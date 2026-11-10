@@ -65,7 +65,7 @@ class ModelHarnesses implements SessionBindingFactory {
       fork: async checkpoint => { const copy = checkpoint + "-fork-" + ++this.opened; this.truth.set(copy, { harnessId: selected.harnessId, delivered: new Set(), knowsOrigin: true }); return copy; },
       models: async () => ({ models: [{ id: "model-a", name: "A" }], defaultModel: "model-a", authentication: "ready", canSelect: true, commands: COMMANDS }),
       classify: (text, catalog) => listedCommand(text, catalog),
-      startText: async (_id, text, output) => {
+      startText: async (_id, text: string, output) => {
         const events = all(this.store, session), prepared = events.findLast(event => event.type === "run.context_prepared" && event.data.runId === run);
         const command = events.some(event => event.type === "run.native_command" && event.data.runId === run);
         const input = this.store.get(session).runs.find(row => row.id === run)!.input;

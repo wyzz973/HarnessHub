@@ -1,7 +1,8 @@
 import type { ControlProtocol } from "../contexts/catalog/domain/discovery.js";
 import type { ResolvedCommand } from "../contexts/catalog/domain/catalog.js";
 import type { ContentKind, ContentRef, ControlAttachment } from "./content.js";
-import type { RelayCapabilities } from "./relay.js";
+import type { DataClass, DeliveryPosition, RelayCapabilities, RelayPacketId, TurnText, VendorObservation, VerifyResult } from "./relay.js";
+export type { TurnText };
 
 declare const nativeConversationBrand: unique symbol;
 export type NativeConversationId = string & { readonly [nativeConversationBrand]: true };
@@ -78,7 +79,13 @@ export interface NativeUsage {
   readonly turn?: { readonly input?: number; readonly output?: number; readonly cachedInput?: number; readonly cacheWrite?: number; readonly reasoning?: number; readonly total?: number };
   readonly context?: { readonly used: number; readonly size?: number };
   readonly cost?: { readonly amount: number; readonly currency: string; readonly scope: "turn" | "session" };
+  /**
+   * The Turn's model requests one by one, oldest first, at most MAX_USAGE_REQUESTS (the latest are kept): what each read and
+   * what the cache gave it (ADR-055 §3.2, VF2-09). Absent when the native side reports only totals.
+   */
+  readonly requests?: readonly { readonly input: number; readonly cachedInput?: number; readonly cacheWrite?: number }[];
 }
+export const MAX_USAGE_REQUESTS = 64;
 /** Non-text native output. Bytes are handed to the content owner; links are never fetched. */
 export type NativeOutput =
   | { readonly kind: "content"; readonly name: string; readonly mediaType: string; readonly data: Uint8Array }
@@ -103,7 +110,13 @@ export type ControlEvent =
       /** A question the program asks (a form, a choice, free text) rather than an approval of its own action; approval when absent. */
       readonly kind?: "approval" | "question" }
   | { readonly type: "permission"; readonly id: string; readonly decision: "denied" | "cancelled" }
-  | { readonly type: "diagnostic"; readonly message: string };
+  | { readonly type: "diagnostic"; readonly message: string }
+  /**
+   * The native side recorded this Turn's input in its history (ADR-055 §7.1, evidence E1): its protocol said so, or it echoed
+   * the user entry. `packetId` is the relay packet the Driver saw in that entry, when it looked for one. Sent at most once per
+   * Turn, before the Turn's result; never inferred from the reply alone (that is BackendResult.input).
+   */
+  | { readonly type: "input_recorded"; readonly packetId?: RelayPacketId };
 export interface BackendResult {
   readonly status: "completed" | "cancelled" | "failed";
   readonly reason: string;
@@ -123,7 +136,26 @@ export interface BackendResult {
    * nothing. The Session reads it only for the command's effect and stores it nowhere.
    */
   readonly command?: "noop";
+  /**
+   * The Driver confirmed that this Turn emptied the native history (ADR-055 §3.2, F04): the native side's fixed receipt, a
+   * read that shows a new session, or a session the Driver itself opened in place of the old one, whose recovery reference is
+   * then `replaced.checkpoint`. Absent says nothing: a clear the Driver could not confirm stays unconfirmed. Transient: the
+   * Session writes its conclusion into the Turn's end event and never into the snapshot.
+   */
+  readonly native?: { readonly cleared: true; readonly replaced: { readonly checkpoint: string } | null };
 }
+/**
+ * The default placement of a Turn's text: the input alone, or the relay packet, a blank line and the user's words as one
+ * text. A Driver whose declaration places them otherwise (RelayCapabilities.placement) does so itself.
+ */
+export function singleText(text: TurnText): string { return typeof text === "string" ? text : `${text.relay.body}\n\n${text.user}`; }
+/** What a check asks a Driver (ADR-055 §7.3): each packet's title line after the position its delivery recorded, oldest first. */
+export interface VerifyRequest {
+  readonly markers: readonly { readonly packetId: RelayPacketId; readonly position: DeliveryPosition }[];
+  /** Whether the check needs to know that the native history is empty (an unconfirmed clear). */
+  readonly historyEmpty: boolean;
+}
+export const MAX_VERIFY_MARKERS = 8;
 export interface NativeOption {
   readonly id: string;
   readonly name: string;
@@ -336,8 +368,35 @@ export interface HarnessControl {
    * reference and recent messages. Sends no prompt and changes nothing; the connection is closed afterwards.
    */
   importSession?(id: string, cwd: string): Promise<NativeSessionImport>;
-  /** Sends one prompt. Attachments were accepted by checkAttachments; their private copies stay readable for the Turn. */
-  startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void, attachments?: readonly ControlAttachment[]): Promise<ControlRun>;
+  /**
+   * Where the native history of the open conversation stands now, read without changing it (ADR-055 §3.2, F20). Called after
+   * open() and before a Turn's input; a later check reads only the first user entry after it. `{ kind: "none" }` when this
+   * conversation has no readable position; absent when the Driver records none.
+   */
+  deliveryPosition?(id: NativeConversationId): Promise<DeliveryPosition>;
+  /**
+   * Reads the native history for the packets' title lines, each after its own position, and answers per marker; reads only,
+   * sends no prompt, and returns no native content (ADR-055 §7.3, R8). A marker it could not look for is "unavailable", never
+   * "absent". `historyEmpty` is null unless the Driver read the whole history. Rejects only when the connection failed.
+   */
+  verifyDelivered?(id: NativeConversationId, request: VerifyRequest): Promise<VerifyResult>;
+  /**
+   * The endpoint and model this connection's conversation runs on, as the Driver resolved them from its own configuration
+   * layers after open() (ADR-055 §10.4); null when it cannot tell. Values never leave as text: host and layer only.
+   */
+  relayVendor?(): Promise<VendorObservation | null>;
+  /** The user's own words in a replayed native user entry, with what native wrapping was stripped (ADR-055 VF3-09). Pure. */
+  userTextOf?(replayed: string): { readonly user: string; readonly stripped: readonly { readonly kind: DataClass; readonly bytes: number }[] };
+  /**
+   * Names the open conversation on the native side, for a session a handoff created; called after open() and before its
+   * first prompt, only when the declaration's `title` is "set". A failure never fails the Turn.
+   */
+  setTitle?(id: NativeConversationId, title: string): Promise<void>;
+  /**
+   * Sends one prompt: the input alone, or the user's words with a relay packet the Driver places by its declaration
+   * (singleText by default). Attachments were accepted by checkAttachments; their private copies stay readable for the Turn.
+   */
+  startText(id: NativeConversationId, text: TurnText, onEvent: (event: ControlEvent) => void, attachments?: readonly ControlAttachment[]): Promise<ControlRun>;
   /** Enables interactive requests for a public Run. Standalone probes keep their explicit deny default. */
   enablePermissions?(): void;
   /** Selects an actual pending option; receipt does not assert backend acknowledgement. */

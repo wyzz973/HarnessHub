@@ -13,6 +13,7 @@ import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import { string } from "../../infrastructure/control/json-rpc-process.js";
 import { checkInputs } from "../../infrastructure/control/attachments.js";
 import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
+import { singleText, type TurnText } from "../../contracts/control.js";
 
 type OpenClawMethod = "agents.list" | "models.list" | "sessions.patch" | "sessions.get" | "sessions.list" | "chat.history" | "skills.status" | "tools.catalog";
 /** The Hub's own Gateway session keys; no other key is patched or continued. */
@@ -445,7 +446,8 @@ export class OpenClawControl extends AcpControl {
    * usage and the real stop reason, of exactly the messages this turn appended; a full window that starts after the turn's
    * first entry is reported as a diagnostic, and the entries it holds are still reconciled.
    */
-  override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+  override async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    const prompt = singleText(turn);
     // Nothing was sent, so this is the Turn's own failure rather than a dispatch with an unknown outcome.
     try { await this.applySelectedModel(); }
     catch (error) { if (error instanceof ControlError) return notSent(error); throw error; }

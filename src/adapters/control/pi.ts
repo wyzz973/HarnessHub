@@ -5,6 +5,7 @@ import { MAX_NATIVE_EXTENSIONS, nativeConversationId, requestExpiry, type Native
 import { classifyRemoteFailure, ControlError, errorFrom, JsonRpcProcess, object, string, type RpcWireCodec } from "../../infrastructure/control/json-rpc-process.js";
 import { MAX_CONTENT_BYTES, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
+import { singleText, type TurnText } from "../../contracts/control.js";
 
 function piCodec(): RpcWireCodec {
  const commands = new Map<string, string>();
@@ -234,7 +235,8 @@ export class PiControl implements HarnessControl {
     const current = this.entries.find(row => row.id === this.catalog.defaultModel);
     checkInputs(attachments, { image: current?.image === true, audio: false, file: true });
   }
-  async startText(id: NativeConversationId, message: string, event: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+  async startText(id: NativeConversationId, turn: TurnText, event: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    let message = singleText(turn);
     if (this.closed || this.failure || id !== this.conversation || this.active) throw this.failure ?? new ControlError("INVALID_STATE", "Pi conversation is not ready for a prompt");
     if (typeof message !== "string" || !message.trim()) throw new ControlError("INVALID_INPUT", "prompt must contain text");
     const images: { type: "image"; data: string; mimeType: string }[] = [];

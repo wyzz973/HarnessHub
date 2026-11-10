@@ -13,6 +13,7 @@ import { checkInputs, fileMentions } from "../../infrastructure/control/attachme
 import type { RelayCapabilities } from "../../contracts/relay.js";
 import { CODEX_SKILL_INPUT as SKILL_INPUT, CODEX_THREAD_COMMANDS as THREAD_COMMANDS, codexClassify, codexNativeClassify, codexThreadOperation as threadOperation, relayDeclaration } from "./relay-classify.js";
 import { codexVendor, slashModelKey } from "./relay-vendor.js";
+import { singleText, type TurnText } from "../../contracts/control.js";
 
 /**
  * Codex's relay declaration (ADR-055 §8.1, Codex row): one text (packet, a line break, then the user's words), at most
@@ -521,7 +522,8 @@ export class CodexControl implements HarnessControl {
     const catalog = await this.models(), selected = catalog.models.find(row => row.id === (this.openedModel ?? catalog.defaultModel));
     checkInputs(attachments, selected?.inputs ?? { image: true, audio: false, file: true });
   }
-  async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+  async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    const prompt = singleText(turn);
     this.assertInitialized();
     if (!this.conversation || id !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "thread is not owned by this connection");
     if (this.active) throw new ControlError("INVALID_STATE", "a turn is already active");

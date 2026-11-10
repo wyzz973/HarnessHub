@@ -54,7 +54,7 @@ test("Redacted control sanitizes initialize metadata, nested capabilities and ob
 test("Redacted control preserves native identity and caller inputs while cleaning public tool, permission and diagnostic events", async () => fixture(async service => {
   const events: ControlEvent[] = []; let receivedCwd = "", receivedPrompt = "";
   const inner = control({ open: async cwd => { receivedCwd = cwd; return native; },
-    startText: async (id, prompt, emit) => {
+    startText: async (id, prompt: string, emit) => {
       assert.equal(id, native); receivedPrompt = prompt;
       emit({ type: "tool", id: keyA, title: "tool " + keyB, status: keyA });
       emit({ type: "permission", id: keyB, decision: "denied" });

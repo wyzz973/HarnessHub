@@ -158,7 +158,7 @@ class HeldHarness implements SessionBindingFactory {
       initialize: async () => ({ protocol: "acp-v1", protocolVersion: 1, agentName: "held", agentVersion: "1", authenticationMethods: [], capabilities: {} }),
       open: async () => { opened = true; return nativeConversationId("native-" + selected.harnessId); },
       checkpoint: async () => opened ? "private-native-" + selected.harnessId : null,
-      startText: async (_id, text, output) => {
+      startText: async (_id, text: string, output) => {
         this.prompts.push(text); output({ type: "text", text: "reply to " + text });
         const result = new Promise<BackendResult>(resolve => { this.waiting.push(resolve); }); this.notify?.();
         return { result, requestStop: async () => ({ requested: true }) };

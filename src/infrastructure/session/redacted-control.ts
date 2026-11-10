@@ -1,5 +1,5 @@
 import type { ProviderTextRedactor } from "../../contracts/provider.js";
-import type { CleanupEvidence, ControlEvent, ControlRun, HarnessControl, NativeConversationId, NativeOptions, NativeToolDetail, ProtocolObservation } from "../../contracts/control.js";
+import type { CleanupEvidence, ControlEvent, ControlRun, HarnessControl, NativeConversationId, NativeOptions, NativeToolDetail, ProtocolObservation, TurnText } from "../../contracts/control.js";
 import { SessionError } from "../../contracts/session.js";
 import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
 
@@ -17,7 +17,7 @@ function publicEvent(event: ControlEvent, redact: (text: string) => string): Con
     case "tool": return { ...event, id: redact(event.id), title: redact(event.title), status: redact(event.status), ...(event.detail === undefined ? {} : { detail: sanitize(event.detail, redact) as NativeToolDetail }) };
     case "permission": return { ...event, id: redact(event.id) };
     case "plan": return { type: "plan", entries: event.entries.map(entry => ({ ...entry, content: redact(entry.content) })), ...(event.explanation === undefined ? {} : { explanation: redact(event.explanation) }) };
-    case "usage": return event;
+    case "usage": case "input_recorded": return event;
     case "notice": return { ...event, title: redact(event.title), ...(event.detail === undefined ? {} : { detail: redact(event.detail) }) };
     case "activity": return { ...event, id: redact(event.id), title: redact(event.title), ...(event.detail === undefined ? {} : { detail: redact(event.detail) }) };
     case "output": {
@@ -63,7 +63,7 @@ export class RedactedHarnessControl implements HarnessControl {
       return this.safe(() => Promise.reject(error));
     }
   }
-  async startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void, attachments?: readonly ControlAttachment[]): Promise<ControlRun> {
+  async startText(id: NativeConversationId, text: TurnText, onEvent: (event: ControlEvent) => void, attachments?: readonly ControlAttachment[]): Promise<ControlRun> {
     const redactor = this.stream();
     const run = await this.safe(() => this.inner.startText(id, text, value => {
       if (value.type !== "text") onEvent(publicEvent(value, this.redact));

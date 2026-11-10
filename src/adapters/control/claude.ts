@@ -8,6 +8,7 @@ import { ControlError } from "../../infrastructure/control/json-rpc-process.js";
 import { AcpControl } from "./acp.js";
 import { CLAUDE_EXPORT as EXPORT, CLAUDE_HIDDEN as HIDDEN, claudeClassify, claudeListedEffect, claudeCommand as commandOf, claudeNativeClassify, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { claudeVendor, slashModelKey } from "./relay-vendor.js";
+import { singleText, type TurnText } from "../../contracts/control.js";
 
 /**
  * Claude Code's relay declaration (ADR-055 §8.1, Claude Code row): two text blocks; no live evidence, a check after the
@@ -124,7 +125,8 @@ export class ClaudeControl extends AcpControl {
     this.hubExport = !commands.some(command => command.name === EXPORT.name);
     return { ...catalog, commands: (this.hubExport ? [...commands, EXPORT] : commands).map(command => ({ ...command, contextEffect: command.contextEffect ?? claudeListedEffect(command.name) ?? "keep" })), hiddenCommands: HIDDEN };
   }
-  override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+  override async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    const prompt = singleText(turn);
     // The same reading as classify(): the command name and arguments after leading whitespace.
     const named = commandOf(prompt);
     if (named?.name === REMOTE_CONTROL) return { result: Promise.resolve(REMOTE_CONTROL_REFUSED), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "a refused command has no native turn to stop")) };

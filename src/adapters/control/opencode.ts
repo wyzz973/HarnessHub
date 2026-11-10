@@ -7,6 +7,7 @@ import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import { AcpControl } from "./acp.js";
 import { OPENCODE_COMPACT as COMPACT, openCodeClassify, openCodeCommand as commandOf, openCodeNativeClassify, relayDeclaration } from "./relay-classify.js";
 import { openCodeVendor, slashModelKey } from "./relay-vendor.js";
+import { singleText, type TurnText } from "../../contracts/control.js";
 
 /**
  * OpenCode's relay declaration (ADR-055 §8.1, OpenCode 2 row): two text blocks; no live evidence and no check (a second
@@ -130,7 +131,8 @@ export class OpenCodeControl extends AcpControl {
   override async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
     const id = await super.open(cwd, model, options, checkpoint); this.openedModel = model; return id;
   }
-  override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+  override async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    const prompt = singleText(turn);
     // The same reading as classify(): only a bare `/compact` without attachments is judged by what it answered.
     const named = commandOf(prompt);
     if (attachments.length || named?.name !== COMPACT.name || named.args !== "") return super.startText(id, prompt, onEvent, attachments);

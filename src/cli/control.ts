@@ -17,6 +17,7 @@ function describe(event: ControlEvent): string {
   switch (event.type) {
     case "text": case "thinking": return event.text;
     case "diagnostic": return event.message;
+    case "input_recorded": return event.packetId ?? "input recorded";
     case "tool": return event.title + " · " + event.status;
     case "permission_requested": return event.title;
     case "permission": return event.decision;

@@ -95,7 +95,7 @@ class FakeHarnesses implements SessionBindingFactory {
       fork: async checkpoint => checkpoint + "-branch",
       models: async () => ({ models: [{ id: "model-a", name: "A" }, { id: "model-x", name: "X" }], defaultModel: "model-a", authentication: "ready", canSelect: true, commands: this.commands }),
       nativeConfig: async () => ({ model: this.models.get(harnessId) ?? null, options: {} }),
-      startText: async (_id, text, output) => {
+      startText: async (_id, text: string, output) => {
         this.prompts.push({ harnessId, text });
         const model = /^\/model\s+(\S+)/u.exec(text); if (model) this.models.set(harnessId, model[1]!);
         const ending = this.ending(harnessId, text);

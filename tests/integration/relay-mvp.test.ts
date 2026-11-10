@@ -73,7 +73,7 @@ class FakeHarnesses implements SessionBindingFactory {
       open: async () => { opened = true; return nativeConversationId("native-" + harnessId); },
       checkpoint: async () => opened ? "private-native-" + harnessId : null,
       models: async () => ({ models: [{ id: "model-a", name: "A" }], defaultModel: "model-a", authentication: "ready", canSelect: true, commands: this.commands }),
-      startText: async (_id, text, output) => {
+      startText: async (_id, text: string, output) => {
         this.prompts.push({ harnessId, text });
         for (const event of this.tools(harnessId, this.prompts.length)) output(event);
         output({ type: "text", text: this.reply(harnessId, readRelayPrompt(text).currentInput.text) });

@@ -11,6 +11,7 @@ import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/
 import type { RelayCapabilities } from "../../contracts/relay.js";
 import { nativeReading, relayDeclaration, relayEntries, textClassify } from "./relay-classify.js";
 import { dshVendor, slashModelKey } from "./relay-vendor.js";
+import { singleText, type TurnText } from "../../contracts/control.js";
 
 interface ActivePrompt {
   readonly event: (event: ControlEvent) => void;
@@ -593,7 +594,8 @@ export class AcpControl implements HarnessControl {
     } catch (error) { const failure = this.nativeFailure(error); if (!(failure instanceof ControlError && ["MODEL_UNAVAILABLE","NATIVE_OPTION_UNAVAILABLE"].includes(failure.code))) this.rpc.abort(failure); throw failure; }
     finally { this.opening = false; this.replaying = false; this.openingMetadata.length = 0; }
   }
-  async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+  async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    const prompt = singleText(turn);
     this.assertInitialized();
     if (!this.conversation || id !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "conversation is not owned by this connection");
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");

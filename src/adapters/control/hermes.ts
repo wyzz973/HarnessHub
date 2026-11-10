@@ -8,6 +8,7 @@ import { gatewayRefusalMessage, hermesGatewayPreflight, type HermesGatewayPrefli
 import { HERMES_COMMAND_WORD as COMMAND_WORD, HERMES_EFFECTS as EFFECTS, HERMES_HIDDEN as HIDDEN, HERMES_LEADING_SPACE as LEADING_SPACE, HERMES_REGISTRY as REGISTRY,
   hermesClassify, hermesCommand as commandOf, hermesNativeClassify, hermesReadsSlash as readsSlash, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { hermesModelKey, hermesVendor } from "./relay-vendor.js";
+import { singleText, type TurnText } from "../../contracts/control.js";
 
 /**
  * Hermes's relay declaration (ADR-055 §8.1, Hermes Agent row): two text blocks with attachment pointers after the user's
@@ -195,7 +196,8 @@ export class HermesControl extends AcpControl {
     return named === null || !COMMAND_WORD.test(named.word);
   }
   override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return hermesNativeClassify(text, catalog, attachments); }
-  override async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+  override async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
+    const prompt = singleText(turn);
     // The same reading as classify(): a registry command by its name and arguments, and none with an image.
     const named = readsSlash(attachments.map(file => file.kind)) ? commandOf(prompt) : null, command = named === null ? undefined : REGISTRY.get(named.word.toLowerCase());
     // The Hub's export is `/export` alone: with a file its pointer text becomes the arguments Hermes sees.
