@@ -16,7 +16,7 @@ import type { DataClass, DeliveryPosition, MarkerResult, RelayCapabilities, Rela
 import { CODEX_SKILL_INPUT as SKILL_INPUT, CODEX_THREAD_COMMANDS as THREAD_COMMANDS, codexClassify, codexNativeClassify, codexThreadOperation as threadOperation, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { codexVendor, readEndpoint, slashModelKey, vendorObservation } from "./relay-vendor.js";
 import { singleText, type TurnText, type VerifyRequest } from "../../contracts/control.js";
-import { bodyWithoutFirstLine, boundedRequests, carriesPacket, COMMAND_REFUSED, exceedsInput, INPUT_LIMIT_REFUSED, TITLE_DEADLINE_MS, unavailable, usageRequest, userWords, VERIFY_BUDGET_MS, verifyResult } from "./relay-turn.js";
+import { bodyWithoutFirstLine, boundedRequests, carriesPacket, COMMAND_REFUSED, exceedsInput, INPUT_LIMIT_REFUSED, TITLE_DEADLINE_MS, unavailable, usageRequest, userWords, VERIFY_BUDGET_MS, verifyResult, measureBy } from "./relay-turn.js";
 
 /**
  * Codex's relay declaration (ADR-055 §8.1, Codex row): one text (packet, a line break, then the user's words), at most
@@ -28,13 +28,16 @@ import { bodyWithoutFirstLine, boundedRequests, carriesPacket, COMMAND_REFUSED, 
  * the window from each turn's token usage; a native title by `thread/name/set` before the first turn. Not probed.
  */
 export const codexRelayCapabilities: RelayCapabilities = relayDeclaration({
+  // probed gates D6 too (the Runtime continues the original session after an unknown Turn only for a probed process Driver):
+  // for this process Driver the flip to true needs P16 besides P2, P3, P6 and P11 (the approval agent's A3, 2026-11-10).
   probed: false,
   delivery: { live: "recorded_event", verify: "after_turn", successProvesRecorded: false, lateDelivery: false },
   execution: "process",
   commands: { unlistedSlash: "text", hidden: [], classify: codexClassify },
   // Files go as pointers at the end of the one text, after the words; images and audio as their own items after it (G069
   // phase two, approval B8; to be probed).
-  placement: { parts: "single", maxInput: { unit: "chars", limit: 1_048_576 }, pointersAfterUser: true },
+  // measure: the one text (packet, blank line, words; a skill input's is shorter) and each file's pointer (ADR-055 C3).
+  placement: { parts: "single", maxInput: { unit: "chars", limit: 1_048_576 }, pointersAfterUser: true, measure: measureBy("single", "chars", ["file"]) },
   window: "turn_report",
   fixedPrefix: null,
   cacheTtl: "30m",

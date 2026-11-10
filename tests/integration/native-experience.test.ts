@@ -9,6 +9,28 @@ import { captureNativeEnvironment } from "../../src/infrastructure/session/nativ
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { parseNativeOptions } from "../../src/contracts/session.js";
 
+/**
+ * G072 (ADR-055 D11, §10.4): another Harness's history now meets the probe gate and the vendor's consent at admission. These
+ * fixtures' Drivers are unprobed or declare nothing and their vendors cannot be told (unknown:<harnessId>, and Codex's own
+ * unknown:codex for what its Driver observes), so the composition
+ * lets them through as only an isolated test data root does (`relay.allowUnprobed`), and each conversation it makes (created or
+ * branched) consents to their vendors in its own scope, as a user's request would (`relay.consent`, which HTTP takes with G073).
+ */
+function relayOpen<T extends ReturnType<typeof application>>(app: T, harnessIds: readonly string[]): T {
+  app.store.setPref("relay.allowUnprobed", "true");
+  let granted = 0;
+  const grant = (id: string) => {
+    for (const vendor of [...harnessIds.map(harnessId => "unknown:" + harnessId), "unknown:origin", "unknown:codex", "openai"])
+      app.store.appendRelayLog({ commandId: "fixture-grant-" + ++granted + "-" + Date.now(), vendor: vendor as never, scope: { kind: "session", sessionId: id as never },
+        decision: "acknowledged", categories: ["user_text"], policyVersion: "relay/1", authKind: null, decidedAt: 1 });
+  };
+  const runtime = app.runtime as { create: typeof app.runtime.create; fork: typeof app.runtime.fork };
+  const create = app.runtime.create.bind(app.runtime), fork = app.runtime.fork.bind(app.runtime);
+  runtime.create = async (...args) => { const created = await create(...args); grant(created.id); return created; };
+  runtime.fork = (...args) => { const branched = fork(...args); grant(branched.id); return branched; };
+  for (const session of app.store.list?.() ?? []) grant(session.id);
+  return app;
+}
 async function fixture(t: test.TestContext, scenario = "native-experience") {
   const root = await mkdtemp(join(tmpdir(), "native-experience-")), home = join(root,"home"), workspace=join(root,"workspace"), peer=join(root,"original-peer.mjs"), trace=join(root,"trace"), manifest=join(root,"catalog.json");
   await mkdir(home); await mkdir(workspace); await copyFile(resolve("tests/fixtures/control-peer.mjs"),peer);
@@ -16,7 +38,7 @@ async function fixture(t: test.TestContext, scenario = "native-experience") {
   const definitions=["alpha","bravo"].map(id=>({id:"native-"+id,name:id,aliases:[],binaryNames:[],configHints:[],controls:[{id:"native-"+id,protocol:"acp-v1",executableNames:["fixture"],args:[peer,"acp-v1",scenario],env:{FIXTURE_TRACE:trace},package:null,distribution:null,requiredExecutables:[],source}]}));
   await writeFile(manifest,JSON.stringify({version:2,definitions,overrides:Object.fromEntries(definitions.map(row=>[row.controls[0]!.id,{executable:process.execPath}]))}));
   const config=await prepareConfiguration({workspace,manifestPath:manifest,pathOnly:true}), native=captureNativeEnvironment({HOME:home,PATH:process.env.PATH});
-  const server=await startWebServer({root:join(root,"data"),configuration:config,application:(data,publish)=>application(data,publish,{installations:"any",nativeEnvironment:native,management:{installationMode:"private-fixture"},workspaceLockRoot:join(root,"locks")})});
+  const server=await startWebServer({root:join(root,"data"),configuration:config,application:(data,publish)=>relayOpen(application(data,publish,{installations:"any",nativeEnvironment:native,management:{installationMode:"private-fixture"},workspaceLockRoot:join(root,"locks")}),["native-alpha","native-bravo"])});
   t.after(async()=>{await server.close();await rm(root,{recursive:true,force:true});});
   const url=new URL(server.url),origin=url.origin;
   const boot=await fetch(origin+"/api/v1/auth/bootstrap",{method:"POST",headers:{Origin:origin,"Content-Type":"application/json"},body:JSON.stringify({token:new URLSearchParams(url.hash.slice(1)).get("token")})});

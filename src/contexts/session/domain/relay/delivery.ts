@@ -106,7 +106,14 @@ export type RelayEvent =
    * D6 (§9 S6): a process Driver's Turn ended unknown, the Hub confirmed its process group ended, and the user continues the
    * original native session: the binding becomes suspect{unknown_turn}; a pending packet is saved in `carried`.
    */
-  | { readonly kind: "unknown_turn_continued" };
+  | { readonly kind: "unknown_turn_continued" }
+  /**
+   * A7 point 4 (the approval agent's decision on the stage-two review, G072): a content Turn on a pending binding while nothing
+   * is owed any more (every fact the pending packet carried is excluded from what is owed): the binding goes back to the prior
+   * the packet was built on, its delivery row stays as it is (unknown), and the user is not asked (`verified: nothing_owed`).
+   * Only on a pending binding; the Turn's input goes as typed.
+   */
+  | { readonly kind: "owed_nothing" };
 export type RelayEventKind = RelayEvent["kind"];
 /** The 14 events of §7.2's table, by their letters. */
 export const RELAY_EVENT_LETTERS = ["a", "b", "n", "c", "d", "e", "e′", "f", "g", "h", "i", "j", "k", "l"] as const;
@@ -126,7 +133,7 @@ export function eventLetter(event: RelayEvent): RelayEventLetter | null {
     case "plain_settled": return "j";
     case "verified": return "k";
     case "reset": return "l";
-    case "unknown_turn_continued": return null;
+    case "unknown_turn_continued": case "owed_nothing": return null;
   }
 }
 
@@ -638,6 +645,11 @@ export function step(relay: BindingRelayState, event: RelayEvent): RelayStep {
         return refuse({ code: "invalid", why: "a native reset names the bindings of its own Harness control, this one included" });
       const next = initialBindingRelay(event.bindings, event.harnessId, event.controlId, "new");
       return { kind: "replaced", archived: relay, relay: parseBindingRelayState(next), deliveries: [], note: NOTHING };
+    }
+    case "owed_nothing": {
+      if (sync.kind !== "pending") return notApplicable("only a pending binding goes back to its prior when nothing is owed");
+      // Its mark is the prior's (never above what the prior claimed); the pending packet's row keeps its outcome (A7 point 4).
+      return applied(relay, withSync(relay, sync.prior), [], { verified: "nothing_owed" });
     }
     case "unknown_turn_continued": {
       if (sync.kind === "pending") {

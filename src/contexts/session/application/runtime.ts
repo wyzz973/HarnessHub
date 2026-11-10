@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { parseProviderTarget } from "../../../contracts/provider.js";
 import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeToolDetail, type NativeUsage } from "../../../contracts/control.js";
 import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
@@ -11,7 +12,11 @@ import { buildPublicContext, type PublicContext, type PublicContextOptions } fro
 import { parseToolDetail, type RelayToolDetail } from "../domain/relay/narration.js";
 import { commandEffect, commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
 import { initialBindingRelay } from "../domain/relay/migrate.js";
-import { BLOCKED_CODES, RelayError, type BindingRelayState, type DeliveryPosition, type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayPacket, type RelayStorePort, type VerifyResult } from "../../../contracts/relay.js";
+import { BLOCKED_CODES, RelayError, markOf, type BindingRelayState, type ConsentAppend, type ConsentRecord, type DeliveryPosition, type EndpointLayer, type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayKeyPort, type RelayLogPort, type RelayPacket, type RelayPrefKey, type RelayStorePort, type RelayWindow, type VendorKey, type VendorObservation, type VerifyResult, parseVendorObservation } from "../../../contracts/relay.js";
+import { relayRedactor } from "../domain/relay/redaction.js";
+import { cacheAfter, hardCap, observedWindow, packetBudget, packetFamily, resolveWindow, windowRow, fitsMinPacket, type ResolvedWindow } from "../domain/relay/windows.js";
+import { estimateTokens, type RelayBudget } from "../domain/relay/budget.js";
+import { returnChoice, returnPreference, warm as cacheWarm } from "../domain/relay/return-policy.js";
 import { mayReuseKept, owed, planReturnVerify, step, type BindingDelivery, type RelayFact } from "../domain/relay/delivery.js";
 /**
  * How long a relay read on a Turn's connection (a check at the open or at a settlement, the position before dispatch) may take
@@ -20,9 +25,10 @@ import { mayReuseKept, owed, planReturnVerify, step, type BindingDelivery, type 
  */
 const RELAY_READ_MS = 2000;
 import {
-  EphemeralKeys, RelayLedger, acceptedChoices, admitRelay, bindingDeliveries, checkStep, checkWorthAnEvent, checkedResult, clearNotConfirmed, continuityOf, decideTurn, deliveryRow, heldSinceIn, holdsNothing, markIn,
-  nativeExactAt, needRuns, outcomeWrites, packetManifest, parseRelayChoices, rangeOf, recordedStep, relayDeclaration, renderView, retreatEvent, runRelayOf, settleTurn, unavailableResult, verifiedEvent, verifyRequestOf,
-  type CarriedTurn, type Check, type RelayChoices, type RelayDeclaration, type SettledTurn, type TurnDecision,
+  CONSENT_CATEGORIES, RelayLedger, UnkeptRelayKeys, crossHarnessFacts, acceptedChoices, admitCarrying, bindingDeliveries, carriesWithReading, checkStep, checkWorthAnEvent, checkedResult, clearNotConfirmed, consentCommandOf, consentGate, consentRequired, consentStanding, continuityOf, crossVendor,
+  dataRootInWorkspace, decideTurn, deliveryRow, heldSinceIn, holdsNothing, inputLimit, markIn, nativeExactAt, needRuns, outcomeWrites, packetManifest, parseRelayChoices, probeGate, rangeOf, recordedStep, relayAdmission, relayDeclaration,
+  renderView, retreatEvent, runRelayOf, runRelayRequest, settleTurn, sourceVendors, unavailableResult, vendorKeyOf, verifiedEvent, verifyRequestOf,
+  type AdmitGates, type AdmitInput, type CarriedTurn, type Carrying, type Check, type ConsentStanding, type ConsentView, type RelayChoices, type RelayDeclaration, type SettledTurn, type TurnDecision,
 } from "./relay-coordinator.js";
 import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_PLAN_ENTRIES, MAX_QUEUE, MAX_RUNS, MAX_RUN_ACTIVITIES, MAX_RUN_NOTICES, MAX_RUN_TOOLS, assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
 
@@ -63,6 +69,20 @@ interface ActiveExecution {
   /** The Turn's relay (ADR-055 §6.1, §7; G068 phase two): what it checked, sent and saw recorded, until its end commits it. */
   readonly relay: TurnRelay;
 }
+/** What G072's checks at the open found for a carrying Turn (Runtime.openGates). */
+interface OpenGate {
+  readonly vendor: VendorKey;
+  readonly window: ResolvedWindow;
+  readonly budget: RelayBudget;
+  readonly clamped: readonly ("window" | "input_limit")[];
+  readonly consentLogSeq: number | null;
+  /** How a return to a binding that stood on its own mark continued (§7.3): the request's `native`, the preference's default; null when it was no return. */
+  readonly returning: "continue" | "new" | null;
+}
+/** C7 (G072): the reading of the input changed between admission and the open in a way that matters to the relay. */
+function classificationChanged(): RelayError {
+  return new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "classification_changed" }, "没能准备这条消息：受理时和打开原生会话后对这条消息是不是命令的判断不一致，这条消息没有发出，草稿已保留。可以再发一次，或只发这条消息。");
+}
 /** What a Turn holds of the relay between its preparation and its end (relay-coordinator.ts does the deciding). */
 interface TurnRelay {
   declaration: RelayDeclaration;
@@ -85,6 +105,18 @@ interface TurnRelay {
   e1Refused: boolean;
   /** The conversation's Harness control the Turn's reads are made for (`brokenReads`); null before the Turn knows it. */
   key: string | null;
+  /**
+   * What the Driver observed of the endpoint and model after the open (relayVendor, ADR-055 §10.4): cached on the binding with
+   * the Turn's next commit, its end included (a Turn that fails on consent still teaches the next admission the vendor); null
+   * when the Driver could not tell, undefined when it was not asked.
+   */
+  observed: VendorObservation | null | undefined;
+  /** Relay events the Turn's end commits after `run.ended` besides its settlement's (relay.vendor_changed of a Turn refused for it). */
+  readonly endEvents: EventDraft[];
+  /** The consent a carrying Turn's dispatch rests on, read again before dispatch (§10.4: withdrawn → not dispatched). */
+  consent: { readonly vendor: VendorKey; readonly layer: EndpointLayer | null; readonly target: HarnessSelection;
+    /** The log seq of the consent this request itself gave and the dispatch rests on; null when it rests on another record. */
+    readonly requestSeq: number | null } | null;
 }
 /** A conversation's kept native process (ADR-030): the binding of its last Run, idle between Turns and owned by the runtime. */
 interface KeptProcess {
@@ -307,8 +339,12 @@ export class SessionRuntime {
 
   /** The facts each conversation's events place (ADR-055 §2), read incrementally by this owner. */
   private readonly ledger: RelayLedger;
-  /** The keyed digests of delivery rows until G070's session subkeys exist (relay-coordinator EphemeralKeys). */
-  private readonly relayKeys = new EphemeralKeys();
+  /**
+   * The keyed digests of delivery rows and of a request's relay options (ADR-055 §10.2): the installation's relay key the
+   * composition gives (relay-keys.ts), else one this owner keeps in memory only (UnkeptRelayKeys, rows named EPHEMERAL_KEY_ID).
+   */
+  private readonly relayKeys: RelayKeyPort;
+  private readonly unkeptKeys = new UnkeptRelayKeys();
   /**
    * The relay choices of the inputs this owner accepted, as their `message.accepted` events committed them, until their Turn
    * reads them (G068 fix batch, R8): an ordinary Turn reads no event for them. A Turn accepted by an earlier owner reads its event.
@@ -324,6 +360,7 @@ export class SessionRuntime {
 
   constructor(private readonly store: SessionStore, private readonly factory: SessionBindingFactory, private readonly options: SessionRuntimeOptions) {
     this.ledger = new RelayLedger((id, after, limit) => this.store.events(id, after, limit));
+    this.relayKeys = options.relayKeys ?? new UnkeptRelayKeys();
   }
 
   create(configuration: SessionConfiguration, selection: SelectionRequest, key: string): Promise<SessionSnapshot> {
@@ -425,7 +462,11 @@ export class SessionRuntime {
    * (RelayChoice): with `{ attach: "none" }` the input is sent alone, exactly as typed, and the public facts its Harness is
    * owed stay owed (ADR-055 §7.2 n); a key keeps its choices, and the same key with other choices conflicts. An input that
    * would carry relay content is checked here first (ADR-055 §6.1 admit): what can be decided before any Run exists is
-   * refused synchronously with RELAY_CHOICE_REQUIRED or RELAY_UNAVAILABLE (HTTP 409), and no Run is made.
+   * refused synchronously — RELAY_TARGET_UNVERIFIED, RELAY_UNAVAILABLE, RELAY_CHOICE_REQUIRED, RELAY_CONSENT_REQUIRED (HTTP
+   * 409) or RELAY_INPUT_LIMIT (429) — and no Run is made. The choices are kept with the Run (`relayRequest`, its options and
+   * their HMAC); a consent the request gives (`relay.consent`) is recorded in the installation's log and mirrored in the
+   * conversation (`relay.consent_recorded`); `relay.native:"new"` (［新开原生会话］) archives the Harness control's native
+   * session as a native reset does, in the same transaction, so the input opens a new one (only while the conversation is idle).
    */
   send(id: SessionId, text: string, key: string, attachmentIds: readonly string[] = [], relay?: RelayChoice): SendReceipt {
     this.admit(); assertInput(text);
@@ -443,37 +484,152 @@ export class SessionRuntime {
     }
     if (state.runs.length >= MAX_RUNS) throw new SessionError("RUN_LIMIT", "Session Run budget exhausted");
     if (state.runs.filter(run => run.status === "queued").length >= MAX_QUEUE) throw new SessionError("QUEUE_FULL", "Session queued input limit reached");
+    // ［新开原生会话］: the binding it replaces, archived with this input as a native reset archives it (resetNative's conditions).
+    const renewed = choices?.native === "new" ? this.renewedBinding(state) : null;
     this.admitRelay(state, text, attachments.map(file => file.kind), choices ?? {});
+    // A key that cannot be used never stops an input (one sent alone included): its options are then fingerprinted under a key
+    // kept in memory only (EPHEMERAL_KEY_ID, not checkable), and any packet it would carry fails at its own preparation.
+    let relayRequest: ReturnType<typeof runRelayRequest>;
+    try { relayRequest = runRelayRequest(id, choices, this.relayKeys); }
+    catch (error) { if (!(error instanceof RelayError)) throw error; relayRequest = runRelayRequest(id, choices, this.unkeptKeys); }
+    // The request's consent goes to the installation's log first (its authority, §10.4), then into this transaction as a mirror.
+    const consent = choices?.consent === undefined ? null : this.recordConsent(id, command, choices.consent, state);
     const nextId = runId("run-" + this.options.id()), userId = messageId("message-" + this.options.id()), assistantId = messageId("message-" + this.options.id());
     const run: PublicRun = { id: nextId, commandId: command, input: text, userMessageId: userId, assistantMessageId: assistantId,
       selection: state.selection, epoch: state.epoch, status: "queued", cancelRequested: false, contextThroughSeq: 0,
       sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: state.pendingSwitchId, ...(attachments.length ? { attachments } : {}),
-      timing: { acceptedAt: this.options.now().getTime() } };
+      timing: { acceptedAt: this.options.now().getTime() }, ...(relayRequest === undefined ? {} : { relayRequest }) };
     // What this owner found of a process kept under the previous one is shown until the conversation's next Turn.
     this.lost.delete(id); this.outside.delete(id); this.upgraded.delete(id);
-    this.commit(id, current => ({ next: { ...current, runs: [...current.runs, run],
-      messages: [...current.messages, { id: userId, runId: nextId, role: "user", text, seq: current.lastSeq + 1, status: "queued" }],
-      commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] },
-      events: [event("message.accepted", { runId: nextId, messageId: userId, role: "user", text, ...(attachments.length ? { attachments } : {}), ...(choices === undefined ? {} : { relay: choices }) })] }));
+    const reset = renewed === null ? null : { id: commandId("native-" + createHash("sha256").update(id + "\0" + command, "utf8").digest("hex").slice(0, 40)), fingerprint: this.fingerprint({ kind: "native-reset", epoch: state.epoch, by: "send", command }) };
+    this.commit(id, ({ relayRecoveryFailed, ...rest }) => {
+      // A native reset clears a relay recovery failure (§9 S15), as resetNative does.
+      const current: SessionSnapshot = renewed === null && relayRecoveryFailed !== undefined ? { ...rest, relayRecoveryFailed } : rest;
+      return { next: { ...current, runs: [...current.runs, run],
+        ...(renewed === null ? {} : { nativeBindings: current.nativeBindings?.map(binding => binding.harnessId === renewed.harnessId && binding.controlId === renewed.controlId && binding.status !== "archived" ? { ...binding, status: "archived" as const } : binding) ?? [] }),
+        messages: [...current.messages, { id: userId, runId: nextId, role: "user", text, seq: current.lastSeq + 1 + (renewed === null ? 0 : 1), status: "queued" }],
+        commands: [...current.commands, ...(reset === null ? [] : [{ id: reset.id, kind: "native-reset" as const, fingerprint: reset.fingerprint, resultId: id }]), { id: command, kind: "send", fingerprint, resultId: nextId }] },
+        events: [...(renewed === null ? [] : [event("native.branch_requested", { harnessId: renewed.harnessId, controlId: renewed.controlId, historyPreserved: true, previousBindingPreserved: true, by: "relay.native", runId: nextId })]),
+          event("message.accepted", { runId: nextId, messageId: userId, role: "user", text, ...(attachments.length ? { attachments } : {}), ...(choices === undefined ? {} : { relay: choices }), ...(relayRequest === undefined ? {} : { relayRequest }) }),
+          ...(consent === null ? [] : [event("relay.consent_recorded", { runId: nextId, logSeq: consent.logSeq, vendor: consent.vendor, scope: consent.scope.kind, decision: consent.decision, categories: consent.categories, policyVersion: consent.policyVersion, authKind: consent.authKind })])] };
+    });
     this.acceptedRelay.set(nextId, choices ?? {});
     // Inputs cancelled before they run never read theirs: the oldest go first, so this stays bounded.
     if (this.acceptedRelay.size > 4096) this.acceptedRelay.delete(this.acceptedRelay.keys().next().value!);
+    // The kept process runs the archived native session; it is closed before the input opens a new one (ADR-030).
+    if (renewed !== null && this.kept.has(id)) void this.requestRelease(id, "native_reset");
     this.schedule(id); return { sessionId: id, runId: nextId, replayed: false };
   }
   /**
-   * Admission's relay part (relay-coordinator admitRelay): the input runs on the pending switch's target when there is one,
-   * else on the selection; only the target Driver's static declaration (the factory's, without starting anything) and the
-   * binding's committed state are read. A factory that cannot tell the declaration leaves every question to the open.
+   * The binding `relay.native:"new"` replaces (ADR-055 §7.3, the ［新开原生会话］ of §9): the selection's own native binding,
+   * archived as resetNative archives it, under the same conditions (the conversation idle, its selection a native Harness, no
+   * Turn whose resources are unconfirmed); null when it has none yet (the input opens a new one anyway).
    */
-  private admitRelay(state: SessionSnapshot, text: string, attachments: readonly ContentKind[], choices: RelayChoices): void {
+  private renewedBinding(state: SessionSnapshot): { readonly harnessId: string; readonly controlId: string } | null {
+    if (state.activeRunId !== null || state.pendingSwitchId !== null || state.runs.some(run => !terminal(run.status))) throw new SessionError("NATIVE_SESSION_BUSY", "新开原生会话只能在这个对话空闲时进行：等这一轮结束后再发。这条消息没有发出，草稿已保留。");
+    if (state.selection.provider !== undefined) throw new SessionError("INVALID_INPUT", "a managed Provider has no native session to renew");
+    if (state.runs.some(run => run.status === "unknown" && run.cleanup?.closed !== true)) throw new SessionError("RECOVERY_CLEANUP_REQUIRED", "native resources must be confirmed before a new native session");
+    const bound = state.nativeBindings?.find(binding => binding.harnessId === state.selection.harnessId && binding.controlId === state.selection.controlId && binding.status !== "archived");
+    if (bound === undefined) return null;
+    if (bound.status !== "ready") throw new SessionError("NATIVE_STATE_UNCONFIRMED", "原生会话状态尚未确认；可以切换其他 Harness，或明确建立新的原生分支。公共历史会保留。");
+    return { harnessId: bound.harnessId, controlId: bound.controlId };
+  }
+  /**
+   * A request's consent (`relay.consent`, ADR-055 §10.4) appended to the installation's relay log (its authority); the record
+   * it made, for the conversation's mirror. A Store without the log refuses it (RELAY_UNAVAILABLE{consent_log_full} is the
+   * log's own refusal); the input is then not accepted.
+   */
+  private recordConsent(id: SessionId, command: string, consent: NonNullable<RelayChoices["consent"]>, state: SessionSnapshot): ConsentRecord {
+    const log = this.relayLog();
+    if (log?.appendRelayLog === undefined) throw new RelayError({ code: "RELAY_UNAVAILABLE", reason: "consent_log_full" }, "这个 Gateway 没有可写的同意记录，不能记下这次同意；这条消息没有发出。");
+    const binding = state.nativeBindings?.find(row => row.harnessId === state.selection.harnessId && row.controlId === state.selection.controlId && row.status !== "archived");
+    const record: ConsentAppend = { commandId: consentCommandOf(id, command), vendor: consent.vendor, scope: consent.scope === "global" ? { kind: "global" } : { kind: "session", sessionId: id },
+      decision: consent.decision, categories: [...CONSENT_CATEGORIES], policyVersion: "relay/1", authKind: binding?.relay?.vendorObserved?.authKind ?? null, decidedAt: this.options.now().getTime() };
+    return log.appendRelayLog(record);
+  }
+  /**
+   * Admission's relay part (relay-coordinator relayAdmission and admitCarrying): the input runs on the pending switch's target
+   * when there is one, else on the selection; only the target Driver's static declaration (the factory's, without starting
+   * anything) and the binding's committed state are read, and for an input that would carry relay content the installation's
+   * preferences, consents and windows (G072). A factory that cannot tell the declaration leaves every question to the open.
+   */
+  private admitRelay(state: SessionSnapshot, text: string, attachments: readonly ContentKind[], choices: RelayChoices, pinned?: HarnessSelection, run?: PublicRun): void {
     const pending = state.pendingSwitchId === null ? undefined : state.switches.find(sw => sw.id === state.pendingSwitchId);
-    if (pending !== undefined && pending.target === null) return;
-    const target = pending?.target ?? state.selection;
+    if (pinned === undefined && pending !== undefined && pending.target === null) return;
+    const target = pinned ?? pending?.target ?? state.selection;
     if (target.provider !== undefined) return;
-    let capabilities: RelayCapabilities | null | undefined;
-    try { capabilities = this.factory.relayCapabilities === undefined ? undefined : this.factory.relayCapabilities(target); } catch { capabilities = undefined; }
+    const capabilities = this.declarationOf(target);
     const binding = state.nativeBindings?.find(row => row.harnessId === target.harnessId && row.controlId === target.controlId && row.status !== "archived");
-    admitRelay({ state, binding, target, capabilities, text, attachments, choices, facts: on => this.relayFacts(state, on) });
+    const input: AdmitInput = { state, binding, target, capabilities, text, attachments, choices, facts: on => this.relayFacts(state, on) };
+    const carrying = relayAdmission(input);
+    if (carrying === null) return;
+    // Once accepted (prePlan), the request's own consent counts as the log holds it: withdrawn since, it is none.
+    const effective = run === undefined ? choices : this.withRecordedConsent(state, run, choices);
+    admitCarrying(input, carrying, this.relayGated() ? this.relayGates(state, target, binding, carrying, capabilities ?? null, effective) : undefined);
+  }
+  /**
+   * The request's own consent after its acceptance (§10.4): the one it recorded in the installation's log, as long as no
+   * withdrawal of its vendor (in this conversation or for all) was logged after it; the choices without it otherwise.
+   */
+  private withRecordedConsent(state: SessionSnapshot, run: PublicRun, choices: RelayChoices): RelayChoices {
+    if (choices.consent === undefined) return choices;
+    const { consent, ...rest } = choices, records = this.relayLog()?.relayConsents?.() ?? [];
+    // The log's current view keeps the latest record of each vendor and scope: one no longer there was superseded in its scope,
+    // and the records alone then decide (a later consent stands by itself, a later withdrawal is none).
+    const own = records.filter(record => record.commandId === consentCommandOf(state.id, run.commandId)).at(-1);
+    const withdrawn = own === undefined || records.some(record => record.vendor === consent.vendor && record.decision === "revoked" && record.logSeq > own.logSeq && (record.scope.kind === "global" || record.scope.sessionId === state.id));
+    return withdrawn ? rest : choices;
+  }
+  /**
+   * Whether G072's relay gates apply (the probe gate, the data root, consent and vendor keys, the window): whenever the binding
+   * factory declares the Drivers' static relay declarations (relayCapabilities), as the Gateway's own factory always does
+   * (DirectorySessionBindingFactory). A factory that declares none (a test's fake) is the stage-two seam's: admission asks
+   * nothing and the open applies G068's checks only.
+   */
+  private relayGated(): boolean { return typeof this.factory.relayCapabilities === "function"; }
+  /** The factory's static declaration of a selection's Driver; undefined without the method, null when it declares none or fails. */
+  private declarationOf(selection: HarnessSelection): RelayCapabilities | null | undefined {
+    if (this.factory.relayCapabilities === undefined) return undefined;
+    try { return this.factory.relayCapabilities(selection); } catch { return null; }
+  }
+  /** The installation's relay log, windows and preferences of a Store that keeps them (SqliteSessionStore); none otherwise. */
+  private relayLog(): Partial<RelayLogPort> | null {
+    const store = this.store as Partial<RelayLogPort>;
+    return typeof store.relayPrefs === "function" ? store : null;
+  }
+  private relayPrefs(): Readonly<Partial<Record<RelayPrefKey, string>>> {
+    try { return this.relayLog()?.relayPrefs?.() ?? {}; } catch (error) { if (error instanceof SessionError && error.code === "INVALID_DATA") return {}; throw error; }
+  }
+  /** The consent view of a conversation (§10.4): the log's current records, the preferences and the request's own consent. */
+  private consentView(state: SessionSnapshot, prefs: Readonly<Partial<Record<RelayPrefKey, string>>>, choices: RelayChoices): ConsentView {
+    const crossVendor = prefs["relay.crossVendor"], records = this.relayLog()?.relayConsents?.() ?? [];
+    return { session: state.id, records, crossVendor: crossVendor === "allow" || crossVendor === "goal_only" ? crossVendor : "ask", localModelsOffline: prefs["relay.localModelsOffline"] === "true", request: choices.consent ?? null };
+  }
+  private relayWindowOf(harnessId: string, controlId: string, modelKey: string): RelayWindow | null {
+    try { return this.relayLog()?.relayWindow?.(harnessId, controlId, modelKey) ?? null; } catch (error) { if (error instanceof SessionError && error.code === "INVALID_DATA") return null; throw error; }
+  }
+  /**
+   * The vendor the latest binding of a Harness control last saw, archived ones included: what a new native session of the same
+   * control is predicted to run on (its configuration is the same) until its own open tells (§10.4; checked again there).
+   */
+  private lineageVendor(state: SessionSnapshot, target: HarnessSelection): VendorObservation | null {
+    return (state.nativeBindings ?? []).filter(row => row.harnessId === target.harnessId && row.controlId === target.controlId && row.relay?.vendorObserved != null).at(-1)?.relay?.vendorObserved ?? null;
+  }
+  private isolated(workspace: string): boolean {
+    try { return this.options.relayIsolated?.(workspace) ?? true; } catch { return false; }
+  }
+  /**
+   * What admission's G072 checks read for an input that would carry relay content (relay-coordinator AdmitGates): the target's
+   * vendor key from its binding's cached observation (the one a new native session replaces predicts it too), the vendor keys
+   * of what would be carried, the data root, the preferences and consents, and the target's observed window.
+   */
+  private relayGates(state: SessionSnapshot, target: HarnessSelection, binding: NativeSessionBinding | undefined, carrying: Carrying, capabilities: RelayCapabilities | null, choices: RelayChoices): AdmitGates {
+    const prefs = this.relayPrefs(), observed = binding?.relay?.vendorObserved ?? this.lineageVendor(state, target);
+    const facts = carrying.owes ? carrying.need.facts : carrying.facts;
+    return { allowUnprobed: prefs["relay.allowUnprobed"] === "true", isolated: this.isolated(state.configuration.workspace),
+      target: { vendor: vendorKeyOf(capabilities, target.harnessId, observed), layer: observed?.endpoint?.layer ?? null },
+      sources: sourceVendors(state, facts, carrying.need.origin || carrying.doubt && carrying.originHistory && !carrying.relay.originIncluded, selection => this.declarationOf(selection)),
+      consent: this.consentView(state, prefs, choices), window: this.relayWindowOf(target.harnessId, target.controlId, observed?.modelKey ?? ""), now: this.options.now().getTime() };
   }
 
   switch(id: SessionId, selection: SelectionRequest, key: string): SwitchReceipt {
@@ -1528,7 +1684,7 @@ export class SessionRuntime {
         waiting: false, since: performance.now(), timer: null }, stopReason: null, grace: null,
       stream: { kind: null, text: "", committedBytes: 0, bytes: 0, last: "", cancel: null }, streamFailure: null,
       relay: { declaration: relayDeclaration(null), openCheck: null, turn: { kind: "none" }, settledCheck: null, recorded: false, io: { asked: false, healthy: undefined, abandoned: [], broke: false },
-        e1Refused: false, key: null } };
+        e1Refused: false, key: null, observed: undefined, endEvents: [], consent: null } };
     if (this.actives.has(id)) throw new SessionError("OWNERSHIP_LOST", "another Turn of this conversation is active");
     this.actives.set(id, execution); this.waitUsed.delete(target);
     // The execution budget runs from here: starting the program, its model, tools and result (ADR-036).
@@ -1556,6 +1712,10 @@ export class SessionRuntime {
       const current = this.owned(execution), run = this.continue(execution);
       previousNative = run.selection.provider === undefined ? current.nativeBindings?.find(binding => binding.harnessId === run.selection.harnessId && binding.controlId === run.selection.controlId && binding.status !== "archived") : undefined;
       if (previousNative !== undefined && previousNative.status !== "ready") throw new SessionError("NATIVE_STATE_UNCONFIRMED", "原生会话状态尚未确认；可以切换其他 Harness，或明确建立新的原生分支。公共历史会保留。");
+      // prePlan (ADR-055 §6.1, VF3-02): a queued input's admission again, on the conversation as it is now (a Turn before it may
+      // have changed the model, cleared, or the user withdrawn a consent): one that no longer passes fails with the same error
+      // before anything is started, its binding as it was.
+      if (run.selection.provider === undefined && this.relayGated()) this.admitRelay(current, run.input, run.attachments?.map(file => file.kind) ?? [], this.choicesOf(current, run), run.selection, run);
       // A process the conversation kept takes the Turn when it still runs this selection and its binding needs no check at
       // an open (ADR-055 §7.4, VF1-09); any other kept process is closed first and the Turn starts the program as usual (ADR-030).
       reusing = run.selection.provider === undefined ? await this.takeKept(id, run.selection, previousNative?.relay) : null;
@@ -1609,6 +1769,9 @@ export class SessionRuntime {
         this.continue(execution);
       }
       opened = native;
+      // The endpoint and model the open session runs on, as its Driver resolved them (ADR-055 §10.4): the open's consent check
+      // reads it, and the binding caches it with this Turn for the next admission.
+      if (run.selection.provider === undefined && control.relayVendor !== undefined) { execution.relay.observed = await this.observeVendor(control); this.continue(execution); }
       // The Session as the binding's preparation committed it: what the relay reads below (the binding's relay state, the facts).
       let prepared: SessionSnapshot = current;
       if (run.selection.provider === undefined && control.checkpoint) {
@@ -1641,7 +1804,20 @@ export class SessionRuntime {
       // (its effect, and the commands the driver itself offers there).
       let classified = reading;
       if (classified.kind !== "content" && control.models) { const catalog = await control.models(); this.continue(execution); classified = this.classify(control, run.input, catalog, kinds); }
-      if (classified.kind === "command") {
+      // C7 (G072): admission read the input by the target's static declaration without a catalog; a definite command it asked
+      // nothing for that now reads as content (or a command whose arguments the native side submits), or content it checked
+      // that now reads as a command, fails before dispatch (classification_changed). A word only the catalog settles was asked
+      // as content at admission, so whatever the catalog makes of it was checked.
+      // It fails only a Turn the change matters to: one that would now carry a packet admission never checked, or a command
+      // whose binding is owed something admission meant to send with it; a single-Harness conversation is never stopped.
+      let changedReading: "to_command" | "to_content" | null = null;
+      if (this.relayGated() && run.selection.provider === undefined && control.relayCapabilities !== undefined) {
+        const admitted = control.relayCapabilities.commands.classify(run.input, null, kinds);
+        if (admitted.kind !== "possible_command" && carriesWithReading(admitted) !== carriesWithReading(classified)) changedReading = carriesWithReading(classified) ? "to_content" : "to_command";
+      }
+      // A command whose arguments the native side submits as a prompt (acceptsRelay: Codex `/skill:…`, Hermes `/queue`, `/steer`)
+      // is a content Turn to the relay: it may carry a packet, which its Driver places (C7).
+      if (classified.kind === "command" && classified.acceptsRelay !== true) {
         const named = classified; command = named;
         prepared = this.commit(id, current => ({ next: current, events: [event("run.native_command", { runId: target, name: named.name, publicContextInjected: false, contextEffect: named.effect })] })).session;
       }
@@ -1668,9 +1844,17 @@ export class SessionRuntime {
         execution.relay.openCheck = { plan, result, ...(plan.kind === "unknown_turn" && plan.marker === null ? { turnEntry: "unavailable" as const } : {}), ...(unasked === undefined ? {} : { unasked }), moment: "open" };
         checked = checkStep(bound.relay!, execution.relay.openCheck, run.id, { seq: prepared.lastSeq + 1, time: now() }).relay;
       }
+      // C7: content admission checked now reads as a command; it fails only when its binding is owed something (a packet it waits
+      // for, or facts above its mark), which admission meant to send with it.
+      if (changedReading === "to_command" && command !== null && checked !== null) {
+        const owedNow = owed(checked, h, c, this.relayFacts(prepared, { harnessId: h, controlId: c, nativeEpoch: checked.nativeEpoch }), { originHistory: (prepared.origin?.history.length ?? 0) > 0, heldSince: heldSinceIn(prepared, h, c, checked) });
+        if (checked.sync.kind === "pending" || owedNow.facts.length > 0 || owedNow.origin) throw classificationChanged();
+      }
       // What the Turn sends (ADR-055 §7.2, §9): a command goes as typed; a content input as typed when nothing is owed, alone
       // when the user chose so, or with a packet of what is owed (a pending packet resent, a suspect one only on the user's choice).
       let decision: TurnDecision | null = null, working: BindingRelayState | null = checked, clearFloor: number | null = null;
+      // G072: what the open's gates found (vendor key, consent, window and budget), the secrets the packet was redacted with, and the native title.
+      let gate: OpenGate | null = null, packetSecrets: readonly string[] = [], titled: "set" | "refused" | "unavailable" | null = null;
       let turnText: TurnText = run.input, packet: { readonly manifest: RelayPacket; readonly body: string; readonly record: PublicContext["relay"]; readonly runs: readonly PublicRun["id"][]; readonly origin: boolean } | null = null;
       let position: DeliveryPosition | null = null;
       if (command === null) {
@@ -1698,17 +1882,31 @@ export class SessionRuntime {
         const sync = working.sync, epochRows = rows.filter(row => row.nativeEpoch === working!.nativeEpoch);
         decision = decideTurn({ relay: working, harnessId: h, controlId: c, facts, originHistory, choices, declaration, firstFromSeq: epochRows[0]?.range.fromSeq ?? null,
           pendingRun: sync.kind === "pending" ? this.pendingRunOf(prepared, rows, sync.packetId) : null, recoveryFailed: prepared.relayRecoveryFailed !== undefined, heldSince: heldSinceIn(prepared, h, c, working) });
+        // C7: a command admission asked nothing for that now reads as content may carry no packet admission never checked.
+        if (changedReading === "to_content" && decision.kind === "carry") throw classificationChanged();
         if (decision.kind === "carry") {
           const runs = needRuns(prepared, run, decision.need);
+          // G072's checks at the open (§6.1 finalize, §9): the probe gate on this Driver's own declaration, the vendor key it
+          // observed against the consent and the data root, and the refined window; each fails the Run before dispatch.
+          gate = this.relayGated() ? this.openGates(prepared, run, bound, working, decision, declaration, requested, kinds) : null;
           // The renderer sees the binding on which what is owed was reckoned (a retreat's prior, else the binding as it is).
-          const context = buildPublicContext(renderView(prepared, h, c, decision.on), run, runs, await relayFor(prepared, runs, decision.need.origin));
+          const options = await relayFor(prepared, runs, decision.need.origin);
+          packetSecrets = options.secrets ?? [];
+          const context = buildPublicContext(renderView(prepared, h, c, decision.on), run, runs, gate === null ? options : { ...options, budget: gate.budget });
           this.continue(execution);
           if (!context.text.endsWith("\n" + run.input)) throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render" }, "没能准备交接单：交接单与这条消息拼接不一致，这条消息没有发出。");
           const body = context.text.slice(0, context.text.length - run.input.length - 1), range = rangeOf(prepared, decision.need, runs);
           const manifest = packetManifest({ state: prepared, run, relay: working, record: context.relay, body, range, runs, attachOverride: decision.attachOverride || sync.kind === "pending" && sync.attachOverride,
-            supersedes: decision.resend !== null && sync.kind === "pending" ? sync.packetId : null, firstLineOmitted: !context.relay.firstLine });
+            supersedes: decision.resend !== null && sync.kind === "pending" ? sync.packetId : null, firstLineOmitted: !context.relay.firstLine,
+            ...(gate === null ? {} : { vendor: gate.vendor, window: gate.window, clamped: gate.clamped }) });
           packet = { manifest, body, record: context.relay, runs, origin: decision.need.origin };
           turnText = { user: run.input, relay: { packetId: manifest.id, body, firstLine: context.relay.firstLine } };
+          // C3 (G072): the placed Turn measured as its Driver will place it; over the Driver's bound it fails here, before dispatch,
+          // the Driver's own refusal (INPUT_LIMIT_REFUSED) staying the backstop.
+          const limit = declaration.capabilities?.placement.maxInput ?? null;
+          if (gate !== null && limit !== null && declaration.capabilities!.placement.measure(turnText, kinds) > limit.limit) throw inputLimit("input_limit", run.selection);
+          // A native session this handoff opened is named before its first prompt (§8.1, VF3-12): its Driver's declaration says so.
+          if (openedNew && declaration.capabilities?.title === "set" && control.setTitle !== undefined) titled = await this.titleFor(control, native, prepared, execution.binding?.secrets ?? []);
         }
         // Where the native history stands before a packet goes (F20): its delivery row keeps it for a later check. A Turn without a
         // packet reads none: D6's check of such a Turn is deferred for good (A16), so nothing would read it (R8).
@@ -1749,10 +1947,19 @@ export class SessionRuntime {
             relay = carried.relay;
             for (const change of carried.deliveries) {
               if (change.kind !== "insert") continue;
-              deliveries.push({ kind: "insert", record: deliveryRow({ change, position: position ?? { kind: "none" }, relay, declaration, inputHmac: this.relayKeys.input(id, run.input),
-                setTag: this.relayKeys.setTag(id), rulesVersion: packet.record.policyVersion, keyId: this.relayKeys.keyId }) });
+              deliveries.push({ kind: "insert", record: deliveryRow({ change, position: position ?? { kind: "none" }, relay, declaration, inputHmac: this.relayKeys.inputHmac(id, run.input),
+                setTag: this.relayKeys.setTag(id, packetSecrets), rulesVersion: packet.record.policyVersion, keyId: this.relayKeys.keyId, consentLogSeq: gate?.consentLogSeq ?? null }) });
             }
+            // The epoch's vendor key (§4 consentKey): the one the first packet went to, or the one the user consented to anew.
+            if (gate !== null) relay = { ...relay, consentKey: gate.vendor };
           }
+        } else if (relay !== null && decision?.kind === "plain" && decision.owedNothing === true) {
+          // A7 point 4: nothing is owed any more; the binding goes back to the pending packet's prior, nobody is asked.
+          const back = step(relay, { kind: "owed_nothing" });
+          if (back.kind !== "applied") throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render_mismatch" }, "没能准备这条消息：送达状态不允许原样发送，这条消息没有发出。");
+          relay = back.relay;
+          events.push({ type: "relay.verified", data: { verifiedRunIds: [], moment: "open", plan: "owed_nothing", markers: [], historyEmpty: null, compaction: null, foreignAfterLast: null, verifyMs: 0,
+            result: "nothing_owed", inRunId: run.id, recorded: [], sync: relay.sync.kind } });
         } else if (relay !== null && decision?.kind === "plain") {
           const plain = step(relay, { kind: "plain", foreign: decision.foreign, ...(decision.retreat === undefined ? {} : { retreat: decision.retreat }) });
           if (plain.kind === "applied") relay = plain.relay;
@@ -1760,6 +1967,9 @@ export class SessionRuntime {
           // The user's complete packet had nothing to carry: the binding stands on the prior it moved back to (R5), recorded as a check would be.
           if (decision.retreat !== undefined) events.push(retreatEvent(relay, run.id));
         }
+        // The vendor the open session runs on, cached for the next admission (§10.4, F10).
+        if (relay !== null && execution.relay.observed !== undefined) relay = { ...relay, vendorObserved: execution.relay.observed };
+        if (titled !== null) events.push(event("relay.title_set", { runId: target, harnessId: h, controlId: c, result: titled }));
         const executedOn = bound !== undefined && relay !== null ? { harnessId: h, controlId: c, nativeEpoch: relay.nativeEpoch } : null;
         const sources = packet?.runs ?? [];
         let next = updatedRun(latest, target, { contextThroughSeq: factsSeq, sourceRunIds: sources, relay: runRelayOf(packet?.manifest ?? null, continuityOf(decision, packet?.record ?? null, sources.length), executedOn) });
@@ -1774,7 +1984,9 @@ export class SessionRuntime {
             ...(decision?.kind === "carry" && decision.retreat !== undefined ? { retreat: true } : {}), ...(decision?.kind === "carry" && decision.attachOverride ? { attachOverride: true } : {}) } : {}),
           // The user asked for the history and there was none to attach: it went as typed, which the conversation shows (A9).
           ...(decision?.kind === "alone" ? { alone: true } : {}), ...(decision?.kind === "plain" && decision.nothingToAttach ? { nothingToAttach: true } : {}),
-          ...(decision?.kind === "plain" && decision.retreat !== undefined ? { retreat: true } : {}) }),
+          ...(decision?.kind === "plain" && decision.retreat !== undefined ? { retreat: true } : {}), ...(decision?.kind === "plain" && decision.owedNothing === true ? { owedNothing: true } : {}),
+          // G072: the target's vendor key, the window the packet was budgeted against, and how a return continued (§7.3, §14.2).
+          ...(gate === null ? {} : { vendor: gate.vendor, window: { size: gate.window.size, source: gate.window.source }, ...(gate.returning === null ? {} : { returnChoice: gate.returning }) }) }),
           event("run.authorized", { runId: target, epoch: run.epoch }));
         return { next, events, ...(packets.length || deliveries.length ? { relay: { ...(packets.length ? { packets } : {}), ...(deliveries.length ? { deliveries } : {}) } } : {}) };
       });
@@ -1808,6 +2020,15 @@ export class SessionRuntime {
       // when a read left it failed (relayReadsSettled), its close's protocol failure is the relay's, never the binding's: nothing
       // was dispatched, so the binding is ready again (G068 fix batch 2, M-2).
       if (execution.relay.io.asked && control.healthy?.() === false) { execution.relay.io.broke = execution.relay.io.healthy !== false; throw notReached(); }
+      // The consent a carrying Turn rests on, read once more right before dispatch (§6.1, RT2-18): one withdrawn since the Turn
+      // was prepared stops it, nothing sent (RELAY_CONSENT_REQUIRED{revoked}).
+      if (execution.relay.consent !== null) {
+        const asked = execution.relay.consent, view = this.consentView(this.owned(execution), this.relayPrefs(), {});
+        // A consent the request gave stands until a withdrawal of its vendor is logged after it (in this conversation or for all).
+        const withdrawn = asked.requestSeq !== null ? view.records.some(record => record.vendor === asked.vendor && record.logSeq > asked.requestSeq! && record.decision === "revoked"
+          && (record.scope.kind === "global" || record.scope.sessionId === view.session)) : consentStanding(asked.vendor, asked.layer, view).kind === "missing";
+        if (withdrawn) throw consentRequired("revoked", asked.vendor, asked.target);
+      }
       this.commit(id, current => ({ next: updatedRun(current, target, phase(current, target, "dispatchedAt", this.options.now().getTime())), events: [event("run.dispatched", { runId: target })] }));
       execution.dispatched = true;
       execution.run = await control.startText(native, turnText, value => this.output(execution, value), ...(files.length ? [files] : []));
@@ -1951,9 +2172,13 @@ export class SessionRuntime {
           // The relay part of the end (ADR-055 §6.1, §7.2): the open's check if it was not committed, the Turn's own event, after_turn's
           // check and D6, on the binding's relay state as committed now; the delivery rows decided with it.
           const own = next.nativeBindings?.find(row => row.harnessId === pinned.harnessId && row.controlId === pinned.controlId && row.status !== "archived");
-          const relayed = withRelay && checkpointStored && own?.relay !== undefined ? settleTurn({ relay: own.relay, runId: target, openCheck: execution.relay.openCheck, turn: this.settledTurn(execution, next),
+          const settled = withRelay && checkpointStored && own?.relay !== undefined ? settleTurn({ relay: own.relay, runId: target, openCheck: execution.relay.openCheck, turn: this.settledTurn(execution, next),
             dispatched: execution.dispatched, status: backend?.status ?? null, input: evidence ?? undefined, noop, cleared: clearConfirmed ? { replaced: replaced !== null } : null,
             declaration: execution.relay.declaration, settledCheck: execution.relay.settledCheck, unknownTurn: continued, endedSeq: current.lastSeq + 1, time: endedAt }) : null;
+          // G072: the binding keeps what the Turn taught the next admission — the vendor its Driver observed (a Turn refused for its
+          // consent included) and the context its usage reported (the window's first source, the return's warmth); a replaced
+          // native session starts with neither.
+          const relayed = settled === null || settled.replaced ? settled : { ...settled, relay: this.relayAfterTurn(settled.relay, execution, latestRun) };
           if (withRelay) { tried.relayed = relayed !== null; tried.replaced = relayed?.replaced === true; }
           if (checkpointStored && checkpoint !== null && (confirmed || continued)) {
             next = { ...next, nativeBindings: next.nativeBindings?.map(binding => {
@@ -2001,7 +2226,7 @@ export class SessionRuntime {
           return { next, events: [event("run.ended", { runId: target, status, backend, cleanup: closed, error: failure, input, ...(effect === null ? {} : { contextEffect: effect }),
               ...(nativeCleared === undefined ? {} : { native: nativeCleared }), ...(relayed?.delivery == null ? {} : { delivery: relayed.delivery }), ...(relayed === null ? {} : { binding: relayed.binding }),
               ...(relayed?.shown == null ? {} : { shown: relayed.shown }), ...(Object.keys(relayNote).length === 0 ? {} : { relay: relayNote }), ...(continued ? { continued: true } : {}) }),
-            ...(relayed?.events ?? []),
+            ...(relayed?.events ?? []), ...(withRelay ? execution.relay.endEvents : []),
             ...(keep.keep ? [event("native.process_retained", { runId: target, idleEndsAt: endedAt + idleMs })] : keep.skipped ? [event("native.retention_skipped", { runId: target, reason: keep.skipped })] : []),
             ...(cancelSwitch ? [event("switch.failed", { switchId: current.pendingSwitchId, reason: "cancelled by close" })] : []),
             ...(stranded === null ? [] : [event("switch.failed", { switchId: stranded, error: STRANDED_SWITCH, reason: "the Turn it waited for ended without confirmed settlement" }),
@@ -2009,7 +2234,7 @@ export class SessionRuntime {
             ...(unsafe ? [event("session.blocked", { runId: target, reason: "execution or cleanup could not be safely confirmed" })] : [])],
             ...(relayed !== null && relayed.deliveries.length ? { relay: { deliveries: relayed.deliveries } } : {}) };
         };
-        try { this.commit(id, ended(true), true); }
+        try { this.commit(id, ended(true), true); this.recordWindow(execution, id, target, pinned, openedNew); }
         catch (error) {
           // The Store refused the relay part of the end (its rows, the binding's relay state): the public facts are committed
           // without it, once, and the conversation is marked (R6). A replaced native session is not split from its relay state;
@@ -2184,9 +2409,105 @@ export class SessionRuntime {
       events: [event("switch.effective", { switchId: targetId, target, epoch: state.epoch + 1, throughSeq: state.lastSeq,
         sourceRunIds: state.switches.find(sw => sw.id === targetId)!.sourceRunIds, cleanup, continuity: "public_context_rehydrate", ...(recovery ? { recovered: true } : {}) })] }));
   }
+  /**
+   * G072's checks at the open for a Turn that carries a packet (ADR-055 §6.1 finalize, §9 "open 之后"): the probe gate on the
+   * open Driver's own declaration; the vendor key it observed after the open (relayVendor), else the binding's cached one, against
+   * the data root (cross-vendor) and the consent — a key that differs from what admission read is vendor_changed, recorded as
+   * relay.vendor_changed with the Turn's end; the refined window and the hard cap (RELAY_INPUT_LIMIT{min_packet}); and the budget
+   * the packet is folded to. The consent a cross-vendor dispatch rests on is kept for the read right before dispatch.
+   */
+  private openGates(state: SessionSnapshot, run: PublicRun, bound: NativeSessionBinding | undefined, relay: BindingRelayState, decision: Extract<TurnDecision, { kind: "carry" }>,
+      declaration: RelayDeclaration, choices: RelayChoices, kinds: readonly ContentKind[]): OpenGate {
+    const target = run.selection, h = target.harnessId, c = target.controlId, prefs = this.relayPrefs(), execution = this.actives.get(state.id)!;
+    // Another Harness's history only (Carrying.crossHarness): a target's own history coming back meets the epoch's vendor key alone.
+    const crossHarness = crossHarnessFacts(state, decision.need.facts, decision.need.origin, target);
+    if (crossHarness) probeGate(declaration, prefs["relay.allowUnprobed"] === "true", target);
+    const cached = bound?.relay?.vendorObserved ?? relay.vendorObserved ?? this.lineageVendor(state, target), observed = execution.relay.observed === undefined ? cached : execution.relay.observed;
+    const predicted = vendorKeyOf(declaration.capabilities, h, cached), vendor = vendorKeyOf(declaration.capabilities, h, observed), layer = observed?.endpoint?.layer ?? null;
+    const sources = sourceVendors(state, decision.need.facts, decision.need.origin, selection => this.declarationOf(selection) ?? (selection.harnessId === h && selection.controlId === c ? declaration.capabilities : undefined));
+    const cross = crossHarness && crossVendor(vendor, sources);
+    if (cross && !this.isolated(state.configuration.workspace)) throw dataRootInWorkspace(target);
+    let standing: ConsentStanding | null;
+    try { standing = consentGate({ relay, vendor, layer, cross, consent: this.consentView(state, prefs, this.withRecordedConsent(state, run, choices)), target, predicted }); }
+    catch (error) {
+      if (error instanceof RelayError && error.reason === "vendor_changed")
+        execution.relay.endEvents.push(event("relay.vendor_changed", { harnessId: h, controlId: c, from: relay.consentKey ?? predicted, to: vendor, observedInRun: run.id }));
+      throw error;
+    }
+    // The consent a request gave was recorded at its acceptance: the delivery row names that record.
+    const recorded = standing?.kind === "given" && standing.via === "request" ? this.relayLog()?.relayConsents?.().filter(record => record.commandId === consentCommandOf(state.id, run.commandId)).at(-1)?.logSeq ?? null : null;
+    const consentLogSeq = standing?.kind === "given" ? standing.logSeq ?? recorded : null;
+    execution.relay.consent = cross ? { vendor, layer, target, requestSeq: standing?.kind === "given" && standing.via === "request" ? recorded : null } : null;
+    const window = resolveWindow({ relay, report: declaration.capabilities?.window ?? "none", stored: this.relayWindowOf(h, c, observed?.modelKey ?? ""), vendor, fixedPrefix: declaration.capabilities?.fixedPrefix ?? null, now: this.options.now().getTime() });
+    const limit = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(run.input, kinds) ?? [...run.input].length;
+    const cap = hardCap(window, estimateTokens(run.input), limit, size);
+    if (crossHarness && !fitsMinPacket(cap, packetFamily(vendor, observed?.modelKey ?? ""))) throw inputLimit("min_packet", target);
+    const budget = packetBudget(window, cap), standard = packetBudget(window, Number.POSITIVE_INFINITY);
+    const clamped: ("window" | "input_limit")[] = [];
+    if (budget.cap < standard.cap) clamped.push(limit !== null && hardCap(window, estimateTokens(run.input), null, size) >= standard.cap ? "input_limit" : "window");
+    // A return (§7.3): the binding stood on a mark of its own native session; what the request chose of it, and the pref's default.
+    const returning = markOf(relay.sync) === null ? null : returnChoice({ warm: cacheWarm(relay.cache, declaration.capabilities?.cacheTtl ?? "unknown", observed?.authKind ?? null, this.options.now().getTime()), sideBySide: false },
+      returnPreference(prefs), choices.native).choice;
+    return { vendor, window, budget, clamped, consentLogSeq, returning };
+  }
+  /**
+   * A binding's relay state after its Turn (G072): the vendor its Driver observed after the open (when asked), and the cache of
+   * the context its usage reported (windows.ts cacheAfter; a Turn that reported no usage leaves it as it was).
+   */
+  private relayAfterTurn(relay: BindingRelayState, execution: ActiveExecution, run: PublicRun): BindingRelayState {
+    let next = execution.relay.observed === undefined ? relay : { ...relay, vendorObserved: execution.relay.observed };
+    if (run.usage !== undefined && execution.dispatched) next = { ...next, cache: cacheAfter(next.cache, run.usage, run.timing?.dispatchedAt ?? null) };
+    return next;
+  }
+  /**
+   * The window a Turn's usage reported, kept for its Harness control and model for later Sessions (relay_windows, the window's
+   * second source, §6.2); best-effort after the end is committed: a Store that refuses it changes nothing of the Turn.
+   */
+  private recordWindow(execution: ActiveExecution, id: SessionId, target: PublicRun["id"], selection: HarnessSelection, firstTurn: boolean): void {
+    if (selection.provider !== undefined || !execution.dispatched || execution.relay.declaration.capabilities?.window === "none") return;
+    const log = this.relayLog();
+    if (log?.upsertWindow === undefined) return;
+    try {
+      const run = this.load(id).runs.find(row => row.id === target), modelKey = execution.relay.observed?.modelKey ?? "";
+      const row = windowRow(selection.harnessId, selection.controlId, modelKey, run?.usage, firstTurn, this.options.now().getTime());
+      if (row !== null) log.upsertWindow(row);
+    } catch { /* a window is a hint for budgets; it never fails a Turn */ }
+  }
+  /**
+   * The native title of a session a handoff opened (ADR-055 §8.1, VF3-12), set before its first prompt within RELAY_READ_MS:
+   * the conversation's public title (its first words), "新对话" when it holds anything the relay would redact (§10.2's egress
+   * scan); `set`, `refused` (the Driver said no) or `unavailable` (late, or failed). Its failure never fails the Turn.
+   */
+  private async titleFor(control: HarnessControl, native: NativeConversationId, state: SessionSnapshot, secrets: readonly string[]): Promise<"set" | "refused" | "unavailable"> {
+    const first = state.messages.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim().slice(0, 80) ?? "";
+    const title = first === "" || relayRedactor(secrets).redact(first).hits > 0 ? "新对话" : first;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const done = control.setTitle!(native, title).then(() => "set" as const, (error: unknown) => fault(error).code === "NATIVE_TITLE_UNAVAILABLE" ? "refused" as const : "unavailable" as const);
+      return await Promise.race([done, new Promise<"unavailable">(resolve => { timer = setTimeout(() => resolve("unavailable"), RELAY_READ_MS); timer.unref?.(); })]);
+    } catch { return "unavailable"; } finally { if (timer !== undefined) clearTimeout(timer); }
+  }
   /** How the native side reads an input: its driver's reading, or the shared one (listedCommand) for a driver without one. */
   private classify(control: HarnessControl, text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[]): CommandClass {
+    // C7 (G072): the Driver's relay declaration reads it when it has one (the same reading as its own, with acceptsRelay); its
+    // catalog's commands as the declaration's entries, a command declaring no effect an unknown one (relay-classify relayEntries).
+    const declared = control.relayCapabilities;
+    if (declared !== undefined) return declared.commands.classify(text, catalog === null ? null : (catalog.commands ?? []).map(command => ({ name: command.name, effect: command.contextEffect ?? "unknown" })), attachments);
     return control.classify ? control.classify(text, catalog, attachments) : listedCommand(text, catalog);
+  }
+  /**
+   * The Driver's vendor observation after the open (ADR-055 §10.4), bounded like a relay read (RELAY_READ_MS) but on no
+   * connection of the relay's: what it cannot tell, fails or is late with is null (unknown:<harnessId>, never a guess).
+   */
+  private async observeVendor(control: HarnessControl): Promise<VendorObservation | null> {
+    const read = control.relayVendor?.bind(control);
+    if (read === undefined) return null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const answer = read().catch(() => null);
+      const value = await Promise.race([answer, new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), RELAY_READ_MS); timer.unref?.(); })]);
+      return value === null || value === undefined ? null : parseVendorObservation(value);
+    } catch { return null; } finally { if (timer !== undefined) clearTimeout(timer); }
   }
   /**
    * The known secrets of the Harnesses a packet carries, from the factory (M1). Its refusals pass on as they are (it names

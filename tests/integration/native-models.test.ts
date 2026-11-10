@@ -72,7 +72,10 @@ test("real Codex/ACP protocol probes enumerate native models without prompts and
   const session = await runtime.create(f.config, { harnessId: "native-codex", nativeModel: "native-model-b" }, "create");
   runtime.send(session.id, "native first", "first"); await runtime.wait(session.id);
   runtime.switch(session.id, { harnessId: "native-acp", provider: null, nativeModel: "native-model-b" }, "switch"); await runtime.wait(session.id);
-  runtime.send(session.id, "native second", "second"); await runtime.wait(session.id);
+  // G072 (D11): the Gateway's factory now tells admission the Drivers' relay declarations, and the generic ACP Driver declares
+  // none, so a packet to it is refused at admission (RELAY_TARGET_UNVERIFIED{undeclared}); this case is about model selection,
+  // so the input goes alone.
+  runtime.send(session.id, "native second", "second", [], { attach: "none" }); await runtime.wait(session.id);
   const current = runtime.read(session.id); assert.equal(current.id, session.id); assert.equal(current.runs[1]!.status, "completed");
   assert.equal(current.runs[1]!.selection.nativeModel, "native-model-b");
   const messages = (await readFile(f.trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
@@ -81,7 +84,8 @@ test("real Codex/ACP protocol probes enumerate native models without prompts and
   assert.equal(messages.filter(row => row.method === "turn/start" || row.method === "session/prompt").length, 2);
   runtime.switch(session.id, { harnessId: "native-codex", nativeModel: "model-from-another-harness" }, "invalid-model"); await runtime.wait(session.id);
   assert.equal(runtime.read(session.id).switches.at(-1)!.status, "effective");
-  runtime.send(session.id,"invalid model must not reach a prompt","invalid-model-input"); await runtime.wait(session.id);
+  // Alone too: Codex's declaration is unprobed (RELAY_TARGET_UNVERIFIED{unprobed} at admission otherwise, G072).
+  runtime.send(session.id,"invalid model must not reach a prompt","invalid-model-input", [], { attach: "none" }); await runtime.wait(session.id);
   assert.equal(runtime.read(session.id).runs.at(-1)!.status,"failed"); assert.equal(runtime.read(session.id).runs.at(-1)!.error?.code,"MODEL_UNAVAILABLE"); assert.equal(runtime.read(session.id).status,"open");
 });
 

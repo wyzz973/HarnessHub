@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { MAX_USAGE_REQUESTS, singleText, type NativeUsage, type TurnText, type VerifyRequest } from "../../contracts/control.js";
+import type { ContentKind } from "../../contracts/content.js";
 import { MAX_AUTH_KIND_BYTES, relayPacketId, type DataClass, type Fingerprint, type MarkerResult, type RelayCapabilities, type RelayPacketId, type VerifyResult } from "../../contracts/relay.js";
 
 /**
@@ -97,6 +98,25 @@ export function placedSize(parts: readonly string[], unit: "chars" | "bytes"): n
   let count = 0;
   for (const _ of text) count++;
   return count;
+}
+/**
+ * Room one attachment's text pointer may take beside the words (attachments.ts fileMentions: a blank line, a name, a media
+ * type, a size and a private copy's path of up to 4,096 bytes), in either unit: before dispatch the paths are not known yet.
+ */
+export const POINTER_ALLOWANCE = 4608;
+/** Room OpenClaw's bridge's working-directory prefix may take (`[Working directory: <cwd>]` and a blank line), in either unit. */
+export const CWD_PREFIX_ALLOWANCE = 4128;
+/**
+ * A declaration's `placement.measure` (ADR-055 C3): the size of the text parts `parts` places a Turn in (placeTurn), in
+ * `unit`, with POINTER_ALLOWANCE for each attachment of `pointerKinds` (the kinds this Driver names by a text pointer) and
+ * `fixed` for what the native side adds before it counts (a prefix). Never smaller than what the Driver measures at dispatch
+ * (exceedsInput), so a Turn the coordinator lets through by it is never refused by the Driver's backstop for its size alone.
+ */
+export function measureBy(parts: RelayCapabilities["placement"]["parts"], unit: "chars" | "bytes", pointerKinds: readonly ContentKind[], fixed = 0): (turn: TurnText, attachments: readonly ContentKind[]) => number {
+  return (turn, attachments) => {
+    const placed = typeof turn === "string" ? [turn] : placeTurn(turn, { parts, maxInput: null, pointersAfterUser: true, measure: () => 0 });
+    return placedSize(placed, unit) + attachments.filter(kind => pointerKinds.includes(kind)).length * POINTER_ALLOWANCE + fixed;
+  };
 }
 /** Whether placed text, with what the native side adds to it (`extra`, in the same unit), exceeds a declaration's maxInput. */
 export function exceedsInput(parts: readonly string[], placement: RelayCapabilities["placement"] | undefined, extra = 0): boolean {

@@ -25,7 +25,9 @@ import { hermesModelKey, slashModelKey } from "../../src/adapters/control/relay-
 // conservative one or the one the current code reads, and is kept for the probes (ADR-055 implementation notes, G069).
 
 type Harness = "claude" | "codex" | "opencode" | "dsh" | "hermes" | "openclaw";
-type Plain = Omit<RelayCapabilities, "commands" | "resolveVendor" | "normalizeModel"> & { readonly commands: { readonly unlistedSlash: RelayCapabilities["commands"]["unlistedSlash"]; readonly hidden: readonly (readonly [string, string])[] } };
+type Plain = Omit<RelayCapabilities, "commands" | "resolveVendor" | "normalizeModel" | "placement"> & { readonly commands: { readonly unlistedSlash: RelayCapabilities["commands"]["unlistedSlash"]; readonly hidden: readonly (readonly [string, string])[] };
+  /** The placement's plain cells; its `measure` (a function, G072's C3) is checked by its own test below. */
+  readonly placement: Omit<RelayCapabilities["placement"], "measure"> };
 interface Cells {
   readonly plain: Plain;
   readonly normalizeModel: (model: string | null) => string;
@@ -95,7 +97,8 @@ const TABLE: Readonly<Record<Harness, Cells>> = {
   hermes: {
     plain: { ...unprobed, delivery: { live: "none", verify: "on_next_open", successProvesRecorded: true, lateDelivery: false }, execution: "gateway",
       commands: { unlistedSlash: "executed", hidden: [["new", "clear"], ["clear", "clear"]] }, placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
-      window: "session_report", cacheTtl: "unknown", compactionEvidence: "replay_marker", title: "set" },
+      // title: §8.1 writes "set" (D3, `/title`); not used before a probe and its two preconditions (B10, G072).
+      window: "session_report", cacheTtl: "unknown", compactionEvidence: "replay_marker", title: "none" },
     normalizeModel: hermesModelKey,
     classify: [["　/clear", null, ["command", "clear", "clear", ""]], ["/new", null, ["command", "new", "clear", ""]], ["/reset", null, ["command", "new", "clear", ""]],
       ["/compress", null, ["command", "compress", "compact", ""]], ["/compress --preview", null, ["command", "compress", "none", "--preview"]], ["/undo", null, ["command", "undo", "rewind", ""]],
@@ -123,8 +126,8 @@ const DECLARED: Readonly<Record<Harness, RelayCapabilities>> = { claude: claudeR
 const KEYS = ["probed", "delivery", "execution", "commands", "placement", "window", "fixedPrefix", "cacheTtl", "compactionEvidence", "resolveVendor", "normalizeModel", "title", "hostPathRead", "sessionTools"].sort();
 
 function plain(declared: RelayCapabilities): Plain {
-  const { commands, resolveVendor: _vendor, normalizeModel: _model, ...rest } = declared;
-  return { ...rest, commands: { unlistedSlash: commands.unlistedSlash, hidden: commands.hidden.map(entry => [entry.name, typeof entry.effect === "string" ? entry.effect : "byArgs"] as const) } };
+  const { commands, resolveVendor: _vendor, normalizeModel: _model, placement: { measure: _measure, ...placement }, ...rest } = declared;
+  return { ...rest, placement, commands: { unlistedSlash: commands.unlistedSlash, hidden: commands.hidden.map(entry => [entry.name, typeof entry.effect === "string" ? entry.effect : "byArgs"] as const) } };
 }
 function row(value: CommandClass): readonly (string | boolean)[] {
   return value.kind === "command" ? [value.kind, value.name, value.effect, value.args, ...(value.acceptsRelay ? ["relay"] : [])] : value.kind === "possible_command" ? [value.kind, value.name] : [value.kind];

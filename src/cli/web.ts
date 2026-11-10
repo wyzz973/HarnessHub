@@ -7,6 +7,7 @@ import { prepareConfiguration } from "../infrastructure/session/binding-factory.
 import { resolveInstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { MANIFEST_IGNORED } from "../infrastructure/catalog/inventory-composition.js";
 import { startWebServer, type WebServer } from "../web/server.js";
+import { defaultRelayKeyPath } from "../infrastructure/session/relay-keys.js";
 
 /**
  * Whether this Gateway offers reading the login shell's PATH on the user's request (ADR-040), decided once at the entry:
@@ -38,6 +39,8 @@ export async function main(args: readonly string[]): Promise<number> {
     const root = dataRoot(values["data-dir"]);
     gateway = await startWebServer({ providerManagement: false, root, configuration, port: values.port === undefined ? 4317 : Number(values.port), budgets, loginShell,
       installations,
+      // The relay's installation key, outside the data directory (ADR-055 D5; an unusable one is said on stderr, never fatal).
+      relayKeyFile: defaultRelayKeyPath(process.env.HOME || undefined),
       ...(values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] }),
       ...(values["assets-dir"] === undefined ? {} : { assetsDirectory: resolve(values["assets-dir"]) }) });
     process.stdout.write("HarnessGateway\n" + gateway.url + "\n");

@@ -406,6 +406,12 @@ export function upsertRelayWindow(database: DatabaseSync, window: RelayWindow): 
   database.prepare("INSERT INTO relay_windows(harness_id,control_id,model_key,size,first_turn_used,observed_at) VALUES(?,?,?,?,?,?) ON CONFLICT(harness_id, control_id, model_key) DO UPDATE SET size=excluded.size,first_turn_used=excluded.first_turn_used,observed_at=excluded.observed_at")
     .run(row.harnessId, row.controlId, row.modelKey, row.size, row.firstTurnUsed, row.observedAt);
 }
+/** The window kept for a Harness control and model key, read back through its parser; null when none is kept (G072). */
+export function readRelayWindow(database: DatabaseSync, harnessId: string, controlId: string, modelKey: string): RelayWindow | null {
+  const row = database.prepare("SELECT harness_id,control_id,model_key,size,first_turn_used,observed_at FROM relay_windows WHERE harness_id=? AND control_id=? AND model_key=?").get(harnessId, controlId, modelKey);
+  if (row === undefined) return null;
+  return parseRelayWindow({ harnessId: row.harness_id, controlId: row.control_id, modelKey: row.model_key, size: row.size, firstTurnUsed: row.first_turn_used, observedAt: row.observed_at });
+}
 /** Removes windows observed more than RELAY_WINDOW_RETENTION_MS before `now` (at each start, §14.1); returns how many. */
 export function pruneRelayWindows(database: DatabaseSync, now: number): number {
   return Number(database.prepare("DELETE FROM relay_windows WHERE observed_at<?").run(now - RELAY_WINDOW_RETENTION_MS).changes);

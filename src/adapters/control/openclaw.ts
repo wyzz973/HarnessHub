@@ -14,7 +14,7 @@ import { string } from "../../infrastructure/control/json-rpc-process.js";
 import { checkInputs } from "../../infrastructure/control/attachments.js";
 import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
 import { type TurnText, type VerifyRequest } from "../../contracts/control.js";
-import { boundedRequests, entryCarries, strip, unavailable, usageRequest, VERIFY_BUDGET_MS, verifyResult, type UserText } from "./relay-turn.js";
+import { boundedRequests, entryCarries, strip, unavailable, usageRequest, VERIFY_BUDGET_MS, verifyResult, type UserText, measureBy, CWD_PREFIX_ALLOWANCE } from "./relay-turn.js";
 
 type OpenClawMethod = "agents.list" | "models.list" | "sessions.patch" | "sessions.get" | "sessions.list" | "sessions.describe" | "chat.history" | "skills.status" | "tools.catalog";
 /** The bridge's working-directory prefix on every prompt it sends (src/acp translator, `[Working directory: ${displayCwd}]\n\n`, v2026.10.9). */
@@ -220,7 +220,8 @@ export const openClawRelayCapabilities: RelayCapabilities = relayDeclaration({
   execution: "gateway",
   commands: { unlistedSlash: "text", hidden: [], classify: openClawClassify },
   // Attachments go as ACP blocks after the one text (G069 phase two, approval B8; what the bridge forwards is to be probed).
-  placement: { parts: "single", maxInput: { unit: "bytes", limit: 2_097_152 }, pointersAfterUser: true },
+  // measure: the one text, each file's pointer, and the bridge's working-directory prefix (inputOverhead), in bytes (ADR-055 C3).
+  placement: { parts: "single", maxInput: { unit: "bytes", limit: 2_097_152 }, pointersAfterUser: true, measure: measureBy("single", "bytes", ["file"], CWD_PREFIX_ALLOWANCE) },
   window: "session_report",
   fixedPrefix: null,
   cacheTtl: "5m",

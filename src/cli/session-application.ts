@@ -9,6 +9,7 @@ import { performance } from "node:perf_hooks";
 import { resolveHostBudgets } from "../contracts/native-host.js";
 import { SessionError, type SelectionRequest, type SessionEvent } from "../contracts/session.js";
 import { HostTmpdirs, defaultHostTmpdirRoot } from "../infrastructure/session/host-tmpdir.js";
+import { RelayKeys, insideByIdentity } from "../infrastructure/session/relay-keys.js";
 import { SessionRuntime } from "../contexts/session/application/runtime.js";
 import { SqliteSessionStore } from "../infrastructure/session/sqlite-store.js";
 import { recoverRelay } from "../contexts/session/domain/relay/recover.js";
@@ -42,7 +43,11 @@ export interface DataRootPlacement {
   readonly containment: "separate" | "data_root_in_workspace" | "workspace_in_data_root";
   readonly markers: readonly string[];
 }
-export function dataRootPlacement(root: string, workspace: string): DataRootPlacement {
+/**
+ * Only the containment part of dataRootPlacement (no marker search): a few stats along both directories' parents, cheap
+ * enough for every relay admission (ADR-055 §10.1). `null` when either cannot be read (nothing proved).
+ */
+export function dataRootContainment(root: string, workspace: string): { readonly containment: DataRootPlacement["containment"]; readonly place: string } | null {
   const identity = (path: string) => { const info = statSync(path, { bigint: true }); return info.dev + ":" + info.ino; };
   const within = (path: string, ancestor: string): boolean => {
     for (let current = path; ; current = dirname(current)) {
@@ -50,14 +55,18 @@ export function dataRootPlacement(root: string, workspace: string): DataRootPlac
       if (dirname(current) === current) return false;
     }
   };
-  const isFile = (path: string): boolean => { try { return statSync(path).isFile(); } catch { return false; } };
-  let place: string, containment: DataRootPlacement["containment"];
   try {
-    const data = realpathSync(root), spelled = resolve(root); place = realpathSync(workspace);
+    const data = realpathSync(root), spelled = resolve(root), place = realpathSync(workspace);
     const workspaceIdentity = identity(place);
-    containment = within(data, workspaceIdentity) || spelled !== data && within(spelled, workspaceIdentity) ? "data_root_in_workspace"
-      : within(place, identity(data)) ? "workspace_in_data_root" : "separate";
-  } catch { return { containment: "separate", markers: [] }; }
+    return { place, containment: within(data, workspaceIdentity) || spelled !== data && within(spelled, workspaceIdentity) ? "data_root_in_workspace"
+      : within(place, identity(data)) ? "workspace_in_data_root" : "separate" };
+  } catch { return null; }
+}
+export function dataRootPlacement(root: string, workspace: string): DataRootPlacement {
+  const isFile = (path: string): boolean => { try { return statSync(path).isFile(); } catch { return false; } };
+  const contained = dataRootContainment(root, workspace);
+  if (contained === null) return { containment: "separate", markers: [] };
+  const { place, containment } = contained;
   const markers: string[] = [], deadline = performance.now() + MARKER_MS, pending: { readonly path: string; readonly depth: number }[] = [{ path: place, depth: 0 }];
   let entries = 0;
   while (pending.length && entries < MARKER_ENTRIES && performance.now() < deadline) {
@@ -77,6 +86,45 @@ export function dataRootPlacement(root: string, workspace: string): DataRootPlac
     } catch { /* A directory that cannot be read further proves nothing. */ } finally { directory.closeSync(); }
   }
   return { containment, markers };
+}
+/**
+ * Whether the data directory and the relay key are out of a workspace's reach (ADR-055 §10.1, INV-36), for the relay's
+ * cross-vendor check at admission and at the open (SessionRuntimeOptions.relayIsolated): neither contains the other by device
+ * and inode (each call: a few stats), no data directory's marker is in the workspace (the bounded search, only at a
+ * workspace's first check and again when its own directory's mtime changed, cached for 64 workspaces), and the relay key file
+ * is neither in the workspace nor beside it. What cannot be read is not isolated: the handoff is refused rather than risked.
+ */
+export function relayIsolation(root: string, keyFile: string | null): (workspace: string) => boolean {
+  const searched = new Map<string, { readonly mtimeMs: number; readonly markers: number }>();
+  return workspace => {
+    let mtimeMs: number;
+    try { mtimeMs = statSync(workspace).mtimeMs; } catch { return false; }
+    const contained = dataRootContainment(root, workspace);
+    if (contained === null || contained.containment !== "separate") return false;
+    let known = searched.get(workspace);
+    if (known === undefined || known.mtimeMs !== mtimeMs) {
+      known = { mtimeMs, markers: dataRootPlacement(root, workspace).markers.length };
+      if (searched.size >= 64 && !searched.has(workspace)) searched.delete(searched.keys().next().value!);
+      searched.set(workspace, known);
+    }
+    if (known.markers > 0) return false;
+    return keyFile === null || !insideByIdentity(keyFile, contained.place) && !insideByIdentity(contained.place, dirname(keyFile));
+  };
+}
+/**
+ * The installation's relay key for this composition (ADR-055 D5): opened at `path`, which must lie outside the data directory;
+ * null (the Runtime then keys under a key it keeps in memory only) when it is inside it or cannot be opened, said on stderr.
+ */
+export function openRelayKeys(path: string, root: string): RelayKeys | null {
+  try {
+    if (insideByIdentity(path, root)) { process.stderr.write("HarnessGateway: RELAY_KEY_UNAVAILABLE (the relay key would lie in the data directory)\n"); return null; }
+    const opened = RelayKeys.open(path);
+    for (const note of opened.notes) if (note !== "created") process.stderr.write("HarnessGateway: RELAY_KEY (" + note + ")\n");
+    return opened.keys;
+  } catch (error) {
+    process.stderr.write("HarnessGateway: RELAY_KEY_UNAVAILABLE (" + (error !== null && typeof error === "object" && "code" in error ? String(error.code).slice(0, 32) : "unreadable") + ")\n");
+    return null;
+  }
 }
 /** The startup warning for a data directory a workspace's Harnesses can read (ADR-055 §10.1, D8); null when there is none. */
 export function dataRootWarning(placement: DataRootPlacement): string | null {
@@ -133,7 +181,12 @@ export function application(root: string, publish: (event: SessionEvent) => void
   /** The workspace lock namespace, resolved by `resolveWorkspaceLockRoot`; the per-user default shared by every Gateway otherwise. */
   readonly workspaceLockRoot?: string;
   /** What counts as an installation (ADR-044): only official channels unless development explicitly allows any entry. */
-  readonly installations?: InstallationPolicy } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
+  readonly installations?: InstallationPolicy;
+  /**
+   * The installation's relay key file (ADR-055 D5; defaultRelayKeyPath for the Gateway's own entries), opened here; without it
+   * (or when it cannot be opened) the Runtime keys relay rows under a key it keeps in memory only.
+   */
+  readonly relayKeyFile?: string } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
   // Recovery decides the relay deliveries a previous owner left in flight, per Session in its own SAVEPOINT (ADR-055 §9 S15).
   const store = new SqliteSessionStore(root, { recoverRelay });
   let providers: LocalProviderService | undefined;
@@ -166,7 +219,10 @@ export function application(root: string, publish: (event: SessionEvent) => void
       if (names === undefined) { try { names = new Map(loadBuiltinCatalog(catalogTarget()).map(definition => [definition.id, definition.name])); } catch { names = new Map(); } }
       return names.get(harnessId) ?? null;
     };
+    // The relay's installation key and the data directory's isolation from a workspace (ADR-055 §10.1, §10.2, INV-36).
+    const relayKeys = options.relayKeyFile === undefined ? null : openRelayKeys(options.relayKeyFile, root);
     const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, ...(options.budgets ?? {}),
+      ...(relayKeys === null ? {} : { relayKeys }), relayIsolated: relayIsolation(root, relayKeys?.path ?? options.relayKeyFile ?? null),
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
     // Upgrades see and close this runtime's conversations' processes (ADR-043).
     management.attachProgramUsers({ list: harnessId => runtime.programUsers(harnessId), closeIdle: harnessId => runtime.releaseForUpgrade(harnessId) });

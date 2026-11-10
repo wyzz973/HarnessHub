@@ -13,7 +13,7 @@ import type { DataClass, RelayCapabilities, VendorObservation } from "../../cont
 import { nativeReading, relayDeclaration, relayEntries, textClassify } from "./relay-classify.js";
 import { dshVendor, readEndpoint, slashModelKey, vendorObservation } from "./relay-vendor.js";
 import { type TurnText } from "../../contracts/control.js";
-import { COMMAND_REFUSED, exceedsInput, INPUT_LIMIT_REFUSED, placeTurn, userWords, type RelayTurn, type Stripped, type UserText } from "./relay-turn.js";
+import { bodyWithoutFirstLine, COMMAND_REFUSED, exceedsInput, INPUT_LIMIT_REFUSED, placeTurn, userWords, type RelayTurn, type Stripped, type UserText, measureBy } from "./relay-turn.js";
 
 interface ActivePrompt {
   readonly event: (event: ControlEvent) => void;
@@ -148,12 +148,14 @@ function loaded(value: unknown): Record<string, unknown> {
  * profile and plugin configuration layers before this flips.
  */
 export const dshRelayCapabilities: RelayCapabilities = relayDeclaration({
+  // probed gates D6 too (the Runtime continues the original session after an unknown Turn only for a probed process Driver):
+  // for this process Driver the flip to true needs P16 besides P2, P3, P6 and P11 (the approval agent's A3, 2026-11-10).
   probed: false,
   delivery: { live: "agent_output", verify: "none", successProvesRecorded: false, lateDelivery: false },
   execution: "process",
   commands: { unlistedSlash: "text", hidden: [], classify: textClassify },
   // Attachments go as ACP blocks after the two text blocks (G069 phase two, approval B8; to be probed).
-  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
+  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true, measure: measureBy("multiple", "chars", ["file"]) },
   window: "session_report",
   fixedPrefix: null,
   cacheTtl: "hours",
@@ -708,8 +710,17 @@ export class AcpControl implements HarnessControl {
     const declared = this.relayCapabilities;
     if (declared === undefined) return placeTurn(turn, undefined);
     const reading = declared.commands.classify(turn.user, this.announced, attachments);
-    // A command, a possible command and a command whose arguments become a prompt (unless placed by its Driver) carry none.
-    return reading.kind === "content" ? placeTurn(turn, declared.placement) : null;
+    if (reading.kind === "content") return placeTurn(turn, declared.placement);
+    // A command whose arguments the native side submits as a prompt (acceptsRelay: Hermes `/queue`, `/steer`, ADR-055 §8.1; the
+    // Runtime reads such a command as a content Turn since G072, C7): the packet goes into those arguments, as one text — the
+    // command, the packet without the copy of the first line, a blank line and the user's own arguments — so the native side
+    // still reads the command first and submits the packet with the words. To be probed with the Driver's other cells.
+    if (reading.kind === "command" && reading.acceptsRelay === true && reading.args !== "") {
+      const body = bodyWithoutFirstLine(turn);
+      return ["/" + reading.name + " " + body + (body.endsWith("\n\n") ? "" : body.endsWith("\n") ? "\n" : "\n\n") + reading.args];
+    }
+    // A command, a possible command and a command whose arguments become a prompt without arguments carry none.
+    return null;
   }
   /** What the native side adds to the text before it counts against maxInput (OpenClaw's working-directory prefix), in its unit. */
   protected inputOverhead(_unit: "chars" | "bytes"): number { return 0; }

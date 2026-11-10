@@ -9,29 +9,32 @@ import { HERMES_COMMAND_WORD as COMMAND_WORD, HERMES_EFFECTS as EFFECTS, HERMES_
   hermesClassify, hermesCommand as commandOf, hermesNativeClassify, hermesReadsSlash as readsSlash, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { hermesModelKey, hermesVendor } from "./relay-vendor.js";
 import { type TurnText } from "../../contracts/control.js";
-import { carriesWholePacket, cursorDigest, packetEntry, placeTurn, strip, TITLE_DEADLINE_MS, titledPacket, unavailable, verifyResult, type RelayTurn, type UserText } from "./relay-turn.js";
+import { carriesWholePacket, cursorDigest, packetEntry, placeTurn, strip, TITLE_DEADLINE_MS, titledPacket, unavailable, verifyResult, type RelayTurn, type UserText, measureBy } from "./relay-turn.js";
 
 /**
  * Hermes's relay declaration (ADR-055 §8.1, Hermes Agent row): two text blocks with attachment pointers after the user's
  * words; no live evidence, a check on the next open (every open replays the session), and a content prompt that ended
  * proves it recorded; commands as the viewer reads them (lstrip, the registry's names and aliases), `/new` and `/clear`
  * run although unannounced; compaction told by markers in the replay; the gateway runs the session (a viewer that exits is
- * no quiescence); the vendor only by an endpoint it resolves; a native title by `/title` before the first relayed turn.
- * Not probed.
+ * no quiescence); the vendor only by an endpoint it resolves. Not probed.
+ *
+ * Title "none" although §8.1 (D3) writes "set" (G072, the approval agent's B10): the Runtime names a session a handoff opened
+ * for every Driver whose declaration says "set", and Hermes's `/title` (setTitle below) is not to be used before a probe and
+ * before its two preconditions (setTitle's I2 and I3) are solved; this declaration turns to "set" with them.
  */
 export const hermesRelayCapabilities: RelayCapabilities = relayDeclaration({
   probed: false,
   delivery: { live: "none", verify: "on_next_open", successProvesRecorded: true, lateDelivery: false },
   execution: "gateway",
   commands: { unlistedSlash: "executed", hidden: relayEntries(HIDDEN), classify: hermesClassify },
-  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
+  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true, measure: measureBy("multiple", "chars", ["file"]) },
   window: "session_report",
   fixedPrefix: null,
   cacheTtl: "unknown",
   compactionEvidence: "replay_marker",
   resolveVendor: hermesVendor,
   normalizeModel: hermesModelKey,
-  title: "set",
+  title: "none",
   hostPathRead: "none",
   sessionTools: null,
 });

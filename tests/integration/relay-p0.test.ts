@@ -12,6 +12,7 @@ import { OpenClawControl } from "../../src/adapters/control/openclaw.js";
 import { dataRootPlacement, dataRootWarning } from "../../src/cli/session-application.js";
 import { listedCommand, nativeConversationId, singleText, type BackendResult, type CleanupEvidence, type ControlLaunch, type ControlOptions, type HarnessControl, type NativeCommand } from "../../src/contracts/control.js";
 import { dshRelayCapabilities } from "../../src/adapters/control/acp.js";
+import { sharedClassify } from "../../src/adapters/control/relay-classify.js";
 import type { RelayCapabilities } from "../../src/contracts/relay.js";
 import { SessionError, type HarnessSelection, type PreparedSessionBinding, type PublicRun, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type SessionRuntimeOptions, type SessionSnapshot } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
@@ -79,8 +80,10 @@ async function switched(app: SessionRuntime, id: SessionId, selection: Selection
  */
 // No live evidence either (`live: "none"`): dsh's `agent_output` would make each reply E1 (G068 fix batch R3), and these
 // cases are about Turns that end without evidence.
+// Its reading reads the catalog it is given (the shared reading over relay entries): since G072 the Runtime reads an input by
+// the declaration (C7), so a reading that ignored its catalog would read every command as a possible one.
 const FAKE_RELAY: RelayCapabilities = { ...dshRelayCapabilities, placement: { ...dshRelayCapabilities.placement, parts: "single" },
-  delivery: { ...dshRelayCapabilities.delivery, live: "none" }, commands: { ...dshRelayCapabilities.commands, unlistedSlash: "executed", classify: text => listedCommand(text, null) } };
+  delivery: { ...dshRelayCapabilities.delivery, live: "none" }, commands: { ...dshRelayCapabilities.commands, unlistedSlash: "executed", classify: sharedClassify } };
 /** How a fake Harness ends one prompt: completed and recorded unless said otherwise; held until its program is ended; or lost. */
 type Ending = BackendResult | "hold" | "lost";
 /**

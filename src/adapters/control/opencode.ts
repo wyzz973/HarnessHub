@@ -1,4 +1,5 @@
 import type { ContentKind, ContentRef, ControlAttachment } from "../../contracts/content.js";
+import { measureBy } from "./relay-turn.js";
 import type { BackendResult, CleanupEvidence, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeInputs, NativeModelCatalog, NativeOptions } from "../../contracts/control.js";
 import { checkInputs } from "../../infrastructure/control/attachments.js";
 import type { ControlError } from "../../infrastructure/control/json-rpc-process.js";
@@ -17,12 +18,14 @@ import { type TurnText } from "../../contracts/control.js";
  * `baseURL`; no native title entry (not guaranteed before P13). Not probed.
  */
 export const openCodeRelayCapabilities: RelayCapabilities = relayDeclaration({
+  // probed gates D6 too (the Runtime continues the original session after an unknown Turn only for a probed process Driver):
+  // for this process Driver the flip to true needs P16 besides P2, P3, P6 and P11 (the approval agent's A3, 2026-11-10).
   probed: false,
   delivery: { live: "none", verify: "none", successProvesRecorded: true, lateDelivery: true },
   execution: "process",
   commands: { unlistedSlash: "text", hidden: [], classify: openCodeClassify },
   // Attachments go as ACP blocks after the two text blocks (G069 phase two, approval B8; to be probed).
-  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
+  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true, measure: measureBy("multiple", "chars", ["file"]) },
   window: "session_report",
   fixedPrefix: null,
   cacheTtl: "unknown",

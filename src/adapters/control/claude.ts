@@ -2,14 +2,14 @@ import { open, readdir, readFile, realpath, stat, type FileHandle } from "node:f
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { MAX_CONTENT_BYTES, type ContentKind, type ControlAttachment } from "../../contracts/content.js";
-import type { BackendResult, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog, VerifyRequest } from "../../contracts/control.js";
+import type { BackendResult, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog, NativeOptions, VerifyRequest } from "../../contracts/control.js";
 import { RELAY_POSITION_BYTES, type DeliveryPosition, type MarkerResult, type RelayCapabilities, type VerifyResult } from "../../contracts/relay.js";
 import { ControlError } from "../../infrastructure/control/json-rpc-process.js";
 import { AcpControl, refusedRun } from "./acp.js";
 import { CLAUDE_EXPORT as EXPORT, CLAUDE_HIDDEN as HIDDEN, claudeClassify, claudeListedEffect, claudeCommand as commandOf, claudeNativeClassify, claudeReadsSlash as readsSlash, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { claudeVendor, slashModelKey } from "./relay-vendor.js";
 import { type TurnText } from "../../contracts/control.js";
-import { authKind, entryCarries, packetEntry, strip, VERIFY_BUDGET_MS, verifyResult, type UserText } from "./relay-turn.js";
+import { authKind, entryCarries, packetEntry, strip, VERIFY_BUDGET_MS, verifyResult, type UserText, measureBy } from "./relay-turn.js";
 
 /**
  * Claude Code's relay declaration (ADR-055 §8.1, Claude Code row): two text blocks; no live evidence, a check after the
@@ -23,12 +23,14 @@ import { authKind, entryCarries, packetEntry, strip, VERIFY_BUDGET_MS, verifyRes
  * session-index/connection.js:39-51) and answers any other client with method-not-found; the Hub does not pose as AIR.
  */
 export const claudeRelayCapabilities: RelayCapabilities = relayDeclaration({
+  // probed gates D6 too (the Runtime continues the original session after an unknown Turn only for a probed process Driver):
+  // for this process Driver the flip to true needs P16 besides P2, P3, P6 and P11 (the approval agent's A3, 2026-11-10).
   probed: false,
   delivery: { live: "none", verify: "after_turn", successProvesRecorded: true, lateDelivery: false },
   execution: "process",
   commands: { unlistedSlash: "executed", hidden: relayEntries(HIDDEN), classify: claudeClassify },
   // Attachments go as ACP blocks after the two text blocks (G069 phase two, approval B8; to be probed).
-  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
+  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true, measure: measureBy("multiple", "chars", ["file"]) },
   window: "session_report",
   fixedPrefix: null,
   cacheTtl: "auth_dependent",
@@ -192,6 +194,21 @@ export class ClaudeControl extends AcpControl {
   private transcript: { readonly id: NativeConversationId; readonly path: string; readonly project: string } | null = null;
   constructor(private readonly claudeLaunch: ControlLaunch, private readonly claudeOptions: ControlOptions) { super(claudeLaunch, claudeOptions); }
   protected override get vendorHarness(): "claude" { return "claude"; }
+  /**
+   * A session claude-agent-acp does not have, refused when the open resumes or loads it (0.99.1 `sessionNotFound`, ACP's
+   * resource-not-found -32002, acp-agent.js:2491-2499; a session never prompted cannot be resumed by another process), is
+   * NATIVE_SESSION_NOT_FOUND: the Runtime's fallback for an empty native session (ADR-055 C5, holdsNothing) reads exactly that
+   * code (G072). Only that refusal of an open with a checkpoint is mapped, never a timeout, a failed connection or another
+   * refusal; the refused open has failed the connection as every refused open does, so the Runtime opens anew on a new one.
+   */
+  override async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
+    try { return await super.open(cwd, model, options, checkpoint); }
+    catch (error) {
+      if (checkpoint !== undefined && error instanceof ControlError && error.code === "REMOTE_ERROR" && error.remoteCode === SESSION_NOT_FOUND)
+        throw new ControlError("NATIVE_SESSION_NOT_FOUND", "Claude Code has no session with this identity");
+      throw error;
+    }
+  }
   protected override vendorAuthKind(): string | null { return this.signedIn; }
   /** Claude Code's configuration directory for this process: CLAUDE_CONFIG_DIR, else `~/.claude` (claude-agent-acp paths.js). */
   private get configDir(): string { const env = { ...this.claudeOptions.env, ...this.claudeLaunch.env }; return env.CLAUDE_CONFIG_DIR || join(env.HOME || homedir(), ".claude"); }

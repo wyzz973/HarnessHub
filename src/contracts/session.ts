@@ -388,7 +388,8 @@ export interface SessionBindingFactory {
   /**
    * The static relay declaration of the Driver that serves `selection` (ADR-055 §3.2, F10), read at admission without
    * starting anything or building a control; null when it declares none. Absent: admission cannot tell, so it leaves every
-   * relay question to the check after the open (G068 phase two; G072 wires the real factory).
+   * relay question to the check after the open, and the Runtime then applies none of G072's gates (only a test's fake factory is
+   * so; the Gateway's own, DirectorySessionBindingFactory, always answers).
    */
   relayCapabilities?(selection: HarnessSelection): import("./relay.js").RelayCapabilities | null;
   /**
@@ -469,6 +470,19 @@ export interface SessionRuntimeOptions {
    * shown when absent or when it returns null. Must be synchronous and side-effect free.
    */
   readonly harnessName?: (harnessId: string) => string | null;
+  /**
+   * The installation's relay key (ADR-055 §10.2, D5; relay-keys.ts): the HMACs of delivery rows and of a request's relay
+   * options. Without it the Runtime keys them under a key it keeps only in memory and names EPHEMERAL_KEY_ID (A17), which no
+   * reader can check; the Gateway's own entries always give one.
+   */
+  readonly relayKeys?: import("./relay.js").RelayKeyPort;
+  /**
+   * Whether this Gateway's data directory and relay key are out of a workspace's reach (ADR-055 §10.1, INV-36): neither inside
+   * the workspace nor holding it, compared by device and inode, and no data directory's marker found in it. A cross-vendor
+   * handoff into a workspace that is not is refused (RELAY_UNAVAILABLE{data_root_in_workspace}). Synchronous and cheap: the
+   * marker search is the composition's, cached. Absent: nothing can be told, and the check is the composition's to wire.
+   */
+  readonly relayIsolated?: (workspace: string) => boolean;
 }
 export interface SendReceipt { readonly sessionId: SessionId; readonly runId: RunId; readonly replayed: boolean }
 export interface SwitchReceipt { readonly sessionId: SessionId; readonly switchId: SwitchId; readonly replayed: boolean }

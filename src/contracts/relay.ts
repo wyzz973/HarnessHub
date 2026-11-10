@@ -190,8 +190,9 @@ export interface VerifyResult {
 export const DELIVERY_CHANNELS = ["text_block", "single_text"] as const;
 /**
  * The reserved `redaction.keyId` of a delivery row whose keyed digests were made under a key kept only in the memory of the
- * owner that wrote it (until G072's relay-keys, A17): no reader can check them. A reader that finds a `keyId` other than its
- * current key's concludes "not checkable" (不可复核), never "different"; rows are never re-keyed afterwards.
+ * owner that wrote it (rows written before G072's relay-keys, and a Runtime composed without an installation key, A17): no
+ * reader can check them. The installation key (RelayKeyPort) never takes this identity. A reader that finds a `keyId` other
+ * than its current key's concludes "not checkable" (不可复核), never "different"; rows are never re-keyed afterwards.
  */
 export const EPHEMERAL_KEY_ID = "ephemeral";
 export const REALIZED_CLOSED_BY = ["compaction", "clear", "epoch", "idle"] as const;
@@ -247,7 +248,15 @@ export interface RelayCapabilities {
      */
     readonly classify: (text: string, catalog: readonly { readonly name: string; readonly effect: ContextEffectRule; readonly acceptsRelay?: boolean }[] | null, attachments: readonly ContentKind[]) => CommandClass;
   };
-  readonly placement: { readonly parts: typeof PLACEMENT_PARTS[number]; readonly maxInput: { readonly unit: "chars" | "bytes"; readonly limit: number } | null; readonly pointersAfterUser: boolean };
+  readonly placement: { readonly parts: typeof PLACEMENT_PARTS[number]; readonly maxInput: { readonly unit: "chars" | "bytes"; readonly limit: number } | null; readonly pointersAfterUser: boolean;
+    /**
+     * The size of what this Driver hands its native side for `turn` (the placed text, with an allowance for what the native
+     * side or the Driver adds that is unknown before dispatch: each attachment's pointer, a working-directory prefix), in
+     * `maxInput`'s unit (Unicode code points without a bound). Pure and synchronous: the coordinator chooses the packet's
+     * size by it before dispatch (ADR-055 C3, the approval agent's decision on the stage-two review); the Driver's own refusal
+     * of a Turn over the bound (INPUT_LIMIT_REFUSED) stays as the backstop. Never smaller than what the Driver measures itself.
+     */
+    readonly measure: (turn: TurnText, attachments: readonly ContentKind[]) => number };
   readonly window: typeof WINDOW_REPORTS[number];
   readonly fixedPrefix: { readonly tokens: number; readonly basis: "measured" | "assumed" } | null;
   readonly cacheTtl: typeof CACHE_TTLS[number];
@@ -491,17 +500,45 @@ export const RELAY_PREPARE_REASONS = ["render", "render_mismatch", "redaction_fa
 export const RELAY_UNAVAILABLE_REASONS = ["data_root_in_workspace", "consent_log_full", "recovery_failed"] as const;
 /** Why the next content input needs the user's choice (relay-architecture §9 "需要用户选择"), the cause of RELAY_CHOICE_REQUIRED. */
 export const RELAY_CHOICE_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent"] as const;
+/**
+ * Why the target takes no relay content (D11, G072): `unprobed`, its Driver declares relay mechanisms its probes have not
+ * proved on the latest release (and `relay.allowUnprobed` is not set); `undeclared`, its Driver declares none (WorkBuddy, Pi,
+ * Cursor, a control the Gateway cannot place), which no preference opens.
+ */
+export const RELAY_TARGET_REASONS = ["unprobed", "undeclared"] as const;
+/** Why the target's vendor needs the user's consent (§10.4): none recorded (or withdrawn), the vendor changed in this epoch, or withdrawn since the Turn was prepared. */
+export const RELAY_CONSENT_REASONS = ["missing", "vendor_changed", "revoked"] as const;
+/**
+ * Why the smallest packet does not fit (§6.2, G072): `min_packet`, the target's window (conservative at admission, refined at
+ * the open) leaves less than MIN_PACKET of its family; `input_limit`, the placed Turn exceeds the Driver's input bound.
+ */
+export const RELAY_LIMIT_REASONS = ["min_packet", "input_limit"] as const;
 export type RelayErrorReason =
   | { readonly code: "RELAY_PREPARE_FAILED"; readonly reason: typeof RELAY_PREPARE_REASONS[number] }
   | { readonly code: "RELAY_UNAVAILABLE"; readonly reason: typeof RELAY_UNAVAILABLE_REASONS[number] }
-  | { readonly code: "RELAY_CHOICE_REQUIRED"; readonly reason: typeof RELAY_CHOICE_CAUSES[number] };
+  | { readonly code: "RELAY_CHOICE_REQUIRED"; readonly reason: typeof RELAY_CHOICE_CAUSES[number] }
+  | { readonly code: "RELAY_TARGET_UNVERIFIED"; readonly reason: typeof RELAY_TARGET_REASONS[number] }
+  | { readonly code: "RELAY_CONSENT_REQUIRED"; readonly reason: typeof RELAY_CONSENT_REASONS[number] }
+  | { readonly code: "RELAY_INPUT_LIMIT"; readonly reason: typeof RELAY_LIMIT_REASONS[number] };
+/**
+ * What a relay error tells the page besides its code and reason (G073 turns it into the error body's `relay` member, §12.4):
+ * the vendor key a consent is asked for and the one consented to before, the Harness control it concerns. Plain values, never
+ * a secret, a path or the history's text.
+ */
+export interface RelayErrorDetail {
+  readonly vendor?: VendorKey;
+  readonly previousVendor?: VendorKey;
+  readonly harnessId?: string;
+  readonly controlId?: string;
+}
 /**
  * An expected relay failure (INV-35): it fails one Run or one consent command and nothing else. The Store throws it before
  * any statement of the failing write runs, so it never disables the Store; `reason` is the code's closed reason.
  */
 export class RelayError extends SessionError {
   readonly reason: RelayErrorReason["reason"];
-  constructor(failure: RelayErrorReason, message: string) { super(failure.code, message); this.name = "RelayError"; this.reason = failure.reason; }
+  readonly detail: RelayErrorDetail | undefined;
+  constructor(failure: RelayErrorReason, message: string, detail?: RelayErrorDetail) { super(failure.code, message); this.name = "RelayError"; this.reason = failure.reason; this.detail = detail; }
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -591,11 +628,30 @@ export interface RelayLogPort {
   appendRelayLog(record: ConsentAppend): ConsentRecord;
   /** Keeps the latest observed window of one Harness control and model; the last writer wins. */
   upsertWindow(window: RelayWindow): void;
+  /** The window last observed for one Harness control and model key (G072, the window's second source, §6.2); null when none is kept. */
+  relayWindow(harnessId: string, controlId: string, modelKey: string): RelayWindow | null;
   /** Sets one installation preference to one of its values; the last writer wins. */
   setPref(key: RelayPrefKey, value: string): void;
   relayPrefs(): Readonly<Partial<Record<RelayPrefKey, string>>>;
   /** The current consent view: the latest record of each vendor and scope. */
   relayConsents(): readonly ConsentRecord[];
+}
+
+/**
+ * The installation's relay key as the relay uses it (ADR-055 §10.2, D5, INV-29; G072's relay-keys): HMACs under a subkey
+ * derived per Session (HMAC(installation key, "relay-tag/1" ‖ sessionId)), so one value keys differently in every Session and
+ * nothing in a relay row can be checked against a guessed value without the key. The key itself is never exported. `keyId`
+ * names the key in the rows; it is never EPHEMERAL_KEY_ID (A17). Each method may throw a RelayError (RELAY_PREPARE_FAILED,
+ * redaction_failed) when the key cannot be used; nothing is then written with a digest of another key.
+ */
+export interface RelayKeyPort {
+  readonly keyId: string;
+  /** HMAC-SHA256 of the current input (a delivery row's inputHmac). */
+  inputHmac(session: SessionId, text: string): HmacDigest;
+  /** The first 8 hex of the HMAC of a known-secret set (a delivery row's redaction.setHmac): the same set, whatever its order, tags alike. */
+  setTag(session: SessionId, secrets: readonly string[]): RedactionTag;
+  /** HMAC-SHA256 of a request's relay options as canonical JSON (PublicRun.relayRequest.fingerprint, RT2-19). */
+  requestFingerprint(session: SessionId, canonical: string): HmacDigest;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

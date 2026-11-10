@@ -2,6 +2,7 @@ import { SessionError, type PublicRun, type RunId, type SessionSnapshot } from "
 import { dispatched } from "./relay/advance.js";
 import type { RelayToolDetail } from "./relay/narration.js";
 import { renderRelay, type RelayRecord } from "./relay/packet.js";
+import type { RelayBudget } from "./relay/budget.js";
 import { terminal } from "./state.js";
 
 export interface PublicContext {
@@ -42,6 +43,11 @@ export interface PublicContextOptions {
   readonly names?: (harnessId: string) => string | null;
   readonly firstLine?: boolean;
   readonly details?: ReadonlyMap<string, RelayToolDetail>;
+  /**
+   * The budget the packet is folded to, when the relay coordinator resolved it (G072: the window of windows.ts and the hard cap
+   * of the target's channel); the renderer's own (the target's last reported window, or the assumed one) otherwise.
+   */
+  readonly budget?: RelayBudget;
 }
 
 /**
@@ -65,6 +71,6 @@ export function buildPublicContext(state: SessionSnapshot, current: PublicRun, s
   const position = new Map(state.runs.map((run, index) => [run.id, index]));
   const ordered = [...sources].sort((a, b) => position.get(a.id)! - position.get(b.id)!);
   const rendered = renderRelay({ state, current, sources: ordered, origin: options.origin ?? false, ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
-    ...(options.names === undefined ? {} : { names: options.names }), ...(options.firstLine === undefined ? {} : { firstLine: options.firstLine }), ...(options.details === undefined ? {} : { details: options.details }) });
+    ...(options.names === undefined ? {} : { names: options.names }), ...(options.firstLine === undefined ? {} : { firstLine: options.firstLine }), ...(options.details === undefined ? {} : { details: options.details }), ...(options.budget === undefined ? {} : { budget: options.budget }) });
   return { text: rendered.text, throughSeq: state.lastSeq, sourceRunIds: ordered.map(run => run.id), continuity: "public_context_rehydrate", relay: rendered.record };
 }

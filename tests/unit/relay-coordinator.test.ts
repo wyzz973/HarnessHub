@@ -9,7 +9,7 @@ import {
 } from "../../src/contracts/relay.js";
 import { SessionError, runId, sessionId, type NativeSessionBinding, type PublicRun, type RunId, type SessionEvent, type SessionSnapshot } from "../../src/contracts/session.js";
 import {
-  EphemeralKeys, RelayLedger, admitRelay, bindingDeliveries, checkedResult, decideTurn, heldSinceIn, holdsNothing, nativeExactAt, relayDeclaration, settleTurn, unavailableResult, verifyRequestOf,
+  UnkeptRelayKeys, RelayLedger, admitRelay, bindingDeliveries, checkedResult, decideTurn, heldSinceIn, holdsNothing, nativeExactAt, relayDeclaration, settleTurn, unavailableResult, verifyRequestOf,
   type Check, type DecideInput, type RelayChoices, type SettleInput,
 } from "../../src/contexts/session/application/relay-coordinator.js";
 import { chainAfter, owed, planReturnVerify, step, type BindingDelivery, type RelayFact, type VerifyPlan } from "../../src/contexts/session/domain/relay/delivery.js";
@@ -42,6 +42,8 @@ function caps(overrides: { readonly verify?: RelayCapabilities["delivery"]["veri
   return { ...dshRelayCapabilities, commands: { ...dshRelayCapabilities.commands, unlistedSlash: "executed", classify: text => listedCommand(text, null) },
     delivery: { live: "none", verify: overrides.verify ?? "none", successProvesRecorded: overrides.successProvesRecorded ?? false, lateDelivery: overrides.lateDelivery ?? false } };
 }
+/** A declaration whose reading of a slash word is a definite command (a Driver that settles it without a catalog). */
+const COMMANDING: RelayCapabilities = { ...caps(), commands: { ...caps().commands, classify: text => text.startsWith("/") ? { kind: "command", name: text.slice(1), args: "", effect: "compact" } : { kind: "content" } } };
 const binding = (state: BindingRelayState, extra: Partial<NativeSessionBinding> = {}): NativeSessionBinding => ({ ...X, checkpoint: "native-x", throughRunId: null, status: "ready", relay: state, ...extra });
 function snapshot(bindings: readonly NativeSessionBinding[], extra: Partial<SessionSnapshot> = {}): SessionSnapshot {
   return { schemaVersion: 13, id: sessionId("session-unit"), version: 1, lastSeq: 20, epoch: 1, status: "open", configuration: { workspace: "/w", manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true },
@@ -63,7 +65,8 @@ function admit(state: BindingRelayState, choices: RelayChoices = {}, options: { 
 test("G068 fix R7 admitRelay: only an input that would carry relay content is asked; a pending packet whose resend is spent asks unless the user resends (resend or attach full, R9b); a suspect binding no check can settle asks", () => {
   assert.equal(admit(SYNCED, {}, { facts: [] }), "ok", "a single-Harness conversation is never asked");
   assert.equal(admit(pending(1), { attach: "none" }), "ok", "an input sent alone is never asked");
-  assert.equal(admit(pending(1), {}, { text: "/compact" }), "ok", "a command carries nothing");
+  assert.equal(admit(pending(1), {}, { text: "/compact", capabilities: COMMANDING }), "ok", "a command carries nothing");
+  assert.equal(admit(pending(1), {}, { text: "/compact" }), "ok", "a word only the catalog settles is not asked either: the open's checks decide it");
   assert.equal(admit(pending(1), {}, { capabilities: undefined }), "ok", "a factory that cannot tell the declaration leaves it to the open");
   assert.equal(admit(pending(0)), "ok", "the one automatic resend");
   assert.equal(admit(pending(1)), "RELAY_CHOICE_REQUIRED{delivery_unconfirmed}");
@@ -112,7 +115,8 @@ test("G068 fix R7 decideTurn: b as typed when nothing is owed, n when the user s
   }
   assert.equal(refused(() => decide(pending(0), {}, { pendingRun: null })), "RELAY_CHOICE_REQUIRED{delivery_unconfirmed}", "a resend names what it supersedes");
   assert.equal(refused(() => decide(pending(0), {}, { recoveryFailed: true })), "RELAY_UNAVAILABLE{recovery_failed}");
-  assert.equal(refused(() => decide(pending(0), {}, { facts: FOREIGN.slice(0, 2) })), "RELAY_CHOICE_REQUIRED{delivery_unconfirmed}", "nothing owed on a pending packet (A7, until G072)");
+  // A7 point 4 (G072): nothing owed on a pending packet goes back to its prior, as typed, nobody asked.
+  assert.deepEqual(decide(pending(0), {}, { facts: FOREIGN.slice(0, 2) }), { kind: "plain", foreign: true, nothingToAttach: false, owedNothing: true }, "nothing owed on a pending packet");
   // Suspect: as typed only with nothing foreign at all; otherwise the user's choice, which retreats to the epoch base.
   const rewound = relay({ kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: null, rewound: false });
   assert.equal(refused(() => decide(rewound)), "RELAY_CHOICE_REQUIRED{verify_required}");
@@ -293,10 +297,11 @@ test("G068 fix R10e A10: only an epoch's latest 32 recorded rows keep the mark t
   assert.ok(absent.kind === "applied" && absent.relay.sync.kind === "suspect" && absent.relay.sync.cause === "marker_absent");
 });
 
-test("G068 fix R10g the keyed digests of delivery rows made under an owner's ephemeral key name the reserved key identity", () => {
-  const keys = new EphemeralKeys();
+test("G068 fix R10g the keyed digests of delivery rows made under an owner's ephemeral key name the reserved key identity (G072: only a Runtime composed without the installation key uses one)", () => {
+  const keys = new UnkeptRelayKeys();
   assert.equal(EPHEMERAL_KEY_ID, "ephemeral"); assert.equal(keys.keyId, EPHEMERAL_KEY_ID);
-  assert.notEqual(keys.input(sessionId("session-a"), "words"), new EphemeralKeys().input(sessionId("session-a"), "words"), "a key per owner, never kept");
+  assert.notEqual(keys.inputHmac(sessionId("session-a"), "words"), new UnkeptRelayKeys().inputHmac(sessionId("session-a"), "words"), "a key per owner, never kept");
+  assert.notEqual(keys.inputHmac(sessionId("session-a"), "words"), keys.inputHmac(sessionId("session-b"), "words"), "a subkey per Session");
 });
 
 test("G068 fix R10a (A1) a binding without relay state, the one case exactAt reads as never exact, cannot exist in a v13 Session: the parser refuses it", () => {
@@ -324,6 +329,7 @@ test("G068 fix2 M-1 admitRelay and ［确认已清空］: offered only on an unc
   assert.equal(admit(pending(0), { clearConfirmed: true }), "INVALID_INPUT");
   assert.equal(admit(relay({ kind: "suspect", mark: MARK1, cause: "rewind", floorCandidate: null, carried: null, rewound: false }), { clearConfirmed: true }), "INVALID_INPUT");
   // What admission never asks about stays so: a command carries nothing, a factory that cannot tell leaves it to the open.
+  assert.equal(admit(SYNCED, { clearConfirmed: true }, { text: "/compact", capabilities: COMMANDING }), "ok");
   assert.equal(admit(SYNCED, { clearConfirmed: true }, { text: "/compact" }), "ok");
   assert.equal(admit(SYNCED, { clearConfirmed: true }, { capabilities: undefined }), "ok");
 });

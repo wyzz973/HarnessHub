@@ -11,7 +11,7 @@ import type { ConsentAppend, ConsentRecord, DeliveryRecord, RecoverRelay, RelayC
 import { MAX_EVENT_BYTES, MAX_EVENT_LOG_BYTES, MAX_READ_BYTES, MAX_READ_ITEMS, MAX_SESSION_BYTES, MAX_SESSION_EVENTS, assertSessionTransition, parseSession, recoverSession, utf8Bytes } from "../../contexts/session/domain/state.js";
 import { migrateSession, type MigrationEvent } from "../../contexts/session/domain/relay/migrate.js";
 import { MAX_SNAPSHOT_CACHE_BYTES, SnapshotCache, type SnapshotCacheStats } from "./snapshot-cache.js";
-import { RELAY_DDL, checkPacketReferences, checkRelayRows, checkRelayWrite, deleteRelayRows, diagnosticOf, pruneRelayWindows, readDeliveries, readIndexRows, readPackets, relayRowCounts, upsertRelayWindow, writeBehindIndexes, writeDerivedRows, writeRelayRows, writeRelayWrite } from "./relay-tables.js";
+import { RELAY_DDL, checkPacketReferences, checkRelayRows, checkRelayWrite, deleteRelayRows, diagnosticOf, pruneRelayWindows, readDeliveries, readIndexRows, readPackets, readRelayWindow, relayRowCounts, upsertRelayWindow, writeBehindIndexes, writeDerivedRows, writeRelayRows, writeRelayWrite } from "./relay-tables.js";
 import { appendConsent, currentConsents, readPrefs, writePref } from "./relay-log.js";
 
 const activeRoots = new Set<string>();
@@ -498,6 +498,10 @@ export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLo
   upsertWindow(window: RelayWindow): void {
     this.assertOwner();
     this.transaction(() => { upsertRelayWindow(this.database, window); });
+  }
+  relayWindow(harnessId: string, controlId: string, modelKey: string): RelayWindow | null {
+    this.assertOwner();
+    return this.read(() => readRelayWindow(this.database, harnessId, controlId, modelKey));
   }
   setPref(key: RelayPrefKey, value: string): void {
     this.assertOwner();

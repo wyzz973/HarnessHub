@@ -1,19 +1,22 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { MAX_VERIFY_MARKERS, type ContextEffect, type VerifyRequest } from "../../../contracts/control.js";
+import { MAX_VERIFY_MARKERS, type CommandClass, type ContextEffect, type VerifyRequest } from "../../../contracts/control.js";
 import type { ContentKind } from "../../../contracts/content.js";
 import {
-  EPHEMERAL_KEY_ID, MARKER_RESULTS, RELAY_MAX_RUNS, RELAY_MAX_SEQ, RelayError, fingerprint, hmacDigest, markOf, parseDeliveredMark, parseExecutedOn, redactionTag, relayPacketId,
-  type BindingRelayState, type ContinuityLevel, type DeliveredMark, type DeliveryPosition, type DeliveryRecord, type ExecutedOn, type Fingerprint, type MarkerResult,
-  type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayPacket, type RelayPacketId, type RunRelay, type SourceRange, type VerifyResult,
+  EPHEMERAL_KEY_ID, MARKER_RESULTS, RELAY_MAX_RUNS, RELAY_MAX_SEQ, RelayError, TIERS, fingerprint, hmacDigest, markOf, parseDeliveredMark, parseExecutedOn, parseVendorKey, redactionTag, relayPacketId,
+  type BindingRelayState, type ConsentRecord, type ContinuityLevel, type DeliveredMark, type DeliveryPosition, type DeliveryRecord, type EndpointLayer, type ExecutedOn, type Fingerprint, type HmacDigest, type MarkerResult,
+  type RedactionTag, type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayKeyPort, type RelayPacket, type RelayPacketId, type RelayWindow, type RunRelay, type RunRelayRequest, type SourceRange, type Tier,
+  type VendorKey, type VendorObservation, type VerifyResult,
 } from "../../../contracts/relay.js";
 import { SessionError, type EventDraft, type HarnessSelection, type NativeSessionBinding, type PublicRun, type RunId, type SessionEvent, type SessionId, type SessionSnapshot } from "../../../contracts/session.js";
 import { commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
+import { estimateTokens } from "../domain/relay/budget.js";
 import {
   admitsWithoutChoice, commandTurnEvent, foreignTo, heldSince, owed, pendingResend, retreatedPrior, settledOutcome, settledWithoutCheck, step,
   type BindingDelivery, type ChoiceCause, type DeliveryChange, type Owed, type RelayAt, type RelayEvent, type RelayFact, type RelayStep, type StepNote, type VerifyPlan,
 } from "../domain/relay/delivery.js";
 import type { RelayRecord } from "../domain/relay/packet.js";
 import { initialBindingRelay } from "../domain/relay/migrate.js";
+import { fitsMinPacket, hardCap, packetFamily, resolveWindow, type ResolvedWindow } from "../domain/relay/windows.js";
 import { terminal } from "../domain/state.js";
 
 /**
@@ -27,8 +30,11 @@ import { terminal } from "../domain/state.js";
  * the Session's events through the reader it was built with; the Runtime does the I/O (the Driver's check, the store) and
  * commits.
  *
- * G072 extends this file with probe gating, consent and vendor keys, the data-root check, windows and the return decision;
- * `admitRelay` marks where its checks go.
+ * G072 adds the gates of an input that carries another Harness's history (relayAdmission, admitCarrying): the probe gate (D11),
+ * the data root of a cross-vendor handoff (INV-36), consent by the target's vendor key (§10.4, INV-33: consentStanding,
+ * consentGate) and the smallest packet on the target's window (windows.ts); the request's relay options (parseRelayChoices,
+ * runRelayRequest) and the decision for a pending binding owed nothing (A7 point 4). Their reads (preferences, consents,
+ * windows, the data root) are the Runtime's, given here as values; nothing in this file does I/O (A15).
  */
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -67,26 +73,57 @@ export function relayDeclaration(capabilities: RelayCapabilities | null | undefi
 // ---------------------------------------------------------------------------------------------------------------------
 
 /**
- * What a request chose for the relay (relay-architecture §12.4, the subset the Runtime acts on in G068 phase two): `attach`
- * "none" sends the input alone ("只发这条消息", event n), "full" attaches the history once even below a clear floor ("附上交接
- * 单", attachOverride) and, on a suspect binding, sends the complete packet again in the same native session ("补发完整交接
- * 单"); `resend` sends a pending packet again ("再附一次"), and on a suspect binding also chooses the complete packet;
- * `clearConfirmed` is the user's ［确认已清空］. Tier, native, notes, exclusions, reveals and consent are G072's and G073's.
+ * What a request chose for the relay (relay-architecture §12.4, the subset the Runtime acts on): `attach` "none" sends the
+ * input alone ("只发这条消息", event n), "full" attaches the history once even below a clear floor ("附上交接单",
+ * attachOverride) and, on a suspect binding, sends the complete packet again in the same native session ("补发完整交接单");
+ * `resend` sends a pending packet again ("再附一次"), and on a suspect binding also chooses the complete packet;
+ * `clearConfirmed` is the user's ［确认已清空］; `native` "new" opens a new native session for this input with the whole packet
+ * ("新开原生会话", §7.3, D9; "continue" is the default, continuing the original one); `consent` is the user's consent to the
+ * target's vendor key (§10.4), recorded in the installation's log when the input is accepted; `tier` is recorded with the Run
+ * (the MVP renders the standard tier only). Notes, exclusions and reveals are G073's.
  */
-export interface RelayChoices { readonly attach?: "full" | "none"; readonly resend?: true; readonly clearConfirmed?: true }
+export interface RelayChoices {
+  readonly attach?: "full" | "none"; readonly resend?: true; readonly clearConfirmed?: true;
+  readonly tier?: Tier; readonly native?: "continue" | "new"; readonly consent?: RequestedConsent;
+}
+const CHOICE_KEYS = ["attach", "resend", "clearConfirmed", "tier", "native", "consent"];
 /** The request's relay choices, checked; undefined when it makes none ("auto" is none). INVALID_INPUT for anything else. */
 export function parseRelayChoices(value: unknown): RelayChoices | undefined {
   if (value === undefined) return undefined;
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new SessionError("INVALID_INPUT", "relay choices must be an object");
   const item = value as Readonly<Record<string, unknown>>;
-  if (Object.keys(item).some(key => key !== "attach" && key !== "resend" && key !== "clearConfirmed")) throw new SessionError("INVALID_INPUT", "unsupported relay choice");
+  if (Object.keys(item).some(key => !CHOICE_KEYS.includes(key))) throw new SessionError("INVALID_INPUT", "unsupported relay choice");
   if (item.attach !== undefined && item.attach !== "auto" && item.attach !== "full" && item.attach !== "none") throw new SessionError("INVALID_INPUT", "relay attach must be auto, full or none");
   if (item.resend !== undefined && item.resend !== true) throw new SessionError("INVALID_INPUT", "relay resend must be true");
   if (item.clearConfirmed !== undefined && item.clearConfirmed !== true) throw new SessionError("INVALID_INPUT", "relay clearConfirmed must be true");
-  if (item.attach === "none" && (item.resend === true || item.clearConfirmed === true)) throw new SessionError("INVALID_INPUT", "an input sent alone carries no relay choice besides");
+  if (item.tier !== undefined && !(TIERS as readonly unknown[]).includes(item.tier)) throw new SessionError("INVALID_INPUT", "relay tier must be one of " + TIERS.join(", "));
+  if (item.native !== undefined && item.native !== "continue" && item.native !== "new") throw new SessionError("INVALID_INPUT", "relay native must be continue or new");
+  let consent: RequestedConsent | undefined;
+  if (item.consent !== undefined) {
+    const raw = item.consent;
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw) || Object.keys(raw).some(key => key !== "vendor" && key !== "decision" && key !== "scope")) throw new SessionError("INVALID_INPUT", "relay consent must name a vendor, a decision and a scope");
+    const row = raw as Readonly<Record<string, unknown>>;
+    let vendor: VendorKey;
+    try { vendor = parseVendorKey(row.vendor); } catch { throw new SessionError("INVALID_INPUT", "relay consent must name a vendor key"); }
+    if (row.decision !== "acknowledged" && row.decision !== "goal_only") throw new SessionError("INVALID_INPUT", "relay consent decision must be acknowledged or goal_only");
+    if (row.scope !== "session" && row.scope !== "global") throw new SessionError("INVALID_INPUT", "relay consent scope must be session or global");
+    consent = { vendor, decision: row.decision, scope: row.scope };
+  }
+  if (item.attach === "none" && (item.resend === true || item.clearConfirmed === true || item.native === "new" || consent !== undefined)) throw new SessionError("INVALID_INPUT", "an input sent alone carries no relay choice besides");
   const choices: RelayChoices = { ...(item.attach === "full" || item.attach === "none" ? { attach: item.attach } : {}), ...(item.resend === true ? { resend: true as const } : {}),
-    ...(item.clearConfirmed === true ? { clearConfirmed: true as const } : {}) };
+    ...(item.clearConfirmed === true ? { clearConfirmed: true as const } : {}), ...(item.tier === undefined ? {} : { tier: item.tier as Tier }),
+    ...(item.native === "continue" || item.native === "new" ? { native: item.native } : {}), ...(consent === undefined ? {} : { consent }) };
   return Object.keys(choices).length ? choices : undefined;
+}
+/**
+ * PublicRun.relayRequest for a request's choices (§4, RT2-19): the tier, attach, native and resend it chose, and the HMAC of
+ * all of them (consent and ［确认已清空］ included) as canonical JSON under the Session's subkey; undefined when it chose none.
+ */
+export function runRelayRequest(session: SessionId, choices: RelayChoices | undefined, keys: RelayKeyPort): RunRelayRequest | undefined {
+  if (choices === undefined) return undefined;
+  const canonical = JSON.stringify(Object.fromEntries(Object.entries(choices).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, value]) => [key, key === "consent" ? { vendor: (value as RequestedConsent).vendor, decision: (value as RequestedConsent).decision, scope: (value as RequestedConsent).scope } : value])));
+  return { ...(choices.tier === undefined ? {} : { tier: choices.tier }), ...(choices.attach === undefined ? {} : { attach: choices.attach }), ...(choices.native === undefined ? {} : { native: choices.native }),
+    ...(choices.resend === true ? { resend: true as const } : {}), fingerprint: keys.requestFingerprint(session, canonical) };
 }
 /** The choices a `message.accepted` event recorded (its `relay`); none when it recorded none or something else. */
 export function acceptedChoices(data: Readonly<Record<string, unknown>> | undefined): RelayChoices {
@@ -303,38 +340,153 @@ export interface AdmitInput {
   readonly choices: RelayChoices;
   /** The facts foreign to the binding of this Harness control in this native epoch (RelayLedger.facts). */
   readonly facts: (binding: { readonly harnessId: string; readonly controlId: string; readonly nativeEpoch: number }) => readonly RelayFact[];
+  /**
+   * What G072's checks read (the probe gate, the data root, consent and the window), given only for an input that would carry
+   * relay content (relayAdmission said so): its reads are the Runtime's. Absent: only G068's checks run (a caller that cannot
+   * tell them, and the unit tests of those checks).
+   */
+  readonly gates?: AdmitGates;
+}
+/** An input that would carry relay content, as admission found it (relayAdmission): what its binding is and owes. */
+export interface Carrying {
+  readonly relay: BindingRelayState;
+  readonly declaration: RelayDeclaration;
+  readonly facts: readonly RelayFact[];
+  readonly need: Owed;
+  /** Something is owed now (need≠∅). */
+  readonly owes: boolean;
+  /** Foreign facts while the binding's mark is in doubt (suspect of a rewind-like cause): a check decides what is owed. */
+  readonly doubt: boolean;
+  readonly originHistory: boolean;
+  readonly heldSince: number;
+  /**
+   * Whether what would be carried includes another Harness control's history (or the history the Session started from): only
+   * then are G072's gates asked. What ran on the target's own Harness control (an earlier native session of it, a Turn its
+   * Driver keeps no session for) is its own history coming back to it, which no probe, vendor or data root changes (§6.1's
+   * "单 Harness 对话不做任何接力检查"); the epoch's vendor key is still held to (`consentKey`, vendor_changed).
+   */
+  readonly crossHarness: boolean;
 }
 /**
- * Admission's relay part (§6.1 coordinator.admit, §9): what can be decided before any Run exists, synchronously and without
- * starting anything. Only an input that would carry relay content is asked anything — what is owed (need≠∅), a packet the
- * binding waits for, `attach:"full"`, or foreign facts while the binding's mark is in doubt (suspect of a rewind-like cause);
- * an input sent alone, a command (by the Driver's own reading) and a single-Harness conversation never are. Throws the 409
- * relay error: RELAY_UNAVAILABLE{recovery_failed}; RELAY_CHOICE_REQUIRED{delivery_unconfirmed} for a pending packet no check
- * before dispatch can settle and none may be resent automatically; RELAY_CHOICE_REQUIRED{verify_required | marker_absent} for a
- * suspect binding no check can settle (admitsWithoutChoice) — a Driver that checks at the open is let through and settled
- * there (§9: only what admission can decide is a 409). The user's ［确认已清空］ is answered before anything else
- * (admitClearConfirmed: INVALID_INPUT where it is not offered).
+ * Whether facts include one that ran on another Harness control than `target` (by its relay, else its Run's selection; a Run
+ * the Session cannot place counts as another's), or the Session's own starting history is owed.
  */
-export function admitRelay(input: AdmitInput): void {
+export function crossHarnessFacts(state: SessionSnapshot, facts: readonly RelayFact[], origin: boolean, target: { readonly harnessId: string; readonly controlId: string }): boolean {
+  if (origin) return true;
+  return facts.some(fact => {
+    const run = state.runs.find(row => row.id === fact.runId);
+    const harnessId = fact.executedOn?.harnessId ?? (run?.selection.provider === undefined ? run?.selection.harnessId : undefined), controlId = fact.executedOn?.controlId ?? run?.selection.controlId;
+    return harnessId !== target.harnessId || controlId !== target.controlId;
+  });
+}
+/** The installation's consent view for one Session, and the request's own consent (§10.4). */
+export interface ConsentView {
+  readonly session: SessionId;
+  /** The latest record of each vendor, scope and Session (RelayLogPort.relayConsents). */
+  readonly records: readonly ConsentRecord[];
+  readonly crossVendor: "ask" | "allow" | "goal_only";
+  readonly localModelsOffline: boolean;
+  /** The consent the request itself gives (`relay.consent`), not recorded yet. */
+  readonly request: RequestedConsent | null;
+}
+/** What G072's checks read for an input that would carry relay content (relayGatesOf builds the vendor part). */
+export interface AdmitGates {
+  /** `relay.allowUnprobed` (D11): an unprobed Driver may take relay content (development and tests only). */
+  readonly allowUnprobed: boolean;
+  /** The data directory and relay key are out of the workspace's reach (INV-36). */
+  readonly isolated: boolean;
+  /** The target's vendor key as admission can tell it (the binding's cached observation; unknown:<harnessId> without one) and the layer its endpoint came from. */
+  readonly target: { readonly vendor: VendorKey; readonly layer: EndpointLayer | null };
+  /** The vendor keys of what would be carried (§6.1 "任一来源的厂商键与目的不同即算跨厂商"). */
+  readonly sources: readonly VendorKey[];
+  readonly consent: ConsentView;
+  /** The window last observed for the target's Harness control and model (relay_windows), for MIN_PACKET. */
+  readonly window: RelayWindow | null;
+  readonly now: number;
+}
+/**
+ * Whether an input would carry relay content and is asked anything (§6.1 coordinator.admit's premise): none for an input sent
+ * alone, a managed Provider's, one the target's Driver reads as a command or a possible command (its own reading without a
+ * catalog; acceptsRelay commands excepted, carriesWithReading), and one whose binding owes
+ * nothing, waits for no packet, is not in doubt and was not asked for the history. Null: nothing is asked and nothing is read.
+ * A factory that cannot tell the declaration (undefined) leaves every question to the open.
+ */
+export function relayAdmission(input: AdmitInput): Carrying | null {
   const { state, binding, target, capabilities, choices } = input;
-  if (target.provider !== undefined || choices.attach === "none" || capabilities === undefined) return;
+  if (target.provider !== undefined || choices.attach === "none" || capabilities === undefined) return null;
   const declaration = relayDeclaration(capabilities);
-  // A command (or what may be one) carries nothing and is never stopped by the relay (VF1-05).
-  if (capabilities !== null && capabilities.commands.classify(input.text, null, input.attachments).kind !== "content") return;
-  const relay = binding?.relay ?? initialBindingRelay(state.nativeBindings ?? [], target.harnessId, target.controlId, "new");
-  // The user's ［确认已清空］ is answered first, whatever is owed: a binding that owes nothing would otherwise let it through to an
-  // open that has no use for it (M-1).
-  if (choices.clearConfirmed === true) admitClearConfirmed(relay, declaration);
+  // A command carries nothing and is never stopped by the relay (VF1-05); one whose arguments the native side submits as a
+  // prompt (acceptsRelay) may carry, and so may a word only the catalog settles.
+  if (capabilities !== null && !carriesWithReading(capabilities.commands.classify(input.text, null, input.attachments))) return null;
+  // The user's ［新开原生会话］ (`native:"new"`): the input runs on a new binding of its Harness control (send archives this one).
+  const relay = choices.native === "new" || binding?.relay === undefined ? initialBindingRelay([...(state.nativeBindings ?? []).map(row => row === binding ? { ...row, status: "archived" as const } : row)], target.harnessId, target.controlId, "new") : binding.relay;
   const facts = input.facts({ harnessId: target.harnessId, controlId: target.controlId, nativeEpoch: relay.nativeEpoch }), originHistory = (state.origin?.history.length ?? 0) > 0;
-  const sync = relay.sync, since = heldSinceIn(state, target.harnessId, target.controlId, relay);
+  const sync = relay.sync, since = choices.native === "new" ? relay.nativeEpoch : heldSinceIn(state, target.harnessId, target.controlId, relay);
   const need = owed(relay, target.harnessId, target.controlId, facts, { originHistory, attachOverride: choices.attach === "full" || sync.kind === "pending" && sync.attachOverride, heldSince: since });
   const owes = need.facts.length > 0 || need.origin;
   const doubt = sync.kind === "suspect" && SUSPICIONS.has(sync.cause) && foreignAtAll(facts, target.harnessId, target.controlId, relay, originHistory, since);
-  if (!owes && !doubt && sync.kind !== "pending" && choices.attach !== "full") return;
-  // G072 inserts its checks here, in the order of §6.1: the probe gate (RELAY_TARGET_UNVERIFIED), the data root of a
-  // cross-vendor handoff (RELAY_UNAVAILABLE{data_root_in_workspace}); then the user's choice below; then consent
-  // (RELAY_CONSENT_REQUIRED) and MIN_PACKET (RELAY_INPUT_LIMIT).
+  // The user's ［确认已清空］ is answered whatever is owed (M-1): returned so that admitRelay answers it.
+  if (!owes && !doubt && sync.kind !== "pending" && choices.attach !== "full" && choices.clearConfirmed !== true) return null;
+  const crossHarness = crossHarnessFacts(state, owes ? need.facts : facts, need.origin || doubt && originHistory && !relay.originIncluded, target);
+  return { relay, declaration, facts, need, owes, doubt, originHistory, heldSince: since, crossHarness };
+}
+/**
+ * Whether a reading may carry relay content: content, or a command that submits its arguments as a prompt (acceptsRelay). A
+ * command and a word only the catalog settles (possible_command) carry none at admission (§6.1: they skip every relay check, a
+ * command is never stopped by the relay); what the open's catalog then settles as content meets the open's own checks (the
+ * probe gate, the data root, consent, the window and the user's choice are all checked again there) and fails before dispatch
+ * with the same codes, since admission could not decide it.
+ */
+export function carriesWithReading(reading: CommandClass): boolean {
+  return reading.kind === "content" || reading.kind === "command" && reading.acceptsRelay === true;
+}
+/**
+ * Admission's relay part (§6.1 coordinator.admit, §9): what can be decided before any Run exists, synchronously and without
+ * starting anything, for an input relayAdmission found would carry relay content; an input sent alone, a command and a
+ * single-Harness conversation never are asked (relayAdmission). In §6.1's order, each the first failing one thrown:
+ * - the probe gate (D11): a Driver that declares no relay mechanisms takes none (RELAY_TARGET_UNVERIFIED{undeclared}), an
+ *   unprobed one only with `relay.allowUnprobed` (RELAY_TARGET_UNVERIFIED{unprobed});
+ * - a relay recovery that could not be written (RELAY_UNAVAILABLE{recovery_failed});
+ * - the data root (INV-36): a cross-vendor handoff (any source's vendor key differs from the target's) into a workspace the
+ *   data directory or relay key is not out of reach of (RELAY_UNAVAILABLE{data_root_in_workspace});
+ * - the user's choice (G068): a pending packet no check before dispatch can settle and none may be resent automatically
+ *   (RELAY_CHOICE_REQUIRED{delivery_unconfirmed}), a suspect binding no check can settle (verify_required | marker_absent); a
+ *   Driver that checks at the open is let through and settled there (§9: only what admission can decide is a 409);
+ * - consent (§10.4, INV-33): a vendor key that changed since the epoch's first packet without this request's consent to the
+ *   new one (RELAY_CONSENT_REQUIRED{vendor_changed}); a cross-vendor handoff without a consent that stands
+ *   (RELAY_CONSENT_REQUIRED{missing});
+ * - the smallest packet (§6.2): the hard cap on the conservative window below MIN_PACKET (RELAY_INPUT_LIMIT{min_packet}).
+ * The user's ［确认已清空］ is answered first (admitClearConfirmed: INVALID_INPUT where it is not offered). Without `gates`,
+ * only G068's checks run.
+ */
+export function admitRelay(input: AdmitInput): void {
+  const carrying = relayAdmission(input);
+  if (carrying !== null) admitCarrying(input, carrying, input.gates);
+}
+export function admitCarrying(input: AdmitInput, carrying: Carrying, gates: AdmitGates | undefined): void {
+  const { state, target, choices } = input, { relay, declaration } = carrying, sync = relay.sync;
+  if (choices.clearConfirmed === true) admitClearConfirmed(relay, declaration);
+  if (!carrying.owes && !carrying.doubt && sync.kind !== "pending" && choices.attach !== "full") return;
+  // G072's gates apply to another Harness's history only (Carrying.crossHarness); the epoch's vendor key always.
+  const gated = gates !== undefined && carrying.crossHarness ? gates : undefined;
+  if (gated !== undefined) probeGate(declaration, gated.allowUnprobed, target);
   if (state.relayRecoveryFailed !== undefined) throw recoveryFailed();
+  const cross = gated !== undefined && crossVendor(gated.target.vendor, gated.sources);
+  if (gated !== undefined && cross && !gated.isolated) throw dataRootInWorkspace(target);
+  admitChoice(carrying, choices);
+  if (gates === undefined) return;
+  consentGate({ relay, vendor: gates.target.vendor, layer: gates.target.layer, cross, consent: gates.consent, target, predicted: null });
+  if (gated === undefined) return;
+  const window = resolveWindow({ relay, report: declaration.capabilities?.window ?? "none", stored: gates.window, vendor: gates.target.vendor, fixedPrefix: declaration.capabilities?.fixedPrefix ?? null, now: gates.now });
+  const channel = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(input.text, input.attachments) ?? [...input.text].length;
+  const modelKey = relay.vendorObserved?.modelKey ?? "";
+  if (!fitsMinPacket(hardCap(window, estimateTokens(input.text), channel, size), packetFamily(gates.target.vendor, modelKey))) throw inputLimit("min_packet", target);
+}
+/** G068's checks of the user's choice at admission (§9 "需要用户选择"), for an input that would carry relay content. */
+function admitChoice(carrying: Carrying, choices: RelayChoices): void {
+  const { relay, declaration } = carrying, sync = relay.sync;
+  // The user's ［新开原生会话］ starts a fresh binding: nothing of this one's state needs a choice.
+  if (choices.native === "new") return;
   // The user's "再附一次": `resend`, or `attach:"full"` on a pending packet (R9b), which sends it again too.
   const resend = choices.resend === true || choices.attach === "full";
   if (sync.kind === "pending") {
@@ -344,13 +496,133 @@ export function admitRelay(input: AdmitInput): void {
   }
   if (sync.kind === "suspect") {
     if (resend || choices.clearConfirmed === true && sync.cause === "clear_unconfirmed") return;
-    if (sync.cause === "legacy" || sync.cause === "marker_absent") { if (owes) throw choiceRequired(causeOf(sync.cause)); return; }
+    if (sync.cause === "legacy" || sync.cause === "marker_absent") { if (carrying.owes) throw choiceRequired(causeOf(sync.cause)); return; }
     if (!admitsWithoutChoice(relay, declaration.verify)) throw choiceRequired("verify_required");
     // What the open certainly makes of it is read like any binding (R9a): landing on a pending packet whose automatic resend
     // is spent (the table of unchecked suspicion sends a carried packet back with autoResends 1), the user chooses now.
     const landed = settledWithoutCheck(relay, declaration.verify);
     if (landed?.sync.kind === "pending" && pendingResend(landed.sync, declaration.lateDelivery) === "choice") throw choiceRequired("delivery_unconfirmed");
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// G072's gates: probes, vendors and consent, the data root, the window
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** RELAY_TARGET_UNVERIFIED (D11) in the user's words: "只发这条消息" is what is left. */
+export function targetUnverified(reason: "unprobed" | "undeclared", target: { readonly harnessId: string; readonly controlId: string }): RelayError {
+  const message = reason === "undeclared" ? "这个 Harness 还不支持接收交接内容，HarnessHub 不会把之前的对话交给它。可以只发这条消息（不附交接单）；这条消息没有发出，草稿已保留。"
+    : "这个 Harness 的交接方式还没有在它的最新正式版上验证过，HarnessHub 暂不把之前的对话交给它。可以只发这条消息（不附交接单）；这条消息没有发出，草稿已保留。";
+  return new RelayError({ code: "RELAY_TARGET_UNVERIFIED", reason }, message, { harnessId: target.harnessId, controlId: target.controlId });
+}
+/**
+ * The probe gate (D11): only a probed Driver takes another Harness's history; with `relay.allowUnprobed` (development and
+ * tests, set only in an isolated data root) an unprobed one does too, and so does a Driver that declares nothing, which is then
+ * read by the most conservative declaration (relayDeclaration(null): no check, lateDelivery, no success proof).
+ */
+export function probeGate(declaration: RelayDeclaration, allowUnprobed: boolean, target: { readonly harnessId: string; readonly controlId: string }): void {
+  if (declaration.probed || allowUnprobed) return;
+  throw targetUnverified(declaration.declared ? "unprobed" : "undeclared", target);
+}
+export function dataRootInWorkspace(target: { readonly harnessId: string; readonly controlId: string }): RelayError {
+  return new RelayError({ code: "RELAY_UNAVAILABLE", reason: "data_root_in_workspace" }, "HarnessHub 的数据目录或接力密钥在这个工作区里，目标 Harness 能直接读到它们；把数据目录移到工作区外（--data-dir）后再交接。同一厂商的接力与单个 Harness 的对话不受影响；也可以只发这条消息。",
+    { harnessId: target.harnessId, controlId: target.controlId });
+}
+export function inputLimit(reason: "min_packet" | "input_limit", target: { readonly harnessId: string; readonly controlId: string }): RelayError {
+  const message = reason === "min_packet" ? "这个 Harness 的上下文窗口放不下最小的交接单和这条消息。可以只发这条消息（不附交接单）；这条消息没有发出，草稿已保留。"
+    : "这条消息和交接单合起来超过了这个 Harness 的输入上限。可以只发这条消息（不附交接单），或把消息拆短；这条消息没有发出，草稿已保留。";
+  return new RelayError({ code: "RELAY_INPUT_LIMIT", reason }, message, { harnessId: target.harnessId, controlId: target.controlId });
+}
+/**
+ * The vendor key a Driver declares for what it observed (§10.4): `resolveVendor` of the observation, checked as a key;
+ * unknown:<harnessId> without a declaration or an observation, or when the declaration's answer is no key.
+ */
+export function vendorKeyOf(capabilities: RelayCapabilities | null | undefined, harnessId: string, observed: VendorObservation | null): VendorKey {
+  const unknown = ("unknown:" + harnessId) as VendorKey;
+  if (capabilities === null || capabilities === undefined || observed === null) return unknown;
+  try { return parseVendorKey(capabilities.resolveVendor(observed)); } catch { return unknown; }
+}
+/** Cross-vendor (§6.1, §10.1): any source's vendor key differs from the target's (several sources: any one differing). */
+export function crossVendor(target: VendorKey, sources: readonly VendorKey[]): boolean { return sources.some(source => source !== target); }
+/**
+ * The vendor keys of what would be carried (§6.1): for each fact, the Harness control it ran on (its relay, else its Run's
+ * selection) as that control's binding last saw its vendor (the latest binding of that control, archived ones included) and
+ * its Driver declares it (`declarationOf`); a managed Provider's Run, a Run the Session cannot place, and the history the
+ * Session started from (owed when `origin`) are unknown:<harnessId> — conservatively cross-vendor, so the data root and consent
+ * are asked rather than skipped.
+ */
+export function sourceVendors(state: SessionSnapshot, facts: readonly RelayFact[], origin: boolean, declarationOf: (selection: HarnessSelection) => RelayCapabilities | null | undefined): readonly VendorKey[] {
+  const keys = new Set<VendorKey>();
+  for (const fact of facts) {
+    const run = state.runs.find(row => row.id === fact.runId);
+    if (run?.selection.provider !== undefined) { keys.add(("unknown:" + (run?.selection.harnessId ?? "harness")) as VendorKey); continue; }
+    const harnessId = fact.executedOn?.harnessId ?? run?.selection.harnessId, controlId = fact.executedOn?.controlId ?? run?.selection.controlId;
+    if (harnessId === undefined || controlId === undefined) { keys.add("unknown:harness" as VendorKey); continue; }
+    const bound = (state.nativeBindings ?? []).filter(row => row.harnessId === harnessId && row.controlId === controlId).at(-1);
+    keys.add(vendorKeyOf(declarationOf({ harnessId, controlId }), harnessId, bound?.relay?.vendorObserved ?? null));
+  }
+  if (origin) keys.add(("unknown:" + (state.origin?.kind === "import" ? state.origin.harnessId : "origin")) as VendorKey);
+  return [...keys];
+}
+/** A request's own consent (`relay.consent`, §12.4): to one vendor key, acknowledged or goal only, for this Session or every one. */
+export interface RequestedConsent { readonly vendor: VendorKey; readonly decision: "acknowledged" | "goal_only"; readonly scope: "session" | "global" }
+/** What stands for a vendor key (§10.4): exempt (local, offline models), a consent (and the record it rests on), or none. */
+export type ConsentStanding =
+  | { readonly kind: "exempt" }
+  | { readonly kind: "given"; readonly decision: "acknowledged" | "goal_only"; readonly logSeq: number | null; readonly via: "request" | "session" | "global" | "preference" }
+  | { readonly kind: "missing"; readonly revoked: boolean };
+/** The vendor keys `relay.crossVendor:allow` never covers, and only a Session's own record does for unknown ones (§10.4, INV-33). */
+function guarded(vendor: VendorKey): boolean { return /^(?:unknown|gateway|router|provider):/u.test(vendor); }
+/**
+ * Whether a consent stands for `vendor` in this Session (§10.4, INV-33): `local` with "本机模型不出网" needs none; the request's
+ * own consent to it stands; else this Session's latest record decides (withdrawn: none), else — except for an unknown key and an
+ * endpoint a workspace file gave, which every Session asks anew — the latest global record, else `relay.crossVendor` (allow or
+ * goal_only), which never covers unknown:*, gateway:*, router:* or provider:*. A withdrawal is never overridden by a broader
+ * consent or the preference.
+ */
+export function consentStanding(vendor: VendorKey, layer: EndpointLayer | null, view: ConsentView): ConsentStanding {
+  if (vendor === "local" && view.localModelsOffline) return { kind: "exempt" };
+  if (view.request !== null && view.request.vendor === vendor) return { kind: "given", decision: view.request.decision, logSeq: null, via: "request" };
+  const latest = (scope: "session" | "global") => view.records.filter(record => record.vendor === vendor && (scope === "session" ? record.scope.kind === "session" && record.scope.sessionId === view.session : record.scope.kind === "global"))
+    .reduce<ConsentRecord | null>((last, record) => last === null || record.logSeq > last.logSeq ? record : last, null);
+  const own = latest("session");
+  if (own !== null) return own.decision === "revoked" ? { kind: "missing", revoked: true } : { kind: "given", decision: own.decision, logSeq: own.logSeq, via: "session" };
+  if (vendor.startsWith("unknown:") || layer === "workspace_file") return { kind: "missing", revoked: false };
+  const global = latest("global");
+  if (global !== null) return global.decision === "revoked" ? { kind: "missing", revoked: true } : { kind: "given", decision: global.decision, logSeq: global.logSeq, via: "global" };
+  if (!guarded(vendor) && view.crossVendor !== "ask") return { kind: "given", decision: view.crossVendor === "allow" ? "acknowledged" : "goal_only", logSeq: null, via: "preference" };
+  return { kind: "missing", revoked: false };
+}
+export function consentRequired(reason: "missing" | "vendor_changed" | "revoked", vendor: VendorKey, target: { readonly harnessId: string; readonly controlId: string }, previous?: VendorKey, goalOnly = false): RelayError {
+  const message = reason === "vendor_changed" ? "这个 Harness 现在用的模型服务（" + vendor + "）和本段对话之前交接时（" + (previous ?? "另一家") + "）不同。可以同意交给新的服务、新开原生会话，或取消；这条消息没有发出，草稿已保留。"
+    : reason === "revoked" ? "你已经撤回了把对话交给 " + vendor + " 的同意，这条消息没有发出，草稿已保留。可以重新同意，或只发这条消息（不附交接单）。"
+    : goalOnly ? "你只同意了把目标交给 " + vendor + "（只交目标），HarnessHub 现在还只能生成标准档的交接单。可以同意交出标准档，或只发这条消息（不附交接单）；这条消息没有发出，草稿已保留。"
+    : "这条消息会附上之前的对话记录交给 " + vendor + "，需要你先同意。可以同意后发送，或只发这条消息（不附交接单）；这条消息没有发出，草稿已保留。";
+  return new RelayError({ code: "RELAY_CONSENT_REQUIRED", reason }, message, { vendor, ...(previous === undefined ? {} : { previousVendor: previous }), harnessId: target.harnessId, controlId: target.controlId });
+}
+/**
+ * The consent checks (§10.4) for a Turn that would carry relay content: the vendor key changed since the epoch's first packet
+ * (`consentKey`) without this request's consent to the new one → vendor_changed, whether cross-vendor or not (the native
+ * history the new vendor reads holds the earlier packets); a cross-vendor handoff without a standing consent → missing (or
+ * vendor_changed when `predicted`, what admission read, differs from this key: the open saw another vendor than admission
+ * could tell). A goal-only consent stands for no packet yet: the MVP renders the standard tier only (G070), so it is asked
+ * again (missing). Returns the consent that stands (null when none is needed).
+ */
+export function consentGate(input: { readonly relay: BindingRelayState; readonly vendor: VendorKey; readonly layer: EndpointLayer | null; readonly cross: boolean; readonly consent: ConsentView;
+    readonly target: { readonly harnessId: string; readonly controlId: string }; readonly predicted: VendorKey | null }): ConsentStanding | null {
+  const { relay, vendor, consent, target } = input;
+  if (relay.consentKey !== null && relay.consentKey !== vendor && consent.request?.vendor !== vendor) throw consentRequired("vendor_changed", vendor, target, relay.consentKey);
+  if (!input.cross) return null;
+  const standing = consentStanding(vendor, input.layer, consent);
+  if (standing.kind === "missing") throw consentRequired(input.predicted !== null && input.predicted !== vendor ? "vendor_changed" : standing.revoked ? "revoked" : "missing", vendor, target, input.predicted ?? undefined);
+  if (standing.kind === "given" && standing.decision === "goal_only") throw consentRequired("missing", vendor, target, undefined, true);
+  return standing;
+}
+/** The data classes a relay packet may carry (§10.1), recorded with a consent the request gives. */
+export const CONSENT_CATEGORIES = ["user_text", "hub_text", "harness_text", "exec_output", "workspace_meta", "credential_path"] as const;
+/** The command identity of the consent a send carries in the installation's log: unique across Sessions, the same for a replay. */
+export function consentCommandOf(session: SessionId, command: string): string {
+  return "send-" + createHash("sha256").update(session + "\0" + command, "utf8").digest("hex").slice(0, 40);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -483,7 +755,13 @@ export type TurnDecision =
    * and there was none to attach (A9, R10c), which `run.context_prepared` records. `retreat`: that request was the complete
    * packet on a suspect binding, whose retreated prior owes nothing; the binding stands on that prior (R5).
    */
-  | { readonly kind: "plain"; readonly foreign: boolean; readonly nothingToAttach: boolean; readonly retreat?: { readonly firstFromSeq: number | null } }
+  | { readonly kind: "plain"; readonly foreign: boolean; readonly nothingToAttach: boolean; readonly retreat?: { readonly firstFromSeq: number | null };
+      /**
+       * A7 point 4: the binding waited for a packet and nothing is owed any more (the facts it carried are no longer owed, as
+       * once the user excludes them): it goes back to the packet's prior (`owed_nothing`), its row stays as it is, and the user
+       * is not asked; the input goes as typed.
+       */
+      readonly owedNothing?: true }
   /** n: the user chose to send it alone; what is owed stays owed. */
   | { readonly kind: "alone" }
   /** a: a packet of `need`, on `relay` (the binding after the check, a confirmed clear and a retreat). */
@@ -538,7 +816,11 @@ export function decideTurn(input: DecideInput): TurnDecision {
   const requested = choices.attach === "full" || choices.resend === true;
   if (sync.kind === "pending") {
     const attachOverride = sync.attachOverride || choices.attach === "full", need = needOn(relay, attachOverride);
-    if (!nonEmpty(need)) throw choiceRequired("delivery_unconfirmed");
+    // A7 point 4 (G072): nothing is owed any more, so nothing is sent again and nobody is asked; the binding goes back to the prior.
+    if (!nonEmpty(need)) {
+      refusedBy(step(relay, { kind: "owed_nothing" }));
+      return { kind: "plain", foreign: foreign(), nothingToAttach: requested, owedNothing: true };
+    }
     if (input.recoveryFailed) throw recoveryFailed();
     // On a pending packet `attach:"full"` is the user's resend too (R9b).
     const by = pendingResend(sync, declaration.lateDelivery) === "auto" ? "auto" as const : requested ? "user" as const : null;
@@ -598,11 +880,15 @@ export function renderView(state: SessionSnapshot, harnessId: string, controlId:
 /** The relay policy the v13 manifest names: the contract's `relay/<n>`; the MVP's own version stays in `run.context_prepared`. */
 export const MANIFEST_POLICY = "relay/1" as const;
 /**
- * A packet manifest (§4 RelayPacket) for a packet G070's renderer made (its record and text): only what the record and
- * the facts say; counts the MVP does not keep are 0 or empty. The Store checks it with the text in the same transaction.
+ * A packet manifest (§4 RelayPacket) for a packet G070's renderer made (its record and text): only what the record, the facts
+ * and the budget it was folded to say (G072 fills the target's vendor key, the estimator family, the window's source, the fixed
+ * prefix and the caps from windows.ts); what the MVP does not keep stays conservative — no sections, no omission ledger, no
+ * re-anchor section, and no token counts of the user's or the models' text (0) — and a reader never reads "complete" or "no
+ * omissions" from them (A13). The Store checks it with the text in the same transaction.
  */
 export function packetManifest(input: { readonly state: SessionSnapshot; readonly run: PublicRun; readonly relay: BindingRelayState; readonly record: RelayRecord; readonly body: string;
-    readonly range: SourceRange; readonly runs: readonly RunId[]; readonly attachOverride: boolean; readonly supersedes: RelayPacketId | null; readonly firstLineOmitted: boolean }): RelayPacket {
+    readonly range: SourceRange; readonly runs: readonly RunId[]; readonly attachOverride: boolean; readonly supersedes: RelayPacketId | null; readonly firstLineOmitted: boolean;
+    readonly vendor?: VendorKey; readonly window?: ResolvedWindow; readonly clamped?: readonly ("window" | "input_limit")[] }): RelayPacket {
   const { state, run, record } = input, harnessId = run.selection.harnessId;
   const indexes = input.runs.map(id => state.runs.findIndex(row => row.id === id)).filter(index => index >= 0);
   const sources = new Map<string, { harnessId: string; model: string | null; from: number; through: number }>();
@@ -613,15 +899,18 @@ export function packetManifest(input: { readonly state: SessionSnapshot; readonl
   const names = [...sources.values()].slice(0, 64).map(item => ({ harnessId: item.harnessId, model: item.model === null ? null : item.model.slice(0, 1024), runs: [item.from, item.through] as const }));
   const kind = names.length > 1 ? "multiple" as const : names.length === 1 && names[0]!.harnessId === harnessId ? "same_program" as const : "other" as const;
   const sha = (text: string) => createHash("sha256").update(text, "utf8").digest("hex") as Fingerprint;
+  const vendor = input.vendor ?? ("unknown:" + harnessId) as VendorKey, window = input.window;
+  const userCap = Math.min(2500, Math.floor(0.5 * record.budget.cap)), untrustedCap = Math.floor(0.6 * record.budget.cap);
   return {
     id: relayPacketId(record.packetId), kind: record.kind, tier: "standard", complete: record.complete, reanchor: false,
-    target: { harnessId, controlId: run.selection.controlId, model: run.selection.nativeModel ?? null, vendor: ("unknown:" + harnessId) as RelayPacket["target"]["vendor"], nativeEpoch: input.relay.nativeEpoch },
+    target: { harnessId, controlId: run.selection.controlId, model: run.selection.nativeModel ?? null, vendor, nativeEpoch: input.relay.nativeEpoch },
     source: { kind, names }, range: input.range, basePacketId: null, supersedes: input.supersedes, policyVersion: MANIFEST_POLICY, language: record.language,
     factsFingerprint: sha(JSON.stringify({ runs: input.runs, range: input.range })), workspaceObservationSeq: null,
     inputs: { attachOverride: input.attachOverride, digestBehind: [], detailsMissing: [], noteIncluded: false, firstLineOmitted: input.firstLineOmitted ? "slash" : null },
     redaction: { profile: "egress", count: record.redactions, byClass: {}, overridden: 0, unscanned: 0 },
-    body: { sha256: sha(input.body), bytes: Buffer.byteLength(input.body, "utf8"), estTokens: record.tokens, estimator: "est/2", family: "unknown", untrustedTokens: 0, userTokens: 0 },
-    budget: { capTokens: record.budget.cap, userCap: 0, untrustedCap: 0, window: record.budget.window, fixedPrefix: 0, windowSource: record.budget.windowSource === "observed" ? "session_report" : "assumed_cloud", clampedBy: [] },
+    body: { sha256: sha(input.body), bytes: Buffer.byteLength(input.body, "utf8"), estTokens: record.tokens, estimator: "est/2", family: packetFamily(vendor, input.relay.vendorObserved?.modelKey ?? ""), untrustedTokens: 0, userTokens: 0 },
+    budget: { capTokens: record.budget.cap, userCap, untrustedCap, window: record.budget.window, fixedPrefix: window?.fixedPrefix ?? 0,
+      windowSource: window?.source ?? (record.budget.windowSource === "observed" ? "session_report" : "assumed_cloud"), clampedBy: [...new Set(input.clamped ?? [])] },
     sections: [], fold: indexes.slice(0, RELAY_MAX_RUNS).map(runIndex => ({ kind: "unit" as const, runIndex, grade: record.complete ? "verbatim" as const : "compact" as const, why: "tail" as const })),
     omissions: [], userEdits: [],
   };
@@ -635,16 +924,22 @@ export function runRelayOf(packet: RelayPacket | null, continuity: ContinuityLev
   return { packetId: packet?.id ?? null, kind: packet === null ? null : packet.kind, continuity, executedOn };
 }
 /**
- * The keyed digests a delivery row needs (the current input's, the redaction set's tag) until the session subkeys of
- * G070's relay-keys exist: an HMAC under a key made for this owner and never kept, so the rows hold nothing anyone can
- * check a guessed input against (INV-29); they identify nothing across owners either. Their rows name the reserved key
- * identity EPHEMERAL_KEY_ID (A17), which no reader can check them with.
+ * The keyed digests of a Runtime composed without the installation's relay key (SessionRuntimeOptions.relayKeys; the Gateway's
+ * own entries always give one): HMACs under a key made for this owner and never kept, with a subkey per Session as the
+ * installation key derives them, so the rows hold nothing anyone can check a guessed input against (INV-29); they identify
+ * nothing across owners either. Their rows name the reserved key identity EPHEMERAL_KEY_ID (A17): no reader can check them.
  */
-export class EphemeralKeys {
-  private readonly key = randomBytes(32);
+export class UnkeptRelayKeys implements RelayKeyPort {
+  readonly #key = randomBytes(32);
   readonly keyId = EPHEMERAL_KEY_ID;
-  input(session: SessionId, text: string): DeliveryRecord["inputHmac"] { return hmacDigest(createHmac("sha256", this.key).update("input\0" + session + "\0" + text, "utf8").digest("hex")); }
-  setTag(session: SessionId): DeliveryRecord["redaction"]["setHmac"] { return redactionTag(createHmac("sha256", this.key).update("secret-set\0" + session, "utf8").digest("hex").slice(0, 8)); }
+  private subkey(session: SessionId): Buffer { return createHmac("sha256", this.#key).update("relay-tag/1\0" + session, "utf8").digest(); }
+  inputHmac(session: SessionId, text: string): HmacDigest { return hmacDigest(createHmac("sha256", this.subkey(session)).update("input\0" + text, "utf8").digest("hex")); }
+  setTag(session: SessionId, secrets: readonly string[]): RedactionTag {
+    const hmac = createHmac("sha256", this.subkey(session)).update("secret-set\0", "utf8");
+    for (const value of [...new Set(secrets)].sort()) hmac.update(value + "\0", "utf8");
+    return redactionTag(hmac.digest("hex").slice(0, 8));
+  }
+  requestFingerprint(session: SessionId, canonical: string): HmacDigest { return hmacDigest(createHmac("sha256", this.subkey(session)).update("request\0" + canonical, "utf8").digest("hex")); }
 }
 /**
  * The delivery row inserted with a carrying Turn (§4, §6.1): in flight, at the position the Driver read before dispatch,
@@ -652,10 +947,12 @@ export class EphemeralKeys {
  * says it never compacts and a probe proved it (then the constant cursor, so the clear check's rule 4 still applies).
  */
 export function deliveryRow(input: { readonly change: Extract<DeliveryChange, { kind: "insert" }>; readonly position: DeliveryPosition; readonly relay: BindingRelayState; readonly declaration: RelayDeclaration;
-    readonly inputHmac: DeliveryRecord["inputHmac"]; readonly setTag: DeliveryRecord["redaction"]["setHmac"]; readonly rulesVersion: string; readonly keyId: string }): DeliveryRecord {
+    readonly inputHmac: DeliveryRecord["inputHmac"]; readonly setTag: DeliveryRecord["redaction"]["setHmac"]; readonly rulesVersion: string; readonly keyId: string;
+    /** The installation log's seq of the consent the dispatch rests on (§10.4); null when none was needed (same vendor, local exempt) or it is the request's, recorded later. */
+    readonly consentLogSeq?: number | null }): DeliveryRecord {
   const { declaration } = input;
   const cursor = declaration.compactionEvidence !== "none" ? input.relay.compactionSeen : declaration.probed ? { count: 0, digest: null } : null;
-  return { runId: input.change.runId, packetId: input.change.packetId, channel: declaration.channel, position: input.position, outcome: { kind: "in_flight" }, consentLogSeq: null, inputHmac: input.inputHmac,
+  return { runId: input.change.runId, packetId: input.change.packetId, channel: declaration.channel, position: input.position, outcome: { kind: "in_flight" }, consentLogSeq: input.consentLogSeq ?? null, inputHmac: input.inputHmac,
     redaction: { rulesVersion: input.rulesVersion.slice(0, 64), keyId: input.keyId, setHmac: input.setTag }, compactionAtDelivery: cursor, resendOf: input.change.resendOf, attachOverride: input.change.attachOverride, verifyMs: null, realized: null };
 }
 

@@ -22,6 +22,28 @@ const peer = fileURLToPath(new URL("../../../tests/fixtures/session-peer.mjs", i
 function row(value: unknown): Record<string, unknown> {
   assert.ok(value !== null && typeof value === "object" && !Array.isArray(value)); return value as Record<string, unknown>;
 }
+/**
+ * G072 (ADR-055 D11, §10.4): another Harness's history now meets the probe gate and the vendor's consent at admission. These
+ * fixtures' Drivers are unprobed or declare nothing and their vendors cannot be told (unknown:<harnessId>, and Codex's own
+ * unknown:codex for what its Driver observes), so the composition
+ * lets them through as only an isolated test data root does (`relay.allowUnprobed`), and each conversation it makes (created or
+ * branched) consents to their vendors in its own scope, as a user's request would (`relay.consent`, which HTTP takes with G073).
+ */
+function relayOpen<T extends ReturnType<typeof application>>(app: T, harnessIds: readonly string[]): T {
+  app.store.setPref("relay.allowUnprobed", "true");
+  let granted = 0;
+  const grant = (id: string) => {
+    for (const vendor of [...harnessIds.map(harnessId => "unknown:" + harnessId), "unknown:origin", "unknown:codex", "openai"])
+      app.store.appendRelayLog({ commandId: "fixture-grant-" + ++granted + "-" + Date.now(), vendor: vendor as never, scope: { kind: "session", sessionId: id as never },
+        decision: "acknowledged", categories: ["user_text"], policyVersion: "relay/1", authKind: null, decidedAt: 1 });
+  };
+  const runtime = app.runtime as { create: typeof app.runtime.create; fork: typeof app.runtime.fork };
+  const create = app.runtime.create.bind(app.runtime), fork = app.runtime.fork.bind(app.runtime);
+  runtime.create = async (...args) => { const created = await create(...args); grant(created.id); return created; };
+  runtime.fork = (...args) => { const branched = fork(...args); grant(branched.id); return branched; };
+  for (const session of app.store.list?.() ?? []) grant(session.id);
+  return app;
+}
 interface Fixture { root: string; data: string; workspace: string; manifest: string; trace: string; assets: string; gateway: WebServer; origin: string; token: string; cookie: string; csrf: string; expectedShutdownError: boolean }
 async function fixture(t: test.TestContext, scenario = "basic"): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), "harness-web-")), workspace = join(root, "workspace"), assets = join(root, "assets"), manifest = join(root, "catalog.json"), trace = join(root, "trace.ndjson");
@@ -36,7 +58,8 @@ async function fixture(t: test.TestContext, scenario = "basic"): Promise<Fixture
       requiredExecutables: [], package: null, distribution: null, source }] }));
   await writeFile(manifest, JSON.stringify({ version: 2, definitions, overrides: Object.fromEntries(definitions.map(item => [item.controls[0]!.id, { executable: process.execPath }])) }));
   const configuration = await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true });
-  const data = join(root, "data"), gateway = await startWebServer({ installations: "any", root: data, configuration, port: 0, assetsDirectory: assets, workspaceLockRoot: join(root, "locks") });
+  const data = join(root, "data"), gateway = await startWebServer({ installations: "any", root: data, configuration, port: 0, assetsDirectory: assets, workspaceLockRoot: join(root, "locks"),
+    application: (dataRoot, publish) => relayOpen(application(dataRoot, publish, { installations: "any", workspaceLockRoot: join(root, "locks") }), ["web-a", "web-b", "web-bad"]) });
   const parsed = new URL(gateway.url), f = { root, workspace: configuration.workspace, assets, manifest, trace, data, gateway, origin: parsed.origin, token: new URLSearchParams(parsed.hash.slice(1)).get("token")!, cookie: "", csrf: "", expectedShutdownError: false };
   t.after(async () => {
     if (f.expectedShutdownError) await assert.rejects(f.gateway.close(), (error: unknown) => row(error).code === "SESSION_BLOCKED");
@@ -207,7 +230,8 @@ test("closed Session retains history and denies new messages; server reopen pres
   assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "second", commandId: "second" })).status, 409);
   await f.gateway.close();
   const configuration = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true });
-  const reopened = await startWebServer({ installations: "any", root: f.data, configuration, port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks") }); f.gateway = reopened;
+  const reopened = await startWebServer({ installations: "any", root: f.data, configuration, port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks"),
+    application: (dataRoot, publish) => relayOpen(application(dataRoot, publish, { installations: "any", workspaceLockRoot: join(f.root, "locks") }), ["web-a", "web-b", "web-bad"]) }); f.gateway = reopened;
   const parsed = new URL(reopened.url); const next = { ...f, gateway: reopened, origin: parsed.origin, token: new URLSearchParams(parsed.hash.slice(1)).get("token")!, cookie: "", csrf: "" }; await auth(next);
   const history = await state(next, id); assert.equal(history.status, "closed"); assert.equal(history.runs.length, 1); assert.equal(history.messages.at(-1)?.text, "a:first");
 });
@@ -260,7 +284,8 @@ test("closing the web owner waits for the running Harness cleanup and releases t
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "first" }); await waitFor(f, id, value => value.runs[0]?.status === "running");
   await f.gateway.close(); await f.gateway.close();
   for (const child of (await trace(f)).filter(item => item.kind === "spawn")) assert.throws(() => process.kill(Number(child.pid), 0), (error: unknown) => row(error).code === "ESRCH");
-  const reopened = await startWebServer({ installations: "any", root: f.data, configuration: await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks") });
+  const reopened = await startWebServer({ installations: "any", root: f.data, configuration: await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks"),
+    application: (dataRoot, publish) => relayOpen(application(dataRoot, publish, { installations: "any", workspaceLockRoot: join(f.root, "locks") }), ["web-a", "web-b", "web-bad"]) });
   f.gateway = reopened;
 });
 
@@ -273,7 +298,8 @@ test("authenticated recovery restores a legacy blocked conversation without rewr
   const error={code:"GATEWAY_AUTH_REQUIRED",message:"synthetic legacy startup failure"};
   store.transact(snapshot.id,snapshot.version,current=>({next:{...current,status:"blocked",switches:[{id:legacyId,commandId:broken,requested:{harnessId:"web-bad"},requestedSeq:current.lastSeq+1,target:{harnessId:"web-bad",controlId:"web-bad-control"},status:"failed",throughSeq:current.lastSeq+3,sourceRunIds:current.runs.map(run=>run.id),error}],commands:[...current.commands,{id:broken,kind:"switch",fingerprint:"0".repeat(64),resultId:legacyId}]},events:[{type:"switch.requested",data:{switchId:legacyId}},{type:"switch.failed",data:{switchId:legacyId,error,cleanup:{closed:true,exitCode:0,signal:null,protocolFailure:null}}},{type:"session.blocked",data:{switchId:legacyId}}]}));
   const legacy=store.get(snapshot.id); const failed={runs:legacy.runs,messages:legacy.messages,switches:legacy.switches}; store.close();
-  f.gateway = await startWebServer({ installations: "any", root: f.data, configuration: await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks") });
+  f.gateway = await startWebServer({ installations: "any", root: f.data, configuration: await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks"),
+    application: (dataRoot, publish) => relayOpen(application(dataRoot, publish, { installations: "any", workspaceLockRoot: join(f.root, "locks") }), ["web-a", "web-b", "web-bad"]) });
   const launch = new URL(f.gateway.url); f.origin = launch.origin; f.token = new URLSearchParams(launch.hash.slice(1)).get("token")!; await auth(f);
   const count = (await trace(f)).filter(item => item.kind === "prompt").length;
   const input = { selection: { harnessId: "web-b" }, commandId: "resume" };
@@ -389,7 +415,8 @@ test("a binding that opens a new native session (opensNew) offers no continue co
     db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify(stored), id);
   } finally { db.close(); }
   const configuration = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true });
-  f.gateway = await startWebServer({ installations: "any", root: f.data, configuration, port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks") });
+  f.gateway = await startWebServer({ installations: "any", root: f.data, configuration, port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks"),
+    application: (dataRoot, publish) => relayOpen(application(dataRoot, publish, { installations: "any", workspaceLockRoot: join(f.root, "locks") }), ["web-a", "web-b", "web-bad"]) });
   const parsed = new URL(f.gateway.url); f.origin = parsed.origin; f.token = new URLSearchParams(parsed.hash.slice(1)).get("token")!;
   await auth(f);
   assert.deepEqual((await call(f, `/api/v1/sessions/${id}/native-resume`)).data, { resume: null }, "no session to continue yet");

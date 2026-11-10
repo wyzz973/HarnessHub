@@ -432,7 +432,7 @@ test("G069 a declared input bound counts Hub's file pointers too: words and poin
   const peer = await peerRoot(t), attachment = await fileIn(peer);
   class Pointing extends AcpControl { protected override get fileBlocks(): boolean { return false; } }
   const turn = relayTurn(ID_A, WORDS, false), size = [...turn.relay.body + "\n\n" + WORDS].length;
-  const declaration: RelayCapabilities = { ...dshRelayCapabilities, placement: { parts: "multiple", maxInput: { unit: "chars", limit: size + 10 }, pointersAfterUser: true } };
+  const declaration: RelayCapabilities = { ...dshRelayCapabilities, placement: { ...dshRelayCapabilities.placement, maxInput: { unit: "chars", limit: size + 10 } } };
   const launch: ControlLaunch = { protocol: "acp-v1", executable: process.execPath, args: [join(process.cwd(), "tests/fixtures/relay-control-peer.mjs")], env: peer.env };
   const control = new Pointing(launch, options(peer), declaration); t.after(() => control.close().then(() => undefined));
   await control.initialize(); const id = await control.open(peer.workspace);

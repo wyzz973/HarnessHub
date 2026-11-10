@@ -6,7 +6,10 @@ import { constants, existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir, totalmem } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { createNativeControl } from "../../adapters/control/factory.js";
+import { createNativeControl, relayCapabilities as driverRelayCapabilities } from "../../adapters/control/factory.js";
+import { loadBuiltinCatalog } from "../../adapters/catalog.js";
+import { catalogTarget } from "../catalog/platform.js";
+import type { RelayCapabilities } from "../../contracts/relay.js";
 import { NATIVE_FRAME_BYTES } from "../control/json-rpc-process.js";
 import { chooseControl } from "../../contexts/catalog/application/select-control.js";
 import { inventory } from "../catalog/inventory-composition.js";
@@ -157,8 +160,49 @@ async function privateHome(root: string, configuration: SessionConfiguration): P
     await mkdir(join(home, child), { mode: 0o700 });
   return home;
 }
+/** The built-in catalog's control protocols by Harness (and alias) and control, read once (it is static, ADR-033). */
+let builtinProtocols: ReadonlyMap<string, ControlLaunch["protocol"]> | null = null;
+function builtinProtocol(harnessId: string, controlId: string): ControlLaunch["protocol"] | undefined {
+  if (builtinProtocols === null) {
+    const table = new Map<string, ControlLaunch["protocol"]>();
+    try {
+      for (const definition of loadBuiltinCatalog(catalogTarget()))
+        for (const control of definition.controls)
+          if (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc")
+            for (const id of [definition.id, ...definition.aliases]) table.set(id + "\0" + control.id, control.protocol);
+    } catch { /* A catalog that cannot be read places no control; admission then reads no declaration (the most conservative). */ }
+    builtinProtocols = table;
+  }
+  return builtinProtocols.get(harnessId + "\0" + controlId);
+}
 /** Fresh per-Turn control with a real workspace lease; this is public-context rehydration, not native resume. */
 export class DirectorySessionBindingFactory implements SessionBindingFactory {
+  /**
+   * The protocol of each control this factory resolved (validate, prepare, a probe), by Harness and control: what places a
+   * control a Session's manifest declares, which the built-in catalog does not know (G072). In memory only; a new owner learns
+   * them again at the first resolution.
+   */
+  private readonly protocols = new Map<string, ControlLaunch["protocol"]>();
+  private remember(observed: Observation): void {
+    const protocol = observed.selected.protocol;
+    if (protocol === "acp-v1" || protocol === "codex-app-server" || protocol === "pi-rpc") {
+      if (this.protocols.size >= 1024 && !this.protocols.has(observed.harnessId + "\0" + observed.selected.id)) this.protocols.delete(this.protocols.keys().next().value!);
+      this.protocols.set(observed.harnessId + "\0" + observed.selected.id, protocol);
+    }
+  }
+  /**
+   * The static relay declaration of the Driver that serves `selection` (ADR-055 §3.2, F10; G072 step one, the approval agent's
+   * A8): the Driver createNativeControl picks for its Harness and the control's protocol — the protocol this factory resolved
+   * for the control, else the built-in catalog's — read without starting anything, building a control or reading a file. Null
+   * when that Driver declares none, and when the control's protocol cannot be told (a manifest's control not resolved by this
+   * owner yet): the relay then reads the most conservative declaration, which takes no relay content (RELAY_TARGET_UNVERIFIED
+   * {undeclared}), never one that would let more through. A managed Provider's selection carries no native relay.
+   */
+  relayCapabilities(selection: HarnessSelection): RelayCapabilities | null {
+    if (selection.provider !== undefined) return null;
+    const protocol = this.protocols.get(selection.harnessId + "\0" + selection.controlId) ?? builtinProtocol(selection.harnessId, selection.controlId);
+    return protocol === undefined ? null : driverRelayCapabilities(selection.harnessId, protocol);
+  }
   private readonly budgets: HostBudgets;
   private readonly tmpdirs: HostTmpdirs | null;
   /**
@@ -182,8 +226,8 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
     this.assertOwner();
     const root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-validation-")));
     try {
-      const { harnessId, selected } = await observe(request, configuration, root, this.installations, this.management, this.nativeEnvironment);
-      this.assertOwner();
+      const observedNow = await observe(request, configuration, root, this.installations, this.management, this.nativeEnvironment), { harnessId, selected } = observedNow;
+      this.assertOwner(); this.remember(observedNow);
       if (request.provider !== undefined && request.provider !== null) {
         if (!this.providers) throw new SessionError("PROVIDER_UNAVAILABLE", "Provider management is unavailable");
         if (configuration.configHome !== null) throw new SessionError("INCOMPATIBLE_CONFIGURATION", "managed Provider selection requires a private generated configuration home");
@@ -204,6 +248,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       usage = this.nativeLocks?.read(selection.harnessId);
       root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-binding-")));
       const observed = await observe(selection, configuration, root, this.installations, this.management, this.nativeEnvironment);
+      this.remember(observed);
       if (observed.harnessId !== selection.harnessId || observed.selected.id !== selection.controlId || observed.selected.command === null)
         throw new SessionError("HARNESS_UNAVAILABLE", "the admitted control is no longer available");
       const home = selection.provider === undefined ? configuration.configHome : await privateHome(root, configuration);
@@ -297,6 +342,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
     this.assertOwner(); const root = await realpath(await mkdtemp(join(tmpdir(), "harness-catalog-identity-")));
     try {
       const observed = await observe(selection, configuration, root, this.installations, this.management, this.nativeEnvironment), command = observed.selected.command;
+      this.remember(observed);
       if (!command) throw new SessionError("HARNESS_UNAVAILABLE", "native control unavailable");
       const env = nativeValues(this.nativeEnvironment, configuration.configHome), home = env.HOME ?? this.nativeEnvironment.home;
       const codex = env.CODEX_HOME ?? join(home,".codex"), claude=env.CLAUDE_CONFIG_DIR ?? join(home,".claude"), pi=env.PI_CODING_AGENT_DIR ?? join(home,".pi","agent"), gemini=join(env.GEMINI_CLI_HOME ?? home,".gemini"), opencode=env.OPENCODE_CONFIG_DIR ?? join(env.XDG_CONFIG_HOME ?? join(home,".config"),"opencode");
@@ -352,6 +398,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       if (signal.aborted) throw new SessionError("CANCELLED", "model discovery was cancelled");
       usage = this.nativeLocks?.read(request.harnessId);
       const observed = await observe(request, configuration, root, this.installations, this.management, this.nativeEnvironment);
+      this.remember(observed);
       if (observed.selected.command === null) throw new SessionError("HARNESS_UNAVAILABLE", "native control is unavailable");
       const env = { ...await referencedNativeValues(this.nativeEnvironment, configuration.configHome, observed.harnessId, configuration.workspace), ...nativeDescriptorValues(this.nativeEnvironment, configuration.configHome, observed.selected.command.env),
         PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath,

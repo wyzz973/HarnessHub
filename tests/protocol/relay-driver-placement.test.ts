@@ -139,7 +139,7 @@ test("G069-C01 a placement over the declared input bound is never sent: Codex in
   // The size is the declaration's unit: code points, not UTF-16 units; bytes in UTF-8.
   assert.equal(placedSize(["a😀", "中"], "chars"), 3);
   assert.equal(placedSize(["a😀", "中"], "bytes"), 8);
-  const limited = { parts: "single" as const, maxInput: { unit: "chars" as const, limit: 10 }, pointersAfterUser: false };
+  const limited = { parts: "single" as const, maxInput: { unit: "chars" as const, limit: 10 }, pointersAfterUser: false, measure: () => 0 };
   assert.equal(exceedsInput(["0123456789"], limited), false, "at the bound");
   assert.equal(exceedsInput(["0123456789", "x"], limited), true, "one over");
   assert.equal(exceedsInput(["012345678"], limited, 1), false);

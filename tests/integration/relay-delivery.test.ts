@@ -10,11 +10,13 @@ import { test, type TestContext } from "node:test";
 import { listedCommand, nativeConversationId, singleText, type BackendResult, type CleanupEvidence, type ControlEvent, type HarnessControl, type NativeCommand, type TurnText, type VerifyRequest } from "../../src/contracts/control.js";
 import { contentId, type ContentPort } from "../../src/contracts/content.js";
 import { dshRelayCapabilities } from "../../src/adapters/control/acp.js";
+import { sharedClassify } from "../../src/adapters/control/relay-classify.js";
+import { measureBy } from "../../src/adapters/control/relay-turn.js";
 import { SessionRuntime, type RelayChoice } from "../../src/contexts/session/application/runtime.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 import {
   RelayError, markOf, parseRelayPacket, relayPacketId,
-  type BindingRelayState, type DeliveredMark, type DeliveryPosition, type DeliveryRecord, type Fingerprint, type MarkerResult, type RelayCapabilities, type RelayDeliveryWrite, type RelayPacket, type RelayPacketId, type RelayRows, type SourceRange, type VerifyResult,
+  type BindingRelayState, type DeliveredMark, type DeliveryPosition, type DeliveryRecord, type Fingerprint, type MarkerResult, type RelayCapabilities, type RelayDeliveryWrite, type RelayPacket, type RelayPacketId, type RelayRows, type SourceRange, type VendorKey, type VerifyResult,
 } from "../../src/contracts/relay.js";
 import { SessionError, commandId, messageId, runId, sessionId, type HarnessSelection, type NativeSessionBinding, type PreparedSessionBinding, type PublicRun, type RunId, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type SessionRuntimeOptions, type SessionSnapshot } from "../../src/contracts/session.js";
 import {
@@ -546,8 +548,11 @@ test("G068-C09 (domain part) D6: an unknown Turn continued in its native session
 // Hub concludes is read back from the Store; what the native session holds is read from the model.
 
 /** The fakes' relay declaration: the generic ACP Driver's, with one text per prompt and the shared reading of slash words. */
-const BASE_RELAY: RelayCapabilities = { ...dshRelayCapabilities, placement: { ...dshRelayCapabilities.placement, parts: "single" },
-  commands: { ...dshRelayCapabilities.commands, unlistedSlash: "executed", classify: text => listedCommand(text, null) } };
+// The declaration's reading reads the catalog it is given (the shared reading over relay entries), as a Driver's must: since
+// G072 the Runtime reads an input by the declaration (C7), so a reading that ignored its catalog would read every command as
+// a possible one.
+const BASE_RELAY: RelayCapabilities = { ...dshRelayCapabilities, placement: { ...dshRelayCapabilities.placement, parts: "single", measure: measureBy("single", "chars", ["file"]) },
+  commands: { ...dshRelayCapabilities.commands, unlistedSlash: "executed", classify: sharedClassify } };
 function declared(overrides: { readonly verify?: RelayCapabilities["delivery"]["verify"]; readonly live?: RelayCapabilities["delivery"]["live"]; readonly lateDelivery?: boolean;
     readonly successProvesRecorded?: boolean; readonly execution?: RelayCapabilities["execution"]; readonly probed?: boolean; readonly compactionEvidence?: RelayCapabilities["compactionEvidence"] } = {}): RelayCapabilities {
   return { ...BASE_RELAY, probed: overrides.probed ?? false, execution: overrides.execution ?? "process", compactionEvidence: overrides.compactionEvidence ?? "event",
@@ -608,7 +613,7 @@ class ModelHarnesses implements SessionBindingFactory {
   catalogFails = false;
   closeFails = false;
   prepared = 0;
-  constructor(private readonly peer: Peer, private readonly declarations: Readonly<Record<string, RelayCapabilities>>, private readonly admission = false) {}
+  constructor(private readonly peer: Peer, readonly declarations: Readonly<Record<string, RelayCapabilities>>, private readonly admission = false) {}
   relayCapabilities?(selection: HarnessSelection): RelayCapabilities | null;
   enableAdmission(): void { this.relayCapabilities = selection => this.declarations[selection.harnessId] ?? null; }
   async validate(request: SelectionRequest): Promise<HarnessSelection> {
@@ -697,8 +702,20 @@ async function runtimeWorld(t: TestContext): Promise<RuntimeWorld> {
       let next = 0;
       const app = new SessionRuntime(world.store, factory, { id: () => "g068-" + ++next + "-" + runtimes.length, now: () => new Date(Date.UTC(2026, 10, 10, 12)), publish: () => {},
         fingerprint: value => createHash("sha256").update(value).digest("hex"), ...options });
+      // G072: with the factory's declarations (enableAdmission) the relay's gates apply. These cases are about delivery, not
+      // the gates (tests/integration/relay-coordinator.test.ts, relay-consent.test.ts): the fakes are let through the probe gate
+      // (`relay.allowUnprobed`, as only an isolated test data root sets it) and each conversation consents to its fakes' vendors.
+      const create = app.create.bind(app);
+      (app as { create: SessionRuntime["create"] }).create = async (...args) => {
+        const created = await create(...args);
+        if (factory instanceof ModelHarnesses) for (const harnessId of Object.keys(factory.declarations))
+          world.store.appendRelayLog({ commandId: "grant-" + created.id + "-" + harnessId, vendor: ("unknown:" + harnessId) as VendorKey, scope: { kind: "session", sessionId: created.id }, decision: "acknowledged",
+            categories: ["user_text"], policyVersion: "relay/1", authKind: null, decidedAt: 1 });
+        return created;
+      };
       runtimes.push(app); return app;
     } };
+  world.store.setPref("relay.allowUnprobed", "true");
   t.after(async () => {
     for (const app of runtimes) { try { await app.close(); } catch { /* a runtime whose store was closed under it (a crash) ends failed */ } }
     try { world.store.close(); } catch { /* closed by the test */ }

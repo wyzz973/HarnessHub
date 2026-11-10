@@ -67,6 +67,8 @@ export interface WebServerOptions {
   readonly installations?: InstallationPolicy;
   /** Fetches from GitHub without following redirects, for adding and updating skills (ADR-045 §4); the platform's `fetch` by default. */
   readonly github?: GithubFetch;
+  /** The installation's relay key file (ADR-055 D5) when this server composes its own application; none otherwise (G072). */
+  readonly relayKeyFile?: string;
 }
 export interface WebServer { readonly url: string; close(): Promise<void> }
 /** A list of Harness identities in a request body: unique, at most 16. */
@@ -369,7 +371,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const attention = new AttentionStreamHub(() => app.runtime.attention(), {}, frame => streams.attentionChanged(frame));
   app = (options.application ?? ((root, publish) => composeApplication(root, publish, { ...(options.budgets === undefined ? {} : { budgets: options.budgets }),
     ...(options.workspaceLockRoot === undefined ? {} : { workspaceLockRoot: options.workspaceLockRoot }),
-    ...(options.installations === undefined ? {} : { installations: options.installations }) })))(options.root, event => {
+    ...(options.installations === undefined ? {} : { installations: options.installations }), ...(options.relayKeyFile === undefined ? {} : { relayKeyFile: options.relayKeyFile }) })))(options.root, event => {
     try { streams.publish(event); } finally { if (app !== undefined) attention.changed(); }
   });
   // This build: every compiled Gateway file by name and content (ADR-033), also named in a Turn's diagnostics (ADR-037).

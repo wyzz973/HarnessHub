@@ -36,6 +36,8 @@ export interface RelayRenderInput {
   readonly firstLine?: boolean;
   /** Tool details the caller read, by `runId + "/" + toolId`. */
   readonly details?: ReadonlyMap<string, RelayToolDetail>;
+  /** The budget to fold to, when the caller resolved it (G072's windows.ts); the target's last reported window's otherwise. */
+  readonly budget?: RelayBudget;
 }
 /** What `run.context_prepared` records of a packet (ADR-055 §7.6 on v12): no text, only what identifies and accounts for it. */
 export interface RelayRecord {
@@ -652,7 +654,7 @@ export function renderRelay(input: RelayRenderInput): RelayRendering {
   const n = new Narrator(language, redactor, input.names ?? (() => null)), units = relayUnits(state, input.sources, input.origin, input.details);
   const binding = targetBinding(state, current);
   const delta = binding !== undefined && (binding.throughRunId !== null || ((state.origin?.history.length ?? 0) > 0 && !input.origin));
-  const budget = resolveRelayBudget(windowOf(state, current));
+  const budget = input.budget ?? resolveRelayBudget(windowOf(state, current));
   const first = input.firstLine !== false && redactor.redact(current.input).hits === 0 ? firstLine(current.input, language) : null;
   const draft = delta ? renderDelta(n, units, budget, first, binding!, state, current.selection.harnessId) : renderPacket(n, units, budget, first, current.selection.harnessId, state);
   const packetId = packetIdOf(draft.head + PLACEHOLDER + draft.body + PLACEHOLDER + draft.tail);
