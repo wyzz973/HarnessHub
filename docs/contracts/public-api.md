@@ -174,19 +174,23 @@ Session/配置变更使用 expectedVersion 或条件请求；缺少必须前置�
                   "cleared": 0, "probed": false,
                   "canConfirm"?: true｜false, "vendor"?: "openai",
                   "owed"?: { "runs": 2, "estTokens": 1700 },
+                  "vendorChange"?: { "from": "openai", "to": "deepseek", "runIndex": 3 },
                   "attention"?: { "cause", "options": [ "attach_full"｜"new_native"｜"clear_confirmed"｜"acknowledge" ],
                                   "counts": { "runs": 2, "packets": 1 }, "key", "packet"?: 2, "vendor"?: "openai" } } ],
   "packets":  [ { "packetId", "runId", "runIndex": 1, "number": 1, "kind": "packet"｜"delta"｜"anchor"｜"resend", "tier",
                   "target": { "harnessId", "model": null }, "estTokens", "omissions", "redactions",
                   "delivery": "in_flight"｜"recorded"｜"unknown"｜"not_recorded", "evidence": "E1"｜"E2"｜"E3" | null } ],
-  "dataRootExposed"?: true }
+  "dataRootExposed"?: true,
+  "installation"?: [ { "cause": "key_unavailable", "detail"?: "长度是 33 字节，应为 32 字节" } ] }
 ```
 
 - `bindings`：会话里每个未归档的原生绑定一行。`throughRun`：绑定的标记所覆盖的最后一个已结束 Run 在会话 Run 里的序号（从 0 起），不覆盖任何 Run（没有标记，或只是会话起点的历史）时为 null；`evidence` 是标记的依据；待核、待定的绑定仍给出它最后所站的标记。`cleared`：当前原生会话里清空过几次——确认的清空就地抬高纪元；Harness 放弃它清空的原生会话（Claude Code 的合成清空）则新会话不在其中抬高纪元，它留下的 `fresh{user_cleared}` 状态算作造出它的那一次清空。`probed`：Driver 的接力机制是否在真机上证明过；Driver 不声明接力机制时也是 false（读自运行时，工厂无从判断时按声明）。
 - `canConfirm`：这个 Harness 做的任何事能不能让网关知道交接单送达了（实时信号、事后核对，或一次正常结束的 prompt 就证明它记下了）；Driver 不声明接力机制时是 false——送达永远没法确认是 Harness 的事实，不是故障；网关答不出时不出现。
 - `vendor`：这个绑定的 Harness 最后一次被看到在哪项模型服务上运行，只给固定词的（`openai`、`anthropic`、`deepseek`…）；用户自己的网关、路由、provider 以主机名或标识命名，不在这里给（只有［重新允许］在 `attention.vendor` 里点名）；Harness 还没运行过时不出现。
-- `owed`：现在向这个绑定交接会带的已结束 Run 数与对它们的 token 估算（它们的原话与回复，加交接单的框架，封顶在窗口未知的标准档上限；估算偏高，不是交接单的大小，界面写“约”）；什么都不欠时不出现。运行时为这个 Harness 保有原生会话时，它就是欠交的唯一说法（清空与下限是运行时才知道的）。
+- `vendorChange`：这个绑定的 Harness 最近一次换了模型服务（`relay.vendor_changed` 且 `allowed:true`，默认放行下不拦、只记）：`from`、`to` 是厂商键（固定词，或 `gateway:<主机>` 这类事件里本来就公开的键），`runIndex` 是看到这次变化的 Turn 在会话 Run 里的序号（从 0 起）；页面在该 Turn 的消息下写“X 这次经 … 处理（上次是 …），已记录”。只给最近一次；从没变过、或那个 Run 已不在时不出现。
+- `owed`：现在向这个绑定交接会带的已结束 Run 数（分支引用的父会话历史也按它的用户轮数算入）与对它们的 token 估算（它们的原话与回复，加交接单的框架，封顶在窗口未知的标准档上限；估算偏高，不是交接单的大小，界面写“约”）；什么都不欠时不出现。运行时为这个 Harness 保有原生会话时，它就是欠交的唯一说法（清空与下限是运行时才知道的）。
 - `attention`：运行时的 `Runtime.relayAttention`（permissive-defaults §2.6），这个绑定请用户看一眼的事，**从不拦路，下一条消息照样发出**；没有事时不出现。**按这一刻的状态现算（独立审查 I5），不从“最近一个 Run 的决定”推**：绑定的同步状态（待核、清空待确认、记录没能恢复），加上它仍欠交时（`counts.runs`>0）该厂商键当前的同意站位（用户撤回过、或只同意了目标）与它已知的窗口放不放得下最小的交接单——所以撤回的提示条在两条消息之间的命令回合里不会消失、用户重新允许后立即消失而不用等下一个 Run，窗口读到更大后同样；`counts.runs` 把会话起点的历史（分支引用的父会话）也算作欠交的轮数。同一厂商之后的又一次撤回是另一次事件（`key` 里带那条日志记录的序号），关掉过的提示条会再出现。`cause`：`delivery_unconfirmed`｜`verify_required`｜`marker_absent`｜`clear_unconfirmed`｜`recovery_failed`｜`input_limit`｜`consent_revoked`｜`consent_goal_only`。`options` 是用户可以怎么处理，每个对应下一次发送的一个字段（同错误体的 `options`），**永不含 `send_alone`**（单发是下一条输入自己会做的事）。`counts.runs`：这个绑定仍欠的对话轮数；`counts.packets`：已发出还没确认送达的交接单份数（`delivery_unconfirmed` 时为 1＋自动补发＋用户补发）。`key` 命名一次事件：同一个原因在同一次待核内是同一个 key，**页面按 key 只提示一次、关掉后不再弹**（浏览器里记，后端不存）。`packet`：`delivery_unconfirmed` 说的是“交接单 #n”；`vendor`：只在选项含 `acknowledge` 时给，是要重新允许的那个厂商键，关系视图里点名厂商的唯一地方。
+- `installation`：安装整体现在做不到的事，只要原因在就一直在（`Runtime.relayInstallation`）；不是某个对话的提示，所以不进 `attention`。现有一种 `key_unavailable`：接力密钥文件不能用（长度不对、路径上是目录等），`detail` 是原因的几个字（不含路径与值）；此时每份要带历史的消息都只发原话（`prepare_failed{redaction_failed}`）。页面在每个对话里给一条不能关的提示，写明原因与怎么修（把 relay-key 文件移走、重启，旧的交接记录将无法核验）。没有问题时不出现。
 - `dataRootExposed`：数据目录在这个会话的工作区的可及范围内（`Runtime.relayDataRootExposed`）；一个警告，不是拦截，页面在工作区层面给一行可关的横幅（`relay.dataRootInWorkspace=block` 才拒绝）。
 - `packets`：每个带交接单的 Run 一项，按 Run 顺序；`number` 是第几个 `relay.packetId` 非 null 的 Run（界面“交接单 #n”），`runIndex` 是这个 Run 在会话 Run 里的序号（从 0 起）。同一份交接单被另一个 Run 再发是另一项。`kind` 是交接单自己的种类：自动补发的包仍是 `packet`，区分它的是 Run 的 `relay.decision`，不是 `kind`。`omissions` 是省略项总数，`redactions` 是脱敏计数。没有原生绑定可追踪的 Driver（没有可恢复的原生会话）收到的交接单没有送达行，`delivery` 是 `unknown`、`evidence` 是 null——没有任何证据，不说送达。正文没有存下的交接单不列出，它的序号也空着。
 - 读它不改变会话（`lastSeq`、`version` 都不动）。
@@ -199,7 +203,7 @@ Session/配置变更使用 expectedVersion 或条件请求；缺少必须前置�
 
 #### Run 与事实流
 
-**Run 的送达状态与决定**：`GET /api/v1/sessions/:id` 与事实流里的 Run（`SessionView.runs`、`run` 帧）的 `relay`（`RunRelayView`）在快照已有的 `packetId`、`kind`、`continuity`、`executedOn` 之外多两个可选成员。`delivery: { state, evidence }`：每个带交接单（`packetId` 非 null）的 Run 都有；没有送达行可追踪的交接单是 `{ state: "unknown", evidence: null }`；没带交接单的 Run 没有它；送达行读不出来时（`INVALID_DATA`）整个会话的 Run 不带它，会话本身不受影响。**Run 结束后它仍会变**——后来的核对可以把 `unknown` 改成 `recorded`（E2）——变化随提交它的那次事实帧到达。`decision: { kind: "carry"｜"alone"｜"plain", by: "need"｜"policy"｜"user", cause?, reason? }`：relay 对这个 Turn 的历史做了什么、谁决定、为什么（读自事件 `run.context_prepared` 的 `relay.decision`，每个会话读一次、之后只读新事件；只跑在同一个 Harness 控制入口上、没有任何交接的会话不读事件）。普通且不欠任何东西的 Turn 没有它；`carry/need` 是按欠交发出的交接单，`carry/policy` 是策略自动补发或退到纪元基准补发完整交接单，`alone/policy` 是策略单发（`cause` 说为什么：`delivery_unconfirmed`、`verify_required`、`marker_absent`、`input_limit`、`recovery_failed`、`consent_revoked`、`consent_goal_only`、`prepare_failed`、`classification_changed`），`alone/user` 与 `carry/user` 是用户自己的选择。页面据此如实说“这条只发了原话”，从不把单发的 Turn 说成“已接手”。**Web 的 Run 不带 `relayRequest`**：它是用户这次选择的 HMAC（`fingerprint`），留在网关里，用户选了什么看 `decision.by === "user"`；事件页（`GET …/events`）里 `message.accepted` 的 `relayRequest` 也去掉 `fingerprint`。
+**Run 的送达状态与决定**：`GET /api/v1/sessions/:id` 与事实流里的 Run（`SessionView.runs`、`run` 帧）的 `relay`（`RunRelayView`）在快照已有的 `packetId`、`kind`、`continuity`、`executedOn` 之外多两个可选成员。`delivery: { state, evidence }`：每个带交接单（`packetId` 非 null）的 Run 都有；没有送达行可追踪的交接单是 `{ state: "unknown", evidence: null }`；没带交接单的 Run 没有它；送达行读不出来时（`INVALID_DATA`）整个会话的 Run 不带它，会话本身不受影响。**Run 结束后它仍会变**——后来的核对可以把 `unknown` 改成 `recorded`（E2）——变化随提交它的那次事实帧到达。`decision: { kind: "carry"｜"alone"｜"plain", by: "need"｜"policy"｜"user", cause?, reason?, resend?: "auto"｜"grown"｜"user" }`：relay 对这个 Turn 的历史做了什么、谁决定、为什么（读自事件 `run.context_prepared` 的 `relay.decision`，授权后才被撤回同意的 Turn 以 `relay.withheld` 的决定为准——后写的为准；每个会话读一次、之后只读新事件；只跑在同一个 Harness 控制入口上、没有任何交接的会话不读事件）。普通且不欠任何东西的 Turn 没有它；`carry/need` 是按欠交发出的交接单，`carry/policy` 是策略自动补发或退到纪元基准补发完整交接单（`resend` 区分补发的两种：`auto` 是对没确认送达的那份包自动再附一次、同样的事实再发，`grown` 是为更新的事实发的新包、它也带着上次没确认送达的内容，界面写“补交 N 轮（含上次未确认送达的内容）”；用户自己的［再附一次］是 `carry/user`＋`resend:"user"`；不是补发的交接单没有 `resend`），`alone/policy` 是策略单发（`cause` 说为什么：`delivery_unconfirmed`、`verify_required`、`marker_absent`、`input_limit`、`recovery_failed`、`consent_revoked`、`consent_goal_only`、`prepare_failed`、`classification_changed`），`alone/user` 与 `carry/user` 是用户自己的选择。页面据此如实说“这条只发了原话”，从不把单发的 Turn 说成“已接手”。**Web 的 Run 不带 `relayRequest`**：它是用户这次选择的 HMAC（`fingerprint`），留在网关里，用户选了什么看 `decision.by === "user"`；事件页（`GET …/events`）里 `message.accepted` 的 `relayRequest` 也去掉 `fingerprint`。
 
 **`relay` 帧**：会话事实流在 `snapshot`、`message`、`run` 之外多一种帧，只通知、不是事实：
 

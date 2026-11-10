@@ -12,6 +12,8 @@ import { recoverRelay } from "../../src/contexts/session/domain/relay/recover.js
 import { RelayKeys } from "../../src/infrastructure/session/relay-keys.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { RelayError } from "../../src/contracts/relay.js";
+import type { RelayView } from "../../src/contracts/web.js";
+import { RelayApi } from "../../src/web/relay-routes.js";
 import { CHECKING, Fakes, declared, eventOf, events, fromAlpha, refusedAt, relayOf, seen, to, turn, world } from "../fixtures/relay-fakes.js";
 
 // The independent reviews' findings on G072 and the permissive defaults (docs/proposals/relay/permissive-defaults.md; the review
@@ -196,7 +198,7 @@ test("G072-RV05 (review I4, m9) a packet sent again for newer facts (grown) that
   let snapshot: { state: ReturnType<typeof app.read>; rows: ReturnType<typeof w.store.relayDeliveries>; packets: ReturnType<typeof w.store.relayPackets> } | null = null;
   fakes.onAuthorized = () => { snapshot = { state: app.read(id), rows: w.store.relayDeliveries(id), packets: w.store.relayPackets(id) }; fakes.onAuthorized = null; throw new Error("the Turn ends before dispatch"); };
   const b4 = await turn(app, id, "b4 grown", "b4");
-  assert.equal(b4.timing?.dispatchedAt, undefined, "never dispatched"); assert.deepEqual(decisionOf(w.store, id, b4), { kind: "carry", by: "policy", cause: "delivery_unconfirmed" });
+  assert.equal(b4.timing?.dispatchedAt, undefined, "never dispatched"); assert.deepEqual(decisionOf(w.store, id, b4), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" });
   const settled = syncOf(app, id, "bravo");
   assert.ok(settled.kind === "pending" && spent.kind === "pending" && settled.packetId === spent.packetId, "settlement: waiting for the packet the grown one superseded");
   const { recoverRelay } = await import("../../src/contexts/session/domain/relay/recover.js");
@@ -212,7 +214,7 @@ test("G072-RV05 (review I4, m9) a packet sent again for newer facts (grown) that
   // can leave neither. The seam is private, so the test reaches in for it.
   (lost.app as unknown as { pendingRunOf: () => null }).pendingRunOf = () => null;
   const grown = await accepted(lost.app, lost.id, "b4 grown, the Run of the pending packet is unknown", "b4");
-  assert.equal(typeof lost.fakes.to("bravo").at(-1)!.turn, "object", "the newer facts go, with everything owed from the prior"); assert.deepEqual(decisionOf(lost.w.store, lost.id, grown), { kind: "carry", by: "policy", cause: "delivery_unconfirmed" });
+  assert.equal(typeof lost.fakes.to("bravo").at(-1)!.turn, "object", "the newer facts go, with everything owed from the prior"); assert.deepEqual(decisionOf(lost.w.store, lost.id, grown), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" });
   assert.equal(grown.sourceRunIds.length, 2, "a1 and a2");
   const after = syncOf(lost.app, lost.id, "bravo");
   assert.ok(after.kind === "pending" && after.autoResends === 0, JSON.stringify(after));
@@ -541,4 +543,83 @@ test("G072-RV13 (review m6) the data directory's isolation is asked afresh where
   await accepted(app, id, "b2 carries a2", "b2");
   assert.ok(asked.length > 0 && asked.every((fresh): boolean => fresh === true), "block: " + JSON.stringify(asked));
   assert.equal(existsSync(data), true);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// A, B, C — what the API tells the page: how a packet was sent again, where the vendor changed, what the installation cannot do
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The relay API over a world's Store and Runtime, without HTTP: its views are what the routes answer. */
+function apiOf(w: { readonly store: SqliteSessionStore }, app: SessionRuntime, fakes: Fakes): RelayApi {
+  return new RelayApi({ reads: w.store, read: id => app.read(id), declaration: selection => fakes.relayCapabilities({ ...selection }), attention: id => app.relayAttention(id), dataRootExposed: id => app.relayDataRootExposed(id),
+    installation: () => app.relayInstallation(), http: { json: () => {}, headers: () => {}, queries: () => {}, body: async () => ({}) } });
+}
+
+test("G072-RV14 (A, B, C) the Run says how a pending packet was sent again (the same facts again, a packet for newer facts that holds the unconfirmed one's, the user's own); a binding says the latest time its model service changed and on which Turn; the relay view says what the installation cannot do while the relay key file is unusable", async t => {
+  // A: the three kinds of resend, as the API shows the Runs.
+  const spent = await fromAlpha(t, { bravo: declared({ ...CHECKING }) }, "bravo");
+  spent.fakes.observed.bravo = seen("openai"); spent.fakes.readable = false;
+  spent.fakes.script = harnessId => harnessId === "bravo" ? { result: "unrecorded" } : {};
+  const api = apiOf(spent.w, spent.app, spent.fakes);
+  const b1 = await accepted(spent.app, spent.id, "b1 carries a1", "b1"), b2 = await accepted(spent.app, spent.id, "b2 sent again", "b2");
+  await accepted(spent.app, spent.id, "b3 alone", "b3");
+  const b5 = await accepted(spent.app, spent.id, "b5 the user sends it again", "b5", { resend: true });
+  await to(spent.app, spent.id, "alpha", "to-a"); await accepted(spent.app, spent.id, "a2 newer", "a2", { attach: "none" }); await to(spent.app, spent.id, "bravo", "to-b2");
+  const b4 = await accepted(spent.app, spent.id, "b4 for newer facts", "b4");
+  const shown = new Map(api.runViews(spent.app.read(spent.id)).map(run => [run.id, run.relay?.decision ?? null]));
+  assert.deepEqual(shown.get(b1.id), { kind: "carry", by: "need" }, "a first packet supersedes none");
+  assert.deepEqual(shown.get(b2.id), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" });
+  assert.deepEqual(shown.get(b4.id), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" });
+  assert.deepEqual(shown.get(b5.id), { kind: "carry", by: "user", resend: "user" });
+  // B: the model service changed on the Turn that carried the second packet; the binding says so, with the Turn's index.
+  const moved = await fromAlpha(t, { bravo: declared() }, "bravo");
+  moved.fakes.observed.bravo = seen("openai");
+  const movedApi = apiOf(moved.w, moved.app, moved.fakes);
+  await accepted(moved.app, moved.id, "b1 carries a1", "b1");
+  assert.equal(movedApi.view(moved.app.read(moved.id)).bindings.find(row => row.harnessId === "bravo")!.vendorChange, undefined, "it never changed");
+  await to(moved.app, moved.id, "alpha", "to-a"); await accepted(moved.app, moved.id, "a2 newer", "a2", { attach: "none" }); await to(moved.app, moved.id, "bravo", "to-b2");
+  moved.fakes.observed.bravo = seen("deepseek");
+  const b2c = await accepted(moved.app, moved.id, "b2 carries a2 to another vendor", "b2");
+  const afterOne = movedApi.view(moved.app.read(moved.id)).bindings.find(row => row.harnessId === "bravo")!;
+  assert.deepEqual(afterOne.vendorChange, { from: "openai", to: "deepseek", runIndex: moved.app.read(moved.id).runs.findIndex(run => run.id === b2c.id) });
+  // The latest change wins; an endpoint of the user's own is a public key (a gateway's host), as the events already say.
+  await to(moved.app, moved.id, "alpha", "to-a2"); await accepted(moved.app, moved.id, "a3 newer", "a3", { attach: "none" }); await to(moved.app, moved.id, "bravo", "to-b3");
+  moved.fakes.observed.bravo = { model: null, modelKey: "", authKind: null, endpoint: { host: "api.example.com", layer: "user_config" }, loopback: false };
+  const b3c = await accepted(moved.app, moved.id, "b3 carries a3 to a gateway", "b3");
+  const afterTwo = movedApi.view(moved.app.read(moved.id)).bindings.find(row => row.harnessId === "bravo")!;
+  assert.deepEqual(afterTwo.vendorChange, { from: "deepseek", to: "gateway:api.example.com", runIndex: moved.app.read(moved.id).runs.findIndex(run => run.id === b3c.id) });
+  assert.equal(movedApi.view(moved.app.read(moved.id)).bindings.find(row => row.harnessId === "alpha")!.vendorChange, undefined, "alpha's service did not change");
+  // A change the relay refused (the strict design asks anew and the Turn fails) is a change that did not go through: the view does not say it.
+  const strict = await fromAlpha(t, { bravo: declared() }, "bravo", { strict: true });
+  strict.fakes.observed.bravo = seen("openai");
+  await accepted(strict.app, strict.id, "b0 as typed", "b0", { attach: "none" });   // the vendor is read once, so the consent can name it
+  await accepted(strict.app, strict.id, "b1 carries a1", "b1", { consent: { vendor: "openai" as VendorKey, decision: "acknowledged", scope: "session" } });
+  await to(strict.app, strict.id, "alpha", "to-a"); await accepted(strict.app, strict.id, "a2 newer", "a2", { attach: "none" }); await to(strict.app, strict.id, "bravo", "to-b2");
+  strict.fakes.observed.bravo = seen("deepseek");
+  const stopped = await turn(strict.app, strict.id, "b2 would carry a2", "b2");
+  assert.equal(stopped.error?.code, "RELAY_CONSENT_REQUIRED", "the strict design asks anew");
+  assert.deepEqual(events(strict.w.store, strict.id).filter(row => row.type === "relay.vendor_changed").map(row => row.data.allowed ?? null), [null], "the refusal is on record, as a refusal");
+  assert.equal(apiOf(strict.w, strict.app, strict.fakes).view(strict.app.read(strict.id)).bindings.find(row => row.harnessId === "bravo")!.vendorChange, undefined, "a Turn that never went through it did not live a change");
+  // C: a relay key file that cannot be used is the installation's standing problem, said in every conversation's relay view; a usable one says nothing.
+  const root = mkdtempSync(join(tmpdir(), "relay-key-notice-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const unusable = join(root, "relay-key"); writeFileSync(unusable, Buffer.alloc(33, 1), { mode: 0o600 });
+  const refused = RelayKeys.open(unusable).keys, fine = RelayKeys.open(join(root, "fine", "relay-key")).keys;
+  const bad = world(t), fakes = new Fakes({ alpha: declared(), bravo: declared() }), badApp = bad.runtime(fakes, { keys: refused });
+  fakes.observed.alpha = seen("anthropic"); fakes.observed.bravo = seen("openai");
+  const id = (await badApp.create(bad.configuration, { harnessId: "alpha" }, "create")).id;
+  await accepted(badApp, id, "a1 on alpha", "a1"); await to(badApp, id, "bravo", "to-b");
+  const notice = [{ cause: "key_unavailable", detail: "长度是 33 字节，应为 32 字节" }];
+  assert.deepEqual(badApp.relayInstallation(), notice);
+  const badView: RelayView = apiOf(bad, badApp, fakes).view(badApp.read(id));
+  assert.deepEqual(badView.installation, notice, "the view says it for the conversation");
+  const alone = await accepted(badApp, id, "b1 would carry a1", "b1");
+  assert.deepEqual(decisionOf(bad.store, id, alone), { kind: "alone", by: "policy", cause: "prepare_failed", reason: "redaction_failed" }, "and the message goes without the history");
+  const good = world(t), goodFakes = new Fakes({ alpha: declared(), bravo: declared() }), goodApp = good.runtime(goodFakes, { keys: fine });
+  goodFakes.observed.alpha = seen("anthropic"); goodFakes.observed.bravo = seen("openai");
+  const gid = (await goodApp.create(good.configuration, { harnessId: "alpha" }, "create")).id;
+  await accepted(goodApp, gid, "a1 on alpha", "a1"); await to(goodApp, gid, "bravo", "to-b");
+  assert.deepEqual(goodApp.relayInstallation(), []); assert.equal(apiOf(good, goodApp, goodFakes).view(goodApp.read(gid)).installation, undefined);
+  // A Runtime composed without the installation's key keeps one in memory only: nothing is wrong with that.
+  assert.deepEqual(world(t).runtime(new Fakes({ alpha: declared() })).relayInstallation(), []);
 });

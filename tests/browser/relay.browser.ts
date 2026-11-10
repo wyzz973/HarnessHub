@@ -92,13 +92,13 @@ function conversation(second: "none" | "preparing" | "running" | "completed" | "
     messages: all, runs, switches: [{ id: "switch-1", commandId: "cmd-switch-1", requested: CODEX, requestedSeq: through + 1, target: CODEX, status: "effective", throughSeq: through, sourceRunIds: ["run-1"], error: null }] };
 }
 /** What the fake says of the relay (stage3 §3): the bindings and the packets. */
-function relayView(overrides: { readonly packets?: readonly Record<string, unknown>[]; readonly bindings?: readonly Record<string, unknown>[]; readonly dataRootExposed?: boolean } = {}): RelayWire {
-  return { ...(overrides.dataRootExposed === true ? { dataRootExposed: true } : {}), bindings: overrides.bindings ?? [
+function relayView(overrides: { readonly packets?: readonly Record<string, unknown>[]; readonly bindings?: readonly Record<string, unknown>[]; readonly dataRootExposed?: boolean; readonly installation?: readonly Record<string, unknown>[] } = {}): RelayWire {
+  return { ...(overrides.dataRootExposed === true ? { dataRootExposed: true } : {}), ...(overrides.installation === undefined ? {} : { installation: overrides.installation }), bindings: overrides.bindings ?? [
     { harnessId: "claude", controlId: "claude-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "native", cleared: 0, probed: true },
     { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: false },
   ], packets: overrides.packets ?? [] };
 }
-interface RelayWire { bindings: readonly Record<string, unknown>[]; packets: readonly Record<string, unknown>[]; dataRootExposed?: true }
+interface RelayWire { bindings: readonly Record<string, unknown>[]; packets: readonly Record<string, unknown>[]; dataRootExposed?: true; installation?: readonly Record<string, unknown>[] }
 /** Claude Code's binding, which holds everything it ran itself; with no binding of Codex's, a conversation that was switched to Codex and sent nothing to it. */
 const CLAUDE_BOUND = { harnessId: "claude", controlId: "claude-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "native", cleared: 0, probed: true };
 const NO_CODEX = (): RelayWire => relayView({ bindings: [CLAUDE_BOUND] });
@@ -1012,7 +1012,7 @@ test("G073 each cause a binding asks about is said in its own words with only th
   await shoot(page, "banner-consent-revoked");
   // The consent: re-allowing is a field of the next message, with the vendor the Gateway named.
   await banner.getByRole("button", { name: "重新允许", exact: true }).click();
-  await expect(banner).toContainText("下一条消息会重新允许交接给 OpenAI");
+  await expect(banner).toContainText("下一条消息会在这个对话里重新允许交接给 OpenAI");
   await page.getByRole("textbox", { name: "发送消息", exact: true }).fill("允许吧"); await page.getByRole("textbox", { name: "发送消息", exact: true }).press("Enter");
   await expect.poll(() => gateway.posted.length).toBe(1);
   assert.deepEqual(gateway.posted[0]?.relay, { consent: { vendor: "openai", decision: "acknowledged", scope: "session" } });
@@ -1065,6 +1065,33 @@ test("G073 what the relay did with a Turn's history is said under its message in
   const plain = await open(t, third(conversation("completed", packetRelay(CODEX)), own(CODEX)), { view: relayView({ packets: [packetRow("recorded", "E1")] }) });
   await expect(plain.log.locator(".user-message").nth(2)).toBeVisible(); await expect(plain.log.locator(".relay-note")).toHaveCount(0);
   assert.deepEqual([resent.errors, alone.errors, small.errors, plain.errors], [[], [], [], []]);
+});
+
+test("G072 review, C: what the installation cannot do for the relay stands above the conversation with its reason and how to mend it, is not closed by the user, and nothing waits for it", async t => {
+  const reason = "长度是 0 字节，应为 32 字节";
+  const { gateway, page, errors, composer } = await open(t, conversation("completed", packetRelay(CODEX)), { view: relayView({ installation: [{ cause: "key_unavailable", detail: reason }, { cause: "something-new" }] }) });
+  const notice = page.locator("[data-relay=installation]");
+  await expect(notice).toHaveCount(1);
+  await expect(notice).toContainText("暂时不能把对话交给别的 Harness");
+  await expect(notice).toContainText("接力密钥文件不能用（" + reason + "）");
+  await expect(notice).toContainText("relay-key 文件移走");
+  await expect(notice).toContainText("重启 HarnessHub");
+  await expect(notice.getByRole("button")).toHaveCount(0);
+  await shoot(page, "installation-key-unavailable");
+  // The message is sent as any other, and the notice stays: its cause does.
+  await expect(composer).toBeEnabled();
+  await composer.fill("照常发"); await composer.press("Enter");
+  await expect.poll(() => gateway.posted.length).toBe(1);
+  assert.equal("relay" in gateway.posted[0]!, false);
+  await page.reload(); await expect(composer).toBeEnabled(); await page.waitForTimeout(300);
+  await expect(page.locator("[data-relay=installation]")).toHaveCount(1);
+  // A Gateway with nothing wrong has no such notice, and an answer without the member is read as none.
+  const clear = await open(t, conversation("completed", packetRelay(CODEX)), { view: relayView() });
+  await expect(clear.composer).toBeEnabled(); await clear.page.waitForTimeout(300);
+  await expect(clear.page.locator("[data-relay=installation]")).toHaveCount(0);
+  assert.deepEqual(decodeRelayView({ bindings: [], packets: [], installation: [{ cause: "key_unavailable" }, { cause: "x" }, 7, null] })?.installation, [{ cause: "key_unavailable", detail: null }]);
+  assert.deepEqual(decodeRelayView({ bindings: [], packets: [] })?.installation, []);
+  assert.deepEqual([errors, clear.errors], [[], []]);
 });
 
 test("G073 a data directory within reach of the workspace is a warning for the workspace that can be closed, and nothing waits for it", async t => {
@@ -1146,9 +1173,9 @@ test("G073 the reading of the relay never takes an unknown word for a good one, 
     packets: [packetRow("recorded", "E2"), packetRow("delivered-ish", "E9"), { packetId: "relay-only-an-id" }, { ...packetRow("in_flight", null), runIndex: -1 }, "x"], dataRootExposed: true });
   assert.ok(view !== null);
   assert.deepEqual(view.bindings.map(item => item.harnessId), ["codex", "hermes", "opencode", "openclaw"]);
-  assert.deepEqual(view.bindings[0], { harnessId: "codex", controlId: "codex-native", nativeEpoch: 2, sync: "synced", throughRun: 3, evidence: "E1", cleared: 1, probed: true, canConfirm: true, vendor: "openai", owed: null, attention: null });
+  assert.deepEqual(view.bindings[0], { harnessId: "codex", controlId: "codex-native", nativeEpoch: 2, sync: "synced", throughRun: 3, evidence: "E1", cleared: 1, probed: true, canConfirm: true, vendor: "openai", owed: null, vendorChange: null, attention: null });
   // A word the page does not know is "unknown", a number it cannot read is nothing, and a flag that is not true is false.
-  assert.deepEqual(view.bindings[1], { harnessId: "hermes", controlId: "hermes-native", nativeEpoch: 1, sync: "unknown", throughRun: null, evidence: null, cleared: 0, probed: false, canConfirm: null, vendor: null, owed: { runs: 2, estTokens: 900 },
+  assert.deepEqual(view.bindings[1], { harnessId: "hermes", controlId: "hermes-native", nativeEpoch: 1, sync: "unknown", throughRun: null, evidence: null, cleared: 0, probed: false, canConfirm: null, vendor: null, owed: { runs: 2, estTokens: 900 }, vendorChange: null,
     attention: { cause: "delivery_unconfirmed", options: ["attach_full", "new_native"], counts: { runs: 2, packets: 1 }, key: "delivery_unconfirmed:relay-0", packet: 4, vendor: "openai" } });
   // Nothing owed is no `owed`; a cause the page does not know asks nothing of the user (it is not shown as another); a banner needs its key.
   assert.deepEqual([view.bindings[2]!.owed, view.bindings[2]!.attention], [null, null]);
@@ -1165,9 +1192,11 @@ test("G073 the reading of the relay never takes an unknown word for a good one, 
   assert.deepEqual(runRelayInfo({ relay: decoded }), { packetId: PACKET, kind: "packet", continuity: { kind: "rehydrate", tier: "standard", complete: false }, executedOn: { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1 }, delivery: { state: null, evidence: "E1" }, decision: null });
   // What the relay decided for a Turn: kinds and authors it knows, an unknown cause only left out, an unknown kind no decision at all.
   const decided = (decision: unknown) => runRelayInfo({ relay: decodeRunRelay({ packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: null, decision })! })?.decision;
-  assert.deepEqual(decided({ kind: "alone", by: "policy", cause: "delivery_unconfirmed" }), { kind: "alone", by: "policy", cause: "delivery_unconfirmed", reason: null });
-  assert.deepEqual(decided({ kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" }), { kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" });
-  assert.deepEqual(decided({ kind: "carry", by: "need", cause: "something-new" }), { kind: "carry", by: "need", cause: null, reason: null });
+  assert.deepEqual(decided({ kind: "alone", by: "policy", cause: "delivery_unconfirmed" }), { kind: "alone", by: "policy", cause: "delivery_unconfirmed", reason: null, resend: null });
+  assert.deepEqual(decided({ kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" }), { kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota", resend: null });
+  assert.deepEqual(decided({ kind: "carry", by: "need", cause: "something-new" }), { kind: "carry", by: "need", cause: null, reason: null, resend: null });
+  // How a carried packet was sent again: only the three ways the Gateway knows are read; a word it does not know leaves the way unsaid.
+  assert.deepEqual(["auto", "grown", "user", "robot", 3, null].map(resend => decided({ kind: "carry", by: "need", resend })?.resend), ["auto", "grown", "user", null, null, null]);
   for (const odd of [{ kind: "teleport", by: "policy" }, { kind: "alone", by: "robot" }, { kind: "alone" }, "alone", 7, null]) assert.equal(decided(odd) ?? null, null, JSON.stringify(odd));
   assert.equal(runRelayInfo({}), null);
   assert.deepEqual(runRelayInfo({ relay: decodeRunRelay({ packetId: null, kind: null, continuity: "native_fork", executedOn: null })! })?.continuity, { kind: "native_fork" });
@@ -1350,7 +1379,7 @@ test("G073 a banner says what a binding asks once, each way to settle it is a fi
 
 test("G073 what the relay did with a Turn's history is said in the words of the decision, and never as a Harness taking over", () => {
   const info = (decision: Record<string, unknown> | null, relay: Record<string, unknown> = {}) => runRelayInfo({ relay: decodeRunRelay({ packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: { ...CODEX, nativeEpoch: 1 }, ...(decision === null ? {} : { decision }), ...relay })! })!;
-  const ctx: NoteContext = { target: "Codex", number: 3, pending: 2, service: "openai", cannotConfirm: false };
+  const ctx: NoteContext = { target: "Codex", number: 3, sourceRuns: 2, pending: 2, service: "openai", cannotConfirm: false };
   const say = (decision: Record<string, unknown> | null, relay: Record<string, unknown> = {}, context = ctx) => decisionNote(info(decision, relay), context);
   // The history went as it was owed: nothing to say. Or it went alone, and the words say why.
   assert.equal(say(null), null); assert.equal(say({ kind: "carry", by: "need" }, { packetId: PACKET }), null); assert.equal(say({ kind: "plain", by: "need" }), null);
@@ -1371,6 +1400,14 @@ test("G073 what the relay did with a Turn's history is said in the words of the 
   // The packet went again, or went whole again, or was cut down to a small window.
   const carried = { packetId: PACKET, kind: "packet", continuity: { kind: "rehydrate", tier: "standard", runs: 2 } };
   assert.equal(say({ kind: "carry", by: "policy", cause: "delivery_unconfirmed" }, carried), "上一份交接单没有确认送达，这条消息已再附一次（交接单 #3 · 补交 2 轮）");
+  // G072 review, A: the two kinds of automatic resend are told apart — the same facts again, and a packet for newer facts that also holds the unconfirmed one's.
+  assert.equal(say({ kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" }, carried), "上一份交接单没有确认送达，这条消息已再附一次（交接单 #3 · 补交 2 轮）");
+  assert.equal(say({ kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" }, carried), "这条消息补交了 2 轮（含上次未确认送达的内容）（交接单 #3）");
+  assert.equal(say({ kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" }, { ...carried, continuity: { kind: "rehydrate", tier: "standard" } }, { ...ctx, sourceRuns: 5 }),
+    "这条消息补交了 5 轮（含上次未确认送达的内容）（交接单 #3）", "a whole packet names its Turns by the Runs it carries");
+  assert.equal(say({ kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" }, carried, { ...ctx, number: null }), "这条消息补交了 2 轮（含上次未确认送达的内容）");
+  assert.equal(say({ kind: "carry", by: "user", resend: "user" }, carried), null, "the user's own resend needs no note");
+  assert.equal(say({ kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "teleport" }, carried), "上一份交接单没有确认送达，这条消息已再附一次（交接单 #3 · 补交 2 轮）", "a kind this page does not know reads as the older words");
   assert.equal(say({ kind: "carry", by: "policy", cause: "verify_required" }, carried), "未能核对 Codex 的原生会话，已补发完整交接单（可能与已有内容重复）");
   assert.equal(say({ kind: "carry", by: "policy", cause: "marker_absent" }, carried), "Codex 的原生会话里找不到之前的交接单，已在同一会话补发");
   assert.equal(say({ kind: "carry", by: "need" }, { ...carried, continuity: { kind: "rehydrate", tier: "brief" } }), "Codex 的窗口较小，交接单已缩为精简");
@@ -1380,6 +1417,15 @@ test("G073 what the relay did with a Turn's history is said in the words of the 
   const session = conversation("completed", packetRelay(CODEX, { decision: { kind: "carry", by: "policy", cause: "delivery_unconfirmed" } }));
   const notes = runNotes({ runs: runsOf(session), view: viewOf(relayView({ packets: [packetRow("unknown", null)] })), name: harnessNames });
   assert.deepEqual([...notes], [["run-2", "上一份交接单没有确认送达，这条消息已再附一次（交接单 #1）"]]);
+  // G072 review, B: a change of the model service is said under the Turn that saw it — on its own, and after the Turn's own note.
+  const changed = (extra: Record<string, unknown>) => relayView({ packets: [packetRow("recorded", "E2")], bindings: [CLAUDE_BOUND, { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "synced", throughRun: 1, evidence: "E2", cleared: 0, probed: false, ...extra }] });
+  const plain = conversation("completed", packetRelay(CODEX));
+  assert.deepEqual([...runNotes({ runs: runsOf(plain), view: viewOf(changed({ vendorChange: { from: "openai", to: "deepseek", runIndex: 1 } })), name: harnessNames })], [["run-2", "Codex 这次经 DeepSeek 处理（上次是 OpenAI），已记录"]]);
+  assert.deepEqual([...runNotes({ runs: runsOf(plain), view: viewOf(changed({ vendorChange: { from: "openai", to: "gateway:api.example.com", runIndex: 1 } })), name: harnessNames })], [["run-2", "Codex 这次经 自配网关 api.example.com 处理（上次是 OpenAI），已记录"]]);
+  assert.deepEqual([...runNotes({ runs: runsOf(session), view: viewOf(changed({ vendorChange: { from: "openai", to: "deepseek", runIndex: 1 } })), name: harnessNames })],
+    [["run-2", "上一份交接单没有确认送达，这条消息已再附一次（交接单 #1） · Codex 这次经 DeepSeek 处理（上次是 OpenAI），已记录"]]);
+  for (const other of [{ from: "openai", to: "deepseek", runIndex: 0 }, { from: "openai", to: "deepseek", runIndex: 7 }, { from: "", to: "deepseek", runIndex: 1 }, { from: "openai", to: "deepseek" }, null])
+    assert.deepEqual([...runNotes({ runs: runsOf(plain), view: viewOf(changed({ vendorChange: other })), name: harnessNames })], [], "a change on another Turn, or one that is no change, says nothing here: " + JSON.stringify(other));
 });
 
 test("G073 each refusal says what it is and each way forward sends what its words say", () => {

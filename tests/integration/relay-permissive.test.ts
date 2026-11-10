@@ -62,7 +62,7 @@ test("row 1 (§2.1): a packet still unconfirmed after the check is sent again on
     assert.equal(refusedAt(app, fakes, id, "b2 would resend", "b2"), "accepted", "no 409"); await app.wait(id);
     const b2 = app.read(id).runs.at(-1)!;
     assert.equal(b2.status, "completed", "lateDelivery " + lateDelivery);
-    assert.deepEqual(decisionOf(w.store, id, b2), { kind: "carry", by: "policy", cause: "delivery_unconfirmed" });
+    assert.deepEqual(decisionOf(w.store, id, b2), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" });
     assert.deepEqual(b2.sourceRunIds, [a1.id], "the resend renders all that is owed again");
     assert.equal(typeof fakes.to("bravo").at(-1)!.turn, "object", "a packet went with b2");
     assert.equal(eventOf(w.store, id, "run.context_prepared", b2.id)!.data.resendOf, b1.id);
@@ -93,7 +93,7 @@ test("rows 2 and 3 (§2.1): the packet sent twice and still unconfirmed, nothing
   // Row 3: a newer fact (alpha's own Turn) is owed too: the packet goes again, with it, and the automatic count starts again.
   await to(app, id, "alpha", "to-a"); const a2 = await accepted(app, fakes, id, "a2 a newer fact", "a2", { attach: "none" }); await to(app, id, "bravo", "to-b2");
   const grown = await accepted(app, fakes, id, "b-grown carries the newer fact", "b-grown");
-  assert.deepEqual(decisionOf(w.store, id, grown), { kind: "carry", by: "policy", cause: "delivery_unconfirmed" });
+  assert.deepEqual(decisionOf(w.store, id, grown), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" });
   assert.ok(grown.sourceRunIds.includes(a1.id) && grown.sourceRunIds.includes(a2.id), "all that is owed, the unconfirmed one's facts included");
   assert.equal(eventOf(w.store, id, "run.context_prepared", grown.id)!.data.resendOf, b2.id, "it supersedes the packet that was waiting");
   const after = syncOf(app, id, "bravo");
@@ -224,7 +224,7 @@ test("row 9 (D6, §2.1): a Turn of a probed process Driver that ended unknown wi
   assert.ok(pending.kind === "pending" && pending.autoResends === 1, "back to pending with the automatic resend spent");
   const a2 = await newFactOnAlpha({ w, fakes, app, id, a1 }, "a2 a newer fact", "a2");
   const b3 = await accepted(app, fakes, id, "b3 sends it again with the newer fact", "b3");
-  assert.deepEqual(decisionOf(w.store, id, b3), { kind: "carry", by: "policy", cause: "delivery_unconfirmed" });
+  assert.deepEqual(decisionOf(w.store, id, b3), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" });
   assert.ok(b3.sourceRunIds.includes(a1.id) && b3.sourceRunIds.includes(a2.id));
 });
 
@@ -495,7 +495,7 @@ test("P10 (§0 rule 3): what the user chose is not rewritten by the policy — a
   const { w, fakes, app, id } = await pendingSpent(t, { verify: "none", live: "recorded_event" });
   // The user's resend of a pending packet is theirs: it goes (manualResends), never turned into alone.
   const user = await accepted(app, fakes, id, "b3 sends it again", "b3", { resend: true });
-  assert.equal(typeof fakes.to("bravo").at(-1)!.turn, "object"); assert.deepEqual(decisionOf(w.store, id, user), { kind: "carry", by: "user" });
+  assert.equal(typeof fakes.to("bravo").at(-1)!.turn, "object"); assert.deepEqual(decisionOf(w.store, id, user), { kind: "carry", by: "user", resend: "user" });
   const sync = syncOf(app, id, "bravo"); assert.ok(sync.kind === "pending" && sync.manualResends === 1);
   // whenUnsure=ask: the question the strict design asked, at admission, no Run.
   w.store.setPref("relay.whenUnsure", "ask");

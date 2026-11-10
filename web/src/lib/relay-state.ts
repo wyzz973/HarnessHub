@@ -119,6 +119,8 @@ export interface NoteContext {
   readonly target: string;
   /** "交接单 #n" of the Turn's own packet. */
   readonly number: number | null;
+  /** How many Turns the Turn's packet carries (its source Runs): the "N 轮" of a packet sent again for newer facts. */
+  readonly sourceRuns: number;
   /** The latest packet sent to this Harness before the Turn: the one an alone Turn left unconfirmed. */
   readonly pending: number | null;
   /** The named service the Harness runs on, when it is known. */
@@ -167,7 +169,10 @@ export function decisionNote(info: RunRelayInfo, ctx: NoteContext): string | nul
   switch (decision.kind) {
     case "carry":
       if (decision.by === "policy") switch (decision.cause) {
-        case "delivery_unconfirmed": return `上一份交接单没有确认送达，这条消息已再附一次${packetWords(ctx.number, info.continuity.runs)}`;
+        // A packet for newer facts also holds what the unconfirmed one held (permissive-defaults row 3): it says so, with how many Turns; the automatic resend is the same facts again.
+        case "delivery_unconfirmed": return decision.resend === "grown"
+          ? `这条消息补交了 ${info.continuity.runs ?? ctx.sourceRuns} 轮（含上次未确认送达的内容）${ctx.number === null ? "" : `（交接单 #${ctx.number}）`}`
+          : `上一份交接单没有确认送达，这条消息已再附一次${packetWords(ctx.number, info.continuity.runs)}`;
         case "verify_required": return `未能核对 ${ctx.target} 的原生会话，已补发完整交接单（可能与已有内容重复）`;
         case "marker_absent": return `${ctx.target} 的原生会话里找不到之前的交接单，已在同一会话补发`;
         default: break;
@@ -182,7 +187,16 @@ function noteContext(run: PublicRun, index: number, info: RunRelayInfo, view: Re
   const harnessId = info.executedOn?.harnessId ?? run.selection.harnessId, binding = view?.bindings.find(item => item.harnessId === harnessId);
   const own = view?.packets.find(item => item.packetId === info.packetId)?.number ?? null;
   const before = view?.packets.filter(item => item.target.harnessId === harnessId && item.runIndex < index).at(-1)?.number ?? null;
-  return { target: name(harnessId), number: own, pending: before, service: binding?.vendor ?? null, cannotConfirm: binding?.canConfirm === false };
+  return { target: name(harnessId), number: own, sourceRuns: run.sourceRunIds.length, pending: before, service: binding?.vendor ?? null, cannotConfirm: binding?.canConfirm === false };
+}
+/**
+ * Where a binding's Harness changed the model service it runs on, said under the Turn that saw it (permissive-defaults row 12): the
+ * defaults let a change go, with a record, so the user is told who handled the Turn and who handled the one before. Keys are public
+ * words (a named service, `gateway:<host>`); null when the Turn is not the one.
+ */
+function vendorChangeNote(run: PublicRun, index: number, view: RelayView | null, name: (id: string) => string): string | null {
+  const harnessId = runRelayInfo(run)?.executedOn?.harnessId ?? run.selection.harnessId, change = view?.bindings.find(item => item.harnessId === harnessId)?.vendorChange;
+  return change === null || change === undefined || change.runIndex !== index ? null : `${name(harnessId)} 这次经 ${vendorWords(change.to)} 处理（上次是 ${vendorWords(change.from)}），已记录`;
 }
 /**
  * The note under each Turn's message that the relay's decision calls for, by Turn: an automatic resend, a complete packet again, a
@@ -192,9 +206,9 @@ export function runNotes(input: { readonly runs: readonly PublicRun[]; readonly 
   const notes = new Map<string, string>();
   input.runs.forEach((run, index) => {
     const info = runRelayInfo(run);
-    if (info === null) return;
-    const note = decisionNote(info, noteContext(run, index, info, input.view, input.name));
-    if (note !== null) notes.set(run.id, note);
+    // A change of the model service is said even for a Turn whose relay facts say little else (G072 review, B).
+    const note = [info === null ? null : decisionNote(info, noteContext(run, index, info, input.view, input.name)), vendorChangeNote(run, index, input.view, input.name)].filter((item): item is string => item !== null).join(" · ");
+    if (note !== "") notes.set(run.id, note);
   });
   return notes;
 }
@@ -316,7 +330,7 @@ function bannerChosen(option: RelayOption, cause: RelayAttentionCause, target: s
     case "send_alone": return "下一条消息只发原话";
     case "new_native": return `下一条消息会新开 ${target} 的原生会话，并附上交接单`;
     case "clear_confirmed": return "下一条消息会按“已清空”处理";
-    case "acknowledge": return `下一条消息会重新允许交接给${vendor === null ? "它" : ` ${vendorWords(vendor)}`}`;
+    case "acknowledge": return `下一条消息会在这个对话里重新允许交接给${vendor === null ? "它" : ` ${vendorWords(vendor)}`}`;
   }
 }
 /**
@@ -381,6 +395,21 @@ const UNAVAILABLE: Readonly<Record<string, string>> = {
   consent_log_full: "交接的同意记录已满，暂时不能交接这段对话。",
   recovery_failed: "这段对话在上次服务重启后没能恢复交接状态，暂时不能交接。",
 };
+/**
+ * The standing notice for what the installation as a whole cannot do for the relay (the `installation` of the relay view): why, what it
+ * means for the next message, and how to mend it. It stays while the cause does; the user's message still goes, without the history.
+ */
+export interface InstallationView { readonly cause: string; readonly title: string; readonly text: string }
+export function installationNotices(notices: readonly { readonly cause: string; readonly detail: string | null }[]): readonly InstallationView[] {
+  return notices.flatMap(notice => {
+    switch (notice.cause) {
+      case "key_unavailable": return [{ cause: notice.cause, title: "暂时不能把对话交给别的 Harness",
+        text: `HarnessHub 的接力密钥文件不能用${notice.detail === null ? "" : `（${notice.detail}）`}，所以现在发的消息只带原话，不附交接单。` +
+          "修好它：把 HarnessHub 应用支持目录（~/Library/Application Support/HarnessHub）里的 relay-key 文件移走，然后重启 HarnessHub，它会生成新的密钥；旧的交接记录将无法再核验。" }];
+      default: return [];
+    }
+  });
+}
 /**
  * The line a refused send turns into. `target` is the Harness the message was going to; the binding the Gateway names, when
  * it names one, is the Harness whose original session the choice is about.

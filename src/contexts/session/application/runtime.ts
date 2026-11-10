@@ -12,7 +12,7 @@ import { buildPublicContext, type PublicContext, type PublicContextOptions } fro
 import { parseToolDetail, type RelayToolDetail } from "../domain/relay/narration.js";
 import { commandEffect, commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
 import { initialBindingRelay } from "../domain/relay/migrate.js";
-import { BLOCKED_CODES, RelayError, consentSourceOf, markOf, relayDecisionOf, type RelayAttention, type RelayDecision, type BindingRelayState, type ConsentAppend, type ConsentRecord, type DeliveryPosition, type EndpointLayer, type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayKeyPort, type RelayLogPort, type RelayPacket, type RelayPrefKey, type RelayStorePort, type RelayWindow, type VendorKey, type VendorObservation, type VerifyResult, parseVendorObservation } from "../../../contracts/relay.js";
+import { BLOCKED_CODES, RelayError, consentSourceOf, markOf, relayDecisionOf, type RelayAttention, type RelayDecision, type BindingRelayState, type ConsentAppend, type ConsentRecord, type DeliveryPosition, type EndpointLayer, type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayInstallationNotice, type RelayKeyPort, type RelayLogPort, type RelayPacket, type RelayPrefKey, type RelayStorePort, type RelayWindow, type VendorKey, type VendorObservation, type VerifyResult, parseVendorObservation } from "../../../contracts/relay.js";
 import { relayRedactor } from "../domain/relay/redaction.js";
 import { cacheAfter, hardCap, observedWindow, packetBudget, packetFamily, resolveWindow, windowRow, fitsMinPacket, type ResolvedWindow } from "../domain/relay/windows.js";
 import { estimateTokens, type RelayBudget } from "../domain/relay/budget.js";
@@ -741,6 +741,15 @@ export class SessionRuntime {
       }
       return { harnessId: h, controlId: c, probed, attention: attentionOf({ relay, recoveryFailed: state.relayRecoveryFailed !== undefined, owedRuns, consent, fits }) };
     });
+  }
+  /**
+   * What the installation as a whole cannot do for the relay while it stays so (G072 review, C): the relay key file unusable, so that
+   * no packet can be keyed and every handoff goes as the words alone, which no single conversation's attention says. Empty when
+   * nothing is wrong. Read-only.
+   */
+  relayInstallation(): readonly RelayInstallationNotice[] {
+    const problem = this.relayKeys.unusable;
+    return problem === undefined || problem === null ? [] : [{ cause: "key_unavailable", detail: problem.slice(0, 200) }];
   }
   /**
    * Whether the data directory (or the relay key) is within reach of this conversation's workspace (ADR-055 INV-36): what the

@@ -1,4 +1,4 @@
-import type { ContinuityLevel, DeliveryEvidence, DeliveryStatus, RelayAttention, RelayDecision, RelayPrefKey, RunRelay, Tier } from "../../src/contracts/relay.js";
+import type { ContinuityLevel, DeliveryEvidence, DeliveryStatus, RelayAttention, RelayDecision, RelayInstallationNotice, RelayPrefKey, RunRelay, Tier } from "../../src/contracts/relay.js";
 import type { RelayStreamEvent, RelayStreamEventType } from "../../src/contracts/web.js";
 
 /*
@@ -50,6 +50,14 @@ export type RelayAttentionCausesAreListed = Holds<Exact<RelayAttentionCause, Rel
 export const RELAY_DECISION_KINDS = ["carry", "alone", "plain"] as const;
 export type RelayDecisionKind = typeof RELAY_DECISION_KINDS[number];
 export type RelayDecisionKindsAreListed = Holds<Exact<RelayDecisionKind, RelayDecision["kind"]>>;
+/** How a `carry` decision sent a pending packet again: the automatic resend, a packet for newer facts that also holds the unconfirmed one's, the user's own. */
+export const RELAY_DECISION_RESENDS = ["auto", "grown", "user"] as const;
+export type RelayDecisionResend = typeof RELAY_DECISION_RESENDS[number];
+export type RelayDecisionResendsAreListed = Holds<Exact<RelayDecisionResend, NonNullable<RelayDecision["resend"]>>>;
+/** What the installation as a whole cannot do for the relay while it stays so (`installation` of the relay view). */
+export const RELAY_INSTALLATION_CAUSES = ["key_unavailable"] as const;
+export type RelayInstallationCause = typeof RELAY_INSTALLATION_CAUSES[number];
+export type RelayInstallationCausesAreListed = Holds<Exact<RelayInstallationCause, RelayInstallationNotice["cause"]>>;
 export const RELAY_DECISION_BY = ["need", "policy", "user"] as const;
 export type RelayDecisionBy = typeof RELAY_DECISION_BY[number];
 export type RelayDecisionByIsListed = Holds<Exact<RelayDecisionBy, RelayDecision["by"]>>;
@@ -82,6 +90,8 @@ export interface RelayBinding {
   readonly vendor: string | null;
   /** What a handoff to it would carry now: Turns and an estimate of their tokens (which errs high). Null when nothing is owed or the Gateway does not say. */
   readonly owed: { readonly runs: number; readonly estTokens: number | null } | null;
+  /** The latest time the model service it runs on changed, as the relay recorded it: the vendor keys it was and became, and the index (from 0) of the Turn that saw it. Null when it never did. */
+  readonly vendorChange: { readonly from: string; readonly to: string; readonly runIndex: number } | null;
   /** What the binding asks the user to look at, when it does: never a block, the next message goes anyway. */
   readonly attention: RelayAttentionInfo | null;
 }
@@ -119,6 +129,8 @@ export interface RelayView {
   readonly bindings: readonly RelayBinding[]; readonly packets: readonly RelayPacket[];
   /** The data directory is within reach of this conversation's workspace: a warning for the workspace, never a block. */
   readonly dataRootExposed: boolean;
+  /** What the installation as a whole cannot do for the relay while it stays so: a standing notice, with its reason, until it is mended. Empty when nothing is wrong. */
+  readonly installation: readonly { readonly cause: RelayInstallationCause; readonly detail: string | null }[];
 }
 
 /** The relay facts a Turn carries, as the page reads them from the conversation view. */
@@ -138,9 +150,11 @@ export interface RelayDecisionInfo {
   readonly by: RelayDecisionBy;
   readonly cause: RelayDecisionCause | null;
   readonly reason: string | null;
+  /** On a `carry` that sent a pending packet again: how. Null on any other (and from a Gateway that does not say). */
+  readonly resend: RelayDecisionResend | null;
 }
 /** A Turn's relay member with the delivery and the decision a Gateway attaches to it (the contract's RunRelay does not have them). */
-export type ClientRunRelay = RunRelay & { readonly delivery?: { readonly state?: unknown; readonly evidence?: unknown }; readonly decision?: { readonly kind?: unknown; readonly by?: unknown; readonly cause?: unknown; readonly reason?: unknown } };
+export type ClientRunRelay = RunRelay & { readonly delivery?: { readonly state?: unknown; readonly evidence?: unknown }; readonly decision?: { readonly kind?: unknown; readonly by?: unknown; readonly cause?: unknown; readonly reason?: unknown; readonly resend?: unknown } };
 
 /** The installation's relay preferences the page lets the user change (the Gateway has more, which only the API sets). */
 export interface RelayPrefs { readonly crossVendor: RelayCrossVendor; readonly whenUnsure: RelayWhenUnsure }
@@ -217,7 +231,17 @@ function decodeBinding(value: unknown): RelayBinding | null {
   return { harnessId, controlId, nativeEpoch: whole(value.nativeEpoch) ?? 1, sync: oneOf(value.sync, RELAY_SYNC_STATES) ?? "unknown",
     throughRun: whole(value.throughRun), evidence: word(value.evidence, 32), cleared: whole(value.cleared) ?? 0, probed: value.probed === true,
     canConfirm: typeof value.canConfirm === "boolean" ? value.canConfirm : null, vendor: word(value.vendor, 32),
-    owed: runs === null || !isRecord(value.owed) || runs === 0 ? null : { runs, estTokens: whole(value.owed.estTokens) }, attention: decodeAttention(value.attention) };
+    owed: runs === null || !isRecord(value.owed) || runs === 0 ? null : { runs, estTokens: whole(value.owed.estTokens) }, vendorChange: decodeVendorChange(value.vendorChange), attention: decodeAttention(value.attention) };
+}
+/** The latest change of the service a binding runs on; null for none, and for one whose parts are not what a change holds. */
+function decodeVendorChange(value: unknown): RelayBinding["vendorChange"] {
+  if (!isRecord(value)) return null;
+  const from = word(value.from, 253), to = word(value.to, 253), runIndex = whole(value.runIndex);
+  return from === null || to === null || runIndex === null ? null : { from, to, runIndex };
+}
+/** What the installation cannot do for the relay; a cause this page does not know is left out (it is not shown as another). */
+function decodeInstallation(value: unknown): RelayView["installation"] {
+  return Array.isArray(value) ? value.slice(0, 8).flatMap(row => { const cause = isRecord(row) ? oneOf(row.cause, RELAY_INSTALLATION_CAUSES) : null; return cause === null || !isRecord(row) ? [] : [{ cause, detail: word(row.detail, 200) }]; }) : [];
 }
 function decodePacket(value: unknown): RelayPacket | null {
   if (!isRecord(value)) return null;
@@ -231,7 +255,8 @@ function decodePacket(value: unknown): RelayPacket | null {
 /** The conversation's relay state; null when the answer is not the relay view (an older Gateway, another shape). */
 export function decodeRelayView(value: unknown): RelayView | null {
   if (!isRecord(value) || !Array.isArray(value.bindings) || !Array.isArray(value.packets)) return null;
-  return { bindings: value.bindings.slice(0, 64).flatMap(row => decodeBinding(row) ?? []), packets: value.packets.slice(0, 512).flatMap(row => decodePacket(row) ?? []), dataRootExposed: value.dataRootExposed === true };
+  return { bindings: value.bindings.slice(0, 64).flatMap(row => decodeBinding(row) ?? []), packets: value.packets.slice(0, 512).flatMap(row => decodePacket(row) ?? []), dataRootExposed: value.dataRootExposed === true,
+    installation: decodeInstallation(value.installation) };
 }
 /** The `relay` member of an error body; null when there is none. A member that offers nothing has no options. */
 export function decodeRelayErrorBody(value: unknown): RelayErrorBody | null {
@@ -264,7 +289,7 @@ export function decodeRunRelay(value: unknown): ClientRunRelay | null {
   const packetId = value.packetId == null ? null : word(value.packetId, 128), kind = value.kind == null ? null : word(value.kind, 32), continuity = decodeContinuity(value.continuity);
   if (continuity === null || (value.packetId != null && packetId === null) || (value.kind != null && kind === null)) return null;
   const delivery = isRecord(value.delivery) ? { state: word(value.delivery.state, 32), evidence: word(value.delivery.evidence, 8) } : undefined;
-  const decision = isRecord(value.decision) ? { kind: word(value.decision.kind, 16), by: word(value.decision.by, 16), cause: word(value.decision.cause, 48), reason: word(value.decision.reason, 64) } : undefined;
+  const decision = isRecord(value.decision) ? { kind: word(value.decision.kind, 16), by: word(value.decision.by, 16), cause: word(value.decision.cause, 48), reason: word(value.decision.reason, 64), resend: word(value.decision.resend, 16) } : undefined;
   // The contract types brand the identity and close the words; the page keeps what it read and checks the words where it uses them.
   return { packetId, kind, continuity, executedOn: decodeExecutedOn(value.executedOn), ...(delivery === undefined ? {} : { delivery }), ...(decision === undefined ? {} : { decision }) } as unknown as ClientRunRelay;
 }
@@ -282,7 +307,7 @@ export function runRelayInfo(run: { readonly relay?: RunRelay | undefined }): Ru
 function decodeDecision(value: unknown): RelayDecisionInfo | null {
   if (!isRecord(value)) return null;
   const kind = oneOf(value.kind, RELAY_DECISION_KINDS), by = oneOf(value.by, RELAY_DECISION_BY);
-  return kind === null || by === null ? null : { kind, by, cause: oneOf(value.cause, RELAY_DECISION_CAUSES), reason: word(value.reason, 64) };
+  return kind === null || by === null ? null : { kind, by, cause: oneOf(value.cause, RELAY_DECISION_CAUSES), reason: word(value.reason, 64), resend: oneOf(value.resend, RELAY_DECISION_RESENDS) };
 }
 /**
  * The preferences, from the shapes a Gateway may answer with (`{ prefs: { "relay.crossVendor": … } }`, the same without the wrapper,

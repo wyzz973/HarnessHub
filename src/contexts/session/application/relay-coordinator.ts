@@ -1033,12 +1033,13 @@ export function decideTurn(input: DecideInput): TurnDecision {
 /**
  * What a Turn records of its decision in `run.context_prepared.data.relay.decision` (contracts RelayDecision): the kind, who decided
  * and what for. An ordinary Turn that owes nothing records none (it has no `relay` at all); one asked for the history with none to
- * attach says the user asked; one whose pending packet is no longer owed says the need decided.
+ * attach says the user asked; one whose pending packet is no longer owed says the need decided. A packet that sent a pending one again says
+ * how (`resend`: the automatic resend, a packet for newer facts, or the user's own).
  */
 export function decisionRecord(decision: TurnDecision | null): RelayDecision | null {
   if (decision === null) return null;
   switch (decision.kind) {
-    case "carry": return { kind: "carry", by: decision.by, ...(decision.cause === undefined ? {} : { cause: decision.cause }) };
+    case "carry": return { kind: "carry", by: decision.by, ...(decision.cause === undefined ? {} : { cause: decision.cause }), ...(decision.resend === null ? {} : { resend: decision.resend.by }) };
     case "alone": return { kind: "alone", by: decision.by, ...(decision.cause === undefined ? {} : { cause: decision.cause }), ...(decision.reason === undefined ? {} : { reason: decision.reason }) };
     case "plain": return decision.nothingToAttach ? { kind: "plain", by: "user" } : decision.owedNothing === true ? { kind: "plain", by: "need" } : null;
   }

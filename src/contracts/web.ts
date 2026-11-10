@@ -1,7 +1,7 @@
 import type { ProviderView } from "./provider.js";
 import type { HarnessManagementView, InstallationJobView, InstallationLog } from "./management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunId, SelectionRequest, SessionEvent, SessionOrigin, SessionSnapshot } from "./session.js";
-import type { DeliveryEvidence, DeliveryStatus, EvidenceClass, RelayAttention, RelayDecision, RelayPacketId, RelayPacketKind, RelayPrefKey, RunRelay, SYNC_KINDS, Tier } from "./relay.js";
+import type { DeliveryEvidence, DeliveryStatus, EvidenceClass, RelayAttention, RelayDecision, RelayInstallationNotice, RelayPacketId, RelayPacketKind, RelayPrefKey, RunRelay, SYNC_KINDS, Tier } from "./relay.js";
 
 /**
  * A conversation's title as summaries and the sidebar give it, the same in the Gateway and the page: its first message,
@@ -337,6 +337,12 @@ export interface RelayBindingView {
    */
   readonly owed?: { readonly runs: number; readonly estTokens: number };
   /**
+   * The latest time the model service this binding's Harness runs on changed, as the relay recorded it (`relay.vendor_changed`, which the
+   * defaults let go and note): the vendor keys it was and became (a named service, or a public key such as `gateway:<host>`), and the
+   * 0-based index, in the Session's Runs, of the Turn that saw it — the page says it under that Turn's message. Absent when it never changed.
+   */
+  readonly vendorChange?: { readonly from: string; readonly to: string; readonly runIndex: number };
+  /**
    * What this binding asks the user to look at (permissive-defaults §2.6), read from the Runtime: never a block, the next input
    * goes anyway. Absent when it needs nothing.
    */
@@ -383,6 +389,11 @@ export interface RelayView {
    * that refuses).
    */
   readonly dataRootExposed?: true;
+  /**
+   * What the installation as a whole cannot do for the relay while it stays so (the relay key file is unusable): a standing notice with its
+   * reason, for every conversation, until it is mended. Absent when nothing is wrong (`Runtime.relayInstallation`).
+   */
+  readonly installation?: readonly RelayInstallationNotice[];
 }
 /** The installation's relay preferences, all of them: a key never set has its default (RELAY_PREF_DEFAULTS) (GET and PUT /api/v1/relay/prefs). */
 export interface RelayPrefsView { readonly prefs: Readonly<Record<RelayPrefKey, string>> }

@@ -382,7 +382,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   relayApi = new RelayApi({ reads: app.store, read: id => app.runtime.read(id),
     declaration: selection => { const factory: SessionBindingFactory = app.factory; return factory.relayCapabilities?.(selection); },
     // What each binding asks the user to look at, and whether the data directory is in the workspace's reach: the Runtime's reads (never a block).
-    attention: id => app.runtime.relayAttention(id), dataRootExposed: id => app.runtime.relayDataRootExposed(id), http: { json, headers, queries, body } });
+    attention: id => app.runtime.relayAttention(id), dataRootExposed: id => app.runtime.relayDataRootExposed(id), installation: () => app.runtime.relayInstallation(), http: { json, headers, queries, body } });
   // This build: every compiled Gateway file by name and content (ADR-033), also named in a Turn's diagnostics (ADR-037).
   const revision = buildRevision(fileURLToPath(new URL("..", import.meta.url)));
   // Derived observations only; a file this version cannot adopt is reported and left as it is. Catalogs are reused only by

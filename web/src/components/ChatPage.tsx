@@ -10,7 +10,7 @@ import { failureMessage, runStatusLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { clock, compact, duration, elapsed, folderName, shortTitle } from "../lib/format.js";
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
-import { bannerOf, choiceApplies, choiceView, handoverOf, relayHasStory, relayLine, relayRequestFor, runNotes, userSequences } from "../lib/relay-state.js";
+import { bannerOf, choiceApplies, choiceView, handoverOf, installationNotices, relayHasStory, relayLine, relayRequestFor, runNotes, userSequences } from "../lib/relay-state.js";
 import { useClosedNotices, useRelayIntro } from "../lib/use-relay.js";
 import { runRelayInfo, type RelayApi, type RelayChoice, type RelayOption, type RelayPrefs, type RelayRequest, type RelayView } from "../relay.js";
 import { cancelledWords, changeCount, finished, toolTree, TOOL_PENDING, type QueueNotice } from "../lib/turn.js";
@@ -24,7 +24,7 @@ import { BranchOrigin } from "./BranchOrigin.js";
 import { Composer, OPTION_NAMES, THINKING_NAMES, type DockedApproval } from "./Composer.js";
 import { DetailsPanel, type PanelTab } from "./DetailsPanel.js";
 import { RelayPacketDialog, type PacketTarget } from "./RelayDetails.js";
-import { RelayCard, RelayDataRoot, type RelayNext } from "./RelayCard.js";
+import { RelayCard, RelayDataRoot, RelayInstallation, type RelayNext } from "./RelayCard.js";
 import { RelayDivider } from "./RelayDivider.js";
 import { AssistantTurn, SwitchDivider, UserMessage } from "./Turn.js";
 import { Welcome } from "./Welcome.js";
@@ -608,6 +608,7 @@ export function ChatPage(props: ChatProps) {
       {error ? <div className="chat-error px-4 pt-3 sm:px-8"><Notice tone="red" onDismiss={props.onDismissError} className="mx-auto max-w-reading">{error}</Notice></div> : null}
       {props.connectionError ? <div className="px-4 pt-3 sm:px-8"><Notice tone="amber" className="connection-notice mx-auto max-w-reading" action={props.onRetryConnection ? <button type="button" className="btn btn-sm" onClick={props.onRetryConnection}>重新连接</button> : undefined}>{props.connectionError}</Notice></div> : null}
       {session && relay?.view?.dataRootExposed && !closed.has("dataroot|" + session.workspace) ? <div className="px-4 pt-3 sm:px-8"><RelayDataRoot onDismiss={() => closed.add("dataroot|" + session.workspace)}/></div> : null}
+      {session && relay?.view ? installationNotices(relay.view.installation).map(notice => <div key={notice.cause} className="px-4 pt-3 sm:px-8"><RelayInstallation notice={notice}/></div>) : null}
       {failedSwitch && session?.status === "open" ? <div className="px-4 pt-3 sm:px-8"><Notice tone="red" className="selection-failure mx-auto max-w-reading" title={`未能切换到 ${harnessName(failedSwitch.requested.harnessId)}`}
         action={<button className="btn btn-sm" type="button" disabled={mutation !== null || pending} onClick={() => { props.onDraft(selectionDraft(session.selection)); setDismissedSwitch(failedSwitch.id); }}>继续使用当前选择</button>}>
         {failedSwitch.error ? failureMessage(failedSwitch.error) : "目标连接没有通过验证。"} 当前选择仍是 {harnessName(session.selection.harnessId)}。</Notice></div> : null}

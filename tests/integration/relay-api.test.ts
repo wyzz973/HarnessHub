@@ -321,7 +321,7 @@ test("under the defaults nothing is asked: an unconfirmed handoff is sent again 
   const shown = await view(f, id), model = await relayOf(f, id);
   assert.deepEqual(shown.runs.map(run => run.status), ["completed", "completed", "completed", "completed", "completed"], "no Run failed");
   assert.deepEqual(shown.runs.map(run => run.relay?.decision ?? null), [null,
-    { kind: "carry", by: "need" }, { kind: "carry", by: "policy", cause: "delivery_unconfirmed" }, { kind: "alone", by: "policy", cause: "delivery_unconfirmed" }, { kind: "alone", by: "policy", cause: "delivery_unconfirmed" }],
+    { kind: "carry", by: "need" }, { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" }, { kind: "alone", by: "policy", cause: "delivery_unconfirmed" }, { kind: "alone", by: "policy", cause: "delivery_unconfirmed" }],
     "a Run that went alone because of what it could not confirm says so; one sent again says it was the relay that did it");
   assert.deepEqual(shown.runs.map(run => run.relay?.kind ?? null), [null, "packet", "packet", null, null], "the packet sent again is a packet like the first: what tells it apart is the decision, not its kind");
   assert.deepEqual(shown.runs.map(run => run.relay?.packetId != null), [false, true, true, false, false]);

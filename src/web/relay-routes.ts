@@ -8,7 +8,7 @@ import { heldSince, owed } from "../contexts/session/domain/relay/delivery.js";
 import { terminal } from "../contexts/session/domain/state.js";
 import {
   ATTACH_CHOICES, NATIVE_CHOICES, RELAY_PREF_DEFAULTS, RELAY_PREF_KEYS, RELAY_PREF_VALUES, TIERS, markOf, parseVendorKey, relayDecisionOf,
-  type BindingRelayState, type DeliveredMark, type DeliveryOutcome, type DeliveryRecord, type RelayAttention, type RelayCapabilities, type RelayDecision, type RelayIndexRow, type RelayLogPort, type RelayPrefKey, type RelayStorePort, type Tier, type VendorKey,
+  type BindingRelayState, type DeliveredMark, type DeliveryOutcome, type DeliveryRecord, type RelayAttention, type RelayCapabilities, type RelayDecision, type RelayIndexRow, type RelayInstallationNotice, type RelayLogPort, type RelayPrefKey, type RelayStorePort, type Tier, type VendorKey,
 } from "../contracts/relay.js";
 import { SessionError, sessionId, type HarnessSelection, type NativeSessionBinding, type SessionEvent, type SessionId, type SessionSnapshot } from "../contracts/session.js";
 import type { RelayAttentionView, RelayBindingView, RelayDeliveryView, RelayErrorView, RelayOption, RelayPacketView, RelayPrefsView, RelayView, WebRun } from "../contracts/web.js";
@@ -154,6 +154,8 @@ export interface RelayApiOptions {
   readonly attention?: (id: SessionId) => readonly BindingAttention[];
   /** Whether the data directory is within reach of the Session's workspace (the Runtime's `relayDataRootExposed`). */
   readonly dataRootExposed?: (id: SessionId) => boolean;
+  /** What the installation as a whole cannot do for the relay while it stays so (the Runtime's `relayInstallation`). */
+  readonly installation?: () => readonly RelayInstallationNotice[];
   readonly http: RelayHttp;
 }
 
@@ -188,17 +190,22 @@ function mayHaveDecisions(snapshot: SessionSnapshot): boolean {
   }
   return false;
 }
+/** The latest allowed change of vendor of a binding, as `relay.vendor_changed` recorded it: the keys and the Run that saw it. */
+interface VendorChange { readonly from: VendorKey; readonly to: VendorKey; readonly runId: string }
+/** What the relay's events of a Session say that the API shows: the decision of each Run, and each binding's latest change of vendor. */
+interface RelayFacts { readonly decisions: ReadonlyMap<string, RelayDecision>; readonly changes: ReadonlyMap<string, VendorChange> }
 /**
- * The relay decision each Run's `run.context_prepared` recorded (`relayDecisionOf`), by Run — or the one a `relay.withheld` took back to. Events are append-only, so each
+ * The relay decision each Run's `run.context_prepared` recorded (`relayDecisionOf`), by Run — or the one a `relay.withheld` took back to
+ * — and the latest change of vendor of each binding (`relay.vendor_changed` the defaults let go). Events are append-only, so each
  * Session's are read once, from where the last read stopped; a Session the process has not seen is read from its start. Bounded:
  * the least recently read Sessions are forgotten.
  */
 class DecisionLedger {
-  private readonly sessions = new Map<SessionId, { after: number; readonly byRun: Map<string, RelayDecision> }>();
+  private readonly sessions = new Map<SessionId, { after: number; readonly byRun: Map<string, RelayDecision>; readonly changes: Map<string, VendorChange> }>();
   constructor(private readonly events: (id: SessionId, afterSeq: number, limit: number) => readonly SessionEvent[]) {}
-  of(state: SessionSnapshot): ReadonlyMap<string, RelayDecision> {
+  of(state: SessionSnapshot): RelayFacts {
     let known = this.sessions.get(state.id);
-    if (known === undefined || known.after > state.lastSeq) known = { after: 0, byRun: new Map() };
+    if (known === undefined || known.after > state.lastSeq) known = { after: 0, byRun: new Map(), changes: new Map() };
     // Used last: moved to the end of the map, which is where the forgetting starts from the other side.
     this.sessions.delete(state.id); this.sessions.set(state.id, known);
     if (this.sessions.size > DECISION_SESSIONS) this.sessions.delete(this.sessions.keys().next().value!);
@@ -207,6 +214,7 @@ class DecisionLedger {
       if (!page.length) break;
       for (const item of page) {
         const run = item.data.runId;
+        if (item.type === "relay.vendor_changed") { this.changed(known.changes, item.data); continue; }
         // The last word wins: a packet withheld at the last moment (`relay.withheld`) takes back what `run.context_prepared` decided.
         if (item.type !== "run.context_prepared" && item.type !== "relay.withheld" || typeof run !== "string") continue;
         const decision = relayDecisionOf(item.data);
@@ -214,7 +222,13 @@ class DecisionLedger {
       }
       known.after = page.at(-1)!.seq;
     }
-    return known.byRun;
+    return { decisions: known.byRun, changes: known.changes };
+  }
+  /** A change the relay let go and noted (`allowed`), by the Harness control it was seen on; one it refused, or whose keys are no keys, is left out. */
+  private changed(into: Map<string, VendorChange>, data: Readonly<Record<string, unknown>>): void {
+    const { harnessId, controlId, observedInRun } = data;
+    if (data.allowed !== true || typeof harnessId !== "string" || typeof controlId !== "string" || typeof observedInRun !== "string") return;
+    try { into.set(harnessId + "\0" + controlId, { from: parseVendorKey(data.from), to: parseVendorKey(data.to), runId: observedInRun }); } catch { /* Not a key: not shown. */ }
   }
 }
 /** What a binding is owed now: the Runs a handoff to it would carry, and whether the history the Session started from goes too. */
@@ -253,7 +267,7 @@ export class RelayApi {
     }
     let decisions: ReadonlyMap<string, RelayDecision> = new Map();
     if (mayHaveDecisions(snapshot)) {
-      try { decisions = this.decisions.of(snapshot); }
+      try { decisions = this.decisions.of(snapshot).decisions; }
       catch (error) { if (!(error instanceof SessionError && error.code === "INVALID_DATA")) throw error; }
     }
     const shown = snapshot.runs.map(run => {
@@ -296,16 +310,27 @@ export class RelayApi {
       packets.push({ packetId: packet.id, runId: run.id, runIndex, number, kind: packet.kind, tier: packet.tier, target: { harnessId: packet.target.harnessId, model: packet.target.model },
         estTokens: packet.body.estTokens, omissions: packet.omissions.reduce((sum, item) => sum + item.count, 0), redactions: packet.redaction.count, delivery: delivery.state, evidence: delivery.evidence });
     }
-    const attended = this.attended(snapshot.id);
-    const bindings = (snapshot.nativeBindings ?? []).flatMap(binding => binding.status === "archived" || binding.relay === undefined ? [] : [this.bindingView(snapshot, binding, binding.relay, attended, numbers)]);
-    return { bindings, packets, ...(this.exposed(snapshot.id) ? { dataRootExposed: true as const } : {}) };
+    const attended = this.attended(snapshot.id), changes = this.vendorChanges(snapshot);
+    const bindings = (snapshot.nativeBindings ?? []).flatMap(binding => binding.status === "archived" || binding.relay === undefined ? [] : [this.bindingView(snapshot, binding, binding.relay, attended, numbers, changes)]);
+    const installation = this.installation();
+    return { bindings, packets, ...(this.exposed(snapshot.id) ? { dataRootExposed: true as const } : {}), ...(installation.length ? { installation } : {}) };
+  }
+  /** What the installation as a whole cannot do for the relay (the Runtime's `relayInstallation`); a read that fails says nothing. */
+  private installation(): readonly RelayInstallationNotice[] {
+    try { return (this.options.installation?.() ?? []).map(notice => ({ cause: notice.cause, ...(notice.detail === undefined ? {} : { detail: notice.detail.slice(0, 200) }) })); } catch { return []; }
+  }
+  /** The latest change of vendor of each of the Session's bindings, by binding. */
+  private vendorChanges(snapshot: SessionSnapshot): ReadonlyMap<string, VendorChange> {
+    if (!mayHaveDecisions(snapshot)) return new Map();
+    try { return this.decisions.of(snapshot).changes; }
+    catch (error) { if (error instanceof SessionError && error.code === "INVALID_DATA") return new Map(); throw error; }
   }
   /** What the Runtime says each binding asks the user to look at, by binding; none when it says nothing (or cannot be asked). */
   private attended(id: SessionId): ReadonlyMap<string, BindingAttention> {
     try { return new Map((this.options.attention?.(id) ?? []).map(row => [row.harnessId + "\0" + row.controlId, row])); } catch { return new Map(); }
   }
   private exposed(id: SessionId): boolean { try { return this.options.dataRootExposed?.(id) === true; } catch { return false; } }
-  private bindingView(snapshot: SessionSnapshot, binding: NativeSessionBinding, relay: BindingRelayState, attended: ReadonlyMap<string, BindingAttention>, numbers: ReadonlyMap<string, number>): RelayBindingView {
+  private bindingView(snapshot: SessionSnapshot, binding: NativeSessionBinding, relay: BindingRelayState, attended: ReadonlyMap<string, BindingAttention>, numbers: ReadonlyMap<string, number>, changes: ReadonlyMap<string, VendorChange>): RelayBindingView {
     const mark = markOf(relay.sync);
     let declared: RelayCapabilities | null | undefined;
     try { declared = this.options.declaration({ harnessId: binding.harnessId, controlId: binding.controlId }); } catch { declared = undefined; }
@@ -328,10 +353,12 @@ export class RelayApi {
     // old one) raises none in the new one, and the fresh state it left says it was a clear.
     const clears = Math.max(0, relay.nativeEpoch - heldSince(relay, snapshot.nativeBindings ?? [], binding.harnessId, binding.controlId));
     const cleared = clears === 0 && relay.sync.kind === "fresh" && relay.sync.basis === "user_cleared" ? 1 : clears;
+    const change = changes.get(binding.harnessId + "\0" + binding.controlId), changeIndex = change === undefined ? -1 : snapshot.runs.findIndex(run => run.id === change.runId);
     return { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.nativeEpoch, sync: relay.sync.kind, throughRun: this.throughRun(snapshot, mark),
       evidence: mark?.evidence ?? null, cleared, probed,
       ...(canConfirm === undefined ? {} : { canConfirm }), ...(named === undefined ? {} : { vendor: named }),
-      ...(need === undefined || need.runIds.length === 0 ? {} : { owed: { runs: need.runIds.length, estTokens: this.estimate(snapshot, need) } }),
+      ...(need === undefined || need.runIds.length === 0 && !need.origin ? {} : { owed: { runs: this.owedRuns(snapshot, need), estTokens: this.estimate(snapshot, need) } }),
+      ...(change === undefined || changeIndex < 0 ? {} : { vendorChange: { from: change.from, to: change.to, runIndex: changeIndex } }),
       ...(attention === undefined ? {} : { attention }) };
   }
   /**
@@ -408,7 +435,14 @@ export class RelayApi {
     const relay = binding?.relay;
     if (binding === undefined || relay === undefined) return undefined;
     const need = this.owedNow(snapshot, binding);
-    return need === undefined ? undefined : { runs: need.runIds.length, packets: relay.packetsInEpoch };
+    return need === undefined ? undefined : { runs: this.owedRuns(snapshot, need), packets: relay.packetsInEpoch };
+  }
+  /**
+   * How many Turns a handoff to the binding would carry: the finished Runs it owes, and the Turns of the history the Session started
+   * from when that goes too (a branch's quoted history counts, as the Runtime's attention counts it).
+   */
+  private owedRuns(snapshot: SessionSnapshot, need: OwedNow): number {
+    return need.runIds.length + (need.origin ? Math.max(1, (snapshot.origin?.history ?? []).filter(row => row.role === "user").length) : 0);
   }
 
   // ---- routes --------------------------------------------------------------------------------------------------------

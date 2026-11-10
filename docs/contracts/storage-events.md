@@ -202,7 +202,7 @@ PRAGMA user_version=13;
 | `relay_windows` | 安装 | 一个 (harness, control, model_key) 的窗口与首回合用量；`model_key` 经 `normalizeModel`，`''` 为模型未知 | `upsertWindow`（含回合外的 `usage_update`），最后写入者胜 | 每个键一行 |
 | `relay_log` | 安装 | 一条同意或撤回，自带 seq，`command_id` 唯一；只追加 | `RelayLogPort.append` | ≤65,536 行，触顶在同一事务轮转 |
 | `relay_log_archive` | 安装 | 轮转出去的旧同意记录 | 轮转事务 | 终稿未写 |
-| `relay_prefs` | 安装 | 一项安装级偏好 | `setPref`，最后写入者胜 | CHECK 限 `RELAY_PREF_KEYS` 的键（现为 6 个，默认放行加了 2 个），值 ≤64；打开时较旧的库（G072 建的 CHECK 只列 4 个）在事务里重建并保留数据（`repairRelayPrefs`），表仍不收的偏好是 `INVALID_INPUT`、不停用 Store |
+| `relay_prefs` | 安装 | 一项安装级偏好 | `setPref`，最后写入者胜 | CHECK 限 4 个键，值 ≤64 |
 
 引文（终稿第 14.1 节）：
 
@@ -239,8 +239,7 @@ PRAGMA user_version=13;
 | `relay.consent_recorded` / `relay.consent_revoked`（会话镜像） | `logSeq`、`vendor`、`scope`、`decision`、`categories`、`policyVersion`、`authKind` | commandId · 权威在 `relay_log`，镜像与它同事务或更晚 |
 | `relay.redaction_overridden` | `runId`、`ref`、`offset`、`length`、`tag`（HMAC 前 8 位） | commandId · 用户命令；不含值与值的哈希 |
 | `relay.vendor_changed` | `harnessId`、`controlId`、`from`、`to`、`observedInRun` | runId · 发现时的提交 |
-| `relay.title_set` | `harnessId`、`controlId`、`result: set ｜ refused ｜ unavailable` | runId · 在携带交接单的 `run.context_prepared` 提交之后、`run.dispatched` 之前单独提交（标题在首个提示之前回写，VF3-12；最终转为单发的 Turn 不设，独立审查 I7） |
-| `relay.withheld` | `runId`、`packetId`、`relay.decision`（`{kind:"alone", by:"policy", cause:"consent_revoked"}`） | runId · 在 `run.authorized` 之后、`run.dispatched` 之前：这条消息的同意在授权后被撤回，交接单没有发出，原话原样发出；这个 Run 失去它准备好的交接单（`relay`、`sourceRunIds` 回到无包，是 `assertSessionTransition` 允许的唯一一种已在运行的 Run 的上下文变化，要求这个事件点名同一份包且尚未派发），交接单的送达行在结算时记 `not_recorded{never_dispatched}`（独立审查 m1） |
+| `relay.title_set` | `harnessId`、`controlId`、`result: set ｜ refused ｜ unavailable` | runId · 与 `run.context_prepared` 同事务（标题在首个提示之前回写，VF3-12） |
 
 每次交接新增事件 ≤3 条（`input_recorded`、`verified`、`title_set`；扩展字段不算新事件）+ 请求带 `relay.consent` 时的同意镜像 1 条（VF2-08）；普通回合 0 条。v12 的事件类型是开放的（`sqlite-store.ts:85–106`【事实】），P0 新增 `contextEffect`、`input` 字段与 `relay.input_recorded` 不必升库。
 

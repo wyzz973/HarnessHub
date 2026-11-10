@@ -529,6 +529,13 @@ export const DECISION_BY = ["need", "policy", "user"] as const;
  */
 export const DECISION_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent", "input_limit", "recovery_failed", "consent_revoked", "consent_goal_only", "prepare_failed", "classification_changed"] as const;
 /**
+ * Which kind of resend a `carry` decision is, when its packet superseded a pending one: `auto`, the one automatic resend of an
+ * unconfirmed packet (the same facts again); `grown`, a packet for newer facts that also carries what the unconfirmed one carried
+ * (permissive-defaults row 3, "补交 N 轮（含上次未确认送达的内容）"); `user`, the user's own "再附一次" (or attach on a pending packet).
+ * Absent for a packet that supersedes none.
+ */
+export const DECISION_RESENDS = ["auto", "grown", "user"] as const;
+/**
  * `run.context_prepared.data.relay.decision`: what the relay did with a content Turn's history. `reason` names the failure of a
  * `prepare_failed` (a RELAY_PREPARE_REASONS or RELAY_UNAVAILABLE_REASONS value). An ordinary Turn that owes nothing records none.
  */
@@ -537,6 +544,8 @@ export interface RelayDecision {
   readonly by: typeof DECISION_BY[number];
   readonly cause?: typeof DECISION_CAUSES[number];
   readonly reason?: string;
+  /** Only on a `carry` that sent a pending packet again: how (DECISION_RESENDS). */
+  readonly resend?: typeof DECISION_RESENDS[number];
 }
 /** The decision a `run.context_prepared` event records; null when it records none (or something that is not one). */
 export function relayDecisionOf(data: Readonly<Record<string, unknown>> | undefined): RelayDecision | null {
@@ -547,8 +556,17 @@ export function relayDecisionOf(data: Readonly<Record<string, unknown>> | undefi
   const row = item as Readonly<Record<string, unknown>>;
   if (!(DECISION_KINDS as readonly unknown[]).includes(row.kind) || !(DECISION_BY as readonly unknown[]).includes(row.by)) return null;
   const cause = (DECISION_CAUSES as readonly unknown[]).includes(row.cause) ? row.cause as typeof DECISION_CAUSES[number] : undefined;
-  return { kind: row.kind as RelayDecision["kind"], by: row.by as RelayDecision["by"], ...(cause === undefined ? {} : { cause }), ...(typeof row.reason === "string" ? { reason: row.reason.slice(0, 64) } : {}) };
+  const resend = row.kind === "carry" && (DECISION_RESENDS as readonly unknown[]).includes(row.resend) ? row.resend as typeof DECISION_RESENDS[number] : undefined;
+  return { kind: row.kind as RelayDecision["kind"], by: row.by as RelayDecision["by"], ...(cause === undefined ? {} : { cause }), ...(typeof row.reason === "string" ? { reason: row.reason.slice(0, 64) } : {}),
+    ...(resend === undefined ? {} : { resend }) };
 }
+/**
+ * What the installation as a whole cannot do for the relay, as long as it stays so (not what one conversation asks): `key_unavailable`,
+ * the relay key file is unusable, so no packet can be keyed and every handoff goes as the words alone until it is mended.
+ * `detail` is the Gateway's reason in a few words, never a path or a value.
+ */
+export const INSTALLATION_NOTICE_CAUSES = ["key_unavailable"] as const;
+export interface RelayInstallationNotice { readonly cause: typeof INSTALLATION_NOTICE_CAUSES[number]; readonly detail?: string }
 export const ATTENTION_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent", "clear_unconfirmed", "recovery_failed", "input_limit", "consent_revoked", "consent_goal_only"] as const;
 /**
  * The user's ways out, as the buttons of a banner (the options of the 409's error body, relay-architecture §12.4, stage3-workstreams §3).
@@ -751,6 +769,8 @@ export interface RelayLogPort {
  */
 export interface RelayKeyPort {
   readonly keyId: string;
+  /** Why the key cannot be used (a file of the wrong length, a directory in its place), in words without a path; null when it can. Absent: a key kept in memory. */
+  readonly unusable?: string | null;
   /** HMAC-SHA256 of the current input (a delivery row's inputHmac). */
   inputHmac(session: SessionId, text: string): HmacDigest;
   /** The first 8 hex of the HMAC of a known-secret set (a delivery row's redaction.setHmac): the same set, whatever its order, tags alike. */

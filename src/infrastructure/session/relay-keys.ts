@@ -65,6 +65,8 @@ export class RelayKeys implements RelayKeyPort {
   /** Kept only in this object: never returned, logged or serialized. */
   readonly #key: Buffer | null;
   readonly #refusal: string | null;
+  /** Why this key cannot be used (what opening found at its path), or null when it can: what the page tells the user (G072 review, C). */
+  get unusable(): string | null { return this.#key === null ? this.#refusal ?? "不可用" : null; }
   private constructor(path: string | null, key: Buffer | null, refusal: string | null) {
     this.path = path; this.#key = key; this.#refusal = refusal;
     this.keyId = key === null ? "k-refused" : keyIdOf(key);

@@ -1,7 +1,7 @@
 import { ArrowRightLeft, Eraser, Info, X } from "lucide-react";
 import { cn } from "../lib/cn.js";
 import { compact } from "../lib/format.js";
-import { vendorWords, type BannerView, type ChoiceView, type RelayLine } from "../lib/relay-state.js";
+import { vendorWords, type BannerView, type ChoiceView, type InstallationView, type RelayLine } from "../lib/relay-state.js";
 import type { RelayOption, RelayRequest } from "../relay.js";
 import { Badge, Notice } from "../ui/primitives.js";
 
@@ -83,4 +83,12 @@ export function RelayDataRoot({ onDismiss }: { readonly onDismiss: () => void })
   return <Notice tone="amber" className="relay-data-root mx-auto max-w-reading" onDismiss={onDismiss}>
     HarnessHub 的数据目录在这个工作区里，目标 Harness 能直接读到全部对话记录；建议用 --data-dir 把它移到工作区外。
   </Notice>;
+}
+
+/**
+ * The standing notice for something the installation cannot do for the relay (the relay key file is unusable): why, what it means for
+ * the next message, and how to mend it. It is not closed by the user, because the cause stays until it is mended; the message still goes.
+ */
+export function RelayInstallation({ notice }: { readonly notice: InstallationView }) {
+  return <div className="relay-installation" data-relay="installation" data-cause={notice.cause}><Notice tone="amber" className="mx-auto max-w-reading" title={notice.title}>{notice.text}</Notice></div>;
 }

@@ -477,6 +477,14 @@ test("permissive §2.6 decisionRecord and attention: what the Turn records of it
   assert.deepEqual(decisionRecord({ kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" }), { kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" });
   assert.deepEqual(relayDecisionOf({ relay: { decision: { kind: "alone", by: "policy", cause: "input_limit", reason: "min_packet" } } }), { kind: "alone", by: "policy", cause: "input_limit", reason: "min_packet" });
   assert.equal(relayDecisionOf({ relay: { decision: { kind: "nope", by: "policy" } } }), null); assert.equal(relayDecisionOf({}), null);
+  // G072 review, A: a carry that sent a pending packet again says how — the same facts again, a packet for newer facts, the user's own.
+  assert.deepEqual(decisionRecord(auto(pending(0), {}, { declaration: relayDeclaration(caps({ successProvesRecorded: true })) }) as never), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" });
+  assert.deepEqual(decisionRecord(auto(pending(1), {}, { facts: NEWER }) as never), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" });
+  assert.deepEqual(decisionRecord(auto(pending(1), { resend: true }) as never), { kind: "carry", by: "user", resend: "user" });
+  assert.deepEqual(decisionRecord(decide(SYNCED)), { kind: "carry", by: "need" }, "a packet that supersedes none says no resend");
+  assert.deepEqual(relayDecisionOf({ relay: { decision: { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" } } }), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" });
+  assert.deepEqual(relayDecisionOf({ relay: { decision: { kind: "carry", by: "policy", resend: "teleport" } } }), { kind: "carry", by: "policy" }, "a kind it does not know is left out");
+  assert.deepEqual(relayDecisionOf({ relay: { decision: { kind: "alone", by: "policy", cause: "input_limit", resend: "auto" } } }), { kind: "alone", by: "policy", cause: "input_limit" }, "only a carry has one");
   // G072 review I5: attention is the state as it is now — the binding's sync state, what it owes, its vendor's consent, its window.
   const owedTwo = { owedRuns: 2, recoveryFailed: false, consent: null, fits: true };
   assert.deepEqual(attentionOf({ ...owedTwo, relay: pending(1) }), { cause: "delivery_unconfirmed", options: ["attach_full", "new_native"], counts: { runs: 2, packets: 2 }, key: "delivery_unconfirmed:" + P2 });
