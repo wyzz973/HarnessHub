@@ -17,11 +17,14 @@ import type { SessionView } from "../../src/contracts/web.js";
  * that says "taken over" only on evidence, the strip that opens a packet's text, the line above the message box and the ways
  * forward of a refused send, what a cleared context offers, the details tab and the setting.
  *
- * The page is the real built page (web/dist) in a real browser. The Gateway it talks to is a fake written here, because the
- * relay endpoints belong to another workstream (the API) and are not in this tree yet: it serves the page and answers the
- * calls the page makes, with the shapes the real Gateway sends (a conversation view that the page's own decoders accept,
- * the server-sent events of the conversation) and the relay endpoints as the stage-3 seam describes them. Everything the
- * fake says is data the test sets; what the test checks is what the page makes of it and what the page sends back.
+ * The page is the real built page (web/dist) in a real browser. The Gateway it talks to is a fake written here, so that every state
+ * the relay can be in is one the test sets (a binding that asks, a Turn sent alone, a refusal of the strict settings, a Gateway
+ * with no relay at all) without a Harness having to get there: it serves the page and answers the calls the page makes, with the
+ * shapes the real Gateway sends (a conversation view that the page's own decoders accept, the server-sent events of the
+ * conversation, the relay endpoints as src/contracts/web.ts and docs/contracts/public-api.md give them). Everything the fake
+ * says is data the test sets; what the test checks is what the page makes of it and what the page sends back. The real Gateway,
+ * with real Drivers over fixture programs, is walked end to end by relay-e2e.browser.ts, and its answers are checked by
+ * tests/integration/relay-api.test.ts and tests/security/relay-api.test.ts.
  *
  * Run: `pnpm build && pnpm web:build && node --test dist/tests/browser/relay.browser.js` (it needs the built page and Chromium;
  * the last group of tests reads the page's decoders and view model directly and starts no page). Pictures of each state, light
