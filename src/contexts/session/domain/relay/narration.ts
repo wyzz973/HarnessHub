@@ -3,9 +3,10 @@ import type { PublicRun, PublicTool, RunStatus, SessionSnapshot } from "../../..
 import { estimateTokens } from "./budget.js";
 import { characters, codeUnitsOf, fence, headUnits, neutralize, normalize, visible, type RelayLanguage } from "./escape.js";
 import { marksIn, namesCredentialFile, restoreLabels, type RelayRedactor } from "./redaction.js";
+import { changesFrom, classifyTool, commandTextOf, diffFiles, locationOf, normalizeTool, toolOutcome, type FileChange, type ToolFamily } from "../protocol/index.js";
 
 /**
- * Narration of the record for the slim relay packet (relay/1-mvp.6, ADR-055 §5.2): what one turn of the history says, as
+ * Narration of the record for the slim relay packet (relay/1-mvp.7, ADR-055 §5.2): what one turn of the history says, as
  * facts and nothing else, cut into items — the user's words, a reply, the lines of what was read, changed and run, a failed
  * command's output tail, an error — each of which a packet carries whole or leaves out whole. Only committed public facts
  * enter: the user's words, the tools' titles, kinds, statuses and exit codes, attachments, errors and replies; tool details
@@ -229,82 +230,21 @@ export class Narrator {
   }
 }
 
-type ToolKind = "read" | "change" | "search" | "execute" | "fetch" | "think" | "subagent" | "mcp" | "other";
-export function kindOf(tool: PublicTool): ToolKind {
-  switch (tool.kind) {
-    case "read": return "read";
-    case "edit": case "delete": case "move": return "change";
-    case "search": return "search";
-    case "execute": return "execute";
-    case "fetch": return "fetch";
-    case "think": return "think";
-    case "subagent": case "task": return "subagent";
-    case "mcp": return "mcp";
-    default: return "other";
-  }
-}
-const FAILED_TOOL = ["failed", "error", "declined", "rejected", "cancelled"];
+/**
+ * What a tool is, in the relay's words: the shared classification (domain/protocol/tools.ts), which trusts the kind the Harness reported
+ * and tells a tool that reported none by the name table. How a tool ended is the shared status words'.
+ */
+type ToolKind = ToolFamily;
+export function kindOf(tool: PublicTool): ToolKind { return classifyTool(tool).family; }
 /** How a tool ended: done, failed, or not finished. */
-function toolEnd(tool: PublicTool): "done" | "failed" | "open" {
-  if (tool.status === "completed") return "done";
-  return FAILED_TOOL.includes(tool.status) ? "failed" : "open";
-}
+function toolEnd(tool: PublicTool): "done" | "failed" | "open" { return toolOutcome(tool); }
 /** Whether a command failed: a non-zero exit code, or an end that is a failure. */
 function commandFailed(tool: PublicTool): boolean { return (tool.exitCode !== undefined && tool.exitCode !== 0) || toolEnd(tool) === "failed"; }
 
-/** One file a change made: where, how (created, deleted, edited, moved), and its added and removed lines when known. */
-export interface FileChange { readonly path: string; readonly op: "create" | "delete" | "edit" | "move"; readonly added: number | null; readonly removed: number | null }
-function diffPath(header: string): string { const path = header.replace(/\t.*$/u, "").trim(); return path === "/dev/null" ? path : path.replace(/^[ab]\//u, ""); }
-/**
- * A unified diff split by file (M4): a section starts at `diff --git` or at a `---` line followed by a `+++` line; each
- * section's path, operation (`--- /dev/null` created, `+++ /dev/null` deleted) and added and removed lines (headers excluded).
- */
-export function diffFiles(diff: string): readonly FileChange[] {
-  const sections: { old: string | null; next: string | null; added: number; removed: number; header: boolean }[] = [];
-  let current: (typeof sections)[number] | null = null;
-  const lines = diff.split("\n");
-  for (let index = 0; index < lines.length; index++) {
-    const line = lines[index]!;
-    if (line.startsWith("diff --git ")) { current = { old: null, next: null, added: 0, removed: 0, header: false }; sections.push(current); continue; }
-    if (line.startsWith("--- ") && lines[index + 1]?.startsWith("+++ ")) {
-      if (current === null || current.header) { current = { old: null, next: null, added: 0, removed: 0, header: false }; sections.push(current); }
-      current.old = diffPath(line.slice(4)); current.next = diffPath(lines[index + 1]!.slice(4)); current.header = true; index++; continue;
-    }
-    if (current === null) { current = { old: null, next: null, added: 0, removed: 0, header: false }; sections.push(current); }
-    if (line.startsWith("+")) current.added++; else if (line.startsWith("-")) current.removed++;
-  }
-  return sections.filter(section => section.added + section.removed > 0 || section.header).map(section => ({
-    path: section.next !== null && section.next !== "/dev/null" ? section.next : section.old ?? "",
-    op: section.old === "/dev/null" ? "create" : section.next === "/dev/null" ? "delete" : "edit", added: section.added, removed: section.removed,
-  }));
-}
-/** Whether a location and a diff's path name one file: equal once leading slashes and `./` are dropped, or one ends the other. */
-function sameFile(location: string, path: string): boolean {
-  const a = location.replace(/^(?:\.\/|\/)+/u, ""), b = path.replace(/^(?:\.\/|\/)+/u, "");
-  return a === b || a.endsWith("/" + b) || b.endsWith("/" + a);
-}
-/**
- * The files one change tool made, from its read detail (M4): its diff split by file, each matched to one of its locations
- * (a patch over several files lists each); its locations alone when it has no diff; null when nothing was read or the
- * diff and the locations do not correspond, and the tool is then told by its title.
- */
-export function changesOf(unit: Pick<RelayUnit, "details">, tool: PublicTool): readonly FileChange[] | null {
-  const detail = unit.details.get(tool.id);
-  if (detail === undefined) return null;
-  const locations = (detail.locations ?? []).map(location => location.replace(/:\d+$/u, "")).filter(location => location !== "");
-  const kindOp = tool.kind === "delete" ? "delete" : tool.kind === "move" ? "move" : null;
-  const files = detail.diff === undefined ? [] : diffFiles(detail.diff).filter(file => file.path !== "");
-  if (files.length === 0) return locations.length ? locations.slice(0, 16).map(path => ({ path, op: kindOp ?? "edit", added: null, removed: null })) : null;
-  // One location and a diff of one file name the same change, whatever path the diff's headers give.
-  if (locations.length === 1 && files.length === 1) return [{ ...files[0]!, path: locations[0]!, op: kindOp ?? files[0]!.op }];
-  if (locations.length && !files.every(file => locations.some(location => sameFile(location, file.path)))) return null;
-  return files.map(file => ({ ...file, path: locations.find(location => sameFile(location, file.path)) ?? file.path, op: kindOp ?? file.op }));
-}
-/** Where a tool read, from its detail's first location (a trailing `:line` dropped); null without one. */
-function locationOf(detail: RelayToolDetail | undefined): string | null {
-  const first = detail?.locations?.[0];
-  return typeof first === "string" && first !== "" ? first.replace(/:\d+$/u, "") : null;
-}
+/** One file a change made, and the split of a unified diff by file: read one way by the packet, the table and the protocol (domain/protocol/changes.ts). */
+export { diffFiles, type FileChange };
+/** The files one change tool made, from its read detail; null when nothing was read or the diff and the locations do not correspond. */
+export function changesOf(unit: Pick<RelayUnit, "details">, tool: PublicTool): readonly FileChange[] | null { return changesFrom(tool, unit.details.get(tool.id)); }
 /** A title fully wrapped in one pair of backticks (as some drivers write commands) without them. */
 function unwrapped(title: string): string { return /^`[^`]+`$/u.test(title) ? title.slice(1, -1) : title; }
 /** The lines of a command's recorded output as the table counts them: normalized like any output, blank lines at either end not counted; 0 for none. */
@@ -319,6 +259,25 @@ function linesOf(output: string): number {
 function commandSource(unit: RelayUnit, tool: PublicTool): string {
   const input = unit.details.get(tool.id)?.input;
   return typeof input === "string" && input.trim() !== "" ? input : unwrapped(tool.title);
+}
+/**
+ * What a tool that only the name table could tell acted on, from its stored detail: the command, the path, the query or the address. Such a
+ * tool's title is just its name (a DeepSeek Harness `bash`), so without the detail there is nothing to quote and null is returned, and the tool
+ * is told as the operation of no known kind it was before the name table knew it.
+ */
+function namedObject(tool: PublicTool, detail: RelayToolDetail | undefined, family: ToolKind): string | null {
+  if (family === "execute") { const command = commandTextOf(tool, detail ?? null); return command === "" ? null : command; }
+  const result = normalizeTool(tool, { seq: 0, detail: detail ?? null, turn: "going" });
+  if (!result.row) return null;
+  const item = result.item;
+  return item.type === "file_read" ? item.path : item.type === "search" ? item.query : item.type === "web" ? item.query ?? item.url ?? null : null;
+}
+/** The files a change tool that only the name table could tell made, from its stored detail (its input names a path); null when it says none. */
+function namedChanges(tool: PublicTool, detail: RelayToolDetail | undefined): readonly FileChange[] | null {
+  const result = normalizeTool(tool, { seq: 0, detail: detail ?? null, turn: "going" });
+  if (!result.row || result.item.type !== "file_change" || result.item.changes.length === 0) return null;
+  const ops = { create: "create", delete: "delete", modify: "edit", rename: "move" } as const;
+  return result.item.changes.map(file => ({ path: file.path, op: ops[file.op], added: file.added ?? null, removed: file.removed ?? null }));
 }
 
 /** The words of the items, in each language: both are listed here so that they stay the same text. */
@@ -436,14 +395,18 @@ export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): reado
   }
   for (const tool of unit.tools) {
     if (tool.parentId !== undefined) continue;
-    const kind = kindOf(tool), detail = unit.details.get(tool.id);
-    if (kind === "think") continue;
+    const { family, via } = classifyTool(tool), detail = unit.details.get(tool.id);
+    if (family === "think") continue;
+    // A tool only the name table could tell is worded by what its stored detail says, and by what it was before the name table when it has none.
+    const changes = family === "change" ? changesOf(unit, tool) ?? (via === "name" ? namedChanges(tool, detail) : null) : null;
+    const named = via === "name" && (family === "execute" || family === "read" || family === "search" || family === "fetch") ? namedObject(tool, detail, family) : undefined;
+    const kind: ToolKind = named === null || (via === "name" && family === "change" && changes === null) ? "other" : family;
     if (kind === "change") {
-      const files = changesOf(unit, tool), op: FileChange["op"] = tool.kind === "delete" ? "delete" : tool.kind === "move" ? "move" : "edit";
+      const files = changes, op: FileChange["op"] = tool.kind === "delete" ? "delete" : tool.kind === "move" ? "move" : "edit";
       if (files === null) add("changes", "ops", RANK.change, tool.title.length, counted => { const code = n.code(unwrapped(tool.title), counted); return code === null ? null : line(op, code, words.unread + status(tool)); });
       else for (const file of files) add("changes", "ops", RANK.change, file.path.length, counted => { const code = n.code(file.path, counted); return code === null ? null : line(file.op, code, words.counts(file.added, file.removed) + status(tool)); });
     } else if (kind === "execute") {
-      const source = commandSource(unit, tool), exit = words.exit(tool), keptBack = namesCredentialFile(source), output = detail?.output;
+      const source = named ?? commandSource(unit, tool), exit = words.exit(tool), keptBack = namesCredentialFile(source), output = detail?.output;
       // With the Hub's tools the whole output can be read back, so the line says there is one the packet does not carry (never for a rule's withheld output: the table keeps it back too).
       const lines = n.tools && !keptBack && typeof output === "string" ? linesOf(output) : 0;
       const command = add("calls", "ops", RANK.command, source.length, counted => { const code = n.code(source, counted); return code === null ? null : line("ran", code, exit); }, null, false,
@@ -454,8 +417,8 @@ export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): reado
           return tail === null || tail === "unfit" ? null : words.output(name, tail.shown, tail.total) + "\n" + tail.block;
         }, command, keptBack);
     } else {
-      const raw = kind === "read" ? locationOf(detail) ?? unwrapped(tool.title)
-        : kind === "search" && typeof detail?.input === "string" && detail.input.trim() !== "" && !detail.input.includes("\n") ? detail.input : unwrapped(tool.title);
+      const raw = named ?? (kind === "read" ? locationOf(detail) ?? unwrapped(tool.title)
+        : kind === "search" && typeof detail?.input === "string" && detail.input.trim() !== "" && !detail.input.includes("\n") ? detail.input : unwrapped(tool.title));
       add("calls", "ops", RANK.call, raw.length, counted => { const code = n.code(raw, counted); return code === null ? null : line(kind, code, status(tool)); });
     }
   }

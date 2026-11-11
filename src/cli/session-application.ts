@@ -24,6 +24,18 @@ import { catalogTarget } from "../infrastructure/catalog/platform.js";
 import { MemoryTableGrants } from "../infrastructure/session/table-grants.js";
 import type { TableGrants } from "../contracts/table.js";
 
+/**
+ * A Harness's display name by its id: its name in the built-in catalog ("Claude Code", "DeepSeek Harness", "Hermes Agent"), read once at the
+ * first ask. The Runtime's relay packets and the web view's protocol Turns both name Harnesses by it. A catalog that cannot be read leaves
+ * every Harness named by its id (null here): a name is never worth failing a Turn.
+ */
+export function builtinHarnessName(): (harnessId: string) => string | null {
+  let names: ReadonlyMap<string, string> | undefined;
+  return harnessId => {
+    if (names === undefined) { try { names = new Map(loadBuiltinCatalog(catalogTarget()).map(definition => [definition.id, definition.name])); } catch { names = new Map(); } }
+    return names.get(harnessId) ?? null;
+  };
+}
 export function dataRoot(value: string | undefined): string {
   const path = value === undefined ? resolve("data") : resolve(value);
   if ((value !== undefined && !value.trim()) || path.length > 4096 || /[\0\r\n]/u.test(path)) throw new SessionError("INVALID_INPUT", "invalid data directory");
@@ -129,12 +141,7 @@ export function application(root: string, publish: (event: SessionEvent) => void
     // Kept process groups are recognized across restarts on POSIX only; elsewhere a previous owner's kept process stays
     // unconfirmed and its workspace quarantined (ADR-030).
     // The relay names a Harness by its catalog name (ADR-055 §5.4); the built-in catalog is read once, at the first packet.
-    // A catalog that cannot be read leaves every Harness named by its id; a name is never worth failing a Turn.
-    let names: ReadonlyMap<string, string> | undefined;
-    const harnessName = (harnessId: string): string | null => {
-      if (names === undefined) { try { names = new Map(loadBuiltinCatalog(catalogTarget()).map(definition => [definition.id, definition.name])); } catch { names = new Map(); } }
-      return names.get(harnessId) ?? null;
-    };
+    const harnessName = builtinHarnessName();
     // The relay's installation key (ADR-055 §10.2, INV-36).
     const relayKeys = options.relayKeyFile === undefined ? null : openRelayKeys(options.relayKeyFile, root);
     const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, ...(options.budgets ?? {}),

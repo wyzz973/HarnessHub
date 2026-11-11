@@ -68,6 +68,8 @@ export class HarnessModels {
   probeSessions(harnessId: string, controlId: string): ReadonlySet<string> { return this.cache.probeSessions(harnessId, controlId); }
   /** Each entry's latest catalog read, most recent first. */
   readiness(): readonly NativeReadiness[] { return this.cache.readinessList(); }
+  /** The display name the catalogs read so far give a native model of a Harness (the name the message box's picker shows); null when none has been read. Never reads a catalog. */
+  modelName(harnessId: string, nativeModel: string): string | null { return this.cache.modelNames().get(harnessId + "\n" + nativeModel) ?? null; }
   private list<T extends NativeExtensions | null | NativeSessionPage>(kind: string, selection: SelectionRequest, configuration: SessionConfiguration, read: (signal: AbortSignal) => Promise<T>): Promise<T> {
     if (this.stopping) return Promise.reject(new SessionError("RUNTIME_CLOSED", "native model reader is stopping"));
     const key = JSON.stringify({ kind, selection, configuration }), existing = this.listing.get(key);

@@ -284,7 +284,7 @@ test("authenticated recovery restores a legacy blocked conversation without rewr
   assert.equal((await call(f, `/api/v1/sessions/${id}/resume`, "POST", { ...input, acknowledgeUnknown: "yes" })).status, 400);
   const accepted = await call(f, `/api/v1/sessions/${id}/resume`, "POST", input); assert.equal(accepted.status, 202, accepted.text);
   const resumed = await waitFor(f, id, value => value.status === "open");
-  assert.equal(resumed.id, id); assert.deepEqual(resumed.runs, failed.runs); assert.deepEqual(resumed.messages, failed.messages);
+  assert.equal(resumed.id, id); assert.deepEqual(resumed.runs.map(({ protocol: derived, ...rest }) => { assert.equal(derived?.version, "hh/1"); return rest; }), failed.runs); assert.deepEqual(resumed.messages, failed.messages);
   assert.deepEqual(resumed.switches[0], failed.switches[0]); assert.equal(resumed.selection.harnessId, "web-b");
   assert.equal((await trace(f)).filter(item => item.kind === "prompt").length, count);
   const replay = await call(f, `/api/v1/sessions/${id}/resume`, "POST", input); assert.equal(replay.status, 202); assert.equal(row(replay.data).replayed, true);
@@ -413,6 +413,7 @@ test("the public conversation exports as Markdown or JSON without private native
   const json = await fetch(f.origin + `/api/v1/sessions/${id}/export?format=json`, { headers: { Cookie: f.cookie } });
   const exported = row(await json.json()); assert.equal(exported.application, "HarnessHub"); assertView(exported.session);
   assert.equal(JSON.stringify(exported).includes("nativeBindings"), false, "private native bindings are not exported");
+  assert.equal(JSON.stringify(exported).includes("\"protocol\""), false, "the protocol view reads stored tool details, which an export leaves out");
   // A cancelled Turn is exported with why it ended, as the chat shows it (ADR-036).
   const view = exported.session as SessionView, ended = (error: string | null, cancelRequested: boolean) => conversationMarkdown({ ...view,
     runs: view.runs.map(run => ({ ...run, status: "cancelled" as const, error: error === null ? null : { code: error, message: "ended" }, cancelRequested })),

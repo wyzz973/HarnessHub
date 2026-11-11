@@ -10,6 +10,7 @@ import {
 } from "../../../contracts/session.js";
 import { buildPublicContext, type PublicContext, type PublicContextOptions } from "../domain/context.js";
 import { parseToolDetail, type RelayToolDetail } from "../domain/relay/narration.js";
+import { toolFamily } from "../domain/protocol/index.js";
 import { commandEffect, commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
 import { initialBindingRelay, owed, plan, type RelayFact } from "../domain/relay/delivery.js";
 import { BLOCKED_CODES, RelayError, type BindingRelayState, type DeliveryRecord, type RelayAttention, type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayInstallationNotice, type RelayKeyPort, type RelayLogPort, type RelayPacket, type RelayPrefKey, type RelayStorePort } from "../../../contracts/relay.js";
@@ -2209,7 +2210,7 @@ export class SessionRuntime {
       let taken = 0;
       for (const tool of run.tools ?? []) {
         if (left === 0 || taken === 32) break;
-        if (tool.detail === undefined || tool.parentId !== undefined || !["execute", "edit", "delete", "move", "read", "search"].includes(tool.kind ?? "")) continue;
+        if (tool.detail === undefined || tool.parentId !== undefined || !["execute", "change", "read", "search"].includes(toolFamily(tool))) continue;
         taken++; left--;
         const text = await content.readText(tool.detail, 256 * 1024);
         if (text === null) continue;

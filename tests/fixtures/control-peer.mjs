@@ -530,6 +530,27 @@ lines.on("line", line => {
       update({ sessionUpdate: "agent_message_chunk", content: { type: "resource_link", uri: "https://example.invalid/report", name: "report", title: "Report" } });
       acpOutput(); answer(promptId, { stopReason: "end_turn", usage: { inputTokens: 900, outputTokens: 300, cachedReadTokens: 50, totalTokens: 1250 } }); return;
     }
+    // The tool calls five Harnesses really sent in the trial of 2026-11-11 (tests/fixtures/protocol/trial-2026-11-11.json), in each one's own spelling:
+    // DeepSeek Harness's `bash` and `read` (kind other, the title only the tool's name), Claude Code's command and the Hub's own MCP tool, an edit with
+    // its diff, Hermes's `terminal: …` title, and a call no rule knows.
+    if (protocol === "acp-v1" && scenario === "protocol-trial") {
+      const sessionId = "session-fixture", update = value => notification("session/update", { sessionId, update: value });
+      const text = value => [{ type: "content", content: { type: "text", text: value } }];
+      update({ sessionUpdate: "tool_call", toolCallId: "d-bash", title: "bash", kind: "other", status: "in_progress", rawInput: { command: "pwd && ls -la" } });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "d-bash", status: "completed", content: text("/w") });
+      update({ sessionUpdate: "tool_call", toolCallId: "d-read", title: "read", kind: "other", status: "in_progress", rawInput: { file_path: "/w/src/cart.js" } });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "d-read", status: "completed", content: text("1: export const x = 1;") });
+      update({ sessionUpdate: "tool_call", toolCallId: "c-bash", title: "npm test", kind: "execute", status: "pending", rawInput: { command: "npm test" }, _meta: { claudeCode: { toolName: "Bash" } } });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "c-bash", status: "completed", content: text("ok") });
+      update({ sessionUpdate: "tool_call", toolCallId: "c-hub", title: "mcp__harnesshub__hub_turns", kind: "other", status: "pending", _meta: { claudeCode: { toolName: "mcp__harnesshub__hub_turns" } } });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "c-hub", status: "completed", content: text("Turns 1-1 of 1.") });
+      update({ sessionUpdate: "tool_call", toolCallId: "e-edit", title: "Edit a.txt", kind: "edit", status: "pending", rawInput: { file_path: "/w/a.txt" }, _meta: { claudeCode: { toolName: "Edit" } } });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "e-edit", status: "completed", content: [{ type: "diff", path: "a.txt", oldText: "one\ntwo", newText: "one\nTWO" }], locations: [{ path: "/w/a.txt", line: 2 }] });
+      update({ sessionUpdate: "tool_call", toolCallId: "h-term", title: "terminal: ls -la", kind: "execute", status: "completed" });
+      update({ sessionUpdate: "tool_call", toolCallId: "x-odd", title: "Brainstorm", kind: "other", status: "completed" });
+      update({ sessionUpdate: "usage_update", used: 1200, size: 200000 });
+      acpOutput(); finish(); return;
+    }
     if (protocol === "acp-v1" && scenario === "tool-merge") {
       const sessionId = "session-fixture";
       notification("session/update", { sessionId, update: { sessionUpdate: "tool_call", toolCallId: "merged", title: "printf 'a'\nprintf 'b'", status: "pending" } });

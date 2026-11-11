@@ -38,7 +38,7 @@ function usage(value: unknown): TurnUsage {
   const row = obj(value), completeness = pick(row.completeness, ["complete", "partial", "unavailable"] as const);
   const input = maybe(row.input, amount), cachedInput = maybe(row.cachedInput, amount), output = maybe(row.output, amount);
   const context = maybe(row.context, value => { const used = obj(value), size = maybe(used.size, amount); return { used: amount(used.used), ...(size === undefined ? {} : { size }) }; });
-  const cost = maybe(row.cost, value => { const paid = obj(value); return { amount: amount(paid.amount), currency: str(paid.currency), scope: pick(paid.scope, ["turn", "conversation"] as const) }; });
+  const cost = maybe(row.cost, value => { const paid = obj(value); return { amount: amount(paid.amount), currency: str(paid.currency), scope: pick(paid.scope, ["turn", "session", "conversation"] as const) }; });
   return { completeness, ...(input === undefined ? {} : { input }), ...(cachedInput === undefined ? {} : { cachedInput }), ...(output === undefined ? {} : { output }),
     ...(context === undefined ? {} : { context }), ...(cost === undefined ? {} : { cost }) };
 }
@@ -96,7 +96,7 @@ function typed(row: Record<string, unknown>, b: ItemBase): ProtocolItem {
     case "context_event": return { ...b, type: "context_event", kind: pick(row.kind, ["compaction", "clear", "rewind"] as const) };
     case "switch": {
       const turns = maybe(row.turns, int), delivery = maybe(row.delivery, value => pick(value, ["sending", "confirmed", "unconfirmed", "not_sent"] as const)), packetId = maybe(row.packetId, str);
-      return { ...b, type: "switch", from: executor(row.from), to: executor(row.to), context: pick(row.context, ["full", "delta", "resend", "none", "native"] as const), session: pick(row.session, ["new", "resumed"] as const),
+      return { ...b, type: "switch", from: executor(row.from), to: executor(row.to), context: pick(row.context, ["full", "delta", "resend", "none", "native", "unknown"] as const), session: pick(row.session, ["new", "resumed", "unknown"] as const),
         ...(turns === undefined ? {} : { turns }), ...(delivery === undefined ? {} : { delivery }), ...(packetId === undefined ? {} : { packetId }) };
     }
     case "interrupt": return { ...b, type: "interrupt", by: pick(row.by, ["user", "hub"] as const) };

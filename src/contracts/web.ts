@@ -295,9 +295,12 @@ export interface RunRelayView extends RunRelay { readonly delivery?: RelayDelive
 /**
  * The Run as the API shows it: a PublicRun whose `relay` also carries the delivery state and the decision, and without its
  * `relayRequest` (that member holds an HMAC of the user's choices, which stays in the Gateway; what the user chose shows in
- * `relay.decision.by === "user"`). Assignable to PublicRun, whose `relayRequest` is optional.
+ * `relay.decision.by === "user"`). Assignable to PublicRun, whose `relayRequest` is optional. Its `protocol` (PublicRun's own
+ * member, never stored) is the Run as the HarnessHub protocol tells it, read from the facts when the view is made.
  */
-export type WebRun = Omit<PublicRun, "relay" | "relayRequest"> & { readonly relay?: RunRelayView };
+export type WebRun = Omit<PublicRun, "relay" | "relayRequest"> & {
+  readonly relay?: RunRelayView;
+};
 
 /**
  * What a binding is, in the words the page knows: `fresh`, its native session holds nothing of the conversation (no mark, nothing run on it);

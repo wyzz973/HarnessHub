@@ -13,7 +13,7 @@ import { runId, type PublicRun } from "../../src/contracts/session.js";
 import { endLines, fenced, readRelayPrompt, TITLE } from "../fixtures/relay-packet.js";
 import { conversation, longConversation, names, s1, s1Delta, s3, tool, type RunSpec, type Scenario } from "../fixtures/relay-scenarios.js";
 
-// The slim relay packet (relay/1-mvp.6, ADR-055 §5 as cut down on 2026-11-11) rendered from public snapshots: facts only, two
+// The slim relay packet (relay/1-mvp.7, ADR-055 §5 as cut down on 2026-11-11) rendered from public snapshots: facts only, two
 // tiers, whole items or none, a ledger that adds up, and never a failure. Pure domain code; the formal Runtime's use of it is
 // in tests/integration/relay-mvp.test.ts.
 

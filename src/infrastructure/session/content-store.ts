@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, closeSync, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { constants, closeSync, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { chmod, copyFile, mkdir, open, rename, unlink } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -195,6 +195,24 @@ export class LocalContentStore implements ContentPort {
     try {
       const handle = await open(found.path, constants.O_RDONLY | constants.O_NOFOLLOW);
       try { data = await handle.readFile(); } finally { await handle.close(); }
+    } catch { return null; }
+    if (data.byteLength !== ref.bytes || createHash("sha256").update(data).digest("hex") !== ref.sha256) return null;
+    return data.toString("utf8");
+  }
+  /**
+   * `readText` without waiting, for a reader that cannot wait (the web view of a conversation is made synchronously): the same checks, the same
+   * answer, null for anything that is not read. For the small details of tool calls only: it blocks while the file is read.
+   */
+  readTextSync(ref: ContentRef, maxBytes: number): string | null {
+    this.owner();
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || ref.bytes > maxBytes) return null;
+    let found: ReturnType<LocalContentStore["read"]>;
+    try { found = this.read(ref.id); } catch (error) { if (error instanceof SessionError) return null; throw error; }
+    if (found.ref.sha256 !== ref.sha256 || found.ref.bytes !== ref.bytes) return null;
+    let data: Buffer;
+    try {
+      const fd = openSync(found.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try { data = readFileSync(fd); } finally { closeSync(fd); }
     } catch { return null; }
     if (data.byteLength !== ref.bytes || createHash("sha256").update(data).digest("hex") !== ref.sha256) return null;
     return data.toString("utf8");

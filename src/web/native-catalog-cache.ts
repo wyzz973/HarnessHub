@@ -60,6 +60,7 @@ interface ProbeSession { readonly harnessId: string; readonly controlId: string;
  */
 export class NativeCatalogCache {
   private catalogs: CatalogEntry[] = [];
+  private names: Map<string, string> | null = null;
   private readonly readiness = new Map<string, NativeReadiness>();
   private probes: ProbeSession[] = [];
   private persistent = true;
@@ -88,6 +89,19 @@ export class NativeCatalogCache {
     const age = this.now() - entry.observedAt;
     return entry.fingerprint === fingerprint && age >= 0 && age < NATIVE_CATALOG_TTL_MS ? entry.catalog : null;
   }
+  /**
+   * The display name each native model has in the catalogs this cache holds now (read by this process, or adopted from the file at start), by
+   * Harness and native model id (`harnessId + "\n" + id`): what the message box's picker shows ("Opus 5.5"). The newest read of a Harness wins.
+   * Derived from `catalogs`, rebuilt after the next record or drop.
+   */
+  modelNames(): ReadonlyMap<string, string> {
+    if (this.names === null) {
+      const names = new Map<string, string>();
+      for (const entry of [...this.catalogs].sort((a, b) => a.observedAt - b.observedAt)) for (const model of entry.catalog.models) if (model.name.trim() !== "") names.set(entry.harnessId + "\n" + model.id, model.name);
+      this.names = names;
+    }
+    return this.names;
+  }
   /** Records a successful catalog read; the oldest entries leave first. A catalog outside the stored bounds is not kept. */
   putCatalog(entry: Omit<CatalogEntry, "observedAt">): void {
     if (this.closed) return;
@@ -95,12 +109,13 @@ export class NativeCatalogCache {
     // Only the contract's fields are kept, and the kept value is the one the next process will read back.
     try { catalog = parseCatalog(project(entry.catalog)); } catch { return; }
     this.catalogs = [...this.catalogs.filter(item => item.key !== entry.key), { ...entry, catalog, observedAt: this.now() }].slice(-MAX_CATALOGS);
+    this.names = null;
     this.persist();
   }
   /** Forgets a catalog that its owner found to be stale. */
   dropCatalog(key: string): void {
     if (this.closed || !this.catalogs.some(item => item.key === key)) return;
-    this.catalogs = this.catalogs.filter(item => item.key !== key); this.persist();
+    this.catalogs = this.catalogs.filter(item => item.key !== key); this.names = null; this.persist();
   }
   /** Records what one entry's latest catalog read showed. */
   observe(value: Omit<NativeReadiness, "checkedAt">): void {
@@ -174,6 +189,7 @@ export class NativeCatalogCache {
       // Catalogs read by another build (or by v1, which did not record it) are validated but not reused.
       const current = document.version === VERSION && digest(document.revision) === this.revision;
       const now = this.now();
+      this.names = null;
       this.catalogs = bounded(document.catalogs, MAX_CATALOGS).map(value => {
         const row = record(value, ["key", "fingerprint", "harnessId", "controlId", "observedAt", "catalog"]);
         return { key: digest(row.key), fingerprint: digest(row.fingerprint), harnessId: identity(row.harnessId), controlId: identity(row.controlId), observedAt: time(row.observedAt), catalog: parseCatalog(row.catalog) };
@@ -192,7 +208,7 @@ export class NativeCatalogCache {
         return { harnessId: identity(row.harnessId), controlId: identity(row.controlId), id: line(row.id, 1024), createdAt: time(row.createdAt) };
       });
     } catch {
-      this.catalogs = []; this.readiness.clear(); this.probes = [];
+      this.catalogs = []; this.names = null; this.readiness.clear(); this.probes = [];
       this.reject("its contents are not a catalog cache this version can read");
     }
   }

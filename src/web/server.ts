@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { release, userInfo } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { application as composeApplication } from "../cli/session-application.js";
+import { application as composeApplication, builtinHarnessName } from "../cli/session-application.js";
 import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
 import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionSnapshot } from "../contracts/session.js";
@@ -25,6 +25,7 @@ import { carriedNativeConfiguration } from "../contexts/session/domain/state.js"
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
 import { RelayApi, parseSendRelay } from "./relay-routes.js";
+import { DetailHeads, ProtocolView } from "./protocol-view.js";
 import { TableApi } from "./table-routes.js";
 import type { TableGrants } from "../contracts/table.js";
 import { AttentionStreamHub } from "./attention-stream.js";
@@ -376,12 +377,17 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     const workspace = app.runtime.queueState(id), slot = workspace === null ? app.runtime.slotWait(id) : null;
     return workspace !== null ? { kind: "workspace", ...workspace } : slot !== null ? { kind: "slot", ...slot } : null;
   };
+  // The protocol (hh/1) reading of each Run of a view (src/contracts/protocol.ts); made once the Gateway's parts it reads from exist, below.
+  let protocolView: ProtocolView | undefined;
   // A conversation's view with the live state of the native process it keeps (ADR-030).
-  const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => ({ ...view(snapshot, permissions, app.runtime.keptProcess(snapshot.id), app.runtime.keptLoss(snapshot.id),
-    queueOf(snapshot.id), Object.fromEntries(snapshot.runs.flatMap(run => { const holder = app.runtime.busyHolderOf(run.id); return holder === null ? [] : [[run.id, holder]]; })),
-    app.runtime.keptOutside(snapshot.id), app.runtime.keptUpgrade(snapshot.id)),
+  const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => {
     // Each Run that carried a packet with its delivery state, which can still change after the Run ended.
-    runs: relayApi.runViews(snapshot) });
+    const runs = relayApi.runViews(snapshot);
+    return { ...view(snapshot, permissions, app.runtime.keptProcess(snapshot.id), app.runtime.keptLoss(snapshot.id),
+      queueOf(snapshot.id), Object.fromEntries(snapshot.runs.flatMap(run => { const holder = app.runtime.busyHolderOf(run.id); return holder === null ? [] : [[run.id, holder]]; })),
+      app.runtime.keptOutside(snapshot.id), app.runtime.keptUpgrade(snapshot.id)),
+      runs: protocolView === undefined ? runs : protocolView.attach(snapshot, runs, new Set(permissions.flatMap(request => request.decided ? [] : [request.runId]))) };
+  };
   const streams = new SessionStreamHub(id => sessionView(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
     const fault = publicFailure(failure.error, homeForms());
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
@@ -411,6 +417,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // the build that read them (every compiled Gateway file), since its drivers decide what a catalog contains.
   const nativeModels = new HarnessModels(app.factory, new NativeCatalogCache(realpathSync(options.root), { assertOwner: () => app.store.assertOwner(),
     report: problem => process.stderr.write("HarnessGateway: NATIVE_CATALOG_CACHE_UNAVAILABLE (" + problem + ")\n"), revision }));
+  // Each Run's protocol Turn: Harnesses named as the relay names them, models as the catalogs read so far name them, tool details as the content store reads them back.
+  protocolView = new ProtocolView({ heads: new DetailHeads(app.content), harnessName: builtinHarnessName(), modelName: (harnessId, nativeModel) => nativeModels.modelName(harnessId, nativeModel) });
   // Directories the user took from the login shell's PATH (G(ii)) extend discovery and new conversations until removed.
   const loginShells = new LoginShellStore(realpathSync(options.root));
   // What each installed Harness reads besides its model (ADR-045 step 1), from the user's own files; read-only.
@@ -1075,8 +1083,10 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         queries(url, ["format"]); const format = url.searchParams.get("format") ?? "markdown";
         if (format !== "markdown" && format !== "json") throw new HttpError(400, "INVALID_INPUT", "export format must be markdown or json");
         // Names come from the catalog, the same in every scan: the last one is enough.
+        // The protocol view reads stored tool details (a command's text), which an export leaves out as it always has; the Runs go as they were.
         const current = sessionView(app.runtime.read(id)), now = new Date(), names = new Map(harnesses.map(harness => [harness.id, harness.name]));
-        const bytes = Buffer.from(format === "json" ? JSON.stringify({ application: "HarnessHub", exportedAt: now.toISOString(), session: current }, null, 2) + "\n" : conversationMarkdown(current, harnessId => names.get(harnessId) ?? harnessId, now));
+        const exported = { ...current, runs: current.runs.map(({ protocol: _derived, ...run }) => run) };
+        const bytes = Buffer.from(format === "json" ? JSON.stringify({ application: "HarnessHub", exportedAt: now.toISOString(), session: exported }, null, 2) + "\n" : conversationMarkdown(exported, harnessId => names.get(harnessId) ?? harnessId, now));
         if (bytes.length > MAX_RESPONSE_BYTES) throw new HttpError(413, "RESPONSE_LIMIT", "Conversation export exceeds its byte budget");
         if (response.destroyed || response.writableEnded) return;
         headers(response); response.statusCode = 200;

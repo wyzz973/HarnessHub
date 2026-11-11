@@ -43,9 +43,14 @@ export interface ItemBase {
 export interface UserMessageItem extends ItemBase { readonly type: "user_message"; readonly messageId: MessageId }
 /** `commentary`: said on the way; `final`: the Turn's answer. The text is the message's. */
 export interface AssistantMessageItem extends ItemBase { readonly type: "assistant_message"; readonly messageId: MessageId; readonly phase: "commentary" | "final" }
-export interface ReasoningItem extends ItemBase { readonly type: "reasoning"; readonly text: string; readonly durationMs?: number }
+/** `truncated`: the text is the first part of a longer one (the Hub caps what one Turn carries here); the whole stays in the Run's own `thinking`. */
+export interface ReasoningItem extends ItemBase { readonly type: "reasoning"; readonly text: string; readonly durationMs?: number; readonly truncated?: true }
 
-/** `command` is what ran, without the shell a Harness wrapped it in; `raw` is the native spelling when it differs. */
+/**
+ * `command` is what ran, without the shell a Harness wrapped it in; `raw` is the native spelling when it differs. `command` is empty
+ * when the native side has not said which command it ran (a DeepSeek Harness `bash` whose stored detail is not readable yet): the
+ * client then says a command ran, and never shows an empty line.
+ */
 export interface CommandItem extends ItemBase { readonly type: "command"; readonly command: string; readonly raw?: string; readonly cwd?: string; readonly exitCode?: number; readonly background?: true }
 export interface FileReadItem extends ItemBase { readonly type: "file_read"; readonly path: string | null; readonly range?: { readonly start: number; readonly end?: number } }
 export const FILE_OPS = ["create", "modify", "delete", "rename"] as const;
@@ -83,12 +88,14 @@ export interface ErrorItem extends ItemBase { readonly type: "error"; readonly c
 export interface ContextEventItem extends ItemBase { readonly type: "context_event"; readonly kind: "compaction" | "clear" | "rewind" }
 /**
  * The executor changed before this Turn. `context` is what the new one was given: the whole conversation, what it had missed, the
- * same again, nothing but the user's words, or nothing needed (`native`: the same native session, another model).
+ * same again, nothing but the user's words, or nothing needed (`native`: the native session it continues already holds the
+ * conversation, as when the same Harness runs another model). `unknown`, in `context` and in `session`: the Turn carries no relay
+ * facts (one from before the relay kept them), so what was brought and where it ran are not known; never read as `none` or `new`.
  */
 export interface SwitchItem extends ItemBase {
   readonly type: "switch"; readonly from: Executor; readonly to: Executor;
-  readonly context: "full" | "delta" | "resend" | "none" | "native"; readonly turns?: number;
-  readonly session: "new" | "resumed"; readonly delivery?: "sending" | "confirmed" | "unconfirmed" | "not_sent"; readonly packetId?: string;
+  readonly context: "full" | "delta" | "resend" | "none" | "native" | "unknown"; readonly turns?: number;
+  readonly session: "new" | "resumed" | "unknown"; readonly delivery?: "sending" | "confirmed" | "unconfirmed" | "not_sent"; readonly packetId?: string;
 }
 export interface InterruptItem extends ItemBase { readonly type: "interrupt"; readonly by: "user" | "hub" }
 export interface DelegationItem extends ItemBase { readonly type: "delegation"; readonly to: Executor; readonly task: string }
@@ -113,12 +120,21 @@ export interface Executor { readonly harnessId: string; readonly harness: string
  * A Turn's usage in one meaning for every Harness: `input` is everything the Turn's model requests read, cached part included
  * (`cachedInput` of it came from the cache); `output` is everything generated, reasoning included. `completeness` says whether
  * the numbers cover the Turn: a client shows no number it does not have, and never a zero in its place.
+ *  - `complete`: `input` and `output` are both there and cover the whole Turn.
+ *  - `partial`: numbers are there but may cover less than the Turn (the Turn did not end normally, so the last request may be missing,
+ *    or only one of the two was reported); a client shows none of them as the Turn's total.
+ *  - `unavailable`: the Harness reports no token numbers a Turn can be told by (a DeepSeek Harness reports only its context window;
+ *    a Hermes report is its session's running total, which is not a Turn's). `input`, `cachedInput` and `output` are then absent;
+ *    `context` and `cost` may still be there.
+ * `cost.scope`: `turn` is this Turn's; `session` is the running total of the native session the Turn ran in (what most Harnesses
+ * report), which is not the whole conversation when it has run in other native sessions or on other Harnesses; `conversation` is
+ * reserved for a total the Hub itself keeps.
  */
 export interface TurnUsage {
   readonly completeness: "complete" | "partial" | "unavailable";
   readonly input?: number; readonly cachedInput?: number; readonly output?: number;
   readonly context?: { readonly used: number; readonly size?: number };
-  readonly cost?: { readonly amount: number; readonly currency: string; readonly scope: "turn" | "conversation" };
+  readonly cost?: { readonly amount: number; readonly currency: string; readonly scope: "turn" | "session" | "conversation" };
 }
 
 export const TURN_STATUSES = ["queued", "preparing", "running", "waiting", "completed", "failed", "cancelled", "unknown"] as const;

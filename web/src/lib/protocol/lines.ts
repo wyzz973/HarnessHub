@@ -32,6 +32,8 @@ export function turnFooter(turn: Pick<ReadTurn, "executor" | "usage" | "duration
     if (usage.output !== undefined) parts.push("输出 " + compact(usage.output));
   }
   if (usage.cost?.scope === "conversation") parts.push("对话累计 " + moneyText(usage.cost));
+  // The running total of the native session the Turn ran in, which is what most Harnesses report.
+  else if (usage.cost?.scope === "session") parts.push("会话累计 " + moneyText(usage.cost));
   return parts.filter(Boolean).join(" · ");
 }
 
@@ -63,6 +65,8 @@ function carried(item: SwitchItem): string | null {
     case "none": return "只发了原话";
     // The same native session went on with another model: nothing was carried, and nothing needs saying.
     case "native": return null;
+    // A Run from before the relay recorded what it carried: nothing is known, so nothing is said.
+    case "unknown": return null;
   }
 }
 const DELIVERY: Readonly<Record<NonNullable<SwitchItem["delivery"]>, { readonly flag: string | null; readonly detail: string }>> = {
@@ -83,7 +87,7 @@ export function switchLine(item: SwitchItem): SwitchLine {
   const delivery = item.delivery === undefined ? null : DELIVERY[item.delivery], gone = item.delivery === "not_sent";
   const context = gone ? null : carried(item), flag = delivery?.flag ?? null;
   const head = changed ? `${from} → ${to}` : `${item.to.harness} 的设置已更换`;
-  const details = [item.session === "new" ? "新会话" : "继续原会话", item.context === "native" ? null : delivery?.detail ?? null].filter(Boolean).join(" · ");
+  const details = [item.session === "new" ? "新会话" : item.session === "resumed" ? "继续原会话" : null, item.context === "native" ? null : delivery?.detail ?? null].filter(Boolean).join(" · ");
   return { text: [head, context, flag].filter(Boolean).join(" · "), from, to, changed, context, flag, details, packetId: item.packetId ?? null, attention: item.delivery === "unconfirmed" || gone };
 }
 
