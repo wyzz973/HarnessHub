@@ -12,7 +12,7 @@ test("tokens are unguessable, resolve to what they were minted for, and go by Se
   const grants = new MemoryTableGrants();
   const a = grants.mint(grant(ONE, "claude")), b = grants.mint(grant(ONE, "codex")), c = grants.mint(grant(TWO, "claude"));
   assert.equal(new Set([a, b, c]).size, 3);
-  assert.match(a, /^[A-Za-z0-9_-]{43}$/u, "32 random bytes");
+  assert.match(a, /^(hht_)?[A-Za-z0-9_-]{43}$/u, "32 random bytes");
   assert.deepEqual(grants.resolve(a), grant(ONE, "claude"));
   assert.deepEqual(grants.resolve(b), grant(ONE, "codex"));
   grants.revoke(ONE);
