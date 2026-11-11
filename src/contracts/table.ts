@@ -28,8 +28,73 @@ export interface TableGrants {
   revoke(sessionId: SessionId): void;
 }
 
-/** One line of the directory: a Turn, who ran it, and how it ended. `n` counts from 1 in conversation order. */
+/**
+ * One line of the directory: a Turn, who ran it, and how it ended. `n` counts from 1 in conversation order (the same number a
+ * handoff note gives the Turn). `user` and `reply` are shortened and redacted; `tools` counts the Turn's tool calls without its
+ * reasoning; `files` counts the distinct files its changes touched, and `filesApprox` says some change's files could not be
+ * read, so that change counted as one file.
+ */
 export interface TableTurnLine {
   readonly n: number; readonly harnessId: string; readonly status: string;
   readonly user: string; readonly reply: string; readonly tools: number; readonly files: number;
+  readonly model?: string; readonly filesApprox?: true;
+}
+
+/** How much the read tools hand back at once, and how much of the stored detail they will read to answer. */
+export const TABLE_LIMITS = {
+  /** The directory lists this many Turns unless asked for another number, and at most `turnsMax`. */
+  turnsDefault: 40, turnsMax: 100,
+  /** One page of a long text is this many characters unless asked for another number, and at most `pageMax`. */
+  pageDefault: 12_000, pageMax: 40_000,
+  /** A search returns this many places unless asked for another number, and at most `searchMax`; its words are at most `queryMax` long. */
+  searchDefault: 20, searchMax: 50, queryMax: 200,
+  /** A stored tool detail is read back when it is no larger than this. */
+  detailBytes: 1024 * 1024,
+  /** At most this many stored details (and bytes) are read to answer one request: a directory, one Turn, a search. */
+  directoryDetails: 300, turnDetails: 200, searchDetails: 400, totalBytes: 32 * 1024 * 1024,
+} as const;
+
+/** The pieces of one Turn `hub_read_turn` can return; `overview` is the default. */
+export const TABLE_PARTS = ["overview", "user", "reply", "tools", "files", "plan", "input", "output", "diff"] as const;
+export type TablePart = typeof TABLE_PARTS[number];
+/** The parts that read one tool call of the Turn, which the request names by its number in the list `tools` gives. */
+export const TABLE_TOOL_PARTS = ["input", "output", "diff"] as const;
+
+/** The directory (`GET /api/table/turns`): a window of the Turns, oldest first. `from` and `to` are 1-based and inclusive; `to` is `from - 1` when none is listed. */
+export interface TableTurnsView {
+  readonly total: number; readonly from: number; readonly to: number;
+  readonly lines: readonly TableTurnLine[];
+  /** The Turn that is running now, when one is. */
+  readonly active?: number;
+  /** The conversation started from earlier history (a branch, or a native session continued in the Hub) that the Turns do not include. */
+  readonly origin?: { readonly kind: "fork" | "import"; readonly messages: number };
+  readonly notes?: readonly string[];
+}
+
+/**
+ * One page of one part of one Turn (`GET /api/table/turns/:n`). The offsets count characters (UTF-16 code units) of the part's
+ * redacted text: this page is `text`, from `offset` to `end` of `size`; `end < size` means there is more, from `end`. The
+ * overview is composed to fit one page and says itself where each of its pieces continues.
+ */
+export interface TableTurnRead {
+  readonly n: number; readonly total: number;
+  readonly harnessId: string; readonly status: string; readonly model?: string;
+  readonly part: TablePart; readonly tool?: number;
+  readonly text: string; readonly offset: number; readonly end: number; readonly size: number;
+  readonly notes?: readonly string[];
+}
+
+/** What a search match was found in: the user's words, a reply, a tool call's title, its input, its output or its diff. */
+export const TABLE_SEARCH_WHERE = ["user", "reply", "tool", "input", "output", "diff"] as const;
+export type TableSearchWhere = typeof TABLE_SEARCH_WHERE[number];
+/** One place a search matched: its Turn, what it was found in (and which tool call), the character where the first match starts in that text, how many matches it holds, and an excerpt. */
+export interface TableSearchHit {
+  readonly n: number; readonly where: TableSearchWhere; readonly tool?: number;
+  readonly at: number; readonly matches: number; readonly snippet: string;
+}
+/** A search (`GET /api/table/search`): the places found, newest Turn first (`total` of them in all, `hits` the first of them), and how many tool details could not be searched. */
+export interface TableSearchView {
+  readonly query: string; readonly total: number; readonly hits: readonly TableSearchHit[];
+  readonly turns: number; readonly unsearched: number;
+  readonly notes?: readonly string[];
 }

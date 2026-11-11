@@ -25,6 +25,9 @@ import { carriedNativeConfiguration } from "../contexts/session/domain/state.js"
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
 import { RelayApi, parseSendRelay } from "./relay-routes.js";
+import { TableApi } from "./table-routes.js";
+import { MemoryTableGrants } from "../infrastructure/session/table-grants.js";
+import type { TableGrants } from "../contracts/table.js";
 import { AttentionStreamHub } from "./attention-stream.js";
 import { HarnessModels } from "./harness-models.js";
 import { buildRevision, NativeCatalogCache, type NativeReadiness } from "./native-catalog-cache.js";
@@ -54,7 +57,7 @@ export interface WebServerOptions {
   readonly configuration: SessionConfiguration;
   readonly port?: number;
   readonly assetsDirectory?: string;
-  readonly application?: typeof composeApplication;
+  readonly application?: (root: string, publish: (event: SessionEvent) => void) => Omit<ReturnType<typeof composeApplication>, "grants"> & { readonly grants?: TableGrants };
   /** The Turn budgets (ADR-036), resolved by `resolveTurnBudgets`; the defaults otherwise. */
   readonly budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number };
   /**
@@ -70,6 +73,8 @@ export interface WebServerOptions {
   readonly github?: GithubFetch;
   /** The installation's relay key file (ADR-055 D5) when this server composes its own application; none otherwise (G072). */
   readonly relayKeyFile?: string;
+  /** The context table's tokens (src/contracts/table.ts) when this server composes its own application; it makes its own otherwise. */
+  readonly tableGrants?: TableGrants;
 }
 export interface WebServer { readonly url: string; close(): Promise<void> }
 /** A list of Harness identities in a request body: unique, at most 16. */
@@ -374,15 +379,22 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // Waiting approvals and questions of every conversation, refreshed after each published event (ADR-035). A page with a
   // conversation open gets them on that conversation's stream; a page without one subscribes to them alone.
   const attention = new AttentionStreamHub(() => app.runtime.attention(), {}, frame => streams.attentionChanged(frame));
-  app = (options.application ?? ((root, publish) => composeApplication(root, publish, { ...(options.budgets === undefined ? {} : { budgets: options.budgets }),
+  const made = (options.application ?? ((root, publish) => composeApplication(root, publish, { ...(options.budgets === undefined ? {} : { budgets: options.budgets }),
     ...(options.workspaceLockRoot === undefined ? {} : { workspaceLockRoot: options.workspaceLockRoot }),
-    ...(options.installations === undefined ? {} : { installations: options.installations }), ...(options.relayKeyFile === undefined ? {} : { relayKeyFile: options.relayKeyFile }) })))(options.root, event => {
+    ...(options.installations === undefined ? {} : { installations: options.installations }), ...(options.relayKeyFile === undefined ? {} : { relayKeyFile: options.relayKeyFile }),
+    ...(options.tableGrants === undefined ? {} : { tableGrants: options.tableGrants }) })))(options.root, event => {
     try { streams.publish(event); } finally { if (app !== undefined) attention.changed(); }
   });
+  // An application put together by hand may bring no tokens for the context table: it then has a table nobody can enter.
+  app = { ...made, grants: made.grants ?? options.tableGrants ?? new MemoryTableGrants() };
   relayApi = new RelayApi({ reads: app.store, read: id => app.runtime.read(id),
     declaration: selection => { const factory: SessionBindingFactory = app.factory; return factory.relayCapabilities?.(selection); },
     // What each binding asks the user to look at, and whether the data directory is in the workspace's reach: the Runtime's reads (never a block).
     attention: id => app.runtime.relayAttention(id), installation: () => app.runtime.relayInstallation(), http: { json, headers, queries, body } });
+  // The context table's API (docs/decisions/LOG.md, 2026-11-11): what a Harness running a Turn of a conversation may read back of it, by the token its process was given.
+  const tableApi = new TableApi({ grants: app.grants, read: id => app.runtime.read(id), content: app.content,
+    secrets: (configuration, harnessIds) => { const factory: SessionBindingFactory = app.factory; return factory.relaySecrets === undefined ? Promise.resolve([]) : factory.relaySecrets(configuration, harnessIds); },
+    http: { json, queries } });
   // This build: every compiled Gateway file by name and content (ADR-033), also named in a Turn's diagnostics (ADR-037).
   const revision = buildRevision(fileURLToPath(new URL("..", import.meta.url)));
   // Derived observations only; a file this version cannot adopt is reported and left as it is. Catalogs are reused only by
@@ -519,7 +531,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   };
   async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (stopping) throw new HttpError(503, "GATEWAY_STOPPING", "Gateway is stopping");
-    if (request.headers.host !== host) throw new HttpError(403, "HOST_REJECTED", "Invalid local Host");
+    // The table's callers are programs on this computer, which may name it localhost; no other name is accepted for any route.
+    const forTable = typeof request.url === "string" && /^\/api\/table\/[a-z]/u.test(request.url);
+    if (request.headers.host !== host && !(forTable && request.headers.host === "localhost:" + host.slice(host.lastIndexOf(":") + 1))) throw new HttpError(403, "HOST_REJECTED", "Invalid local Host");
     const receivedOrigin = request.headers.origin;
     if (receivedOrigin !== undefined && receivedOrigin !== origin) throw new HttpError(403, "ORIGIN_REJECTED", "Cross-origin request rejected");
     if (request.headers["sec-fetch-site"] === "cross-site") throw new HttpError(403, "ORIGIN_REJECTED", "Cross-site request rejected");
@@ -529,6 +543,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (method !== "GET" && method !== "HEAD") throw new HttpError(405, "METHOD_NOT_ALLOWED", "Method not allowed");
       queries(url, []); await asset(assets, path, response, method); return;
     }
+    // The context table is read by a Harness's tool process with a bearer token, not by the page: it has no login and no CSRF token.
+    if (forTable) { if (await tableApi.handle(request, response, url, method)) return; throw new HttpError(404, "NOT_FOUND", "API route not found"); }
     const write = method !== "GET" && method !== "HEAD";
     if (write && receivedOrigin !== origin) throw new HttpError(403, "ORIGIN_REQUIRED", "Same-origin write required");
     if (path === "/api/v1/auth/bootstrap") {

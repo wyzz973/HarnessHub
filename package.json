@@ -16,6 +16,7 @@
     "run:harness": "node dist/src/cli/control.js run",
     "chat": "node dist/src/cli/chat.js",
     "sessions": "node dist/src/cli/sessions.js",
+    "hub-tools": "node dist/src/cli/hub-tools.js",
     "test:real:session": "pnpm build && node --test dist/tests/real/codex-session.real.js",
     "test:real:codex": "pnpm build && node --test dist/tests/real/codex-local-provider.real.js",
     "check:design": "python3 tools/check_design.py",

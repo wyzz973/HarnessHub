@@ -100,7 +100,7 @@ export function relayUnits(state: SessionSnapshot, sources: readonly PublicRun[]
 
 /** Inline `<think>` blocks of a reply (and an unclosed one to its end): thinking never leaves (ADR-055 §5.1). */
 const THINK = /<think>[\s\S]*?(?:<\/think>|$)/giu;
-function withoutThinking(reply: string): string {
+export function withoutThinking(reply: string): string {
   return reply.includes("<think") || reply.includes("<THINK") ? reply.replace(THINK, "") : reply;
 }
 
@@ -281,7 +281,7 @@ function sameFile(location: string, path: string): boolean {
  * (a patch over several files lists each); its locations alone when it has no diff; null when nothing was read or the
  * diff and the locations do not correspond, and the tool is then told by its title.
  */
-function changesOf(unit: RelayUnit, tool: PublicTool): readonly FileChange[] | null {
+export function changesOf(unit: Pick<RelayUnit, "details">, tool: PublicTool): readonly FileChange[] | null {
   const detail = unit.details.get(tool.id);
   if (detail === undefined) return null;
   const locations = (detail.locations ?? []).map(location => location.replace(/:\d+$/u, "")).filter(location => location !== "");

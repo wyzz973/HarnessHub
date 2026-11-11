@@ -20,6 +20,8 @@ import { NativeInstallationLocks } from "../infrastructure/management/native-loc
 import { LocalContentStore } from "../infrastructure/session/content-store.js";
 import { loadBuiltinCatalog } from "../adapters/catalog.js";
 import { catalogTarget } from "../infrastructure/catalog/platform.js";
+import { MemoryTableGrants } from "../infrastructure/session/table-grants.js";
+import type { TableGrants } from "../contracts/table.js";
 
 export function dataRoot(value: string | undefined): string {
   const path = value === undefined ? resolve("data") : resolve(value);
@@ -94,7 +96,9 @@ export function application(root: string, publish: (event: SessionEvent) => void
    * The installation's relay key file (ADR-055 D5; defaultRelayKeyPath for the Gateway's own entries), opened here; without it
    * (or when it cannot be opened) the Runtime keys relay rows under a key it keeps in memory only.
    */
-  readonly relayKeyFile?: string } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
+  readonly relayKeyFile?: string;
+  /** The context table's tokens (src/contracts/table.ts): the instance whoever starts native processes mints from and the web server resolves with; a private in-memory one when not given. */
+  readonly tableGrants?: TableGrants } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime; readonly grants: TableGrants } {
   // Recovery decides the relay deliveries a previous owner left in flight, per Session in its own SAVEPOINT (ADR-055 §9 S15).
   const store = new SqliteSessionStore(root, { recoverRelay });
   let providers: LocalProviderService | undefined;
@@ -134,6 +138,6 @@ export function application(root: string, publish: (event: SessionEvent) => void
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
     // Upgrades see and close this runtime's conversations' processes (ADR-043).
     management.attachProgramUsers({ list: harnessId => runtime.programUsers(harnessId), closeIdle: harnessId => runtime.releaseForUpgrade(harnessId) });
-    return { store, content, factory, runtime, providers, management };
+    return { store, content, factory, runtime, providers, management, grants: options.tableGrants ?? new MemoryTableGrants() };
   } catch (error) { try { management?.close(); } finally { try { providers?.close(); } finally { store.close(); } } throw error; }
 }
