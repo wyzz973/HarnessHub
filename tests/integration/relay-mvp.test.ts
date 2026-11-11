@@ -108,13 +108,13 @@ test("G070-MVP A→B→A through the Runtime: bravo gets a packet of alpha's tur
   // bravo's first input: a full packet of alpha's two turns, then its own words exactly as typed; its second goes as typed.
   const toBravo = readRelayPrompt(fake.to("bravo")[0]!);
   assert.equal(toBravo.kind, "packet"); assert.deepEqual(toBravo.history.map(row => row.user.text), [a1.input, a2.input]); assert.equal(toBravo.currentInput.text, b3.input);
-  assert.match(fake.to("bravo")[0]!, /^把失败的测试修好，别改测试的预期值。\n〔HarnessHub 交接单 relay-[0-9a-z]{20}〕\n这段对话前面的部分不在你的上下文里：另一个 Harness（Alpha Harness）在同一个工作区里/u);
+  assert.match(fake.to("bravo")[0]!, /^把失败的测试修好，别改测试的预期值。\n〔HarnessHub 交接单 relay-[0-9a-z]{20}〕\n这段对话此前的 2 轮不在你（Bravo Harness）的会话里：Alpha Harness 做了 2 轮（第 1–2 轮）。/u);
   assert.equal(fake.to("bravo")[1], b4.input);
   // Back on alpha, whose native session holds turns 1–2: only bravo's turns 3–4, as a delta, and never again what alpha did.
   const toAlpha = readRelayPrompt(fake.to("alpha")[2]!);
   assert.equal(toAlpha.kind, "delta"); assert.deepEqual(toAlpha.history.map(row => [row.turn, row.user.text]), [[3, b3.input], [4, b4.input]]); assert.equal(toAlpha.currentInput.text, a5.input);
   assert.ok(!fake.to("alpha")[2]!.includes(a1.input) && !fake.to("alpha")[2]!.includes(a2.input));
-  assert.match(fake.to("alpha")[2]!, /^你（Alpha Harness）在第 2 轮之后离开，这段对话随后由 Bravo Harness 做了 2 轮。$/mu);
+  assert.match(fake.to("alpha")[2]!, /^你（Alpha Harness）离开期间，Bravo Harness 做了 2 轮（第 3–4 轮）。$/mu);
   assert.equal(fake.to("alpha")[3], a6.input, "once carried, nothing is owed");
   assert.deepEqual(a5.sourceRunIds, [b3.id, b4.id]);
   // What run.context_prepared keeps: the policy, the packet's ID and the sha256 of the text sent, the facts carried, the fold.
@@ -130,7 +130,7 @@ test("G070-MVP A→B→A through the Runtime: bravo gets a packet of alpha's tur
   }
   // The snapshot keeps no text of a packet: only its identity in the Run's and the binding's relay state (Session v13, G068 phase two).
   const snapshot = JSON.stringify(app.read(session.id));
-  assert.ok(!snapshot.includes("这段对话前面的部分不在你的上下文里") && !snapshot.includes("policyVersion"));
+  assert.ok(!snapshot.includes("HH-DATA") && !snapshot.includes("policyVersion"));
   assert.equal(app.read(session.id).runs.find(row => row.id === b3.id)?.relay?.packetId, readRelayPrompt(fake.to("bravo")[0]!).packetId);
 });
 
@@ -178,16 +178,14 @@ test("G070-MVP stored tool details are read back for the packet: the command and
     await sent(app, session.id, "看看哪里失败了", "b1");
     const prompt = fake.to("bravo")[0]!;
     if (readable) {
-      assert.match(prompt, /^- 修改 `src\/export\/summary\.ts`（\+2 −1）。$/mu, "the path and counts come from the stored diff");
-      assert.match(prompt, /^- 执行 `npm test -- --run` → 退出码 1。输出末尾：$/mu, "the command comes from the stored input, not the title");
+      assert.match(prompt, /^- 修改 `src\/export\/summary\.ts`（\+2 −1）$/mu, "the path and counts come from the stored diff");
+      assert.match(prompt, /^- 执行 `npm test -- --run` → 退出码 1\n  Alpha Harness 记录的输出末尾（最后 20 行，共 43 行）：$/mu, "the command comes from the stored input, not the title; its output is the end of what Alpha Harness recorded");
       assert.ok(prompt.includes("  AssertionError: expected '1234' to be '1235'"), "the failing output's end is quoted");
       assert.equal(prompt.split("\n").filter(line => line === "  noise").length, 20 - 3, "only its last 20 lines: 17 of the 40 noise lines and the 3 of the failure");
-      assert.match(prompt, /^\| `src\/export\/summary\.ts` \| 修改 \| \+2 −1 \| 第 1 轮 \|$/mu);
       assert.ok(!prompt.includes("工具详情没有读取"));
     } else {
-      assert.match(prompt, /^- 修改 `Edit file`。$/mu); assert.match(prompt, /^- 执行 `Terminal` → 退出码 1。$/mu);
-      assert.match(prompt, /^- 工具详情没有读取：2 个工具调用只按标题列出。$/mu);
-      assert.match(prompt, /^- 交接时没有观测工作区；文件改动以工作区为准。$/mu);
+      assert.match(prompt, /^- 修改 `Edit file`（路径未读取）$/mu); assert.match(prompt, /^- 执行 `Terminal` → 退出码 1$/mu);
+      assert.match(prompt, /^- 工具详情没有读取：2 个工具调用只列了标题。$/mu);
     }
   }
 });
@@ -276,7 +274,7 @@ test("G070-MVP m7: a stored detail whose bytes cannot be read (no permission, a 
     await switched(app, session.id, "bravo", "to-b");
     const run = await sent(app, session.id, "看看改了什么", "b1"), prompt = fake.to("bravo")[0]!;
     assert.equal(run.status, "completed");
-    assert.match(prompt, /^- 修改 `Edit file`。$/mu); assert.match(prompt, /^- 工具详情没有读取：1 个工具调用只按标题列出。$/mu);
+    assert.match(prompt, /^- 修改 `Edit file`（路径未读取）$/mu); assert.match(prompt, /^- 工具详情没有读取：1 个工具调用只列了标题。$/mu);
   } finally { await chmod(blob, mode); }
 });
 

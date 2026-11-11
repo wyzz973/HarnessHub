@@ -1717,7 +1717,7 @@ export class SessionRuntime {
             // everything again, or the native session holds no part of the conversation (no mark).
             const options = await relayFor(prepared, runs, carrying.need.origin);
             packetSecrets = options.secrets ?? [];
-            const context = buildPublicContext(renderView(prepared, h, c, carrying.whole || working.mark < 0), run, runs, { ...options, budget, ...(carrying.mayRepeat ? { mayRepeat: true } : {}) });
+            const context = buildPublicContext(renderView(prepared, h, c, carrying.whole || working.mark < 0), run, runs, { ...options, budget, ...(carrying.repeat ? { repeat: true } : {}) });
             this.continue(execution);
             if (!context.text.endsWith("\n" + run.input)) throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render" }, "没能准备交接单：交接单与这条消息拼接不一致，这条消息没有发出。");
             const body = context.text.slice(0, context.text.length - run.input.length - 1), range = rangeOf(prepared, carrying.need, runs);

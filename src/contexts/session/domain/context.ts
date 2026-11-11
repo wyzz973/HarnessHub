@@ -50,17 +50,19 @@ export interface PublicContextOptions {
   readonly budget?: RelayBudget;
   /**
    * Part of the packet may be in the target's native history already (an automatic resend, a packet sent again for newer facts,
-   * everything again after a rewind): the renderer says so at the head of the packet, so the target does not take it for new work.
+   * everything again after a rewind, the user's own attach to a session that holds a part): the renderer says so at the head of
+   * the packet, so the target does not take it for new work.
    */
-  readonly mayRepeat?: boolean;
+  readonly repeat?: boolean;
 }
 
 /**
  * The public context a Turn sends (ADR-055 §5, MVP on v12): the relay packet for the given sources (publicSources by
  * default) and, when owed, the history the Session started from, followed by the current input exactly as typed. The
- * history is folded to the packet's budget and never makes it fail; CONTEXT_TOO_LARGE only when the frame and the
- * current input alone exceed what one message can carry. Sources must be finished public facts before the current input,
- * each once; the current input must be the Session's own. Queued inputs and native tool identities never enter it.
+ * history is fitted to the packet's budget by leaving out whole items, and never makes it fail; a budget the least packet
+ * does not fit is told by `relay.tokens` against `relay.budget.cap`. Sources must be finished public facts before the
+ * current input, each once; the current input must be the Session's own. Queued inputs and native tool identities never
+ * enter it.
  */
 export function buildPublicContext(state: SessionSnapshot, current: PublicRun, sourceRunIds?: readonly RunId[], options: PublicContextOptions = {}): PublicContext {
   const currentSeq = currentSeqOf(state, current);
@@ -77,7 +79,6 @@ export function buildPublicContext(state: SessionSnapshot, current: PublicRun, s
   const ordered = [...sources].sort((a, b) => position.get(a.id)! - position.get(b.id)!);
   const rendered = renderRelay({ state, current, sources: ordered, origin: options.origin ?? false, ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
     ...(options.names === undefined ? {} : { names: options.names }), ...(options.firstLine === undefined ? {} : { firstLine: options.firstLine }), ...(options.details === undefined ? {} : { details: options.details }), ...(options.budget === undefined ? {} : { budget: options.budget }),
-    // Read by a renderer that says so at the head of a packet; one that does not know it renders as before.
-    ...(options.mayRepeat === true ? { mayRepeat: true } : {}) });
+    ...(options.repeat === undefined ? {} : { repeat: options.repeat }) });
   return { text: rendered.text, throughSeq: state.lastSeq, sourceRunIds: ordered.map(run => run.id), continuity: "public_context_rehydrate", relay: rendered.record };
 }

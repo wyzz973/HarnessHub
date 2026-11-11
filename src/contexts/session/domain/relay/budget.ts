@@ -1,21 +1,21 @@
 /**
- * The relay's estimator and budget on Session v12 (ADR-055 §6.2, the MVP of G070): one deterministic token estimate for
- * every model family and the standard tier's caps, resolved here and nowhere else. Pure; nothing here reads a clock, a
- * store or a process.
+ * The relay's estimator and budget (ADR-055 §6.2, slimmed 2026-11-11): one deterministic token estimate for every model
+ * family and the one cap a packet is folded to, resolved here and nowhere else. Pure; nothing here reads a clock, a store or
+ * a process.
  */
 
 /**
  * The policy every packet of this renderer belongs to. A change to a template, an escape or redaction rule, an estimator
  * coefficient, a cap or the Unicode tables of the running Node changes what is rendered and must change this version.
+ * relay/1-mvp.4: facts only and two tiers (complete, brief), whole items or none, a ledger that adds up.
  */
-export const RELAY_POLICY_VERSION = "relay/1-mvp.3";
+export const RELAY_POLICY_VERSION = "relay/1-mvp.4";
 
 /**
- * The standard tier (ADR-055 §0, §5.3, §6.2): its cap T = min(8,000, 5% of the target's context window), the window
- * assumed when the target never reported one, the share of T that model and tool text may take, the user's-words budget
- * U, and the delta's own caps. Initial values of the design except two, not calibrated by a benchmark yet: model and tool
- * text may take 0.6 of T (the design's standard tier says 0.375, which kept a reply-heavy handoff near 40% of T and cut
- * every earlier reply, review M3), and a delta's latest reply has a budget of its own beyond the turns and files.
+ * What the one cap of a packet is made of: T = min(8,000, 5% of the target's context window), the window assumed when the
+ * target never reported one, and the share of T the user's earlier words may take before replies and outputs are chosen (U).
+ * Only the window and the channel lower T (windows.ts hardCap); what a handoff costs in money or time decides nothing.
+ * `untrustedRatio` is read by windows.ts alone: the renderer no longer divides the cap between kinds of text.
  */
 export const RELAY_BUDGET = Object.freeze({
   standardCap: 8000,
@@ -23,17 +23,12 @@ export const RELAY_BUDGET = Object.freeze({
   assumedWindow: 128_000,
   untrustedRatio: 0.6,
   userCap: 2500,
-  deltaCap: 1500,
-  deltaUserCap: 1000,
-  deltaUserExtension: 2000,
-  deltaReplyCap: 1500,
 });
 
 /**
- * Which limits may lower a packet's tier (permissive-defaults §2.4, the owner's decision of 2026-11-10: "可以不在乎预算"). The
- * target's window and its channel are physical limits of what can be sent at all, and keep their say (windows.ts hardCap, the 5%
- * rule); what a handoff costs in money or time, and the price cliff a longer context crosses, are shown (return-policy.ts) and
- * decide nothing. A change of this table is a change of policy, and changes `RELAY_POLICY_VERSION`.
+ * Which limits may lower a packet's cap (permissive-defaults §2.4, the owner's decision of 2026-11-10: "可以不在乎预算"). Kept
+ * only because tests/unit/relay-return-policy.test.ts still reads it; nothing in the renderer does. Delete it with that test
+ * when return-policy's estimates of cost and time go.
  */
 export const BUDGET_DEMOTIONS = Object.freeze({ window: true, channel: true, cost: false, latency: false, cliff: false });
 
@@ -71,12 +66,11 @@ export function estimateTokens(text: string): number {
 
 /** What a packet may take (ADR-055 §6.2), in tokens of `estimateTokens`. */
 export interface RelayBudget {
-  readonly tier: "standard";
-  /** T: the whole packet, its frame, the user's words, the record and the ledger. */
+  /** T: the whole packet, its frame, the history it carries and its ledger. */
   readonly cap: number;
-  /** What model and tool text (replies, tool titles and outputs, errors, plans) may take of it. */
+  /** Not read by the renderer; windows.ts still derives it from the cap (see RELAY_BUDGET). */
   readonly untrusted: number;
-  /** U: the user's earlier words, verbatim. */
+  /** U: the user's earlier words, chosen before replies and outputs, up to this much (the latest one may take more if it fits). */
   readonly user: number;
   /** The target's context window the cap was derived from, and whether the target reported it or it was assumed. */
   readonly window: number;
@@ -84,15 +78,15 @@ export interface RelayBudget {
 }
 
 /**
- * The standard tier's budget for a target whose context window is `window` tokens (its latest reported `usage.context
- * .size`), or the assumed 128k when it reported none or reported something that is not a positive whole number. The
- * cap never exceeds 8,000 tokens nor 5% of the window; the history's length never enters it, so no history is too long
- * for it (the packet folds instead).
+ * The budget for a target whose context window is `window` tokens (its latest reported `usage.context.size`), or the assumed
+ * 128k when it reported none or reported something that is not a positive whole number. The cap never exceeds 8,000 tokens
+ * nor 5% of the window; the history's length never enters it, so no history is too long for it (the packet leaves out whole
+ * items instead).
  */
 export function resolveRelayBudget(window: number | null): RelayBudget {
   const observed = window !== null && Number.isSafeInteger(window) && window > 0;
   const size = observed ? window : RELAY_BUDGET.assumedWindow;
   const cap = Math.min(RELAY_BUDGET.standardCap, Math.floor(RELAY_BUDGET.windowShare * size));
-  return { tier: "standard", cap, untrusted: Math.floor(RELAY_BUDGET.untrustedRatio * cap), user: Math.min(RELAY_BUDGET.userCap, Math.floor(0.5 * cap)),
+  return { cap, untrusted: Math.floor(RELAY_BUDGET.untrustedRatio * cap), user: Math.min(RELAY_BUDGET.userCap, Math.floor(0.5 * cap)),
     window: size, windowSource: observed ? "observed" : "assumed" };
 }

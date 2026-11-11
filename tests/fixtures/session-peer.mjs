@@ -16,14 +16,13 @@ function readRelayPrompt(prompt) {
   if (end < 0) return { packet: false, currentInput: { text: prompt }, history: [], branchedHistory: [] };
   const lines = prompt.slice(start + 1, end).split("\n"), words = new Map(), replies = new Map();
   const fenced = at => { const open = /^(`{3,})text$/u.exec(lines[at] ?? ""); if (!open) return null; const body = []; for (let index = at + 1; index < lines.length; index++) { if (lines[index] === open[1]) return { text: body.join("\n"), next: index + 1 }; body.push(lines[index]); } return null; };
-  const labels = [/^- (来源)?第 (\d+) 轮(?:（开场请求）)?：$/u, /^- (Source t|T)urn (\d+)(?: \(opening request\))?:$/u, /^- (来源)?第 (\d+) 轮 · .+。用户原话：$/u, /^- (Source t|T)urn (\d+) · .+\. The user's words:$/u];
-  let originTurn = null;
+  let unit = null;
   for (let index = 0; index < lines.length; index++) {
     const heading = /^### (来源)?第 (\d+) 轮 · |^### (Source t|T)urn (\d+) · /u.exec(lines[index]);
-    if (heading) { originTurn = heading[1] === "来源" || heading[3] === "Source t" ? Number(heading[2] ?? heading[4]) : null; continue; }
-    const label = labels.map(pattern => pattern.exec(lines[index])).find(match => match !== null), block = fenced(index + 1);
-    if (label && block) { words.set((label[1] === "来源" || label[1] === "Source t" ? "origin:" : "run:") + Number(label[2]), block.text); index = block.next - 1; }
-    else if (originTurn !== null && block && /(?: 的回复(?:（首段与末段）)?：|'s reply(?: \(first and last paragraphs\))?:)$/u.test(lines[index])) { replies.set(originTurn, block.text); index = block.next - 1; }
+    if (heading) { unit = { origin: heading[1] === "来源" || heading[3] === "Source t", turn: Number(heading[2] ?? heading[4]) }; continue; }
+    const block = unit === null ? null : fenced(index + 1);
+    if (block && /^(?:用户原话：|The user's words:)$/u.test(lines[index])) { words.set((unit.origin ? "origin:" : "run:") + unit.turn, block.text); index = block.next - 1; }
+    else if (block && unit.origin && /(?: 的回复：|'s reply:)$/u.test(lines[index])) { replies.set(unit.turn, block.text); index = block.next - 1; }
   }
   const turns = [...new Set([...[...words.keys()].filter(key => key.startsWith("origin:")).map(key => Number(key.slice(7))), ...replies.keys()])].sort((a, b) => a - b);
   // The words follow the end line after one LF (the renderer's text) or a blank line (a Driver's singleText, G068 phase two).

@@ -78,22 +78,22 @@ test("what the next content input does", () => {
   assert.deepEqual(planned(state(), { facts: [] }), { kind: "plain", nothingToAttach: false });
   assert.deepEqual(planned(state({ mark: 2 })), { kind: "plain", nothingToAttach: false });
   const first = carry(state());
-  assert.deepEqual([seqs(first.need), first.by, first.resend, first.whole, first.mayRepeat, first.cause], [[1, 2], "need", null, false, false, undefined]);
+  assert.deepEqual([seqs(first.need), first.by, first.resend, first.whole, first.repeat, first.cause], [[1, 2], "need", null, false, false, undefined]);
   // The user: alone, or the whole history (below a clear too), or nothing to attach.
   assert.deepEqual(planned(state(), { attach: "none" }), { kind: "alone", by: "user" });
   assert.deepEqual(planned(state({ pending: pending("a", 1, 2) }), { attach: "none" }), { kind: "alone", by: "user" });
   const full = carry(state({ mark: 2, floor: 2 }), { attach: "full" });
-  assert.deepEqual([seqs(full.need), full.by, full.whole, full.mayRepeat], [[1, 2], "user", true, true], "everything, even what the mark covers");
-  assert.equal(carry(state({ floor: 2 }), { attach: "full" }).mayRepeat, false, "a cleared native session holds none of it");
+  assert.deepEqual([seqs(full.need), full.by, full.whole, full.repeat], [[1, 2], "user", true, true], "everything, even what the mark covers");
+  assert.equal(carry(state({ floor: 2 }), { attach: "full" }).repeat, false, "a cleared native session holds none of it");
   assert.deepEqual(planned(state(), { attach: "full", facts: [] }), { kind: "plain", nothingToAttach: true });
   // Everything again after a rewind, from the floor, once.
   const again = carry(state({ mark: 2, floor: 1, resendAll: true }));
-  assert.deepEqual([seqs(again.need), again.by, again.resend, again.whole, again.mayRepeat, again.cause], [[2], "policy", "all", true, true, "history_changed"]);
+  assert.deepEqual([seqs(again.need), again.by, again.resend, again.whole, again.repeat, again.cause], [[2], "policy", "all", true, true, "history_changed"]);
   assert.deepEqual(planned(state({ resendAll: true }), { facts: [] }), { kind: "plain", nothingToAttach: false }, "nothing to send again");
   assert.equal(carry(state({ resendAll: true, pending: pending("a", 1, 2, 1) })).resend, "all", "a rewind outranks a spent resend");
   // An unconfirmed packet: sent again once when the Driver can ever confirm, then alone, until there are newer facts.
   const resend = carry(state({ pending: pending("a", 1, 2, 0) }));
-  assert.deepEqual([seqs(resend.need), resend.by, resend.resend, resend.cause, resend.mayRepeat], [[1, 2], "policy", "auto", "delivery_unconfirmed", true]);
+  assert.deepEqual([seqs(resend.need), resend.by, resend.resend, resend.cause, resend.repeat], [[1, 2], "policy", "auto", "delivery_unconfirmed", true]);
   assert.deepEqual(planned(state({ pending: pending("a", 1, 2, 1) })), { kind: "alone", by: "policy", cause: "delivery_unconfirmed" });
   assert.deepEqual(planned(state({ pending: pending("a", 1, 2, 0) }), { canConfirm: false }), { kind: "alone", by: "policy", cause: "delivery_unconfirmed" }, "a Driver that never confirms is not sent again by itself");
   const grown = carry(state({ pending: pending("a", 1, 2, 1) }), { facts: [A(1), A(2), A(3)] });

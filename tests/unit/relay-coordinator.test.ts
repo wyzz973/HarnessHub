@@ -33,8 +33,8 @@ test("the request's choice and the installation's setting are read as a whole", 
 
 test("what a Turn records of its decision, and which failures only send the words alone", () => {
   const need = { facts: [], origin: false };
-  assert.deepEqual(decisionRecord({ kind: "carry", need, by: "need", resend: null, whole: false, mayRepeat: false }), { kind: "carry", by: "need" });
-  assert.deepEqual(decisionRecord({ kind: "carry", need, by: "policy", resend: "auto", whole: false, mayRepeat: true, cause: "delivery_unconfirmed" }), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" });
+  assert.deepEqual(decisionRecord({ kind: "carry", need, by: "need", resend: null, whole: false, repeat: false }), { kind: "carry", by: "need" });
+  assert.deepEqual(decisionRecord({ kind: "carry", need, by: "policy", resend: "auto", whole: false, repeat: true, cause: "delivery_unconfirmed" }), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" });
   assert.deepEqual(decisionRecord({ kind: "alone", by: "policy", cause: "prepare_failed", reason: "render" }), { kind: "alone", by: "policy", cause: "prepare_failed", reason: "render" });
   assert.deepEqual(decisionRecord({ kind: "alone", by: "user" }), { kind: "alone", by: "user" });
   assert.deepEqual(decisionRecord({ kind: "plain", nothingToAttach: true }), { kind: "plain", by: "user" });

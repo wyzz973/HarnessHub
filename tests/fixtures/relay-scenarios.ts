@@ -79,8 +79,10 @@ const S1_DETAILS: Readonly<Record<string, RelayToolDetail>> = {
   "run-1/x1": { input: "npm test", output: "\n Test Files  4 passed (4)\n      Tests  17 passed (17)\n" },
   "run-2/e6": { locations: ["src/export/summary.ts"], diff: diff("src/export/summary.ts", false, 4, 1) }, "run-2/e7": { locations: ["tests/export.test.ts"], diff: diff("tests/export.test.ts", false, 7, 0) },
   "run-2/x2": { input: "npm test", output: S1_FAILURE },
-  // The A→B→A delta's one change, read for the files the turns away changed (review m1).
+  // The A→B→A delta's turns away: the files read, the one change, the commands.
+  "run-3/d1": { locations: ["src/export/summary.ts"] }, "run-3/d2": { locations: ["tests/export.test.ts"] }, "run-3/d3": { locations: ["src/export/csv.ts"] },
   "run-3/d4": { locations: ["src/export/summary.ts"], diff: diff("src/export/summary.ts", false, 9, 4) },
+  "run-3/d5": { input: "npm test", output: "\n Test Files  4 passed (4)\n      Tests  18 passed (18)\n" }, "run-4/d6": { input: "npm test", output: "\n Test Files  4 passed (4)\n      Tests  18 passed (18)\n" },
 };
 function s1Runs(language: "zh" | "en"): RunSpec[] {
   const words = s1Words(language);
@@ -108,6 +110,37 @@ export function s1Delta(language: "zh" | "en"): Scenario {
     { input: words.back, harnessId: "claude", model: "claude-opus-5-5" }],
   [{ harnessId: "claude", controlId: "claude-acp", checkpoint: "private-claude", throughRunId: runId("run-2"), status: "ready" }, { harnessId: "dsh", controlId: "dsh-acp", checkpoint: "private-dsh", throughRunId: runId("run-4"), status: "ready" }],
   S1_DETAILS);
+}
+
+/** S3's words in `language`: a release checklist across five turns of Claude Code and Codex, one failing check, then the user's question. */
+function s3Words(language: "zh" | "en") {
+  return language === "zh" ? {
+    inputs: ["整理出一份发布清单。", "把清单里的每一项标上负责人。", "再核对一遍版本号。", "修好版本号的检查。", "跑一遍发布前的全部检查。"], current: "总结一下还差什么。",
+    replies: ["清单已经写在 docs/release.md：版本号、更新日志、迁移说明、回滚方案四项，每项一行。", "每一项都标好了负责人：版本号归 Alex，更新日志归 Bo，迁移说明归 Chen，回滚方案归 Dana。",
+      "版本号检查没有通过：package.json 写的是 1.4.0，更新日志写的是 1.4.1，两处不一致。我先停在这里，没有改任何文件。", "已经把 package.json 改成 1.4.1，scripts/check-version.js 也不再把预发布后缀当成不一致。再跑一遍检查已通过。",
+      "发布前的全部检查都通过了：类型检查、单元测试和版本号检查，没有新的警告。"],
+    failure: "version mismatch: package.json 1.4.0, CHANGELOG.md 1.4.1\n",
+  } : {
+    inputs: ["Draft a release checklist.", "Put an owner on every item of the checklist.", "Check the version numbers once more.", "Fix the version check.", "Run all the pre-release checks."], current: "Summarize what is still missing.",
+    replies: ["The checklist is in docs/release.md: version number, changelog, migration notes and rollback plan, one line each.", "Every item has an owner: the version number is Alex's, the changelog Bo's, the migration notes Chen's and the rollback plan Dana's.",
+      "The version check fails: package.json says 1.4.0 and the changelog says 1.4.1. I stopped here and did not change any file.", "package.json now says 1.4.1, and scripts/check-version.js no longer takes a pre-release suffix for a mismatch. The check passes again.",
+      "All the pre-release checks pass: type check, unit tests and the version check, with no new warnings."],
+    failure: "version mismatch: package.json 1.4.0, CHANGELOG.md 1.4.1\n",
+  };
+}
+/** S3: five finished turns (Claude Code, Codex, Claude Code, Codex, Claude Code) and the user's sixth words to Codex — a history too long for a small budget. */
+export function s3(language: "zh" | "en"): Scenario {
+  const words = s3Words(language), harness = (index: number) => index % 2 === 0 ? { harnessId: "claude", model: "claude-opus-5-5" } : { harnessId: "codex", model: "gpt-6.1-sol" };
+  const tools: readonly (readonly PublicTool[])[] = [
+    [tool("a1", "Read CHANGELOG.md", "read"), tool("a2", "Write docs/release.md", "edit")], [tool("b1", "Edit docs/release.md", "edit")],
+    [tool("c1", "node scripts/check-version.js", "execute", { exitCode: 1, status: "failed" })], [tool("d1", "Edit package.json", "edit"), tool("d2", "Edit scripts/check-version.js", "edit"), tool("d3", "node scripts/check-version.js", "execute", { exitCode: 0 })],
+    [tool("e1", "pnpm check", "execute", { exitCode: 0 })]];
+  const specs = words.inputs.map((input, index): RunSpec => ({ input, ...harness(index), reply: words.replies[index]!, tools: tools[index]! }));
+  return conversation([...specs, { input: words.current, harnessId: "codex", model: "gpt-6.1-sol" }], [], {
+    "run-1/a1": { locations: ["CHANGELOG.md"] }, "run-1/a2": { locations: ["docs/release.md"], diff: diff("docs/release.md", true, 12, 0) }, "run-2/b1": { locations: ["docs/release.md"], diff: diff("docs/release.md", false, 6, 2) },
+    "run-3/c1": { input: "node scripts/check-version.js", output: words.failure },
+    "run-4/d1": { locations: ["package.json"], diff: diff("package.json", false, 1, 1) }, "run-4/d2": { locations: ["scripts/check-version.js"], diff: diff("scripts/check-version.js", false, 3, 1) }, "run-4/d3": { input: "node scripts/check-version.js", output: "version ok\n" },
+    "run-5/e1": { input: "pnpm check", output: "all checks passed\n" } });
 }
 
 /**

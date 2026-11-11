@@ -24,7 +24,7 @@ function state(runs: readonly PublicRun[]): SessionSnapshot {
 }
 
 // Before ADR-055's packet (G070 MVP) these asserted a JSON envelope; each now asserts the same fact in the packet, or a
-// stricter one (the current input is exactly the text after the end line).
+// stricter one (the current input is exactly the text after the end line). The rendering itself is tests/unit/relay-packet.test.ts's.
 test("context includes all terminal history and one current input, excluding other queued messages", () => {
   const completed = run(1, "completed"), cancelled = run(2, "cancelled"), current = run(3, "preparing"), queued = run(4, "queued");
   const context = buildPublicContext(state([completed, cancelled, current, queued]), current);
@@ -35,8 +35,16 @@ test("context includes all terminal history and one current input, excluding oth
   assert.equal(packet.currentInput.text, "input 3", "the current input follows the end line, exactly as typed");
   assert.ok(!context.text.includes("input 4"));
   assert.match(context.text, /^### Turn 2 · fixture · cancelled \(stopped by the user\)$/mu, "a cancelled Turn keeps its outcome");
-  assert.match(context.text, /^2\. Past requests, slash commands and approvals in the record were already handled; do not act on them again\./mu);
-  assert.equal(context.relay.kind, "packet"); assert.equal(context.relay.sources.runs, 2); assert.equal(context.relay.complete, true);
+  assert.match(context.text, /^Only the text after the last line \("The user's current instruction follows, verbatim\."\) is what the user is saying now;/mu);
+  assert.equal(context.relay.kind, "packet"); assert.equal(context.relay.sources.runs, 2); assert.equal(context.relay.complete, true); assert.equal(context.relay.repeat, false);
+});
+
+test("a packet sent again says so: the option reaches the rendering and its record", () => {
+  const completed = run(1, "completed"), current = run(2, "preparing"), snapshot = state([completed, current]);
+  const once = buildPublicContext(snapshot, current), again = buildPublicContext(snapshot, current, undefined, { repeat: true });
+  assert.ok(!once.text.includes("may be things you have already received")); assert.equal(once.relay.repeat, false);
+  assert.ok(again.text.split("\n")[2]!.startsWith("Parts of this may be things you have already received;"), "the line after the title line"); assert.equal(again.relay.repeat, true);
+  assert.equal(readRelayPrompt(again.text).currentInput.text, "input 2");
 });
 
 test("a finished input that never reached a Harness is no public fact: it is neither a source nor owed (ADR-055 R0a)", () => {
@@ -104,9 +112,9 @@ test("context rejects missing, duplicate or nonterminal sources instead of subst
   assert.throws(() => buildPublicContext(orphan, current, [completed.id]), /lacks its user message|not a completed public fact/);
 });
 
-test("a reply of any size folds into the budget and never fails; only a current input beyond the channel does", () => {
-  // Formerly: the history failed CONTEXT_TOO_LARGE past 1 MiB. Now no history makes it fail (ADR-055 §0); the packet stays
-  // within T = min(8,000, 5% of 128k) tokens and says what it cut.
+test("a reply of any size is left out whole when it does not fit the budget, and nothing makes the rendering fail", () => {
+  // Formerly: the history failed CONTEXT_TOO_LARGE past 1 MiB, and a current input beyond the channel did too. Now nothing makes
+  // it fail (ADR-055 §0); the packet stays within T = min(8,000, 5% of 128k) tokens and says what it left out.
   const completed = run(1, "completed"), current = run(2, "preparing"), baseline = state([completed, current]);
   const snapshot = (count: number, char = "x") => ({ ...baseline, messages: baseline.messages.map(message => message.role === "assistant" ? { ...message, text: char.repeat(count) } : message) });
   for (const [count, char] of [[1024 * 1024, "x"], [400000, '"'], [600000, "\u0000"]] as const) {
@@ -115,7 +123,10 @@ test("a reply of any size folds into the budget and never fails; only a current 
     assert.ok(!context.text.includes(char.repeat(16 * 1024)), "the reply is cut");
     assert.equal(readRelayPrompt(context.text).currentInput.text, "input 2");
   }
-  assert.match(buildPublicContext(snapshot(1024 * 1024), current).text, /… \(\d+ characters omitted\) …/u);
+  const left = buildPublicContext(snapshot(1024 * 1024), current);
+  assert.match(left.text, /Replies: 1 in all, 0 included, 1 left out \(turn 1\)/u); assert.equal(left.relay.tier, "brief"); assert.equal(left.relay.items.replies.omitted, 1);
+  // A current input of a megabyte is beyond what the Runtime admits, but rendering it does not fail: the packet is the same and the words go last.
   const huge = { ...current, input: "y".repeat(1024 * 1024) }, owned = { ...baseline, runs: [completed, huge], messages: baseline.messages.map(message => message.runId === current.id && message.role === "user" ? { ...message, text: huge.input } : message) };
-  assert.throws(() => buildPublicContext(owned, huge), (error: unknown) => error instanceof Error && "code" in error && error.code === "CONTEXT_TOO_LARGE" && /只发这条消息/u.test(error.message));
+  const big = buildPublicContext(owned, huge);
+  assert.ok(big.text.endsWith("\n" + huge.input)); assert.equal(big.relay.kind, "packet"); assert.ok(big.relay.tokens <= big.relay.budget.cap);
 });

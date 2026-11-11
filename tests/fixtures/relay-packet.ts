@@ -1,4 +1,4 @@
-// Reads a relay packet the way a test or a test peer needs to (ADR-055 §5.5, relay/1-mvp): whether a prompt carries one,
+// Reads a relay packet the way a test or a test peer needs to (ADR-055 §5.5, relay/1-mvp.4): whether a prompt carries one,
 // the user's current words after its end line, the earlier user words it quotes by turn, and the history a branch or an
 // import started from (its user words and replies). Independent of the Gateway's renderer: it knows only the layout.
 // The .mjs peers import the compiled copy (dist/tests/fixtures/relay-packet.js).
@@ -21,9 +21,10 @@ export function endLines(id: string): readonly string[] {
   return [`〔记录结束 · ${id}。以下是用户现在的指令（原话）〕`, `〔更新结束 · ${id}。以下是用户现在的指令（原话）〕`,
     `〔End of record ${id}. The user's current instruction follows, verbatim.〕`, `〔End of update ${id}. The user's current instruction follows, verbatim.〕`];
 }
-const WORDS = [/^- (来源)?第 (\d+) 轮(?:（开场请求）)?：$/u, /^- (Source t|T)urn (\d+)(?: \(opening request\))?:$/u, /^- (来源)?第 (\d+) 轮 · .+。用户原话：$/u, /^- (Source t|T)urn (\d+) · .+\. The user's words:$/u];
+/** The line that opens a turn's user words (a fenced block follows), a turn's heading, and the line that opens a reply. */
+const WORDS = /^(?:用户原话：|The user's words:)$/u;
 const HEADING = /^### (来源)?第 (\d+) 轮 · |^### (Source t|T)urn (\d+) · /u;
-const REPLY = /(?: 的回复(?:（首段与末段）)?：|'s reply(?: \(first and last paragraphs\))?:)$/u;
+const REPLY = /(?: 的回复：|'s reply:)$/u;
 
 /** The fenced block that opens at `lines[at]`: its content and the index after its closing fence; null when none opens there. */
 export function fenced(lines: readonly string[], at: number): { readonly text: string; readonly next: number } | null {
@@ -53,10 +54,9 @@ export function readRelayPrompt(prompt: string): RelayPrompt {
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index]!, heading = HEADING.exec(line);
     if (heading) { unit = { origin: heading[1] === "来源" || heading[3] === "Source t", turn: Number(heading[2] ?? heading[4]) }; continue; }
-    const label = WORDS.map(pattern => pattern.exec(line)).find(match => match !== null);
-    if (label) {
+    if (unit !== null && WORDS.test(line)) {
       const block = fenced(lines, index + 1);
-      if (block) { words.set((label[1] === "来源" || label[1] === "Source t" ? "origin:" : "run:") + Number(label[2]), block.text); index = block.next - 1; }
+      if (block) { words.set((unit.origin ? "origin:" : "run:") + unit.turn, block.text); index = block.next - 1; }
       continue;
     }
     if (unit?.origin && REPLY.test(line)) { const block = fenced(lines, index + 1); if (block) { origin.set(unit.turn, block.text); index = block.next - 1; } }

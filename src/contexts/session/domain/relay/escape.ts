@@ -6,7 +6,8 @@ import type { Language } from "../../../../contracts/relay.js";
  * any string, whose output depends only on their input and this module's tables. Pure.
  *
  * Order for a quoted text: `normalize` (N1) → redaction (redaction.ts, which leaves its labels as protected marks) →
- * truncation (never inside a mark) → `visible` (N2) → `neutralize` (N4) → the labels restored → `fence` or an inline slot (N3).
+ * `visible` (N2) → `neutralize` (N4) → the labels restored → `fence` or an inline slot (N3). A packet quotes a text whole or
+ * not at all, so nothing is cut between redaction and the escapes.
  */
 
 /** A packet's language: the relay contract's (ADR-055 §4), named as this renderer has always named it. */
@@ -127,23 +128,22 @@ export function dataRegion(body: string): string {
   return "<<<HH-DATA " + id + " BEGIN>>>\n" + body + "\n<<<HH-DATA " + id + " END>>>";
 }
 
-/** Where a cut at `index` must move so it splits neither a surrogate pair nor a redaction mark: back (head) or on (tail). */
-function safeCut(text: string, index: number, direction: "back" | "on"): number {
-  let at = Math.max(0, Math.min(text.length, index));
+/**
+ * The first `count` UTF-16 units of a text, cut back to whole code points and whole redaction marks. Only identifiers (an
+ * error code, a media type, a name) and the packet's first line are ever cut; every other text is quoted whole or not at all.
+ */
+export function headUnits(text: string, count: number): string {
+  let at = Math.max(0, Math.min(text.length, count));
   if (at > 0 && at < text.length) {
-    if (text[at - 1] === MARK && text[at] !== MARK && text[at + 1] === MARK) at = direction === "back" ? at - 1 : at + 2;
-    else if (text[at] === MARK && text[at - 1] !== MARK && text[at - 2] === MARK) at = direction === "back" ? at - 2 : at + 1;
+    if (text[at - 1] === MARK && text[at] !== MARK && text[at + 1] === MARK) at -= 1;
+    else if (text[at] === MARK && text[at - 1] !== MARK && text[at - 2] === MARK) at -= 2;
   }
   if (at > 0 && at < text.length) {
     const before = text.charCodeAt(at - 1), after = text.charCodeAt(at);
-    if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) at += direction === "back" ? -1 : 1;
+    if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) at -= 1;
   }
-  return at;
+  return text.slice(0, at);
 }
-/** The first `count` UTF-16 units of a text, cut back to whole code points and whole redaction marks. */
-export function headUnits(text: string, count: number): string { return text.slice(0, safeCut(text, count, "back")); }
-/** The last `count` UTF-16 units of a text, cut on to whole code points and whole redaction marks. */
-export function tailUnits(text: string, count: number): string { return count <= 0 ? "" : text.slice(safeCut(text, text.length - count, "on")); }
 /** How many code points a text has (what the packet calls 字 / characters). */
 export function characters(text: string): number {
   let count = 0;

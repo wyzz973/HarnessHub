@@ -109,9 +109,9 @@ export type TurnPlan =
   /**
    * A packet of `need`. `by`: the need alone, the policy (a resend, everything again) or the user's own attach. `resend` says which
    * kind of resend it is. `whole`: the packet carries everything again (the policy's `all`, the user's attach), so it is a complete
-   * one and not an update even to a native session that holds a part. `mayRepeat`: part of it may be in the native history already.
+   * one and not an update even to a native session that holds a part. `repeat`: part of it may be in the native history already.
    */
-  | { readonly kind: "carry"; readonly need: Owed; readonly by: "need" | "policy" | "user"; readonly resend: ResendKind | null; readonly whole: boolean; readonly mayRepeat: boolean;
+  | { readonly kind: "carry"; readonly need: Owed; readonly by: "need" | "policy" | "user"; readonly resend: ResendKind | null; readonly whole: boolean; readonly repeat: boolean;
       readonly cause?: "delivery_unconfirmed" | "history_changed" };
 export interface PlanInput {
   readonly harnessId: string;
@@ -138,22 +138,22 @@ export function plan(relay: BindingRelayState, input: PlanInput): TurnPlan {
   if (input.attach === "none") return { kind: "alone", by: "user" };
   if (input.attach === "full") {
     const need = needOn(-1);
-    return nothingOwed(need) ? { kind: "plain", nothingToAttach: true } : { kind: "carry", need, by: "user", resend: null, whole: true, mayRepeat: relay.mark >= 0 || relay.pending !== null };
+    return nothingOwed(need) ? { kind: "plain", nothingToAttach: true } : { kind: "carry", need, by: "user", resend: null, whole: true, repeat: relay.mark >= 0 || relay.pending !== null };
   }
   if (relay.resendAll) {
     const need = needOn(relay.floor);
-    return nothingOwed(need) ? { kind: "plain", nothingToAttach: false } : { kind: "carry", need, by: "policy", resend: "all", whole: true, mayRepeat: true, cause: "history_changed" };
+    return nothingOwed(need) ? { kind: "plain", nothingToAttach: false } : { kind: "carry", need, by: "policy", resend: "all", whole: true, repeat: true, cause: "history_changed" };
   }
   const pending = relay.pending;
   if (pending !== null) {
     const need = needOn(Math.min(ordinaryLower(relay), pending.fromSeq - 1));
     if (nothingOwed(need)) return { kind: "plain", nothingToAttach: false };
-    if (pending.autoResends === 0 && input.canConfirm) return { kind: "carry", need, by: "policy", resend: "auto", whole: false, mayRepeat: true, cause: "delivery_unconfirmed" };
-    if (throughOf(need) > pending.throughSeq) return { kind: "carry", need, by: "policy", resend: "grown", whole: false, mayRepeat: true, cause: "delivery_unconfirmed" };
+    if (pending.autoResends === 0 && input.canConfirm) return { kind: "carry", need, by: "policy", resend: "auto", whole: false, repeat: true, cause: "delivery_unconfirmed" };
+    if (throughOf(need) > pending.throughSeq) return { kind: "carry", need, by: "policy", resend: "grown", whole: false, repeat: true, cause: "delivery_unconfirmed" };
     return { kind: "alone", by: "policy", cause: "delivery_unconfirmed" };
   }
   const need = needOn(ordinaryLower(relay));
-  return nothingOwed(need) ? { kind: "plain", nothingToAttach: false } : { kind: "carry", need, by: "need", resend: null, whole: false, mayRepeat: false };
+  return nothingOwed(need) ? { kind: "plain", nothingToAttach: false } : { kind: "carry", need, by: "need", resend: null, whole: false, repeat: false };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

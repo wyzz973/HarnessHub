@@ -1,14 +1,14 @@
-import type { PublicActivity, PublicOutput, PublicPlan, PublicRun, PublicTool, RunStatus, SessionSnapshot } from "../../../../contracts/session.js";
+import type { PublicRun, PublicTool, RunStatus, SessionSnapshot } from "../../../../contracts/session.js";
 import { estimateTokens } from "./budget.js";
-import { characters, codeUnitsOf, fence, headUnits, neutralize, normalize, tailUnits, visible, type RelayLanguage } from "./escape.js";
+import { characters, codeUnitsOf, fence, headUnits, neutralize, normalize, visible, type RelayLanguage } from "./escape.js";
 import { marksIn, namesCredentialFile, restoreLabels, type RelayRedactor } from "./redaction.js";
 
 /**
- * Narration rules relay/1 on Session v12 (ADR-055 §5.2, the MVP of G070): what one unit of the record (a Run, or a turn of
- * the history a branch or an import started from) says at each grade — verbatim (G1), compact (G2), one line (G3) — and
- * the range line for consecutive units. Only committed public facts enter: the user's words, the tools' titles, kinds,
- * statuses and exit codes, the plan, attachments, outputs, activities, the error and the reply; tool details only when the
- * caller read them. Thinking never does. Pure.
+ * Narration of the record for the slim relay packet (relay/1-mvp.4, ADR-055 §5.2): what one turn of the history says, as
+ * facts and nothing else, cut into items — the user's words, a reply, the lines of what was read, changed and run, a failed
+ * command's output tail, an error — each of which a packet carries whole or leaves out whole. Only committed public facts
+ * enter: the user's words, the tools' titles, kinds, statuses and exit codes, attachments, errors and replies; tool details
+ * only when the caller read them. Thinking, plans, diffs and the output of commands that succeeded never do. Pure.
  */
 
 /** What a tool's stored detail adds when its caller could read it (ADR-055 §6.4): the command, its output, its diff, where. */
@@ -25,7 +25,7 @@ export function parseToolDetail(value: unknown): RelayToolDetail | null {
     ...(typeof row.diff === "string" ? { diff: row.diff } : {}), ...(locations.length ? { locations } : {}) };
 }
 
-/** One unit of the record, built from the public snapshot by `relayUnits`. */
+/** One unit of the history, built from the public snapshot by `relayUnits`: a Run, or a turn of the history a branch or an import started from. */
 export interface RelayUnit {
   readonly key: string;
   /** The Run's turn number in its conversation (its position, from 1), or the position of an origin turn in its history. */
@@ -36,19 +36,16 @@ export interface RelayUnit {
   readonly status: RunStatus;
   readonly error: { readonly code: string; readonly message: string } | null;
   readonly cancelRequested: boolean;
-  readonly user: string;
+  /** The user's words; null for a turn of an origin's history that starts with a reply, which has no user message. */
+  readonly user: string | null;
   readonly attachments: readonly { readonly name: string; readonly mediaType: string; readonly bytes: number }[];
   readonly tools: readonly PublicTool[];
-  readonly plan: PublicPlan | null;
-  readonly outputs: readonly PublicOutput[];
-  readonly activities: readonly PublicActivity[];
   readonly reply: string;
-  readonly thinking: boolean;
   readonly details: ReadonlyMap<string, RelayToolDetail>;
 }
 
 /** A model name as the packet may show it (ADR-055 §5.1); anything else is an unknown model. */
-export function modelName(value: string | null | undefined): string | null {
+function modelName(value: string | null | undefined): string | null {
   return typeof value === "string" && /^[A-Za-z0-9._:/-]{1,128}$/u.test(value) ? value : null;
 }
 /**
@@ -72,18 +69,17 @@ function runModel(state: SessionSnapshot, run: PublicRun, latest: ReadonlyMap<st
 export function relayUnits(state: SessionSnapshot, sources: readonly PublicRun[], origin: boolean, details: ReadonlyMap<string, RelayToolDetail> = new Map()): readonly RelayUnit[] {
   const units: RelayUnit[] = [];
   if (origin && state.origin !== undefined) {
-    let turn: { user: string; status: RunStatus; harnessId: string | null; attachments: RelayUnit["attachments"]; replies: string[] } | null = null;
+    let turn: { user: string | null; status: RunStatus; harnessId: string | null; attachments: RelayUnit["attachments"]; replies: string[] } | null = null;
     const close = () => {
       if (turn === null) return;
       units.push({ key: "origin-" + (units.length + 1), turn: units.length + 1, origin: true, harnessId: turn.harnessId ?? (state.origin!.kind === "import" ? state.origin!.harnessId : null),
-        model: null, status: turn.status, error: null, cancelRequested: false, user: turn.user, attachments: turn.attachments, tools: [], plan: null, outputs: [], activities: [],
-        reply: turn.replies.join("\n\n"), thinking: false, details: new Map() });
+        model: null, status: turn.status, error: null, cancelRequested: false, user: turn.user, attachments: turn.attachments, tools: [], reply: turn.replies.join("\n\n"), details: new Map() });
       turn = null;
     };
     for (const message of state.origin.history) {
       const attachments = (message.attachments ?? []).map(item => ({ name: item.name, mediaType: item.mediaType, bytes: item.bytes }));
       if (message.role === "user") { close(); turn = { user: message.text, status: message.status, harnessId: null, attachments, replies: [] }; continue; }
-      turn ??= { user: "", status: message.status, harnessId: null, attachments: [], replies: [] };
+      turn ??= { user: null, status: message.status, harnessId: null, attachments: [], replies: [] };
       turn.replies.push(message.text); turn.status = message.status; turn.harnessId = message.harnessId ?? turn.harnessId;
     }
     close();
@@ -96,52 +92,37 @@ export function relayUnits(state: SessionSnapshot, sources: readonly PublicRun[]
     for (const tool of run.tools ?? []) { const detail = details.get(run.id + "/" + tool.id); if (detail !== undefined) own.set(tool.id, detail); }
     units.push({ key: run.id, turn: (index.get(run.id) ?? 0) + 1, origin: false, harnessId: run.selection.harnessId, model: runModel(state, run, latest), status: run.status,
       error: run.error, cancelRequested: run.cancelRequested, user: run.input,
-      attachments: (run.attachments ?? []).map(item => ({ name: item.name, mediaType: item.mediaType, bytes: item.bytes })), tools: run.tools ?? [], plan: run.plan ?? null,
-      outputs: run.outputs ?? [], activities: run.activities ?? [], reply: replies.get(run.assistantMessageId) ?? "", thinking: (run.thinking ?? "") !== "", details: own });
+      attachments: (run.attachments ?? []).map(item => ({ name: item.name, mediaType: item.mediaType, bytes: item.bytes })), tools: run.tools ?? [], reply: replies.get(run.assistantMessageId) ?? "", details: own });
   }
   return units;
 }
 
-
-/** What a piece cut, to be told in the ledger (M5): the user's words, a reply, a command's output or an error, and how much. */
-export interface Cut { readonly what: "words" | "reply" | "output" | "error"; readonly omitted: number }
-/** What a rendered piece costs: its estimated tokens, how many of them are model or tool text, its redaction hits and its cuts. */
-export interface Piece { readonly text: string; readonly tokens: number; readonly untrusted: number; readonly hits: number; readonly cuts: readonly Cut[] }
-/** Counts kept while a piece is written; `untrusted` in tokens. */
-export interface Tally { hits: number; untrusted: number; cuts: Cut[] }
-export function tally(): Tally { return { hits: 0, untrusted: 0, cuts: [] }; }
-function piece(text: string, counted: Tally): Piece { return { text, tokens: estimateTokens(text), untrusted: counted.untrusted, hits: counted.hits, cuts: counted.cuts }; }
-
 /** Inline `<think>` blocks of a reply (and an unclosed one to its end): thinking never leaves (ADR-055 §5.1). */
 const THINK = /<think>[\s\S]*?(?:<\/think>|$)/giu;
-export function withoutThinking(reply: string): { readonly text: string; readonly blocks: number } {
-  let blocks = 0;
-  const text = reply.includes("<think") || reply.includes("<THINK") ? reply.replace(THINK, () => { blocks++; return ""; }) : reply;
-  return { text, blocks };
+function withoutThinking(reply: string): string {
+  return reply.includes("<think") || reply.includes("<THINK") ? reply.replace(THINK, "") : reply;
 }
 
-/**
- * A text ready to cut and quote (ADR-055 §5.2 N19): normalized, then redacted as a whole, so no cut can leave part of a
- * secret; its estimate is of what was read, never of a middle skipped unread (`skipped` characters), so the share kept of
- * a long text does not shrink with its length (M3).
- */
-interface Redacted { readonly text: string; readonly tokens: number; readonly skipped: number; characters?: number }
-/** A quoted text longer than twice this is read only at its two ends (≤64 KiB in all): no cap keeps more than 8 KiB of it. */
-const HUGE_WINDOW = 32 * 1024;
-/** Only an inline field's first characters are read, and this much beyond them (N19). */
-const SCAN_MARGIN = 8192;
+/** Redaction hits counted while a piece is written. */
+interface Tally { hits: number }
+/** A rendered piece of the record: its text, its estimated tokens and its redaction hits. */
+export interface Piece { readonly text: string; readonly tokens: number; readonly hits: number }
+
+/** A quoted line (a command, a path, a title) longer than this is never carried: it is one line, so it is left out whole. */
+const MAX_INLINE = 4000;
+/** A failed command's output is carried as its last lines: at most this many, and as many fewer as keep it within this many characters. */
+export const OUTPUT_LINES = 20;
+const OUTPUT_CHARS = 1200;
 
 /**
  * Writes the record's sentences in one language with one redactor and one way of naming Harnesses. Every quoted text goes
- * through normalize → redaction → cut (never inside a redaction mark) → visible → neutralize → labels; model and tool text
- * counts as untrusted; what a cut leaves out is reported in the tally.
+ * through normalize → redaction → visible → neutralize → labels (escape.ts, ADR-055 N19) and is quoted whole.
  */
 export class Narrator {
   private readonly names = new Map<string, string>();
-  private readonly redactedTexts = { text: new Map<string, Redacted | null>(), output: new Map<string, Redacted | null>() };
   constructor(readonly language: RelayLanguage, private readonly redactor: RelayRedactor, private readonly naming: (harnessId: string) => string | null) {}
   get zh(): boolean { return this.language === "zh"; }
-  /** A Harness's display name: its catalog name when known, else its id; an unknown one for none. */
+  /** A Harness's display name: its catalog name when known, else its id; an unknown one for none. Always a name, never "the other". */
   name(harnessId: string | null): string {
     if (harnessId === null) return this.zh ? "未知 Harness" : "an unknown Harness";
     let shown = this.names.get(harnessId);
@@ -152,111 +133,59 @@ export class Narrator {
     }
     return shown;
   }
-  /** A string quoted inline (in backticks or 「」): one line, ≤ `max` characters, closed off from the slot around it. */
-  inline(raw: string, max: number, counted: Tally, untrusted = true): string {
-    // Only what can be kept is read, and 8 KiB beyond it (N19); it is redacted before it is cut.
-    const window = raw.length > max * 8 + SCAN_MARGIN ? raw.slice(0, max * 8 + SCAN_MARGIN) : raw;
-    let value = this.redactor.redact(normalize(window, "text").replace(/\t/gu, " ")).text;
-    if (characters(value) > max) value = headUnits(value, codeUnitsOf(value, max)) + "…";
+  /** One line of a string, redacted, closed off from the slot around it; `max` clamps an identifier (a code, a media type, a file name). */
+  private slot(raw: string, counted: Tally, max: number | null): string {
+    let value = this.redactor.redact(normalize(raw, "text").replace(/\t/gu, " ")).text;
+    if (max !== null && characters(value) > max) value = headUnits(value, codeUnitsOf(value, max)) + "…";
     counted.hits += marksIn(value);
-    value = restoreLabels(neutralize(visible(value.replace(/\n/gu, "⏎")), this.language, "inline"), this.language).replace(/`/gu, "‘").replace(/\|/gu, "｜");
-    if (/^[#>-]/u.test(value)) value = "·" + value;
-    if (value === "") value = "∅";
-    if (untrusted) counted.untrusted += estimateTokens(value);
-    return value;
+    value = restoreLabels(neutralize(visible(value.replace(/\n/gu, "⏎")), this.language, "inline"), this.language).replace(/`/gu, "‘");
+    return value === "" ? "∅" : value;
   }
+  /** A string quoted inline, whole; null when it is longer than MAX_INLINE (then it is not carried). */
+  inline(raw: string, counted: Tally): string | null { return raw.length > MAX_INLINE ? null : this.slot(raw, counted, null); }
   /** `inline` in backticks. */
-  code(raw: string, max: number, counted: Tally, untrusted = true): string { return "`" + this.inline(raw, max, counted, untrusted) + "`"; }
-  /** See Redacted; cached by text and kind, since the fold quotes one text at several caps. Null when nothing is left. */
-  private redacted(raw: string, kind: "text" | "output"): Redacted | null {
-    const known = this.redactedTexts[kind].get(raw);
-    if (known !== undefined) return known;
-    const huge = raw.length > 2 * HUGE_WINDOW, window = huge ? headUnits(raw, HUGE_WINDOW) + "\n" + tailUnits(raw, HUGE_WINDOW) : raw;
-    const text = this.redactor.redact(normalize(window, kind).replace(/\n+$/u, ""), kind).text;
-    const redacted = text.trim() === "" ? null : { text, tokens: estimateTokens(text), skipped: huge ? raw.length - window.length + 1 : 0 };
-    this.redactedTexts[kind].set(raw, redacted);
-    return redacted;
-  }
-  /** A redacted body as a verbatim block (N3): visible, neutralized, its labels restored, in a fence `indent` deep. */
-  private quote(body: string, indent: string, counted: Tally, untrusted: boolean): string {
+  code(raw: string, counted: Tally): string | null { const value = this.inline(raw, counted); return value === null ? null : "`" + value + "`"; }
+  /** An identifier clamped to `max` characters (the one place a string is cut): an error code, a media type, an attachment's name. */
+  label(raw: string, max: number, counted: Tally): string { return this.slot(raw.slice(0, MAX_INLINE), counted, max); }
+  /** A redacted body as a verbatim block in a fence `indent` deep (N3), escaped (N2, N4) with its labels restored. */
+  private quote(body: string, indent: string, counted: Tally): string {
     counted.hits += marksIn(body);
-    const quoted = fence(restoreLabels(neutralize(visible(body), this.language, "block"), this.language), indent);
-    if (untrusted) counted.untrusted += estimateTokens(quoted);
-    return quoted;
+    return fence(restoreLabels(neutralize(visible(body), this.language, "block"), this.language), indent);
   }
-  private elision(omitted: number): string { return this.zh ? "…（中间省略 " + omitted + " 字）…" : "… (" + omitted + " characters omitted) …"; }
-  /**
-   * A verbatim block (N3) of a text, whole when it is within `capTokens`, else cut to a head and a tail (`headShare` of what
-   * is kept goes to the head) around a line that says how much was left out; the cut is reported as `what`. The share kept
-   * follows the text's own characters per token. Null when nothing is left to quote.
-   */
-  block(raw: string, options: { readonly kind: "text" | "output"; readonly capTokens: number; readonly headShare?: number; readonly indent?: string; readonly untrusted?: boolean; readonly what: Cut["what"] }, counted: Tally): string | null {
-    const redacted = this.redacted(raw, options.kind);
-    if (redacted === null) return null;
-    const { text, tokens, skipped } = redacted;
-    let body = text;
-    if (tokens > options.capTokens || skipped > 0) {
-      const keep = Math.max(0, Math.floor(text.length * Math.min(1, Math.max(0, options.capTokens) / tokens))), head = Math.floor(keep * (options.headShare ?? 0.8)), tail = keep - head;
-      const kept = headUnits(text, head), ending = tailUnits(text, tail);
-      const omitted = skipped + Math.max(0, (redacted.characters ??= characters(text)) - characters(kept) - characters(ending));
-      if (omitted > 0) {
-        body = (kept === "" ? "" : kept + "\n") + this.elision(omitted) + (ending === "" ? "" : "\n" + ending);
-        counted.cuts.push({ what: options.what, omitted });
-      }
-    }
-    return this.quote(body, options.indent ?? "", counted, options.untrusted !== false);
+  /** A text as a verbatim block, whole; null when nothing is left of it once normalized and redacted. */
+  block(raw: string, kind: "text" | "output", counted: Tally): string | null {
+    const text = this.redactor.redact(normalize(raw, kind).replace(/\n+$/u, ""), kind).text;
+    return text.trim() === "" ? null : this.quote(text, "", counted);
   }
   /**
-   * The last lines of a command's output, cut after it was redacted (B1): 20 lines and 1,200 characters when it failed, 3
-   * lines and 300 bytes otherwise; credential-named assignments in it are hidden too. A cut is reported as `output`.
+   * The end of a command's output, as whole lines, after the whole output was redacted: its last OUTPUT_LINES lines, fewer
+   * while they take more than OUTPUT_CHARS characters. "unfit" when even the last line is longer than that; null when
+   * nothing is left of the output.
    */
-  outputTail(output: string, failed: boolean, counted: Tally): string | null {
-    const redacted = this.redacted(output, "output");
-    if (redacted === null) return null;
-    const lines = redacted.text.split("\n");
-    let tail = lines.slice(-(failed ? 20 : 3)).join("\n").replace(/^(?:[ \t]*\n)+/u, "");
-    const limit = failed ? 1200 : 300, size = (text: string) => failed ? characters(text) : new TextEncoder().encode(text).byteLength;
-    while (tail !== "" && size(tail) > limit) { const at = tail.indexOf("\n"); tail = at >= 0 ? tail.slice(at + 1) : tailUnits(tail, Math.floor(tail.length * 3 / 4)); }
-    if (tail.trim() === "") return null;
-    const omitted = redacted.skipped + Math.max(0, characters(redacted.text.replace(/^(?:[ \t]*\n)+/u, "")) - characters(tail));
-    if (omitted > 0) counted.cuts.push({ what: "output", omitted });
-    return this.quote(tail, "  ", counted, true);
-  }
-  /**
-   * A reply's first and last paragraphs, each ≤600 characters (G2), cut after the reply was redacted (B1); null when there is
-   * no reply. `cut` when anything was left out, which is reported as a cut of the reply.
-   */
-  ends(reply: string, counted: Tally): { readonly quoted: string; readonly cut: boolean } | null {
-    const redacted = this.redacted(reply, "text");
-    if (redacted === null) return null;
-    const trimmed = redacted.text.trim();
-    // At most two UTF-16 units a character: a short text needs no count.
-    if (redacted.skipped === 0 && (trimmed.length <= 1200 || (trimmed.length <= 2400 && characters(trimmed) <= 1200))) return { quoted: this.quote(trimmed, "", counted, true), cut: false };
-    const parts = trimmed.split(/\n\s*\n/u), first = parts[0] ?? "", last = parts.length > 1 ? parts.at(-1)! : "";
-    const head = characters(first) > 600 ? headUnits(first, codeUnitsOf(first, 600)) + "…" : first;
-    const tail = last === "" ? tailUnits(trimmed, codeUnitsOf(trimmed, 600)) : characters(last) > 600 ? "…" + tailUnits(last, last.length - codeUnitsOf(last, characters(last) - 600)) : last;
-    counted.cuts.push({ what: "reply", omitted: redacted.skipped + Math.max(0, characters(trimmed) - characters(head) - characters(tail)) });
-    return { quoted: this.quote(head + "\n…\n" + tail, "", counted, true), cut: true };
+  tail(output: string, counted: Tally): { readonly block: string; readonly shown: number; readonly total: number } | "unfit" | null {
+    const text = this.redactor.redact(normalize(output, "output").replace(/\n+$/u, ""), "output").text.replace(/\s+$/u, "");
+    if (text.trim() === "") return null;
+    const lines = text.split("\n");
+    let from = Math.max(0, lines.length - OUTPUT_LINES);
+    while (from < lines.length && characters(lines.slice(from).join("\n")) > OUTPUT_CHARS) from++;
+    if (from >= lines.length) return "unfit";
+    while (lines[from]!.trim() === "") from++;
+    return { block: this.quote(lines.slice(from).join("\n"), "  ", counted), shown: lines.length - from, total: lines.length };
   }
 
   /** “第 3 轮” / “来源第 2 轮” / “turn 3” / “source turn 2”. */
   turnOf(unit: Pick<RelayUnit, "turn" | "origin">): string {
     return this.zh ? (unit.origin ? "来源第 " : "第 ") + unit.turn + " 轮" : (unit.origin ? "source turn " : "turn ") + unit.turn;
   }
-  /** “第 3–9 轮” / “turns 3–9”, for consecutive units of one kind. */
-  turnsOf(first: Pick<RelayUnit, "turn" | "origin">, last: Pick<RelayUnit, "turn" | "origin">): string {
-    if (first.turn === last.turn) return this.turnOf(first);
-    return this.zh ? (first.origin ? "来源第 " : "第 ") + first.turn + "–" + last.turn + " 轮" : (first.origin ? "source turns " : "turns ") + first.turn + "–" + last.turn;
-  }
   /**
    * How a unit ended: 完成, 失败（CODE）, why it was cancelled, or 结果未核实. The relay's own words: in a packet “you” is the
-   * target, so the wait was the user's (m3), never the interface's 等待你的决定.
+   * target, so the wait was the user's, never the interface's 等待你的决定.
    */
   result(unit: RelayUnit, counted: Tally): string {
-    const code = unit.error === null ? null : this.inline(unit.error.code, 64, counted, false);
+    const code = () => unit.error === null ? null : this.label(unit.error.code, 64, counted);
     if (this.zh) switch (unit.status) {
       case "completed": return "完成";
-      case "failed": return code === null ? "失败" : "失败（" + code + "）";
+      case "failed": { const shown = code(); return shown === null ? "失败" : "失败（" + shown + "）"; }
       case "cancelled": switch (unit.error?.code) {
         case "RUN_TIMEOUT": return "已取消（执行预算用尽）";
         case "WAIT_EXPIRED": return "已取消（等待用户决定超时）";
@@ -268,7 +197,7 @@ export class Narrator {
     }
     switch (unit.status) {
       case "completed": return "completed";
-      case "failed": return code === null ? "failed" : "failed (" + code + ")";
+      case "failed": { const shown = code(); return shown === null ? "failed" : "failed (" + shown + ")"; }
       case "cancelled": switch (unit.error?.code) {
         case "RUN_TIMEOUT": return "cancelled (execution budget ran out)";
         case "WAIT_EXPIRED": return "cancelled (the wait for the user's decision ran out)";
@@ -306,11 +235,14 @@ export function kindOf(tool: PublicTool): ToolKind {
     default: return "other";
   }
 }
-/** How a tool ended, for the sentence that names it: done, failed, or not finished. */
+const FAILED_TOOL = ["failed", "error", "declined", "rejected", "cancelled"];
+/** How a tool ended: done, failed, or not finished. */
 function toolEnd(tool: PublicTool): "done" | "failed" | "open" {
   if (tool.status === "completed") return "done";
-  return ["failed", "error", "declined", "rejected", "cancelled"].includes(tool.status) ? "failed" : "open";
+  return FAILED_TOOL.includes(tool.status) ? "failed" : "open";
 }
+/** Whether a command failed: a non-zero exit code, or an end that is a failure. */
+function commandFailed(tool: PublicTool): boolean { return (tool.exitCode !== undefined && tool.exitCode !== 0) || toolEnd(tool) === "failed"; }
 
 /** One file a change made: where, how (created, deleted, edited, moved), and its added and removed lines when known. */
 export interface FileChange { readonly path: string; readonly op: "create" | "delete" | "edit" | "move"; readonly added: number | null; readonly removed: number | null }
@@ -348,7 +280,7 @@ function sameFile(location: string, path: string): boolean {
  * (a patch over several files lists each); its locations alone when it has no diff; null when nothing was read or the
  * diff and the locations do not correspond, and the tool is then told by its title.
  */
-export function changesOf(unit: RelayUnit, tool: PublicTool): readonly FileChange[] | null {
+function changesOf(unit: RelayUnit, tool: PublicTool): readonly FileChange[] | null {
   const detail = unit.details.get(tool.id);
   if (detail === undefined) return null;
   const locations = (detail.locations ?? []).map(location => location.replace(/:\d+$/u, "")).filter(location => location !== "");
@@ -368,198 +300,146 @@ function locationOf(detail: RelayToolDetail | undefined): string | null {
 /** A title fully wrapped in one pair of backticks (as some drivers write commands) without them. */
 function unwrapped(title: string): string { return /^`[^`]+`$/u.test(title) ? title.slice(1, -1) : title; }
 /** The command a tool ran, unquoted: its detail's input when read, else its title. */
-export function commandSource(unit: RelayUnit, tool: PublicTool): string {
+function commandSource(unit: RelayUnit, tool: PublicTool): string {
   const input = unit.details.get(tool.id)?.input;
   return typeof input === "string" && input.trim() !== "" ? input : unwrapped(tool.title);
 }
 
-/** The words of one grade's rendering of a unit. */
-export interface UnitOptions {
-  /** Whether the unit's words are already quoted in the user's-words section, so a one-line rendering leaves them out. */
-  readonly wordsQuoted: boolean;
-  /** Whether this unit holds the newest plan of the record (only that one is shown). */
-  readonly newestPlan: boolean;
-  /** Whether the unit's error is shown in the status section already. */
-  readonly errorShown: boolean;
-  /** The most the reply may take, in tokens. */
-  readonly replyCap: number;
+/** The words of the items, in each language: both are listed here so that they stay the same text. */
+type Verb = "read" | "search" | "fetch" | "mcp" | "subagent" | "other" | "ran" | FileChange["op"];
+interface Words {
+  readonly user: string;
+  readonly empty: string;
+  readonly attachments: (items: readonly string[], total: number) => string;
+  readonly ops: (name: string) => string;
+  readonly reply: (name: string) => string;
+  readonly error: (name: string, code: string) => string;
+  readonly output: (name: string, shown: number, total: number) => string;
+  readonly verb: Readonly<Record<Verb, string>>;
+  readonly unread: string;
+  readonly failed: string;
+  readonly open: string;
+  readonly counts: (added: number | null, removed: number | null) => string;
+  readonly exit: (tool: PublicTool) => string;
 }
-
-/** G1: everything the unit says, in order: attachments, actions, plan, activity, outputs, error, reply (ADR-055 §5.2 N5–N18). */
-export function verbatimUnit(n: Narrator, unit: RelayUnit, options: UnitOptions): Piece {
-  const counted = tally(), zh = n.zh, name = n.name(unit.harnessId), out = [n.heading(unit, counted)];
-  if (unit.attachments.length) out.push(attachmentLine(n, unit, counted));
-  if (!unit.origin) {
-    const top = unit.tools.filter(tool => tool.parentId === undefined && kindOf(tool) !== "think");
-    // Only what the record holds: a Turn's tools beyond its bound and a sub-agent's own are not in it (m4).
-    if (top.length === 0) out.push(zh ? "这一轮没有记录到 " + name + " 的工具调用。" : "No tool calls of " + name + " were recorded in this turn.");
-    else { out.push(zh ? name + " 的操作（按发生顺序）：" : name + "'s actions, in order:"); out.push(...actionLines(n, unit, top, counted)); }
-  }
-  if (options.newestPlan && unit.plan !== null) out.push(planLine(n, unit.plan, counted));
-  const activity = activityLine(n, unit.activities); if (activity !== null) out.push(activity);
-  if (unit.outputs.length) out.push(outputLine(n, unit.outputs, counted));
-  if (unit.status === "failed" && unit.error !== null && !options.errorShown) {
-    const error = n.block(unit.error.message, { kind: "text", capTokens: estimateTokens("x".repeat(400)), headShare: 1, what: "error" }, counted);
-    if (error !== null) out.push((zh ? "错误（" : "Error (") + n.inline(unit.error.code, 64, counted, false) + (zh ? "）原文：" : "), as reported:"), error);
-  }
-  const quoted = n.block(withoutThinking(unit.reply).text, { kind: "text", capTokens: options.replyCap, headShare: 0.25, what: "reply" }, counted);
-  if (quoted !== null) out.push(zh ? name + " 的回复：" : name + "'s reply:", quoted);
-  return piece(out.join("\n"), counted);
+function countsOf(added: number | null, removed: number | null): string {
+  return [added ? "+" + added : "", removed ? "−" + removed : ""].filter(Boolean).join(" ");
 }
-/** G2: the heading, attachments, three lines of actions (files ≤12, commands ≤8, the rest counted) and the reply's ends. */
-export function compactUnit(n: Narrator, unit: RelayUnit, _options: UnitOptions): Piece {
-  const counted = tally(), zh = n.zh, name = n.name(unit.harnessId), out = [n.heading(unit, counted)];
-  if (unit.attachments.length) out.push(attachmentLine(n, unit, counted));
-  const top = unit.tools.filter(tool => tool.parentId === undefined);
-  const changes = top.filter(tool => kindOf(tool) === "change").flatMap(tool => changeItems(n, unit, tool, counted)), commands = top.filter(tool => kindOf(tool) === "execute");
-  if (changes.length) out.push((zh ? "- 改动：" : "- Changes: ") + changes.slice(0, 12).join(zh ? "、" : ", ") +
-    (changes.length > 12 ? (zh ? "（共 " + changes.length + " 处）" : " (" + changes.length + " in all)") : "") + (zh ? "。" : "."));
-  if (commands.length) {
-    const failed = commands.filter(tool => (tool.exitCode !== undefined && tool.exitCode !== 0) || toolEnd(tool) === "failed").length;
-    out.push((zh ? "- 命令：" : "- Commands: ") + commands.slice(0, 8).map(tool => n.code(commandSource(unit, tool), 200, counted) + " → " + (tool.exitCode ?? "?")).join(zh ? "；" : "; ") +
-      (commands.length > 8 ? (zh ? "（共 " + commands.length + " 条，" + failed + " 条失败）" : " (" + commands.length + " in all, " + failed + " failed)") : "") + (zh ? "。" : "."));
-  }
-  const others = countsOf(top.filter(tool => !["change", "execute", "think"].includes(kindOf(tool))), n);
-  if (others !== "") out.push((zh ? "- 其他：" : "- Other: ") + others + (zh ? "。" : "."));
-  const ends = n.ends(withoutThinking(unit.reply).text, counted);
-  if (ends !== null) out.push(ends.cut ? (zh ? name + " 的回复（首段与末段）：" : name + "'s reply (first and last paragraphs):") : (zh ? name + " 的回复：" : name + "'s reply:"), ends.quoted);
-  return piece(out.join("\n"), counted);
-}
-/** G3: one line of ≤400 bytes: turn, who, result, the user's first words unless quoted already, and counts. */
-export function lineUnit(n: Narrator, unit: RelayUnit, options: UnitOptions): Piece {
-  const zh = n.zh;
-  let words = options.wordsQuoted || unit.user.trim() === "" ? 0 : 120;
-  for (;;) {
-    const counted = tally(), turn = n.turnOf(unit), who = n.who(unit.harnessId, unit.model), result = n.result(unit, counted);
-    const counts = toolCounts(n, unit), quoted = words === 0 ? "" : n.dot(result) + (zh ? "用户：「" : "user: 「") + n.inline(unit.user, words, counted, false) + "」";
-    const line = "- " + (zh ? turn : turn[0]!.toUpperCase() + turn.slice(1)) + " · " + who + n.dot(who) + result + quoted + (counts === "" ? "" : n.dot(quoted === "" ? result : "」") + counts);
-    if (new TextEncoder().encode(line).byteLength <= 400 || words === 0) return { ...piece(line, counted), untrusted: 0 };
-    words = words > 10 ? Math.floor(words * 0.75) : 0;
-  }
-}
-/** A range line of ≤600 bytes for consecutive units: turns, who did how many, failures, changes and commands. */
-export function rangeLine(n: Narrator, units: readonly RelayUnit[]): Piece {
-  const zh = n.zh, by = new Map<string, number>(), first = units[0]!, last = units.at(-1)!;
-  let unfinished = 0, changes = 0, commands = 0, failedCommands = 0;
-  for (const unit of units) {
-    const name = n.name(unit.harnessId); by.set(name, (by.get(name) ?? 0) + 1);
-    if (unit.status !== "completed") unfinished++;
-    for (const tool of unit.tools) {
-      if (tool.parentId !== undefined) continue;
-      const kind = kindOf(tool);
-      if (kind === "change") changes++;
-      if (kind === "execute") { commands++; if ((tool.exitCode !== undefined && tool.exitCode !== 0) || toolEnd(tool) === "failed") failedCommands++; }
-    }
-  }
-  const named = [...by.entries()].slice(0, 4).map(([name, count]) => zh ? name + " " + count + " 轮" : name + " " + count).join(zh ? "、" : ", ") + (by.size > 4 ? (zh ? " 等" : ", …") : "");
-  const turns = n.turnsOf(first, last);
-  const head = "- " + (zh ? turns : turns[0]!.toUpperCase() + turns.slice(1)) + (zh ? "（" + named + (unfinished ? "；失败或未完成 " + unfinished + " 轮" : "") + "）" : " (" + named + (unfinished ? "; " + unfinished + " failed or unfinished" : "") + ")");
-  const tail = (changes ? n.dot(head) + (zh ? "改动 " + changes + " 处" : changes + " changes") : "") +
-    (commands ? (changes ? " · " : n.dot(head)) + (zh ? "执行 " + commands + " 条命令" + (failedCommands ? "（" + failedCommands + " 条失败）" : "") : commands + " commands" + (failedCommands ? " (" + failedCommands + " failed)" : "")) : "");
-  return piece(head + tail, tally());
-}
-
-/** Counts of a unit's top-level tools by kind, for one-line renderings: “改动 2 处 · 执行 3 条命令（1 条失败）”. */
-function toolCounts(n: Narrator, unit: RelayUnit): string {
-  const zh = n.zh, top = unit.tools.filter(tool => tool.parentId === undefined);
-  const changes = top.filter(tool => kindOf(tool) === "change").length, commands = top.filter(tool => kindOf(tool) === "execute");
-  const failed = commands.filter(tool => (tool.exitCode !== undefined && tool.exitCode !== 0) || toolEnd(tool) === "failed").length;
-  const parts: string[] = [];
-  if (changes) parts.push(zh ? "改动 " + changes + " 处" : changes + " changes");
-  if (commands.length) parts.push(zh ? "执行 " + commands.length + " 条命令" + (failed ? "（" + failed + " 条失败）" : "") : commands.length + " commands" + (failed ? " (" + failed + " failed)" : ""));
-  if (unit.attachments.length) parts.push(zh ? "附件 " + unit.attachments.length + " 个" : unit.attachments.length + " attachments");
-  return parts.join(" · ");
-}
-/** “读取 3 次、搜索 1 次” / “read 3, searched 1”. */
-function countsOf(tools: readonly PublicTool[], n: Narrator): string {
-  const order: readonly ToolKind[] = ["read", "search", "fetch", "subagent", "mcp", "other"];
-  const words: Readonly<Record<string, readonly [string, string]>> = { read: ["读取", "read"], search: ["搜索", "searched"], fetch: ["获取", "fetched"], subagent: ["子 Agent", "sub-agent"], mcp: ["MCP 工具", "MCP tool"], other: ["其他操作", "other"] };
-  return order.flatMap(kind => { const count = tools.filter(tool => kindOf(tool) === kind).length; return count === 0 ? [] : [n.zh ? words[kind]![0] + " " + count + " 次" : words[kind]![1] + " " + count]; }).join(n.zh ? "、" : ", ");
-}
+const WORDS: Readonly<Record<RelayLanguage, Words>> = {
+  zh: {
+    user: "用户原话：", empty: "（空）",
+    attachments: (items, total) => "用户附件：" + items.join("、") + (total > items.length ? " 等 " + total + " 个" : "") + "，只列名称。",
+    ops: name => name + " 的操作（按发生顺序）：",
+    reply: name => name + " 的回复：",
+    error: (name, code) => name + " 报告的错误（" + code + "）原文：",
+    output: (name, shown, total) => "  " + name + " 记录的输出" + (shown < total ? "末尾（最后 " + shown + " 行，共 " + total + " 行）：" : "（共 " + total + " 行）："),
+    verb: { read: "读取", search: "搜索", fetch: "获取", mcp: "调用 MCP 工具", subagent: "子 Agent", other: "其他操作", ran: "执行", create: "新建", delete: "删除", edit: "修改", move: "移动" },
+    unread: "（路径未读取）", failed: "（失败）", open: "（未完成）",
+    counts: (added, removed) => { const text = countsOf(added, removed); return text === "" ? "" : "（" + text + "）"; },
+    exit: tool => tool.exitCode !== undefined ? " → 退出码 " + tool.exitCode : toolEnd(tool) === "failed" ? " → 失败（没有报告退出码）" : toolEnd(tool) === "open" ? "（未完成）" : "（没有报告退出码）",
+  },
+  en: {
+    user: "The user's words:", empty: "(empty)",
+    attachments: (items, total) => "Attachments from the user: " + items.join(", ") + (total > items.length ? " and " + (total - items.length) + " more" : "") + "; names only.",
+    ops: name => name + "'s actions, in order:",
+    reply: name => name + "'s reply:",
+    error: (name, code) => "Error reported by " + name + " (" + code + "), as written:",
+    output: (name, shown, total) => "  Output recorded by " + name + (shown < total ? " (last " + shown + " of " + total + " lines):" : " (" + total + " lines):"),
+    verb: { read: "Read", search: "Searched", fetch: "Fetched", mcp: "Called MCP tool", subagent: "Sub-agent", other: "Other", ran: "Ran", create: "Created", delete: "Deleted", edit: "Edited", move: "Moved" },
+    unread: " (path not read)", failed: " (failed)", open: " (not finished)",
+    counts: (added, removed) => { const text = countsOf(added, removed); return text === "" ? "" : " (" + text + ")"; },
+    exit: tool => tool.exitCode !== undefined ? " → exit code " + tool.exitCode : toolEnd(tool) === "failed" ? " → failed (no exit code reported)" : toolEnd(tool) === "open" ? " (not finished)" : " (no exit code reported)",
+  },
+};
 function bytesLabel(bytes: number): string { return bytes < 1024 ? bytes + " B" : bytes < 1048576 ? Math.round(bytes / 1024) + " KB" : (bytes / 1048576).toFixed(1) + " MB"; }
-function attachmentLine(n: Narrator, unit: RelayUnit, counted: Tally): string {
-  const zh = n.zh, items = unit.attachments.slice(0, 8).map(item => n.code(item.name, 120, counted, false) + (zh ? "（" : " (") + n.inline(item.mediaType, 80, counted, false) + (zh ? "，" : ", ") + bytesLabel(item.bytes) + (zh ? "）" : ")"));
-  return (zh ? "用户附件：" : "Attachments from the user: ") + items.join(zh ? "、" : ", ") + (unit.attachments.length > 8 ? (zh ? " 等 " + unit.attachments.length + " 个" : " and " + (unit.attachments.length - 8) + " more") : "") + (zh ? "，只列名称。" : "; names only.");
+
+/** The kinds of item a packet counts: what it carries and what it leaves out are told by these, and add up to what the record holds. */
+export const ITEM_KINDS = ["userMessages", "replies", "outputs", "changes", "calls"] as const;
+export type ItemKind = typeof ITEM_KINDS[number];
+/** Where an item stands in its unit: the user's words, the lines of operations (a command's output under its line), an error, the reply. */
+export type ItemGroup = "user" | "ops" | "output" | "error" | "reply";
+/** One thing the record says that a packet may carry, whole or not at all. */
+export interface Candidate {
+  readonly kind: ItemKind;
+  readonly group: ItemGroup;
+  /** The index of its unit among the packet's units. */
+  readonly unit: number;
+  /** Its place in the unit's own order. */
+  readonly seq: number;
+  /** Its priority among the unit's items when not all fit: lower first (changes, commands, errors, the reply, outputs, other calls). */
+  readonly rank: number;
+  /** How many characters of the record it quotes whole (none for an output: only its last lines are quoted), to leave a text that cannot fit unrendered. */
+  readonly raw: number;
+  /** The item it stands under: a command's output goes only with the command. */
+  readonly needs: Candidate | null;
+  /** Whether a rule keeps it out whatever the budget (the output of a command that reads a credential file). */
+  readonly withheld: boolean;
+  /** The rendering, made once; null when the item cannot be carried whole (too long, or nothing is left of it). */
+  piece(): Piece | null;
 }
-function planLine(n: Narrator, plan: PublicPlan, counted: Tally): string {
-  const zh = n.zh, done = plan.entries.filter(entry => entry.status === "completed").length, open = plan.entries.filter(entry => entry.status !== "completed");
-  const listed = open.slice(0, 20).map(entry => "「" + n.inline(entry.content, 200, counted) + "」" + (entry.status === "in_progress" ? (zh ? "（进行中）" : " (in progress)") : ""));
-  return (zh ? "计划（本轮结束时）：已完成 " + done + " 项" : "Plan at the end of this turn: " + done + " done") +
-    (listed.length ? (zh ? "；未完成：" : "; open: ") + listed.join(zh ? "；" : "; ") + (open.length > 20 ? (zh ? " 等 " + open.length + " 项" : " and " + (open.length - 20) + " more") : "") : "") + (zh ? "。" : ".");
-}
-function activityLine(n: Narrator, activities: readonly PublicActivity[]): string | null {
-  const zh = n.zh, count = (kind: PublicActivity["kind"]) => activities.filter(item => item.kind === kind).length;
-  const parts = ([["compaction", "压缩 # 次", "# compaction(s)"], ["subagent", "子 Agent # 个", "# sub-agent(s)"], ["task", "后台任务 # 个", "# background task(s)"], ["retry", "重试 # 次", "# retry(ies)"], ["review", "审查 # 次", "# review(s)"]] as const)
-    .flatMap(([kind, chinese, english]) => count(kind) ? [(zh ? chinese : english).replace("#", String(count(kind)))] : []);
-  return parts.length ? (zh ? "活动：" : "Activity: ") + parts.join(zh ? "、" : ", ") + (zh ? "。" : ".") : null;
-}
-function outputLine(n: Narrator, outputs: readonly PublicOutput[], counted: Tally): string {
-  const zh = n.zh, items = outputs.slice(0, 8).map(output => output.kind === "content"
-    ? n.code(output.content.name, 120, counted) + (zh ? "（" : " (") + n.inline(output.content.mediaType, 80, counted, false) + (zh ? "，" : ", ") + bytesLabel(output.content.bytes) + (zh ? "）" : ")")
-    : n.code(output.name, 120, counted) + (zh ? "（链接）" : " (link)"));
-  return (zh ? "产物：" : "Outputs: ") + items.join(zh ? "、" : ", ") + (outputs.length > 8 ? (zh ? " 等 " + outputs.length + " 个" : " and " + (outputs.length - 8) + " more") : "") + (zh ? "，只列名称。" : "; names only.");
-}
-/** One change's files as quoted items, `path`（+a −d）, with the tool's end when it did not succeed; its title without a detail. */
-function changeItems(n: Narrator, unit: RelayUnit, tool: PublicTool, counted: Tally): readonly string[] {
-  const end = toolEnd(tool), status = end === "failed" ? (n.zh ? "（失败）" : " (failed)") : end === "open" ? (n.zh ? "（未完成）" : " (not finished)") : "";
-  const files = changesOf(unit, tool);
-  if (files === null) return [n.code(unwrapped(tool.title), 200, counted) + status];
-  return files.map(file => n.code(file.path, 200, counted) + countsLabel(n, file) + status);
-}
-function countsLabel(n: Narrator, file: FileChange): string {
-  const counts = [file.added ? "+" + file.added : "", file.removed ? "−" + file.removed : ""].filter(Boolean).join(" ");
-  return counts === "" ? "" : n.zh ? "（" + counts + "）" : " (" + counts + ")";
-}
-const CHANGE_WORDS: Readonly<Record<FileChange["op"], readonly [string, string]>> = { create: ["新建", "created"], delete: ["删除", "deleted"], edit: ["修改", "edited"], move: ["移动", "moved"] };
+const RANK = { change: 0, command: 1, error: 2, reply: 3, output: 4, call: 5 } as const;
+/** The rank from which items are the least worth carrying: a packet takes them last, after the user's words (the reads, the searches and the like). */
+export const LEAST = RANK.call;
+
 /**
- * G1 actions: consecutive reads, searches and changes merged (≤8 tools a line; a patch over several files lists each file,
- * ≤16), one line per command with its output's tail. A command that names a credential file never has its output quoted
- * (ADR-055 §10.1); the sentence says so.
+ * The items of one unit, in the order the unit tells them: the user's words, each tool's lines (a patch over several files is
+ * a line for each file, a failed command's output tail under the command), the error, the reply. The totals a packet counts
+ * come from this list alone, whatever is carried.
  */
-function actionLines(n: Narrator, unit: RelayUnit, tools: readonly PublicTool[], counted: Tally): readonly string[] {
-  const zh = n.zh, lines: string[] = [], sentence = (text: string) => text.slice(0, 1).toUpperCase() + text.slice(1);
-  const status = (tool: PublicTool) => { const end = toolEnd(tool); return end === "failed" ? (zh ? "（失败）" : " (failed)") : end === "open" ? (zh ? "（未完成）" : " (not finished)") : ""; };
-  for (let index = 0; index < tools.length;) {
-    const tool = tools[index]!, kind = kindOf(tool);
-    if (kind === "execute") {
-      const failed = (tool.exitCode !== undefined && tool.exitCode !== 0) || toolEnd(tool) === "failed", source = commandSource(unit, tool);
-      const exit = tool.exitCode !== undefined ? (zh ? " → 退出码 " + tool.exitCode : " → exit code " + tool.exitCode)
-        : toolEnd(tool) === "failed" ? (zh ? " → 失败（没有报告退出码）" : " → failed (no exit code reported)") : toolEnd(tool) === "open" ? (zh ? "（未完成）" : " (not finished)") : (zh ? "（没有报告退出码）" : " (no exit code reported)");
-      const output = unit.details.get(tool.id)?.output, secretFile = namesCredentialFile(source);
-      const tail = !secretFile && typeof output === "string" && output.trim() !== "" ? n.outputTail(output, failed, counted) : null;
-      lines.push("- " + (zh ? "执行 " : "Ran ") + n.code(source, 400, counted) + exit + (zh ? "。" : ".") + (secretFile && output !== undefined ? (zh ? "它读取凭据类文件，输出没有附上。" : " It reads a credential file; its output is not included.") : "")
-        + (tail === null ? "" : (zh ? "输出末尾：" : " Output tail:") + "\n" + tail));
-      index++; continue;
-    }
-    let end = index + 1;
-    while (end < tools.length && kindOf(tools[end]!) === kind) end++;
-    const group = tools.slice(index, end), shown = group.slice(0, 8), more = group.length - shown.length;
-    const extra = more > 0 ? (zh ? " 等 " + group.length + " 项" : " and " + more + " more") : "";
-    if (kind === "change") {
-      const parts: string[] = []; let op: FileChange["op"] | null = null, members: string[] = [], listed = 0, beyond = 0;
-      for (const item of shown) {
-        const files = changesOf(unit, item) ?? [{ path: "", op: item.kind === "delete" ? "delete" as const : item.kind === "move" ? "move" as const : "edit" as const, added: null, removed: null }];
-        for (const file of files) {
-          if (listed >= 16) { beyond++; continue; }
-          listed++;
-          if (file.op !== op) { if (op !== null) parts.push(CHANGE_WORDS[op][zh ? 0 : 1] + " " + members.join(zh ? "、" : ", ")); op = file.op; members = []; }
-          members.push((file.path === "" ? n.code(unwrapped(item.title), 200, counted) : n.code(file.path, 200, counted) + countsLabel(n, file)) + status(item));
-        }
+export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): readonly Candidate[] {
+  const out: Candidate[] = [], words = WORDS[n.language], name = n.name(unit.harnessId);
+  let seq = 0;
+  const add = (kind: ItemKind, group: ItemGroup, rank: number, raw: number, make: (counted: Tally) => string | null, needs: Candidate | null = null, withheld = false): Candidate => {
+    let made: Piece | null | undefined;
+    const candidate: Candidate = { kind, group, unit: index, seq: seq++, rank, raw, needs, withheld, piece() {
+      if (made === undefined) {
+        const counted: Tally = { hits: 0 }, text = withheld ? null : make(counted);
+        made = text === null ? null : { text, tokens: estimateTokens(text), hits: counted.hits };
       }
-      if (op !== null) parts.push(CHANGE_WORDS[op][zh ? 0 : 1] + " " + members.join(zh ? "、" : ", "));
-      const files = beyond > 0 ? (zh ? "，另有 " + beyond + " 个文件" : ", and " + beyond + " more files") : "";
-      lines.push("- " + (zh ? parts.join("；") : sentence(parts.join("; "))) + files + extra + (zh ? "。" : "."));
-    } else {
-      const items = shown.map(item => {
-        const detail = unit.details.get(item.id), query = kind === "search" && typeof detail?.input === "string" && detail.input.trim() !== "" && !detail.input.includes("\n") ? detail.input : null;
-        const path = kind === "read" ? locationOf(detail) : null;
-        return n.code(path ?? query ?? unwrapped(item.title), 200, counted) + status(item);
-      }).join(zh ? "、" : ", ");
-      const words: Readonly<Record<string, readonly [string, string]>> = { read: ["读取 ", "Read "], search: ["搜索 ", "Searched "], fetch: ["获取 ", "Fetched "], subagent: ["子 Agent：", "Sub-agent: "], mcp: ["调用 MCP 工具 ", "Called MCP tool "], other: ["其他操作：", "Other: "] };
-      const [chinese, english] = words[kind] ?? words.other!;
-      lines.push("- " + (zh ? chinese : english) + items + extra + (kind === "fetch" ? (zh ? "，正文没有附上。" : "; content not included.") : zh ? "。" : "."));
-    }
-    index = end;
+      return made;
+    } };
+    out.push(candidate);
+    return candidate;
+  };
+  const status = (tool: PublicTool) => { const end = toolEnd(tool); return end === "failed" ? words.failed : end === "open" ? words.open : ""; };
+  const line = (verb: Verb, code: string, tail: string) => "- " + words.verb[verb] + " " + code + tail;
+  if (unit.user !== null) {
+    const user = unit.user;
+    add("userMessages", "user", 0, user.length, counted => {
+      const attachments = unit.attachments.slice(0, 8).map(item => "`" + n.label(item.name, 120, counted) + "`" + (n.zh ? "（" : " (") + n.label(item.mediaType, 80, counted) + (n.zh ? "，" : ", ") + bytesLabel(item.bytes) + (n.zh ? "）" : ")"));
+      return [words.user, n.block(user, "text", counted) ?? words.empty, ...(attachments.length ? [words.attachments(attachments, unit.attachments.length)] : [])].join("\n");
+    });
   }
-  return lines;
+  for (const tool of unit.tools) {
+    if (tool.parentId !== undefined) continue;
+    const kind = kindOf(tool), detail = unit.details.get(tool.id);
+    if (kind === "think") continue;
+    if (kind === "change") {
+      const files = changesOf(unit, tool), op: FileChange["op"] = tool.kind === "delete" ? "delete" : tool.kind === "move" ? "move" : "edit";
+      if (files === null) add("changes", "ops", RANK.change, tool.title.length, counted => { const code = n.code(unwrapped(tool.title), counted); return code === null ? null : line(op, code, words.unread + status(tool)); });
+      else for (const file of files) add("changes", "ops", RANK.change, file.path.length, counted => { const code = n.code(file.path, counted); return code === null ? null : line(file.op, code, words.counts(file.added, file.removed) + status(tool)); });
+    } else if (kind === "execute") {
+      const source = commandSource(unit, tool);
+      const command = add("calls", "ops", RANK.command, source.length, counted => { const code = n.code(source, counted); return code === null ? null : line("ran", code, words.exit(tool)); });
+      const output = detail?.output;
+      if (commandFailed(tool) && typeof output === "string" && output.trim() !== "")
+        add("outputs", "output", RANK.output, 0, counted => {
+          const tail = n.tail(output, counted);
+          return tail === null || tail === "unfit" ? null : words.output(name, tail.shown, tail.total) + "\n" + tail.block;
+        }, command, namesCredentialFile(source));
+    } else {
+      const raw = kind === "read" ? locationOf(detail) ?? unwrapped(tool.title)
+        : kind === "search" && typeof detail?.input === "string" && detail.input.trim() !== "" && !detail.input.includes("\n") ? detail.input : unwrapped(tool.title);
+      add("calls", "ops", RANK.call, raw.length, counted => { const code = n.code(raw, counted); return code === null ? null : line(kind, code, status(tool)); });
+    }
+  }
+  if (unit.status === "failed" && unit.error !== null && unit.error.message.trim() !== "") {
+    const error = unit.error;
+    add("outputs", "error", RANK.error, error.message.length, counted => words.error(name, n.label(error.code, 64, counted)) + "\n" + (n.block(error.message, "text", counted) ?? words.empty));
+  }
+  const reply = withoutThinking(unit.reply);
+  if (reply.trim() !== "") add("replies", "reply", RANK.reply, reply.length, counted => words.reply(name) + "\n" + (n.block(reply, "text", counted) ?? words.empty));
+  return out;
 }
+/** The line that opens a unit's operations. */
+export function opsLabel(n: Narrator, unit: RelayUnit): string { return WORDS[n.language].ops(n.name(unit.harnessId)); }

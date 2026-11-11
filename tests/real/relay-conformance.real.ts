@@ -118,7 +118,7 @@ function ledger(app: App, id: SessionId, state: SessionSnapshot, run: PublicRun)
 function summary(app: App, id: SessionId, state: SessionSnapshot, run: PublicRun): Record<string, unknown> {
   const relay = relayOf(app, id, run), text = reply(state, run);
   return { harness: run.selection.harnessId, status: run.status, error: run.error?.code ?? null, carried: run.sourceRunIds.length, digits: digits(text), replyBytes: Buffer.byteLength(text), tokens: tokens(run), ledger: ledger(app, id, state, run),
-    relay: relay === null ? null : { kind: relay.kind, language: relay.language, tokens: relay.tokens, budget: relay.budget, complete: relay.complete, units: relay.units, userWords: relay.userWords, redactions: relay.redactions } };
+    relay: relay === null ? null : { kind: relay.kind, language: relay.language, tokens: relay.tokens, budget: relay.budget, complete: relay.complete, tier: relay.tier, items: relay.items, turns: relay.turns, repeat: relay.repeat, redactions: relay.redactions } };
 }
 
 if (probeTargets.length === 0) test("installed Harnesses hand a conversation over and back: the second knows the first's answer, the first knows the second's", { timeout: 20 * 60 * 1000 }, async () => {
