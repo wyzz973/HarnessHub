@@ -10,7 +10,6 @@ import type { RelayPrefsState } from "../lib/use-relay.js";
 import { Segmented, Spinner, Switch } from "../ui/primitives.js";
 import { ShortcutList } from "./CommandPalette.js";
 import { Card, PageShell, Section } from "./PageShell.js";
-import { CrossVendorControl, WhenUnsureControl } from "./RelayConsent.js";
 
 /** One setting: what it is and what it does on the left, its control on the right; wraps under the words when narrow. */
 function Row({ title, children, control, className }: { readonly title: ReactNode; readonly children?: ReactNode; readonly control?: ReactNode; readonly className?: string }) {
@@ -68,10 +67,9 @@ export function SettingsPage({ api, relay, preferences, onPreference, onRescan, 
       <Card className={ROWS}>
         <Row title="过程显示" control={<Segmented label="默认过程显示" value={preferences.density} onChange={value => onPreference("density", value)} options={[{ value: "compact", label: "简洁" }, { value: "detailed", label: "详细" }]}/>}>
           简洁：每轮的工具与思考收成一行摘要，失败和未完成的步骤仍写在摘要里。详细：全部展开。</Row>
-        {relay.prefs === null ? null : <Row title="跨厂商交接" control={<CrossVendorControl value={relay.prefs.crossVendor} disabled={relay.saving} onChange={value => relay.change("crossVendor", value)}/>}>
-          把对话交给用另一家模型服务的 Harness 时，是否先问你。允许：直接交接，第一次在输入框上方说明一句，交接记录照常保存。每次询问：每次交接前都说明将交出什么，由你确认。只交目标：只发你的原话，不附之前的对话记录。这项设置属于本机网关，对所有浏览器生效。</Row>}
-        {relay.prefs === null ? null : <Row title="送达拿不准时" control={<WhenUnsureControl value={relay.prefs.whenUnsure} disabled={relay.saving} onChange={value => relay.change("whenUnsure", value)}/>}>
-          交接单没有确认送达、或没能核对目标里的对话记录时怎么办。自动处理：再附一次或补发，仍拿不准就只发你的原话，并在输入框上方说明。每次问我：发送前先停下来，由你选再附、补发、只发这条消息或新开原生会话。
+        {relay.prefs === null ? null : <Row title="换 Harness 时附上之前的对话" control={<Segmented label="换 Harness 时附上之前的对话" value={relay.prefs.attach} onChange={value => relay.change("attach", value)}
+          options={[{ value: "auto", label: "开（默认）", disabled: relay.saving }, { value: "off", label: "关", disabled: relay.saving }]}/>}>
+          开：对话换到另一个 Harness 后的第一条消息，自动附上它没看过的部分；第一次交给某个 Harness 时，会在输入框上方说明一句。关：消息只发原话，需要时可以在输入框上方逐条选择附上。这项设置属于本机网关，对所有浏览器生效。
           {relay.problem ? <span className="mt-1 block text-red" role="status">{relay.problem}</span> : null}</Row>}
       </Card>
     </Section>

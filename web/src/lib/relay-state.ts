@@ -1,13 +1,14 @@
 import type { PublicMessage, PublicRun } from "../../../src/contracts/session.js";
 import type { SessionView } from "../../../src/contracts/web.js";
-import { runRelayInfo, type RelayAttentionCause, type RelayBinding, type RelayChoice, type RelayDecisionInfo, type RelayDeliveryState, type RelayEvidence, type RelayOption, type RelayPacket, type RelayRequest, type RelayTier, type RelayView, type RunRelayInfo } from "../relay.js";
+import { runRelayInfo, type RelayAttentionCause, type RelayBinding, type RelayDecisionInfo, type RelayDeliveryState, type RelayEvidence, type RelayOption, type RelayPacket, type RelayPrefs, type RelayRequest, type RelayTier, type RelayView, type RunRelayInfo } from "../relay.js";
 import { compact } from "./format.js";
 import { finished } from "./turn.js";
 
 /*
- * What the page makes of the relay facts (ADR-055, relay-architecture §12.1–§12.3): which words each state gets, when the
- * hand-over line may say a Harness took over, what is still owed to the Harness the conversation is on, and what a refused
- * send offers. Pure functions of the conversation view and the relay view, so every state can be checked without a page.
+ * What the page makes of the relay facts (ADR-055, docs/proposals/relay/slim.md): which words each state gets, when the hand-over
+ * line may say a Harness took over, what is still owed to the Harness the conversation is on, what a binding asks the user to look
+ * at, and what each way to answer sends. Pure functions of the conversation view and the relay view, so every state can be checked
+ * without a page. The page asks nothing and refuses nothing: the relay decides and the page says what it decided.
  */
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -22,7 +23,7 @@ export function tierWords(tier: RelayTier | null): string {
     case null: return "交接单";
   }
 }
-/** How a Turn continued its context, as a main label and a sub label (12.2). */
+/** How a Turn continued its context, as a main label and a sub label. */
 export function continuityWords(level: RunRelayInfo["continuity"]): { readonly main: string; readonly sub: string | null } {
   switch (level.kind) {
     case "native_resume": return { main: "继续原会话", sub: null };
@@ -34,20 +35,15 @@ export function continuityWords(level: RunRelayInfo["continuity"]): { readonly m
     case "blocked": return { main: "无法接续", sub: null };
   }
 }
-/** What the proof behind a delivery or a binding's position is called. */
-export function evidenceWords(evidence: string | null): string | null {
+/** What the proof behind a delivery or a binding's position is called: the native side's own report as it happened, or the Turn's normal end. */
+export function evidenceWords(evidence: RelayEvidence | null): string | null {
   switch (evidence) {
     case "E1": return "实时确认";
-    case "E2": return "事后核对";
     case "E3": return "按结果推断";
-    case "native": return "它自己跑过";
-    case "origin": return "来自原会话";
-    case "legacy": return "升级前的记录";
-    case "choice": return "按你的选择";
-    default: return null;
+    case null: return null;
   }
 }
-/** The delivery state of a packet in the details list (12.2: 交接中 / 已接手 / 未确认 / 没有送达). */
+/** The delivery state of a packet in the details list: 交接中 / 已接手 / 未确认 / 没有送达. */
 export function deliveryWords(state: RelayDeliveryState | null): string {
   switch (state) {
     case "in_flight": return "交接中";
@@ -58,12 +54,12 @@ export function deliveryWords(state: RelayDeliveryState | null): string {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Where the conversation changed hands (T5)
+// Where the conversation changed hands
 // ---------------------------------------------------------------------------------------------------------------------
 
 /**
- * What the line where another Harness took over may say. It says "took over" only with evidence: before the packet is
- * known to be in the original program's history the line only says it was handed over (12.1 T5).
+ * What the line where another Harness took over may say. It says "took over" only with evidence: before the packet is known to be in
+ * the original program's history the line only says it was handed over.
  *  - `legacy`: the Gateway has no relay information, or the change is within one Harness: the line the page always drew.
  *  - `none`: nothing is drawn yet (nothing was sent to the new Harness, or the Turn is still being prepared).
  */
@@ -72,10 +68,10 @@ export type Handover =
   | { readonly kind: "none" }
   | ShownHandover;
 /**
- * The states with something to say. `fresh` says the Turn that carried the hand-over was accepted moments ago, so the line is
- * news and comes in; one drawn with the history of a conversation just opened is not, whenever its facts are read. `runId` is the
- * Turn the line is about. `alone` is a Turn whose history did not go with it (the relay or the user sent the words alone):
- * it says that, and never "taken over".
+ * The states with something to say. `fresh` says the Turn that carried the hand-over was accepted moments ago, so the line is news and
+ * comes in; one drawn with the history of a conversation just opened is not, whenever its facts are read. `runId` is the Turn the line
+ * is about. `alone` is a Turn whose history did not go with it (the relay or the user sent the words alone): it says that and why,
+ * and never "taken over".
  */
 export type ShownHandover =
   | { readonly kind: "pending"; readonly runId: string; readonly number: number | null; readonly packetId: string | null; readonly fresh: boolean }
@@ -97,16 +93,16 @@ export function userSequences(messages: readonly PublicMessage[]): ReadonlyMap<s
   for (const message of messages) if (message.role === "user") result.set(message.runId, message.seq);
   return result;
 }
-/** The words a taken hand-over names its way with: "新会话 · 交接单（标准）· #1", or "继续原会话 · 补交 2 轮". */
+/** The words a taken hand-over names its way with: "新会话 · 交接单（完整）· #1", or "继续原会话 · 补交 2 轮". */
 function takenHow(info: RunRelayInfo, number: number | null): string {
   const { main, sub } = continuityWords(info.continuity), parts = [main, ...(sub === null ? [] : [sub])];
   if (info.packetId !== null && number !== null) parts.push(sub !== null && sub.startsWith("交接单") ? `#${number}` : `交接单 #${number}`);
   return parts.join(" · ");
 }
 /**
- * What a Turn's decision means for the user, in words, when it is more than "the history went along as it was owed" (permissive-defaults
- * §1): an automatic resend, a complete packet again, a packet cut down to a small window, words sent alone and why. null for a Turn
- * that needs no note. The words never say "taken over": a Turn that went alone has not handed the conversation over.
+ * What a Turn's decision means for the user, in words, when it is more than "the history went along as it was owed": a packet sent
+ * again, a packet with everything again, a packet that left things out, words sent alone and why. null for a Turn that needs no
+ * note. The words never say "taken over": a Turn that went alone has not handed the conversation over.
  */
 export interface NoteContext {
   /** The display name of the Harness the Turn ran on. */
@@ -117,8 +113,8 @@ export interface NoteContext {
   readonly sourceRuns: number;
   /** The latest packet sent to this Harness before the Turn: the one an alone Turn left unconfirmed. */
   readonly pending: number | null;
-  /** The named service the Harness runs on, when it is known. */
-  readonly service: string | null;
+  /** How many items the Turn's own packet left out (the ledger at its end names them); 0 when it left none or the Turn carried none. */
+  readonly omissions: number;
   /** Nothing this Harness does can confirm that a handoff arrived. */
   readonly cannotConfirm: boolean;
 }
@@ -128,7 +124,6 @@ function prepareWords(reason: string | null): string {
     case "render": case "render_mismatch": return "（生成时出错）";
     case "redaction_failed": return "（没能隐去疑似密钥，所以不发）";
     case "storage": case "storage_quota": return "（存储空间不足）";
-    case "consent_log_full": return "（同意记录已满）";
     default: return "";
   }
 }
@@ -142,31 +137,31 @@ function aloneWords(decision: RelayDecisionInfo, ctx: NoteContext): string {
   switch (decision.cause) {
     case "delivery_unconfirmed": return ctx.cannotConfirm ? `${which}已发出，${target} 无法确认是否收到 · 这条只发了原话` : `${which}发了两次仍未确认送达 · 这条只发了原话`;
     case "history_changed": return "这条消息只发了原话";
-    case "input_limit": return decision.reason === "input_limit" ? `这条消息已接近 ${target} 的输入上限，放不下交接单 · 这条只发了原话` : `${target} 的上下文窗口放不下交接单 · 这条只发了原话`;
+    case "input_limit": return `${target} 一次放不下这条消息和交接单 · 这条只发了原话`;
     case "recovery_failed": return "服务重启后没能恢复这个对话的交接记录 · 这条只发了原话";
     case "prepare_failed": return `这次没能准备交接单${prepareWords(decision.reason)} · 这条只发了原话，下一条会再试`;
     case null: return "这条消息只发了原话";
   }
 }
-/** A packet cut down for a small window: said when the Turn carried one that is not the standard size. */
-function downgradeNote(info: RunRelayInfo, ctx: NoteContext): string | null {
-  const tier = info.continuity.tier;
-  return info.packetId !== null && tier === "brief" ? `${ctx.target} 的窗口较小，交接单已缩为${tierWords(tier)}` : null;
+/** A packet that left whole items out because the record did not fit: said when the Turn carried one that is not the complete record. */
+function briefNote(info: RunRelayInfo, ctx: NoteContext): string | null {
+  if (info.packetId === null || info.continuity.tier !== "brief") return null;
+  return ctx.omissions > 0 ? `交接单放不下全部记录，已精简：${ctx.omissions} 项没有放进去，交接单末尾逐项列明` : "交接单放不下全部记录，已精简，没放进去的在交接单末尾逐项列明";
 }
 export function decisionNote(info: RunRelayInfo, ctx: NoteContext): string | null {
   const decision = info.decision;
-  if (decision === null) return downgradeNote(info, ctx);
+  if (decision === null) return briefNote(info, ctx);
   switch (decision.kind) {
     case "carry":
       if (decision.by === "policy") switch (decision.cause) {
-        // A packet for newer facts also holds what the unconfirmed one held (permissive-defaults row 3): it says so, with how many Turns; the automatic resend is the same facts again.
+        // A packet for newer facts also holds what the unconfirmed one held: it says so, with how many Turns; the automatic resend is the same facts again.
         case "delivery_unconfirmed": return decision.resend === "grown"
-          ? `这条消息补交了 ${info.continuity.runs ?? ctx.sourceRuns} 轮（含上次未确认送达的内容）${ctx.number === null ? "" : `（交接单 #${ctx.number}）`}`
+          ? `这条消息补交了 ${info.continuity.runs ?? ctx.sourceRuns} 轮，含上次没有确认送达的内容${ctx.number === null ? "" : `（交接单 #${ctx.number}）`}`
           : `上一份交接单没有确认送达，这条消息已再附一次${packetWords(ctx.number, info.continuity.runs)}`;
-        case "history_changed": return `${ctx.target} 的原生会话可能被改动过，已补发完整交接单（可能与已有内容重复）`;
+        case "history_changed": return `${ctx.target} 的会话可能回退过，已整份重发（可能与已有内容重复）`;
         default: break;
       }
-      return downgradeNote(info, ctx);
+      return briefNote(info, ctx);
     case "alone": return aloneWords(decision, ctx);
     case "plain": return decision.by === "user" ? "没有可附的交接内容，这条消息按原样发出" : null;
   }
@@ -174,30 +169,19 @@ export function decisionNote(info: RunRelayInfo, ctx: NoteContext): string | nul
 /** What `decisionNote` needs of a Turn: its names, its packet's number, the packet it left unconfirmed, and what its binding says. */
 function noteContext(run: PublicRun, index: number, info: RunRelayInfo, view: RelayView | null, name: (id: string) => string): NoteContext {
   const harnessId = info.executedOn?.harnessId ?? run.selection.harnessId, binding = view?.bindings.find(item => item.harnessId === harnessId);
-  const own = view?.packets.find(item => item.packetId === info.packetId)?.number ?? null;
+  const own = view?.packets.find(item => item.packetId === info.packetId);
   const before = view?.packets.filter(item => item.target.harnessId === harnessId && item.runIndex < index).at(-1)?.number ?? null;
-  return { target: name(harnessId), number: own, sourceRuns: run.sourceRunIds.length, pending: before, service: binding?.vendor ?? null, cannotConfirm: binding?.canConfirm === false };
+  return { target: name(harnessId), number: own?.number ?? null, sourceRuns: run.sourceRunIds.length, pending: before, omissions: own?.omissions ?? 0, cannotConfirm: binding?.canConfirm === false };
 }
 /**
- * Where a binding's Harness changed the model service it runs on, said under the Turn that saw it (permissive-defaults row 12): the
- * defaults let a change go, with a record, so the user is told who handled the Turn and who handled the one before. Keys are public
- * words (a named service, `gateway:<host>`); null when the Turn is not the one.
- */
-function vendorChangeNote(run: PublicRun, index: number, view: RelayView | null, name: (id: string) => string): string | null {
-  const harnessId = runRelayInfo(run)?.executedOn?.harnessId ?? run.selection.harnessId, change = view?.bindings.find(item => item.harnessId === harnessId)?.vendorChange;
-  return change === null || change === undefined || change.runIndex !== index ? null : `${name(harnessId)} 这次经 ${vendorWords(change.to)} 处理（上次是 ${vendorWords(change.from)}），已记录`;
-}
-/**
- * The note under each Turn's message that the relay's decision calls for, by Turn: an automatic resend, a complete packet again, a
- * packet cut down, words sent alone and why. A Turn that needs none has none.
+ * The note under each Turn's message that the relay's decision calls for, by Turn: a packet sent again, everything again, a packet that
+ * left things out, words sent alone and why. A Turn that needs none has none.
  */
 export function runNotes(input: { readonly runs: readonly PublicRun[]; readonly view: RelayView | null; readonly name: (id: string) => string }): ReadonlyMap<string, string> {
   const notes = new Map<string, string>();
   input.runs.forEach((run, index) => {
-    const info = runRelayInfo(run);
-    // A change of the model service is said even for a Turn whose relay facts say little else (G072 review, B).
-    const note = [info === null ? null : decisionNote(info, noteContext(run, index, info, input.view, input.name)), vendorChangeNote(run, index, input.view, input.name)].filter((item): item is string => item !== null).join(" · ");
-    if (note !== "") notes.set(run.id, note);
+    const info = runRelayInfo(run), note = info === null ? null : decisionNote(info, noteContext(run, index, info, input.view, input.name));
+    if (note !== null) notes.set(run.id, note);
   });
   return notes;
 }
@@ -237,7 +221,7 @@ export function handoverOf(input: {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// What is owed to the Harness the conversation is on (T2, T7)
+// What is owed to the Harness the conversation is on
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** Whether a Turn reached its Harness: it was handed to the program, or (for a Turn from before the timing was kept) it completed. */
@@ -257,36 +241,38 @@ export function owedRuns(runs: readonly PublicRun[], target: { readonly harnessI
   return owed;
 }
 
-/** The one line above the message box, when there is one (T2, T7). */
-export type RelayLine =
-  | { readonly kind: "owed"; readonly runs: number; readonly tokens: number | null; readonly unverified: boolean;
-    /** The named service the Harness was last seen on, when known: the first hand-over to it says where the history goes. */ readonly service: string | null }
-  | { readonly kind: "cleared" };
+/**
+ * The one line above the message box when something is owed to the Harness the conversation is on. `first`: no conversation was ever
+ * handed to this Harness on this installation, so the line says where the history goes (and goes away with the message that sends it).
+ * `off`: the installation's setting does not hand the earlier conversation over by itself, so the message goes with the words alone
+ * unless the user attaches it.
+ */
+export interface RelayLine { readonly kind: "owed"; readonly runs: number; readonly tokens: number | null; readonly first: boolean; readonly off: boolean }
 
 /**
- * What the message box's line says about the next message. Nothing while a Turn runs or a change waits (what is owed is
- * being settled), nothing when there is nothing to hand over. After a confirmed clear it offers the history back once, and
- * stays until the next message is sent. What is owed is the Gateway's count when it keeps a native session for the Harness here (absent
- * means nothing: its floors and its clears are the Gateway's to know), and the page's own count of the Turns the Harness is not known to
- * hold when it keeps none (the first hand-over to a Harness that never ran in this conversation).
+ * What the message box's line says about the next message. Nothing while a Turn runs or a change waits (what is owed is being
+ * settled), nothing when there is nothing to hand over. What is owed is the Gateway's count when it keeps a native session for the
+ * Harness here (absent means nothing: its floors and its clears are the Gateway's to know), and the page's own count of the Turns the
+ * Harness is not known to hold when it keeps none (the first hand-over to a Harness that never ran in this conversation).
  */
-export function relayLine(session: SessionView, view: RelayView | null): RelayLine | null {
+export function relayLine(session: SessionView, view: RelayView | null, prefs: RelayPrefs | null = null): RelayLine | null {
   if (view === null || session.status !== "open" || session.activeRunId !== null || session.pendingSwitchId !== null || session.runs.length === 0) return null;
   if (session.runs.some(run => !finished(run.status))) return null;
   const target = { harnessId: session.selection.harnessId, controlId: session.selection.controlId };
   const binding = view.bindings.find(item => item.harnessId === target.harnessId && item.controlId === target.controlId);
-  if (binding !== undefined && binding.sync === "fresh" && binding.cleared > 0 && session.runs.some(dispatched)) return { kind: "cleared" };
   // The Gateway keeps a native session for the Harness: what it says is owed is the word (its floors and clears are not the page's to know).
   const runs = binding !== undefined ? binding.owed?.runs ?? 0 : owedRuns(session.runs, target, binding).length;
   if (runs === 0) return null;
-  return { kind: "owed", runs, tokens: binding?.owed?.estTokens ?? null, unverified: binding !== undefined && !binding.probed, service: binding?.vendor ?? null };
+  return { kind: "owed", runs, tokens: binding?.owed?.estTokens ?? null, first: !view.handedOver.includes(target.harnessId), off: prefs?.attach === "off" };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// What a binding asks the user to look at (permissive-defaults §2.6): a banner, never a block
+// What a binding asks the user to look at: a banner, never a block
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** One way to settle what a banner says: the button, the sentence the banner shows while it is chosen for the next message, and what that message sends. */
+/** What the one way to answer a banner sends with the next message: the whole earlier conversation attached. */
+export function relayRequestFor(_option: RelayOption): RelayRequest { return { attach: "full" }; }
+/** The way to answer a banner: the button, the sentence the banner shows while it is chosen for the next message, and what that message sends. */
 export interface BannerAction { readonly option: RelayOption; readonly label: string; readonly chosen: string; readonly request: RelayRequest }
 export interface BannerView {
   readonly key: string;
@@ -295,89 +281,35 @@ export interface BannerView {
   readonly actions: readonly BannerAction[];
 }
 /**
- * The refusal-shaped description of a binding's attention, so that its ways forward send what a refusal's would (relayRequestFor): the
- * cause it names, the options it offers and the vendor an allowance is for.
- */
-function choiceOf(binding: RelayBinding): RelayChoice {
-  const attention = binding.attention!;
-  return { code: "RELAY_CHOICE_REQUIRED", body: { binding: { harnessId: binding.harnessId, controlId: binding.controlId }, cause: attention.cause, options: attention.options, counts: attention.counts, vendor: attention.vendor } };
-}
-/** The label of a way forward on a banner. */
-function bannerLabel(option: RelayOption, cause: RelayAttentionCause): string {
-  switch (option) {
-    case "attach_full": return cause === "delivery_unconfirmed" ? "再附一次" : "补发完整交接单";
-    case "send_alone": return "只发这条消息";
-    case "new_native": return "新开原生会话";
-    case "clear_confirmed": return "确认已清空";
-    case "acknowledge": return "重新允许";
-  }
-}
-/** The sentence a banner shows while a way forward is chosen for the next message. */
-function bannerChosen(option: RelayOption, cause: RelayAttentionCause, target: string, vendor: string | null): string {
-  switch (option) {
-    case "attach_full": return cause === "delivery_unconfirmed" ? "下一条消息会再附一次交接单" : "下一条消息会补发完整交接单";
-    case "send_alone": return "下一条消息只发原话";
-    case "new_native": return `下一条消息会新开 ${target} 的原生会话，并附上交接单`;
-    case "clear_confirmed": return "下一条消息会按“已清空”处理";
-    case "acknowledge": return `下一条消息会在这个对话里重新允许交接给${vendor === null ? "它" : ` ${vendorWords(vendor)}`}`;
-  }
-}
-/**
- * The banner above the message box for the binding the conversation is on: what is wrong, said once, and the ways to settle it, each
- * one a field of the next message. Nothing waits for them: the next message goes whatever the banner says. None when the binding asks
- * nothing, when the user closed this episode (`closed` is asked with its key), and for a delivery nothing can confirm: a Harness whose
- * Driver has no way to learn that a handoff arrived stays unconfirmed whatever is done, which the hand-over line and the details
- * say once and a banner would repeat on every message.
+ * The banner above the message box for the binding the conversation is on: what is wrong, said once, and the way to settle it, a field of
+ * the next message. Nothing waits for it: the next message goes whatever the banner says. None when the binding asks nothing, when the
+ * user closed this episode (`closed` is asked with its key), and for a delivery nothing can confirm: a Harness whose Driver has no way
+ * to learn that a handoff arrived stays unconfirmed whatever is done, which the hand-over line and the details say once and a banner
+ * would repeat on every message.
  */
 export function bannerOf(binding: RelayBinding | undefined, target: string, closed: (key: string) => boolean): BannerView | null {
   const attention = binding?.attention;
   if (binding === undefined || attention === null || attention === undefined || closed(attention.key)) return null;
   if (attention.cause === "delivery_unconfirmed" && binding.canConfirm === false) return null;
-  const cause = attention.cause, stake = attention.counts.runs > 0 ? ` · 还有 ${attention.counts.runs} 轮待交接` : "";
-  const service = attention.vendor ?? binding.vendor, named = service === null ? "该服务" : vendorWords(service);
+  const cause = attention.cause;
   const text = ((): string => {
     switch (cause) {
       case "delivery_unconfirmed": {
-        const which = attention.packet === null ? "上一份交接单" : `交接单 #${attention.packet} `, sent = attention.counts.packets;
-        return sent >= 2 ? `${which}发了${sent === 2 ? "两" : sent}次仍未确认送达 ${target} · 之后的消息只发原话，有新内容再附` : `${which}还没有确认送达 ${target}`;
+        const which = attention.packet === null ? "上一份交接单" : `交接单 #${attention.packet} `;
+        return attention.counts.packets >= 2 ? `${which}发了两次仍未确认送达 ${target} · 之后的消息只发原话，有新内容再附` : `${which}还没有确认送达 ${target}`;
       }
-      case "attach_available": return `上下文已清空，${target} 看不到之前的对话 · 想让它接着做，可以把之前的对话附到下一条消息`;
+      case "attach_available": return `${target} 的上下文已清空 · 下一条不附历史`;
     }
-  })() + (cause === "attach_available" ? "" : stake);
-  const choice = choiceOf(binding), actions: BannerAction[] = [];
-  // "只发这条消息" is never a button here: sending alone is what the next message does by itself, and the line above the box has the toggle.
-  for (const option of attention.options) {
-    const request = option === "send_alone" ? null : relayRequestFor(option, choice);
-    if (request !== null) actions.push({ option, label: bannerLabel(option, cause), chosen: bannerChosen(option, cause, target, service), request });
-  }
+  })();
+  const actions: BannerAction[] = attention.options.includes("attach_full") ? [{ option: "attach_full", label: cause === "delivery_unconfirmed" ? "再附一次" : "附上交接单",
+    chosen: cause === "delivery_unconfirmed" ? "下一条消息会再附一次交接单" : "下一条会附上之前对话的交接单", request: relayRequestFor("attach_full") }] : [];
   return { key: attention.key, cause, text, actions };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// A refused send (12.1 T2, 7.4, 10.4): what it says and what each way forward sends
+// What the installation cannot do for the relay
 // ---------------------------------------------------------------------------------------------------------------------
 
-export interface ChoiceAction { readonly option: RelayOption; readonly label: string; readonly primary: boolean; readonly title?: string }
-export interface ChoiceView { readonly title: string; readonly text: string; readonly actions: readonly ChoiceAction[] }
-const VENDORS: Readonly<Record<string, string>> = { anthropic: "Anthropic", openai: "OpenAI", deepseek: "DeepSeek", google: "Google", "aws-bedrock": "AWS Bedrock", "google-vertex": "Google Vertex AI", local: "本机模型" };
-/** A vendor key (relay-architecture §10.4) in words: a named vendor, a gateway or router of the user's own, or one that could not be told. */
-export function vendorWords(vendor: string): string {
-  const named = VENDORS[vendor];
-  if (named !== undefined) return named;
-  const [kind, ...rest] = vendor.split(":"), detail = rest.join(":");
-  switch (kind) {
-    case "gateway": return `自配网关 ${detail}`;
-    case "router": return `路由 ${detail}`;
-    case "provider": return `Provider ${detail}`;
-    case "unknown": return "无法确认的服务";
-    default: return vendor;
-  }
-}
-const UNAVAILABLE: Readonly<Record<string, string>> = {
-  data_root_in_workspace: "HarnessHub 的数据目录在这个工作区里，目标 Harness 能直接读到它。把数据目录移到工作区外（--data-dir）后再交接。",
-  consent_log_full: "交接的同意记录已满，暂时不能交接这段对话。",
-  recovery_failed: "这段对话在上次服务重启后没能恢复交接状态，暂时不能交接。",
-};
 /**
  * The standing notice for what the installation as a whole cannot do for the relay (the `installation` of the relay view): why, what it
  * means for the next message, and how to mend it. It stays while the cause does; the user's message still goes, without the history.
@@ -393,54 +325,9 @@ export function installationNotices(notices: readonly { readonly cause: string; 
     }
   });
 }
-/**
- * The line a refused send turns into. `target` is the Harness the message was going to; the binding the Gateway names, when
- * it names one, is the Harness whose original session the choice is about.
- */
-export function choiceView(choice: RelayChoice, harnessName: (id: string) => string, target: string): ChoiceView {
-  const { code, body } = choice, about = harnessName(body.binding?.harnessId ?? target), to = harnessName(target);
-  const text = ((): { readonly title: string; readonly text: string } => {
-    if (code === "RELAY_CHOICE_REQUIRED") switch (body.cause) {
-      case "delivery_unconfirmed": return { title: `上一份交接单没有确认送达 ${about}`, text: "再附一次可能让它收到两份；只发这条消息不会补交之前的内容。" };
-      case "marker_absent": return { title: `${about} 的原生会话里找不到之前的交接单`, text: "可能被清空或回退过。补发完整交接单会在同一会话里重复一部分内容。" };
-      case "verify_required": return { title: `没能确认 ${about} 的原生会话里有哪些之前的对话`, text: "补发完整交接单最稳妥；只发这条消息则不补交。" };
-      default: return { title: "发送前需要你选一个办法", text: "这条消息还没有发出，草稿已保留。" };
-    }
-    if (code === "RELAY_CONSENT_REQUIRED") {
-      const what = body.counts === null ? "之前的对话记录" : `之前 ${body.counts.runs} 轮的对话记录`, vendor = body.vendor === null ? "" : `（${vendorWords(body.vendor)}）`;
-      return { title: body.cause === "vendor_changed" ? `${to} 现在用的模型服务和上次不同${vendor}` : `这条消息会附上${what}，交给 ${to}${vendor}`,
-        text: `发出后不能收回。${to} 会在本机保存这段记录，也可能交给它自己配置的辅助模型。` };
-    }
-    if (code === "RELAY_TARGET_UNVERIFIED") return { title: `${to} 的接力还没有经过真机验证`, text: "HarnessHub 不能保证它接得上之前的对话。这条消息还没有发出，草稿已保留。" };
-    if (code === "RELAY_UNAVAILABLE") return { title: "现在不能交接这段对话", text: UNAVAILABLE[body.cause ?? ""] ?? "这条消息还没有发出，草稿已保留。" };
-    if (code === "RELAY_INPUT_LIMIT") return { title: `这段对话放不进 ${to} 的上下文窗口`, text: "交接单装不下。这条消息还没有发出，草稿已保留。" };
-    return { title: "发送前需要你选一个办法", text: "这条消息还没有发出，草稿已保留。" };
-  })();
-  const resend = body.cause === "delivery_unconfirmed";
-  const labels: Readonly<Record<RelayOption, string>> = { attach_full: resend ? "再附一次" : "补发完整交接单", send_alone: "只发这条消息", new_native: "新开原生会话",
-    clear_confirmed: "确认已清空", acknowledge: `发送并交给 ${to}` };
-  // The consent is the one choice that needs a name the Gateway must give; without it the choice is shown but cannot be made.
-  const actions = body.options.map((option, index): ChoiceAction => ({ option, label: labels[option], primary: index === 0,
-    ...(option === "acknowledge" && body.vendor === null ? { title: "网关没有说明要同意哪家服务；可以在设置里把“跨厂商交接”改为“允许”。" } : {}) }));
-  return { ...text, actions };
-}
-/** What a way forward sends with the message; null when it cannot be sent (a consent that does not know its vendor). */
-export function relayRequestFor(option: RelayOption, choice: RelayChoice): RelayRequest | null {
-  switch (option) {
-    case "attach_full": return choice.body.cause === "delivery_unconfirmed" ? { resend: true } : { attach: "full" };
-    case "send_alone": return { attach: "none" };
-    case "new_native": return { native: "new" };
-    case "clear_confirmed": return { clearConfirmed: true };
-    case "acknowledge": return choice.body.vendor === null ? null : { consent: { vendor: choice.body.vendor, decision: "acknowledged", scope: "session" } };
-  }
-}
-/** Whether a refused send still belongs to the conversation's Harness: choosing another one leaves the old refusal behind. */
-export function choiceApplies(choice: RelayChoice, selection: { readonly harnessId: string; readonly controlId: string }): boolean {
-  return choice.body.binding === null || (choice.body.binding.harnessId === selection.harnessId && choice.body.binding.controlId === selection.controlId);
-}
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The details list (12.1 "接续")
+// The details list
 // ---------------------------------------------------------------------------------------------------------------------
 
 /**
@@ -451,18 +338,17 @@ export function relayHasStory(view: RelayView): boolean {
   return view.packets.length > 0 || view.bindings.length > 1 || view.bindings.some(binding => binding.attention !== null || binding.owed !== null);
 }
 
-/** One Harness entry's position, in one sentence: "已同步到第 4 轮（实时确认）· 清空过 1 次". */
+/** One Harness entry's position, in one sentence: "已同步到第 4 轮（实时确认）· 清空过". */
 export function syncWords(binding: RelayBinding): string {
-  const proof = evidenceWords(binding.evidence), cleared = binding.cleared > 0 ? ` · 清空过 ${binding.cleared} 次` : "";
+  const proof = evidenceWords(binding.evidence), cleared = binding.cleared > 0 ? " · 清空过" : "";
   switch (binding.sync) {
     case "synced": return (binding.throughRun === null ? "已同步" : `已同步到第 ${binding.throughRun + 1} 轮`) + (proof === null ? "" : `（${proof}）`) + cleared;
-    case "fresh": return binding.cleared > 0 ? `上下文已清空，下一条不附历史 · 清空过 ${binding.cleared} 次` : "新会话，还没有收到过交接单";
+    case "fresh": return binding.cleared > 0 ? "上下文已清空，下一条不附历史" : "新会话，还没有收到过交接单";
     case "pending": return (binding.canConfirm === false ? "交接单已发出，这个 Harness 无法确认是否收到" : "交接单已发出，送达待确认") + cleared;
-    case "suspect": return "状态待核对" + cleared;
     case "unknown": return "状态未知" + cleared;
   }
 }
-/** One packet in the details list: "#1 · 第 2 轮 · 标准 · 约 1.7k tokens · 省略 3 项 · 隐去 1 处". */
+/** One packet in the details list: "第 2 轮 · 完整 · 约 1.7k tokens · 省略 3 项 · 隐去 1 处". */
 export function packetFacts(packet: RelayPacket): string {
   return [`第 ${packet.runIndex + 1} 轮`, tierWords(packet.tier), packet.estTokens > 0 ? `约 ${compact(packet.estTokens)} tokens` : "", packet.omissions > 0 ? `省略 ${packet.omissions} 项` : "", packet.redactions > 0 ? `隐去 ${packet.redactions} 处` : ""].filter(Boolean).join(" · ");
 }

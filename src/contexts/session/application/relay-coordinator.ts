@@ -248,9 +248,6 @@ export function policyAloneOf(error: unknown, choices: RelayChoices): { readonly
   if (error instanceof RelayError) return error.reason === "input_limit" ? { cause: "input_limit", reason: error.reason } : { cause: "prepare_failed", reason: error.reason };
   // The known secrets could not be read (relaySecretsOf): no packet can be redacted, so none is sent (fail closed).
   if (error instanceof SessionError && error.code === "RELAY_PREPARE_FAILED") return { cause: "prepare_failed", reason: "redaction_failed" };
-  // The frame of a packet and the input together would pass what one message carries: no packet fits, the input goes alone. The input
-  // alone, if it passes the channel too, is the Driver's refusal, which fails the Run as it always did.
-  if (error instanceof SessionError && error.code === "CONTEXT_TOO_LARGE") return { cause: "input_limit", reason: "context_too_large" };
   return null;
 }
 /** The error a packet the user asked for fails the Run with when it does not fit the target (even the smallest, or the placed Turn over its bound). */

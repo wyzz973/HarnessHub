@@ -207,7 +207,7 @@ dsh 的 ACP 自报版本恒为 0.0.1，所以版本一律以证据头的 `instal
 | `native-extensions` | — | 0–1（工作区技能能经命令调用时 1） | skills、plugins、mcp 的列表 |
 | `native-import` | — | 2（原程序自己建会话 1，接续后 1） | session-list |
 | `native-branch` | — | 4 | fork |
-| `relay-conformance` | `HH_REAL_HARNESSES` 写两个（例如 `claude,codex`）；`HH_REAL_MODEL_<ID>`、`HH_REAL_MANIFEST`（可选） | 第一个 2，第二个 1 | 接力（ADR-055，G074 的 MVP 部分）：新加入的一方收到完整交接单，回到原生会话的一方只收到增量；数字只存在于对话里，答对只能来自交接内容。单回合超过 5 分钟即取消并判失败，超过 15 万 token 即停 |
+| `relay-conformance` | `HH_REAL_HARNESSES` 写两个（例如 `claude,codex`）；`HH_REAL_MODEL_<ID>`、`HH_REAL_MANIFEST`（可选） | 第一个 2，第二个 1 | 接力（ADR-055，G074 的 MVP 部分；瘦身后的行为见 [slim.md](../proposals/relay/slim.md)）：新加入的一方收到完整交接单，回到原生会话的一方只收到增量；数字只存在于对话里，答对只能来自交接内容。单回合超过 5 分钟即取消并判失败，超过 15 万 token 即停。加 `HH_REAL_RELAY_WALK=1` 再走一遍（同一方再来一回合、发出后立刻停止的回合、紧接着的回合、清空、清空之后的回合）：只记录不断言，第一个约再加 2，第二个约再加 3。证据逐回合记 `decision`（carry、alone 或 plain，谁决定、为什么）、`handoff`（第一次向该 Harness 交接的记录）、`live`（Driver 实时报告了输入）、送达行（结果、证据 E1/E3、原因、是否是那一次自动补发）、每个绑定之后的 `epoch`、`mark`、`pending`、`resendAll`，以及准备与运行的毫秒数；只有形状与结论，没有交接单或回复的正文 |
 | `claude-mcp` | `HH_REAL_EVIDENCE`（可选） | 0 | Claude 的 mcp 能力写入：私有家目录、禁网沙箱里 `claude mcp add-json/remove` 往返 |
 | `openclaw-skill-switch` | `HH_REAL_EVIDENCE`（可选） | 0 | OpenClaw 的 skills 开关：私有家目录、禁网沙箱里 `openclaw config set/unset` 往返 |
 | `provider-switch`、`codex-local-provider`、`codex-session`、`live-web-stream`、`managed-install`、`gemini-provider`、`harness-provider-switch` | `HH_REAL_EVIDENCE`（可选） | 0（本地确定性 Provider） | Provider、切换、流与私有安装（G060-P*、G060-M01、G060-S01） |

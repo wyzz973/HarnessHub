@@ -64,8 +64,7 @@ export function useRelayView(api: RelayApi, session: SessionView | null, pushed:
 }
 
 /**
- * A set of words this browser remembers from one visit to the next (which hand-overs it explained, which banners the user closed),
- * under one storage key: a JSON list of at most `limit` words, the oldest dropped first. A browser that cannot remember asks again
+ * A set of words this browser remembers from one visit to the next (which banners the user closed), under one storage key: a JSON list of at most `limit` words, the oldest dropped first. A browser that cannot remember asks again
  * each visit, and nothing here ever blocks anything: it is a convenience, so every read and write is allowed to fail.
  */
 export function useRememberedKeys(storageKey: string, limit: number): { readonly has: (key: string) => boolean; readonly add: (key: string) => void } {
@@ -86,15 +85,12 @@ export function useRememberedKeys(storageKey: string, limit: number): { readonly
   }, [storageKey, limit]);
   return { has, add };
 }
-/** The hand-overs this browser has explained once (10.4): one line, the first time the conversation goes to a Harness that has not been told of, then no more. */
-export const INTRO_KEY = "harnesshub:relay-intro-seen";
-export function useRelayIntro() { return useRememberedKeys(INTRO_KEY, 200); }
-/** The banners the user closed (the key of an `attention` with the conversation and the Harness it was about) and the workspace warnings closed. */
+/** The banners the user closed: the key of an `attention`, with the conversation and the Harness it was about. */
 export const CLOSED_KEY = "harnesshub:relay-closed";
 export function useClosedNotices() { return useRememberedKeys(CLOSED_KEY, 400); }
 
 /**
- * The installation's relay preferences for the page, read only when the Gateway is known to have the relay. `prefs` is null while
+ * The installation's relay preference for the page, read only when the Gateway is known to have the relay. `prefs` is null while
  * they are read and when the Gateway has none to give (the page then offers no setting); `change` saves optimistically, returns the
  * old value on failure and says why.
  */

@@ -1,6 +1,6 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import { readSseBlocks } from "./attention.js";
-import { createRelayApi, decodeRelayErrorBody, decodeRelayFrame, decodeRelayStreamEvent, decodeRunRelay, relayBody, type RelayApi, type RelayErrorBody, type RelayEvent, type RelayReply, type RelayRequest, type RelayTransport } from "./relay.js";
+import { createRelayApi, decodeRelayFrame, decodeRelayStreamEvent, decodeRunRelay, relayBody, type RelayApi, type RelayEvent, type RelayReply, type RelayRequest, type RelayTransport } from "./relay.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState } from "../../src/contracts/web.js";
 import { HARNESS_TIERS } from "../../src/contracts/web.js";
@@ -19,11 +19,8 @@ export interface ToolDetailView { readonly kind?: string; readonly name?: string
 /** Same-origin URL of stored native content for img/download use; the page cookie authorizes it. */
 export function contentUrl(content: ContentRef, download = false): string { return "/api/v1/content/" + encodeURIComponent(content.id) + (download ? "?download=1" : ""); }
 export class ApiError extends Error {
-  /**
-   * `status` is the HTTP status of a refusal and `relay` the relay member of its body (the choices a refused send offers,
-   * relay-architecture §12.4); both are absent for a failure that never reached the Gateway.
-   */
-  constructor(readonly code: string, message: string, readonly status?: number, readonly relay?: RelayErrorBody) { super(message); this.name = "ApiError"; }
+  /** `status` is the HTTP status of a refusal; it is absent for a failure that never reached the Gateway. */
+  constructor(readonly code: string, message: string, readonly status?: number) { super(message); this.name = "ApiError"; }
 }
 function invalid(): never { throw new ApiError("INVALID_RESPONSE", "网关返回了无法识别的数据，请重新载入。"); }
 function record(value: unknown): Record<string, unknown> {
@@ -863,9 +860,7 @@ export class GatewayApi {
       const payload = await readBoundedJson(response);
       if (!response.ok) {
         const error = publicError(payload);
-        // A refused send may carry the ways forward (relay-architecture §12.4); the body is read for them, whatever the status.
-        const relay = payload !== null && typeof payload === "object" && !Array.isArray(payload) ? decodeRelayErrorBody((payload as Record<string, unknown>).relay) : null;
-        throw new ApiError(error?.code ?? "REQUEST_FAILED", error?.message ?? "请求未能完成。", response.status, relay ?? undefined);
+        throw new ApiError(error?.code ?? "REQUEST_FAILED", error?.message ?? "请求未能完成。", response.status);
       }
       return decode(payload);
     } catch (error: unknown) {
@@ -970,12 +965,8 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     NATIVE_STATE_UNCONFIRMED: "原生会话的状态尚未确认。可以换一个 Harness，或明确建立新的原生分支；公共历史会保留。",
     SESSION_BLOCKED: "这段对话还有执行结果尚未核实，已暂停接收新消息。请在对话顶部核实后恢复；不会自动重新执行。",
     RUN_TIMEOUT: "本回合超过了 HarnessHub 的执行期限（不含等待你的时间），原程序没有按时结束，已被强制结束。结果尚待核实，不会自动重新执行。",
-    RELAY_INPUT_LIMIT: "这段对话的交接单放不进目标 Harness 的上下文窗口，这条消息没有发出。可以只发这条消息，或新开一个原生会话。",
-    RELAY_CHOICE_REQUIRED: "发送前需要你选一个办法：补发交接单、只发这条消息，或新开原生会话。这条消息没有发出，草稿已保留。",
-    RELAY_CONSENT_REQUIRED: "把对话交给这个 Harness 之前，需要你先确认。这条消息没有发出，草稿已保留。",
-    RELAY_TARGET_UNVERIFIED: "这个 Harness 的接力还没有经过真机验证，HarnessHub 不能保证它接得上之前的对话。这条消息没有发出，草稿已保留。",
-    RELAY_UNAVAILABLE: "现在不能交接这段对话。这条消息没有发出，草稿已保留；可以只发这条消息。",
-    RELAY_PREPARE_FAILED: "已切换，但没能交接：交接单没有准备好。这条消息没有发出，草稿已保留；可以重试，或选“只发这条消息”。",
+    RELAY_INPUT_LIMIT: "这条消息和交接单合起来超过了这个 Harness 能收的大小，这条消息没有发出。可以只发这条消息，或把消息拆短。",
+    RELAY_PREPARE_FAILED: "你选了附上交接单，但它没有准备好，这条消息没有发出，草稿已保留。可以重试，或选“只发这条消息”。",
     LOGIN_SHELL_UNAVAILABLE: "HarnessHub 没有运行你的登录 shell：它必须是列在 /etc/shells 中的绝对路径。用 Homebrew 等方式安装、没有加入这个文件的 shell 常见这种情况。搜索目录没有变化。",
     LOGIN_SHELL_FAILED: "没有读到登录 shell 的 PATH：登录配置超过 3 秒、输出超过 64 KiB、以错误退出，或没有打印 PATH。搜索目录没有变化。",
   };

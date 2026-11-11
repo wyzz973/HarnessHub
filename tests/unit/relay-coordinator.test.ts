@@ -42,7 +42,6 @@ test("what a Turn records of its decision, and which failures only send the word
   assert.deepEqual(policyAloneOf(prepare("storage"), {}), { cause: "prepare_failed", reason: "storage" });
   assert.deepEqual(policyAloneOf(prepare("input_limit"), {}), { cause: "input_limit", reason: "input_limit" });
   assert.deepEqual(policyAloneOf(new SessionError("RELAY_PREPARE_FAILED", "secrets"), {}), { cause: "prepare_failed", reason: "redaction_failed" });
-  assert.deepEqual(policyAloneOf(new SessionError("CONTEXT_TOO_LARGE", "too large"), {}), { cause: "input_limit", reason: "context_too_large" });
   assert.equal(policyAloneOf(prepare("render"), { attach: "full" }), null, "what the user asked for fails the Turn");
   assert.equal(policyAloneOf(new SessionError("OWNERSHIP_LOST", "lost"), {}), null); assert.equal(policyAloneOf(new Error("boom"), {}), null);
 });

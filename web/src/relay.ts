@@ -1,10 +1,9 @@
-import type { ContinuityLevel, DeliveryEvidence, DeliveryStatus, RelayAttention, RelayDecision, RelayInstallationNotice, RelayPrefKey, RunRelay, Tier } from "../../src/contracts/relay.js";
+import type { ContinuityLevel, DeliveryEvidence, DeliveryStatus, RelayAttention, RelayDecision, RelayInstallationNotice, RunRelay, Tier } from "../../src/contracts/relay.js";
 import type { RelayStreamEvent, RelayStreamEventType } from "../../src/contracts/web.js";
 
 /*
- * The relay as the page sees it (ADR-055, relay-architecture §12, docs/proposals/relay/stage3-workstreams.md §3): the
- * Gateway's relay state of one conversation, the stored text of a packet, the installation's relay preferences, the
- * choices a refused send offers, and the one data layer that reads them.
+ * The relay as the page sees it (ADR-055, docs/proposals/relay/slim.md): the Gateway's relay state of one conversation, the stored
+ * text of a packet, the installation's one relay preference, and the one data layer that reads them.
  *
  * The Gateway may not have these endpoints (an older one), or may answer with fields this page does not know. Nothing here
  * throws for that: a missing endpoint is "no relay information" (`null`), an unreadable row is left out, and an unknown
@@ -22,28 +21,25 @@ type Holds<T extends true> = T;
 export const RELAY_TIERS = ["full", "brief"] as const;
 export type RelayTier = typeof RELAY_TIERS[number];
 export type RelayTiersAreListed = Holds<Exact<RelayTier, Tier>>;
-export const RELAY_SYNC_STATES = ["fresh", "synced", "pending", "suspect"] as const;
+export const RELAY_SYNC_STATES = ["fresh", "synced", "pending"] as const;
 export type RelaySyncState = typeof RELAY_SYNC_STATES[number];
 export const RELAY_DELIVERY_STATES = ["in_flight", "recorded", "unknown", "not_recorded"] as const;
 export type RelayDeliveryState = typeof RELAY_DELIVERY_STATES[number];
 export type RelayDeliveryStatesAreListed = Holds<Exact<RelayDeliveryState, DeliveryStatus>>;
+/** What a delivery was decided by: the native side's own report as it happened (E1), or the Turn's normal end where that proves receipt (E3). */
 export const RELAY_EVIDENCE = ["E1", "E3"] as const;
 export type RelayEvidence = typeof RELAY_EVIDENCE[number];
 export type RelayEvidenceIsListed = Holds<Exact<RelayEvidence, DeliveryEvidence>>;
 export const RELAY_CONTINUITY_KINDS = ["native_resume", "native_resume_delta", "rehydrate", "native_fork", "native_import", "native_cleared", "blocked"] as const;
 export type RelayContinuityKind = typeof RELAY_CONTINUITY_KINDS[number];
 export type RelayContinuityKindsAreListed = Holds<Exact<RelayContinuityKind, ContinuityLevel["kind"]>>;
-/** What a refused send may offer (stage3 §3). */
-export const RELAY_OPTIONS = ["attach_full", "send_alone", "new_native", "clear_confirmed", "acknowledge"] as const;
+/** The one way a banner is settled: the next message attaches the whole earlier conversation. */
+export const RELAY_OPTIONS = ["attach_full"] as const;
 export type RelayOption = typeof RELAY_OPTIONS[number];
-export const RELAY_CROSS_VENDOR = ["ask", "allow", "goal_only"] as const;
-export type RelayCrossVendor = typeof RELAY_CROSS_VENDOR[number];
-// The relay now has the one preference "relay.attach" (slim.md); these two names are the page's old settings, not yet followed up (the interface is the next step).
-export const RELAY_PREF_CROSS_VENDOR = "relay.crossVendor";
-/** What the relay does when it is unsure (a delivery nothing confirmed, a history it could not check): settle it itself, or ask. */
-export const RELAY_WHEN_UNSURE = ["auto", "ask"] as const;
-export type RelayWhenUnsure = typeof RELAY_WHEN_UNSURE[number];
-export const RELAY_PREF_WHEN_UNSURE = "relay.whenUnsure";
+/** The installation's one relay setting: whether a switch to another Harness attaches the earlier conversation by itself (`auto`, the default) or not (`off`). */
+export const RELAY_ATTACH = ["auto", "off"] as const;
+export type RelayAttach = typeof RELAY_ATTACH[number];
+export const RELAY_PREF_ATTACH = "relay.attach";
 /** Why a binding asks the user to look at it (`attention.cause`), and what the relay decided for a Turn (`decision`): the words of the wire. */
 export const RELAY_ATTENTION_CAUSES = ["delivery_unconfirmed", "attach_available"] as const;
 export type RelayAttentionCause = typeof RELAY_ATTENTION_CAUSES[number];
@@ -51,7 +47,7 @@ export type RelayAttentionCausesAreListed = Holds<Exact<RelayAttentionCause, Rel
 export const RELAY_DECISION_KINDS = ["carry", "alone", "plain"] as const;
 export type RelayDecisionKind = typeof RELAY_DECISION_KINDS[number];
 export type RelayDecisionKindsAreListed = Holds<Exact<RelayDecisionKind, RelayDecision["kind"]>>;
-/** How a `carry` decision sent a pending packet again: the automatic resend, a packet for newer facts that also holds the unconfirmed one's, the user's own. */
+/** How a `carry` decision sent a pending packet again: the automatic resend, a packet for newer facts that also holds the unconfirmed one's, everything again. */
 export const RELAY_DECISION_RESENDS = ["auto", "grown", "all"] as const;
 export type RelayDecisionResend = typeof RELAY_DECISION_RESENDS[number];
 export type RelayDecisionResendsAreListed = Holds<Exact<RelayDecisionResend, NonNullable<RelayDecision["resend"]>>>;
@@ -79,24 +75,18 @@ export interface RelayBinding {
   readonly sync: RelaySyncState | "unknown";
   /** Index (from 0) of the conversation's last Turn this binding is known to hold; null when none. */
   readonly throughRun: number | null;
-  /** The kind of proof behind `throughRun`: E1, E2, E3, or native, origin, legacy, choice. */
-  readonly evidence: string | null;
-  /** How many times the native context was cleared. */
+  /** The kind of proof behind `throughRun`: E1 or E3. */
+  readonly evidence: RelayEvidence | null;
+  /** 1 when the conversation was cleared on this Harness at some point, else 0 (the Gateway keeps no count). */
   readonly cleared: number;
-  /** Whether a real run of this Harness has proved the relay; until then the card says so (and nothing is held back for it). */
-  readonly probed: boolean;
   /** Whether anything this Harness does can tell the Gateway that a handoff arrived; null when the Gateway does not say. */
   readonly canConfirm: boolean | null;
-  /** The named service this Harness was last seen running on (`openai`); null while unknown or when it is not a named one. */
-  readonly vendor: string | null;
   /** What a handoff to it would carry now: Turns and an estimate of their tokens (which errs high). Null when nothing is owed or the Gateway does not say. */
   readonly owed: { readonly runs: number; readonly estTokens: number | null } | null;
-  /** The latest time the model service it runs on changed, as the relay recorded it: the vendor keys it was and became, and the index (from 0) of the Turn that saw it. Null when it never did. */
-  readonly vendorChange: { readonly from: string; readonly to: string; readonly runIndex: number } | null;
   /** What the binding asks the user to look at, when it does: never a block, the next message goes anyway. */
   readonly attention: RelayAttentionInfo | null;
 }
-/** `attention` of a binding (permissive-defaults §2.6): why, the ways to settle it, how much is at stake, and the name of the episode. */
+/** `attention` of a binding: why, the way to settle it, how much is at stake, and the name of the episode. */
 export interface RelayAttentionInfo {
   readonly cause: RelayAttentionCause;
   readonly options: readonly RelayOption[];
@@ -105,8 +95,6 @@ export interface RelayAttentionInfo {
   readonly key: string;
   /** For `delivery_unconfirmed`: the "交接单 #n" the wait is about. */
   readonly packet: number | null;
-  /** For an `acknowledge`: the vendor key the allowance would be for. */
-  readonly vendor: string | null;
 }
 /** One packet the Gateway built and sent. */
 export interface RelayPacket {
@@ -128,8 +116,8 @@ export interface RelayPacket {
 }
 export interface RelayView {
   readonly bindings: readonly RelayBinding[]; readonly packets: readonly RelayPacket[];
-  /** The data directory is within reach of this conversation's workspace: a warning for the workspace, never a block. */
-  readonly dataRootExposed: boolean;
+  /** The Harnesses this installation has handed a conversation to before: the first handoff to any other is told in one line, once. */
+  readonly handedOver: readonly string[];
   /** What the installation as a whole cannot do for the relay while it stays so: a standing notice, with its reason, until it is mended. Empty when nothing is wrong. */
   readonly installation: readonly { readonly cause: RelayInstallationCause; readonly detail: string | null }[];
 }
@@ -157,8 +145,8 @@ export interface RelayDecisionInfo {
 /** A Turn's relay member with the delivery and the decision a Gateway attaches to it (the contract's RunRelay does not have them). */
 export type ClientRunRelay = RunRelay & { readonly delivery?: { readonly state?: unknown; readonly evidence?: unknown }; readonly decision?: { readonly kind?: unknown; readonly by?: unknown; readonly cause?: unknown; readonly reason?: unknown; readonly resend?: unknown } };
 
-/** The installation's relay preferences the page lets the user change (the Gateway has more, which only the API sets). */
-export interface RelayPrefs { readonly crossVendor: RelayCrossVendor; readonly whenUnsure: RelayWhenUnsure }
+/** The installation's relay preference the page lets the user change. */
+export interface RelayPrefs { readonly attach: RelayAttach }
 /** The stored text of one packet, as it was sent. */
 export interface RelayPacketText {
   readonly text: string;
@@ -167,45 +155,18 @@ export interface RelayPacketText {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// What the page asks, and what a refusal says
+// What the page asks
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** The `relay` member of a message: what to do about the history for this one message (stage3 §3). */
-export interface RelayRequest {
-  readonly attach?: "auto" | "full" | "none";
-  readonly resend?: true;
-  readonly clearConfirmed?: true;
-  readonly native?: "continue" | "new";
-  readonly tier?: RelayTier;
-  readonly note?: string;
-  readonly consent?: { readonly vendor: string; readonly decision: "acknowledged" | "goal_only"; readonly scope: "session" | "global" };
-}
+/** The `relay` member of a message: what to do about the history for this one message. `full` attaches the whole earlier conversation, `none` sends the words alone. */
+export interface RelayRequest { readonly attach?: "auto" | "full" | "none" }
 /** The request as it goes in the body, or null when it asks for nothing. */
 export function relayBody(request: RelayRequest | undefined): Record<string, unknown> | null {
   if (request === undefined) return null;
   const body: Record<string, unknown> = {};
   if (request.attach !== undefined) body.attach = request.attach;
-  if (request.resend === true) body.resend = true;
-  if (request.clearConfirmed === true) body.clearConfirmed = true;
-  if (request.native !== undefined) body.native = request.native;
-  if (request.tier !== undefined) body.tier = request.tier;
-  if (request.note !== undefined && request.note !== "") body.note = request.note;
-  if (request.consent !== undefined) body.consent = { vendor: request.consent.vendor, decision: request.consent.decision, scope: request.consent.scope };
   return Object.keys(body).length ? body : null;
 }
-
-/** The `relay` member of a refused send's error body: which binding, why, and the ways forward. */
-export interface RelayErrorBody {
-  readonly binding: { readonly harnessId: string; readonly controlId: string } | null;
-  /** `delivery_unconfirmed`, `verify_required`, `marker_absent`, `missing`, `vendor_changed`, or a reason such as `data_root_in_workspace`. */
-  readonly cause: string | null;
-  readonly options: readonly RelayOption[];
-  readonly counts: { readonly runs: number; readonly packets: number } | null;
-  /** Optional, from a Gateway that names the vendor a consent is asked for; a consent request echoes it back. */
-  readonly vendor: string | null;
-}
-/** A refused send that waits for the user's choice: the code the Gateway refused with, and what it offered. */
-export interface RelayChoice { readonly code: string; readonly body: RelayErrorBody }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Reading: every decoder is lenient and never throws
@@ -222,7 +183,7 @@ function decodeAttention(value: unknown): RelayAttentionInfo | null {
   const cause = oneOf(value.cause, RELAY_ATTENTION_CAUSES), key = word(value.key, 256), counts = isRecord(value.counts) ? value.counts : {};
   if (cause === null || key === null) return null;
   return { cause, options: Array.isArray(value.options) ? [...new Set(value.options.flatMap(item => oneOf(item, RELAY_OPTIONS) ?? []))] : [], key,
-    counts: { runs: whole(counts.runs) ?? 0, packets: whole(counts.packets) ?? 0 }, packet: whole(value.packet), vendor: word(value.vendor, 253) };
+    counts: { runs: whole(counts.runs) ?? 0, packets: whole(counts.packets) ?? 0 }, packet: whole(value.packet) };
 }
 function decodeBinding(value: unknown): RelayBinding | null {
   if (!isRecord(value)) return null;
@@ -230,15 +191,9 @@ function decodeBinding(value: unknown): RelayBinding | null {
   if (harnessId === null || controlId === null) return null;
   const runs = isRecord(value.owed) ? whole(value.owed.runs) : null;
   return { harnessId, controlId, nativeEpoch: whole(value.nativeEpoch) ?? 1, sync: oneOf(value.sync, RELAY_SYNC_STATES) ?? "unknown",
-    throughRun: whole(value.throughRun), evidence: word(value.evidence, 32), cleared: whole(value.cleared) ?? 0, probed: value.probed === true,
-    canConfirm: typeof value.canConfirm === "boolean" ? value.canConfirm : null, vendor: word(value.vendor, 32),
-    owed: runs === null || !isRecord(value.owed) || runs === 0 ? null : { runs, estTokens: whole(value.owed.estTokens) }, vendorChange: decodeVendorChange(value.vendorChange), attention: decodeAttention(value.attention) };
-}
-/** The latest change of the service a binding runs on; null for none, and for one whose parts are not what a change holds. */
-function decodeVendorChange(value: unknown): RelayBinding["vendorChange"] {
-  if (!isRecord(value)) return null;
-  const from = word(value.from, 253), to = word(value.to, 253), runIndex = whole(value.runIndex);
-  return from === null || to === null || runIndex === null ? null : { from, to, runIndex };
+    throughRun: whole(value.throughRun), evidence: oneOf(value.evidence, RELAY_EVIDENCE), cleared: whole(value.cleared) ?? 0,
+    canConfirm: typeof value.canConfirm === "boolean" ? value.canConfirm : null,
+    owed: runs === null || !isRecord(value.owed) || runs === 0 ? null : { runs, estTokens: whole(value.owed.estTokens) }, attention: decodeAttention(value.attention) };
 }
 /** What the installation cannot do for the relay; a cause this page does not know is left out (it is not shown as another). */
 function decodeInstallation(value: unknown): RelayView["installation"] {
@@ -256,17 +211,8 @@ function decodePacket(value: unknown): RelayPacket | null {
 /** The conversation's relay state; null when the answer is not the relay view (an older Gateway, another shape). */
 export function decodeRelayView(value: unknown): RelayView | null {
   if (!isRecord(value) || !Array.isArray(value.bindings) || !Array.isArray(value.packets)) return null;
-  return { bindings: value.bindings.slice(0, 64).flatMap(row => decodeBinding(row) ?? []), packets: value.packets.slice(0, 512).flatMap(row => decodePacket(row) ?? []), dataRootExposed: value.dataRootExposed === true,
-    installation: decodeInstallation(value.installation) };
-}
-/** The `relay` member of an error body; null when there is none. A member that offers nothing has no options. */
-export function decodeRelayErrorBody(value: unknown): RelayErrorBody | null {
-  if (!isRecord(value)) return null;
-  const harnessId = isRecord(value.binding) ? word(value.binding.harnessId, 96) : null, controlId = isRecord(value.binding) ? word(value.binding.controlId, 96) : null;
-  const runs = isRecord(value.counts) ? whole(value.counts.runs) : null;
-  return { binding: harnessId === null || controlId === null ? null : { harnessId, controlId }, cause: word(value.cause, 64),
-    options: Array.isArray(value.options) ? [...new Set(value.options.flatMap(item => oneOf(item, RELAY_OPTIONS) ?? []))] : [],
-    counts: runs === null || !isRecord(value.counts) ? null : { runs, packets: whole(value.counts.packets) ?? 0 }, vendor: word(value.vendor, 253) };
+  return { bindings: value.bindings.slice(0, 64).flatMap(row => decodeBinding(row) ?? []), packets: value.packets.slice(0, 512).flatMap(row => decodePacket(row) ?? []),
+    handedOver: Array.isArray(value.handedOver) ? value.handedOver.slice(0, 64).flatMap(item => word(item, 96) ?? []) : [], installation: decodeInstallation(value.installation) };
 }
 
 function decodeContinuity(value: unknown): RunRelayInfo["continuity"] | null {
@@ -311,17 +257,16 @@ function decodeDecision(value: unknown): RelayDecisionInfo | null {
   return kind === null || by === null ? null : { kind, by, cause: oneOf(value.cause, RELAY_DECISION_CAUSES), reason: word(value.reason, 64), resend: oneOf(value.resend, RELAY_DECISION_RESENDS) };
 }
 /**
- * The preferences, from the shapes a Gateway may answer with (`{ prefs: { "relay.crossVendor": … } }`, the same without the wrapper,
- * or a list of key and value); null when none is recognised. A key the Gateway does not name has its default.
+ * The preference, from the shapes a Gateway may answer with (`{ prefs: { "relay.attach": … } }`, the same without the wrapper, or a
+ * list of key and value); null when none is recognised. A key the Gateway does not name has its default.
  */
 export function decodeRelayPrefs(value: unknown): RelayPrefs | null {
   const rows = Array.isArray(value) ? Object.fromEntries(value.flatMap(item => isRecord(item) && typeof item.key === "string" ? [[item.key, item.value]] : []))
     : isRecord(value) ? isRecord(value.prefs) ? value.prefs : value : null;
   if (rows === null) return null;
   // A value this page cannot read is not shown as another: the whole answer is then no answer.
-  const cross = rows[RELAY_PREF_CROSS_VENDOR] ?? rows.crossVendor, unsure = rows[RELAY_PREF_WHEN_UNSURE] ?? rows.whenUnsure;
-  const crossVendor = cross === undefined ? "allow" : oneOf(cross, RELAY_CROSS_VENDOR), whenUnsure = unsure === undefined ? "auto" : oneOf(unsure, RELAY_WHEN_UNSURE);
-  return crossVendor === null || whenUnsure === null ? null : { crossVendor, whenUnsure };
+  const attach = rows[RELAY_PREF_ATTACH] ?? rows.attach, chosen = attach === undefined ? "auto" : oneOf(attach, RELAY_ATTACH);
+  return chosen === null ? null : { attach: chosen };
 }
 /** One event the Gateway pushes about the relay. The page needs to know only that the relay state changed, and of what. */
 export interface RelayEvent { readonly type: string; readonly sessionId: string | null; readonly runId: string | null; readonly packetId: string | null }
@@ -365,12 +310,12 @@ export interface RelayApi {
   view(sessionId: string, signal?: AbortSignal): Promise<RelayViewRead>;
   /** The stored text of one packet; rejects with a `RelayReadError` when it cannot be read. */
   packetText(sessionId: string, packetId: string, signal?: AbortSignal): Promise<RelayPacketText>;
-  /** The installation's relay preferences; null when the Gateway has none to give. Never rejects. */
+  /** The installation's relay preference; null when the Gateway has none to give. Never rejects. */
   prefs(signal?: AbortSignal): Promise<RelayPrefs | null>;
   /** Sets one preference; rejects with a `RelayReadError` when the Gateway refuses it. */
   setPref<K extends keyof RelayPrefs>(name: K, value: RelayPrefs[K]): Promise<void>;
 }
-const PREF_KEYS: Readonly<Record<keyof RelayPrefs, string>> = { crossVendor: RELAY_PREF_CROSS_VENDOR, whenUnsure: RELAY_PREF_WHEN_UNSURE };
+const PREF_KEYS: Readonly<Record<keyof RelayPrefs, string>> = { attach: RELAY_PREF_ATTACH };
 export function createRelayApi(transport: RelayTransport): RelayApi {
   const id = encodeURIComponent;
   return {

@@ -18,9 +18,9 @@ export function RelayAttachment({ number, onOpen }: { readonly number: number | 
 }
 
 /**
- * What the relay did with a message's history when that was more than handing it over as owed (permissive-defaults §1): it sent the
- * packet again because the last one was not confirmed, sent the words alone and why, or cut the packet down for a small window. It is
- * said under the message, once and in plain words, and it never says the Harness took over.
+ * What the relay did with a message's history when that was more than handing it over as owed: it sent the packet again because the
+ * last one was not confirmed, sent everything again, sent the words alone and why, or left things out of the packet. It is said under
+ * the message, once and in plain words, and it never says the Harness took over.
  */
 export function RelayNote({ text }: { readonly text: string }) {
   return <p className="relay-note m-0 flex max-w-[82%] items-start gap-1.5 text-caption text-fg-3"><Info size={12} className="mt-[3px] flex-none" aria-hidden="true"/><span className="min-w-0">{text}</span></p>;
@@ -84,8 +84,7 @@ export function RelayDetails({ view, name, onViewPacket }: { readonly view: Rela
       <span className="text-caption text-fg-3">各 Harness 的同步状态</span>
       {view.bindings.length ? <ul className="m-0 flex list-none flex-col p-0">{view.bindings.map(binding => <li key={binding.harnessId + ":" + binding.controlId} className="relay-binding flex min-w-0 flex-col gap-0.5 py-2 hairline-b last:border-b-0" data-sync={binding.sync}>
         <div className="flex min-w-0 items-center gap-2"><BrandIcon brand={binding.harnessId} name={name(binding.harnessId)} size={18}/>
-          <span className="min-w-0 truncate font-medium">{name(binding.harnessId)}</span>
-          {binding.probed ? null : <Badge title="这个 Harness 的接力还没有在真机上验证过；交接单照常发出，结果如实标注。">未经真机验证</Badge>}</div>
+          <span className="min-w-0 truncate font-medium">{name(binding.harnessId)}</span></div>
         <p className="m-0 pl-[26px] text-caption text-fg-2">{syncWords(binding)}</p>
       </li>)}</ul> : <p className="m-0 py-2 text-caption text-fg-3">还没有 Harness 在这个对话里留下原生会话。</p>}
     </section>

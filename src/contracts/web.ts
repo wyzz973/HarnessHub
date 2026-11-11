@@ -314,7 +314,7 @@ export interface RelayBindingView {
   readonly throughRun: number | null;
   /** The evidence the binding's latest recorded packet was decided by (E1 or E3); null when none was. */
   readonly evidence: EvidenceClass | null;
-  /** How many times this native session was cleared: a clear gives the native session up for a new one, which counts the clear that made it. */
+  /** 1 when the conversation was cleared on this Harness at some point (the native session in use started from a clear), else 0: the Gateway keeps no count. */
   readonly cleared: number;
   /**
    * Whether anything this Harness does can tell the Gateway that a handoff arrived (a live signal, or a prompt that ended and so

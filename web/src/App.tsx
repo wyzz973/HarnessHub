@@ -28,7 +28,7 @@ import { CommandPalette, ShortcutsDialog, type PaletteCommand } from "./componen
 import { BrandIcon } from "./components/BrandIcon.js";
 import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
 import type { RelayNext } from "./components/RelayCard.js";
-import { relayBody, runRelayInfo, type RelayChoice, type RelayRequest } from "./relay.js";
+import { relayBody, runRelayInfo, type RelayRequest } from "./relay.js";
 import { useRelayPrefs, useRelayPresence, useRelayView } from "./lib/use-relay.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
 import { hiddenHarnesses, useMedia, useNow, usePreferences } from "./lib/prefs.js";
@@ -258,9 +258,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [streamAttempt, setStreamAttempt] = useState(0);
-  // The relay (relay-architecture §12): a send the Gateway refused and offered ways forward for, what the user chose for the next
-  // message alone, and a count of the Gateway's announcements that the relay changed, which make the page read its state again.
-  const [relayChoice, setRelayChoice] = useState<RelayChoice | null>(null);
+  // The relay: what the user chose for the next message alone, and a count of the Gateway's announcements that the relay changed,
+  // which make the page read its state again.
   const [relayNext, setRelayNext] = useState<RelayNext | null>(null);
   const [relayPushed, setRelayPushed] = useState(0);
   const [nativeCatalog, setNativeCatalog] = useState<NativeModelCatalog | null>(null);
@@ -513,7 +512,7 @@ export function App() {
     return () => { stopped = true; controller.abort(); setAttentionDown(false); };
   }, [api, state !== null, sessionId === null, acceptAttention]);
   // A refusal and a one-message choice belong to the conversation they were made in.
-  useEffect(() => { setRelayChoice(null); setRelayNext(null); }, [sessionId]);
+  useEffect(() => { setRelayNext(null); }, [sessionId]);
   // The relay is drawn only for a Gateway known to have it (lib/use-relay.ts): it says so in its state, a Turn carries a delivery, it
   // pushes a relay event or a refused send offers ways forward. A Gateway without it sees no relay request and no relay line.
   const relayPresence = useRelayPresence();
@@ -680,7 +679,7 @@ export function App() {
       if (!request.committed) { await api.send(id, value, request.sendKey, request.attachments, relayRequest); request.committed = true; rememberChoice(draft, nativeCatalog); }
       pendingMessage.current = null;
       // The message went out: a refusal it answered and a choice it used are spent.
-      if (mounted.current) { setRelayChoice(null); setRelayNext(null); }
+      if (mounted.current) setRelayNext(null);
       // Sent attachments now belong to the message; the composer keeps only what was added meanwhile.
       if (retryAttachments === undefined && mounted.current) setAttachments(current => current.filter(item => item.ref === undefined || !ids.includes(item.ref.id)));
       // The command ACK releases the draft. Durable facts arrive on the independently owned stream.
@@ -694,12 +693,7 @@ export function App() {
         pendingMessage.current = null; setError(null); return;
       }
       if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT", "UNCONFIRMED_REQUEST"].includes(failure.code) && !pendingMessage.current?.committed) pendingMessage.current = null;
-      // A refusal that offers ways forward (relay-architecture §12.4) is shown above the box with a button for each, not as an error:
-      // the draft stays, and the button sends it again with the way the user chose.
-      if (mounted.current) {
-        if (failure instanceof ApiError && failure.relay !== undefined && failure.relay.options.length > 0) { setRelayChoice({ code: failure.code, body: failure.relay }); learnRelay(); }
-        else setError(errorMessage(failure));
-      }
+      if (mounted.current) setError(errorMessage(failure));
       throw failure;
     } finally { endOperation(); }
   };
@@ -1070,7 +1064,7 @@ export function App() {
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
         onImportNative={importNative} focusOnOpen={sessionId !== null && openedFromPage === sessionId} onOpenFocused={() => setOpenedFromPage(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}
         onProviders={() => navigate("providers")} onNew={newChat} onMenu={shell.onMenu}
-        {...(relayPresence.known || relayChoice !== null ? { relay: { api: api.relay, view: relayView, fresh: relayFresh, prefs: relayPrefs.prefs, choice: relayChoice, next: relayNext, onNext: setRelayNext, onDismissChoice: () => setRelayChoice(null) } } : {})}
+        {...(relayPresence.known ? { relay: { api: api.relay, view: relayView, fresh: relayFresh, prefs: relayPrefs.prefs, next: relayNext, onNext: setRelayNext } } : {})}
         queued={queued} onQueue={queueMessage} onEditQueued={() => { if (queued) returnQueued(queued, null); }} onWithdrawQueued={withdrawQueued} queueNotice={queueNotice} onDismissQueueNotice={() => setQueueNotice(null)}
         preferences={preferences} onPreference={setPreference} conversations={state.sessions.length} sidebarHidden={!narrow && !preferences.sidebar} onExpandSidebar={shell.onExpandSidebar} onHarnesses={() => navigate("harnesses")} onSettings={() => navigate("settings")} onRescan={() => void rescan()} scanning={mutation === "scanning"}/>
         : shown === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>

@@ -26,13 +26,13 @@
 - 效果是“回退”或“未知”的原生命令执行之后：置 `resendAll`。下次要交接时发整份（从本纪元开始的全部），并带“可能重复”的说明；发出后清掉标记。没有新内容要交时什么都不做。
 - 压缩命令：不动任何状态。
 - 结果未知的回合（进程崩了）：进程型 Driver 在 Hub 确认进程组已结束后可以继续原会话（Claude Code、Codex、OpenCode 真机证实不会自己重跑）；绑定置 `resendAll`。其余照旧要求用户新开原生会话。
-- 用户选［附上交接单］（清空后）：这一条发整份，忽略清空的边界，一次有效。
+- 用户选［附上交接单］（清空后）：这一条发整份，忽略清空的边界，一次有效。送达没确认的提示条上的［再附一次］是同一个请求（`relay:{attach:"full"}`）。
 
 ## 砍掉的
 
 - 事后核对：`planReturnVerify`、`verifyDelivered`、`deliveryPosition`、`relay.verified`、E2、位置记录。
 - 待核状态：`suspect` 及其全部原因、`floorCandidate`、`rewound`、`carried`、“清空待确认”、〔确认已清空〕、`epochFloor` 与 `nativeEpoch` 的并存（收成 `epoch` 加清空边界）。
-- 严格模式与门：`relay.whenUnsure`、`relay.crossVendor` 的三档、`relay.allowUnprobed`、`relay.dataRootInWorkspace`、`relay.localModelsOffline`、`relay.returnPreference`；`RELAY_CHOICE_REQUIRED`、`RELAY_CONSENT_REQUIRED`、`RELAY_TARGET_UNVERIFIED`、`RELAY_UNAVAILABLE`、`RELAY_INPUT_LIMIT`（受理与派发前都不再因接力拒绝或失败；只关乎交接单的失败一律原样发出并记下原因）。
+- 严格模式与门：`relay.whenUnsure`、`relay.crossVendor` 的三档、`relay.allowUnprobed`、`relay.dataRootInWorkspace`、`relay.localModelsOffline`、`relay.returnPreference`；受理时的 `RELAY_CHOICE_REQUIRED`、`RELAY_CONSENT_REQUIRED`、`RELAY_TARGET_UNVERIFIED`、`RELAY_UNAVAILABLE`、`RELAY_INPUT_LIMIT`（接力从不在受理时拒绝一条消息；派发前，只关乎交接单的失败一律原样发出并记下原因）。实现与这句有一处出入，如实记在这里：用户明确要求附上（`attach:"full"`）而交接单放不下或准备不了时，这一条 Run 失败、草稿保留，不悄悄改成只发原话；Driver 在发出前拒收超限输入的保险也还在，同样是 Run 失败（`RELAY_INPUT_LIMIT`）。
 - 探针门控与 `probed`；数据根检查与横幅。
 - 厂商识别：按配置文件解析端点（`relay-vendor.ts` 的端点层）、`VendorObservation`、`vendor_changed`、`relayVendor()`。接力里“交给谁”就是 Harness 的名字。
 - 同意机制：三档、作用域、撤回、`goal_only`、`relay.withheld`。只留：第一次向某个 Harness 交接时写一行安装级日志（`relay_log`），界面据此显示那一行说明。
