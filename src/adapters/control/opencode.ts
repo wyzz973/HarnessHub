@@ -6,31 +6,28 @@ import type { ControlError } from "../../infrastructure/control/json-rpc-process
 import type { RelayCapabilities } from "../../contracts/relay.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import { AcpControl } from "./acp.js";
-import { OPENCODE_COMPACT as COMPACT, openCodeClassify, openCodeCommand as commandOf, openCodeNativeClassify, relayDeclaration } from "./relay-classify.js";
-import { openCodeVendor, slashModelKey } from "./relay-vendor.js";
+import { HUB_CLEAR, OPENCODE_COMPACT as COMPACT, openCodeClassify, openCodeCommand as commandOf, openCodeNativeClassify, relayDeclaration, relayEntries } from "./relay-classify.js";
+import { harnessVendor, slashModelKey } from "./relay-vendor.js";
 import { type TurnText } from "../../contracts/control.js";
 
 /**
- * OpenCode's relay declaration (ADR-055 §8.1, OpenCode 2 row): two text blocks; no live evidence and no check (a second
- * connection cannot hold the workspace lease inside finalize), a content prompt that ended proves it recorded, and a
- * cancelled prompt's input may still arrive later (lateDelivery); `/compact` and listed commands, any other slash input
- * text; compaction events; one process per connection; the vendor by the `provider/model` prefix and that provider's
- * `baseURL`; no native title entry (not guaranteed before P13). Not probed.
+ * OpenCode's relay declaration (ADR-055 §8.1, OpenCode 2 row): two text blocks; no live evidence, a content prompt that ended
+ * proves it recorded, and a cancelled prompt's input may still arrive later (lateDelivery); `/compact`, listed commands and
+ * the Hub's clear (`/clear`, `/new`, `/reset` alone, which its ACP has no command for), any other slash input text; compaction
+ * events; one process per connection; no native title entry (not guaranteed before P13).
  */
 export const openCodeRelayCapabilities: RelayCapabilities = relayDeclaration({
-  // probed gates D6 too (the Runtime continues the original session after an unknown Turn only for a probed process Driver):
-  // for this process Driver the flip to true needs P16 besides P2, P3, P6 and P11 (the approval agent's A3, 2026-11-10).
   probed: false,
   delivery: { live: "none", verify: "none", successProvesRecorded: true, lateDelivery: true },
   execution: "process",
-  commands: { unlistedSlash: "text", hidden: [], classify: openCodeClassify },
+  commands: { unlistedSlash: "text", hidden: relayEntries(HUB_CLEAR), classify: openCodeClassify },
   // Attachments go as ACP blocks after the two text blocks (G069 phase two, approval B8; to be probed).
   placement: { parts: "multiple", maxInput: null, pointersAfterUser: true, measure: measureBy("multiple", "chars", ["file"]) },
   window: "session_report",
   fixedPrefix: null,
   cacheTtl: "unknown",
   compactionEvidence: "event",
-  resolveVendor: openCodeVendor,
+  resolveVendor: harnessVendor("opencode"),
   normalizeModel: slashModelKey,
   title: "none",
   hostPathRead: "none",
@@ -102,7 +99,8 @@ export function parseOpenCodeModels(output: string): ReadonlyMap<string, { reado
  *
  * Inputs are read as OpenCode reads them (ADR-055 R0d): trimmed, a listed command, or `/compact`, is a command, with or
  * without attachments; a configured command's template enters the session (keep); any other slash input is text for the
- * model. A content prompt that ended with end_turn, max_tokens or refusal was delivered first (OpenCode starts a turn only
+ * model. Its ACP has no clear: `/clear`, `/new` and `/reset` alone are the Hub's, which gives the session up and sends nothing.
+ * A content prompt that ended with end_turn, max_tokens or refusal was delivered first (OpenCode starts a turn only
  * on delivery), and so was one that failed with a model failure after delivery; a cancelled one stays unknown, since its
  * input can still be delivered later; one refused before delivery, and an ignored `/compact`, reached nothing (not recorded).
  */
@@ -112,7 +110,7 @@ export class OpenCodeControl extends AcpControl {
   private openedModel: string | undefined;
   private readonly abort = new AbortController();
   constructor(private readonly nativeLaunch: ControlLaunch, private readonly nativeOptions: ControlOptions) { super(nativeLaunch, nativeOptions); }
-  protected override get vendorHarness(): "opencode" { return "opencode"; }
+  protected override get product(): string { return "OpenCode"; }
   protected override promptRecorded(reason: string): boolean { return RECORDED_STOPS.has(reason); }
   protected override refusedPrompt(error: ControlError): "recorded" | "not_recorded" | null {
     const fields = error.remoteFields;
@@ -120,7 +118,7 @@ export class OpenCodeControl extends AcpControl {
     if (error.remoteCode === -32602 && (REFUSED_FIELDS.has(fields?.field ?? "") || fields?.sessionId !== undefined)) return "not_recorded";
     return error.remoteCode === -32603 && (error.remoteMessage?.startsWith(BUSY) === true || fields?.errorName === "CatalogNotReady") ? "not_recorded" : null;
   }
-  override classify(text: string, catalog: NativeModelCatalog | null, _attachments: readonly ContentKind[] = []): CommandClass { return openCodeNativeClassify(text, catalog); }
+  override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return openCodeNativeClassify(text, catalog, attachments); }
   /**
    * The per-model input kinds of the original CLI catalog, read once per control: null when the command is refused
    * (OpenCode 2 has no `models --verbose`), fails or prints no capabilities. Unavailable metadata only removes the

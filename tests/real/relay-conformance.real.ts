@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { appendFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -15,7 +15,7 @@ import { application } from "../../src/cli/session-application.js";
 import type { ContentKind, ControlAttachment } from "../../src/contracts/content.js";
 import { contentId } from "../../src/contracts/content.js";
 import { singleText, type CleanupEvidence, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeOptions, type TurnText } from "../../src/contracts/control.js";
-import { relayPacketId, type DeliveryPosition, type RelayPacketId, type VerifyResult } from "../../src/contracts/relay.js";
+import { relayPacketId } from "../../src/contracts/relay.js";
 import { runId, sessionId, type HarnessSelection, type PublicRun, type SessionConfiguration, type SessionId, type SessionSnapshot } from "../../src/contracts/session.js";
 import { renderRelay } from "../../src/contexts/session/domain/relay/packet.js";
 import { catalogTarget } from "../../src/infrastructure/catalog/platform.js";
@@ -547,8 +547,16 @@ async function recordOf(h: Rig, open: Open, stored: string | null, offset = 0): 
   if (reader === "codex") return codexRecord(open);
   return null;
 }
-/** The path of Claude Code's transcript for a conversation, relative to its `projects/` directory, as the Driver's position gives it; null otherwise. */
-function storedOf(position: DeliveryPosition | null): string | null { return position !== null && position.kind === "file_offset" ? position.path : null; }
+/**
+ * The path of Claude Code's transcript for an open conversation, relative to its `projects/` directory: the workspace's realpath
+ * with every character but ASCII letters and digits as `-` (a character outside the BMP is two; claude-agent-acp 0.99.1
+ * session-index/project-dirs.js), then `<id>.jsonl`. Null for any other Harness. The Drivers keep no position any more
+ * (the decision log of 2026-11-11): the probes work the path out themselves.
+ */
+async function claudeStored(h: Rig, open: Open): Promise<string | null> {
+  if (h.harnessId !== "claude") return null;
+  return (await realpath(h.workspace).catch(() => h.workspace)).normalize("NFC").replace(/[^a-zA-Z0-9]/g, "-") + "/" + open.id + ".jsonl";
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // A synthetic packet and what is asked of it
@@ -611,15 +619,6 @@ function placementFacts(h: Rig, entry: UserEntry | undefined, built: Built): Rec
 function entryOf(record: NativeRecord | null, built: Built): UserEntry | undefined { return record?.entries.find(entry => entry.texts.some(text => built.title !== "" && text.split("\n").includes(built.title))); }
 const placementHolds = (facts: Record<string, unknown>): boolean => facts.found === true && facts.titleVerbatim === true && facts.endLineVerbatim === true && facts.bodyVerbatim === true && facts.wordsVerbatim === true && facts.titleBeforeWords === true && facts.wordsLast === true;
 
-/** A check through a Driver, timed. */
-async function verifyThrough(open: Open, markers: readonly { readonly packetId: RelayPacketId; readonly position: DeliveryPosition }[], historyEmpty = false): Promise<{ readonly answered: boolean; readonly results: readonly string[]; readonly verifyMs: number | null; readonly wallMs: number; readonly historyEmpty: boolean | null; readonly failure: Record<string, unknown> | null; readonly raw: VerifyResult | null }> {
-  const started = performance.now();
-  if (open.control.verifyDelivered === undefined) return { answered: false, results: [], verifyMs: null, wallMs: 0, historyEmpty: null, failure: null, raw: null };
-  try {
-    const answer = await open.control.verifyDelivered(open.id, { markers, historyEmpty });
-    return { answered: true, results: answer.markers.map(marker => marker.result), verifyMs: answer.verifyMs, wallMs: Math.round(performance.now() - started), historyEmpty: answer.historyEmpty, failure: null, raw: answer };
-  } catch (error) { return { answered: true, results: [], verifyMs: null, wallMs: Math.round(performance.now() - started), historyEmpty: null, failure: failureOf(error), raw: null }; }
-}
 /** What a Turn showed of the evidence classes (§7.1), to be set against the declaration. */
 function evidenceFacts(h: Rig, rec: TurnRecord): Record<string, unknown> {
   const recorded = rec.events.find(entry => entry.event.type === "input_recorded"), firstAgent = rec.events.find(entry => ["text", "thinking", "tool"].includes(entry.event.type));
@@ -629,10 +628,10 @@ function evidenceFacts(h: Rig, rec: TurnRecord): Record<string, unknown> {
     firstAgentOutputMs: firstAgent === undefined ? null : Math.round(firstAgent.at), userEchoChunksLive: echo };
 }
 /** The declaration's evidence cells against what a content Turn that carried a packet showed. */
-function evidenceMismatches(h: Rig, rec: TurnRecord, open: Open): readonly string[] {
+function evidenceMismatches(h: Rig, rec: TurnRecord): readonly string[] {
   const caps = h.caps, facts = evidenceFacts(h, rec), out: string[] = [];
   if (caps === null) return ["no declaration"];
-  const { live, verify, successProvesRecorded } = caps.delivery;
+  const { live, successProvesRecorded } = caps.delivery;
   if (live === "recorded_event" && facts.inputRecordedEvent === null) out.push("live=recorded_event but no input_recorded event arrived");
   if (live !== "recorded_event" && facts.inputRecordedEvent !== null) out.push("live=" + live + " but an input_recorded event arrived");
   if (live === "agent_output" && facts.firstAgentOutputMs === null) out.push("live=agent_output but the Turn showed no agent output");
@@ -643,8 +642,6 @@ function evidenceMismatches(h: Rig, rec: TurnRecord, open: Open): readonly strin
     if (!successProvesRecorded && facts.input === "recorded" && facts.inputRecordedEvent === null && facts.firstAgentOutputMs === null) out.push("input=recorded without a live event, agent output or a declaration that success proves it");
     if (live === "recorded_event" && facts.inputRecordedEvent !== null && facts.input !== "recorded") out.push("a live input_recorded event arrived but the result did not report input=recorded");
   }
-  if (verify === "none" && open.control.verifyDelivered !== undefined) out.push("verify=none but the Driver implements verifyDelivered");
-  if (verify !== "none" && open.control.verifyDelivered === undefined) out.push("verify=" + verify + " but the Driver has no verifyDelivered");
   return out;
 }
 
@@ -654,13 +651,6 @@ function evidenceMismatches(h: Rig, rec: TurnRecord, open: Open): readonly strin
 
 const brief = (reading: { readonly kind: string; readonly name?: string; readonly effect?: string; readonly acceptsRelay?: true } | undefined): string =>
   reading === undefined ? "n/a" : reading.kind + (reading.name === undefined ? "" : ":" + reading.name) + (reading.effect === undefined ? "" : ":" + reading.effect) + (reading.acceptsRelay ? ":acceptsRelay" : "");
-/** The Harness's endpoint, model and sign-in as its Driver resolved them: host and layer only. */
-async function vendorFacts(open: Open, caps: NonNullable<Rig["caps"]>): Promise<Record<string, unknown> | null> {
-  const observed = open.control.relayVendor === undefined ? undefined : await open.control.relayVendor();
-  if (observed === undefined) return { reported: "no relayVendor" };
-  if (observed === null) return null;
-  return { model: observed.model, modelKey: observed.modelKey, authKind: observed.authKind, endpoint: observed.endpoint === null ? null : { host: observed.endpoint.host, layer: observed.endpoint.layer }, loopback: observed.loopback, key: caps.resolveVendor(observed) };
-}
 async function probeStatic(h: Rig): Promise<void> {
   const caps = h.caps, open = await begin(h);
   try {
@@ -676,8 +666,9 @@ async function probeStatic(h: Rig): Promise<void> {
     h.facts.declaration = { probed: caps.probed, delivery: caps.delivery, execution: caps.execution, placement: caps.placement, window: caps.window, fixedPrefix: caps.fixedPrefix, cacheTtl: caps.cacheTtl,
       compactionEvidence: caps.compactionEvidence, title: caps.title, hostPathRead: caps.hostPathRead, unlistedSlash: caps.commands.unlistedSlash, hidden: caps.commands.hidden.map(command => command.name) };
     h.find("CAT", "declaration", control.relayCapabilities === caps ? "confirmed" : "refuted", "the instance carries the same frozen declaration the factory returns without an instance", { sameObject: control.relayCapabilities === caps });
-    h.find("CAT", "delivery.verify", (caps.delivery.verify === "none") === (control.verifyDelivered === undefined) ? "confirmed" : "refuted",
-      "verifyDelivered exists exactly when the declaration says verify is not none", { verify: caps.delivery.verify, hasVerifyDelivered: control.verifyDelivered !== undefined, hasDeliveryPosition: control.deliveryPosition !== undefined });
+    const readsBack = ["verifyDelivered", "deliveryPosition", "relayVendor", "userTextOf"].filter(member => member in control);
+    h.find("CAT", "delivery.verify", caps.delivery.verify === "none" && readsBack.length === 0 ? "confirmed" : "refuted",
+      "no Driver reads its native history back or reads a configuration for a vendor: the declaration says verify none and the instance has no check, no position, no vendor reading and no reader of replayed entries", { verify: caps.delivery.verify, readsBack });
 
     // CLS: how the Hub reads a fixed set of inputs with this Harness's real catalog, by the Driver's own reading and by its declaration.
     const entries = catalog === null ? null : relayEntries(catalog.commands ?? []);
@@ -685,9 +676,6 @@ async function probeStatic(h: Rig): Promise<void> {
       ["clear with a file", "/clear", ["file"]], ["clear with an image", "/clear", ["image"]], ["a path", "/Users/example/notes.txt", []], ["export", "/export", []], ["model", "/model x", []], ["unknown word", "/zzprobe-unknown arg", []], ["skill form", "/skill:example arg", []]];
     h.find("CLS", "commands.classify", "observed", "how the Driver's own reading and its declaration classify fixed inputs with the real catalog (the native truth is probed apart, SLASH)",
       { table: Object.fromEntries(inputs.map(([label, text, attachments]) => [label, { driver: brief(control.classify?.(text, catalog, attachments)), declared: brief(caps.commands.classify(text, entries, attachments)) }])) });
-
-    // VEND (P14 without fixtures): the endpoint and model this conversation runs on.
-    h.find("VEND", "vendor", "observed", "relayVendor() after open: model, sign-in kind, endpoint host and layer only", { observation: await vendorFacts(open, caps) });
 
     // P3: a relay Turn whose words the native side reads as a command is refused whole before anything is sent and never reads as recorded.
     const probeWord = ["/compact", "/clear", "/export"].find(text => { const reading = caps.commands.classify(text, entries, []); return reading.kind === "command" && reading.acceptsRelay !== true; });
@@ -728,7 +716,7 @@ async function probeEmpty(h: Rig): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// P1, P2, P13 and the position and check round trip
+// P1, P2 and P13
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** The public title the Hub would set on a conversation a handoff created: it carries a preset keyword and none of the forbidden strings. */
@@ -764,9 +752,9 @@ function landingFacts(entry: UserEntry | undefined, user: string, name: string):
     nonTextBlockAfterText: entry.kinds.length > 0 && entry.kinds.some((kind, index) => index > lastText && kind !== "text" && kind !== "string") };
 }
 /**
- * P1 placement, P2 evidence, the position and check round trip, P13 titles, and for Claude Code P11's window logic: a relay
- * Turn with a packet and the user's words, a second one with a file, a close, a new process that resumes the conversation, and
- * checks of both packets and of one that was never sent.
+ * P1 placement, P2 evidence, P13 titles: a relay Turn with a packet and the user's words, a second one with a file, a close, and a
+ * new process that resumes the conversation and lists it. (The check of delivery afterwards, the position and P11's window logic
+ * went with them from the Drivers, the decision log of 2026-11-11.)
  */
 async function probePlacement(h: Rig): Promise<void> {
   const caps = h.caps;
@@ -774,25 +762,22 @@ async function probePlacement(h: Rig): Promise<void> {
   const user1 = "上面记录里写的核对暗号是什么？只回复暗号本身，不要调用任何工具，不要别的字。", built1 = fullPacket(h.harnessId, user1, randomUUID());
   const user2 = "附件的文件名是什么？只回复文件名，不要调用任何工具，不要别的字。", built2 = fullPacket(h.harnessId, user2, randomUUID());
   const first = await begin(h);
-  let checkpoint: string | null = null, position1: DeliveryPosition | null = null, position2: DeliveryPosition | null = null, stored: string | null = null, titles: Record<string, unknown> = {};
+  let checkpoint: string | null = null, stored: string | null = null, titles: Record<string, unknown> = {};
   try {
     if (caps.title === "set" && first.control.setTitle !== undefined) {
       try { await first.control.setTitle(first.id, PUBLIC_TITLE); h.facts.setTitle = "accepted"; } catch (error) { h.facts.setTitle = failureOf(error); }
     }
-    position1 = first.control.deliveryPosition === undefined ? null : await first.control.deliveryPosition(first.id);
-    stored = storedOf(position1);
+    stored = await claudeStored(h, first);
     const t1 = await turn(h, first, built1.turn, "P1: relay Turn (packet and words)");
-    const mismatches = evidenceMismatches(h, t1, first);
-    h.find("P2", "delivery.live / verify / successProvesRecorded", mismatches.length === 0 && t1.result?.status === "completed" ? "confirmed" : "refuted",
-      "a completed content Turn that carried a packet shows the evidence the declaration names (live event, input, verifyDelivered presence)", { ...evidenceFacts(h, t1), mismatches, position: position1?.kind ?? "absent" });
+    const mismatches = evidenceMismatches(h, t1);
+    h.find("P2", "delivery.live / successProvesRecorded", mismatches.length === 0 && t1.result?.status === "completed" ? "confirmed" : "refuted",
+      "a completed content Turn that carried a packet shows the evidence the declaration names (live event, input)", { ...evidenceFacts(h, t1), mismatches });
     if (h.harnessId === "codex") {
       const echo = codexEchoFacts(h, t1), user = (echo.userMessageNotifications as { echoKeys: string[]; echoMatchesSent: boolean }[])[0];
       h.find("E1", "codex clientUserMessageId echo", user !== undefined && user.echoMatchesSent ? "confirmed" : "refuted", "turn/start carries clientUserMessageId and the userMessage item of the thread echoes it (under which key), before any agent output", echo);
     }
     h.find("P1", "packet visible to the model", t1.reply.includes(built1.codeword) ? "confirmed" : "refuted", "the reply carries the codeword that only the packet holds", { codewordInReply: t1.reply.includes(built1.codeword), replyChars: [...t1.reply].length });
-    const live = readerOf(h) === "claude" || readerOf(h) === "codex", sameConnection = caps.delivery.verify === "after_turn";
-    const own = sameConnection ? await verifyThrough(first, position1 === null ? [] : [{ packetId: built1.turn.relay.packetId, position: position1 }]) : { answered: false, results: [] as string[], verifyMs: null, wallMs: 0, historyEmpty: null, failure: null, raw: null };
-    if (own.answered && position1 !== null) h.find("P2", "verify after the Turn (same connection)", own.results[0] === "present" ? "confirmed" : "refuted", "the Driver's own check, right after the Turn, finds the packet it just placed", { result: own.results[0] ?? null, verifyMs: own.verifyMs, wallMs: own.wallMs, failure: own.failure });
+    const live = readerOf(h) === "claude" || readerOf(h) === "codex";
     const rec1 = live ? await recordOf(h, first, stored) : null, facts1 = placementFacts(h, entryOf(rec1, built1), built1);
     if (!live) { /* an ACP agent's record is its replay at a resume: read below, in the second process */ }
     else if (rec1 === null) h.find("P1", "placement (title line, words, order)", "unverified", "the native record of the user's entry cannot be read for this Harness", { reader: readerOf(h) });
@@ -808,13 +793,10 @@ async function probePlacement(h: Rig): Promise<void> {
     }
     // The second Turn: a packet and a file attachment, where the pointer lands.
     const file = await attachmentOf(h, "notes.txt", "synthetic attachment for the placement probe\n");
-    position2 = first.control.deliveryPosition === undefined ? null : await first.control.deliveryPosition(first.id);
     const t2 = await turn(h, first, built2.turn, "P1: relay Turn with a file", { attachments: [file] });
     const rec2 = live ? await recordOf(h, first, stored) : null, entry2 = entryOf(rec2, built2), landing = landingFacts(entry2, user2, file.name);
     if (live) h.find("P1", "placement.pointersAfterUser", rec2 === null ? "unverified" : entry2 === undefined ? "refuted" : landing.nameAfterWords === true || landing.nonTextBlockAfterText === true ? "confirmed" : "observed",
       "the attachment (a pointer in the text, or a block) lies after the user's words in the same native user entry", { ...landing, declared: caps.placement.pointersAfterUser, status: t2.result?.status ?? null, input: t2.result?.input ?? null, ...(entry2 === undefined ? {} : { placement: placementFacts(h, entry2, built2) }) });
-    const own2 = sameConnection ? await verifyThrough(first, position2 === null ? [] : [{ packetId: built2.turn.relay.packetId, position: position2 }]) : { answered: false, results: [] as string[], verifyMs: null, wallMs: 0 };
-    if (own2.answered && position2 !== null) h.find("P2", "verify after a Turn with a file", own2.results[0] === "present" ? "confirmed" : "refuted", "the check finds a packet that went with an attachment", { result: own2.results[0] ?? null, verifyMs: own2.verifyMs, wallMs: own2.wallMs });
     // P13: the titles the native side gave this conversation.
     await delay(2000);
     if (h.harnessId === "codex") { const thread = await codexThread(first); titles = { name: thread?.name ?? null, preview: typeof thread?.preview === "string" ? plain(thread.preview, 80) : null }; if (typeof thread?.path === "string") h.rollouts.add(thread.path); }
@@ -822,24 +804,9 @@ async function probePlacement(h: Rig): Promise<void> {
     checkpoint = (await first.control.checkpoint?.()) ?? first.id;
   } finally { await finish(first); }
 
-  // The second process: resume the conversation and check the packets it was handed, and one it never was.
+  // The second process: resume the conversation and list it, for the titles ACP agents give.
   const second = await begin(h, checkpoint ?? undefined);
   try {
-    const unsent = fullPacket(h.harnessId, "x", randomUUID());
-    const markers = position1 === null || position2 === null ? [] : [{ packetId: built1.turn.relay.packetId, position: position1 }, { packetId: built2.turn.relay.packetId, position: position2 }, { packetId: unsent.turn.relay.packetId, position: position1 }];
-    const resumed = await verifyThrough(second, markers);
-    if (resumed.answered && markers.length > 0) {
-      h.find("P2", "verify in a new process (position round trip)", resumed.results[0] === "present" && resumed.results[1] === "present" ? "confirmed" : "refuted",
-        "after the close and a resume by another process, the checks of the two packets at their recorded positions find them", { results: resumed.results, verifyMs: resumed.verifyMs, wallMs: resumed.wallMs, budgetMs: 1800, withinBudget: resumed.wallMs <= 1800, failure: resumed.failure });
-      h.find("P2", "absent for a packet never sent", resumed.results[2] === "absent" ? "confirmed" : resumed.results[2] === "unavailable" ? "observed" : "refuted",
-        "a packet that was never sent, asked at an earlier position, is absent (unavailable is the honest answer where the native side cannot say)", { result: resumed.results[2] ?? null });
-    } else if (!resumed.answered) h.find("P2", "verify in a new process (position round trip)", "unverified", "the declaration says verify is none: the Driver has no check to round trip", { verify: caps.delivery.verify });
-    // An unlisted plain Turn after a fresh position, and the absent path against it.
-    const plainPosition = second.control.deliveryPosition === undefined ? null : await second.control.deliveryPosition(second.id);
-    const plainTurn = caps.delivery.verify === "none" ? null : await turn(h, second, "只回复：好", "ABSENT: plain Turn after a position");
-    const absent = plainPosition === null || plainTurn === null ? null : await verifyThrough(second, [{ packetId: unsent.turn.relay.packetId, position: plainPosition }, { packetId: built1.turn.relay.packetId, position: plainPosition }]);
-    if (absent !== null && absent.answered) h.find("P2", "absent against a later position", absent.results[0] === "absent" ? "confirmed" : absent.results[0] === "unavailable" ? "observed" : "refuted",
-      "a packet never sent, asked at the position before a plain Turn, is absent; a packet sent earlier than that position is absent too (the check reads only what follows the position)", { neverSent: absent.results[0] ?? null, sentEarlier: absent.results[1] ?? null, plainStatus: plainTurn?.result?.status ?? null, failure: absent.failure });
     // P13 for ACP agents that list their sessions: the title they give the conversation.
     if (second.control.nativeSessions !== undefined && readerOf(h) !== "claude") {
       try { const page = await second.control.nativeSessions(h.workspace), row = page.sessions.find(item => item.id === second.id); titles = { ...titles, listed: row !== undefined, listTitle: row?.title === undefined || row.title === null ? null : plain(row.title, 80) }; } catch (error) { titles = { ...titles, listFailure: failureOf(error) }; }
@@ -847,16 +814,6 @@ async function probePlacement(h: Rig): Promise<void> {
     const strings = [titles.name, titles.preview, titles.listTitle, ...(Array.isArray(titles.aiTitles) ? titles.aiTitles : [])].filter((value): value is string => typeof value === "string");
     h.find("P13", "native title", strings.length === 0 ? "unverified" : strings.some(value => FORBIDDEN_TITLE.test(value)) ? "refuted" : "confirmed",
       "no native title (name, preview, listed or generated) carries HarnessHub, 交接, 接手, handoff, relay-, 〔 or ai-title", { titles, declaredTitle: caps.title, publicTitleSet: h.facts.setTitle ?? null, titleEqualsPublic: titles.name === PUBLIC_TITLE });
-    // P11 (Claude Code): the check never answers absent for what it did not read to the end.
-    if (readerOf(h) === "claude" && stored !== null && position1 !== null && position1.kind === "file_offset") {
-      const file = join(h.claudeConfig, "projects", stored), marker = (id: RelayPacketId) => ({ packetId: id, position: position1! });
-      const complete = await verifyThrough(second, [marker(built1.turn.relay.packetId), marker(unsent.turn.relay.packetId)]);
-      const chunk = (JSON.stringify({ type: "progress", sessionId: second.id, pad: "x".repeat(1000) }) + "\n").repeat(1024);
-      for (let part = 0; part < 17; part++) await appendFile(file, chunk);
-      const grown = (await stat(file)).size - position1.bytes, incomplete = await verifyThrough(second, [marker(built1.turn.relay.packetId), marker(unsent.turn.relay.packetId)]);
-      h.find("P11", "check over a tail longer than a check reads", incomplete.results[1] !== "absent" && incomplete.results[0] === "present" && complete.results[1] === "absent" ? "confirmed" : "refuted",
-        "with the tail read to its end a packet never sent is absent; with 17 MiB more after the position the same question is answered unavailable (never absent), and the packet that was sent is still found", { tailBytesAfterPosition: grown, completeTail: complete.results, longTail: incomplete.results, longTailMs: incomplete.wallMs });
-    } else h.find("P11", "check over a tail longer than a check reads", "unverified", "the window logic is exercised on a real transcript only for Claude Code (a Codex check pages by turn count; OpenClaw and Hermes were not run)", { reader: readerOf(h), verify: caps.delivery.verify });
   } finally { await finish(second); }
   // The record of an ACP agent that replays its history: read by another process after the second one closed.
   if (readerOf(h) === "replay" || readerOf(h) === "none") {
@@ -900,7 +857,7 @@ async function probeSlash(h: Rig): Promise<void> {
   if (caps === null) throw new Error("this Harness has no relay declaration");
   const open = await begin(h);
   try {
-    const position = open.control.deliveryPosition === undefined ? null : await open.control.deliveryPosition(open.id), stored = storedOf(position), word = "/zzprobe-unlisted hello";
+    const stored = await claudeStored(h, open), word = "/zzprobe-unlisted hello";
     const unlisted = await turn(h, open, word, "SLASH: an unlisted slash word as a plain prompt");
     let rec: NativeRecord | null;
     if (readerOf(h) === "replay") { const id = (await open.control.checkpoint?.()) ?? open.id; await finish(open); rec = await replayAfter(h, id); } else rec = await recordOf(h, open, stored);
@@ -938,10 +895,10 @@ async function probeClear(h: Rig): Promise<void> {
   const caps = h.caps;
   if (caps === null) throw new Error("this Harness has no relay declaration");
   if (h.harnessId !== "claude") {
-    h.find("P6", "clear", "unverified", "this Harness declares no clear command (nothing hidden, none in the classification): there is no clear to confirm", { hidden: caps.commands.hidden.map(command => command.name), clearListed: (h.facts.catalog as { hidden?: string[] } | null)?.hidden ?? [] });
+    h.find("P6", "clear", "unverified", "the Hub's clear on this Harness (/clear, /new, /reset: not sent, the native session given up) is tested against its protocol with a synthetic peer, not on the real Harness; this probe runs for Claude Code only", { hidden: caps.commands.hidden.map(command => command.name), clearListed: (h.facts.catalog as { hidden?: string[] } | null)?.hidden ?? [] });
     return;
   }
-  const word = codewordOf(randomUUID()), first = await begin(h), position = first.control.deliveryPosition === undefined ? null : await first.control.deliveryPosition(first.id), stored = storedOf(position);
+  const word = codewordOf(randomUUID()), first = await begin(h), stored = await claudeStored(h, first);
   const checkpoint = first.id, projectDirectory = stored === null ? null : join(h.claudeConfig, "projects", stored.split("/")[0]!);
   const files = async (): Promise<readonly string[]> => projectDirectory === null ? [] : (await readdir(projectDirectory).catch(() => [])).filter(name => name.endsWith(".jsonl")).sort();
   const launch = (first.control as unknown as { claudeLaunch?: ConstructorParameters<typeof AcpControl>[0] }).claudeLaunch, settings = (first.control as unknown as { claudeOptions?: ConstructorParameters<typeof AcpControl>[1] }).claudeOptions;
@@ -994,7 +951,7 @@ async function probeClear(h: Rig): Promise<void> {
 
 async function lateOnce(h: Rig, variant: "at once" | "after the first output"): Promise<void> {
   const caps = h.caps!, built = fullPacket(h.harnessId, "请从 1 数到 80，每行一个数字，不要调用任何工具。", randomUUID()), open = await begin(h);
-  const position = open.control.deliveryPosition === undefined ? null : await open.control.deliveryPosition(open.id), stored = storedOf(position);
+  const stored = await claudeStored(h, open);
   let checkpoint: string | null = null;
   const samples: { when: string; present: boolean | null }[] = [];
   const present = async (live: Open | null, when: string): Promise<void> => {
@@ -1057,7 +1014,7 @@ async function groupGone(group: number | null, waitMs: number): Promise<boolean 
 async function probeKill(h: Rig): Promise<void> {
   const caps = h.caps;
   if (caps === null) throw new Error("this Harness has no relay declaration");
-  const first = await begin(h), position = first.control.deliveryPosition === undefined ? null : await first.control.deliveryPosition(first.id), stored = storedOf(position);
+  const first = await begin(h), stored = await claudeStored(h, first);
   let checkpoint: string, group: number | null = null, killed: TurnRecord, gone: boolean | null = null;
   try {
     await turn(h, first, "只回复：就绪", "P16: a first Turn (the session exists on the native side)");
@@ -1104,7 +1061,7 @@ async function probeKill(h: Rig): Promise<void> {
 // ---------------------------------------------------------------------------------------------------------------------
 
 async function readOnce(h: Rig, partner: string, variant: "nominated" | "indirect"): Promise<void> {
-  const first = await begin(h), position = first.control.deliveryPosition === undefined ? null : await first.control.deliveryPosition(first.id), stored = storedOf(position);
+  const first = await begin(h), stored = await claudeStored(h, first);
   let number = 0, checkpoint: string;
   try {
     const base = await turn(h, first, "请随便想一个五位数（不要用 12345、11111 这类有规律的数），只回复这个数字本身，不要调用任何工具，不要别的字。", "READ " + variant + ": the first Turn");
@@ -1156,7 +1113,7 @@ const SHAPES: readonly (readonly [string, string])[] = [
 ];
 async function probeZero(h: Rig): Promise<void> {
   if (h.harnessId !== "claude" && h.harnessId !== "codex") { h.find("P15", "zero injection", "unverified", "P15 runs on Claude Code and Codex only (ADR-055 §13.3), the two with a native record a probe can read", { reader: readerOf(h) }); return; }
-  const open = await begin(h), position = open.control.deliveryPosition === undefined ? null : await open.control.deliveryPosition(open.id), stored = storedOf(position), statuses: (string | null)[] = [];
+  const open = await begin(h), stored = await claudeStored(h, open), statuses: (string | null)[] = [];
   try {
     for (const [label, text] of SHAPES) { const sent = await turn(h, open, text, "P15: " + label); statuses.push(sent.result?.status ?? null); }
     const rec = await recordOf(h, open, stored);
@@ -1197,15 +1154,14 @@ async function probeRedirect(h: Rig): Promise<void> {
   try { open = await begin(h, undefined, directory); }
   catch (error) { h.find("P14", "workspace layer honoured by the Harness", "observed", "the Harness refused to start with the layer file present (the layer is read by the Driver, and the Harness rejects it): recorded as it is", { layer: redirect[0], refused: true, ...failureOf(error) }); return; }
   try {
-    const vendor = await vendorFacts(open, caps), mark = open.control.diagnosticMark?.() ?? 0;
-    const position = readerOf(h) === "claude" && open.control.deliveryPosition !== undefined ? await open.control.deliveryPosition(open.id) : null;
+    const mark = open.control.diagnosticMark?.() ?? 0, stored = await claudeStored(h, open);
     const sent = await turn(h, open, "只回复：好", "P14: a Turn with the workspace layer pointing at a closed port", { limitMs: 45_000, soft: true });
-    const tail = position !== null && storedOf(position) !== null ? await claudeRecord(h, storedOf(position)!) : null;
+    const tail = stored !== null ? await claudeRecord(h, stored) : null;
     const diagnostics = open.control.diagnosticsSince?.(mark) ?? "", mentions = /127\.0\.0\.1[:\s]*9\b|ECONNREFUSED/u.test(diagnostics);
     const replied = sent.reply.trim().length > 0 && sent.result?.status === "completed";
     h.find("P14", "workspace layer honoured by the Harness", replied ? "refuted" : sent.result?.status === "failed" || sent.timedOut || mentions ? "confirmed" : "observed",
-      "with the endpoint set in the workspace layer to a closed local port, the Harness cannot reach its model (the layer is honoured, so the Driver must read it); a normal reply means the layer is ignored",
-      { layer: redirect[0], driverReads: vendor, status: sent.result?.status ?? null, error: sent.result?.error?.code ?? sent.failure?.code ?? null, replied, timedOutAfter45s: sent.timedOut, diagnosticsMentionThePort: mentions, transcriptLineTypes: tail?.facts.types ?? null, transcriptSystemSubtypes: tail?.facts.systemSubtypes ?? null });
+      "with the endpoint set in the workspace layer to a closed local port, the Harness cannot reach its model (the layer is honoured); a normal reply means the layer is ignored (no Driver reads the layer any more: this is what the Harness itself does)",
+      { layer: redirect[0], status: sent.result?.status ?? null, error: sent.result?.error?.code ?? sent.failure?.code ?? null, replied, timedOutAfter45s: sent.timedOut, diagnosticsMentionThePort: mentions, transcriptLineTypes: tail?.facts.types ?? null, transcriptSystemSubtypes: tail?.facts.systemSubtypes ?? null });
   } finally { await finish(open); }
 }
 
@@ -1236,34 +1192,33 @@ async function probeHermes(h: Rig): Promise<void> {
     h.find("HERMES", "replay completeness", rowsBefore.entries.length === 2 ? "confirmed" : "refuted", "the replay of a resumed session holds one user entry per prompt sent (two)", { entries: rowsBefore.entries.length, otherUpdates: rowsBefore.facts.otherUpdates });
     h.find("HERMES", "/title writes no history row (B10)", titled === "accepted" && rowsAfter.entries.length === rowsBefore.entries.length && rowsAfter.facts.otherUpdates === rowsBefore.facts.otherUpdates ? "confirmed" : "refuted",
       "after /title the replay holds the same user entries and the same other updates as before it (no history row, no gateway turn)", { titled, before: rowsBefore.entries.length, after: rowsAfter.entries.length, otherBefore: rowsBefore.facts.otherUpdates, otherAfter: rowsAfter.facts.otherUpdates, titlePrompts: h.facts.titlePrompts ?? null });
-    const cleared = await turn(h, after, "/clear", "HERMES: /clear");
-    h.find("HERMES", "clear receipt", cleared.result?.native?.cleared === true ? "confirmed" : "refuted", "the fixed receipt of /clear is read as native.cleared", { status: cleared.result?.status ?? null, cleared: cleared.result?.native?.cleared ?? null, input: cleared.result?.input ?? "absent" });
+    // The Hub's clear: nothing is sent to the viewer or the gateway, and the gateway's session keeps its history.
+    const mark = h.wire.mark, cleared = await turn(h, after, "/clear", "HERMES: /clear (the Hub's)");
+    const sentToViewer = h.wire.since(mark).filter(entry => entry.dir === "out" && (entry.method === "session/prompt" || entry.method === "session/close")).length;
+    h.find("HERMES", "the Hub's clear", cleared.result?.native?.cleared === true && cleared.result.native.replaced?.checkpoint === null && cleared.result.input === "not_recorded" && sentToViewer === 0 ? "confirmed" : "refuted",
+      "/clear is not sent (no prompt, no close), and is reported as native.cleared with no checkpoint", { status: cleared.result?.status ?? null, cleared: cleared.result?.native?.cleared ?? null, input: cleared.result?.input ?? "absent", sentToViewer });
   } finally { await finish(after); }
-  const emptied = await begin(h, checkpoint);
+  const kept = await begin(h, checkpoint);
   try {
-    const rows = replayRecord(h.wire.since(emptied.wireFrom, emptied.wireTo), emptied.id);
-    h.find("HERMES", "history empty after a clear", rows.entries.length === 0 ? "confirmed" : "refuted", "the replay after /clear holds no user entry", { entries: rows.entries.length });
-  } finally { await finish(emptied); }
+    const rows = replayRecord(h.wire.since(kept.wireFrom, kept.wireTo), kept.id);
+    h.find("HERMES", "the gateway's session keeps its history after the Hub's clear", rows.entries.length === 2 ? "confirmed" : "refuted", "the replay of the old session after the Hub's /clear still holds the two user entries", { entries: rows.entries.length });
+  } finally { await finish(kept); }
 }
-/** OpenClaw: gateway call timing, lifecycleRevision (B7: only /new renews it), and the sequence numbers after a reset. */
+/**
+ * OpenClaw: the Hub's clear. `/new` is not sent to the bridge and the Gateway is asked for nothing; the Driver lets go of the
+ * session key, so the next open starts a session under a new key. (The Gateway call timing for the check and the incarnation
+ * read of `/new`, B7, went with the check from the Driver, the decision log of 2026-11-11.)
+ */
 async function probeOpenClaw(h: Rig): Promise<void> {
-  const open = await begin(h), inner = open.control as unknown as { call: (method: string, params: Record<string, unknown>, deadlineMs?: number) => Promise<unknown>; sessionKey: string | null };
+  const open = await begin(h), inner = open.control as unknown as { sessionKey: string | null };
   try {
     await turn(h, open, "只回复：好", "OPENCLAW: a first Turn");
     const key = inner.sessionKey;
     if (key === null) throw new Error("the OpenClaw Driver holds no session key");
-    const timed = async (params: Record<string, unknown>): Promise<{ ok: boolean; ms: number }> => { const started = performance.now(); try { await inner.call("sessions.get", params); return { ok: true, ms: Math.round(performance.now() - started) }; } catch { return { ok: false, ms: Math.round(performance.now() - started) }; } };
-    const cold = await timed({ key, limit: 1 }), warm = await timed({ key, limit: 1 }), window = await timed({ key, limit: 200 });
-    h.find("OPENCLAW", "gateway call within the check budget", cold.ok && window.ok && cold.ms <= 1800 && window.ms <= 1800 ? "confirmed" : "refuted", "each `gateway call sessions.get` is a new CLI process and must finish within the 1.8 s check budget (limit 1 cold, again warm, and the 200-entry window)", { cold, warm, window, budgetMs: 1800 });
-    const revision = async (): Promise<string | null> => { const row = record(record(await inner.call("sessions.describe", { key })).session); return typeof row.lifecycleRevision === "string" ? row.lifecycleRevision : null; };
-    const start = await revision(), steps: { step: string; status: string | null; revisionChanged: boolean | null }[] = [];
-    for (const command of ["/compact", "/reset soft"]) { const sent = await turn(h, open, command, "OPENCLAW: " + command); steps.push({ step: command, status: sent.result?.status ?? null, revisionChanged: start === null ? null : (await revision()) !== start }); }
-    const other = open.catalog?.models.find(model => model.id !== (h.model ?? open.catalog?.defaultModel));
-    if (other !== undefined) { const sent = await turn(h, open, "/model " + other.id, "OPENCLAW: a model change"); steps.push({ step: "/model", status: sent.result?.status ?? null, revisionChanged: start === null ? null : (await revision()) !== start }); }
-    const before = await revision(), fresh = await turn(h, open, "/new", "OPENCLAW: /new"), renewed = await revision(), after = await timed({ key, limit: 200 });
-    const unchanged = steps.every(step => step.revisionChanged === false);
-    h.find("OPENCLAW", "lifecycleRevision (B7)", start !== null && unchanged && before !== null && renewed !== null && renewed !== before && fresh.result?.native?.cleared === true ? "confirmed" : "refuted",
-      "/compact, /reset soft and a model change leave sessions.describe's lifecycleRevision as it was, and /new renews it and is reported as a confirmed clear", { steps, newRenewedIt: before !== null && renewed !== null && renewed !== before, cleared: fresh.result?.native?.cleared ?? null, revisionRead: start !== null, afterResetWindow: after });
+    const mark = h.wire.mark, fresh = await turn(h, open, "/new", "OPENCLAW: /new (the Hub's)");
+    const sentToBridge = h.wire.since(mark).filter(entry => entry.dir === "out" && (entry.method === "session/prompt" || entry.method === "session/close")).length;
+    h.find("OPENCLAW", "the Hub's clear", fresh.result?.native?.cleared === true && fresh.result.native.replaced?.checkpoint === null && fresh.result.input === "not_recorded" && sentToBridge === 0 && inner.sessionKey === null ? "confirmed" : "refuted",
+      "/new is not sent (no prompt, no close), is reported as native.cleared with no checkpoint, and the Driver holds no session key afterwards", { status: fresh.result?.status ?? null, cleared: fresh.result?.native?.cleared ?? null, input: fresh.result?.input ?? "absent", sentToBridge, keyLetGo: inner.sessionKey === null });
   } finally { await finish(open); }
 }
 

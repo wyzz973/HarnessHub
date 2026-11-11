@@ -1,18 +1,16 @@
-import { createHash } from "node:crypto";
-import { MAX_USAGE_REQUESTS, singleText, type NativeUsage, type TurnText, type VerifyRequest } from "../../contracts/control.js";
+import { MAX_USAGE_REQUESTS, singleText, type BackendResult, type ControlEvent, type NativeUsage, type TurnText } from "../../contracts/control.js";
 import type { ContentKind } from "../../contracts/content.js";
-import { MAX_AUTH_KIND_BYTES, relayPacketId, type DataClass, type Fingerprint, type MarkerResult, type RelayCapabilities, type RelayPacketId, type VerifyResult } from "../../contracts/relay.js";
+import { relayPacketId, type RelayCapabilities, type RelayPacketId } from "../../contracts/relay.js";
 
 /**
- * What every Driver does with a relay Turn on its way to the native side and back (ADR-055 §3.2, §5.5, §7.1, §7.3, VF3-09),
- * in one place so that each Driver only says where its own protocol differs:
+ * What every Driver does with a relay Turn on its way to the native side and back (ADR-055 §3.2, §5.5, §7.1), in one place so
+ * that each Driver only says where its own protocol differs:
  *
  * - placement: a Turn's text as the text parts a Driver sends, by its declaration's `placement` (two parts, or one), a
  *   relay Turn refused whole when the native side reads its words as a command (one whose arguments it submits as a prompt
  *   excepted), and the size a declaration's `maxInput` bounds;
- * - markers: whether a native user entry carries a packet's title line, or the packet whole, and which entry after a
- *   position counts (the first with its title line, a later one only whole);
- * - the user's words of a replayed native entry, with the packet, Hub's file pointers and native wrapping stripped;
+ * - the packet's title line in a native user entry, which is how a live echo says which packet it carries;
+ * - the Hub's own clear: what a Driver reports when it gives up the native session instead of sending the command;
  * - the bound on per-request usage.
  *
  * Everything here is pure and synchronous and reads nothing but its arguments.
@@ -36,41 +34,16 @@ const PACKET_ID = /relay-[0-9a-hjkmnp-tv-z]{20}/u;
  * its first TITLE_LINES lines (a line that starts so but names no packet, such as a user's own, does not stop the search);
  * null when there is none (a plain message, or a packet cut before its title line).
  */
-export function titledPacket(text: string): RelayPacketId | null { return titleOf(text)?.id ?? null; }
-/** titledPacket with the line its title is on. */
-function titleOf(text: string): { readonly id: RelayPacketId; readonly line: number } | null {
-  const head = text.slice(0, TITLE_UNITS).split("\n", TITLE_LINES);
-  for (const [line, value] of head.entries()) {
+export function titledPacket(text: string): RelayPacketId | null {
+  for (const value of text.slice(0, TITLE_UNITS).split("\n", TITLE_LINES)) {
     if (!value.startsWith(RELAY_TITLE)) continue;
     const found = PACKET_ID.exec(value)?.[0];
-    if (found !== undefined) return { id: relayPacketId(found), line };
+    if (found !== undefined) return relayPacketId(found);
   }
   return null;
 }
 /** Whether a native entry's text carries this packet's title line (titledPacket). */
 export function carriesPacket(text: string, packetId: RelayPacketId): boolean { return titledPacket(text) === packetId; }
-/**
- * Whether a native entry's text carries this packet whole: its title line (titledPacket) and, on a later line, its end line,
- * the next line that starts with `〔` and names the same packet (packet.ts FRAME.end; stripPacket reads it the same way).
- */
-export function carriesWholePacket(text: string, packetId: RelayPacketId): boolean {
-  const title = titleOf(text);
-  if (title === null || title.id !== packetId) return false;
-  return text.split("\n").some((line, index) => index > title.line && line.startsWith("〔") && line.includes(packetId));
-}
-/**
- * Which of the client's user entries after a position carries a packet (ADR-055 §7.3, the approval agent's B1), entries in
- * order and `carries(entry, whole)` reading one: the first entry with the title line alone (a packet the native side cut
- * after its title is still the one this Turn sent, RT2-09), any later one only with the title and end lines of the same
- * packet (a late write is whole, VF1-13; a title line the user pasted is not). A false present loses facts, a false absent
- * only repeats them, so the later entries are held to the stricter reading. -1 when none does.
- */
-export function packetEntry<T>(entries: readonly T[], carries: (entry: T, whole: boolean) => boolean): number {
-  return entries.findIndex((entry, index) => carries(entry, index > 0));
-}
-/** One entry's text read as packetEntry asks: the title line, or the whole packet. */
-export function entryCarries(text: string, packetId: RelayPacketId, whole: boolean): boolean { return whole ? carriesWholePacket(text, packetId) : carriesPacket(text, packetId); }
-
 
 /** The blank line between a packet and the user's words when they go as two parts (dsh joins parts without a separator). */
 function separated(body: string): string { return body.endsWith("\n\n") ? body : body + (body.endsWith("\n") ? "\n" : "\n\n"); }
@@ -135,79 +108,30 @@ export const INPUT_LIMIT_REFUSED = { status: "failed", reason: "input_too_large"
  */
 export const COMMAND_REFUSED = { status: "failed", reason: "classification_changed", input: "not_recorded",
   error: { code: "RELAY_PREPARE_FAILED", message: "原程序会把这条消息读作命令，命令回合不能附交接单，所以这条消息和交接单都没有发出。可以只发这条命令，或把交接单附在下一条普通消息上。" } } as const;
+/** How long a native title request may take; past it the request is given up alone (ADR-055 C6). */
+export const TITLE_DEADLINE_MS = 2000;
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The Hub's clear
+// ---------------------------------------------------------------------------------------------------------------------
+
 /**
- * How long a check may take (ADR-055 C6, VerifyRequest's contract: "within about two seconds"): what a Driver has not read by
- * then is unavailable. A native title request has the same bound.
+ * The result of a clear the Hub runs itself (the decision log of 2026-11-11: clearing is the Hub's, on every Driver). Nothing
+ * was sent to the native side. Its session was given up, and the next Turn opens a new one: `replaced.checkpoint` is null, since
+ * a session never prompted cannot be resumed by another process, so none is opened ahead.
  */
-export const VERIFY_BUDGET_MS = 1800, TITLE_DEADLINE_MS = 2000;
-
-// ---------------------------------------------------------------------------------------------------------------------
-// Replayed user entries
-// ---------------------------------------------------------------------------------------------------------------------
-
-/** One kind of native or Hub wrapping a replayed user entry had, and how many UTF-8 bytes of it were stripped. */
-export type Stripped = { readonly kind: DataClass; readonly bytes: number };
-export interface UserText { readonly user: string; readonly stripped: readonly Stripped[] }
-const bytes = (text: string) => Buffer.byteLength(text, "utf8");
-/** Adds a stripped part; parts of one kind are counted together, and nothing is recorded for an empty part. */
-export function strip(stripped: readonly Stripped[], kind: DataClass, part: string): readonly Stripped[] {
-  if (part === "") return stripped;
-  const found = stripped.find(item => item.kind === kind);
-  return found === undefined ? [...stripped, { kind, bytes: bytes(part) }] : stripped.map(item => item === found ? { kind, bytes: item.bytes + bytes(part) } : item);
+export function hubCleared(): BackendResult {
+  return { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true, replaced: { checkpoint: null } } };
 }
-/**
- * A relay packet in a replayed entry (§5.5): its head (the copy of the user's first line and the blank line after it, when
- * the packet has them), its title line and everything up to its end line, the next line that starts with `〔` and names the
- * same packet; with the separator after it (at most three line breaks: the placement's blank line and a native join).
- * Text before the head stays the user's (a prefix the Driver did not strip); a packet without its end line is not one.
- */
-export function stripPacket(text: string): { readonly before: string; readonly packet: string; readonly after: string } | null {
-  const found = titleOf(text);
-  if (found === null) return null;
-  const id = found.id, title = found.line, lines = text.split("\n");
-  const end = lines.findIndex((line, index) => index > title && line.startsWith("〔") && line.includes(id));
-  if (end < 0) return null;
-  // The renderer's head: first line, an optional blank line, then the title (packet.ts renderPacket).
-  const start = title >= 2 && lines[title - 1] === "" && lines[title - 2] !== "" ? title - 2 : title >= 1 && lines[title - 1] !== "" ? title - 1 : title;
-  const before = lines.slice(0, start).join("\n") + (start > 0 ? "\n" : "");
-  let after = lines.slice(end + 1).join("\n"), packet = lines.slice(start, end + 1).join("\n") + (end + 1 < lines.length ? "\n" : "");
-  const separator = /^\n{0,3}/u.exec(after)![0];
-  packet += separator; after = after.slice(separator.length);
-  return { before, packet, after };
-}
-/** Hub's own text pointers to read-only attachment copies (attachments.ts fileMentions), at the end of an entry. */
-const POINTERS = /(?:\n\n|^)\[Attached file\] [^\n]*(?:\n\[Attached file\] [^\n]*)*$/u;
-/**
- * The user's words of a replayed entry once a Driver stripped its own native wrapping: the relay packet (hub_text) and Hub's
- * file pointers after the words (workspace_meta) go; everything else is the user's.
- */
-export function userWords(text: string, stripped: readonly Stripped[] = []): UserText {
-  let user = text, removed = stripped;
-  const packet = stripPacket(user);
-  if (packet !== null) { removed = strip(removed, "hub_text", packet.packet); user = packet.before + packet.after; }
-  const pointers = POINTERS.exec(user);
-  if (pointers !== null && pointers.index > 0) { removed = strip(removed, "workspace_meta", pointers[0]); user = user.slice(0, pointers.index); }
-  return { user, stripped: removed };
+/** What the Turn says of it: the command was not sent, and the old session is given up, not deleted. */
+export function clearedNotice(command: string, product: string): ControlEvent {
+  return { type: "diagnostic", message: `HarnessHub 代为执行了 /${command}：这条命令没有发给 ${product}，原来的会话已放下（没有删除，仍在 ${product} 里），下一条消息会在新会话里开始。` };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Checks and usage
+// Usage
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** A check's answer, marker by marker in the request's order, with the time it took. */
-export function verifyResult(request: VerifyRequest, results: readonly MarkerResult[], started: number, extra: Partial<Pick<VerifyResult, "historyEmpty" | "compaction" | "foreignAfterLast">> = {}): VerifyResult {
-  return { markers: request.markers.map((marker, index) => ({ packetId: marker.packetId, result: results[index] ?? "unavailable" })), historyEmpty: extra.historyEmpty ?? null,
-    compaction: extra.compaction ?? null, foreignAfterLast: extra.foreignAfterLast ?? null, verifyMs: Math.max(0, Math.round(Date.now() - started)) };
-}
-/** Every marker unavailable: what a Driver answers when it cannot look at all (never "absent"). */
-export function unavailable(request: VerifyRequest, started: number): VerifyResult { return verifyResult(request, request.markers.map(() => "unavailable"), started); }
-/** A compaction cursor's digest: sha256 of what identifies the compactions seen, or null for none. */
-export function cursorDigest(parts: readonly string[]): Fingerprint | null {
-  if (!parts.length) return null;
-  const hash = createHash("sha256");
-  for (const part of parts) hash.update(part, "utf8").update("\0");
-  return hash.digest("hex") as Fingerprint;
-}
 /** A per-request usage entry from native counts; null when the request's input is not a count. */
 export function usageRequest(input: unknown, cachedInput?: unknown, cacheWrite?: unknown): NonNullable<NativeUsage["requests"]>[number] | null {
   const count = (value: unknown): number | undefined => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
@@ -219,8 +143,4 @@ export function usageRequest(input: unknown, cachedInput?: unknown, cacheWrite?:
 /** A Turn's requests, oldest first, bounded to the latest MAX_USAGE_REQUESTS. */
 export function boundedRequests(requests: readonly NonNullable<NativeUsage["requests"]>[number][]): NonNullable<NativeUsage["requests"]> {
   return requests.length > MAX_USAGE_REQUESTS ? requests.slice(-MAX_USAGE_REQUESTS) : [...requests];
-}
-/** An authentication kind a Driver may report: a short plain word (account, api_key…), never a label or an account name. */
-export function authKind(value: unknown): string | null {
-  return typeof value === "string" && /^[a-z][a-z0-9_-]*$/u.test(value) && Buffer.byteLength(value) <= MAX_AUTH_KIND_BYTES ? value : null;
 }

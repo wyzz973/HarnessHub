@@ -8,12 +8,11 @@ import { unifiedDiff } from "../../infrastructure/control/unified-diff.js";
 import { MAX_NATIVE_SESSIONS, type NativeOutput, type NativeSessionImport, type NativeSessionPage, type NativeToolDetail, type NativeUsage } from "../../contracts/control.js";
 import { MAX_CONTENT_BYTES, textual, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
-import { homedir } from "node:os";
-import type { DataClass, RelayCapabilities, VendorObservation } from "../../contracts/relay.js";
-import { nativeReading, relayDeclaration, relayEntries, textClassify } from "./relay-classify.js";
-import { dshModelKey, dshVendor, readEndpoint, vendorObservation } from "./relay-vendor.js";
+import type { RelayCapabilities } from "../../contracts/relay.js";
+import { dshClassify, HUB_CLEAR, nativeReading, relayDeclaration, relayEntries } from "./relay-classify.js";
+import { dshModelKey, harnessVendor } from "./relay-vendor.js";
 import { type TurnText } from "../../contracts/control.js";
-import { bodyWithoutFirstLine, COMMAND_REFUSED, exceedsInput, INPUT_LIMIT_REFUSED, placeTurn, userWords, type RelayTurn, type Stripped, type UserText, measureBy } from "./relay-turn.js";
+import { bodyWithoutFirstLine, clearedNotice, COMMAND_REFUSED, exceedsInput, hubCleared, INPUT_LIMIT_REFUSED, placeTurn, type RelayTurn, measureBy } from "./relay-turn.js";
 
 interface ActivePrompt {
   readonly event: (event: ControlEvent) => void;
@@ -137,30 +136,22 @@ function loaded(value: unknown): Record<string, unknown> {
 /**
  * DeepSeek Harness's relay declaration (ADR-055 §8.1, DeepSeek Harness row). dsh runs on this generic driver, which the
  * factory hands this declaration: two text blocks (dsh joins them into one user message); its first message, thought or
- * tool call is weak live evidence, there is no check, and a completed turn proves nothing by itself; dsh has no commands,
- * so every input, a slash one included, is text; no compaction evidence; one process per connection; the vendor by the
- * endpoint the layers read here resolve (the inherited DEEPSEEK_BASE_URL, then the two `.env` files), otherwise DeepSeek;
- * the window from its usage reports; no native title entry (not guaranteed before P13). Not probed.
- *
- * The vendor key is exact only for the layers read: the plugin configuration's `baseURL` (dsh-llm-deepseek's highest layer)
- * and the routes of its other providers (dsh-llm-pi-ai) are not read, so a profile that sets either is keyed wrongly. The
- * probe gate covers it: with probed=false a relay to dsh is refused (RELAY_TARGET_UNVERIFIED), and P14 must cover the
- * profile and plugin configuration layers before this flips.
+ * tool call is weak live evidence, and a completed turn proves nothing by itself; dsh has no commands, so every input, a slash
+ * one included, is text, except the Hub's own clear (`/clear`, `/new`, `/reset` alone, relay-classify.ts HUB_CLEAR), which the
+ * Hub runs itself; no compaction evidence; one process per connection; the window from its usage reports; no native title entry.
  */
 export const dshRelayCapabilities: RelayCapabilities = relayDeclaration({
-  // probed gates D6 too (the Runtime continues the original session after an unknown Turn only for a probed process Driver):
-  // for this process Driver the flip to true needs P16 besides P2, P3, P6 and P11 (the approval agent's A3, 2026-11-10).
   probed: false,
   delivery: { live: "agent_output", verify: "none", successProvesRecorded: false, lateDelivery: false },
   execution: "process",
-  commands: { unlistedSlash: "text", hidden: [], classify: textClassify },
+  commands: { unlistedSlash: "text", hidden: relayEntries(HUB_CLEAR), classify: dshClassify },
   // Attachments go as ACP blocks after the two text blocks (G069 phase two, approval B8; to be probed).
   placement: { parts: "multiple", maxInput: null, pointersAfterUser: true, measure: measureBy("multiple", "chars", ["file"]) },
   window: "session_report",
   fixedPrefix: null,
   cacheTtl: "hours",
   compactionEvidence: "none",
-  resolveVendor: dshVendor,
+  resolveVendor: harnessVendor("dsh"),
   // dsh reports its model as a JSON array text of the provider and the model; the key is the last item (relay-conformance.md F8).
   normalizeModel: dshModelKey,
   title: "none",
@@ -176,7 +167,6 @@ export class AcpControl implements HarnessControl {
    */
   readonly relayCapabilities?: RelayCapabilities;
   private readonly rpc: JsonRpcProcess;
-  private readonly launchEnv: Readonly<Record<string, string>>;
   private initializing: Promise<ProtocolObservation> | null = null;
   private initialized = false;
   private version: string | null = null;
@@ -199,9 +189,8 @@ export class AcpControl implements HarnessControl {
    */
   private readonly permissions = new Map<string, { readonly request: string; readonly options: readonly string[]; readonly resolve: (value: unknown) => void; readonly reply?: (option: string, input?: string) => unknown; readonly dispose?: () => void }>();
   private configuredDefault: string | null = null;
-  /** The workspace the conversation was opened in, and how: a new session, or one restored by load or resume. */
+  /** The workspace the conversation was opened in. */
   private openedCwd: string | null = null;
-  private openMethod: "new" | "load" | "resume" | null = null;
   private modelConfigId: string | null = null;
   private legacyModels = false;
   private readonly openingMetadata: Record<string, unknown>[] = [];
@@ -221,7 +210,6 @@ export class AcpControl implements HarnessControl {
   constructor(launch: ControlLaunch, private readonly options: ControlOptions, relayCapabilities?: RelayCapabilities) {
     if (launch.protocol !== "acp-v1") throw new ControlError("INVALID_INPUT", "ACP control requires an ACP launch");
     if (relayCapabilities !== undefined) this.relayCapabilities = relayCapabilities;
-    this.launchEnv = launch.env;
     this.rpc = new JsonRpcProcess(launch, options, {
       notification: (method, params) => this.notification(method, params),
       request: request => this.serverRequest(request),
@@ -555,59 +543,18 @@ export class AcpControl implements HarnessControl {
     if (!this.catalog.canSelect || !id || id.length > 1024 || /[\0\r\n]/u.test(id)) return;
     this.catalog = { ...this.catalog, models: this.catalog.models.some(row => row.id === id) ? this.catalog.models : [...this.catalog.models, { id, name: id }], defaultModel: id };
   }
-  /**
-   * One update the agent replayed while open() restored the conversation (session/load), in stream order and before the
-   * open resolves; replays read for continuing a session (importSession) are not passed. The hook must return without
-   * waiting and must not keep the update's content beyond its own bounds. The default keeps nothing.
-   */
-  protected replayed(_kind: string, _update: Readonly<Record<string, unknown>>): void {}
   /** Rejects an identity that is not the conversation this connection owns now (a replacement after a clear included). */
   protected assertOwned(id: NativeConversationId): void {
     this.assertInitialized();
     if (this.conversation === null || id !== this.conversation || this.opening) throw new ControlError("IDENTITY_MISMATCH", "conversation is not owned by this connection");
   }
-  /** Whether a prompt of this connection is still running. */
-  protected get promptActive(): boolean { return this.active !== null; }
   /**
    * The commands the agent announced to this connection, as a relay catalog reads them; null before it announced any, when
    * a slash word that only a catalog settles is a possible command (and so carries no packet).
    */
   protected get announced(): ReturnType<typeof relayEntries> | null { return this.catalog.commands === undefined ? null : relayEntries(this.catalog.commands); }
-  /** How the open conversation was established: a new session, or restored by session/load or session/resume; null before open. */
-  protected get opened(): { readonly cwd: string; readonly method: "new" | "load" | "resume" } | null {
-    return this.openedCwd === null || this.openMethod === null || this.conversation === null ? null : { cwd: this.openedCwd, method: this.openMethod };
-  }
-  /** The environment the agent's process runs with (the options' and the launch's, as the process gets them). */
-  protected get processEnvironment(): Readonly<Record<string, string>> { return { ...this.options.env, ...this.launchEnv }; }
-  /** Which Harness's endpoint layers this Driver reads for its vendor (relay-vendor.ts); null for none (a Harness that declares nothing). */
-  protected get vendorHarness(): Parameters<typeof readEndpoint>[0] | null { return this.relayCapabilities !== undefined && this.relayCapabilities === dshRelayCapabilities ? "dsh" : null; }
-  /** The model the open conversation runs, as the agent reports it; null when the agent cannot tell. */
-  protected vendorModel(): string | null { return this.catalog.canSelect ? this.catalog.defaultModel : null; }
-  /** The authentication kind the agent reported (Claude's `_auth/status_update` kind); null when it reports none. */
-  protected vendorAuthKind(): string | null { return null; }
-  /**
-   * The endpoint and model this conversation runs on (ADR-055 §10.4): the Harness's own endpoint layers as it resolves them
-   * (readEndpoint, only the endpoint keys), with the model and sign-in the agent reported. Null before open(), for a Driver
-   * without a declaration, and when an endpoint layer cannot be read (an endpoint that cannot be known is never none).
-   */
-  async relayVendor(): Promise<VendorObservation | null> {
-    const declared = this.relayCapabilities, harness = this.vendorHarness, opened = this.opened;
-    if (declared === undefined || harness === null || opened === null) return null;
-    const model = this.vendorModel(), env = this.processEnvironment, separator = harness === "hermes" ? ":" : "/";
-    const index = model?.indexOf(separator) ?? -1, provider = model !== null && index > 0 ? model.slice(0, index).trim().toLowerCase() : null;
-    const reading = await readEndpoint(harness, { home: env.HOME || homedir(), values: env, workspace: opened.cwd }, provider);
-    return vendorObservation(reading, model, this.vendorAuthKind(), declared.normalizeModel);
-  }
-  /**
-   * The native wrapping a Driver's agent puts around a user entry, stripped before the packet is (a prefix such as OpenClaw's
-   * working directory, tags the agent injects); the default strips nothing.
-   */
-  protected nativeWrapping(replayed: string): UserText { return { user: replayed, stripped: [] }; }
-  /** The user's own words of a replayed native user entry (ADR-055 VF3-09): native wrapping, the relay packet and Hub's file pointers go. */
-  userTextOf(replayed: string): { readonly user: string; readonly stripped: readonly { readonly kind: DataClass; readonly bytes: number }[] } {
-    const native = this.nativeWrapping(replayed);
-    return userWords(native.user, native.stripped as readonly Stripped[]);
-  }
+  /** The workspace the open conversation was opened in; null before open and after the conversation was given up. */
+  protected get opened(): { readonly cwd: string } | null { return this.openedCwd === null || this.conversation === null ? null : { cwd: this.openedCwd }; }
   /** Waits for history replayed around a session/load response to go quiet; the window starts at the response. */
   private async replaySettled(): Promise<void> {
     this.lastReplay = Date.now();
@@ -625,13 +572,13 @@ export class AcpControl implements HarnessControl {
     return this.establish(cwd, model, options, checkpoint);
   }
   /**
-   * Gives up the session this connection owns (Claude's clear, ADR-055 §8.1, the approval agent's decision on B1 of the
-   * stage-two review): the connection owns no session from then on, refuses the old identity, and counts and drops whatever
-   * the agent still sends for it (a late reply, a permission request); open() may open a new one. No session is opened in its
-   * place: one never prompted cannot be resumed by another process (claude-agent-acp 0.99.1 answers sessionNotFound), so the
-   * next Turn opens its own. An agent that declares session/close is asked to close the old one, within CLOSE_SESSION_MS and
-   * without failing the connection when it refuses or does not answer; nothing it holds on disk is touched. Rejects while a
-   * prompt runs or a session is being opened.
+   * Gives up the session this connection owns (the Hub's clear, the decision log of 2026-11-11): the connection owns no
+   * session from then on, refuses the old identity, and counts and drops whatever the agent still sends for it (a late reply,
+   * a permission request); open() may open a new one. No session is opened in its place: one never prompted cannot be resumed
+   * by another process (claude-agent-acp 0.99.1 answers sessionNotFound), so the next Turn opens its own. An agent that declares
+   * session/close is asked to close the old one (unless closesAbandoned says the session lives in a gateway), within
+   * CLOSE_SESSION_MS and without failing the connection when it refuses or does not answer; nothing it holds on disk is touched.
+   * Rejects while a prompt runs or a session is being opened.
    */
   protected async abandonConversation(): Promise<void> {
     this.assertInitialized();
@@ -640,9 +587,36 @@ export class AcpControl implements HarnessControl {
     const previous = this.conversation;
     this.abandoned.add(previous); this.lastAbandoned = previous; this.conversation = null;
     const sessions = this.capabilities.sessionCapabilities == null ? {} : object(this.capabilities.sessionCapabilities, "native session capabilities");
-    if (sessions.close === undefined) return;
+    if (sessions.close === undefined || !this.closesAbandoned) return;
     try { await this.rpc.request("session/close", { sessionId: previous }, Math.min(this.options.requestTimeoutMs, CLOSE_SESSION_MS), "reject"); }
     catch { /* A refusal, a missed deadline or a failed connection leaves the session abandoned all the same. */ }
+  }
+  /**
+   * Whether an abandoned session is asked to close. A Driver whose sessions live in a gateway of the user's (Hermes, OpenClaw)
+   * only lets go of its reference: nothing is sent to the gateway for a clear, not even a close.
+   */
+  protected get closesAbandoned(): boolean { return true; }
+  /** The Harness's name as the Turn's notices say it. */
+  protected get product(): string { return this.relayCapabilities === dshRelayCapabilities ? "DeepSeek Harness" : "原程序"; }
+  /**
+   * The Hub's clear (the decision log of 2026-11-11: clearing a conversation is the Hub's, on every Driver). An input whose
+   * words this Driver reads as a command with the effect clear is not sent: the native session is given up and the Turn reports
+   * the history cleared with no checkpoint, so the next Turn opens a new native session. Null for any other input, which goes on
+   * as a Turn. A relay Turn is never run as a clear: its words read as a command, and it is refused whole before (relayRefused,
+   * relayParts). A Driver that does other work before the base startText asks this first, so that a clear touches nothing.
+   */
+  protected clearRun(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[]): ControlRun | null {
+    if (typeof turn !== "string") return null;
+    const reading = this.classify(turn, this.catalog, attachments.map(file => file.kind));
+    if (reading.kind !== "command" || reading.effect !== "clear") return null;
+    this.assertOwned(id);
+    if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
+    const cleared = async (): Promise<BackendResult> => {
+      await this.abandonConversation();
+      onEvent(clearedNotice(reading.name, this.product));
+      return hubCleared();
+    };
+    return { result: cleared(), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "a clear the Hub runs itself has no native turn to stop")) };
   }
   /** Sessions this connection gave up (abandonConversation), whose late messages are counted and dropped; the latest one. */
   private readonly abandoned = new Set<string>();
@@ -672,7 +646,7 @@ export class AcpControl implements HarnessControl {
       this.lastAbandoned = null;
       if (method === "session/load") await this.replaySettled();
       this.replaying = false;
-      this.openedCwd = cwd; this.openMethod = method === "session/load" ? "load" : method === "session/resume" ? "resume" : "new";
+      this.openedCwd = cwd;
       this.readModels(response); this.configuredDefault=this.catalog.defaultModel;
       for (const params of this.openingMetadata.splice(0)) this.notification("session/update", params);
       // A value the session already runs is not requested again (Hermes's set_model can reroute an unchanged model).
@@ -734,7 +708,7 @@ export class AcpControl implements HarnessControl {
     return typeof turn !== "string" && this.relayParts(turn, attachments) === null ? refusedRun(COMMAND_REFUSED) : null;
   }
   async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
-    return this.sendPrompt(id, turn, onEvent, attachments, null);
+    return this.clearRun(id, turn, onEvent, attachments) ?? this.sendPrompt(id, turn, onEvent, attachments, null);
   }
   /**
    * startText, with a deadline of its own for a prompt the native side answers itself (Hermes's `/title`): when it passes, the
@@ -868,7 +842,6 @@ export class AcpControl implements HarnessControl {
       this.lastReplay = Date.now();
       this.replayBytes += Buffer.byteLength(JSON.stringify(params));
       if (this.replayBytes > 64 * 1024 * 1024) throw new ControlError("REPLAY_LIMIT", "native history replay exceeded its budget");
-      if (this.collected === null) this.replayed(kind, update);
       if (this.collected && (kind === "user_message_chunk" || kind === "agent_message_chunk")) { this.collect(kind === "user_message_chunk" ? "user" : "assistant", update.content); return; }
       if (!metadataUpdates.has(kind)) return;
     }

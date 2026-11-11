@@ -11,9 +11,9 @@ import { HermesControl } from "../../src/adapters/control/hermes.js";
 import { OpenClawControl } from "../../src/adapters/control/openclaw.js";
 import { OpenCodeControl } from "../../src/adapters/control/opencode.js";
 
-// G069 phase two: the six Drivers on the relay peer (tests/fixtures/relay-control-peer.mjs) as real child processes, each in a
-// private temporary root; OpenClaw's Gateway calls are answered from the peer's own state file, as the Gateway reads what
-// the bridge stored. Nothing here runs a Harness or reads a user's configuration.
+// The six Drivers on the relay peer (tests/fixtures/relay-control-peer.mjs) as real child processes, each in a private
+// temporary root; OpenClaw's Gateway calls are answered from the peer's own state file, as the Gateway reads what the bridge
+// stored. Nothing here runs a Harness or reads a user's configuration.
 
 export type Harness = "claude" | "codex" | "opencode" | "dsh" | "hermes" | "openclaw";
 const PEER = resolve("tests/fixtures/relay-control-peer.mjs");
@@ -36,7 +36,7 @@ export interface Peer {
   /** The messages the peer received, in order. */
   sent(): Promise<readonly { readonly method?: string; readonly params?: Record<string, unknown>; readonly id?: unknown }[]>;
   /** The peer's native state (sessions and threads). */
-  native(): Promise<{ readonly sessions: Record<string, { readonly entries: readonly Record<string, unknown>[]; readonly revision: string; readonly title: string | null }>; readonly threads: Record<string, { readonly turns: readonly Record<string, unknown>[]; readonly name: string | null }> }>;
+  native(): Promise<{ readonly sessions: Record<string, { readonly entries: readonly Record<string, unknown>[]; readonly title: string | null }>; readonly threads: Record<string, { readonly turns: readonly Record<string, unknown>[]; readonly name: string | null }> }>;
 }
 /** A private root with a workspace, the peer's state file and its trace; removed after the test. */
 export async function peerRoot(t: TestContext, env: Readonly<Record<string, string>> = {}): Promise<Peer> {
@@ -52,7 +52,7 @@ export async function peerRoot(t: TestContext, env: Readonly<Record<string, stri
 export function options(peer: Peer, overrides: Partial<ControlOptions> = {}): ControlOptions {
   return { cwd: peer.workspace, env: peer.env, requestTimeoutMs: 3000, runTimeoutMs: 8000, maxFrameBytes: 4 << 20, maxDiagnosticBytes: 1 << 14, closeGraceMs: 150, ...overrides };
 }
-/** OpenClaw's Gateway as the driver's original CLI reads it: the bridge's stored rows of the one session, after its latest reset. */
+/** OpenClaw's Gateway as the driver's original CLI reads it: the bridge's stored rows of the one session. */
 export function gatewayOf(peer: Peer, overrides: Partial<Record<string, (params: Readonly<Record<string, unknown>>) => Promise<unknown>>> = {}) {
   return async (method: string, params: Readonly<Record<string, unknown>>): Promise<unknown> => {
     const override = overrides[method];
@@ -62,12 +62,9 @@ export function gatewayOf(peer: Peer, overrides: Partial<Record<string, (params:
     if (method === "models.list") return { models: [] };
     if (method === "sessions.list") return { sessions: [] };
     if (method === "chat.history") return { messages: [] };
-    if (method === "sessions.describe") return { session: owned === undefined ? null : { lifecycleRevision: owned.revision } };
     if (method === "sessions.get") {
-      const entries = owned?.entries ?? [], reset = entries.map(entry => entry.kind).lastIndexOf("reset"), shown = entries.slice(Math.max(0, reset));
-      const limit = typeof params.limit === "number" ? params.limit : 200;
-      return { messages: shown.slice(-limit).map(entry => entry.role === "system" ? { role: "system", content: [{ type: "text", text: "Reset" }], __openclaw: { kind: entry.kind, seq: entry.seq } }
-        : { role: entry.role, content: entry.role === "user" ? entry.text : [{ type: "text", text: entry.text }], ...(entry.usage === undefined ? {} : { usage: entry.usage }), __openclaw: { seq: entry.seq, ...(entry.kind === undefined ? {} : { kind: entry.kind }) } }) };
+      const entries = owned?.entries ?? [], limit = typeof params.limit === "number" ? params.limit : 200;
+      return { messages: entries.slice(-limit).map(entry => ({ role: entry.role, content: entry.role === "user" ? entry.text : [{ type: "text", text: entry.text }], ...(entry.usage === undefined ? {} : { usage: entry.usage }), __openclaw: { seq: entry.seq } })) };
     }
     throw new Error("unexpected OpenClaw method " + method);
   };

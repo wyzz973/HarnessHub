@@ -54,13 +54,33 @@ export function relayDeclaration(declaration: RelayCapabilities): RelayCapabilit
 const accepts = (listed: { readonly acceptsRelay?: true } | undefined): { readonly acceptsRelay?: true } => listed?.acceptsRelay ? { acceptsRelay: true } : {};
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The shared reading and a native side without commands
+// The shared reading
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** The shared reading (control.ts sharedReading) as a relay declaration's classify. */
 export const sharedClassify: RelayClassify = (text, catalog) => sharedReading(text, catalog === null ? null : relayCommands(catalog));
-/** A native side that has no commands and sends every input, a slash one included, as text to its model (unlistedSlash text). */
-export const textClassify: RelayClassify = () => ({ kind: "content" });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The Hub's clear
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * The words that clear a conversation in the Hub, whichever Harness it runs on (the decision log of 2026-11-11: clearing is the
+ * Hub's). A native side that has these commands (Claude Code, Hermes, OpenClaw) reads them as it reads its own; one that has
+ * none (Codex, OpenCode, DeepSeek Harness) is given them by the Hub, and for it a clear is exactly one of the words alone: no
+ * arguments and no attachment, so that nothing the user typed with one is dropped (hubClearReading). No Driver sends them: it
+ * gives up the native session, and the next Turn opens a new one.
+ */
+export const HUB_CLEAR_NAMES: readonly string[] = ["clear", "reset", "new"];
+/** The Hub's clear words as commands the declaration lists as hidden: the native side does not list them. */
+export const HUB_CLEAR: readonly NativeCommand[] = HUB_CLEAR_NAMES.map(name => ({ name, description: "清空会话上下文（HarnessHub 开一个新的原生会话）", contextEffect: "clear" as const }));
+/** A clear as the Hub reads it where the native side has none: the slash first, one word, nothing after it but whitespace. */
+const HUB_CLEAR_INPUT = /^\/(clear|reset|new)\s*$/u;
+/** The Hub's clear an input asks for, or null: exactly one of its words, with nothing before or after it, and no attachment. */
+export function hubClearReading(text: string, attachments: readonly ContentKind[] = []): CommandClass | null {
+  const named = attachments.length === 0 ? HUB_CLEAR_INPUT.exec(text) : null;
+  return named === null ? null : { kind: "command", name: named[1]!, args: "", effect: "clear" };
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Claude Code (claude-agent-acp)
@@ -148,12 +168,15 @@ export function codexThreadOperation(text: string, attached: boolean): "export" 
 }
 /**
  * Codex's reading: the app-server has no slash commands. Exactly `/export` and `/compact`, without attachments, are the
- * driver's thread operations, and `/skill:<name> …` is an input with that skill when the catalog lists it (only the catalog
- * settles the name), which submits its text as a prompt (acceptsRelay). Anything else, leading whitespace included, is text.
+ * driver's thread operations, exactly `/clear`, `/new` and `/reset` alone are the Hub's clear (hubClearReading), and
+ * `/skill:<name> …` is an input with that skill when the catalog lists it (only the catalog settles the name), which submits
+ * its text as a prompt (acceptsRelay). Anything else, leading whitespace included, is text.
  */
 export function codexReading(text: string, commands: CommandLookup | null, attachments: readonly ContentKind[]): CommandClass {
   const operation = codexThreadOperation(text, attachments.length > 0);
   if (operation !== null) { const own = CODEX_THREAD_COMMANDS.find(command => command.name === operation)!; return { kind: "command", name: own.name, args: "", effect: own.contextEffect }; }
+  const cleared = hubClearReading(text, attachments);
+  if (cleared !== null) return cleared;
   const invoked = CODEX_SKILL_INPUT.exec(text);
   if (invoked === null) return { kind: "content" };
   const name = "skill:" + invoked[1]!;
@@ -183,18 +206,21 @@ export function openCodeCommand(text: string): { readonly name: string; readonly
 /**
  * OpenCode's reading: trimmed, `/compact` or a listed command is a command, with or without attachments; a configured
  * command's template enters the session (keep, also for an unknown effect); any other slash input is text for the model.
+ * Its ACP has no clear: the Hub's `/clear`, `/new` and `/reset` are the words alone, trimmed like its own commands, with no
+ * attachment and no arguments (HUB_CLEAR_NAMES), and win over a configured command of the same name.
  */
-export function openCodeReading(text: string, commands: CommandLookup | null): CommandClass {
+export function openCodeReading(text: string, commands: CommandLookup | null, attachments: readonly ContentKind[] = []): CommandClass {
   const named = openCodeCommand(text);
   if (named === null) return { kind: "content" };
   if (named.name === OPENCODE_COMPACT.name) return { kind: "command", name: OPENCODE_COMPACT.name, args: named.args, effect: OPENCODE_COMPACT.contextEffect };
+  if (attachments.length === 0 && named.args === "" && HUB_CLEAR_NAMES.includes(named.name)) return { kind: "command", name: named.name, args: "", effect: "clear" };
   if (commands === null) return { kind: "possible_command", name: named.name };
   const listed = commands(named.name, named.args);
   return listed === undefined ? { kind: "content" } : { kind: "command", name: named.name, args: named.args, effect: listed.effect === undefined || listed.effect === "unknown" ? "keep" : listed.effect, ...accepts(listed) };
 }
-export const openCodeClassify: RelayClassify = (text, catalog) => openCodeReading(text, catalog === null ? null : relayCommands(catalog));
+export const openCodeClassify: RelayClassify = (text, catalog, attachments = []) => openCodeReading(text, catalog === null ? null : relayCommands(catalog), attachments);
 /** HarnessControl.classify of the OpenCode driver. */
-export function openCodeNativeClassify(text: string, catalog: NativeModelCatalog | null): CommandClass { return nativeReading(openCodeReading(text, lookupOf(catalog))); }
+export function openCodeNativeClassify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return nativeReading(openCodeReading(text, lookupOf(catalog), attachments)); }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Hermes Agent (gateway viewer)
@@ -302,17 +328,26 @@ export function hermesNativeClassify(text: string, catalog: NativeModelCatalog |
 /**
  * What OpenClaw's own slash commands do to its session (docs/tools/slash-commands.md, v2026.10.9): `/new` archives it and
  * starts another, `/reset` resets it in place (`/reset soft` keeps the transcript), `/compact` compacts it, `/stop` stops
- * the run; the settings commands change no history; `/restart` and `/bash` act outside the session (unknown effect).
+ * the run; the settings commands change no history; `/restart` and `/bash` act outside the session (unknown effect). `/clear`
+ * is none of its commands: it is the Hub's clear, like `/new` and `/reset`, which the Hub runs without asking OpenClaw.
  */
-export const OPENCLAW_COMMAND_EFFECTS: Readonly<Record<string, ContextEffect>> = { new: "clear", reset: "clear", compact: "compact", stop: "none", restart: "unknown", bash: "unknown",
+export const OPENCLAW_COMMAND_EFFECTS: Readonly<Record<string, ContextEffect>> = { new: "clear", reset: "clear", clear: "clear", compact: "compact", stop: "none", restart: "unknown", bash: "unknown",
   think: "none", verbose: "none", trace: "none", reasoning: "none", elevated: "none", model: "none", queue: "none", usage: "none", fast: "none" };
+/** The Hub's clear words the OpenClaw bridge does not list: `/clear` (the bridge lists `/new` and `/reset`). */
+export const OPENCLAW_HIDDEN: readonly NativeCommand[] = HUB_CLEAR.filter(command => command.name === "clear");
 /** The effect OPENCLAW_COMMAND_EFFECTS names for a command, or undefined: only its own entries count (no Object member). */
 export function openClawCommandEffect(name: string): ContextEffect | undefined { return Object.hasOwn(OPENCLAW_COMMAND_EFFECTS, name) ? OPENCLAW_COMMAND_EFFECTS[name] : undefined; }
 function openClawEffect(name: string, args: string): ContextEffect {
   return name === "reset" && args.split(/\s+/u)[0] === "soft" ? "compact" : openClawCommandEffect(name) ?? "unknown";
 }
-/** OpenClaw's reading: the bridge's listed commands (the shared reading), with the effects OpenClaw gives its own by arguments. */
+/**
+ * OpenClaw's reading: the bridge's listed commands (the shared reading), with the effects OpenClaw gives its own by arguments.
+ * The Hub's clear words (HUB_CLEAR_NAMES) are commands whatever the catalog lists, so that the Hub gives the session up for
+ * them before the bridge could be asked: `/new` and `/reset` clear, `/reset soft` compacts and is sent, `/clear` clears.
+ */
 export function openClawReading(text: string, commands: CommandLookup | null): CommandClass {
+  const word = text.startsWith("/") ? text.slice(1).split(/\s/u)[0]! : "";
+  if (HUB_CLEAR_NAMES.includes(word)) { const args = text.slice(1 + word.length).trim(); return { kind: "command", name: word, args, effect: openClawEffect(word, args) }; }
   const reading = sharedReading(text, commands);
   // The effect of a command OpenClaw names here depends on its arguments (`/reset soft`), whatever the catalog declares.
   return reading.kind === "command" && openClawCommandEffect(reading.name) !== undefined ? { ...reading, effect: openClawEffect(reading.name, reading.args) } : reading;
@@ -320,3 +355,10 @@ export function openClawReading(text: string, commands: CommandLookup | null): C
 export const openClawClassify: RelayClassify = (text, catalog) => openClawReading(text, catalog === null ? null : relayCommands(catalog));
 /** HarnessControl.classify of the OpenClaw driver. */
 export function openClawNativeClassify(text: string, catalog: NativeModelCatalog | null): CommandClass { return nativeReading(openClawReading(text, lookupOf(catalog))); }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// DeepSeek Harness (the generic ACP driver)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** DeepSeek Harness has no commands and sends every input, a slash one included, as text to its model; but for the Hub's clear. */
+export const dshClassify: RelayClassify = (text, _catalog, attachments = []) => hubClearReading(text, attachments) ?? { kind: "content" };

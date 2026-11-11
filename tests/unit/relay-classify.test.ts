@@ -105,7 +105,7 @@ test("G069-C03 Claude Code: a command only with the slash as the first character
   assert.deepEqual(claudeRelayCapabilities.commands.hidden.map(entry => [entry.name, entry.effect]), [["clear", "clear"], ["reset", "clear"], ["new", "clear"], ["remote-control", "none"]]);
 });
 
-test("G069-C03 Codex: exactly /export, /compact and a listed /skill: (which takes relay content); no lstrip, every other slash input is text (unlistedSlash text)", () => {
+test("G069-C03 Codex: exactly /export, /compact, the Hub's clear alone and a listed /skill: (which takes relay content); no lstrip, every other slash input is text (unlistedSlash text)", () => {
   const classify = codexRelayCapabilities.commands.classify, catalog = entries(["compact", "compact"], ["export", "none"], ["skill:review", "keep"]);
   check(classify, [
     { rule: "the thread operations, exactly", read: [["/compact", null, [], ["command", "compact", "compact", ""]], ["/export  ", null, [], ["command", "export", "none", ""]]],
@@ -115,12 +115,25 @@ test("G069-C03 Codex: exactly /export, /compact and a listed /skill: (which take
     { rule: "a listed skill submits its text", read: [["/skill:review the diff", catalog, [], ["command", "skill:review", "keep", "the diff", "relay"]], ["/skill:review it", catalog, ["image"], ["command", "skill:review", "keep", "it", "relay"]]],
       not: ["/skill:other", catalog, [], ["content"]] },
     { rule: "an unlisted slash word is text", read: [["/review", catalog, [], ["content"]], ["/compact now", catalog, [], ["content"]]], not: ["/skill:review", null, [], ["possible_command", "skill:review"]] },
+    // Codex's app-server has no clear: the Hub's is exactly /clear, /new or /reset, nothing before, after or with it.
+    { rule: "the Hub's clear, exactly", read: [["/clear", null, [], ["command", "clear", "clear", ""]], ["/new", catalog, [], ["command", "new", "clear", ""]], ["/reset  ", null, [], ["command", "reset", "clear", ""]],
+      ["/clear\n", null, [], ["command", "clear", "clear", ""]]], not: ["/clear now", null, [], ["content"]] },
+    { rule: "no leading whitespace and no word that only starts like one", read: [[" /clear", null, [], ["content"]], ["　/new", null, [], ["content"]], ["/cleared", null, [], ["content"]], ["clear", null, [], ["content"]]],
+      not: ["/clear", null, [], ["command", "clear", "clear", ""]] },
+    { rule: "with an attachment the Hub's clear is text: it would drop the attachment", read: [["/clear", null, ["file"], ["content"]], ["/new", null, ["image"], ["content"]], ["/reset", null, ["audio"], ["content"]]],
+      not: ["/clear", null, [], ["command", "clear", "clear", ""]] },
   ]);
 });
 
-test("G069-C03 OpenCode: trimmed, /compact and listed commands (keep for an unknown effect); any other slash input is text (unlistedSlash text)", () => {
+test("G069-C03 OpenCode: trimmed, /compact, the Hub's clear alone and listed commands (keep for an unknown effect); any other slash input is text (unlistedSlash text)", () => {
   const classify = openCodeRelayCapabilities.commands.classify, catalog = entries(["review", "unknown"], ["init", "none"]);
   check(classify, [
+    // OpenCode's ACP has no clear: the Hub's is /clear, /new or /reset alone, trimmed as its commands are, even over a listed command
+    // of the same name; with arguments or an attachment it is not one.
+    { rule: "the Hub's clear, trimmed", read: [["/clear", null, [], ["command", "clear", "clear", ""]], ["  /new  ", catalog, [], ["command", "new", "clear", ""]], ["\t　/reset", null, [], ["command", "reset", "clear", ""]],
+      ["/new", entries(["new", "keep"]), [], ["command", "new", "clear", ""]]], not: ["/new now", entries(["new", "keep"]), [], ["command", "new", "keep", "now"]] },
+    { rule: "with arguments or an attachment it is not the Hub's clear", read: [["/clear now", catalog, [], ["content"]], ["/reset the plan", null, [], ["possible_command", "reset"]], ["/clear", null, ["file"], ["possible_command", "clear"]],
+      ["/new", entries(["new", "keep"]), ["image"], ["command", "new", "keep", ""]]], not: ["/clear", catalog, [], ["command", "clear", "clear", ""]] },
     { rule: "trimmed, half-width and full-width", read: [["  /compact  ", null, [], ["command", "compact", "compact", ""]], ["　/compact", null, [], ["command", "compact", "compact", ""]]],
       not: ["/ compact", null, [], ["content"]] },
     { rule: "a listed command; unknown effect keeps", read: [["/review now", catalog, [], ["command", "review", "keep", "now"]], ["\t/init  x ", catalog, [], ["command", "init", "none", "x"]]],
@@ -136,16 +149,25 @@ test("G069-C03 OpenClaw: the bridge's listed commands with effects by arguments;
       ["/think high", bridge, [], ["command", "think", "none", "high"]]], not: ["/reset", bridge, [], ["command", "reset", "clear", ""]] },
     { rule: "unlisted is a prompt", read: [["/nope", bridge, [], ["content"]], ["/Users/me/a.md", bridge, [], ["content"]]], not: ["/nope", null, [], ["possible_command", "nope"]] },
     { rule: "no leading-whitespace strip", read: [["/new", bridge, [], ["command", "new", "clear", ""]]], not: [" /new", bridge, [], ["content"]] },
+    // The Hub's clear words are commands whatever the catalog lists, or none yet: the Driver gives the session up before the bridge could be asked.
+    // `/clear` is not one of the bridge's commands; `/reset soft` stays its own (it keeps the transcript).
+    { rule: "the Hub's clear words need no catalog", read: [["/new", null, [], ["command", "new", "clear", ""]], ["/reset", [], [], ["command", "reset", "clear", ""]], ["/clear", bridge, [], ["command", "clear", "clear", ""]],
+      ["/clear", null, [], ["command", "clear", "clear", ""]], ["/reset soft", null, [], ["command", "reset", "compact", "soft"]]], not: ["/nope", null, [], ["possible_command", "nope"]] },
   ]);
 });
 
-test("G069-C03 DeepSeek Harness: unlistedSlash=text and no commands, so every input is content, whatever a catalog lists", () => {
-  const classify = dshRelayCapabilities.commands.classify, listing = entries(["clear", "clear"], ["compact", "compact"]);
+test("G069-C03 DeepSeek Harness: unlistedSlash=text and no commands but the Hub's clear alone, so every other input is content, whatever a catalog lists", () => {
+  const classify = dshRelayCapabilities.commands.classify, listing = entries(["clear", "keep"], ["compact", "compact"]);
   assert.equal(dshRelayCapabilities.commands.unlistedSlash, "text");
-  for (const text of ["/clear", "　/clear", " /compact", "/compact", "/skill:x", "/Users/me", "hello", ""]) for (const catalog of [null, [], listing] as const)
+  for (const text of ["　/clear", " /compact", "/compact", "/skill:x", "/Users/me", "hello", "", "/clear now", "/newer", "clear"]) for (const catalog of [null, [], listing] as const)
     assert.deepEqual(classify(text, catalog, []), { kind: "content" }, JSON.stringify(text));
-  // The invalid sample: the shared reading, which dsh does not have, reads a listed slash word as a command.
-  assert.deepEqual(row(sharedClassify("/clear", listing, [])), ["command", "clear", "clear", ""]);
+  // The Hub's clear is /clear, /new or /reset alone, whatever a catalog lists (it lists /clear as a command that keeps the history), and not with an attachment.
+  for (const [text, name] of [["/clear", "clear"], ["/new", "new"], ["/reset ", "reset"]] as const) for (const catalog of [null, [], listing] as const) {
+    assert.deepEqual(row(classify(text, catalog, [])), ["command", name, "clear", ""], JSON.stringify(text));
+    assert.deepEqual(classify(text, catalog, ["file"]), { kind: "content" }, JSON.stringify(text) + " with a file");
+  }
+  // The invalid sample: the shared reading, which dsh does not have, reads a listed slash word as a command with the effect the catalog gives it.
+  assert.deepEqual(row(sharedClassify("/clear", listing, [])), ["command", "clear", "keep", ""]);
 });
 
 test("G069-C03 a relay catalog's effect may depend on the arguments, and a listed command may take relay content; the native reading leaves acceptsRelay out", () => {
@@ -188,20 +210,21 @@ test("G069-C03 one source: each Driver's HarnessControl.classify equals its rela
       assert.deepEqual(control.classify!(text, catalog, attachments), nativeReading(declared(text, relay, attachments)), name + " " + JSON.stringify(text) + " " + attachments.join(","));
       compared++;
     }
-    // dsh runs on the generic driver, which reads with the declaration the factory hands it (always content), with or
-    // without a catalog and whatever the catalog lists; the generic driver without one keeps the shared reading.
+    // dsh runs on the generic driver, which reads with the declaration the factory hands it (content, but for the Hub's clear alone),
+    // with or without a catalog and whatever the catalog lists; the generic driver without one keeps the shared reading.
     const dsh = new AcpControl(acp, options, dshRelayCapabilities), generic = new AcpControl(acp, options);
+    const dshReads = (text: string, attachments: readonly ContentKind[]): CommandClass => attachments.length === 0 && /^\/(clear|reset|new)\s*$/u.test(text) ? { kind: "command", name: text.trim().slice(1), args: "", effect: "clear" } : { kind: "content" };
     for (const catalog of catalogs) for (const attachments of [[], ["file"], ["image"]] as const) for (const prefix of prefixes) for (const body of bodies) {
       const text = prefix + body;
       assert.deepEqual(dsh.classify(text, catalog, attachments), nativeReading(dshRelayCapabilities.commands.classify(text, catalog === null ? null : relayEntries(catalog.commands ?? []), attachments)), "dsh " + JSON.stringify(text));
-      assert.deepEqual(dsh.classify(text, catalog, attachments), { kind: "content" });
+      assert.deepEqual(dsh.classify(text, catalog, attachments), dshReads(text, attachments), "dsh " + JSON.stringify(text));
       assert.deepEqual(generic.classify(text, catalog, attachments), listedCommand(text, catalog), "generic " + JSON.stringify(text));
       compared++;
     }
-    // The invalid samples: the shared reading of a listed /clear and of /x without a catalog, which dsh no longer has.
-    assert.deepEqual(generic.classify("/clear", listing(["clear", "clear"])), { kind: "command", name: "clear", args: "", effect: "clear" });
+    // The invalid samples: the shared reading of a listed /compact and of /x without a catalog, which dsh no longer has.
+    assert.deepEqual(generic.classify("/compact", listing(["compact", "compact"])), { kind: "command", name: "compact", args: "", effect: "compact" });
     assert.deepEqual(generic.classify("/x", null), { kind: "possible_command", name: "x" });
-    assert.deepEqual(dsh.classify("/clear", listing(["clear", "clear"])), { kind: "content" }); assert.deepEqual(dsh.classify("/x", null), { kind: "content" });
+    assert.deepEqual(dsh.classify("/compact", listing(["compact", "compact"])), { kind: "content" }); assert.deepEqual(dsh.classify("/x", null), { kind: "content" });
     await dsh.close(); await generic.close();
   } finally { for (const [, control] of drivers) await control.close(); }
   assert.equal(compared, 6 * 3 * 3 * prefixes.length * bodies.length);

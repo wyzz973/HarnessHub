@@ -201,8 +201,8 @@ test("G067-C03 Hermes: a gateway that was unavailable admitted nothing, a failur
   assert.ok(unknown.events.some(event => event.type === "diagnostic" && event.message.includes("/discard adm-7")));
   assert.equal(await lost.received("session/prompt"), 1);
   // A slash input is a command as the viewer reads it (Python's lstrip, so a full-width space too): its reply proves nothing.
-  const cleared = f.launch("acp-v1", { RELAY_PROMPT: "answer" });
-  assert.equal((await turn(new HermesControl(cleared.launch, options, attached), "　/clear")).result.input, undefined);
+  const compressed = f.launch("acp-v1", { RELAY_PROMPT: "answer" });
+  assert.equal((await turn(new HermesControl(compressed.launch, options, attached), "　/compress")).result.input, undefined);
 });
 
 test("G067-C03 OpenClaw: an unapplied model sent nothing, a user row in the turn's transcript is recorded even when the turn failed, an unreadable transcript is unknown", async t => {
@@ -345,15 +345,15 @@ test("G067 R0d each driver's own handling of an input follows its reading: leadi
   assert.equal((await turn(new CodexControl(codexCompact.launch, options), "/compact", undefined, false, [file])).result.input, "recorded");
   assert.equal(await codexCompact.received("turn/start"), 1); assert.equal(await codexCompact.received("thread/compact/start"), 0);
   // Hermes: `  /EXPORT` is its registry's export, which the Hub runs when Hermes lists none. With an image `/clear` is prompt text;
-  // a file goes as a text pointer after it, and Hermes still runs `/clear`.
+  // a file goes as a text pointer after a command, and Hermes still runs it (`/compress`; the Hub's own `/clear` is not sent).
   const hermesExport = f.launch("acp-v1", { RELAY_PROMPT: "answer" });
   const exported = await turn(new HermesControl(hermesExport.launch, options, attached), "  /EXPORT", undefined, true);
   assert.equal(exported.result.reason, "export_failed"); assert.equal(exported.result.input, "not_recorded"); assert.equal(await hermesExport.received("session/prompt"), 0);
   const hermesImage = f.launch("acp-v1", { RELAY_PROMPT: "answer" }), picture = await attachment(f.root, "screen.png", "image");
   assert.equal((await turn(new HermesControl(hermesImage.launch, options, attached), "/clear", undefined, false, [picture])).result.input, "recorded", "read as content, its answer proves it recorded");
   const hermesFile = f.launch("acp-v1", { RELAY_PROMPT: "answer" });
-  assert.deepEqual((await turn(new HermesControl(hermesFile.launch, options, attached), "/clear", undefined, false, [file])).result, { status: "completed", reason: "end_turn" }, "a command: its answer proves nothing");
-  assert.match((await hermesFile.prompts())[0]!, /^\/clear\n\n\[Attached file\] notes\.txt /u);
+  assert.deepEqual((await turn(new HermesControl(hermesFile.launch, options, attached), "/compress", undefined, false, [file])).result, { status: "completed", reason: "end_turn" }, "a command: its answer proves nothing");
+  assert.match((await hermesFile.prompts())[0]!, /^\/compress\n\n\[Attached file\] notes\.txt /u);
   // OpenCode trims an input before it looks for a command (`Iuf`): `  /compact` that answered nothing was ignored.
   const ignored = await turn(new OpenCodeControl(f.launch("acp-v1", { RELAY_PROMPT: "silent" }).launch, options), "  /compact");
   assert.equal(ignored.result.error?.code, "NATIVE_COMMAND_IGNORED");
@@ -381,6 +381,9 @@ test("G067 R0d each driver reads an input as its native side parses it: whitespa
   assert.deepEqual(read(codex, "/skill:review the diff"), ["possible_command", "skill:review"]);
   assert.deepEqual(read(codex, "/skill:review the diff", listed(["skill:review", "keep"])), ["command", "skill:review", "keep", "the diff"]);
   assert.deepEqual(read(codex, "/skill:other", listed(["skill:review", "keep"])), ["content"]); assert.deepEqual(read(codex, "/review"), ["content"]);
+  // The Hub's clear: `/clear`, `/new` and `/reset` alone; with arguments, a leading space or an attachment they are text.
+  assert.deepEqual(read(codex, "/clear"), ["command", "clear", "clear", ""]); assert.deepEqual(read(codex, "/new "), ["command", "new", "clear", ""]);
+  assert.deepEqual(read(codex, "/clear now"), ["content"]); assert.deepEqual(read(codex, " /clear"), ["content"]); assert.deepEqual(read(codex, "/clear", null, ["file"]), ["content"]);
   // With attachments the thread operations are text for Codex; a listed skill is still a skill.
   assert.deepEqual(read(codex, "/compact", null, ["file"]), ["content"]); assert.deepEqual(read(codex, "/export", null, ["image"]), ["content"]);
   assert.deepEqual(read(codex, "/skill:review it", listed(["skill:review", "keep"]), ["image"]), ["command", "skill:review", "keep", "it"]);
@@ -388,6 +391,10 @@ test("G067 R0d each driver reads an input as its native side parses it: whitespa
   const opencode = new OpenCodeControl(launch, options);
   assert.deepEqual(read(opencode, "/compact"), ["command", "compact", "compact", ""]); assert.deepEqual(read(opencode, "/review"), ["possible_command", "review"]);
   assert.deepEqual(read(opencode, "/review now", listed(["review", "keep"])), ["command", "review", "keep", "now"]); assert.deepEqual(read(opencode, "/nope", listed(["review", "keep"])), ["content"]);
+  // Its ACP has no clear: the Hub's `/clear`, `/new` and `/reset` alone, trimmed like its commands, without an attachment.
+  assert.deepEqual(read(opencode, "/clear"), ["command", "clear", "clear", ""]); assert.deepEqual(read(opencode, " /new\t"), ["command", "new", "clear", ""]);
+  assert.deepEqual(read(opencode, "/reset the plan"), ["possible_command", "reset"]); assert.deepEqual(read(opencode, "/clear", null, ["file"]), ["possible_command", "clear"]);
+  assert.deepEqual(read(opencode, "/clear", listed(["review", "keep"])), ["command", "clear", "clear", ""]); assert.deepEqual(read(opencode, "/reset the plan", listed(["review", "keep"])), ["content"]);
   // It trims an input before it looks for its command (`Iuf`), attachments or not.
   assert.deepEqual(read(opencode, "  /compact  "), ["command", "compact", "compact", ""]); assert.deepEqual(read(opencode, "\t/review  now ", listed(["review", "keep"])), ["command", "review", "keep", "now"]);
   assert.deepEqual(read(opencode, "/compact", null, ["image", "file"]), ["command", "compact", "compact", ""]); assert.deepEqual(read(opencode, "/ compact"), ["content"]);
@@ -415,6 +422,8 @@ test("G067 R0d each driver reads an input as its native side parses it: whitespa
   const openclaw = new OpenClawControl(launch, options, async () => { throw new Error("no Gateway"); }), bridge = listed(["new", "clear"], ["reset", "clear"], ["think", "none"]);
   assert.deepEqual(read(openclaw, "/reset soft", bridge), ["command", "reset", "compact", "soft"]); assert.deepEqual(read(openclaw, "/reset", bridge), ["command", "reset", "clear", ""]);
   assert.deepEqual(read(openclaw, "/new", bridge), ["command", "new", "clear", ""]); assert.deepEqual(read(openclaw, "/think high", bridge), ["command", "think", "none", "high"]);
-  assert.deepEqual(read(openclaw, "/new"), ["possible_command", "new"]); assert.deepEqual(read(openclaw, "/nope", bridge), ["content"]);
+  assert.deepEqual(read(openclaw, "/nope", bridge), ["content"]); assert.deepEqual(read(openclaw, "/nope"), ["possible_command", "nope"]);
+  // The Hub's clear words are commands whatever the catalog lists, or none yet; `/reset soft` stays the bridge's own.
+  assert.deepEqual(read(openclaw, "/new"), ["command", "new", "clear", ""]); assert.deepEqual(read(openclaw, "/clear"), ["command", "clear", "clear", ""]); assert.deepEqual(read(openclaw, "/reset soft"), ["command", "reset", "compact", "soft"]);
   for (const driver of [claude, codex, opencode, hermes, openclaw]) await driver.close();
 });

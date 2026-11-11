@@ -1,20 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { MAX_USAGE_REQUESTS, type ControlEvent, type HarnessControl, type NativeUsage } from "../../src/contracts/control.js";
+import { MAX_USAGE_REQUESTS, type ControlEvent, type NativeUsage } from "../../src/contracts/control.js";
 import { contentId, type ControlAttachment } from "../../src/contracts/content.js";
-import { parseVendorObservation } from "../../src/contracts/relay.js";
 import { claudeRelayCapabilities } from "../../src/adapters/control/claude.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
-import { dshRelayCapabilities } from "../../src/adapters/control/acp.js";
 import { exceedsInput, placedSize, titledPacket } from "../../src/adapters/control/relay-turn.js";
 import { driver, gatewayOf, ID_A, packet, peerRoot, prompts, relayTurn, run, type Harness } from "../fixtures/relay-drivers.js";
 
 // G069 phase two, placement (ADR-055 §5.5, §7.4, §8.1): each Driver sends a relay Turn as its declaration places it, and the
 // packet's title line arrives unchanged in the user entry the native side records; a command's words go alone; a packet over
-// the input bound is not sent. Also the user's words of a replayed entry (VF3-09) and per-request usage (VF2-09). The native
-// side is the relay peer, a real child process speaking each protocol; nothing here runs a Harness.
+// the input bound is not sent. Also per-request usage (VF2-09). The native side is the relay peer, a real child process
+// speaking each protocol; nothing here runs a Harness.
 
 const WORDS = "修好 summary.ts 的测试，然后跑一遍";
 const file = (path: string): ControlAttachment => ({ id: contentId("content-g069notes"), name: "notes.txt", mediaType: "text/plain", kind: "file", bytes: 5, sha256: "0".repeat(64), path });
@@ -48,14 +46,13 @@ test("G069-C01 the six Drivers place a relay Turn by their declaration and the t
     if (harness === "claude") (peer.env as Record<string, string>).RELAY_TRANSCRIPT = peer.env.CLAUDE_CONFIG_DIR!;
     const control = driver(t, harness, peer);
     await control.initialize(); const id = await control.open(peer.workspace);
-    if (harness === "codex") await control.deliveryPosition!(id);
     const { result, events } = await run(control, id, relayTurn(ID_A, WORDS));
     assert.equal(result.status, "completed", harness);
     assert.ok(!events.some(event => event.type === "diagnostic" && event.message.includes("交接单")), harness + ": the packet went");
     if (harness === "codex") {
       const start = (await peer.sent()).find(line => line.method === "turn/start")!.params as { input: { type: string; text: string }[]; clientUserMessageId?: string };
       assert.deepEqual(start.input.map(item => item.text), parts, harness);
-      assert.equal(typeof start.clientUserMessageId, "string", "the identity deliveryPosition recorded");
+      assert.equal(typeof start.clientUserMessageId, "string", "a Turn with a packet is sent with an identity of its own");
     } else assert.deepEqual((await prompts(peer))[0], parts, harness);
     const entry = await stored(harness, peer);
     assert.equal(titledPacket(entry), ID_A, harness + ": the native side's user entry carries the title line");
@@ -66,7 +63,7 @@ test("G069-C01 the six Drivers place a relay Turn by their declaration and the t
     await run(control, id, "plain words");
     if (harness === "codex") assert.deepEqual(((await peer.sent()).filter(line => line.method === "turn/start")[1]!.params as { input: { text: string }[]; clientUserMessageId?: string }).input.map(item => item.text), ["plain words"]);
     else assert.deepEqual((await prompts(peer))[1], ["plain words"], harness);
-    if (harness === "codex") assert.equal(((await peer.sent()).filter(line => line.method === "turn/start")[1]!.params as { clientUserMessageId?: string }).clientUserMessageId, undefined, "an identity is used once");
+    if (harness === "codex") assert.equal(((await peer.sent()).filter(line => line.method === "turn/start")[1]!.params as { clientUserMessageId?: string }).clientUserMessageId, undefined, "a plain Turn is sent with none");
   }
 });
 
@@ -100,8 +97,8 @@ test("G069-C01 a relay Turn read as a command is refused whole (G069-F1, relay-d
     const { peer, result, events } = await relayed(harness, words, settings);
     assert.deepEqual([result.error?.code, result.input, await prompts(peer), events], ["RELAY_PREPARE_FAILED", "not_recorded", [], []], harness + ": refused, nothing sent");
   }
-  // The invalid sample: dsh has no commands, so its `/clear` is text and carries the packet.
-  const dsh = await relayed("dsh", "/clear");
+  // The invalid sample: dsh has no commands but the Hub's clear, so any other slash input is text and carries the packet.
+  const dsh = await relayed("dsh", "/review now");
   assert.equal((await prompts(dsh.peer))[0]!.length, 2);
   // Hermes /queue and /steer submit their arguments as a prompt (acceptsRelay): the command word, the packet, the arguments.
   for (const word of ["queue", "q", "steer"]) {
@@ -161,39 +158,6 @@ test("G069-C01 a placement over the declared input bound is never sent: Codex in
   assert.equal((await run(bridge, session, sized(room - prefix))).result.status, "completed");
 });
 
-test("G069-C06 userTextOf strips the four kinds of wrapping a replayed user entry can have and recognizes a packet with a prefix and a suffix; plain words and a broken packet stay as they are", { timeout: 60000 }, async t => {
-  const peer = await peerRoot(t), controls = Object.fromEntries((["claude", "codex", "hermes", "openclaw", "opencode", "dsh"] as const).map(harness => [harness, driver(t, harness, peer)])) as Record<Harness, HarnessControl>;
-  const body = packet(ID_A, "继续"), bytes = (text: string) => Buffer.byteLength(text);
-  // OpenClaw: the bridge's working-directory prefix (workspace_meta), then the packet (hub_text).
-  const cwd = "[Working directory: ~/ws]\n\n";
-  assert.deepEqual(controls.openclaw.userTextOf!(cwd + body + "\n\n继续"), { user: "继续", stripped: [{ kind: "workspace_meta", bytes: bytes(cwd) }, { kind: "hub_text", bytes: bytes(body + "\n\n") }] });
-  // Claude Code: tags it injects into the prompt row (harness_text).
-  const reminder = "<system-reminder>todo list is empty</system-reminder>\n";
-  assert.deepEqual(controls.claude.userTextOf!(reminder + body + "\n\n继续"), { user: "继续", stripped: [{ kind: "harness_text", bytes: bytes(reminder) }, { kind: "hub_text", bytes: bytes(body + "\n\n") }] });
-  // Hermes: the steer wrapper (harness_text), Hub's file pointers after the words (workspace_meta); its "\n" join adds a line break.
-  const pointer = "\n\n[Attached file] notes.txt (text/plain, 5 bytes, read-only copy): /tmp/x/notes.txt";
-  assert.deepEqual(controls.hermes.userTextOf!(body + "\n\n\n继续" + pointer), { user: "继续", stripped: [{ kind: "hub_text", bytes: bytes(body + "\n\n\n") }, { kind: "workspace_meta", bytes: bytes(pointer) }] });
-  const steer = "[OUT-OF-BAND USER MESSAGE — a direct message from the user, delivered once at this position]\n先停一下\n[/OUT-OF-BAND USER MESSAGE]";
-  assert.deepEqual(controls.hermes.userTextOf!(steer), { user: "先停一下", stripped: [{ kind: "harness_text", bytes: bytes(steer) - bytes("先停一下") }] });
-  // Codex, OpenCode, dsh: the packet and pointers only; text before the packet's head stays the user's (a prefix allowed).
-  for (const harness of ["codex", "opencode", "dsh"] as const) {
-    assert.deepEqual(controls[harness].userTextOf!(body + "\n\n继续" + pointer), { user: "继续", stripped: [{ kind: "hub_text", bytes: bytes(body + "\n\n") }, { kind: "workspace_meta", bytes: bytes(pointer) }] }, harness);
-    assert.deepEqual(controls[harness].userTextOf!("前面的话\n\n" + body + "\n\n继续"), { user: "前面的话\n\n继续", stripped: [{ kind: "hub_text", bytes: bytes(body + "\n\n") }] }, harness);
-    assert.deepEqual(controls[harness].userTextOf!("就是普通的一句话"), { user: "就是普通的一句话", stripped: [] }, harness);
-  }
-  // The invalid samples: a packet without its end line, and a title line that is no packet's, are not stripped.
-  const broken = body.slice(0, body.indexOf("〔记录结束"));
-  assert.deepEqual(controls.codex.userTextOf!(broken + "继续"), { user: broken + "继续", stripped: [] });
-  assert.deepEqual(controls.codex.userTextOf!("〔HarnessHub 交接单 不是一个标识〕\n继续"), { user: "〔HarnessHub 交接单 不是一个标识〕\n继续", stripped: [] });
-  // What each native side stored for a relay Turn reads back as the user's words exactly.
-  for (const harness of ["hermes", "openclaw", "dsh"] as const) {
-    const own = await peerRoot(t, harness === "openclaw" ? { RELAY_OPENCLAW: "1" } : harness === "dsh" ? { RELAY_JOIN: "" } : {}), control = driver(t, harness, own);
-    await control.initialize(); const id = await control.open(own.workspace);
-    await run(control, id, relayTurn(ID_A, WORDS));
-    assert.equal(control.userTextOf!(await stored(harness, own)).user, WORDS, harness);
-  }
-});
-
 test("G069-C09 Codex reports each model request's own counts, the latest 64 kept; a Turn without reports has none; OpenClaw's transcript rows give them unless a CLI harness wrote the turn", { timeout: 60000 }, async t => {
   const usage = (events: readonly ControlEvent[]) => events.flatMap(event => event.type === "usage" ? [event.usage] : []) as NativeUsage[];
   const many = await peerRoot(t, { RELAY_REQUESTS: "70" }), control = driver(t, "codex", many); await control.initialize(); const id = await control.open(many.workspace);
@@ -218,42 +182,4 @@ test("G069-C09 Codex reports each model request's own counts, the latest 64 kept
     else assert.deepEqual(requests, expected, String(harness));
     assert.ok(reads >= 2);
   }
-});
-
-test("G069 relayVendor: each Driver's observation from its own endpoint layers after open, the sign-in kind only; null before open, for Hermes, and when a layer cannot be read", { timeout: 60000 }, async t => {
-  const observe = async (harness: Harness, settings: Record<string, string>, prepare: (root: string, workspace: string) => Promise<void> = async () => {}) => {
-    const peer = await peerRoot(t, settings); await prepare(peer.root, peer.workspace);
-    const control = driver(t, harness, peer); await control.initialize();
-    assert.equal(await control.relayVendor!(), null, harness + ": nothing before open");
-    await control.open(peer.workspace);
-    const observed = await control.relayVendor!();
-    if (observed !== null) parseVendorObservation(observed);
-    return { observed, declaration: control.relayCapabilities! };
-  };
-  const settings = (value: string) => async (root: string) => { await mkdir(join(root, "claude"), { recursive: true }); await writeFile(join(root, "claude", "settings.json"), JSON.stringify({ env: { ANTHROPIC_BASE_URL: value } })); };
-  const claude = await observe("claude", { RELAY_AUTH_KIND: "api_key" }, settings("https://g069-gateway.example/anthropic?k=" + "sk-" + "ant-" + "fixture"));
-  assert.deepEqual(claude.observed, { model: null, modelKey: "", authKind: "api_key", endpoint: { host: "g069-gateway.example", layer: "user_config" }, loopback: false });
-  assert.equal(claude.declaration.resolveVendor(claude.observed!), "gateway:g069-gateway.example");
-  assert.ok(!JSON.stringify(claude.observed).includes("label") && !JSON.stringify(claude.observed).includes("fixture"), "no label, no value but the host");
-  const signedIn = await observe("claude", { RELAY_AUTH_KIND: "account" });
-  assert.equal(signedIn.declaration.resolveVendor(signedIn.observed!), "anthropic");
-  // A layer that cannot be read: the endpoint is not known, so there is no observation (never "none").
-  const unreadable = await observe("claude", { RELAY_AUTH_KIND: "account" }, async root => { await mkdir(join(root, "claude", "settings.json"), { recursive: true }); });
-  assert.equal(unreadable.observed, null);
-  const codex = await observe("codex", { OPENAI_BASE_URL: "https://g069-proxy.example/v1", RELAY_PROVIDER: "openai", RELAY_MODEL: "gpt-5.5" });
-  assert.deepEqual(codex.observed, { model: "openai/gpt-5.5", modelKey: "gpt-5.5", authKind: null, endpoint: { host: "g069-proxy.example", layer: "environment" }, loopback: false });
-  assert.equal(codex.declaration.resolveVendor(codex.observed!), "gateway:g069-proxy.example");
-  const azure = await observe("codex", { RELAY_PROVIDER: "azure", RELAY_MODEL: "gpt-5.5" });
-  assert.equal(azure.declaration.resolveVendor(azure.observed!), "gateway:azure");
-  const dsh = await observe("dsh", {}, async (_root, workspace) => { await writeFile(join(workspace, ".env"), "OTHER=1\nDEEPSEEK_BASE_URL=https://g069-relay.example\n"); });
-  assert.deepEqual(dsh.observed?.endpoint, { host: "g069-relay.example", layer: "workspace_file" });
-  assert.equal(dshRelayCapabilities.resolveVendor(dsh.observed!), "gateway:g069-relay.example");
-  // G074-F8: dsh reports its model as a JSON array text of the provider and the model; the observation keeps the text and keys the model.
-  const array = '["deepseek-official","deepseek-v4-flash"]', dshModel = await observe("dsh", { RELAY_ACP_MODEL: array });
-  assert.deepEqual([dshModel.observed?.model, dshModel.observed?.modelKey, dshRelayCapabilities.resolveVendor(dshModel.observed!)], [array, "deepseek-v4-flash", "deepseek"]);
-  // OpenCode keys its endpoint by the model's provider, which this agent does not name: no endpoint, an unknown vendor.
-  const opencode = await observe("opencode", {});
-  assert.equal(opencode.declaration.resolveVendor(opencode.observed!), "unknown:opencode");
-  // Hermes's provider endpoint key is not one §8.1 names: it cannot tell.
-  assert.equal((await observe("hermes", {})).observed, null);
 });

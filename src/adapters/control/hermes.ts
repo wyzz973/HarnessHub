@@ -1,5 +1,5 @@
-import type { BackendResult, CleanupEvidence, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog, NativeOptions, NativeToolDetail, VerifyRequest } from "../../contracts/control.js";
-import type { DeliveryPosition, MarkerResult, RelayCapabilities, RelayPacketId, VerifyResult } from "../../contracts/relay.js";
+import type { BackendResult, CleanupEvidence, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog, NativeToolDetail } from "../../contracts/control.js";
+import type { RelayCapabilities } from "../../contracts/relay.js";
 import { ControlError, classifyRemoteFailure } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import type { ContentKind, ControlAttachment } from "../../contracts/content.js";
@@ -7,24 +7,24 @@ import { AcpControl } from "./acp.js";
 import { gatewayRefusalMessage, hermesGatewayPreflight, type HermesGatewayPreflight } from "./hermes-gateway.js";
 import { HERMES_COMMAND_WORD as COMMAND_WORD, HERMES_EFFECTS as EFFECTS, HERMES_HIDDEN as HIDDEN, HERMES_LEADING_SPACE as LEADING_SPACE, HERMES_REGISTRY as REGISTRY,
   hermesClassify, hermesCommand as commandOf, hermesNativeClassify, hermesReadsSlash as readsSlash, relayDeclaration, relayEntries } from "./relay-classify.js";
-import { hermesModelKey, hermesVendor } from "./relay-vendor.js";
+import { harnessVendor, hermesModelKey } from "./relay-vendor.js";
 import { type TurnText } from "../../contracts/control.js";
-import { carriesWholePacket, cursorDigest, packetEntry, placeTurn, strip, TITLE_DEADLINE_MS, titledPacket, unavailable, verifyResult, type RelayTurn, type UserText, measureBy } from "./relay-turn.js";
+import { placeTurn, TITLE_DEADLINE_MS, type RelayTurn, measureBy } from "./relay-turn.js";
 
 /**
  * Hermes's relay declaration (ADR-055 §8.1, Hermes Agent row): two text blocks with attachment pointers after the user's
- * words; no live evidence, a check on the next open (every open replays the session), and a content prompt that ended
- * proves it recorded; commands as the viewer reads them (lstrip, the registry's names and aliases), `/new` and `/clear`
- * run although unannounced; compaction told by markers in the replay; the gateway runs the session (a viewer that exits is
- * no quiescence); the vendor only by an endpoint it resolves. Not probed.
+ * words; no live evidence, and a content prompt that ended proves it recorded; commands as the viewer reads them (lstrip, the
+ * registry's names and aliases), `/new` and `/clear` run although unannounced, being the Hub's clear (the Hub runs it, the
+ * viewer and the gateway never see it); compaction told by markers in the replay; the gateway runs the session (a viewer that
+ * exits is no quiescence).
  *
  * Title "none" although §8.1 (D3) writes "set" (G072, the approval agent's B10): the Runtime names a session a handoff opened
  * for every Driver whose declaration says "set", and Hermes's `/title` (setTitle below) is not to be used before a probe and
- * before its two preconditions (setTitle's I2 and I3) are solved; this declaration turns to "set" with them.
+ * before its precondition (setTitle's I2) is solved; this declaration turns to "set" with it.
  */
 export const hermesRelayCapabilities: RelayCapabilities = relayDeclaration({
   probed: false,
-  delivery: { live: "none", verify: "on_next_open", successProvesRecorded: true, lateDelivery: false },
+  delivery: { live: "none", verify: "none", successProvesRecorded: true, lateDelivery: false },
   execution: "gateway",
   commands: { unlistedSlash: "executed", hidden: relayEntries(HIDDEN), classify: hermesClassify },
   placement: { parts: "multiple", maxInput: null, pointersAfterUser: true, measure: measureBy("multiple", "chars", ["file"]) },
@@ -32,7 +32,7 @@ export const hermesRelayCapabilities: RelayCapabilities = relayDeclaration({
   fixedPrefix: null,
   cacheTtl: "unknown",
   compactionEvidence: "replay_marker",
-  resolveVendor: hermesVendor,
+  resolveVendor: harnessVendor("hermes"),
   normalizeModel: hermesModelKey,
   title: "none",
   hostPathRead: "none",
@@ -46,21 +46,8 @@ const EXPORT = { name: "export", description: "导出原生会话记录（Hermes
 const COMPRESS_NOOP = /^(?:No changes from compression[.:]|Compression refused \(summary would grow the conversation\):|Compression aborted:)/u;
 /** One session's export is small and quick; one that is larger or slower fails rather than being cut short (E). */
 const EXPORT_BYTES = 8 * 1024 * 1024, EXPORT_DEADLINE_MS = 5000;
-/** The viewer's whole reply to a `/new`, `/clear` or `/reset` that reset the session (gateway_commands.py `_mutate`, v0.22.5). */
-const CLEARED = "Conversation history cleared.";
 /** The viewer's reply to `/title <name>`, answered locally without a gateway turn (gateway_commands.py `_title` → `_rename`). */
 const TITLE_SET = /^Session title set: /u;
-/**
- * How a compaction summary reads in a replayed entry (agent/context_compressor.py SUMMARY_PREFIX, LEGACY_SUMMARY_PREFIX and the
- * merged form), besides the `_meta.hermes` flags the viewer adds (acp_adapter/server.py:83-98).
- */
-const SUMMARY = /^(?:\[CONTEXT COMPACTION — REFERENCE ONLY\]|\[CONTEXT SUMMARY\]:|\[PRIOR CONTEXT — for reference only; not a new message\])/u;
-/** User rows Hermes writes itself, which replay as user entries too (agent/prompt_builder.py, gateway/response_filters.py). */
-const INJECTED = /^(?:\[OUT-OF-BAND USER MESSAGE\b|\[System:|\[STILL IN PROGRESS\b)/u;
-/** The steer wrapper around a user's words (agent/prompt_builder.py:565-595). */
-const STEER = /^(\[OUT-OF-BAND USER MESSAGE[^\n]*\]\n)([\s\S]*?)(\n\[\/OUT-OF-BAND USER MESSAGE\])$/u;
-/** What a check keeps of a replay: each user entry's head (a compaction summary's, for the cursor), for the latest entries only. */
-const REPLAY_HEAD = 4096, REPLAY_ENTRIES = 1024;
 /** Without --session-id Hermes exports every session it holds, its messaging gateway's too: the identifier must be a plain one. */
 const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 
@@ -141,116 +128,21 @@ const OPTION_NOTES: Readonly<Record<string, (name: string) => string>> = {
  * Inputs are read as the viewer reads them (ADR-055 R0d): stripped and split as Python does, a slash word the registry
  * resolves (any case, aliases included) or this Hermes announced is a command, with the effect EFFECTS names for its
  * arguments; a path, any other slash word and every input with an image are prompt text (an attached file goes as text, so
- * it changes nothing). A `/compress` the viewer answers with its no-change report ran and changed nothing (noop). A
- * content prompt that ended with end_turn was admitted and written to the session before the model was called, unless it
- * is a slash word that only reads like a command name (a later Hermes may run it); a prompt refused before admission (an
- * unavailable gateway, an unknown session, a refused submit, a lost turn still pending) never reached it (not recorded);
+ * it changes nothing). A `/compress` the viewer answers with its no-change report ran and changed nothing (noop). `/new`,
+ * `/clear` and `/reset` are the Hub's clear: nothing is sent to the viewer, and nothing to the gateway, not even a close of
+ * the session; the Hub lets go of its reference, the session stays in the user's gateway as it was, and the next Turn opens a
+ * new one. A content prompt that ended with end_turn was admitted and written to the session before the model was called,
+ * unless it is a slash word that only reads like a command name (a later Hermes may run it); a prompt refused before admission
+ * (an unavailable gateway, an unknown session, a refused submit, a lost turn still pending) never reached it (not recorded);
  * one whose outcome the gateway lost may have run (unknown, and never sent again here).
  */
-/** What the latest open's replay showed, as far as a check and a position read it. */
-interface ReplayHistory {
-  /**
-   * User entries by their place in the replay (one per user row), the latest REPLAY_ENTRIES only: the packet each one's title
-   * line names and whether it holds that packet whole (title and end lines, read from its whole text as it replays, F10).
-   */
-  readonly users: { readonly index: number; readonly titled: RelayPacketId | null; readonly whole: boolean; readonly summary: boolean; readonly injected: boolean }[];
-  /** User entries replayed in all, and entries of any other kind (agent messages, thoughts, tool calls). */
-  total: number;
-  others: number;
-  /** The compaction summaries seen (their heads and lengths), the cursor's digest. */
-  readonly summaries: string[];
-}
-const emptyHistory = (): ReplayHistory => ({ users: [], total: 0, others: 0, summaries: [] });
 export class HermesControl extends AcpControl {
   override readonly relayCapabilities: RelayCapabilities = hermesRelayCapabilities;
   private hubExport = false;
   private readonly exports = new AbortController();
-  private history: ReplayHistory = emptyHistory();
-  protected override get vendorHarness(): "hermes" { return "hermes"; }
-  override async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
-    this.history = emptyHistory(); this.prompted = false;
-    return super.open(cwd, model, options, checkpoint);
-  }
-  /**
-   * The viewer replays the whole live history at each open, before its load response (gateway_server.py:340-387): one user
-   * entry per user row, then agent thoughts, messages and tool calls (server.py:126-168); compaction summaries carry
-   * `_meta.hermes.compactionSummary` or `containsCompactionSummary`, or read as one.
-   */
-  protected override replayed(kind: string, update: Readonly<Record<string, unknown>>): void {
-    if (!["user_message_chunk", "agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update"].includes(kind)) return;
-    const content = update.content !== null && typeof update.content === "object" ? update.content as Record<string, unknown> : {};
-    const text = content.type === "text" && typeof content.text === "string" ? content.text : "";
-    const meta = [update._meta, content._meta].map(value => value !== null && typeof value === "object" ? (value as Record<string, unknown>).hermes : undefined)
-      .find(value => value !== null && typeof value === "object") as Record<string, unknown> | undefined;
-    const summary = kind.endsWith("message_chunk") && (meta?.compactionSummary === true || meta?.containsCompactionSummary === true || SUMMARY.test(text));
-    if (summary && this.history.summaries.length < 64) this.history.summaries.push(text.slice(0, REPLAY_HEAD) + "\0" + text.length);
-    if (kind !== "user_message_chunk") { this.history.others++; return; }
-    const titled = titledPacket(text);
-    this.history.users.push({ index: this.history.total++, titled, whole: titled !== null && carriesWholePacket(text, titled), summary, injected: INJECTED.test(text) });
-    if (this.history.users.length > REPLAY_ENTRIES) this.history.users.shift();
-  }
-  /** Whether this open read the whole history: a new session (none yet) or one the viewer replayed (session/load). */
-  private get historyRead(): boolean { const opened = this.opened; return opened !== null && opened.method !== "resume"; }
-  /**
-   * Whether this connection sent a prompt since its open: the replay read at open then no longer holds the history (it lacks
-   * what the prompt wrote, a clear or an undo among them), so neither a position nor a check reads it any more (F7).
-   */
-  private prompted = false;
-  /**
-   * Where the history stands before a Turn's input (ADR-055 §8.1, F20): the number of user entries this open replayed; none
-   * once this connection sent a prompt (its replay no longer holds the history). A packet sent at no position is still
-   * looked for whole by a later open's check (verifyDelivered).
-   */
-  async deliveryPosition(id: NativeConversationId): Promise<DeliveryPosition> {
-    this.assertOwned(id);
-    return this.historyRead && !this.prompted ? { kind: "seq", before: this.history.total } : { kind: "none" };
-  }
-  /**
-   * Looks for each packet in the user entries this open replayed after the packet's position, rows Hermes writes itself left
-   * out (VF1-08): the first of them with its title line, a later one only whole (packetEntry, F10, worked out as the replay
-   * was read); present when one carries it. A compaction summary that holds it is compacted (a packet folded into a merged
-   * summary is no entry of its own). A replay that holds a compaction summary has shifted positions (compacted rows are no
-   * longer replayed), so the whole replay is searched then, whole packets only, since which entry came first after the position
-   * cannot be told. Not found: outside_window when the entries after the position are older than what a check keeps, absent
-   * otherwise (the viewer replays the whole live history), the cursor (the summaries seen) telling the coordinator that a
-   * compaction may explain it.
-   *
-   * A marker without a position (a Turn sent on a connection that had prompted, a kept process's among them) is looked for
-   * whole in every entry of the replay (the second review's I5): packet identities are unique, so an entry with the title
-   * and end lines of the same packet is it, wherever it lies; present then, compacted when only a summary holds it, absent
-   * when the replay was read whole (this open's, every user entry kept) and none does, unavailable when older entries were
-   * not kept. A title line alone never counts for one (a false present loses facts, a false absent only repeats them).
-   *
-   * Every marker is unavailable when the history was not replayed or this connection prompted since its open (F7), a marker
-   * at a position of another kind too. historyEmpty: the replay held nothing at all. Reads only what open read.
-   */
-  async verifyDelivered(id: NativeConversationId, request: VerifyRequest): Promise<VerifyResult> {
-    const started = Date.now();
-    this.assertOwned(id);
-    if (!this.historyRead || this.prompted) return unavailable(request, started);
-    const history = this.history, shifted = history.summaries.length > 0, oldest = history.users[0]?.index ?? history.total;
-    // Every user entry this open replayed is still kept (none gave way to REPLAY_ENTRIES).
-    const kept = history.total === history.users.length;
-    const clients = history.users.filter(entry => !entry.summary && !entry.injected);
-    let foreign: number | null = null;
-    const results = request.markers.map((marker, position): MarkerResult => {
-      if (marker.position.kind !== "seq" && marker.position.kind !== "none") return "unavailable";
-      const packetId = marker.packetId;
-      const carries = (entry: ReplayHistory["users"][number], whole: boolean) => entry.titled === packetId && (!whole || entry.whole);
-      let found: ReplayHistory["users"][number] | undefined;
-      if (marker.position.kind === "none") found = clients.find(entry => carries(entry, true));
-      else {
-        const before = marker.position.before, after = clients.filter(entry => entry.index >= before), at = packetEntry(after, carries);
-        found = at >= 0 ? after[at] : shifted ? clients.find(entry => carries(entry, true)) : undefined;
-      }
-      if (found !== undefined) { const at = found.index; if (position === request.markers.length - 1) foreign = clients.filter(entry => entry.index > at).length; return "present"; }
-      if (history.users.some(entry => entry.summary && entry.titled === packetId)) return "compacted";
-      if (marker.position.kind === "none") return kept ? "absent" : "unavailable";
-      return marker.position.before < oldest && !kept ? "outside_window" : "absent";
-    });
-    return verifyResult(request, results, started, { historyEmpty: request.historyEmpty ? history.total === 0 && history.others === 0 : null,
-      compaction: { count: history.summaries.length, digest: cursorDigest(history.summaries) }, foreignAfterLast: foreign });
-  }
+  protected override get product(): string { return "Hermes"; }
+  /** The session lives in the user's gateway: a clear lets go of the reference and sends nothing, a close included. */
+  protected override get closesAbandoned(): boolean { return false; }
   /**
    * `/queue` and `/steer` submit their arguments as a prompt (gateway_commands.py `_prompt`, `_steer`): the packet goes into
    * the arguments, the command word first, so the viewer still runs the command and Hermes records the packet and the words.
@@ -262,38 +154,25 @@ export class HermesControl extends AcpControl {
     const named = commandOf(turn.user);
     return named === null || named.args === "" ? null : ["/" + named.word, ...placeTurn({ ...turn, user: named.args }, hermesRelayCapabilities.placement)];
   }
-  /** The steer wrapper Hermes writes around a user's words (agent/prompt_builder.py) is harness text. */
-  protected override nativeWrapping(replayed: string): UserText {
-    const steer = STEER.exec(replayed);
-    return steer === null ? { user: replayed, stripped: [] } : { user: steer[2]!, stripped: strip(strip([], "harness_text", steer[1]!), "harness_text", steer[3]!) };
-  }
   /**
    * Names the session in Hermes before its first relayed prompt (ADR-055 §8.1, D3): `/title <title>`, which the viewer answers
    * itself (`_run_slash` → `_rename`, a metadata change) without a gateway turn or a history row; its receipt is swallowed. One
    * line of at most 200 characters; an empty title is not sent (a bare `/title` goes to the gateway). Rejects with
    * NATIVE_TITLE_UNAVAILABLE when Hermes does not confirm it, also when it does not answer within TITLE_DEADLINE_MS: the prompt
    * is then given up alone and the connection stays usable (C6). Not enabled: the Runtime does not call it before a probe
-   * (the approval agent's B10), so neither point below is reachable today.
+   * (the approval agent's B10), so the point below is not reachable today.
    *
-   * Before it is enabled (the declaration's `title: "set"` used, or `probed` flipped), two things must be solved first (the
-   * second review's I2 and I3):
-   * - I2: a `/title` given up at its deadline is only cancelled; the viewer's late reply to it arrives on this session while
-   *   the next Turn's prompt is active and is taken for that Turn's own answer, so a content prompt the native side never
-   *   recorded can be reported `input: "recorded"` (the direction that loses facts). The late updates of a given-up prompt
-   *   must be told apart from the next prompt's (or the next prompt held until Hermes settled the cancel) first.
-   * - I3: the title is a prompt, so it sets `prompted`: the first relayed Turn right after it then gets no position (none)
-   *   and the check on this connection is unavailable (F7); a later open still finds the packet whole (I5), but the Turn
-   *   that a handoff titles is exactly the one whose delivery should be checked. Either the title stops counting as a prompt
-   *   that outdates the replay (once the probe confirms it writes no history row and the late-reply point above is solved),
-   *   or the Turn's position is taken from what the replay showed before the title.
+   * Before it is enabled (the declaration's `title: "set"` used), one thing must be solved first (the second review's I2): a
+   * `/title` given up at its deadline is only cancelled; the viewer's late reply to it arrives on this session while the next
+   * Turn's prompt is active and is taken for that Turn's own answer, so a content prompt the native side never recorded can be
+   * reported `input: "recorded"` (the direction that loses facts). The late updates of a given-up prompt must be told apart
+   * from the next prompt's (or the next prompt held until Hermes settled the cancel) first.
    */
   async setTitle(id: NativeConversationId, title: string): Promise<void> {
     this.assertOwned(id);
     const name = [...title.replace(/[\0-\x1f\x7f\u2028\u2029\u0085]+/gu, " ").trim()].slice(0, 200).join("").trim();
     if (!name) return;
     let reply = "";
-    // A prompt all the same: the replay read at open no longer counts as the history (F7).
-    this.prompted = true;
     const run = await super.sendPrompt(id, "/title " + name, event => { if (event.type === "text" && reply.length < 4096) reply += event.text; }, [], TITLE_DEADLINE_MS);
     const result = await run.result;
     if (result.status !== "completed" || !TITLE_SET.test(reply.trim())) throw new ControlError("NATIVE_TITLE_UNAVAILABLE", "Hermes did not confirm the session title");
@@ -366,7 +245,10 @@ export class HermesControl extends AcpControl {
     // A relay Turn whose words read as a command is refused before anything below runs (the export included).
     const refusal = this.relayRefused(turn, attachments.map(file => file.kind));
     if (refusal !== null) return refusal;
-    // The commands the driver reads (export, model, compress, clear) are read in the user's words; the base driver places a packet.
+    // The Hub's clear: nothing goes to the viewer or the gateway (clearRun).
+    const cleared = this.clearRun(id, turn, onEvent, attachments);
+    if (cleared !== null) return cleared;
+    // The commands the driver reads (export, model, compress) are read in the user's words; the base driver places a packet.
     const prompt = typeof turn === "string" ? turn : turn.user;
     // The same reading as classify(): a registry command by its name and arguments, and none with an image.
     const named = readsSlash(attachments.map(file => file.kind)) ? commandOf(prompt) : null, command = named === null ? undefined : REGISTRY.get(named.word.toLowerCase());
@@ -375,10 +257,8 @@ export class HermesControl extends AcpControl {
       return { result: this.exportSession(id, onEvent), requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "an export has no native turn to stop")) };
     }
     // Only Hermes's own command is read for a model switch; a model reply quoting the same words in another turn is never parsed.
-    const switching = command === "model" && named?.args !== "", compressing = command === "compress", clearing = command === "new" || command === "clear", mark = this.stderrMark;
+    const switching = command === "model" && named?.args !== "", compressing = command === "compress", mark = this.stderrMark;
     let reply = "", answered = false;
-    // From this prompt on, the replay read at open no longer holds the history (F7).
-    this.prompted = true;
     const run = await super.startText(id, turn, event => { if (event.type === "text") { answered = true; if (reply.length < 4096) reply += event.text; } onEvent(event); }, attachments);
     return { ...run, result: run.result.then((result): BackendResult => {
       const switched = switching ? MODEL_SWITCHED.exec(reply) : null;
@@ -386,9 +266,6 @@ export class HermesControl extends AcpControl {
       if (result.status === "completed" && switched) this.adoptModel(switched[2]!.toLowerCase() + ":" + switched[1]!);
       // The viewer answers a /compress that removed nothing in its own fixed words: the command ran and changed nothing.
       if (compressing && result.status === "completed" && COMPRESS_NOOP.test(reply.replace(LEADING_SPACE, ""))) return { ...result, command: "noop" };
-      // The viewer's fixed receipt of a reset is the only confirmation that the history was cleared (ADR-055 §7.4, F04); any
-      // other answer leaves the clear unconfirmed.
-      if (clearing && result.status === "completed" && reply.trim() === CLEARED) return { ...result, native: { cleared: true, replaced: null } };
       // A failed model call still ends with end_turn: nothing is answered (or only Hermes's own "Error: …"), and its log says why.
       // The prompt was in the session before that call, so what the end_turn proved stays proven.
       if (result.status === "completed" && (!answered || reply.startsWith("Error: "))) {
