@@ -119,12 +119,13 @@ const OPTION_NOTES: Readonly<Record<string, (name: string) => string>> = {
  * resolves (any case, aliases included) or this Hermes announced is a command, with the effect EFFECTS names for its
  * arguments; a path, any other slash word and every input with an image are prompt text (an attached file goes as text, so
  * it changes nothing). A `/compress` the viewer answers with its no-change report ran and changed nothing (noop). `/new`,
- * `/clear` and `/reset` are the Hub's clear: nothing is sent to the viewer, and nothing to the gateway, not even a close of
- * the session; the Hub lets go of its reference, the session stays in the user's gateway as it was, and the next Turn opens a
- * new one. A content prompt that ended with end_turn was admitted and written to the session before the model was called,
- * unless it is a slash word that only reads like a command name (a later Hermes may run it); a prompt refused before admission
- * (an unavailable gateway, an unknown session, a refused submit, a lost turn still pending) never reached it (not recorded);
- * one whose outcome the gateway lost may have run (unknown, and never sent again here).
+ * `/clear` and `/reset` without an attachment are the Hub's clear: nothing is sent to the viewer, and nothing to the gateway, not
+ * even a close of the session; the Hub lets go of its reference, the session stays in the user's gateway as it was, and the next
+ * Turn opens a new one. With a file or audio attachment they are not (the clear would drop it): the viewer is sent the input as
+ * typed, with the attachment, and runs the command itself. A content prompt that ended with end_turn was admitted and written to
+ * the session before the model was called, unless it is a slash word that only reads like a command name (a later Hermes may run
+ * it); a prompt refused before admission (an unavailable gateway, an unknown session, a refused submit, a lost turn still
+ * pending) never reached it (not recorded); one whose outcome the gateway lost may have run (unknown, and never sent again here).
  */
 export class HermesControl extends AcpControl {
   override readonly relayCapabilities: RelayCapabilities = hermesRelayCapabilities;
@@ -231,6 +232,14 @@ export class HermesControl extends AcpControl {
     return named === null || !COMMAND_WORD.test(named.word);
   }
   override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return hermesNativeClassify(text, catalog, attachments); }
+  /**
+   * The Hub's clear takes over a clear command only without an attachment: with one, running it would drop what the user attached.
+   * With an image the viewer reads the input as words (hermesReadsSlash); with a file or audio it still runs the command, as the
+   * reading says, and the input then goes to it as typed, the attachment with it, and is settled by the effect of the command.
+   */
+  protected override clearRun(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[]): ControlRun | null {
+    return attachments.length > 0 ? null : super.clearRun(id, turn, onEvent, attachments);
+  }
   override async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
     // A relay Turn whose words read as a command is refused before anything below runs (the export included).
     const refusal = this.relayRefused(turn, attachments.map(file => file.kind));

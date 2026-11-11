@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { CommandClass, ContextEffect } from "../../../contracts/control.js";
 import {
-  EPHEMERAL_KEY_ID, ITEM_KINDS, RELAY_MAX_RUNS, RELAY_MAX_SEQ, RELAY_PREF_DEFAULTS, RelayError, hmacDigest, parseExecutedOn, redactionTag, relayPacketId,
+  CONTEXT_EFFECTS, EPHEMERAL_KEY_ID, ITEM_KINDS, RELAY_MAX_RUNS, RELAY_MAX_SEQ, RELAY_PREF_DEFAULTS, RelayError, hmacDigest, parseExecutedOn, redactionTag, relayPacketId,
   type BindingRelayState, type ContinuityLevel, type DeliveryRecord, type ExecutedOn, type Fingerprint, type HmacDigest, type RedactionTag, type RelayAttention, type RelayCapabilities, type RelayDecision,
   type RelayDeliveryWrite, type RelayIndexRow, type RelayKeyPort, type RelayPacket, type RelayPacketId, type RelayPrefKey, type RunRelay, type RunRelayRequest, type SourceRange,
 } from "../../../contracts/relay.js";
@@ -107,22 +107,27 @@ export function acceptedChoices(data: Readonly<Record<string, unknown>> | undefi
 type EventReader = (id: SessionId, afterSeq: number, limit: number) => readonly SessionEvent[];
 /**
  * The public facts of each Session as its events place them: the fact seq of each finished Run (its `run.ended`, or the
- * `session.recovered` that ended it) and the Runs that were native commands (no fact). Events are append-only, so each
- * Session's are read once, from where the last read stopped; a new owner reads them again from the start.
+ * `session.recovered` that ended it) and the Runs that were native commands, with the effect each had on the native context (the
+ * one its end settled, else the one it was read with): a command is a fact only when it entered the context like a message (keep).
+ * Events are append-only, so each Session's are read once, from where the last read stopped; a new owner reads them again from the start.
  */
 export class RelayLedger {
-  private readonly sessions = new Map<SessionId, { after: number; readonly ended: Map<string, number>; readonly commands: Set<string> }>();
+  private readonly sessions = new Map<SessionId, { after: number; readonly ended: Map<string, number>; readonly commands: Map<string, ContextEffect | undefined>; readonly settled: Map<string, ContextEffect> }>();
   constructor(private readonly events: EventReader) {}
-  private scan(state: SessionSnapshot): { readonly ended: ReadonlyMap<string, number>; readonly commands: ReadonlySet<string> } {
+  private scan(state: SessionSnapshot): { readonly ended: ReadonlyMap<string, number>; readonly commands: ReadonlyMap<string, ContextEffect | undefined>; readonly settled: ReadonlyMap<string, ContextEffect> } {
     let known = this.sessions.get(state.id);
-    if (known === undefined || known.after > state.lastSeq) { known = { after: 0, ended: new Map(), commands: new Set() }; this.sessions.set(state.id, known); }
+    if (known === undefined || known.after > state.lastSeq) { known = { after: 0, ended: new Map(), commands: new Map(), settled: new Map() }; this.sessions.set(state.id, known); }
     while (known.after < state.lastSeq) {
       const page = this.events(state.id, known.after, 100);
       if (!page.length) break;
       for (const item of page) {
         const data = item.data, run = typeof data.runId === "string" ? data.runId : null;
-        if (item.type === "run.ended" && run !== null && !known.ended.has(run)) known.ended.set(run, item.seq);
-        else if (item.type === "run.native_command" && run !== null) known.commands.add(run);
+        if (item.type === "run.ended" && run !== null && !known.ended.has(run)) {
+          known.ended.set(run, item.seq);
+          const effect = contextEffectOf(data.contextEffect);
+          if (effect !== undefined) known.settled.set(run, effect);
+        }
+        else if (item.type === "run.native_command" && run !== null) known.commands.set(run, contextEffectOf(data.contextEffect));
         else if (item.type === "session.recovered")
           for (const id of [...strings(data.unknownRunIds), ...strings(data.cancelledRunIds)]) if (!known.ended.has(id)) known.ended.set(id, item.seq);
       }
@@ -134,10 +139,12 @@ export class RelayLedger {
   endedSeq(state: SessionSnapshot, run: RunId): number | undefined { return this.scan(state).ended.get(run); }
   /**
    * The public facts of the Session foreign to `binding` (its Harness control in its current native epoch): each finished,
-   * dispatched Run that was no native command and did not run there, with its fact seq and where it ran — the Run's own
-   * `relay.executedOn` (v13), else the migration's index row (`index`), else null, which makes it foreign to every binding (a
-   * conservative reading: it may be sent again, never lost). Only the facts a binding may owe are read: the events are paged
-   * only when there is a foreign Run to place, so a single-Harness conversation reads none.
+   * dispatched Run that did not run there, with its fact seq and where it ran — the Run's own `relay.executedOn` (v13), else the
+   * migration's index row (`index`), else null, which makes it foreign to every binding (a conservative reading: it may be sent again,
+   * never lost). A native command is a fact when it entered the context like a message (a skill, a custom command: the effect keep) and
+   * none when it did not (it left the history alone, compacted, rewound or cleared it, had an unknown effect, or never ran): the others
+   * put nothing into the conversation, or were settled by the binding that ran them. Only the facts a binding may owe are read: the events
+   * are paged only when there is a foreign Run to place, so a single-Harness conversation reads none.
    */
   facts(state: SessionSnapshot, index: readonly RelayIndexRow[], binding: { readonly harnessId: string; readonly controlId: string; readonly nativeEpoch: number }): readonly RelayFact[] {
     const rows = new Map<string, Readonly<Record<string, unknown>>>();
@@ -146,7 +153,8 @@ export class RelayLedger {
     for (const run of state.runs) {
       if (!terminal(run.status) || !dispatched(run)) continue;
       const row = rows.get(run.id);
-      if (run.relay === undefined && row !== undefined && row.commandEffect !== null && row.commandEffect !== undefined) continue;
+      // A Run from before v13 that the migration found to be a command (its effect is in its index row) is a fact only when it kept.
+      if (run.relay === undefined && row?.commandEffect != null && row.commandEffect !== "keep") continue;
       const executedOn = run.relay !== undefined ? run.relay.executedOn : executedOf(row?.executedOn);
       if (executedOn !== null && executedOn.harnessId === binding.harnessId && executedOn.controlId === binding.controlId && executedOn.nativeEpoch === binding.nativeEpoch) continue;
       candidates.push({ run, row, executedOn });
@@ -154,7 +162,9 @@ export class RelayLedger {
     if (candidates.length === 0) return [];
     const scanned = this.scan(state), facts: RelayFact[] = [];
     for (const { run, row, executedOn } of candidates) {
-      if (scanned.commands.has(run.id)) continue;
+      // A command Turn is a fact only when it kept: its effect is the index row's for a Run from before v13, else the one its end settled
+      // (a keep that never ran is none), else the one it was read with (a Turn that a recovery ended).
+      if (scanned.commands.has(run.id) && (run.relay === undefined ? row?.commandEffect : scanned.settled.get(run.id) ?? scanned.commands.get(run.id)) !== "keep") continue;
       const indexed = typeof row?.seq === "number" && Number.isSafeInteger(row.seq) && row.seq >= 0 && row.seq <= RELAY_MAX_SEQ ? row.seq : undefined;
       facts.push({ runId: run.id, seq: scanned.ended.get(run.id) ?? indexed ?? state.lastSeq, executedOn });
     }
@@ -163,6 +173,8 @@ export class RelayLedger {
   forget(id: SessionId): void { this.sessions.delete(id); }
 }
 function strings(value: unknown): readonly string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []; }
+/** A stored context effect, or undefined for anything else. */
+function contextEffectOf(value: unknown): ContextEffect | undefined { return typeof value === "string" && (CONTEXT_EFFECTS as readonly string[]).includes(value) ? value as ContextEffect : undefined; }
 function executedOf(value: unknown): ExecutedOn | null {
   if (value === null || value === undefined) return null;
   try { return parseExecutedOn(value); } catch { return null; }

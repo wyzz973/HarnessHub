@@ -137,6 +137,39 @@ test("without the user's attach nothing before a clear goes, and only what comes
   assert.deepEqual(readRelayPrompt(fakes.to("bravo").at(-1)!.text).history.map(row => row.user.text), ["a2 a new fact"], "only what came after the clear is owed");
 });
 
+// The independent review of 2026-11-11 (persistent format): the clear boundary was written only when the program's close was clean. One that
+// ended with a protocol failure left the binding unconfirmed although the Driver had let the native session go, and the native session the
+// user then started inherited the old floor: everything before the clear was handed over again.
+test("a clear the Driver reported is the clear boundary whether or not the program's close was clean: nothing before it is handed over again, with or without a native session of the user's own", async t => {
+  const failure = { code: "INVALID_PROTOCOL", message: "the program broke the protocol while it closed" };
+  const variants = [{ label: "a protocol failure at the close, straight on", reset: false, close: { closed: true, exitCode: 0, signal: null, protocolFailure: failure } as const },
+    { label: "a protocol failure at the close, after a native reset", reset: true, close: { closed: true, exitCode: 0, signal: null, protocolFailure: failure } as const },
+    // A close that threw leaves the Turn unknown and the conversation blocked until the program is confirmed gone; the clear the Driver reported stands.
+    { label: "a close that threw", reset: false, close: new SessionError("CLEANUP_FAILED", "the program could not be ended") }];
+  for (const { label, reset, close } of variants) {
+    const { w, fakes, app, id } = await fromAlpha(t, { bravo: declared() }, "bravo");
+    await turn(app, id, "b1 before the clear", "k1");
+    const before = relayOf(app.read(id), "bravo");
+    fakes.script = (_harnessId, input) => input === "/clear" ? { cleared: true } : {};
+    fakes.closing.bravo = close;
+    const cleared = await turn(app, id, "/clear", "clear");
+    assert.deepEqual([cleared.status, cleared.error?.code], close instanceof Error ? ["unknown", "CLEANUP_FAILED"] : ["failed", failure.code], label + ": the Turn reports what the close found");
+    const ended = events(w.store, id).find(row => row.type === "run.ended" && row.data.runId === cleared.id)!;
+    assert.equal(ended.data.contextEffect, "clear", label + ": and a clear the Driver reported is a clear all the same");
+    const state = app.read(id), bravo = relayOf(state, "bravo");
+    assert.deepEqual([bravo.epoch, bravo.mark, bravo.pending, bravo.resendAll, bravo.floor], [before.epoch + 1, -1, null, false, ended.seq], label + ": the clear is the boundary, as when the close is clean");
+    assert.deepEqual(state.nativeBindings!.filter(row => row.harnessId === "bravo").map(row => row.status), ["archived", "ready"], label + ": the Driver gave the native session up: no binding waits for a confirmation of it");
+    if (close instanceof Error) { assert.equal(state.status, "blocked", label + ": the conversation waits for the program to be confirmed gone"); continue; }
+    fakes.closing = {}; fakes.script = () => ({});
+    if (reset) assert.equal(app.resetNative(id, "reset", app.read(id).epoch).status, "open");
+    const b2 = await turn(app, id, "b2 after the clear", "k2");
+    assert.equal(b2.status, "completed", label + ": " + JSON.stringify(b2.error));
+    assert.equal(fakes.to("bravo").at(-1)!.text, "b2 after the clear", label + ": as typed, nothing of the earlier part");
+    assert.equal(fakes.carried("bravo"), 1, label + ": the first packet is all there ever was"); assert.equal(decisionOf(w.store, id, b2.id), undefined);
+    assert.equal(relayOf(app.read(id), "bravo").floor, ended.seq, label + ": and the boundary stays");
+  }
+});
+
 test("a rewind makes the next packet carry everything again, once", async t => {
   const { w, fakes, app, id } = await fromAlpha(t, { bravo: declared() }, "bravo");
   await turn(app, id, "b1", "k1");
@@ -159,6 +192,47 @@ test("a rewind makes the next packet carry everything again, once", async t => {
   // A compaction changes nothing.
   const before = relayOf(app.read(id), "bravo");
   await turn(app, id, "/compact", "compact"); assert.deepEqual(relayOf(app.read(id), "bravo"), before);
+});
+
+// The independent review of 2026-11-11 (persistent format and lost content): a command read as a command that enters the context like a
+// message (a skill, a custom command: the effect keep) was left out of every packet and the mark went past it, so the next Harness never
+// heard of that Turn.
+test("a command that enters the context like a message (effect keep) is a fact of the conversation: the Harness switched to is given its Turn; no other kind of command is one", async t => {
+  const w = world(t), fakes = new Fakes({ alpha: declared(), bravo: declared() }), app = w.runtime(fakes), id = (await app.create(w.configuration, { harnessId: "alpha" }, "create")).id;
+  await turn(app, id, "a1 a fact on alpha", "a1");
+  const skill = await turn(app, id, "/skill:review 请修复 X", "skill");
+  assert.equal(skill.status, "completed"); assert.equal(fakes.to("alpha").at(-1)!.text, "/skill:review 请修复 X", "a command goes as typed and carries nothing");
+  // A command that leaves the history alone, compacts it, rewinds it, clears it (nobody confirmed) or has an unknown effect puts nothing into
+  // the conversation, and neither does a keep command that was refused before it ran.
+  for (const [index, words] of ["/status", "/compact", "/mystery", "/undo", "/clear"].entries()) assert.equal((await turn(app, id, words, "other" + index)).status, "completed", words);
+  fakes.script = (_harnessId, input) => input === "/skill:review refused" ? { result: "not_recorded" } : {};
+  assert.equal((await turn(app, id, "/skill:review refused", "refused")).status, "failed");
+  fakes.script = () => ({});
+  await to(app, id, "bravo", "to-bravo");
+  const b1 = await turn(app, id, "b1 the first message on bravo", "b1");
+  assert.equal(b1.status, "completed");
+  const first = readRelayPrompt(fakes.to("bravo")[0]!.text);
+  assert.equal(first.packet, true);
+  assert.deepEqual(first.history.map(row => row.user.text), ["a1 a fact on alpha", "/skill:review 请修复 X"], "alpha's Turn and its skill, in order, and nothing else");
+  // The packet's end is the skill's: the mark covers it, and nothing more is owed.
+  const skillEnded = events(w.store, id).find(row => row.type === "run.ended" && row.data.runId === skill.id)!.seq, bravo = relayOf(app.read(id), "bravo");
+  assert.deepEqual([bravo.mark, bravo.pending], [skillEnded, null]);
+  await turn(app, id, "b2", "b2"); assert.equal(fakes.carried("bravo"), 1, "nothing is owed any more");
+});
+
+test("a command that enters the context carries no packet itself, whatever its Harness is owed; its Turn is owed to the others, and is not owed back to the Harness that ran it", async t => {
+  const { w, fakes, app, id } = await fromAlpha(t, { bravo: declared() }, "bravo");
+  const skill = await turn(app, id, "/skill:review 请修复 X", "skill");
+  assert.equal(skill.status, "completed"); assert.equal(fakes.to("bravo")[0]!.text, "/skill:review 请修复 X", "as typed: bravo is owed a1, and the command carries nothing");
+  assert.equal(fakes.carried("bravo"), 0); assert.equal(decisionOf(w.store, id, skill.id), undefined);
+  assert.equal(relayOf(app.read(id), "bravo").mark, -1, "the command settled nothing owed");
+  // The next message carries what bravo is owed: a1 only — its own skill Turn is not foreign to it.
+  await turn(app, id, "b1", "b1");
+  assert.deepEqual(readRelayPrompt(fakes.to("bravo")[1]!.text).history.map(row => row.user.text), ["a1 a fact on alpha"]);
+  // Back on alpha, which is owed bravo's two Turns, the skill one included.
+  await to(app, id, "alpha", "to-alpha");
+  await turn(app, id, "a2", "a2");
+  assert.deepEqual(readRelayPrompt(fakes.to("alpha").at(-1)!.text).history.map(row => row.user.text), ["/skill:review 请修复 X", "b1"]);
 });
 
 test("\"only this message\" sends the words as typed and leaves what is owed owed; the next message carries it", async t => {

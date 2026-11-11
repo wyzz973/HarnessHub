@@ -43,7 +43,9 @@ export const LIVE: Declared = { live: "recorded_event", successProvesRecorded: f
 export const BLIND: Declared = { live: "none", successProvesRecorded: false };
 
 export const COMMANDS: readonly NativeCommand[] = [{ name: "compact", description: "compact", contextEffect: "compact" }, { name: "clear", description: "clear", contextEffect: "clear" },
-  { name: "undo", description: "undo", contextEffect: "rewind" }, { name: "skill:review", description: "skill", contextEffect: "keep" }];
+  { name: "undo", description: "undo", contextEffect: "rewind" }, { name: "skill:review", description: "skill", contextEffect: "keep" },
+  // One command of each of the two effects left: it reports and leaves the history alone, and it declares no effect at all (unknown).
+  { name: "status", description: "status", contextEffect: "none" }, { name: "mystery", description: "mystery" }];
 
 /** How one prompt ends. `result`: the Driver knows it recorded, knows nothing, knows it refused it, loses its connection, or holds until released. */
 export interface Script {
@@ -64,6 +66,8 @@ export class Fakes implements SessionBindingFactory {
   /** The user entries each native session holds. */
   readonly history = new Map<string, string[]>();
   script: (harnessId: string, input: string) => Script = () => ({});
+  /** What closing a Harness's program reports (the program's end, as the Runtime's close sees it): clean unless set here. */
+  closing: Partial<Record<string, CleanupEvidence | Error>> = {};
   prepared = 0;
   /** Prompts that hold until released: `stop` ends them cancelled (the Turn was stopped), `release` completes them without a word on the input. */
   readonly held: { readonly stop: () => void; readonly release: () => void }[] = [];
@@ -114,7 +118,7 @@ export class Fakes implements SessionBindingFactory {
         }
         return { result, requestStop: async () => { for (const held of this.held.splice(0)) held.stop(); return { requested: true }; } };
       },
-      close: async () => CLEAN,
+      close: async () => { const closed = this.closing[harnessId] ?? CLEAN; if (closed instanceof Error) throw closed; return closed; },
     };
     return { control, workspace: configuration.workspace, assertOwned: () => {}, close: () => control.close() };
   }

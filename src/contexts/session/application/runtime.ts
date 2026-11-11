@@ -1889,8 +1889,10 @@ export class SessionRuntime {
         const confirmed = checkpointStored && checkpoint !== null && (keep.keep || closed?.closed === true && closed.protocolFailure === null) && (!execution.dispatched || nativeConfirmed && backend !== null);
         const continued = unsafe && checkpointStored && execution.dispatched && backend === null && cleanup?.closed === true && cleanup.protocolFailure === null && this.fatal === null && !this.unknownOwnership(problem)
           && execution.relay.declaration.execution === "process";
-        // What the Driver reported of a clear, as the relay takes it: a certain clear once the Turn's native state is confirmed (ADR-055 B7).
-        const clearReport = nativeCleared !== undefined && confirmed;
+        // What the Driver reported of a clear, as the relay takes it: a certain clear, whatever else the Turn's end could confirm. The Driver
+        // gave the native session up and opened none: a program that ended with a protocol failure, or a reference nobody confirmed, is nothing
+        // to the new native session the Hub opens next, and must not leave the clear's boundary unwritten (ADR-055 B7, R9e).
+        const clearReport = nativeCleared !== undefined;
         // A command's effect counts only when it ran; it goes into the Turn's end event with what the driver knew of the input. A
         // clear its Driver confirmed is a clear, as the binding records it, whatever the Turn's status (R9e).
         const input: InputOutcome = !execution.dispatched ? "not_recorded" : evidence ?? "unknown";
@@ -1912,13 +1914,14 @@ export class SessionRuntime {
             dispatched: execution.dispatched, status: backend?.status ?? null, input: evidence ?? undefined, noop, cleared: clearReport,
             declaration: execution.relay.declaration, unknownTurn: continued, endedSeq: current.lastSeq + 1, time: endedAt }) : null;
           if (withRelay) { tried.relayed = relayed !== null; tried.replaced = relayed?.replaced === true; }
-          if (checkpointStored && checkpoint !== null && (confirmed || continued)) {
+          if (checkpointStored && checkpoint !== null && (confirmed || continued || relayed?.replaced === true)) {
             next = { ...next, nativeBindings: next.nativeBindings?.map(binding => {
               if (binding.harnessId !== pinned.harnessId || binding.controlId !== pinned.controlId || binding.status === "archived") return binding;
+              // The native session a clear gave up (§7.5) is archived as it was, its relay state frozen; the Turn ran in it. The Driver's
+              // report is the clear, confirmed or not: its successor below carries the boundary.
+              if (relayed?.replaced) return { ...binding, status: "archived" as const, throughRunId: execution.dispatched ? run.id : binding.throughRunId };
               // An unknown Turn continued keeps the reference it resumed from; its native position stays where it was.
               if (!confirmed) return { ...binding, status: "ready" as const, ...(relayed === null ? {} : { relay: relayed.relay }) };
-              // The native session a clear gave up (§7.5) is archived as it was, its relay state frozen; the Turn ran in it.
-              if (relayed?.replaced) return { ...binding, status: "archived" as const, throughRunId: execution.dispatched ? run.id : binding.throughRunId };
               const { observed: earlier, opensNew: _opened, ...rest } = binding, latest = reported ? observed : earlier;
               // A native session this Turn opened anew and never dispatched into was never prompted, and another process cannot
               // resume it: the binding goes on opening a new one (opensNew), naming the session it named before — the abandoned one,

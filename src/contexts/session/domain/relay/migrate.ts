@@ -87,17 +87,14 @@ export function migrateSession(state12: SessionSnapshot, events: readonly Migrat
   };
   // Pass 2: the binding lineage. Bindings are made by the Session's creation (an import, a branch's native fork) and by each
   // `native.binding_prepared{resumed: false}`; each takes the next epoch of its Harness control, a confirmed clear adds one.
-  interface Lineage { readonly harnessId: string; readonly controlId: string; readonly source: "new" | "import" | "fork"; epoch: number; readonly startEpoch: number; archivedAt: number | null }
+  interface Lineage { readonly harnessId: string; readonly controlId: string; readonly source: "new" | "import" | "fork"; epoch: number; readonly startEpoch: number }
   const made: Lineage[] = [], active = new Map<string, number>(), maxEpoch = new Map<string, number>();
   const runBinding = new Map<string, number>(), runEpoch = new Map<string, number>();
   const make = (harnessId: string, controlId: string, source: "new" | "import" | "fork"): void => {
     const key = harnessId + ":" + controlId, epoch = (maxEpoch.get(key) ?? 0) + 1;
-    maxEpoch.set(key, epoch); active.set(key, made.length); made.push({ harnessId, controlId, source, epoch, startEpoch: epoch, archivedAt: null });
+    maxEpoch.set(key, epoch); active.set(key, made.length); made.push({ harnessId, controlId, source, epoch, startEpoch: epoch });
   };
-  const archive = (harnessId: string, controlId: string, seq: number): void => {
-    const key = harnessId + ":" + controlId, index = active.get(key);
-    if (index !== undefined) { made[index]!.archivedAt = seq; active.delete(key); }
-  };
+  const archive = (harnessId: string, controlId: string): void => { active.delete(harnessId + ":" + controlId); };
   for (const event of events) {
     const data = event.data, harnessId = text(data.harnessId), controlId = text(data.controlId);
     switch (event.type) {
@@ -116,7 +113,7 @@ export function migrateSession(state12: SessionSnapshot, events: readonly Migrat
         break;
       }
       case "native.branch_requested": case "native.fork_failed":
-        if (harnessId !== undefined && controlId !== undefined) archive(harnessId, controlId, event.seq);
+        if (harnessId !== undefined && controlId !== undefined) archive(harnessId, controlId);
         break;
       case "run.ended": {
         const id = text(data.runId), index = id === undefined ? undefined : runBinding.get(id), run = id === undefined ? undefined : runs[position.get(id) ?? -1];
@@ -149,7 +146,6 @@ export function migrateSession(state12: SessionSnapshot, events: readonly Migrat
   const result = made.map((binding, index): BindingRelayState => {
     const key = binding.harnessId + ":" + binding.controlId, snapshot = bindings[index]!;
     const through = snapshot.throughRunId === null ? -1 : position.get(snapshot.throughRunId) ?? -1;
-    const asOf = binding.archivedAt ?? Number.MAX_SAFE_INTEGER;
     let floor = binding.source === "new" ? floors.get(key) ?? -1 : -1, mark: number | null = binding.source === "new" ? null : 0;
     let originIncluded = binding.source !== "new", cleared = false, suspicious = false, epoch = binding.startEpoch;
     /** The facts owed at `epoch` with seq in (base, upTo], and whether the Session's own history is owed too. */
@@ -198,9 +194,10 @@ export function migrateSession(state12: SessionSnapshot, events: readonly Migrat
     if (cleared) return { epoch: epochNow, mark: -1, floor, pending: null, resendAll: false };
     // An import's or a branch's native session holds the Session's starting history (§14.4, RT1-B2).
     if (binding.source !== "new") return { epoch: epochNow, mark: 0, floor, pending: null, resendAll: false };
-    const need = owed(Math.max(mark ?? -1, floor), asOf, epochNow), owing = need.origin || need.facts.length > 0;
-    // A binding a command or a refusal may have changed while facts are owed is sent everything again (the D1 shape, RT1-B1).
-    return { epoch: epochNow, mark: mark ?? -1, floor, pending: null, resendAll: owing && suspicious };
+    // A binding a command or a refusal may have changed is sent everything again, whether or not anything is owed to it now (v13's own
+    // rule, delivery.ts commandTurnEvent: a command that may have rewound the native session sets resendAll at once): what the native
+    // session may have lost is not what was owed. The cost is that the first handoff after the migration may send a copy more.
+    return { epoch: epochNow, mark: mark ?? -1, floor, pending: null, resendAll: suspicious };
   });
   const indexes = runs.flatMap((run, index): RelayBehindIndex[] => {
     const seq = factSeq(run);

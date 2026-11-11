@@ -592,7 +592,9 @@ export class AcpControl implements HarnessControl {
    * words this Driver reads as a command with the effect clear is not sent: the native session is given up and the Turn reports
    * the history cleared with no checkpoint, so the next Turn opens a new native session. Null for any other input, which goes on
    * as a Turn. A relay Turn is never run as a clear: its words read as a command, and it is refused whole before (relayRefused,
-   * relayParts). A Driver that does other work before the base startText asks this first, so that a clear touches nothing.
+   * relayParts). A Driver that does other work before the base startText asks this first, so that a clear touches nothing. A Driver
+   * whose native side has commands of its own that clear (OpenClaw's `/new <model>`), or that runs a clear command although the input
+   * carries an attachment (Hermes with a file), narrows this to what the Hub takes over: the rest is sent as typed.
    */
   protected clearRun(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[]): ControlRun | null {
     if (typeof turn !== "string") return null;

@@ -6,12 +6,12 @@ import JSON5 from "json5";
 import { MAX_NATIVE_EXTENSIONS, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type CommandClass, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeInputs, type NativeModelCatalog, type NativeOption, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
 import type { RelayCapabilities } from "../../contracts/relay.js";
 import { AcpControl } from "./acp.js";
-import { openClawClassify, openClawCommandEffect, openClawNativeClassify, relayDeclaration } from "./relay-classify.js";
+import { hubClearReading, openClawClassify, openClawCommandEffect, openClawNativeClassify, relayDeclaration } from "./relay-classify.js";
 import { classifyRemoteFailure, ControlError, object } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import { string } from "../../infrastructure/control/json-rpc-process.js";
 import { checkInputs } from "../../infrastructure/control/attachments.js";
-import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
+import type { ContentKind, ContentRef, ControlAttachment } from "../../contracts/content.js";
 import { type TurnText } from "../../contracts/control.js";
 import { boundedRequests, usageRequest, measureBy, CWD_PREFIX_ALLOWANCE } from "./relay-turn.js";
 
@@ -200,8 +200,9 @@ function unavailability(row: Readonly<Record<string, unknown>>): string {
  * OpenClaw's relay declaration (ADR-055 §8.1, OpenClaw row): one text (the bridge adds a working-directory prefix), at most
  * 2,097,152 bytes; no live evidence, a completed turn proves nothing by itself (the Turn's own transcript read-back, below,
  * does when it holds the user's row), and a cancelled prompt's input may still arrive later (lateDelivery); the bridge's listed
- * commands, with effects by arguments, and the Hub's clear (`/new`, `/reset` and `/clear`, which the Hub runs without asking
- * the bridge; `/reset soft` is the bridge's own compaction); compaction evidence not verified (none); the Gateway runs the
+ * commands, with effects by arguments, and the Hub's clear (`/new`, `/reset` and `/clear` alone and without an attachment, which
+ * the Hub runs without asking the bridge; with an argument or an attachment `/new` and `/reset` are the bridge's own commands,
+ * `/reset soft` its compaction, and `/clear` is text); compaction evidence not verified (none); the Gateway runs the
  * session; the window from the session report; no native title until `_meta.sessionLabel` is probed.
  */
 export const openClawRelayCapabilities: RelayCapabilities = relayDeclaration({
@@ -514,7 +515,17 @@ export class OpenClawControl extends AcpControl {
   }
   /** The bridge's listed commands, read with what each does to the session (OPENCLAW_COMMAND_EFFECTS); any other input is a prompt. */
   // The effect of a command OpenClaw names here depends on its arguments (`/reset soft`), whatever the catalog declares.
-  override classify(text: string, catalog: NativeModelCatalog | null): CommandClass { return openClawNativeClassify(text, catalog); }
+  override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return openClawNativeClassify(text, catalog, attachments); }
+  /**
+   * The Hub's clear is `/new`, `/reset` or `/clear` alone and without an attachment (hubClearReading): the session is given up and
+   * nothing is sent. With an argument or an attachment `/new` and `/reset` are OpenClaw's own commands — their reading says the
+   * effect clear, but the Hub did not run them, so they go to the bridge as typed and are settled by that effect — and `/clear` is
+   * text: nothing the user typed or attached is dropped.
+   */
+  protected override clearRun(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[]): ControlRun | null {
+    if (typeof turn !== "string" || hubClearReading(turn, attachments.map(file => file.kind)) === null) return null;
+    return super.clearRun(id, turn, onEvent, attachments);
+  }
   /**
    * What the Gateway holds for this session after the Turn: its model and each setting the bridge offers that the row (and
    * chat.history, for fast mode) has a value for, in the bridge's own option values; a setting the row leaves unset is

@@ -66,10 +66,11 @@ export const sharedClassify: RelayClassify = (text, catalog) => sharedReading(te
 
 /**
  * The words that clear a conversation in the Hub, whichever Harness it runs on (the decision log of 2026-11-11: clearing is the
- * Hub's). A native side that has these commands (Claude Code, Hermes, OpenClaw) reads them as it reads its own; one that has
- * none (Codex, OpenCode, DeepSeek Harness) is given them by the Hub, and for it a clear is exactly one of the words alone: no
- * arguments and no attachment, so that nothing the user typed with one is dropped (hubClearReading). No Driver sends them: it
- * gives up the native session, and the next Turn opens a new one.
+ * Hub's). A native side that has these commands (Claude Code, Hermes) reads them as it reads its own; one that has none (Codex,
+ * OpenCode, DeepSeek Harness) is given them by the Hub, and for it a clear is exactly one of the words alone: no arguments and no
+ * attachment, so that nothing the user typed with one is dropped (hubClearReading). OpenClaw has `/new` and `/reset` of its own
+ * (with arguments they are its commands, which its Driver sends) and no `/clear`: for it the Hub's clear is also exactly one of
+ * the words alone. No Driver sends the Hub's clear: it gives up the native session, and the next Turn opens a new one.
  */
 export const HUB_CLEAR_NAMES: readonly string[] = ["clear", "reset", "new"];
 /** A clear as the Hub reads it where the native side has none: the slash first, one word, nothing after it but whitespace. */
@@ -325,7 +326,7 @@ export function hermesNativeClassify(text: string, catalog: NativeModelCatalog |
  * What OpenClaw's own slash commands do to its session (docs/tools/slash-commands.md, v2026.10.9): `/new` archives it and
  * starts another, `/reset` resets it in place (`/reset soft` keeps the transcript), `/compact` compacts it, `/stop` stops
  * the run; the settings commands change no history; `/restart` and `/bash` act outside the session (unknown effect). `/clear`
- * is none of its commands: it is the Hub's clear, like `/new` and `/reset`, which the Hub runs without asking OpenClaw.
+ * is none of its commands: alone it is the Hub's clear, like `/new` and `/reset` alone, which the Hub runs without asking OpenClaw.
  */
 export const OPENCLAW_COMMAND_EFFECTS: Readonly<Record<string, ContextEffect>> = { new: "clear", reset: "clear", clear: "clear", compact: "compact", stop: "none", restart: "unknown", bash: "unknown",
   think: "none", verbose: "none", trace: "none", reasoning: "none", elevated: "none", model: "none", queue: "none", usage: "none", fast: "none" };
@@ -336,19 +337,29 @@ function openClawEffect(name: string, args: string): ContextEffect {
 }
 /**
  * OpenClaw's reading: the bridge's listed commands (the shared reading), with the effects OpenClaw gives its own by arguments.
- * The Hub's clear words (HUB_CLEAR_NAMES) are commands whatever the catalog lists, so that the Hub gives the session up for
- * them before the bridge could be asked: `/new` and `/reset` clear, `/reset soft` compacts and is sent, `/clear` clears.
+ * The Hub's clear is exactly one of its words (HUB_CLEAR_NAMES) alone, with no attachment (hubClearReading), whatever the catalog
+ * lists, so that the Hub gives the session up for it before the bridge could be asked: `/new`, `/reset` and `/clear` clear.
+ * Anything more is the user's message and goes to OpenClaw as typed: with an argument or an attachment `/new` and `/reset` are
+ * OpenClaw's own commands, read as ever whatever the catalog lists (`/new <model>` or `/new <text>` archives the session and starts
+ * another, the effect clear — settled like any command that clears and was not run by the Hub; `/reset soft` compacts), and `/clear`,
+ * which is none of its commands, is words. The Driver tells the Hub's clear from these by the same words (OpenClawControl.clearRun).
  */
-export function openClawReading(text: string, commands: CommandLookup | null): CommandClass {
+export function openClawReading(text: string, commands: CommandLookup | null, attachments: readonly ContentKind[] = []): CommandClass {
   const word = text.startsWith("/") ? text.slice(1).split(/\s/u)[0]! : "";
-  if (HUB_CLEAR_NAMES.includes(word)) { const args = text.slice(1 + word.length).trim(); return { kind: "command", name: word, args, effect: openClawEffect(word, args) }; }
+  if (HUB_CLEAR_NAMES.includes(word)) {
+    const cleared = hubClearReading(text, attachments);
+    if (cleared !== null) return cleared;
+    if (word === "clear") return { kind: "content" };
+    const args = text.slice(1 + word.length).trim();
+    return { kind: "command", name: word, args, effect: openClawEffect(word, args) };
+  }
   const reading = sharedReading(text, commands);
   // The effect of a command OpenClaw names here depends on its arguments (`/reset soft`), whatever the catalog declares.
   return reading.kind === "command" && openClawCommandEffect(reading.name) !== undefined ? { ...reading, effect: openClawEffect(reading.name, reading.args) } : reading;
 }
-export const openClawClassify: RelayClassify = (text, catalog) => openClawReading(text, catalog === null ? null : relayCommands(catalog));
+export const openClawClassify: RelayClassify = (text, catalog, attachments = []) => openClawReading(text, catalog === null ? null : relayCommands(catalog), attachments);
 /** HarnessControl.classify of the OpenClaw driver. */
-export function openClawNativeClassify(text: string, catalog: NativeModelCatalog | null): CommandClass { return nativeReading(openClawReading(text, lookupOf(catalog))); }
+export function openClawNativeClassify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return nativeReading(openClawReading(text, lookupOf(catalog), attachments)); }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // DeepSeek Harness (the generic ACP driver)

@@ -153,6 +153,20 @@ test("G069-C03 OpenClaw: the bridge's listed commands with effects by arguments;
     // `/clear` is not one of the bridge's commands; `/reset soft` stays its own (it keeps the transcript).
     { rule: "the Hub's clear words need no catalog", read: [["/new", null, [], ["command", "new", "clear", ""]], ["/reset", [], [], ["command", "reset", "clear", ""]], ["/clear", bridge, [], ["command", "clear", "clear", ""]],
       ["/clear", null, [], ["command", "clear", "clear", ""]], ["/reset soft", null, [], ["command", "reset", "compact", "soft"]]], not: ["/nope", null, [], ["possible_command", "nope"]] },
+    // The Hub's clear is one of its words alone, as on Codex, OpenCode and DeepSeek Harness: with an argument nothing the user typed
+    // is dropped. `/new` and `/reset` are then OpenClaw's own commands (read as before, with the effect OpenClaw gives them, whatever
+    // the catalog lists), which the Driver sends; `/clear` is none of its commands, so its argument makes the input words.
+    { rule: "with an argument /new and /reset are OpenClaw's own commands, read with their effects", read: [["/new 帮我写个函数", null, [], ["command", "new", "clear", "帮我写个函数"]],
+      ["/new 帮我写个函数", bridge, [], ["command", "new", "clear", "帮我写个函数"]], ["/reset 重新来", [], [], ["command", "reset", "clear", "重新来"]], ["/new gpt-5", bridge, [], ["command", "new", "clear", "gpt-5"]],
+      ["/reset soft keep the plan", null, [], ["command", "reset", "compact", "soft keep the plan"]]], not: ["/new", null, [], ["command", "new", "clear", ""]] },
+    { rule: "with an argument /clear is words, whatever the catalog lists", read: [["/clear cache 目录怎么清", bridge, [], ["content"]], ["/clear cache 目录怎么清", null, [], ["content"]], ["/clear cache 目录怎么清", [], [], ["content"]],
+      ["/clear cache 目录怎么清", entries(["clear", "clear"]), [], ["content"]], ["/clear\nand then continue", null, [], ["content"]]], not: ["/clear", null, [], ["command", "clear", "clear", ""]] },
+    // An attachment makes the Hub's words the user's message: running the clear would drop the attachment (on every Driver). `/clear` is words again;
+    // `/new` and `/reset` stay OpenClaw's own commands (the same reading as alone — the Driver tells the Hub's clear by the attachment).
+    { rule: "with an attachment /clear is words", read: [["/clear", bridge, ["image"], ["content"]], ["/clear", null, ["file"], ["content"]], ["/clear", bridge, ["audio"], ["content"]], ["/clear", null, ["audio", "file"], ["content"]]],
+      not: ["/clear", null, [], ["command", "clear", "clear", ""]] },
+    { rule: "with an attachment /new and /reset are OpenClaw's own commands", read: [["/new", bridge, ["image"], ["command", "new", "clear", ""]], ["/reset", null, ["file"], ["command", "reset", "clear", ""]],
+      ["/new", null, ["audio"], ["command", "new", "clear", ""]], ["/reset soft", bridge, ["file"], ["command", "reset", "compact", "soft"]]], not: ["/clear", bridge, ["image"], ["content"]] },
   ]);
 });
 

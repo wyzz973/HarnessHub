@@ -32,6 +32,11 @@ const file = async (peer: Peer, name = "notes.txt"): Promise<ControlAttachment> 
   const path = join(peer.root, name); await writeFile(path, "notes");
   return { id: contentId("content-clear" + name.replace(/[^a-z]/gu, "")), name, mediaType: "text/plain", kind: "file", bytes: 5, sha256: "0".repeat(64), path };
 };
+/** An attachment of any kind: five bytes in the peer's root, as the content store would hand a Driver its private copy. */
+const attachment = async (peer: Peer, kind: ControlAttachment["kind"]): Promise<ControlAttachment> => {
+  const name = kind === "file" ? "notes.txt" : kind === "image" ? "photo.png" : "voice.wav", path = join(peer.root, name); await writeFile(path, "notes");
+  return { id: contentId("content-clear" + kind), name, mediaType: kind === "file" ? "text/plain" : kind === "image" ? "image/png" : "audio/wav", kind, bytes: 5, sha256: "0".repeat(64), path };
+};
 
 test("Claude Code: /clear, /reset and /new are not sent; the old session is closed and given up, none is opened ahead, and the next Turn opens a new one", { timeout: 60000 }, async t => {
   const peer = await peerRoot(t, { RELAY_CLOSE: "1" }), { control, first } = await begin(t, "claude", peer);
@@ -208,6 +213,57 @@ test("on Codex, OpenCode and DeepSeek Harness, which have no clear of their own,
     const { result } = await run(control, first, "/clear", [attachment]);
     assert.deepEqual([result.status, result.native, await control.checkpoint!() === first], ["completed", undefined, true], harness + ": not a clear with an attachment");
   }
+});
+
+// The independent review of 2026-11-11 (persistent format and lost content): on OpenClaw `/clear cache 目录怎么清` and `/new 帮我写个函数` were
+// read as the clear, so what the user typed went to no one and the native session was given up; the same for `/new` with an image, a
+// file or audio. The Hub's clear is one of its words alone, without an attachment, on every Driver.
+test("OpenClaw: /new, /reset and /clear are the Hub's clear only alone and without an attachment; with an argument or an attachment the words are sent as typed — /new and /reset are OpenClaw's own commands, /clear is text — and nothing is given up", { timeout: 180000 }, async t => {
+  const cases: readonly (readonly [string, readonly ControlAttachment["kind"][]])[] = [
+    ["/clear cache 目录怎么清", []], ["/clear\n目录怎么清", []], ["/new 帮我写个函数", []], ["/new gpt-5", []], ["/reset 重新来", []], ["/reset soft", []],
+    ["/new", ["image"]], ["/new", ["file"]], ["/new", ["audio"]], ["/reset", ["image"]], ["/reset", ["file"]], ["/reset", ["audio"]], ["/clear", ["image"]], ["/clear", ["file"]], ["/clear", ["audio"]],
+  ];
+  for (const [typed, kinds] of cases) {
+    const label = JSON.stringify(typed) + (kinds.length ? " + " + kinds.join(",") : ""), peer = await peerRoot(t, { RELAY_OPENCLAW: "1" }), attachments = await Promise.all(kinds.map(kind => attachment(peer, kind)));
+    const calls: string[] = [], answers = gatewayOf(peer), control = driver(t, "openclaw", peer, async (method, params) => { calls.push(method); return answers(method, params); });
+    await control.initialize();
+    const first = await control.open(peer.workspace), reference = await control.checkpoint!(), opened = (await peer.sent()).filter(line => line.method === "session/new").length;
+    const { result, events } = await run(control, first, typed, attachments);
+    assert.deepEqual([result.status, result.native], ["completed", undefined], label + ": a Turn like any other, nothing cleared");
+    assert.equal(await control.checkpoint!(), reference, label + ": the native session is still this connection's");
+    assert.deepEqual((await prompts(peer)).map(blocks => blocks[0]), [typed], label + ": the words went to the bridge as typed");
+    if (kinds.length) assert.equal((await peer.sent()).filter(line => line.method === "session/prompt").flatMap(line => (line.params?.prompt as { type: string }[]).map(block => block.type)).length, 1 + kinds.length, label + ": and the attachments with them");
+    assert.equal(notices(events).some(message => message.includes("代为执行")), false, label + ": the Turn does not say the Hub ran a clear");
+    assert.equal((await peer.sent()).filter(line => line.method === "session/new").length, opened, label + ": no new session was opened");
+    assert.equal(calls.some(method => method === "sessions.patch"), false, label);
+  }
+  // The invalid samples: the same words alone, without an attachment, are the Hub's clear and go to no one.
+  for (const typed of ["/clear", "/new", "/reset", "/new \n"]) {
+    const peer = await peerRoot(t, { RELAY_OPENCLAW: "1" }), { control, first } = await begin(t, "openclaw", peer);
+    const { result } = await run(control, first, typed);
+    assert.deepEqual(result, CLEARED, JSON.stringify(typed));
+    assert.deepEqual(await prompts(peer), [], JSON.stringify(typed) + ": nothing was sent");
+  }
+});
+
+test("Hermes: a clear word with a file or an audio attachment is not the Hub's clear — the viewer is sent the words as typed, with the attachment, and nothing is given up; with an image it is text as before, and alone it is the clear", { timeout: 120000 }, async t => {
+  const attached: readonly (readonly ControlAttachment["kind"][])[] = [["file"], ["audio"], ["file", "audio"], ["image"], ["file", "image"]];
+  for (const kinds of attached) for (const typed of ["/clear", "　/reset", "/NEW "]) {
+    const label = JSON.stringify(typed) + " + " + kinds.join(","), peer = await peerRoot(t, { RELAY_HERMES: "1" }), { control, first } = await begin(t, "hermes", peer);
+    const attachments = await Promise.all(kinds.map(kind => attachment(peer, kind)));
+    const { result } = await run(control, first, typed, attachments);
+    assert.deepEqual([result.status, result.native], ["completed", undefined], label + ": a Turn like any other, nothing cleared");
+    assert.equal(await control.checkpoint!(), first, label + ": the session is still this connection's");
+    const [sent] = await prompts(peer);
+    assert.equal(sent?.[0]?.startsWith(typed), true, label + ": the words went to the viewer as typed: " + JSON.stringify(sent));
+    if (kinds.includes("file")) assert.match(sent![0]!, /\[Attached file\] notes\.txt/u, label + ": the file went with them, as the pointer Hermes reads");
+    assert.equal((await peer.sent()).filter(line => line.method === "session/prompt").flatMap(line => (line.params?.prompt as { type: string }[]).map(block => block.type)).filter(type => type === "audio" || type === "image").length,
+      kinds.filter(kind => kind !== "file").length, label + ": and the audio and the image as blocks");
+  }
+  // The invalid sample: alone, the same words are the Hub's clear.
+  const peer = await peerRoot(t, { RELAY_HERMES: "1" }), { control, first } = await begin(t, "hermes", peer);
+  assert.deepEqual((await run(control, first, "/clear")).result, CLEARED);
+  assert.deepEqual(await prompts(peer), [], "nothing was sent");
 });
 
 test("a relay Turn whose words are the Hub's clear is refused whole on every Driver: failed, not recorded, nothing sent, nothing given up", { timeout: 120000 }, async t => {

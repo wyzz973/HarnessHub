@@ -22,7 +22,10 @@ import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-stor
 // G067 added also taken away (the data of older v12 builds). Every case names its seed; nothing here runs a Harness.
 
 const clean: CleanupEvidence = { closed: true, exitCode: 0, signal: null, protocolFailure: null };
-const COMMANDS: readonly NativeCommand[] = [{ name: "compact", description: "compact", contextEffect: "compact" }, { name: "clear", description: "clear", contextEffect: "clear" }, { name: "model", description: "model", contextEffect: "none" }];
+// The three the random conversations use, and the scripted ones below: a rewind, a command of unknown effect (it declares none) and one that
+// enters the context like a message.
+const COMMANDS: readonly NativeCommand[] = [{ name: "compact", description: "compact", contextEffect: "compact" }, { name: "clear", description: "clear", contextEffect: "clear" }, { name: "model", description: "model", contextEffect: "none" },
+  { name: "undo", description: "undo", contextEffect: "rewind" }, { name: "mystery", description: "mystery" }, { name: "skill", description: "skill", contextEffect: "keep" }];
 const HARNESSES = ["alpha", "bravo", "gamma"] as const;
 /** mulberry32: a small seeded generator, so every case is reproducible from its seed. */
 function generator(seed: number): () => number {
@@ -278,8 +281,10 @@ test("G066-C02 a v12 conversation on one Harness, migrated, sends its next 20 in
     await w.runtime.close(); w.store.close();
     downgrade(w.data);
     w.store = new SqliteSessionStore(w.data); w.harness.use(w.store);
+    // A command or a refusal that may have changed the native session sets resendAll whether or not anything is owed (the migration, like v13);
+    // with no other Harness there is nothing foreign for that flag to send, so the inputs below still go as typed.
     const relay = w.store.get(session.id).nativeBindings![0]!.relay!;
-    assert.equal(relay.resendAll, false, "seed " + seed + ": nothing is owed to its only binding");
+    assert.equal(relay.pending, null, "seed " + seed + ": no packet waits for its only binding");
     w.runtime = new SessionRuntime(w.store, w.harness, { id: w.next, now: () => new Date(Date.UTC(2026, 10, 10)), publish: () => {}, content, fingerprint: value => createHash("sha256").update(value).digest("hex") });
     const before = w.harness.sent.length;
     for (let round = 0; round < 20; round++) { w.runtime.send(session.id, "after the migration " + round, "after-" + round); await w.runtime.wait(session.id); }
@@ -319,4 +324,54 @@ test("G066-C02 before G067 a command moved the position past what it owed: the n
     assert.ok(alpha.mark < b1.seq, "alpha's mark stays before bravo's first Turn, which is still owed (" + alpha.mark + " < " + b1.seq + ")");
   }
   w.store.close();
+});
+
+// The independent review of 2026-11-11 (persistent format): v13 sets resendAll after a command that may have rewound or changed the native
+// session whether or not anything is owed (delivery.ts commandTurnEvent), where the migration set it only while facts were owed. A binding
+// that holds everything and then ran a rewind (or a command of unknown effect) must be sent everything again after the migration too.
+test("G066-C02 a binding a command may have rewound or changed is sent everything again after the migration, whether or not facts are owed to it", async t => {
+  for (const [command, resendAll] of [["", false], ["/undo", true], ["/mystery", true]] as const) {
+    const w = world(t, 97, { rejected: 0, lost: 0 }), app = w.runtime, label = JSON.stringify(command);
+    const id = (await app.create(configuration(w.workspace), { harnessId: "alpha" }, "create")).id;
+    const send = async (text: string, key: string) => { app.send(id, text, key); await app.wait(id); };
+    const to = async (harnessId: string, key: string) => { app.switch(id, { harnessId }, key); await app.wait(id); };
+    // Bravo's Turn is given to alpha in a packet: alpha holds everything of bravo's, and nothing is owed to it. Then the command ran on alpha.
+    await send("a1", "a1"); await to("bravo", "to-b"); await send("b1", "b1"); await to("alpha", "to-a"); await send("a2", "a2");
+    if (command !== "") await send(command, "command");
+    await app.close();
+    const state = v12(w.store.get(id)), events = all(w.store, id).map(event => v12Event({ seq: event.seq, type: event.type, data: event.data })), runs = state.runs;
+    w.store.close();
+    assert.deepEqual(runs.find(run => run.input === "a2")!.sourceRunIds, [runs.find(run => run.input === "b1")!.id], label + ": alpha was given bravo's Turn");
+    const migrated = migrateSession(state, events), at = (harnessId: string) => migrated.bindings[state.nativeBindings!.findIndex(binding => binding.harnessId === harnessId)]!;
+    const b1 = migrated.runs.find(row => row.runId === runs.find(run => run.input === "b1")!.id)!;
+    assert.ok(at("alpha").mark >= b1.seq, label + ": nothing is owed to alpha (its mark " + at("alpha").mark + " covers bravo's Turn, seq " + b1.seq + ")");
+    assert.equal(at("alpha").resendAll, resendAll, label + ": alpha");
+    assert.equal(at("bravo").resendAll, false, label + ": the command ran on alpha only");
+    // The Store migrates the same database to the same relay state.
+    downgrade(w.data);
+    const store = new SqliteSessionStore(w.data);
+    try { assert.deepEqual(store.get(id).nativeBindings?.map(row => row.relay), migrated.bindings, label + ": the Store's migration"); }
+    finally { store.close(); }
+  }
+});
+
+// The independent review of 2026-11-11 (lost content): a command that entered the context like a message (effect keep) was no fact, so the
+// next Harness never heard of that Turn. A v12 conversation's commands are placed by the migration's index rows, which say each one's effect.
+test("G066-C02 a v12 command that entered the context like a message (effect keep) is a fact after the migration: the next Harness is given its Turn, a command of any other effect is not", async t => {
+  const w = world(t, 96, { rejected: 0, lost: 0 });
+  const id = (await w.runtime.create(configuration(w.workspace), { harnessId: "alpha" }, "create")).id;
+  const send = async (text: string, key: string) => { w.runtime.send(id, text, key); await w.runtime.wait(id); };
+  await send("a1", "a1"); await send("/skill review the diff", "skill");
+  for (const [index, words] of ["/compact", "/model model-a", "/undo", "/mystery", "/clear"].entries()) await send(words, "other-" + index);
+  await w.runtime.close(); w.store.close();
+  downgrade(w.data);
+  w.store = new SqliteSessionStore(w.data); w.harness.use(w.store);
+  w.runtime = new SessionRuntime(w.store, w.harness, { id: w.next, now: () => new Date(Date.UTC(2026, 10, 10)), publish: () => {}, content, fingerprint: value => createHash("sha256").update(value).digest("hex") });
+  const runs = w.store.get(id).runs, ofInput = (input: string) => runs.find(run => run.input === input)!;
+  assert.deepEqual(w.store.relayIndex(id).filter(row => row.index.commandEffect === "keep").map(row => row.runId), [ofInput("/skill review the diff").id], "the migration placed the skill as a command that kept");
+  w.runtime.switch(id, { harnessId: "bravo" }, "to-b"); await w.runtime.wait(id);
+  await send("b1", "b1");
+  const prepared = all(w.store, id).findLast(event => event.type === "run.context_prepared" && event.data.runId === w.store.get(id).runs.find(run => run.input === "b1")!.id);
+  assert.deepEqual(prepared?.data.sourceRunIds, [ofInput("a1").id, ofInput("/skill review the diff").id], "alpha's Turn and its skill, and none of the other commands");
+  await w.runtime.close(); w.store.close();
 });
