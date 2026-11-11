@@ -8,8 +8,9 @@
  * The policy every packet of this renderer belongs to. A change to a template, an escape or redaction rule, an estimator
  * coefficient, a cap or the Unicode tables of the running Node changes what is rendered and must change this version.
  * relay/1-mvp.4: facts only and two tiers (complete, brief), whole items or none, a ledger that adds up.
+ * relay/1-mvp.5: and one sentence saying that what the user stated in the record still holds.
  */
-export const RELAY_POLICY_VERSION = "relay/1-mvp.4";
+export const RELAY_POLICY_VERSION = "relay/1-mvp.5";
 
 /**
  * What the one cap of a packet is made of: T = min(8,000, 5% of the target's context window), the window assumed when the

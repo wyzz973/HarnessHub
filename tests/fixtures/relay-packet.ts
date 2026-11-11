@@ -1,4 +1,4 @@
-// Reads a relay packet the way a test or a test peer needs to (ADR-055 §5.5, relay/1-mvp.4): whether a prompt carries one,
+// Reads a relay packet the way a test or a test peer needs to (ADR-055 §5.5, relay/1-mvp.5): whether a prompt carries one,
 // the user's current words after its end line, the earlier user words it quotes by turn, and the history a branch or an
 // import started from (its user words and replies). Independent of the Gateway's renderer: it knows only the layout.
 // The .mjs peers import the compiled copy (dist/tests/fixtures/relay-packet.js).

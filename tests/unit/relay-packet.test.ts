@@ -13,7 +13,7 @@ import { runId, type PublicRun } from "../../src/contracts/session.js";
 import { endLines, fenced, readRelayPrompt, TITLE } from "../fixtures/relay-packet.js";
 import { conversation, longConversation, names, s1, s1Delta, s3, tool, type RunSpec, type Scenario } from "../fixtures/relay-scenarios.js";
 
-// The slim relay packet (relay/1-mvp.4, ADR-055 §5 as cut down on 2026-11-11) rendered from public snapshots: facts only, two
+// The slim relay packet (relay/1-mvp.5, ADR-055 §5 as cut down on 2026-11-11) rendered from public snapshots: facts only, two
 // tiers, whole items or none, a ledger that adds up, and never a failure. Pure domain code; the formal Runtime's use of it is
 // in tests/integration/relay-mvp.test.ts.
 
@@ -189,7 +189,7 @@ test("G070-slim the worst case is the user's latest words and the ledger: the le
     assert.equal(least.record.items.userMessages.included, 0); assert.deepEqual(least.record.turns, { total: 5, shown: 0, absent: 5 });
     assert.match(least.text, language === "zh" ? /这 5 轮的记录都放不下，没有附上/u : /None of the record of these 5 turns fit/u); assert.ok(!least.text.includes("HH-DATA 0") && !least.text.includes("<<<HH-DATA"), "no region without a record");
     assert.equal(renderRelay(input(scenario, { budget: budgetOf(least.record.tokens) })).record.items.userMessages.included, 0, "the least packet alone fills the least budget");
-    const small = renderRelay(input(scenario, { budget: budgetOf(least.record.tokens + estimateTokens(latest) + 150) }));
+    const small = renderRelay(input(scenario, { budget: budgetOf(least.record.tokens + estimateTokens(latest) + 230) }));
     assert.ok(turnsWith(small.text, WORDS).includes(5) && small.text.includes(latest), "the latest turn's words"); assert.ok(small.record.tokens <= small.record.budget.cap);
     assert.ok(small.record.items.userMessages.included >= 1 && small.record.items.userMessages.included < 5 && small.record.tier === "brief");
   }
@@ -403,8 +403,9 @@ test("G070-slim hundreds of tools with long titles cost what their length does, 
 // ---------------------------------------------------------------------------------------------------------------------
 
 test("G070-slim what is kept, in order: the latest, the first, then the rest from newest to oldest — for the user's words and for the replies", () => {
-  // Eight turns of equal size: each of the user's messages and replies takes the same, so what a budget keeps is a prefix of that order.
-  const order = [8, 1, 7, 6, 5, 4, 3, 2], specs: RunSpec[] = Array.from({ length: 8 }, (_, index) => ({ input: "message " + (index + 1) + " " + "needs ".repeat(60), harnessId: index % 2 ? "claude" : "codex", reply: "answer " + (index + 1) + " " + "result ".repeat(60) }));
+  // Eight turns of equal size, all by one Harness: each of the user's messages and replies takes the same (a longer Harness name would make one
+  // turn's lines dearer than another's), so what a budget keeps is a prefix of that order.
+  const order = [8, 1, 7, 6, 5, 4, 3, 2], specs: RunSpec[] = Array.from({ length: 8 }, (_, index) => ({ input: "message " + (index + 1) + " " + "needs ".repeat(60), harnessId: "codex", reply: "answer " + (index + 1) + " " + "result ".repeat(60) }));
   const scenario = conversation([...specs, { input: "go on", harnessId: "dsh" }]);
   const seenWords = new Set<number>(), seenReplies = new Set<number>();
   for (let cap = 600; cap <= 6400; cap += 100) {

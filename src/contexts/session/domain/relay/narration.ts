@@ -5,7 +5,7 @@ import { characters, codeUnitsOf, fence, headUnits, neutralize, normalize, visib
 import { marksIn, namesCredentialFile, restoreLabels, type RelayRedactor } from "./redaction.js";
 
 /**
- * Narration of the record for the slim relay packet (relay/1-mvp.4, ADR-055 §5.2): what one turn of the history says, as
+ * Narration of the record for the slim relay packet (relay/1-mvp.5, ADR-055 §5.2): what one turn of the history says, as
  * facts and nothing else, cut into items — the user's words, a reply, the lines of what was read, changed and run, a failed
  * command's output tail, an error — each of which a packet carries whole or leaves out whole. Only committed public facts
  * enter: the user's words, the tools' titles, kinds, statuses and exit codes, attachments, errors and replies; tool details
