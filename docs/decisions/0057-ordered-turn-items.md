@@ -1,176 +1,190 @@
-# ADR-057：有序条目落盘，会话存储升到 v14
+# ADR-057：有序条目落盘，对话存储改成表（v14），去掉所有内容上限
 
-> **2026-11-12 作废待重写。** 所有者决定“全部转向新协议，每个对话不设置上限，学习 T3 Code”（见 LOG.md）。本稿的双写、每轮 256 条、条目存进快照都不再成立，正在按新决定重写。
+状态：proposed，2026-11-12（重写）。取代同日初稿 dee209e（保留旧字段、每轮 256 条上限、仍是整份快照）。依据：所有者的新决定“全部转向新协议，每个对话不设置上限，学习t3code，包括其他功能都不要设置限制，不要局限功能”；[统一协议设计稿](../proposals/protocol/hub-protocol.html)第 4–6、10、16、17 节；[决定记录 2026-11-12](LOG.md)；[显示层审计](../research/hub-display-audit-2026-11-12.md)；[T3 Code 调研](../research/t3code-protocol-ui-2026-11-12.md)加本次对其存储的补读（`b883156`，只读，出处写作“文件:行”，相对 T3 仓库）。按 AGENTS.md，改持久格式与“会不会丢内容”的逻辑，每段上线末做一轮独立审查（清单在末尾）。实施顺序见 [step2-plan](../proposals/protocol/step2-plan.md)。
 
+## 一、决定了什么
 
-状态：proposed，2026-11-12。依据：[统一协议设计稿](../proposals/protocol/hub-protocol.html)第 4、5、6、10、16、17 节（已定稿）、[决定记录 2026-11-12](LOG.md)（用户：一轮按时间交错显示、存储 13 升 14、旧对话只在打开时现算、审批与提问留痕）、[显示层审计](../research/hub-display-audit-2026-11-12.md)的 A 与 D.12.3、[T3 Code 调研](../research/t3code-protocol-ui-2026-11-12.md)的 A2。协议类型在 `src/contracts/protocol.ts`。按 AGENTS.md，这是改持久格式，实现后做一轮独立审查（清单在末尾）。
+1. 条目是事实本身。旧字段（`thinking`、`tools[]`、`plan`、`notices[]`、`activities[]`、`outputs[]`、每轮一条助手消息、`messages[]`）不再写；界面、交接单叙述、上下文桌、导出、搜索都读条目。
+2. 没有总大小硬顶：不丢弃、不拒绝、不截断用户的内容。办法是分页和按需读取，不是封顶（3.7 逐个列出要拆的上限）。
+3. 旧对话在升级时一次性转成新格式，先自动备份；回退 = 恢复备份。
+4. 格式只升一次（v13 到 v14）。之后的阶段只改代码，不再动数据。
 
-本文只定分步落地的第 2 步（有序条目落盘，运行时按到达顺序产出）和第 3 步里与存储有关的部分（审批、提问留痕）。第 1 步（共用归一模块、读侧投影、界面按协议渲染）不动存储，并行进行。实施拆分见 [step2-plan](../proposals/protocol/step2-plan.md)。
+为什么必须拆表，而不是只去掉常量：
+- 现在一个对话是一份快照 JSON，每次提交整份序列化、解析、校验、重写（`sqlite-store.ts:411-421`）。ADR-047 的实测是 1 MB 的快照每块 7.8 ms、4.2 MB 要 44.8 ms；我在同一台机器上做的原型（临时库，非生产代码）里，只算序列化加重写，4 MiB 也要 11.5 ms。按下面的表，一个文字窗口的提交是 0.11 ms，与历史多长无关。
+- 校验里有两层互相查找（`state.ts:423-442`：每条消息在全部回合里找，每个回合在全部消息里找），回合到万级就是亿次比较。
+- 现有上限（256 回合、8 MiB、16384 条事件，`state.ts:14,20,21`）正是为压住这些代价设的。去掉上限，就必须去掉整份快照。
 
-## 背景
+## 二、T3 Code 怎么存（读到的事实）
 
-- 一轮现在是“一条助手消息加若干并列字段”。助手消息只在 `flushStream` 里建、只追加（`runtime.ts:1442`），每个 Run 只声明一个 `assistantMessageId`（`state.ts:406-407,425`）。`thinking`、`tools[]`、`plan`、`notices[]`、`activities[]`、`outputs[]` 各自独立（`session.ts:114-120`）。公开快照里没有跨类型的先后。
-- 先后只在事件日志里：任何别的事件到达前，先提交已合并的文字或思考窗口（ADR-047；`runtime.ts:1282-1284`）。日志有条数上限（`state.ts:21`），靠回放它不是长久之计。
-- 审批与提问只在 Runtime 内存的 Map 里（`runtime.ts:247`）：决定后删（`:278`），回合结束时删（`:1840-1842`），重启后没有（`session.ts:508-511`）。持久的只有几条事件和一条 `commands` 记录。
-- 工具超过 128 条后，新的被静默丢弃（`state.ts:27`，`runtime.ts:1313`）；通知 32、活动 64、产物 32 同样（`runtime.ts:1327-1328,1488`）。
-- 给前端的帧：文字窗口发整条消息，活动中的 Run 发整个 Run，其余发整份快照（`session-stream.ts:103-121`）。
-- 真实对话里先后确实有信息：试用夹具（`tests/fixtures/protocol/trial-2026-11-11.json`）里 Codex 有两轮是“说一句、连跑十来个工具、再说一句”，dsh 一轮是 6 段思考夹在 13 次工具调用之间。
-- 先例：v7 到 v13 每次加字段都升版本、整库一个事务迁移、旧版本不得带新字段（`sqlite-store.ts:634-701`，`state.ts:325-330,371,389-390`），升版本前自动备份（ADR-049）。
-
-## 决定
-
-### 1. 落盘的形状：条目加偏移，旧字段保留并继续写
-
-- `PublicRun.items?: readonly PublicItem[]`，只在 schemaVersion ≥14 的快照里允许，数组顺序就是 `seq` 顺序。另有 `PublicRun.omitted?`（第 6 节）。
-- `PublicItem` 就是 `protocol.ts` 的 `ProtocolItem`，只有一处不同：`assistant_message` 与 `reasoning` 不带文字（助手段也不带 `messageId`，它就是本 Run 的 `assistantMessageId`），带 `start`、`end?`（UTF-16 偏移，没有 `end` 表示还开着）。文字仍然只有一份，在助手消息（`PublicMessage` 不改）和 `run.thinking` 里；读侧按偏移切出来，填成 `ProtocolItem`。
-- 条目有界地落盘，大块内容只留引用：
-
-| 条目 | 落在快照里 | 放内容库（`detail`，与 `tools[].detail` 是同一个引用） |
+| 问题 | T3 的做法 | 出处 |
 |---|---|---|
-| 每个条目 | `id`≤530、`seq`、`type`、`status`、`startedAt?`、`endedAt?`、`parentId?`、`nativeName?`≤256、`detail?` | |
-| assistant_message、reasoning | `start`、`end?`；助手段另有保留的 `phase?`（第 2 节第 5 条） | 无（文字在消息或 `run.thinking`） |
-| command | `command`≤4 KiB、`raw?`≤4 KiB、`cwd?`≤1 KiB、`exitCode?`、`background?` | 输入全文、输出尾部 64 KiB |
-| file_read、search、web | 路径与范围、`scope`、`query`≤1 KiB、`matches?`、`url?`、`title?` | 结果文本 |
-| file_change | `changes`≤64 项（`path`、`op`、`oldPath?`、`added?`、`removed?`） | diff≤64 KiB |
-| mcp_tool、tool、subagent | `server`、`tool`、`hub?`；`name`；`title`≤1 KiB | 输入输出 JSON |
-| plan | `steps`≤64 项（各≤4 KiB）、`explanation?` | 无 |
-| approval、question | `subject`、`title`≤1 KiB（提问≤4 KiB）、`options`≤32、`decision?`、`answer?`≤4 KiB、`secret?` | 不存 `detail` |
-| notice、context_event、artifact | `severity`、`code?`、`text`≤1 KiB、`more?`≤4 KiB；`kind`；`kind`、`name`、`uri` | 产物字节（与 `outputs[]` 同一个引用） |
+| 谁是真相 | 投影表是真相。一次数据库事务写事件、投影行、命令回执、待办效果；提交后才发布，发布与提交同序（`publishLane`） | `docs/internals/overview.md:47-52`；`EventSink.ts:286-310,383-390` |
+| 怎么分表 | 事件表（自增序号）；投影 `…_projection_{threads,runs,nodes,turn_items,messages,plans…}`，每张几列索引加整行 `payload_json` | `055_OrchestrationV2.ts:20,225-240` |
+| 条目位置 | 首次见到时在 `…_turn_item_positions` 定下，`ordinal = 回合序号×1,000,000 + n`，线程内唯一 | `TurnItemPositionStore.ts:63-65`；`Foundation.ts:123` |
+| 事件保留 | 只留约一天（回放与命令重试用），之后删掉投影已覆盖的事件，所以投影不能从日志重建；每个流的最新事件等少数事件保留 | `ProjectionMaintenance.ts:42,255-300`；`overview.md:61-70` |
+| 长线程怎么取 | 有界快照：约 1 MiB、10 个用户回合（更早的页 20）、500 行，其余窗口 75 行，至少放一行；游标是 base64url JSON；回放超过 128 个事件或 1 MiB 就改发快照 | `threadHistoryPaging.ts:16-21,60-76,309`；`ThreadStream.ts:18-20,100`；`performance-regressions.md:15,31` |
+| 展开时再拉 | 一段里已完成的工作条目超过 150 个，折成带游标的占位（`deferredWork`），展开再取 | `threadHistoryPaging.ts:23,203` |
+| 大块内容 | 命令输出整段存在条目行的 `payload_json` 里；线上去掉并打 `outputOmitted`，详情按条目取，**截到 256 KiB**。存储时 diff **截到 32 KiB**，完整 diff 走检查点（隐藏的 git 引用）的 diff 端点；检查点文件线上只给 **200 个**加总数；实时命令输出不进事件库；跨环境导出超过附件上限就被拒 | `WireProjection.ts:26-29,54,155,242`；`performance-regressions.md:35-43,45-51`；`overview.md:88` |
+| 搜索 | FTS5 trigram 无内容表，触发器维护，VACUUM 后 rowid 会变，要重建 | `messageSearchIndex.ts`；`069_ThreadMessageSearch.ts` |
+| 分支与删除 | 分支继承源的条目，不复制；删除是软删（`deleted_at`） | `ProjectionStore.ts:1337-1500`；`055_OrchestrationV2.ts:66` |
+| 旧数据转换 | 按线程加锁、事件 id 确定、每批 50 条、状态表带 `last_error`，可重来；先转外壳，正文首次打开或后台再转 | `LegacyV1ThreadImporter.ts:683-805`；`LegacyV1ImportState.ts` |
+| 启动恢复 | 从投影状态挑候选，不为确认“没活要干”去读已完成的历史 | `performance-regressions.md:81` |
+| 客户端 | 有界快照加 `historyCursor`；加载更早是显式按钮；虚拟列表靠稳定 id 与前插保位 | `MessagesTimeline.tsx:821-825,1312-1343,1390,1414` |
+| 出过的问题 | 回合窗口里的大工具输出让窗口查询要约一秒（改成先选 id 再按 id 取正文）；忙命令的输出刷事件库会堵死所有线程（所以输出走单独通道）；事件剪掉后投影不能重建 | `ProjectionStore.ts:3156`；`performance-regressions.md:45-51` |
 
-- 落盘的类型：assistant_message、reasoning、七种动作加 subagent、plan、approval、question、notice、context_event、artifact。读时派生、不落盘：user_message（来自消息）、switch（来自 `run.relay` 与前后选择）、interrupt（来自 `cancelRequested`）、error（来自 `run.error`）。以后才写：plan_proposal、recap、delegation。v14 的校验一次放进 23 种的形状，让它们以后开始落盘不必再升版本。
-- `context_event` 必须落盘：Hub 清空与原生命令的上下文效果现在只写进 `run.ended` 事件，快照不存（`control.ts:139-145`，`runtime.ts:1896-1900`）。回合结束时按它们写一条。
-- 与现有字段的关系（推荐 v14 双写：旧字段一个不减、语义不变，一次提交里与条目一起写）：
+照搬：①一个事务写变更与事件，提交后再发布；②条目一行（几列索引加正文），位置首次见到时定下；③窗口加游标分页、大块按需取、实时输出不进事件库；④FTS5 trigram；⑤按对话可重来的转换加状态；⑥启动只看未完成工作的索引；⑦分支引用源、删除软删。
+不该照搬：①剪事件日志，之后无从重建、无从审计；②任何截断（diff 32 KiB、详情 256 KiB、检查点 200 个）——我们按范围读取全文；③每回合 999,999 个位置的隐含上限（`TurnItemPositionStore.ts:64-65`）；④7,671 行的动态 SQL 窗口（`ProjectionStore.ts`）：它要从条目反推“用户回合”，我们一回合就是一个 Run，按回合序号翻页即可。
 
-| 现有 | v14 | 与条目的关系 |
-|---|---|---|
-| 助手消息（每 Run 一条） | 保留，仍是文字唯一的存放处，只追加 | 助手段按偏移指向它；各段加段间空白就是全文 |
-| `thinking` | 保留，同上 | 思考段按偏移指向它 |
-| `tools[]` | 保留，仍≤128，仍供交接单叙述、上下文桌、`contentReferences`、旧 Run | 动作条目是它的归一视图，`detail` 同一个引用 |
-| `plan`、`notices[]`、`activities[]`、`outputs[]` | 保留 | plan、notice、subagent 与 context_event、artifact 条目 |
-| `usage`、`error`、`backend`、`timing`、`relay` | 不变，不进条目 | 用量、结局、换家、停止由读侧派生 |
+## 三、决定
 
-- 双写的退出条件：交接单叙述、上下文桌、导出、界面都改读条目，并且不再承诺降级到 v13。之后新 Run 可以不写 `tools[]` 等，不必升版本（它们本来就是可选字段）。旧 Run 永远只有旧字段。
-- 一个例子：回复全文是“我先改 cart.js。改好了。”（16 个码元），一轮是说一句、改一个文件（要批准）、再说一句（读侧推出 `text:1` 是 commentary，`text:2` 是 final）：
+### 3.1 表（v14，STRICT；`sessions`、`events`、`create_keys`、`owner_metadata`、`relay_*` 沿用原名，外键不动）
 
-```json
-"items": [
-  {"id":"text:1","seq":1,"type":"assistant_message","status":"completed","start":0,"end":12,"startedAt":1000,"endedAt":1040},
-  {"id":"tool:call_7","seq":2,"type":"file_change","status":"completed","changes":[{"path":"src/cart.js","op":"modify","added":2,"removed":2}],"startedAt":1100,"endedAt":1900,"detail":{"id":"content-…"}},
-  {"id":"permission:permission-a1","seq":3,"type":"approval","status":"completed","subject":"file_change","title":"修改 src/cart.js","options":[{"id":"accept","role":"allow_once","label":"允许一次"},{"id":"decline","role":"deny","label":"拒绝"}],"decision":{"role":"allow_once","by":"user","at":1800},"startedAt":1110,"endedAt":1800},
-  {"id":"text:2","seq":4,"type":"assistant_message","status":"completed","start":12,"end":16,"startedAt":1950,"endedAt":1990}
-]
+| 表 | 一行 | 主键与索引 | 放什么 |
+|---|---|---|---|
+| `sessions` | 对话头 | PK `id`；`(updated_at)` | `version`、`last_seq`（并发与事件游标，语义不变）、`format`（13/14）、`status`、`epoch`、`active_run_id`、`pending_switch_id`、`title`、`run_count`、`updated_at`、`deleted_at`；列 `snapshot` 改名 `head`，只放配置、当前执行者（`selection`）、保留进程、`relayRecoveryFailed`、分支来源引用等小对象 |
+| `bindings` | 一个原生绑定（含已归档） | PK `(session_id, ordinal)`；部分唯一 `(harness_id, control_id, checkpoint)` 限 ready/unconfirmed 且非 opensNew | 接力状态（epoch、mark、floor、pending）、观察到的配置、`binding_json` |
+| `runs` | 一个回合 | PK `(session_id, ordinal)`；`run_id` 唯一；部分唯一 `(session_id)` 限 preparing/running/settling；部分 `(session_id, status)` 限未终结；`(session_id, ended_seq)`；`(harness_id, control_id, prepared_at)` | `status`、`user_seq`、`ended_seq`、`dispatched`、`executed_on`（三列：harness、control、epoch）、`context_effect`、`cancel_requested`、`stop_requested`、`legacy_order`；其余在 `run_json`（selection、backend、cleanup、error、timing、usage、relay、relayRequest、retained…） |
+| `items` | 回合里一个条目 | PK `(run_id, seq)`；`(run_id, item_id)` 唯一；部分 `(run_id, status)` 限未终结 | `type`、`status`、起止时间、`parent_seq`、`text_bytes`、`item_json`（类型字段，不含正文与大块） |
+| `item_text` | 正文的一块 | PK `(run_id, item_seq, chunk)`，WITHOUT ROWID | 用户消息、助手段、思考段的文字；一个提交窗口一块，只追加 |
+| `content_refs` | 条目或回合引用的内容库对象 | `(content_id)`；`(run_id, item_seq)` | 内容回收与反查 |
+| `commands`、`switches` | 幂等记录、换家 | PK `(session_id, command_id)`、`(session_id, switch_id)` | 现有字段；`switches.sourceRunIds` 数组改成 `source_through_ordinal`（`runtime.ts:475` 本来就是“到当前回合为止的所有回合”） |
+| `origin_history` | 导入的原生历史 | PK `(session_id, idx)` | 导入时被引用的原生消息；分支不复制（3.3） |
+| `search_fts` | 全文索引 | FTS5 trigram 无内容表，rowid = `items.rowid` | 已结束的用户消息与助手段 |
+
+原型（40 万条目、1 万回合，临时库，非生产代码）：取最近 10 个回合连条目与文字 0.33 ms，加载更早一页 0.006 ms，找“有未完成回合的对话”走部分索引 0.001 ms；`ALTER` 改名、加列、部分唯一索引、终态触发器在 SQLite 3.54 上都按预期工作，检查约束与外键在改名后仍有效。未含 FTS 维护与迁移。
+
+### 3.2 条目、文字、大块
+
+- 条目就是 `protocol.ts` 的 `ProtocolItem`，一行；类型字段在 `item_json`，文字在 `item_text`，不进 `item_json`。文字分块追加：一个提交窗口（ADR-047，100 ms 或 16 KiB）追加一块，不改已有块；触发器禁止对 `item_text` 更新或删除。读全文 = 按块号拼接。段关闭时，同一事务把拼好的全文写进 `search_fts`。
+- 大块（命令输出、diff、工具输入输出、附件、产物）继续放内容库，条目只存引用并登记 `content_refs`。内容库不再截断，不再有单项 20 MiB、总量 4 GiB、26 万条的上限（3.7），读取用字节范围。
+- 分段：窗口从不跨边界（任何别的事件到达前先提交窗口，`runtime.ts:1282-1284`）。一段在首个含非空白字符的窗口打开，同类连续窗口并段；换种类、放下一个占时间线位置的条目（动作、审批、提问、通知、压缩、产物）、回合进入终态，就关段。plan、用量、诊断、已有条目的更新不切段。纯空白并入下一段开头。`phase` 不存，读侧推出（终态后，除 plan 外最后一个条目是助手段者为 `final`）。
+- 身份：`tool:<原生 id>`、`activity:<id>`、`permission:<permissionId>`、`text:<n>`、`think:<n>`、`notice:<n>`、`output:<n>`、`plan`。`(run_id, item_id)` 唯一，同一 id 反复上报是同一行的 upsert，内容没变不提交；类型在回合进行中可以细化。`seq` 从 1 起，首次出现时定下，随行存，不复用。位置在事件到达时预留；异步写内容库的先占位后补引用，写失败标 `failed`。
+- 收场（回合终态或重启恢复，同一个纯函数）：开着的段随回合状态；pending 或 running 的动作，回合 cancelled 记 `cancelled`，其余记 `unknown`；waiting 的审批、提问记 `cancelled`。
+- 审批与提问：开出时同一提交放 `waiting` 条目；用户决定时同一提交改成 `completed` 或 `declined` 并写 `decision{role, by, at}`（提问写 `answer`）；预算到期记 `cancelled` 加 `by:"timeout"`；Harness 撤回按它说的；重启时 `cancelled`、不写 decision。secret 回答不落盘（条目带 `secret:true`），也不进 `commands.fingerprint`（现为裸 SHA-256，`runtime.ts:263`，`session-application.ts:55,140`）。
+- 解析只检查结构，不检查大小。
+
+### 3.3 运行时怎么改
+
+现在的状态机（出处）：每个事件先 `owned()`→`load()` 取整份冻结快照（`runtime.ts:930-936,1165-1173`）；归约在整份上做（`updatedRun`，`:186-192`；`send` 展开 `runs`、`messages`、`commands`，`:437-440`；`flushStream` 对全部消息 `map`，`:1432-1445`）；`commit()` 把整份交给 `store.transact`（`:941-957`），后者整份解析、校验、序列化、重写（`sqlite-store.ts:398-427`，`state.ts:350-468,523-599`）；启动时读遍所有对话（`sqlite-store.ts:707-715`）。
+
+新模型：内存里只有对话头（小，常驻缓存）和正在进行的回合（`ActiveTurn`：回合行、`nextSeq`、未终结的条目与开着的段、当前窗口；已终结的条目不留内存，按 `(run_id, item_id)` 唯一索引查）。历史回合落表后不再进内存。端口：
+
+```ts
+interface ConversationTx {   // 只有索引查询，没有“读全部历史”的方法
+  head(): Head;  run(id): RunRow | null;  runAt(ordinal): RunRow | null;  active(): RunRow | null;
+  queued(limit): RunRow[];  openRuns(): RunRow[];  before(ordinal, limit): RunRow[];  owed(binding, mark, floor): RunRow[];
+  items(runId, after, limit): ItemRow[];  text(runId, itemSeq, from, limit): string;
+  command(id): CommandRow | null;  switchOf(id): SwitchRow | null;  bindings(): BindingRow[];
+}
+interface Mutation { head?; runs?; items?; text?; bindings?; commands?; switches?; contentRefs?; events: EventDraft[]; relay?: RelayRows }
+transact(id, expectedVersion, mutate: (tx: ConversationTx) => Mutation): Commit  // Commit 带变更集，供发布用
 ```
 
-### 2. 助手文字怎么分段
+`version` 乐观并发不变（头行上比较并交换）。原来由整份校验保证的不变量，改由：唯一性与外键交给主键与外键；“只有一个活动回合”“一个原生会话只被一个对话持有”交给部分唯一索引（后者原来靠 `nativeOwners` 的 JSON 遍历，`sqlite-store.ts:361-374`）；“终态回合不可改”“取消与停止不可撤销”“文字只追加”交给触发器；其余只校验被改的行。`SessionSnapshot` 不再是存储或内存里的对话，只作纯函数（渲染器）的切片输入类型。
 
-1. 文字照旧按窗口追加进同一条助手消息。分段只记偏移，不拆消息。窗口从不跨过边界：任何别的事件到达前，先提交已合并的窗口（ADR-047）。
-2. 一段在第一个含非空白字符的窗口里打开，`start` 是该窗口里第一个非空白字符的偏移。更早的空白留在消息里，不属于任何一段；校验要求段与段之间只有空白。打开的段状态为 `running`。
-3. 同一种类（文字或思考）的连续窗口并进同一段。下面任一发生时这一段关闭，`end` 取此刻缓冲长度，状态为 `completed`（回合进入终态时按第 4 节的收场表）：另一种类的窗口到达；一个占时间线位置的新条目被放下（任何动作、审批、提问、通知、压缩、产物）；回合进入终态。
-4. 不切段：已有条目的状态与详情更新（同一个工具反复上报）、plan 的出现与更新、用量、诊断。plan 有自己的 `seq`，但界面不把它画在时间线里，不该拆开一段话。
-5. `phase` 不落盘，读侧推出：回合进入终态后，除 plan 外最后一个条目若是助手段，它是 `final`，别的段是 `commentary`（取消、失败、未知的回合同样）；回合进行中没有 `final`。条目里保留一个可选的 `phase?`，v14 不写；以后 Driver 能报原生的阶段（Codex 的 `commentary` 与 `final_answer`，T3 调研 B6）时才用，读侧以它为准，不必再升版本。
-6. 段打开期间，`endedAt` 随每个窗口推进（窗口最后一块到达的时刻），用 `status` 判断是否结束。
-7. 相邻的两条原生消息在 v14 合成一段，因为 Driver 把消息身份丢了（Codex 的 `itemId` 在 `codex.ts:838-845` 被丢，ACP 在 `acp.ts:877`）。可选的下一步：`ControlEvent.text` 加可选的 `messageId`，Driver 给了就按它切（计划 B 线的可选项）。
-8. 各读者取文字：流式帧、交接单叙述（`narration.ts:91,99`）、上下文桌（`table.ts:88-92`）、导出里的整条回复（`conversation-export.ts:39`）、搜索、`public_context_rehydrate` 都仍读整条助手消息，不受分段影响。只有按先后画的界面和新的导出读段。
+读者：
 
-### 3. 思考怎么分段
+| 读者（现在的位置） | 现在 | 改成 |
+|---|---|---|
+| 接力 `needRuns`、`rangeOf`、`renderView`、`packetManifest`（`relay-coordinator.ts:294-338`）、`holdsNothing`、`nativeExactAt`、`relayFacts`（`runtime.ts:507,2233`） | 遍历全部回合与消息 | 查 `runs` 的列与索引（`ended_seq`、`dispatched`、`executed_on`）；`needRuns` 是一条带范围的查询 |
+| `RelayLedger`（`relay-coordinator.ts:114-137`）、`runtime.ts:883,2043,2246` | 分页扫整个事件日志找 `run.ended` 的 seq 与命令效果 | 这些事实在 `runs` 行（`ended_seq`、`context_effect`）；删扫描 |
+| 接力渲染 `relayUnits`、`renderRelay`（`narration.ts:73-102`，`context.ts:68-85`） | 一次拿到全部欠的回合 | 从新到旧分批取，到预算为止；省略数用 SQL 计数 |
+| 水位与回合下标（`relay.ts:24-26`：seq ≤ 16384、回合 < 256） | 契约里写死 | 放开到安全整数；`mark`、`floor` 仍是事件 seq |
+| 上下文桌 `table.ts:88-92`、`table-routes.ts:123`、`hub-tools` | 整份快照里按 n 找回合 | `runs(ordinal)` 点查加条目分页；目录分页；搜索走 FTS |
+| 搜索（`hub_search`、界面查找） | 扫快照里的文字 | FTS5 trigram（≥3 字符；原型确认两个汉字的词不命中）；更短的词退回按块扫描并说明 |
+| 导出 `conversation-export.ts` | 拼成一个字符串 | 逐回合流式写出（也避开 V8 字符串上限） |
+| 分支 `fork`（`runtime.ts:543-580`）、删除 `deleteSession`（`sqlite-store.ts:436-446`） | 复制历史进 `origin.history`，超 1 MiB 建不出分支（`state.ts:294`）；硬删 | `origin = {sessionId, throughOrdinal}` 只存引用，读时先源后己；删除是软删，被引用的行不清（无引用且用户确认后才真正清行） |
+| 换家、恢复（`runtime.ts:474-478,886-919,2084-2135`）；`carriedNativeConfiguration`（`state.ts:476-487`，`view()` 每次都算） | `sourceRunIds` 数组、对全部回合与消息的过滤、`findLast` 遍历 | `source_through_ordinal` 加 `runs` 范围查询；未知回合走未终结的部分索引；“某绑定最后一个已派发的回合”走 `(session_id, harness_id, control_id, ordinal)` 索引 |
+| 导入 `importOwned`（`runtime.ts:151,355-407`） | 截到 200 条、512 KiB | 全部写 `origin_history`；Harness 没给的部分如实记数 |
+| 侧栏、`/state`（`server.ts:580,225-269`） | `list(100)` 解析 100 份快照，`readinessViews` 扫所有回合 | 读 `sessions` 的列；启动用时取每个入口最近 5 个回合 |
+| 排队、取消、关闭（`runtime.ts:424,478,788,841`） | 过滤全部回合 | `runs` 的部分索引 |
+| 恢复、回收、`listKept`（`sqlite-store.ts:707-715,376-392,353-356`；`session-application.ts:126-128`） | 启动时读遍所有对话 | 未终结回合的部分索引；`content_refs`；`sessions` 的列 |
+| 诊断、CLI（`run-diagnostics.ts:100-118`，`cli/sessions.ts:41`） | `runs.findIndex`、`runs.length` | `ordinal`、`run_count` |
 
-- 规则同第 2 节，缓冲是 `run.thinking`（≤1 MiB，`state.ts:18,203`）。试用夹具（`tests/fixtures/protocol/trial-2026-11-11.json`）里 dsh 一轮有 6 段思考夹在工具之间，所以按段落盘，不按“一轮一块”。
-- 用时由读侧算：`endedAt` 减 `startedAt`。整块一次到达的 Harness（dsh，审计 B.4.2）这个差是 0，读侧当作未知，不写“0 秒”。
+### 3.4 读取与分页
 
-### 4. 条目的身份与先后
+- 会话视图 `GET /api/v1/sessions/:id` 给 `{head, window, olderCursor, permissions, nativeStates, lastSeq}`。`window` 是最近的回合，到 10 个回合或约 1 MiB 为止，至少放一个回合；条目带文字、去掉大块（`bodyOmitted` 加 `detail` 引用）。这些是传输页大小，不是存储上限（数字与 T3 相同）。
+- 更早的回合 `GET …/turns?before=<游标>&limit=`。游标是不透明的 base64url（回合序号、取得时的 `lastSeq`），按 `(session_id, ordinal)` 翻页；回合序号不变，所以新回合到来不会错位。
+- 一个回合里已完成的工作条目超过 150 个，窗口里把中段折成 `deferredWork{fromSeq, toSeq, count}`；`GET …/runs/:ordinal/items?after=&limit=` 取。
+- 大块与长文字：`GET /api/v1/content/:id` 与 `GET …/items/:runId/:seq/text` 都支持 `offset`、`limit`（字节范围），不截断。
+- SSE 帧由提交的变更集生成，提交后才发布：`snapshot`（头加窗口）、`head`、`run`、`item`（条目 upsert，去大块）、`text`（`{runId, itemSeq, from, text}` 追加）、`relay`、`attention`。每帧带 `lastSeq`；重连一律先发 `snapshot` 再接增量，不回放事件（比 T3 简单：T3 在 128 个事件内回放，超了才改发快照）。慢连接的 `dirty`→`snapshot` 回退保留（`session-stream.ts:138-149,159`）。取代“整条消息替换”和“整个 Run 替换”（`:103-121`）。
+- 前端：条目行用稳定 id `runId/seq` 当 key；前插更早页时保位；虚拟列表只依赖这两点（T3 的 `maintainVisibleContentPosition`）。何时加载更早由界面决定。
+- 页大小常量放进一个模块，测试断言窗口字节不超预算（“至少一个回合”除外），对应 T3 的传输预算测试。
 
-- `id` 在本回合内唯一；读侧要全局唯一时拼上 Run 的 id。派生：工具 `tool:<原生 id>`（每个 Driver 都给，`control.ts:96` 必填，`acp.ts:882`）；活动 `activity:<id>`；审批与提问 `permission:<permissionId>`；文字 `text:<n>`、思考 `think:<n>`（n 是本回合第几段）；通知 `notice:<n>`；产物 `output:<n>`；任务清单 `plan`（一轮一份）。Codex 把同一个子任务双发成工具和活动（`codex.ts:881-888`），合成哪个 id 由第 1 步的归一模块返回，Runtime 不自己猜。
-- `seq` 从 1 起，条目第一次出现时定下，不变、不复用，数组严格按 `seq` 增序。它是回合内的位置，不是会话事件的序号。
-- 同一 id 反复上报覆盖同一条，内容没变就不提交（沿用 `runtime.ts:1320` 对 `tools[]` 的做法；设计稿与 T3 同此）。条目的类型在回合进行中可以被细化（后到的上报能改 `kind` 与标题，`runtime.ts:112-121`），回合终结后不再变；界面按 id 认条目，不按类型。
-- 没有原生 id 的 Driver 由适配器造一个本回合内确定的（`<回合>-<序号>`）；空 id 校验拒绝。`parentId` 必须指向本回合更早的 `subagent` 条目，否则丢掉这个字段，不让提交失败。
-- 位置在事件到达时预留，不在异步写内容库完成时：产物字节要先写内容库再提交（`runtime.ts:1496-1503`），条目却在事件到达时就占位，写好后补引用；写失败时标 `failed`，不再只留一条诊断（`:1499`）。工具详情同理（`storeDetail`，`:1473-1485`），写好的那次提交同时补 `tools[]` 与条目的 `detail`。
-- 回合进入终态时（`ended`，`runtime.ts:1903-1971`）和重启恢复时（第 5 节）还没终结的条目，由同一个纯函数收场：
+### 3.5 事件日志
 
-| 回合终态 | 还开着的文字、思考段 | pending 或 running 的动作 | waiting 的审批、提问 |
-|---|---|---|---|
-| completed | 关闭，`completed` | `unknown`，不当已完成（Claude 前台命令一直报 pending，审计 B.4.3；OpenClaw 补记没结果也写 completed，`openclaw.ts:162`，归一时要改） | `cancelled` |
-| cancelled（用户停止、预算到期） | `cancelled` | `cancelled` | `cancelled` |
-| failed、unknown（含重启恢复） | 同回合状态 | `unknown` | `cancelled` |
+- 继续保留全部事件，不修剪。事件变轻：文字窗口只记 `{runId, item, chunk, bytes}`，不含文字；工具等仍记摘要。v13 以前的事件原样保留。条数、总量、单条的上限（`state.ts:21-23`）全部取消。
+- 事件不再是任何读者的事实来源（见 3.3 的接力两行），只做顺序证据、审计与 SSE 的序号。
+- 约定不变：事实先持久提交再发布（`commit()`→`publish()`，`runtime.ts:941-972`），一次提交 = 一个事务写变更集加事件；取消受理、后端停止、资源清理分别记录，仍是 `runs` 的 `cancel_requested`、`stop_requested`、`backend_json`、`cleanup_json`，加 `run.cancel_requested`、`run.stop_requested`、`run.backend_settled`、`run.ended` 事件；单调由行触发器保证。
+- 事件数与 `last_seq` 一致，不再每次读时核对（`sqlite-store.ts:173-174` 要扫事件），改成一条维护命令里的核对。
 
-### 5. 审批与提问的持久化
+### 3.6 迁移 13 到 14
 
-1. 请求开出时（`runtime.ts:1288-1298`），在写 `permission.requested` 的同一次提交里放一条条目：`id` 为 `permission:<permissionId>`，类型 `approval`（`kind` 缺省）或 `question`，状态 `waiting`，`startedAt` 是请求时刻。`approval` 带 `subject`、`title`、`options[{id, role, label}]`；角色由第 1 步的归一模块定，归不了的是 `other`，保留原词（T3 的教训：未映射的类别不能落空，#7825）。
-2. 用户决定时（`decidePermission`，`runtime.ts:259-281`），在写 `permission.decided` 的同一次提交里改条目：允许类角色为 `completed`，`deny` 为 `declined`，写 `decision{role, by:"user", at}`；提问的选项回答写所选项的文字，自由文本写 `answer`（≤4 KiB，截断加省略号），选取消类选项为 `cancelled`。记的是用户的选择；Harness 收没收到，由后面动作条目的状态反映（`permission.submitted` 现在恒为 `backendAcknowledged:false`，`runtime.ts:279`）。
-3. 其他收场，都在写对应事件的同一次提交里：等待预算到期（`runtime.ts:1255-1270`）`cancelled` 加 `decision{role:"deny", by:"timeout"}`；Harness 撤回或自动拒绝（`:1299-1308`）按它说的 `cancelled` 或 `declined`，`by:"harness"`；用户停止或回合结束时还在等（`:1840-1842`）`cancelled`，不写 decision。
-4. Hub 重启：`claimAndRecover` 对每个会话调 `recoverSession`（`sqlite-store.ts:707-715`，`state.ts:601-614`），未终结的回合变 `unknown`（`OWNER_ENDED`）。内存 Map 没了、原进程已不在，没人能答，所以 `waiting` 的请求收成 `cancelled`、不写 decision；动作与段按第 4 节的表收场。不重发、不重问。
-5. 敏感输入：`input.kind === "secret"`（Codex 的 `isSecret`，`codex.ts:998,1014`）的回答只经 `decidePermission` 交给 Driver，不进快照、事件、日志，`answer` 不写。条目要有一个 `secret: true` 标记，界面才能写“已回答（内容未保存）”（协议 `QuestionItem` 加可选字段，见计划缺口 4）。现状还有一处会泄：permission 命令记录的 `fingerprint` 是 `{permission, option, input}` 的裸 SHA-256（`runtime.ts:263`，`session-application.ts:55,140`），编号又在事件里，弱口令可离线撞出来。v14 起 secret 回答不进 fingerprint。
-6. 实时的 `SessionView.permissions` 与“等你处理”（ADR-035）仍来自内存，用来回答；条目只管留痕与时间线。两边用 `permission:<permissionId>` 对上。
+- 触发：打开 v1 到 v13 的库。先备份（ADR-049，条件改为 1 到 13，`sqlite-store.ts:508`），备份失败则不迁移；需要约两倍库大小的空闲空间，不够就拒绝启动并说明。
+- 第一个事务（小）：v1 到 v13 的老阶梯照旧逐级升（`sqlite-store.ts:587-701`），所以 `state.ts` 的整份解析、`relay/migrate.ts` 与 `relay.ts` 里带 16384、256 上界的那部分解析器要原样冻结进 `legacy/`，只供迁移用；然后建新表，`sessions` 加列（`format` 默认 13）、`snapshot` 改名 `head`，设 `user_version=14`。
+- 之后每个对话一个事务：读旧快照 → 读侧投影转成条目 → 写 `runs`、`items`、`item_text`、`content_refs`、`commands`、`switches`、`bindings`、`search_fts` → 读该对话的 `MIGRATION_EVENTS`（`sqlite-store.ts:151`，v13 迁移已在用）补 `ended_seq`、`context_effect` → 校验 → 写头行并置 `format=14` → 提交。
+- 校验（不过则回滚这个对话）：回合数、命令数、绑定数与 relay 状态相等；每个回合的用户文字、助手文字、思考文字与旧值逐字相同；旧 `tools[].detail`、`outputs`、`attachments` 的内容引用集合等于 `content_refs`。
+- 可续跑：`format<14` 的对话就是没转完的；任何时刻被杀，重启继续，已转的不重做；id 与 seq 确定，重做得同样的行。新服务启动时在开始监听之前转完（`node:sqlite` 是同步的），进度写日志。
+- 失败：单个对话转不了，保留它的旧快照在原行，记 `last_error`，其余照常转；界面列为“无法转换”，可导出原始 JSON。整体失败（磁盘满等）停在未完成态，重启续跑。回退 = 按 ADR-049 恢复备份；旧构建遇 v14 拒绝启动（`sqlite-store.ts:569`），库不被改动。
+- 规模：4317 的库有多大我不知道，所以按对话逐个事务，内存只受单个对话大小所限，与库总大小无关；峰值磁盘约为库加备份加单个对话的新旧两份。耗时未实测。
+- 对第 1 步读侧投影（`src/contexts/session/domain/protocol/`）的要求：①全函数，对任何合法 v13 数据不抛；②确定：id、seq、块切分只由输入决定；③不丢内容，逐字；④保留所有内容引用；⑤旧回合没有先后信息，顺序固定为：用户消息、思考、工具（旧数组序）、plan、通知、活动、产物、助手文字，并置 `legacy_order=1`，不当成观察到的先后；⑥回合级事实（selection、backend、cleanup、error、timing、relay…）原样进 `run_json`；⑦纯函数，不读时钟与存储；⑧能逐回合产出，不要求整个对话同时在内存。
+- 可选增强（后做）：用事件日志回放恢复真实先后与审批（`run.output` 窗口与工具事件按 seq 保序，`permission.*` 有请求与决定），与旧文字逐字核对，对不上就退回上面的固定顺序。
 
-### 6. 上限与体量
+### 3.7 限制的处置（我们设的）
 
-- 每 Run 最多 `MAX_RUN_ITEMS = 256` 条（文字段、思考段也算），`items` 序列化后≤128 KiB（估算每条 300 到 500 B，未实测，上限时约 100 到 130 KiB）。审批与提问不计入这两个上限，另有最多 64 条的余量，再多的计入 `omitted.items`。
-- 超限时：不再放新条目，已有条目照常更新（放不下的新条目仍然关掉开着的段），文字与思考照常追加进缓冲，没有段覆盖的尾部由读侧当作最后一段显示。每个没放下的新条目计入 `omitted.items`（按不同 id 数，Turn 内存里记≤4096 个，更多时数字是下限，`atLeast: true`，界面写“至少”）。读侧在回合末尾派生一条 Hub 说的通知：“还有 N 个动作没有逐条记录”。`omitted` 是 `{items?, tools?, notices?, activities?, outputs?, atLeast?}`，没有省略时整个字段不写。
-- 写入方先夹住再写：长度、条数、偏移都由写入方按上限夹住，控制字符清掉（原生文字只当数据），超出的按本节计省略，解析只当断言。因为条目解析失败会让提交失败，而 Runtime 对提交失败是致命的（`runtime.ts:956`，`expectedFailure` 只放过上限类错误，`:162-164`），外来数据（超长路径、重复的 id）不能让它失败。
-- 旧字段的静默丢弃一并改成有账：`tools[]`（128）、`notices[]`（32）、`activities[]`（64）、`outputs[]`（32）超出时计入 `omitted.tools`、`notices`、`activities`、`outputs`，不再直接 `return`（`runtime.ts:1313,1327-1328,1488`）。通知、活动、产物的条目与旧字段同口径：旧字段放不下，条目也不放；只有工具的条目上限（256）高于旧字段（128）。
-- 会话 8 MiB（`state.ts:20,466`）、每会话 16384 条事件（`:21,411`）、单 Run 输出 1 MiB（`:18`）不变。条目不加事件，只让快照变大，所以会更早撞到 8 MiB；撞到的行为照旧（`SESSION_LIMIT`，该回合失败，已落盘的保留）。若实测显示常见会话明显逼近，调小 `MAX_RUN_ITEMS`，不放宽 8 MiB。
-- 读路径还有一处同类上限：`store.list(100)` 把 100 个会话的快照字节加起来不能超过 8 MiB（`state.ts:24`，`sqlite-store.ts:178-188`），`/api/v1/state` 与就绪视图都读它（`server.ts:580,783`）。快照变大会更早让整页状态读失败。第 2 步要实测，并把这个读上限和快照上限分开调（计划 A 线）。
-- 页面的解码器遇到超长数组整体判无效（`web/src/api.ts:35-38`），所以两边的上限一起改。
+| 限制（出处） | 处置 |
+|---|---|
+| 回合 256、命令 1024、排队 8（`state.ts:14-16`） | 去掉；回合与命令只按主键，排队只是 `queued` 行 |
+| 用户输入 64 KiB、请求体 128 KiB（`state.ts:17`，`server.ts:45`） | 去掉对内容的限制；请求体改流式接收（第三段） |
+| 回复与思考 1 MiB，超了回合以 `OUTPUT_LIMIT` 失败（`state.ts:18`，`runtime.ts:1410-1413,1436,1440`） | 去掉；文字分块 |
+| 会话 8 MiB、事件 16384 条、32 MiB、2 MiB（`state.ts:20-23`）；读 8 MiB、响应 8 MiB（`state.ts:24`，`server.ts:46`）；快照缓存 96 MiB（`snapshot-cache.ts:4`） | 去掉（对话不再是一份 JSON）；缓存删除 |
+| 工具 128、通知 32、活动 64、plan 64 项、产物 32（`state.ts:27-30`，`content.ts:12`） | 去掉；静默丢弃（`runtime.ts:1313,1327-1328,1488`）一并删 |
+| 工具输入 16 KiB、输出 64 KiB、diff 64 KiB（`control.ts:73-75`，`runtime.ts:112-122`）；Codex 与 OpenClaw 自己的截尾（`codex.ts:92`，`openclaw.ts:159`） | 去掉，存全文，按范围读；Driver 把原生给的内容原样交上来 |
+| 分支历史 512 条或 1 MiB、导入 200 条或 512 KiB（`state.ts:33,294`，`runtime.ts:151`） | 去掉；分支引用，导入全存 |
+| 附件 8 个、单项 20 MiB、每轮 32 MiB，内容库 4 GiB、26 万条（`content.ts:8-11`，`content-store.ts:11-12`） | 去掉常量；真正的限制是磁盘空间与目标 Harness 能不能收（派发前按能力检查，ADR-023），写不下时如实失败 |
+| relay 契约里的 seq ≤ 16384、回合 < 256（`relay.ts:24-26`）及各解析器 | 放开到安全整数 |
+| relay 每对话 64 MiB 交接单正文（`relay.ts:39`，`relay-tables.ts:156`） | 这是派生数据：超了淘汰最旧的已送达正文，不再拒绝（现在超了就退成只发原话，长对话会悄悄失去交接） |
 
-### 7. 事件与帧
+仍然存在、但不是我们设的限制：①模型上下文窗口与各 Harness 自己的输入限制（relay 的预算由窗口推出，`windows.ts`），超了由 Harness 报错，Hub 如实显示；②SQLite 自身：单个值约 1e9 字节（文字分块，远低于它）、数据库大小、64 位整数；V8 单个字符串约 5e8 字符（导出与全文读取都流式或范围读）；磁盘空间；③对 Harness 子进程的守护：单帧 16 MiB、一条连接累计 256 MiB（`json-rpc-process.ts:162-164`），并行对话 4（`session.ts:412`）、同时待处理的审批 32（`runtime.ts:1289`）、执行与等待预算（ADR-036）、保留进程 4 个——这是资源守护，不是对话大小，超了回合如实失败，不静默截断；④单次传输的页大小（3.4）。
 
-- 不新增事件类型，也不新增提交。条目的每次变化都在引起它的现有事件的同一次提交里：`run.output`、`run.tool_detail`、`permission.requested`、`permission.decided`、`permission.closed`、`run.budget_expired`、`run.ended`、`session.recovered`。
-- 事件载荷只加字段（事件类型开放，旧事件照读）：文字与思考的 `run.output` 加 `item`（所属段）；`permission.*` 加 `item`；`permission.decided` 加 `role`。v13 迁移读的九种事件不受影响（`sqlite-store.ts:151`）。
-- 帧：第 2 步保持“整条消息替换”和“整个活动 Run 替换”，条目随 Run 走（`WebRun` 是 `PublicRun` 去掉两个接力字段，`web.ts:300`，所以 `items` 自动在帧里；若第 1 步改为服务端附上投影好的 `ProtocolTurn`，原始 `items` 就不再上线，免得每个 Run 出现两份）。界面规则：助手消息里没被任何已关闭的段覆盖的尾部，就是正在流的最后一段，排在已知的所有条目之后。这样文字窗口仍只发 message 帧，开新段不需要额外帧；思考窗口发的是 `run` 帧，条目随它到，不需要这条规则。
-- 对流畅度：文字热路径不变；动作、审批、思考窗口发的 `run` 帧多带 `items`（估算至多约 100 KiB，未实测），频率远低于文字窗口。长回复每个窗口发整条消息的二次方成本原样存在。
-- 推荐第 2 步不改成“条目 upsert 加文字增量”：它要改界面 reducer、帧缺口处理、重连，收益只在很长的回复上。触发条件（起始值，真机量后可调）：≥256 KiB 的回复期间帧流量超过 5 MB/s，或页面长任务超过 50 ms。到时形状为 `{runId, upserts, text:{from, append}}`，漏帧回退到整份快照（`session-stream.ts:138-149,159` 已有这个机制）。设计稿第 6 节的命令输出增量通道也不在第 2 步：输出现在只在工具终态写进内容库（`runtime.ts:1324`）。
+### 3.8 分段上线
 
-### 8. 迁移 13 到 14
+格式在第一段定稿，之后只改代码。①第一段：新表、迁移、条目为唯一记录、界面读分页与增量帧；运行时仍把整个对话装进内存归约，经一个过渡层读写这些表（提交只写变更的行，不再整份重写）。这一段结束时上限常量都已去掉、提交成本不再随历史增长，但超大对话的内存与启动时间还要等第二段。②第二段：运行时改成只持有头加活动回合，接力读者改查询，分支引用、启动与回收按索引，过渡层删除。③第三段：长回合的体验与收尾（折叠占位、范围读取、FTS、请求体流式、Driver 截断）。分工与测试见计划。
 
-- `CURRENT_VERSION` 改 14（`sqlite-store.ts:19`）；新库直接建成 14（`:570-582`），`create()` 要求 14（`:319`），新会话三处写 `schemaVersion: 14`（`runtime.ts:329,389,565`）。
-- 迁移块接在 v13 块后：`version ≤ 13` 时，逐会话读出、确认是 v13、`parseSession({...state, schemaVersion: 14})` 写回，最后 `user_version=14`，整库一个事务（同 v7 到 v12，`:634-688`）。不改旧 Run 的内容，不补 items，不读事件日志。旧 Run 没有 items，读侧走第 1 步的投影。旧 Run 的先后其实还在事件日志里，需要时读侧可以回放，不动存储，v14 不做。
-- 校验（`parseSession` 与 `assertSessionTransition`）：`items`、`omitted` 只在 ≥14 的快照里；排队的 Run 没有 items；`id` 唯一、`seq` 严格增序、条数与字节不超限；各类型字段白名单与长度，未知键拒绝；`startedAt ≤ endedAt`（写入方夹住时钟回拨，不让提交失败）；段的偏移在缓冲长度内、按 `seq` 递增、互不重叠、段间只有空白；至多一个没有 `end` 的段，且只在非终态的 Run 里；终态 Run 没有 pending、running、waiting 的条目；审批的 `decision` 与状态对应；已终结条目的状态不退回，终结后只许补 `detail`。
-- 备份沿用 ADR-049，条件从 1 到 12 改为 1 到 13（`sqlite-store.ts:508`），回读核对不变（`:146-149`），失败则迁移不发生。需要约两倍库大小的空闲空间；v14 只改快照版本，应不慢于 v13 的迁移（ADR-049 补充的实测），未实测。
-- 旧程序（v13 构建）遇到 v14 库：备份步骤因 `from ≥ CURRENT_VERSION` 直接返回，随后 `claimAndRecover` 一开始就以 `INVALID_DATA`“unknown business database schema version”回滚并拒绝启动（`:508,569,717`），只读 reader 同样（`:871,889`），库不被改动。`web` 启动失败只打印错误码（ADR-049 影响一节）。
-- 回退的路：① 备份：停服务、换回 `backups/gateway-v13-….sqlite`、删 `-wal` 与 `-shm`、用 v13 构建启动（`docs/contracts/storage-events.md` 手动恢复一节），升级之后的全部变化丢失。② 降级脚本（`tools/session-v14-to-v13.sql`，先例 `tools/management-v6-to-v5.sql`；本 ADR 要求在计划 A 线做并测，应用不自己运行）：停服务后，每个会话的每个 Run 去掉 `items`、`omitted`，`schemaVersion` 与 `user_version` 改回 13。v14 保留并继续写全部旧字段，所以不丢对话、消息、工具、计划、通知与 `commands` 里的审批决定，只丢先后与审批条目。条目里的内容引用在旧字段里都有，降级后 7 天回收器不会收走它们；唯一的例外是同一 Run 第 129 个以后的工具，旧字段本来就不记，它们的详情会被收走。降级前同样先备份。
-- 风险：4317 有真实数据，升级单向；降级脚本只在合成数据上测过；备份和库在同一块盘。按 AGENTS.md，升级 4317、动真实数据先问用户；测试用临时数据根，不复制真实数据。迁移测试用冻结的 v13 夹具（先例 `tests/fixtures/relay/v12/`），夹具要在升版本之前，用现在这个 v13 构建生成。
+## 四、否决的方案
 
-### 9. 谁读 items
+- 只去掉常量、仍存整份快照：提交成本随对话增长，校验是平方的，内存随对话增长（第一节）。
+- 双写旧字段、保留每轮上限（初稿）：所有者否决。
+- 把条目只放在事件日志里（纯事件溯源）：读一个回合要扫事件、按 JSON 路径建索引，事件永远不能修剪，文字重复存两份。
+- 照搬 T3 修剪事件：我们的事件已轻，修剪省不了多少，反而丢掉顺序证据；等没有读者依赖事件后再议。
+- 文字放 `items` 的一列、追加时重写：长思考每个窗口重写整段，是平方的；分块表追加是常数。
+- 文字放内容库（文件）：每个窗口一次文件写加内容库一次提交（实测约 8 ms/条，`docs/contracts/storage-events.md:211`），提交不再是一个事务，崩溃时行与文件会不一致。
+- 位置打包成 `回合×1,000,000+n`（T3）：给每回合埋下 999,999 的上限。
+- 一个事务迁移全部：库大小未知，长时间持有写锁，WAL 巨大，中途失败不可续跑。
+- 像 T3 那样旧对话懒转换：旧快照与新表长期并存，读者要两套；所有者要一次性。
 
-| 读者 | 切换顺序 | 读什么 | 旧 Run |
-|---|---|---|---|
-| 界面 | 第一个（计划 C 线） | `run.items` 经读侧函数填成 `ProtocolTurn` | 走投影 |
-| 导出（`conversation-export.ts`） | 第二个 | 按条目次序写回复、动作、审批 | 走旧写法 |
-| 上下文桌（`table.ts`、`hub-tools`） | 第三个 | 目录里可显示先后；搜索仍搜整条消息；`#k` 工具编号仍按 `tools[]` | 照旧 |
-| 交接单叙述（`narration.ts`） | 最后，单独一轮审查 | 仍取整条回复与 `tools[]`；改按条目叙述等于改交接单内容 | 照旧 |
-| `public_context_rehydrate`（`context.ts`） | 不切 | 整条消息 | 照旧 |
+## 五、需要所有者点头
 
-第 1 步的读侧投影在第 2 步之后仍是旧 Run 的唯一读法（它们永远没有 items），也是新旧两条路的对照：同一批夹具走落盘路径和投影路径，结果应当一致，只差先后与审批。读侧函数在有 `items` 时走落盘路径，没有时走投影。
+什么时候升级 4317 的真实数据。推荐：第一段（新表、迁移、界面读新表）在新数据根上用真实 Claude Code 与 Codex 跑通、合成的多版本夹具与大对话夹具迁移通过、独立审查通过之后，由你点头再升；升级前自动备份并检查空闲空间不少于库的两倍。理由：格式只升这一次，之后的阶段只改代码；升级单向，旧构建打不开 v14。
 
-## 否决的方案
+## 六、独立审查清单
 
-- 每段一条助手消息：要改 `assistantMessageId` 的唯一性与消息状态镜像（`state.ts:406-407,425,432`），消息数上限 `MAX_RUNS*2`（`:358`），接力叙述、上下文桌、导出、前端都按“一轮一条回复”取文字，一次改全部读者，交接单内容跟着变。
-- 条目自带全文、消息当镜像：文字存两份（每轮最多 1 MiB 乘 2，都算进 8 MiB），还要多一条“消息等于各段拼接”的校验。偏移法没有重复。
-- 只做读侧投影（审计 D.12.3 的另一条路）：先后与审批结果只在事件日志里，投影不到；设计稿第 16 节已排除，用户已决定落盘。
-- 条目放单独的表（像 v13 的接力表）：快照不增长、可按条目增量写；但要改 `SessionStore` 端口、快照缓存、备份回读、删除会话、SSE 读路径，段偏移的校验要跨表，而最大的成本（每次提交整份重写快照，文字还在快照里）并不消失。所有读写都经 `run.items`，将来需要时可以原样搬进表。
-- 一次切断旧字段（不双写）：体量小，但所有读者要同时改，交接单内容跟着变，降级只能丢掉新对话。
-- 不升版本，在 v13 里加可选 `items`：旧构建读到未知字段，整个会话以 INVALID_DATA 读不出（`state.ts:192` 的白名单），而不是干净地拒绝启动。
-- 第 2 步就把帧改成增量：第 7 节。
+1. 迁移保真：校验各项（回合、文字逐字、内容引用、relay 状态）是否足够；`ended_seq`、`context_effect`、绑定谱系（epoch 增、floor 不降）是否原样；同一对话迁移前后，交接单与上下文桌的输出是否逐字相同（黄金夹具）。
+2. 可续跑与失败：在随机时刻杀进程，重启后结果与不被杀一致；转换失败的对话保持旧快照、不影响其他；备份失败时库不变；空间不足时拒绝启动。
+3. 不丢内容：文字块只追加（触发器）；终态回合不可改；内容回收器读 `content_refs`，所有引用都登记了；分支只引用且源被软删后仍可读；全仓库已无截断与拒绝（逐项对 3.7）。
+4. 不谎报：收场表（`unknown` 没被当 `completed`）；`legacy_order` 没被当成观察到的先后；搜索短词退回扫描时说明；分页占位标出条数。
+5. 重启恢复：未终结回合的部分索引覆盖所有状态；等待中的审批收成 `cancelled`；恢复与接力恢复（`sqlite-store.ts:725-747`）的交互；保留进程记录。
+6. 事实顺序：变更集与事件在同一事务；发布在提交后；取消受理、后端停止、资源清理的行与事件仍分别可查且单调。
+7. 并发与所有权：头行 `version` 比较并交换；`owner_generation`；SSE 的发布顺序与 `lastSeq`。
+8. 旧库兼容：v1 到 v13 每一代夹具都能升到 v14；冻结的旧解析器没被新代码改动；旧构建拒绝 v14。
+9. 性能预算：提交成本与历史长度无关（对 10 与 5,000 个回合的对话各测）；窗口字节有界；启动时间与对话数无关（有未完成回合的另算）。
+10. 敏感输入：secret 回答不在行、事件、日志、`fingerprint` 里。
 
-## 需要所有者拍板
+## 七、未确认
 
-1. **v14 是否保留旧字段（双写）。** 推荐：保留。理由：这样才做得出不丢对话的降级脚本，交接单等读者也不必同时改；代价是快照比只存条目大（第 2 步实测后报数）。
-2. **什么时候升 4317 的真实库。** 推荐：第 2 步在新数据根上用真实 Claude Code 与 Codex 跑通、降级脚本在合成数据上往返通过之后，经你点头再升，备份在升级时自动做。理由：升级单向，旧构建打不开 v14。
-3. **每轮条目上限 256 与会话容量的取舍。** 推荐：256，超出明确标“还有 N 个”。理由：条目撑大快照，上限高了，一个会话装得下的轮数变少（8 MiB 是硬顶）；要完整记录极长的回合，得把条目移出快照，那是另一个项目。
-
-## 独立审查清单
-
-1. 不丢用户内容：消息文字的追加与终态不可变没被削弱（`state.ts:581-587`）；`contentReferences()` 读了条目里的引用，否则 7 天回收器会收走（`sqlite-store.ts:376-392`，`session-application.ts:126-128`）；偏移之外的字节只有空白；超限后文字仍进缓冲。
-2. 不谎报状态：第 4 节的收场表；回合终态前不推出 `final`；重启恢复不把 `waiting` 说成已处理；`omitted` 进了界面；`unknown` 没被当 `completed`；Harness 没收到决定的情形。
-3. 迁移与备份：整库一个事务；1 到 13 都备份；失败时库仍是 v13；旧程序被干净拒绝；降级脚本往返（v13 夹具到 v14 再回 13，除 `items`、`omitted` 外逐字相同）；没有复制真实数据。
-4. 上限行为：外来数据（超长字段、重复 id、乱序）不会让提交失败；256 条与 128 KiB 的两种超限；审批不被上限挤掉；旧字段超限有账；`SESSION_LIMIT` 与 `store.list` 的读上限（第 6 节）；解析每次提交的代价。
-5. 重启恢复：`recoverSession` 与 `recoverWithRelay` 的交互（`sqlite-store.ts:725-747`）；在恢复事务里收场的条目通过 `assertSessionTransition`；排队的 Run；`settling` 的 Run。
-6. 旧库兼容：旧 Run 没有 items 且读得出；`items` 不得出现在 ≤13 的快照；`SqliteSessionReader` 读 v14；页面解码器对新字段与旧服务的容忍。
-7. 敏感输入：secret 回答不在快照、事件、日志、`fingerprint` 里；非 secret 的自由文本只存截断后的（≤4 KiB）。
-8. 双写一致：条目与旧字段同一次提交写；同一批夹具两路读结果一致；交接单黄金夹具（`tests/fixtures/relay/golden`）不变。
-
-## 未确认
-
-- 第 1 步归一模块对外的函数名与签名（proto-core 还没提交）。本文假设它给出“事件加已有条目得到条目更新（含 id）”和“审批选项得到角色”两个纯函数。
-- ACP 是否在 `agent_message_chunk` 里带消息 id（本仓库的 Driver 没读，`acp.ts:877`）；各家相邻消息之间是否带换行（审计附录 1）。
-- 条目的真实字节数与帧体量：本文数字都是估算，第 2 步按试用夹具实测后回填。
-- 前端解码器之外，界面里其他按“一轮一块正文”写的逻辑（显示节奏缓冲等，审计 D.12.2）改多少：归 proto-web 判断，本文没读前端渲染代码。
+- 第 1 步读侧投影的函数名、签名与“逐回合产出”的形态（proto-core 未提交）。
+- 4317 的库大小、对话数与最长对话；迁移耗时与峰值磁盘都是估算。
+- 原型数字只来自合成数据与我的机器（表形状、索引与提交成本），未含 FTS 维护、触发器的开销与迁移。
+- 前端哪些逻辑依赖“整个对话在内存”（显示节奏缓冲、详情栏各页，审计 C.7、D.12.2）：归 proto-web 判断，本文没读渲染代码。
+- `cli/chat.ts`、管理侧对回合数的读取没有逐行读过，按“读行”处理。
+- T3 的客户端虚拟列表只读了 `MessagesTimeline.tsx` 的属性，没有运行。

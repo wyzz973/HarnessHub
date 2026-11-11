@@ -1,136 +1,104 @@
-# 第 2 步实施计划：有序条目落盘（存储 v14）
+# 第 2 步实施计划（重排）：对话改存表，条目为唯一记录
 
-对应 [ADR-057](../../decisions/0057-ordered-turn-items.md)（proposed）。拆成四条线，各用各的 worktree 与分支，合并前对齐。AGENTS.md 的底线都适用：提交前 `pnpm check`、`pnpm test`，动了界面再 `pnpm test:web`；汇报分“代码完成、合成测试通过、真机通过”。升级 4317 与动真实数据先问用户；测试一律用临时数据根，不复制真实数据。
+对应 [ADR-057](../../decisions/0057-ordered-turn-items.md)（重写，proposed）。各线用各的 worktree 与分支，合并前对齐。AGENTS.md 的底线都适用：提交前 `pnpm check`、`pnpm test`，动了界面再 `pnpm test:web`；汇报分“代码完成、合成测试通过、真机通过”；升级 4317 与动真实数据先问用户；测试一律用临时数据根，不复制真实数据。
 
-## 顺序与对齐
+## 规模评估（老实说）
 
-- A 先做、先合：它定类型、校验、迁移。B 在 A 合并后开工。C 在 A 之后、第 1 步合并后可以先用夹具做，B 好了联调。D 在 A、B 之后。
-- A 与 B 合进集成分支后做一轮独立审查（清单在 ADR-057 末尾）。D3（交接单叙述）会改交接单内容，再单独一轮。
-- 开工前和 proto-core、proto-web 先对齐三件事：①归一模块对外的两个纯函数（“事件加已有条目得到条目更新（含 id）”“审批选项得到角色”）；②缺口 4 的协议可选字段；③第 1 步合并后的线上形状（缺口 9）。这三件我都没法从代码里确认。
+- 这不是加一个字段，是换对话的存法与读法。对话相关源码约 1.28 万行（存储、状态机、运行时、接力、网页服务、导出、上下文桌、CLI；`wc -l` 计），其中 `runtime.ts` 2,258、`sqlite-store.ts` 902、`state.ts` 614、接力约 3,060、`server.ts` 1,197。估计要实质改动 5,000–6,000 行，新写约 3,000 行（表与迁移、行编解码、分页读、变更集、过渡层）。
+- 94 个测试文件命中会话、回合、快照相关的关键字（含少量无关命中），估计约一半要改写；前端约 10 个文件（`web/src/api.ts` 982 行、`session-stream.ts`、`Turn.tsx`、`ChatPage.tsx`…）。
+- 人力（估算，未验证）：第一段 4–6 周（两到三人并行）；第二段 6–8 周（运行时重构是窄路，基本一个人）；第三段 2–3 周。第一段结束才第一次能给所有者真机试；第二段结束才算真正没有上限。
+- 原型已证明表形状可行（40 万条目：取最近 10 回合 0.33 ms，一个文字窗口提交 0.11 ms，旧做法 4 MiB 整份重写 11.5 ms），但那是合成数据、没有触发器与 FTS 的开销，不替代第一段的预算测试。
 
-## 线 A：契约、校验、迁移、降级
+## 最大三处风险
 
-改：
-- `src/contracts/session.ts`：`PublicItem`、`PublicRun.items`、`omitted`，schemaVersion 加 14（`:282`）。
-- `src/contexts/session/domain/state.ts`：限额；`parsePublicRun` 白名单（`:192`）；v14 门槛，写法照 `:325-330`；`assertSessionTransition` 的条目规则；顺手删没人用的 `CURRENT_SCHEMA = 9`（`:31`）。
-- 新文件 `src/contexts/session/domain/items.ts`：条目的解析与界限，纯函数。
-- `src/infrastructure/session/sqlite-store.ts`：`CURRENT_VERSION`（`:19`）、迁移块、备份条件（`:508`）、`create`（`:319`）、`contentReferences`（`:376-392`）、读上限（缺口 1）。
-- `src/contracts/protocol.ts`：只加缺口 4 的可选字段，要 proto-core 点头。
-- `runtime.ts` 只改三处 `schemaVersion: 13`（`:329,389,565`），其余留给 B。
-- `docs/contracts/storage-events.md`；`tools/session-v14-to-v13.sql`（先例 `tools/management-v6-to-v5.sql`，测试里照 `tests/integration/native-management.test.ts:319` 读文件执行）。
+1. **不可逆迁移与保真。** 4317 是真实数据，十三代格式叠出来的库；漏掉或改写内容、接力水位（`ended_seq`、`context_effect`、绑定谱系）转错（之后交接会重发或漏发）、旧回合的先后是推测的。缓解：先冻结 v1–v13 夹具（含事件日志）再动手；逐对话校验（文字逐字、内容引用集合）；杀进程续跑的性质测试；迁移前后交接单与上下文桌输出逐字相同；失败的对话隔离；自动备份；独立审查；所有者点头才升 4317。
+2. **状态机与接力对“整份历史”的隐含依赖。** `parseSession` 的两层互找（`state.ts:423-442`）、`RelayLedger` 扫全日志（`relay-coordinator.ts:114-137`）、relay 契约写死的 16384 与 256（`relay.ts:24-26`）、`fork` 复制历史（`runtime.ts:543-580`）、`switch.sourceRunIds`、启动读遍所有对话（`sqlite-store.ts:707-715`）、回收读遍所有快照（`:376-392`）。漏掉一处，就在某个长度悄悄出错或变慢，而且都属于“会不会丢内容、谎不谎报”的逻辑。缓解：ADR 3.3 的读者表逐项对账；`tests/property/relay-*.test.ts` 在行读取上重跑；“提交成本与历史长度无关”的预算测试；第二段运行时只由一个人改；独立审查。
+3. **界面与 API 的断层，分页的正确性与性能。** 界面从整份替换改成窗口加游标加增量帧；前插保位、游标、重连、超长回合都是新东西；最大的坑是和 proto-web 第 1 步的线上形状对不上。缓解：先把新 `SessionView` 写进契约文档并和 proto-web 对齐再动手；2,000 回合合成对话的浏览器测试；传输预算测试。
 
-不碰：`runtime.ts` 其他行、`web/`、`session-stream.ts`、接力叙述、上下文桌、导出。
+## 分段上线顺序
 
-类型草稿（`src/contracts/session.ts`）：
+1. **第一段（格式定稿，4317 只升这一次）**：A 表与迁移 → B 运行时写条目 → C 分页读与帧、D 读者切换并行 → 门：真机、独立审查、所有者点头。结束时：条目是唯一记录，所有常量上限去掉，提交只写变更的行，界面读窗口与增量；运行时仍把整个对话装进内存，经过渡层读写表。
+2. **第二段（运行时只持有头加活动回合）**：E 端口与运行时 → F 接力读者改查询、G 分支导入删除启动回收 → 门：独立审查。结束时：内存与启动时间与对话数、对话长度无关，过渡层删除，格式不变。
+3. **第三段（收尾）**：H 长回合体验与剩余上限（折叠占位、范围读取、FTS、请求体流式、Driver 截断）。
 
-```ts
-type Text = { readonly start: number; readonly end?: number };
-export type PublicItem =
-  | (Omit<AssistantMessageItem, "messageId" | "phase"> & Text & { readonly phase?: "commentary" | "final" })
-  | (Omit<ReasoningItem, "text" | "durationMs"> & Text)
-  | Exclude<ProtocolItem, AssistantMessageItem | ReasoningItem>;
-export interface PublicOmitted { items?: number; tools?: number; notices?: number; activities?: number; outputs?: number; atLeast?: true }
-// PublicRun 加：readonly items?: readonly PublicItem[]; readonly omitted?: PublicOmitted;
-```
+## 工作流
 
-先做的一步：在改版本号之前，用现在的 v13 构建生成 `tests/fixtures/storage/v13/`（照 `tests/fixtures/relay/v12/` 的生成器与读法），提交后再升版本。降级 SQL 的思路我在一份合成快照上试过（SQLite 3.54，`json_set` 加 `json_group_array(json(json_remove(value,'$.items','$.omitted')))`，数组、键序、非 ASCII 都保持），正式版要在夹具上测。
+### 线 A 表与迁移（第一段，最先）
+- 改：`src/infrastructure/session/` 新增 `schema.ts`（DDL、部分索引、触发器）、`rows.ts`（行与对象互转）、`migrate-v14.ts`（逐对话转换，续跑）、`legacy/`（冻结 `state.ts` 的整份解析、`relay/migrate.ts` 与 `relay.ts` 里带旧上界的解析器，供 v1–v13 阶梯与转换使用）；`sqlite-store.ts` 改成过渡层（`get()` 从表装出现在的对话并缓存，`transact()` 只写变更的行；沿用 `SessionStore` 端口）；`src/contracts/session.ts`（`RunRow`、`ItemRow`、页类型）；`docs/contracts/storage-events.md`。
+- 不碰：`runtime.ts`、`src/web/`、`web/`。
+- 先做的一步：在改版本号之前，用现在的构建生成冻结夹具，含每个对话的事件日志（照 `tests/fixtures/relay/v12/` 的生成器与读法），放 `tests/fixtures/storage/v13/`，提交后再升版本。
+- 完成：v1–v13 夹具都升到 v14 且校验全过；随机杀进程续跑；旧构建拒绝；备份失败则不迁移；`pnpm check`、`pnpm test` 通过。
 
-完成：v13 夹具迁到 v14，除版本外各行逐字相同；备份 `gateway-v13-*` 在；降级 SQL 往返后与原夹具逐字相同；`pnpm check`、`pnpm test` 通过。
+### 线 B 运行时写条目（第一段，A 的行类型合并后）
+- 改：`runtime.ts` 的输出、审批、收场路径改写条目（新文件 `src/contexts/session/domain/items-place.ts`：放条目、关段、收场）；`state.ts` 的整份解析换成行级校验，删两层互找；`runtime.ts:112-122` 去掉详情截断，`:1410-1440` 去掉 `OUTPUT_LIMIT`，`:1313,1327-1328,1488` 去掉静默丢弃，`:263` 的指纹不含 secret；`recoverSession` 只处理未终结回合。
+- 不碰：存储实现、`src/web/`。依赖：A 的行类型与过渡层；第 1 步的归一模块（事件加已有条目得到条目更新，含 id；审批选项得到角色）。
+- 完成：ADR 3.2 的规则都有测试；旧字段不再写；对话里放 5,000 个工具、2 MiB 回复、200 条通知都不丢不拒。
 
-测试：
-- 迁移：行数；备份；整库回滚（坏一个会话，`user_version` 仍为 13）。
-- 解析的正反例：v13 快照带 `items` 被拒；`id` 重复；`seq` 不增；偏移越界、重叠、段间有非空白；两个开着的段；终态 Run 里有 running 或 waiting；超 256 条或 128 KiB；未知键。
-- 转换：终态条目不退回，关闭的段不变。
-- 旧程序：用 `user_version=15` 模拟，Store 与 Reader 都拒绝，库不变。
-- `contentReferences` 含只在条目里出现的引用。
-- `store.list(100)` 在 100 个大会话上读得出；按试用夹具打印条目前后的快照字节（`t.diagnostic`，照 ADR-047）。
+### 线 C 分页读、帧、前端（第一段，A 的读函数合并后）
+- 改：`src/web/server.ts`（`view()`、`/state`、新路由，整个文件归 C）、`src/web/session-stream.ts`、`src/contracts/web.ts`、`web/src/api.ts`、`web/src/session-stream.ts`、界面数据入口（proto-web 的渲染不重做）、`docs/contracts/public-api.md`。
+- 不碰：存储、运行时、领域层。依赖：A 的 `readWindow`、`readOlder`、`readItems`、`readText`；proto-web 的线上形状。
+- 完成：打开 2,000 回合的对话只取窗口；上滑取更早页并保位；流式只收增量帧；重连先收 `snapshot`。
 
-## 线 B：运行时按到达顺序产出条目
+### 线 D 读者切换（第一段）
+- 改：`src/web/conversation-export.ts`、`src/contexts/session/domain/table.ts`、`src/web/table-routes.ts`、`src/cli/hub-tools.ts`、`src/web/run-diagnostics.ts`、`src/cli/sessions.ts`、`src/cli/chat.ts`、`relay/narration.ts`、`relay/packet.ts`、`context.ts`（读条目，不再读旧字段）；`summary`、`readinessViews` 由 D 给纯函数，C 调用。
+- 不碰：`server.ts` 本体、存储、运行时。完成：同一对话迁移前后，导出、上下文桌、交接单的黄金输出相同（交接单逐字）。
 
-改 `src/contexts/session/application/runtime.ts`：
-- `output()` 的 tool、notice、activity、plan 各分支（`:1310-1346`）；`permission_requested` 与撤回（`:1288-1308`）。
-- `flushStream`（`:1425-1446`）：开段、关段、推进 `endedAt`。
-- `storeDetail`、`nativeOutput`（`:1473-1504`）：占位，写好后补引用，写失败标 `failed`。
-- `decidePermission`（`:259-281`）、`expire`（`:1255-1270`）、回合结束的 finally（`:1840-1842`）。
-- `ended`（`:1903-1971`）：收场、`context_event`。
-- `withNotice`（`:181-185`）：预算通知也要放条目。
-- 三处旧字段的静默丢弃改成计入 `omitted`（`:1313,1327-1328,1488`）。
+### 线 E 端口与运行时（第二段，一个人）
+- 改：`src/contracts/session.ts`（`SessionStore` 换成 `ConversationStore`：`transact(id, expectedVersion, mutate: (tx) => Mutation)`，ADR 3.3）、`sqlite-store.ts`（变更集写入，删过渡层与 `snapshot-cache.ts`）、`runtime.ts` 全部 `load()` 与 `state.runs…` 的位置（约 54 处 `.runs`、数十处 `.messages`、`.commands`、`.switches`）、`state.ts`、`session-application.ts`。
+- 完成：提交成本与历史长度无关；内存不随历史增长；`pnpm test` 全过。
 
-另：
-- 新文件 `src/contexts/session/domain/items-place.ts`：放条目、关段、收场、计省略，纯函数，runtime 与 `recoverSession` 共用。
-- `state.ts` 只在 `recoverSession`（`:601-614`）里加一次调用，等 A 合并后做。
-- 可选，放最后：`ControlEvent.text` 加可选 `messageId`（`control.ts:94`），Codex 填 `itemId`（`codex.ts:838-845`），ACP 有就填（`acp.ts:877`）。这会碰 Driver，要和 proto-core 错开。
+### 线 F 接力读者改查询（第二段，E 的端口合并后）
+- 改：`relay-coordinator.ts`（`needRuns`、`rangeOf`、`facts`、`renderView`、`packetManifest`；删 `RelayLedger` 扫描）、`relay/*.ts`（渲染从新到旧分批取）、`relay-tables.ts`（索引；正文配额改淘汰）、`contracts/relay.ts`（放开 16384 与 256；`relay_index.run_index` 与清单里的回合下标改用回合序号）；调用点由 E 接线。
+- 完成：`tests/property/relay-*.test.ts`、`tests/integration/relay-*.test.ts` 在行读取上全过；黄金交接单不变。
 
-不碰：解析与迁移（A）、帧与界面（C）、读者（D）。
+### 线 G 分支、导入、删除、启动、回收（第二段）
+- 改：`runtime.fork`、`importOwned`、`closeSession`、`deleteSession`（软删）、`origin` 与 `origin_history`、`content_refs` 驱动的回收（`content-store.ts` 的 `collect`）、启动恢复按部分索引、`nativeOwners`、`listKept`。
+- 完成：分支超长对话成功；源被软删后分支仍可读；启动时间与对话数无关。
 
-完成：ADR-057 第 2、4、5、6 节的行为都有测试；旧字段的写入与升级前逐字相同（交接单黄金夹具 `tests/fixtures/relay/golden` 不变）；真机通过（见下）。
+### 线 H 收尾（第三段）
+- 改：`deferredWork` 折叠、范围读取路由、FTS5 触发与回退、请求体流式（`server.ts:45`）、内容库去上限（`content-store.ts:11-12`）、Driver 截断（`codex.ts:92`、`openclaw.ts:159`）、传输预算测试进 `pnpm test`。
 
-测试，扩 `tests/integration/session-runtime.test.ts` 里 ADR-047 那套“测试自己演的程序”：
-- 分段：文字、工具、文字、思考、文字的脚本，偏移切出的文字等于消息；空白窗口不开段；同类并段；换种类与新条目关段；plan 与工具更新不切段。
-- 身份：同一工具反复上报 `seq` 不变，内容不变不提交。
-- 审批：开出 `waiting`；允许、拒绝、预算到期、Harness 撤回、用户停止各自收场；secret 回答不出现在快照、事件、`commands[].fingerprint` 里（对序列化后的字节搜原文和它的 SHA-256）。
-- 收场与重启：pending 的工具在 completed 回合里变 `unknown`，cancelled 回合里变 `cancelled`；用真实 Store 关掉再开，`waiting` 变 `cancelled` 且没有 decision，Run 为 `unknown`。
-- 上限：300 个不同工具得 256 条加 `omitted.items`；审批不被挤掉；超限后文字仍进消息。
-- 产物：先占位后补引用；写失败为 `failed`。
-- `context_event`：借 `tests/integration/relay-clear.test.ts` 的清空场景。
-- 对照：同一脚本，旧字段投影与条目投影一致，只差先后与审批。
+## 测试（够用即可）
 
-## 线 C：读侧函数的落盘路径、帧与前端接线
-
-改：
-- 新文件 `src/contexts/session/domain/protocol/stored.ts`（第 1 步的目录里只加这一个文件，入口函数里加一次调用）：把 `run.items` 与消息、`run.thinking` 按偏移切出文字；推出 `phase`（回合终态后除 plan 外最后一个助手段是 `final`）；派生 switch、interrupt、error、user_message；有 `omitted` 时派生“还有 N 个”的通知。
-- `web/src/api.ts`：`decodeRun` 读 `items`、`omitted`，上限 320（超限整体判无效，`:35-38`）。
-- `web/src/session-stream.ts`：归并时，没被任何段覆盖的消息尾部就是最后一段。
-- `src/contracts/web.ts` 只补注释；`docs/contracts/public-api.md`。
-- 界面的数据入口：有 `items` 走落盘路径，没有走投影。渲染是 proto-web 第 1 步的，不重做。
-
-不碰：Store、Runtime、领域层、读者。`src/web/session-stream.ts` 预计不用改，只加测试证明文字窗口仍发 message 帧。
-
-完成：浏览器里“文字、工具、文字”按先后画，流式时最后一段跟着长，刷新与重连后相同；`pnpm test:web` 通过。
-
-测试：
-- 读侧：偏移切出的文字；`final` 的推导（进行中没有，终态后有，plan 在最后时不挡）；同一批夹具走落盘与投影两条路，结果一致，只差先后与审批；没被段覆盖的尾部排在最后。
-- 解码：有效、超限无效、旧服务没有 `items` 照常。
-- 帧：文字窗口只发 message 帧；动作发 run 帧并带 `items`。
-- 归并：先收 run 帧再收 message 帧，尾部显示正确。
-- 浏览器：照 `tests/browser/web.browser.ts` 与 `tests/fixtures/web-harness-peer.mjs`。
-
-## 线 D：读者切换
-
-- D1 导出 `src/web/conversation-export.ts`：有 `items` 时按次序写回复、动作、审批，没有则旧写法。
-- D2 上下文桌 `src/contexts/session/domain/table.ts`：目录行可显示先后；`#k` 工具编号仍按 `tools[]`；搜索仍搜整条消息。
-- D3 交接单叙述 `src/contexts/session/domain/relay/narration.ts`：最后做，单独审查；不改就不动。
-
-不碰：Store、Runtime、帧。完成：没有 `items` 的 Run 输出与改前逐字相同；有 `items` 的次序对；交接单黄金夹具在 D3 之前不变。测试：导出旧新各一份黄金输出；上下文桌编号不变；`narration` 黄金夹具。
+- 迁移：每代夹具一份；校验失败注入（改坏一行，该对话被隔离、其余转完）；随机杀进程续跑与不被杀结果一致；备份失败库不变；`user_version=15` 模拟旧程序被拒；表结构文本与预期一致。
+- 表的性质：两个活动回合被拒；一个原生会话被两个对话持有被拒；终态回合与文字块不可改；`(run_id, item_id)` 唯一。
+- 运行时（用现有的“测试自己演的程序”，`tests/integration/session-runtime.test.ts`）：分段、身份、收场、审批、secret 不落盘（对行、事件、指纹搜原文与其 SHA-256）、无上限（5,000 工具、2 MiB 回复、200 条通知）、重启恢复。
+- 读：窗口字节有界（至少一个回合除外）、游标在新回合到来后仍对、超长单回合分页、`deferredWork`；SSE 增量无缺口、先 `snapshot`；解码；2,000 回合合成对话的浏览器测试（`tests/browser/web.browser.ts`：首屏、上滑、发消息、重连）。
+- 读者：导出、上下文桌、搜索（含短词回退）、交接单黄金夹具（`tests/fixtures/relay/golden`）迁移前后相同。
+- 预算（照 T3 的传输预算测试）：对 10 与 5,000 回合的对话各测提交耗时，差不超过 2 倍；启动用时与对话数无关。
 
 ## 真机要验证的
 
-合成测试代替不了。用临时数据根和临时工作区，写一个新的 `tests/real/native-items.real.ts`（照 `tests/real/native-activity.real.ts` 与 `guard.ts`，`HH_REAL_HARNESSES=claude,codex`；Claude 用 haiku，不考模型的字符级能力），起的不是 4317。
+用临时数据根与临时工作区，起的不是 4317；新写 `tests/real/native-items.real.ts`（照 `tests/real/native-activity.real.ts` 与 `guard.ts`，`HH_REAL_HARNESSES=claude,codex`，Claude 用 haiku）。
 
-1. 边说边做：提示“先用一句话说你要做什么，再用 ls 看目录、读 package.json，最后一句话总结”。读 `runs[].items`：说明、命令、读文件、总结的先后对，偏移切出的文字等于回复，`tools[]` 仍在，命令都有终态而不是 `unknown`。
-2. 审批：Codex 选 `approval_policy` 为 untrusted，Claude 用默认模式，让它改一个文件。批准前看到 `waiting`，允许后 `completed` 带 decision；另跑一次拒绝，得 `declined`。
-3. 重启：回合结束后关掉整个应用再开，条目逐字相同。在审批等待中杀掉应用再开：Run 为 `unknown`，审批为 `cancelled` 且无 decision，已有文字还在。
-4. 停止：工具运行中点停止，进行中的条目为 `cancelled`。
-5. 旧库：用线 A 的合成 v13 夹具建根，新构建打开，迁移成功，旧 Run 靠投影读得出。
-6. 帧体量：记一次长回复和一次多工具回合里的 SSE 帧字节，回填 ADR-057 第 7 节的触发条件。
+第一段：
+1. 边说边做：真实 Claude Code 与 Codex 各一个回合（先说一句、跑命令、读文件、再总结），条目先后对、文字完整、命令有终态。
+2. 审批与提问：批准、拒绝各一次，决定留痕；等待中杀掉应用再开，审批 `cancelled`、Run `unknown`、已有文字还在。
+3. 迁移：合成多版本根（含大对话夹具）升到 v14；迁移中 `kill -9`，重启续跑；旧回合在界面上读得出。
+4. 分页：合成 2,000 回合的对话在浏览器里打开、上滑、边流式边上滑。
 
-先写明验证不了的：secret 提问（要 Codex 触发 `isSecret`，只在合成测试里验）、超过 256 条的真实回合、4317 的升级（要你点头）。
+第二段：5. 约 200 回合的真实长对话，Claude Code→Codex→Claude Code 换家，交接单与重构前黄金一致；6. 30 分钟会话里记内存与 CPU，不随历史增长；7. 从第 N 回合分支、软删源、重启。
+第三段：8. 20 MiB 以上的命令输出、10 MiB 的单条回复、5,000 工具的回合，全文存下并能按范围读。
+验证不了的先写明：secret 提问（要 Codex 触发 `isSecret`，只在合成测试里验）；4317 的升级（要所有者点头，也不复制其数据做试验）。
 
-## 设计稿没有覆盖的问题（读代码时发现）
+## 读代码时发现、ADR 与设计稿之外的问题
 
-1. **列表读上限。** `store.list(100)` 把 100 个会话的快照字节加起来不能超过 8 MiB（`state.ts:24`，`sqlite-store.ts:178-188`），`/api/v1/state` 与就绪视图都读它（`server.ts:580,783`）。快照一变大，整页状态就读失败。建议：线 A 先测；读上限调到 32 MiB 并与快照上限分开；根治是列表只取摘要，不解析整份快照。
-2. **内容回收。** 启动时 7 天回收器按 `contentReferences()` 保留引用（`sqlite-store.ts:376-392`，`session-application.ts:126-128`）。只在条目里出现的引用不读就会被收走。建议：线 A 加上并测。
-3. **secret 回答的指纹。** `decidePermission` 把回答原文放进裸 SHA-256 的 fingerprint 并持久化（`runtime.ts:263`，`session-application.ts:55,140`），编号又在事件里。建议：secret 不进指纹；非 secret 的自由文本是否改用带密钥的摘要，线 B 判断。
-4. **协议类型缺字段**（都是可选的新增，先问 proto-core）：`AssistantMessageItem.text`（分段后只靠 `messageId` 定位不了文字，建议读侧填好）；`QuestionItem.secret?`（界面才能写“已回答，内容未保存”）；`ApprovalItem.forItem?`，同时 `permission_requested` 事件带 `toolId`（Codex 有 `itemId`，`codex.ts:973,979`；ACP 有 `toolCallId`，`acp.ts:994`；没有它，“已允许：运行 npm test”对不上那条命令）；`FileChangeItem.more?`（超过 64 个文件时的余数）。
-5. **Driver 丢了消息身份。** Codex 的 `itemId` 与阶段、ACP 的消息边界都没转给 Runtime（`codex.ts:838-845`，`acp.ts:877`），相邻两条原生消息会合成一段，中间也未必有换行。建议：`text` 事件加可选 `messageId`，Codex 先做。
-6. **有的上下文事件快照里没有。** Hub 清空与原生命令的上下文效果只在 `run.ended` 事件里（`control.ts:139-145`，`runtime.ts:1896-1900`），读侧取不到，而时间线要显示“新会话”分隔。建议：线 B 在回合结束时写 `context_event` 条目。
-7. **回合结束时还开着的动作。** Claude 前台命令一直报 pending（审计 B.4.3），OpenClaw 补记没结果的工具也写 completed（`openclaw.ts:162`）。建议：Runtime 按 ADR-057 的收场表写 `unknown`，OpenClaw 的归一在第 1 步改成未知。
-8. **静默丢弃。** `tools[]`、通知、活动、产物超限直接 `return`（`runtime.ts:1313,1327-1328,1488`），交接单的“省略有账”也算不进去。建议：计入 `omitted`，D3 时让叙述引用它。
-9. **读侧函数在哪儿跑、线上传几份。** 若第 1 步让服务端在 `view()`（`server.ts:257-269`）里附上投影好的 `ProtocolTurn`，就不要再让原始 `items` 同时上线，否则每个 Run 在每个帧里出现两份。建议：只在一处投影，与 proto-web 对齐后定。
-10. **产物与详情是异步写的。** 产物字节先写内容库再提交（`runtime.ts:1496-1503`），写失败现在只留一条诊断（`:1499`）。建议：条目到达时占位，写失败标 `failed`，用户看得见。
-11. **思考用时。** dsh 的思考整块到达（审计 B.4.2），Hub 钟差是 0。建议：读侧把 0 当未知，不写“思考了 0 秒”。
-12. **旧 Run 的先后其实还在事件日志里**（`run.output` 按到达顺序，`runtime.ts:1282-1284`）。建议：v14 不做；以后要还原，只加读侧回放，不动存储。
+1. **relay 契约写死了上限**：seq ≤ 16384、回合下标 < 256（`relay.ts:24-26,502-528,588-592`）。不放开，去掉会话上限后交接会在第 257 回合出错。建议：线 F 先做，所有解析器改成安全整数。
+2. **`RelayLedger` 把事件日志当事实库**（`relay-coordinator.ts:114-137`，`runtime.ts:883,2043,2246`）。建议：`ended_seq`、`context_effect` 写进 `runs` 行，事件只做证据。
+3. **启动是 O(全部数据)**：恢复循环读每个对话并对事件日志求和（`sqlite-store.ts:707-715`），回收读每个对话的全部回合（`:376-392`，`session-application.ts:126-128`）。建议：部分索引与 `content_refs`。
+4. **现有的拒绝**：回复超 1 MiB 回合失败（`runtime.ts:1410-1413`）、用户输入 64 KiB 与请求体 128 KiB 被拒（`state.ts:17`，`server.ts:45`）、分支历史超 1 MiB 建不出分支（`state.ts:294`）。这些都与“不拒绝”相冲，逐项在 ADR 3.7。
+5. **`readinessViews` 扫所有回合**（`server.ts:225-250`）算启动用时中位数。建议：`runs` 上 `(harness_id, control_id, prepared_at)` 索引，每个入口取最近 5 个。
+6. **secret 回答的指纹**：回答原文进裸 SHA-256 并持久化（`runtime.ts:263`，`session-application.ts:55,140`）。建议：secret 不进指纹。
+7. **协议类型缺字段**（可选新增，先问 proto-core）：`AssistantMessageItem.text`（读侧填好）、`QuestionItem.secret?`、`ApprovalItem.forItem?` 加 `permission_requested` 带 `toolId`（Codex `itemId`，`codex.ts:973,979`；ACP `toolCallId`，`acp.ts:994`）、`FileChangeItem` 的余数字段不再需要（不设上限）。
+8. **Driver 丢了消息身份**（`codex.ts:838-845`，`acp.ts:877`）：相邻两条原生消息合成一段。建议：`text` 事件加可选 `messageId`，Codex 先做。
+9. **清空与原生命令的上下文效果只在事件里**（`control.ts:139-145`，`runtime.ts:1896-1900`）：写进 `runs.context_effect` 与条目。
+10. **回合结束时还开着的动作**：Claude 前台命令一直报 pending（审计 B.4.3），OpenClaw 补记没结果也写 completed（`openclaw.ts:162`）。建议：收场表写 `unknown`，OpenClaw 在第 1 步改成未知。
+11. **读侧函数在哪儿跑、线上传几份**：若服务端在 `view()`（`server.ts:257-269`）附投影好的 `ProtocolTurn`，就不要同时发原始条目。建议：只在一处投影，与 proto-web 对齐后定。
+12. **`deleteSession` 是硬删**（`sqlite-store.ts:436-446`），与分支引用冲突。建议：软删。
 
-## 合并时的文档动作
+## 未确认
 
-本分支只新增了 ADR-057 和这份计划，没有改任何已有文件。合并时：`docs/decisions/README.md` 加 ADR-057 一行；`docs/decisions/LOG.md` 记一两句（决定：落盘形状、双写、降级脚本）；`docs/contracts/storage-events.md` 随线 A、`docs/contracts/public-api.md` 随线 C 更新；验证记录（真机结果和没验证的部分）写进 `docs/verification/`。ADR-057 的状态在审查通过、线 A、B 合并后改为 accepted。
+- 第 1 步读侧投影与归一模块的函数名、签名；投影能否逐回合产出（迁移要求，ADR 3.6）。
+- 4317 的库大小、对话数、最长对话；迁移耗时与峰值磁盘。
+- 第 1 步合并后的线上形状（`SessionView` 新形状要先写进契约再做线 C）。
+- 人力与周数都是估算。
