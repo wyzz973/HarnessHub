@@ -1,5 +1,7 @@
 # 设计就绪与开始开发的门禁
 
+> 2026-11-11 起不再适用：项目改为快速迭代（见 [AGENTS.md](../../AGENTS.md)），本文与 `plan/` 下的登记只作历史参考，不再更新，也不卡检查。
+
 更新：2026-10-22。两个常为 false 的门禁标志（`plan/tasks.json` 的 `application_implementation_allowed`、`plan/slices.json` 的 `gateway_execution_implementation_allowed`）已删除（[ADR-048](../decisions/0048-harness-scope-and-workbuddy.md) 第 6 项，审批代理裁决）：源码范围只由各已接受切片的 `allowed_files` 放开，`src/`、`web/` 下不在其中的文件被设计检查拒绝，没有任何已接受切片时这两个目录下的每个文件都被拒绝；原“后续实现门禁”一节同日改写为下文“完成定义的门禁（G0～G5）”——它们是宣称一项功能完成时分别出示的五层证据，不阻塞已接受的切片。此前（2026-10-09）当前按本机MVP推进。ADR-008/009及[ADR-010](../decisions/0010-public-session-mvp.md)认可S01–S04限定范围，目录/控制/公共Session/手动切换已实现。另[ADR-011](../decisions/0011-provider-web-mvp.md)认可Provider/本机HTTP工作台，自动择优明确后置。
 
 当前范围见 plan/slices.json 与 [MVP](mvp.md)。切片认可只允许所列 owner 路径，不能自动解锁 Session/执行/切换；设计检查有合法范围与越界源码拒绝样例。

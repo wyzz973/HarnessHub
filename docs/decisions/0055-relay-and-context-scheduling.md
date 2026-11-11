@@ -564,3 +564,7 @@ G068 阶段一的独立审查提出 F1–F13 与一个 packetId 重合的疑问�
 **待审批代理确认**（实现者的保守选择，已随修正落地）：`relay.withheld` 的窄例外；`goal_only` 在默认模式下转单发（MVP 只渲染标准档）；`tier`、`consent`、`native:"continue"` 不算显式选择；Claude 目录外的词读作内容的读法超出声明那一格；Codex 回合开始前的停止要等 Codex 确认才有回执。
 
 **留给所有者**：推送与 4317 升级；翻转 `probed`（Claude Code、OpenCode 的探针条件已满足）；Hermes、OpenClaw 的探针放行范围；WorkBuddy 的凭据路线与条款；`~/.codex/config.toml` 里探针留下的两行。
+
+### 2026-11-11 之后
+
+用户 2026-11-11 的三项决定（Hub 起的原生会话归 Hub 管；清空由 Hub 接管；项目改为快速迭代）与接力的减法方向记在[决定记录](LOG.md)，依据是[同类产品调研](../research/similar-products-2026-11-11.md)。本 ADR 此后不再逐批补记；上文各节“审批代理的决定”“不变量”“留给 G07x”的条目是 2026-11-11 之前的记录，与之冲突时以决定记录和代码为准。

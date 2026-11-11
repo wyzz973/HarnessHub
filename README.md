@@ -147,7 +147,7 @@ HarnessHub is pre-release. To keep the claims honest, the project separates *des
 
 | | |
 |---|---|
-| **Tested** | `pnpm check` (build, web build, design, boundary and tooling checks), `pnpm test` (996 passing) and the browser suite `pnpm test:web` run on macOS arm64 |
+| **Tested** | `pnpm check` (build, web build, boundary, wording and tooling checks), `pnpm test` (996 passing) and the browser suite `pnpm test:web` run on macOS arm64 |
 | **Real harnesses** | Recorded per feature in the [capability matrix](docs/verification/native-capability-matrix.md) and the [verification records](docs/verification/); some features are blocked by plan or quota limits on the test account and are marked as such |
 | **Relay** | The handoff packet between harnesses passes synthetic tests; in real-harness smoke tests (on storage v12), OpenCode → DeepSeek Harness → OpenCode passed end to end, and Claude Code → Codex passed its handoff, while Claude Code (on haiku), back on its own session, misread a delta that was correct. The business store is now v13: it migrates v12 data and has the relay tables, which nothing writes yet. Delivery records, calibrated budgets and an omission view in the interface build on them ([ADR-055](docs/decisions/0055-relay-and-context-scheduling.md)) |
 | **Designed** | Long-lived native hosts instead of one process per turn ([ADR-056](docs/decisions/0056-native-hosts-and-sessions.md)) |
@@ -171,7 +171,7 @@ The documentation is in Chinese.
 ## Development
 
 ```sh
-pnpm check       # build, web build, design checks, boundary checks, tooling tests
+pnpm check       # build, web build, boundary checks, UI wording, tooling tests
 pnpm test        # unit, integration, protocol and recovery tests against real files and processes
 pnpm test:web    # the web page in a real browser (needs: pnpm exec playwright install chromium)
 ```

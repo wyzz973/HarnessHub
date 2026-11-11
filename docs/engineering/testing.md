@@ -1,5 +1,7 @@
 # 测试与验收策略
 
+> 2026-11-11 起：下面的分层与“保持真实”的原则继续适用；测试用例登记（`plan/test-cases.json`）与测试矩阵不再维护。每个功能点以“合成测试通过 + 在真实 Harness 上试过”为完成标准。
+
 状态：完整工程测试设计。当前Provider/本机工作台新增验收见[对应记录](../verification/provider-web-2026-10-09.md)；自动择优后置。当前[公共Session验证](../verification/public-session-2026-10-09.md)与[目录/控制基线](../verification/catalog-control-2026-10-09.md)分别记录实际运行。蓝图场景唯一来源为plan/test-cases.json，生成矩阵不作为运行结果；数量不等于覆盖已达成。
 
 ## 1. 分层证据

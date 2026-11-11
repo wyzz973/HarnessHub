@@ -1,5 +1,7 @@
 # 工程文档与阅读顺序
 
+最新（2026-11-11）：项目改为快速迭代——先读仓库根的 [AGENTS.md](../AGENTS.md) 与[决定记录](decisions/LOG.md)。`plan/`、`TASKS.md`、测试矩阵、不变量表与就绪门禁停在当天的样子，只作历史参考。接力的现状见[阶段三验证记录](verification/relay-stage3-2026-11-11.md)，同类产品的对比见[调研](research/similar-products-2026-11-11.md)。
+
 最新（2026-11-09）：[最小可用版本功能清单](product/mvp-2026-11-09.md)，写明每一条的证据等级，以及对外可以说和不要说的。接力的交接单取代了 JSON 信封（[验证记录](verification/relay-mvp-2026-11-09.md)：独立审查三轮，真机两对冒烟，OpenCode → DeepSeek Harness → OpenCode 全程通过）。存储优化见 [G075](verification/relay-g075-2026-11-09.md)：8 MiB 时从受理到派发 p95 281.7 ms。
 
 最新（2026-11-01）：各家升到渠道最新版后的真实重验——[Claude Code 2.1.316 + claude-agent-acp 0.99.1](verification/claude-latest-2026-11-01.md)、[Codex 0.166.0](verification/codex-latest-2026-11-01.md)（含 Hub 的 Homebrew cask 升级缺陷）、[DeepSeek Harness 0.2.1-rc.5](verification/dsh-latest-2026-11-01.md)、[Hermes Agent v0.22.5（网关查看器，ADR-051 A2 预检落地）](verification/hermes-latest-2026-11-01.md)、[OpenCode 2.2.5（换到 OpenCode 2）](verification/opencode-latest-2026-11-01.md)；[OpenClaw 两跳升级的真实运行](verification/openclaw-upgrade-2026-11-01.md)（本机升到 2026.10.9，网关升级后未就绪，复验未做）。
@@ -44,4 +46,4 @@
 6. [开发规则](engineering/development.md) → [AI 协作](engineering/ai-workflow.md) → [测试要求](engineering/testing.md) → [测试矩阵](engineering/test-matrix.md)。
 7. [原子任务](../TASKS.md) → [设计就绪门禁](engineering/readiness.md) → [ADR](decisions/README.md)。
 
-需求、任务和测试场景的唯一结构化来源分别是 plan/requirements.json、plan/tasks.json、plan/test-cases.json；人读表由工程检查工具（`python3 tools/check_design.py --write`）生成并检查新鲜度，检查工具自己的无效样例随 `pnpm check` 运行（`check:tools`）。协议或 SDK 版本改变时更新来源与受影响契约，不能只改依赖版本。
+（历史，2026-11-11 起不再维护）需求、任务和测试场景的结构化来源曾是 plan/requirements.json、plan/tasks.json、plan/test-cases.json；人读表由工程检查工具（`python3 tools/check_design.py --write`）生成并检查新鲜度，检查工具自己的无效样例随 `pnpm check` 运行（`check:tools`）。协议或 SDK 版本改变时更新来源与受影响契约，不能只改依赖版本。
