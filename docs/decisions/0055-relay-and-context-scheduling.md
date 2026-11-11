@@ -1,5 +1,7 @@
 # ADR-055：接力与上下文调度（HarnessHub Relay）
 
+> **2026-11-11 起已过时。** 接力做了大幅减法：现状以 [slim.md](../proposals/relay/slim.md) 与代码为准；本文描述的事后核对、待核状态、同意与厂商识别、探针门控、严格设置、多档交接单等机制大多已删除，只作历史参考。
+
 状态：accepted，2026-11-03（用户当天验收，按推荐项接受全部取舍 D1–D11，原话：“按推荐接受”）。实施进展：G067（P0 修复，不升库）代码完成、合成测试通过，见[验证记录](../verification/relay-p0-2026-11-03.md)；G075（存储优化前置片，不升库）代码完成、合成测试通过，参考机上 8 MiB 快照从受理到派发 p95 281.7 ms（目标 ≤400 ms），见[验证记录](../verification/relay-g075-2026-11-09.md)；都未真机验证。G070 的 MVP 过渡实现（v12 上按需渲染交接单，取代 JSON 信封）代码完成、合成测试通过，见[验证记录](../verification/relay-mvp-2026-11-09.md)与下文“实施补记”；真机冒烟两对：OpenCode → DeepSeek Harness → OpenCode 全程通过；Claude Code → Codex → Claude Code 的交接单一步通过，回到 Claude Code（haiku）时答错了一份内容正确的增量（见验证记录）。设计正文是[接力系统统一架构终稿](../proposals/relay/relay-architecture.md)（第三版，总架构师 Fable 5.1 定稿，下称终稿）；本记录只写取舍、失败边界与验收方式，契约、数据模型、模板与伪代码以终稿各节为准。接受时（2026-11-03）的状态是未实现、未真机验证，原型只用合成数据（`spikes/relay/`，不在 TypeScript 构建范围内）；此后的进展见上面的“实施进展”，业务库仍是 v12。实现按终稿第 17 节的切片顺序进行；“用户拍板的取舍”一节的 D1–D11 已全部按推荐项接受（终稿[状态与验收](../proposals/relay/relay-architecture.md#状态与验收)）。接受后取代议程 ADR-006（静止交接与 `public_context_rehydrate` 等级；现行实现是 `buildPublicContext` 把公共历史包成 JSON 信封注入），并按文末一节修订若干既有 ADR；proposed 期间不改它们的正文。
 
 标注：【事实】有代码、契约、报告或实测出处；【实测】原型或评审在本机测得（Apple M5 Pro、Node 26.11.1、SQLite 3.53.4、git 2.54.0，全部合成数据）；【推算】未经实测的数字；【推断】由事实推出。“决定”一节都是本设计的建议。代码位置指基点 `07a0825`，当前工作树的 `src/`、`web/`、`tests/` 与它相同。

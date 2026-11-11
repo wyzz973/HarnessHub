@@ -1,5 +1,7 @@
 # 默认放行的规则裁定（W5，审批代理，2026-11-10）
 
+> **2026-11-11 起已过时。** 接力做了大幅减法：现状以 [slim.md](slim.md) 与代码为准；本文描述的事后核对、待核状态、同意与厂商识别、探针门控、严格设置、多档交接单等机制大多已删除，只作历史参考。
+
 **依据与证据等级**：只读 `cd542d2` 的 AGENTS.md、ADR-055、终稿第 6.2、7、8.1、9、10.1、10.4、12 节、`stage3-workstreams.md`、`delivery.ts`、`relay-coordinator.ts`、`contracts/relay.ts`、`relay-tables.ts`、`invariants.md` 与六家 Driver 的声明。没有运行测试或 Harness，没有读工作区未提交的改动。以下是设计裁定，不是实现或验证结论。
 
 **一处要告知**：我把 `cd542d2` 的五个文件导出到了共享 scratchpad（`delivery.ts`、`coord.ts`、`adr.md`、`arch.md`、`contracts-relay.ts`）。那个目录里已有别的代理的文件；如果它原先有同名文件，现在已被 `cd542d2` 的版本覆盖。仓库内没有改动。

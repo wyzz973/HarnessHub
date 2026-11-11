@@ -1,5 +1,7 @@
 # HarnessHub 接力系统 · 统一架构终稿（relay-architecture，第三版）
 
+> **2026-11-11 起已过时。** 接力做了大幅减法：现状以 [slim.md](slim.md) 与代码为准；本文描述的事后核对、待核状态、同意与厂商识别、探针门控、严格设置、多档交接单等机制大多已删除，只作历史参考。
+
 状态：终稿（第三版，accepted，登记为 ADR-055，2026-11-03 用户验收；未实现、未真机验证）。作者：总架构师 Fable 5.1，2026-11-03。基线 `cc/relay-design`（基点 `07a0825`；工作树 `src/`、`web/`、`tests/` 与基点相同，`git diff --stat 07a0825 HEAD -- src web tests` 为空【事实】），文中 `file:line` 均指该基点的实际代码；本稿只写本文件与 [round4/v3-dispositions.md](round4/v3-dispositions.md)。标注约定：【事实】有代码、契约、报告或实测出处；【实测】原型或评审本机测得；【推断】由事实推出；【建议】本稿的决定；【推算】未经实测的数字；数字注明依据（实测 / 文档常量 / 推算）。
 
 输入：[第一版](round3/v1-architecture.md)；五份红队审查 [RT1](round3/rt1-invariants-storage.md)（不变量、存储与迁移）、[RT2](round3/rt2-failure-races.md)（故障、竞态与恢复）、[RT3](round3/rt3-performance-cost.md)（性能与成本）、[RT4](round3/rt4-security-privacy.md)（安全与隐私）、[RT5](round3/rt5-native-fidelity.md)（原生保真与逐家可行性）；原型测量 [spikes/relay/README.md](../../../spikes/relay/README.md) 与 `results.json`（下称“原型”，编号 1a–7b、F1–F12）；[第二版](round3/v2-architecture.md)与它的四份终审核验 [VF1](round4/vf1-delivery-watermarks.md)（送达与水位）、[VF2](round4/vf2-performance-testability.md)（性能与可测性）、[VF3](round4/vf3-native-security.md)（原生体验、安全与隐私）、[VF4](round4/vf4-completeness.md)（完整性）。第三轮 105 条发现的逐条处置在 [round3/v2-dispositions.md](round3/v2-dispositions.md)；第四轮 69 条发现（blocker 7、major 49、minor 13）的逐条处置在 [round4/v3-dispositions.md](round4/v3-dispositions.md)；本稿正文只在相关节落实，不再复述处置理由。第二轮 J1–J4 的 76 条要求中处置有变化的列在第 18 节。
