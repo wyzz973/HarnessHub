@@ -48,6 +48,11 @@ interface ComposerProps extends ChatProps {
   readonly onEditLast?: (() => void) | undefined;
   /** Fills the composer with text; a draft it replaces stays recoverable (ChatPage offers to put it back). */
   readonly onReplaceDraft?: ((text: string) => void) | undefined;
+  /**
+   * The choice to send the next message without the earlier conversation, offered while something is owed to the Harness the
+   * conversation is on: the "+" menu holds it, as a choice that is made and undone from there.
+   */
+  readonly sendAlone?: { readonly checked: boolean; readonly onToggle: () => void } | undefined;
 }
 
 /** Products whose own documentation names the command that sets up a missing sign-in or provider. */
@@ -488,6 +493,7 @@ export function Composer(props: ComposerProps) {
                 { label: "添加文件或图片…", icon: <Paperclip size={15}/>, hint: "@", disabled: !canAttach, onSelect: () => picker.current?.click() },
                 ...(commands.length ? [{ label: "原生命令", icon: <SquareSlash size={15}/>, hint: "/", disabled: disabled, onSelect: () => { setSlashClosedAt(null); (props.onReplaceDraft ?? props.onMessageDraft)("/"); setTimeout(() => inputRef.current?.focus(), 0); } }] : []),
                 ...(sessionsOffered ? [{ label: "继续原程序的会话…", icon: <History size={15}/>, disabled: disabled || props.mutation !== null, onSelect: () => openPanel("sessions") }] : []),
+                ...(props.sendAlone ? [{ separator: true as const }, { label: "只发这条消息", icon: <ArrowLeftRight size={15}/>, description: "不附之前的对话，只发你写的这一条", checked: props.sendAlone.checked, disabled: disabled, onSelect: props.sendAlone.onToggle }] : []),
               ]} footer={props.attachments.length >= 8 ? "每条消息最多 8 个附件" : undefined}/>
               {permission ? <SearchPicker side={popSide} {...listOpen("permission")} label={OPTION_NAMES[permission.id] ?? permission.name} value={draft.nativeOptions[permission.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(permission, true)}
                 disabled={disabled || props.nativeModelsLoading} onChange={value => changeOption(permission.id, value)} chevron className="gap-[5px] text-fg-2"

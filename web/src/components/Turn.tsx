@@ -4,6 +4,7 @@ import type { CSSProperties, HTMLAttributes, KeyboardEvent, ReactNode } from "re
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus } from "../../../src/contracts/session.js";
 import type { HarnessView } from "../../../src/contracts/web.js";
 import type { ProviderView } from "../../../src/contracts/provider.js";
+import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import { failureMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { duration, elapsed } from "../lib/format.js";
@@ -65,7 +66,7 @@ function textWidth(text: string): number { let width = 0; for (const character o
  * the Turn waits for you: for an approval whatever its step (ruling J), for a question with no step in progress (decision
  * F). The amber of waiting belongs to the Turn's one marker line.
  */
-function LiveIcon({ tone, className }: { readonly tone: LiveStatus["tone"]; readonly className?: string | undefined }) {
+export function LiveIcon({ tone, className }: { readonly tone: LiveStatus["tone"]; readonly className?: string | undefined }) {
   return <span className={cn("flex size-[15px] flex-none items-center justify-center", className)}>
     {tone === "run" ? <Spinner size={15} tone="run" label=""/> : tone === "wait" ? <StatusDot tone="idle"/> : <CircleDashed size={15} className="text-fg-3" aria-hidden="true"/>}
   </span>;
@@ -80,11 +81,11 @@ function outcome(run: PublicRun | undefined, status: RunStatus, text: string, dr
   const tools = run?.tools ?? [], summary = tools.length ? toolSummary(tools, false).text : "", total = run ? runDuration(run) : null, time = total === null ? "" : spentText(total);
   const join = (...parts: string[]) => parts.filter(Boolean).join(" · ");
   switch (status) {
-    case "failed": { const words = join("失败", summary, time ? "用时 " + time : ""); return { icon: <CircleAlert size={15} strokeWidth={1.9} className="text-red" aria-hidden="true"/>, arriving: words, settled: words, tone: "fail" }; }
-    case "cancelled": { const words = join(run ? cancelledWords(run) : "已取消", summary, time); return { icon: <CircleStop size={15} strokeWidth={1.9} className="text-fg-3" aria-hidden="true"/>, arriving: words, settled: words, tone: "quiet" }; }
-    case "unknown": { const words = join("结果未知：可能已经执行，不会自动重发", summary, time); return { icon: <CircleHelp size={15} strokeWidth={1.9} className="text-fg-3" aria-hidden="true"/>, arriving: words, settled: words, tone: "quiet" }; }
+    case "failed": { const words = join(TURN_STATUS_WORDS.failed, summary, time ? "用时 " + time : ""); return { icon: <CircleAlert size={15} strokeWidth={1.9} className="text-red" aria-hidden="true"/>, arriving: words, settled: words, tone: "fail" }; }
+    case "cancelled": { const words = join(run ? cancelledWords(run) : TURN_STATUS_WORDS.cancelled, summary, time); return { icon: <CircleStop size={15} strokeWidth={1.9} className="text-fg-3" aria-hidden="true"/>, arriving: words, settled: words, tone: "quiet" }; }
+    case "unknown": { const words = join(TURN_STATUS_WORDS.unknown + "：可能已经执行，不会自动重发", summary, time); return { icon: <CircleHelp size={15} strokeWidth={1.9} className="text-fg-3" aria-hidden="true"/>, arriving: words, settled: words, tone: "quiet" }; }
     default: {
-      const done = (text ? "已完成" : "已完成，没有文本输出") + (time ? " · 用时 " + time : "");
+      const done = (text ? TURN_STATUS_WORDS.completed : TURN_STATUS_WORDS.completed + "，没有文本输出") + (time ? " · 用时 " + time : "");
       return { icon: <DrawnCheck circle size={15} animate={drawing} delay={210} className="text-fg-3"/>, arriving: done, settled: summary ? join(summary, time) : done, tone: "done" };
     }
   }
@@ -194,7 +195,7 @@ function TurnProcess({ run, status, text, phase, detailed, now, harness, startup
   </div>;
 }
 
-function ActionButton({ label, onClick, children, pressed }: { readonly label: string; readonly onClick: () => void; readonly children: ReactNode; readonly pressed?: boolean }) {
+export function ActionButton({ label, onClick, children, pressed }: { readonly label: string; readonly onClick: () => void; readonly children: ReactNode; readonly pressed?: boolean }) {
   return <Tip label={label} side="bottom"><button type="button" className="icon-btn message-action size-7 text-fg-3" aria-label={label} {...(pressed === undefined ? {} : { "aria-pressed": pressed })} onClick={onClick}>{children}</button></Tip>;
 }
 
@@ -225,7 +226,7 @@ export const UserMessage = memo(function UserMessage({ message, run, onEdit, pac
  * The actions of a queued Turn. One waiting for its workspace says how long it may still wait (it is never sent after
  * that); one waiting for a slot has no deadline of its own, since every running Turn is bounded by its budgets.
  */
-function QueuedTurn({ queue, now }: { readonly queue: QueueNotice; readonly now: number }) {
+export function QueuedTurn({ queue, now }: { readonly queue: QueueNotice; readonly now: number }) {
   return <div className="queued-turn -mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-[22px] text-caption text-fg-3">
     {queue.kind === "workspace"
       ? <small className="text-caption" title="HarnessHub 为外部等待设的期限；到期后这条消息不会发出，也不会自动重试。">最多再等 {Math.max(1, Math.ceil((queue.endsAt - now) / 60000))} 分钟，到时这条消息不会发出。</small>

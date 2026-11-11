@@ -167,7 +167,11 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   await switchTo("Codex", "codex");
   await expect(card).toHaveAttribute("data-relay", "intro");
   await expect(card).toContainText("这条消息会附上之前的对话记录交给 Codex · 可在设置里关闭");
-  await expect(card.getByRole("button")).toHaveText(["只发这条消息"]);
+  // The line asks for nothing: the one choice about the history, to send this message without it, is in the "+" menu of the message box.
+  await expect(card.getByRole("button")).toHaveCount(0);
+  await page.getByRole("button", { name: "添加文件或上下文", exact: true }).click();
+  await expect(page.getByRole("menuitemcheckbox", { name: "只发这条消息", exact: true })).toHaveAttribute("aria-checked", "false");
+  await page.keyboard.press("Escape");
   await shoot(page, "e2e-2-intro");
   // Codex's native side shows the user's message late: the hand-over is on its way, and the line says so and not more.
   await fixture.mode({ echoDelayMs: 2500 });
@@ -205,7 +209,7 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   await switchTo("Claude Code", "claude");
   // No conversation was handed to Claude Code on this installation yet: the same one line, once.
   await expect(card).toContainText("这条消息会附上之前的对话记录交给 Claude Code · 可在设置里关闭");
-  await expect(card.getByRole("button")).toHaveText(["只发这条消息"]);
+  await expect(card.getByRole("button")).toHaveCount(0);
   await shoot(page, "e2e-6-return-line");
   await say("回到这里，再检查一下 README", 2, CLAUDE_REPLY);
   const back = separator(/^从这里起由 Claude Code 接手 · 继续原会话 · 补交 1 轮/u);

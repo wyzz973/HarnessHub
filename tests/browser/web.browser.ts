@@ -1333,7 +1333,7 @@ test("a Turn that waits for its workspace past its wait budget is not sent, and 
   assert.deepEqual(errors, []);
 });
 
-test("a Turn the Runtime cancelled when its wait budget ran out keeps the contract's words in the Turn and the details, the header says 已取消, never 已停止, and out of sight it is announced like a failure while the user's own stop is not (ADR-036, ADR-054 decision H, ruling K)", { timeout: 120000 }, async t => {
+test("a Turn the Runtime cancelled when its wait budget ran out says 已停止 with the contract's cause in the Turn and the details, the header says 已停止, and out of sight it is announced like a failure while the user's own stop is not (ADR-036, ADR-054 decision H, ruling K; the one table of state words, protocol decision of 2026-11-12)", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }, null, false, { executionBudgetMs: 60_000, waitBudgetMs: 2000 }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
@@ -1372,16 +1372,16 @@ test("a Turn the Runtime cancelled when its wait budget ran out keeps the contra
   // Notifications were never chosen, so nothing is shown; back in sight, the offer says the Turn was cancelled, never done.
   assert.deepEqual(await notices(), []);
   await hide(false);
-  const offer = page.getByRole("dialog", { name: "这一轮在后台被取消了" });
+  const offer = page.getByRole("dialog", { name: "这一轮在后台被停止了" });
   await expect(offer).toContainText("要在做完或需要你时用系统通知告诉你吗？");
   await offer.getByRole("button", { name: "开启通知", exact: true }).click(); await expect(offer).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => Notification.permission)).toBe("granted");
-  // The Turn keeps the contract's own words; the header's word is 已取消; nothing calls it the user's stop.
-  await expect(turn.locator(".process-summary")).toContainText("已取消（等待你的决定超时）"); await expect(turn.locator(".process-summary")).not.toContainText("已停止");
-  await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Shared Agent 已取消");
+  // The Turn keeps the contract's own cause after the state's word; the header says the word alone; nothing calls it the user's stop.
+  await expect(turn.locator(".process-summary")).toContainText("已停止（等待你的决定超时）"); await expect(turn.locator(".process-summary")).not.toContainText("用户停止");
+  await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Shared Agent 已停止");
   await turn.hover(); await turn.getByRole("button", { name: "执行详情", exact: true }).click();
   const facts = page.getByRole("complementary", { name: "详情栏" }).locator(".execution-details");
-  await expect(facts.locator("dt", { hasText: "执行状态" }).locator("xpath=following-sibling::dd[1]")).toHaveText("已取消（等待你的决定超时）");
+  await expect(facts.locator("dt", { hasText: "执行状态" }).locator("xpath=following-sibling::dd[1]")).toHaveText("已停止（等待你的决定超时）");
   await page.screenshot({ path: join(artifact, "runtime-cancelled.png"), animations: "disabled" });
   await page.keyboard.press("Escape"); await expect(page.getByRole("complementary", { name: "详情栏" })).toHaveCount(0);
   // Notifications on: a Turn the Runtime cancels out of sight is announced as a failure is, silently, titled with the Agent
@@ -1390,7 +1390,7 @@ test("a Turn the Runtime cancelled when its wait budget ran out keeps the contra
   await expect(log.locator(".assistant-message").last()).toHaveAttribute("data-run-status", "cancelled", { timeout: 15000 });
   await expect.poll(async () => (await notices()).length, { timeout: 15000 }).toBe(1);
   const [cancelled] = await notices();
-  assert.equal(cancelled!.title, "Shared Agent 已取消（等待你的决定超时）"); assert.equal(cancelled!.silent, true); assert.match(cancelled!.body, /^用时 \d+ 秒$/u);
+  assert.equal(cancelled!.title, "Shared Agent 已停止（等待你的决定超时）"); assert.equal(cancelled!.silent, true); assert.match(cancelled!.body, /^用时 \d+ 秒$/u);
   await hide(false);
   // The user's own stop, out of sight as well, is not announced.
   await ask(); await hide(true); await page.keyboard.press("ControlOrMeta+Period");

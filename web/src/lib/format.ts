@@ -19,6 +19,14 @@ export function clock(milliseconds: number): string {
   const total = Math.max(0, Math.floor(milliseconds / 1000)), hours = Math.floor(total / 3600), minutes = Math.floor(total % 3600 / 60), seconds = total % 60;
   return (hours ? hours + ":" + String(minutes).padStart(2, "0") : String(minutes)) + ":" + String(seconds).padStart(2, "0");
 }
+/**
+ * The time a finished Turn took, in the words of the timer that counted it while it ran (Motion board #03): one decimal
+ * under ten seconds ("3.6 秒"), then whole seconds as the timer last showed them ("42 秒", "1 分 05 秒"). Both are cut,
+ * never rounded up, so the total never reads more than the timer could have shown.
+ */
+export function spentText(milliseconds: number): string {
+  return milliseconds < 10_000 ? (Math.floor(Math.max(0, milliseconds) / 100) / 10).toFixed(1) + " 秒" : elapsed(milliseconds);
+}
 export function bytes(value: number): string { return value >= 1024 * 1024 ? (value / 1024 / 1024).toFixed(1) + " MB" : value >= 1024 ? Math.ceil(value / 1024) + " KB" : value + " B"; }
 export function compact(value: number): string { return value >= 1_000_000 ? (value / 1_000_000).toFixed(1) + "M" : value >= 1000 ? (value / 1000).toFixed(1) + "k" : String(value); }
 export function ago(at: number, now = Date.now()): string {

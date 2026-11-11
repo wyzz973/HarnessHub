@@ -1,6 +1,7 @@
 import { Bell, BellOff, Blocks, Bot, CircleHelp, Folder, FolderOpen, Inbox as InboxIcon, PanelLeft, Search, Settings, SlidersHorizontal, SquarePen, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
+import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import type { AttentionItem, PermissionRequest } from "../../../src/contracts/session.js";
 import type { HarnessView, SessionSummary, SessionView } from "../../../src/contracts/web.js";
 import { errorMessage } from "../api.js";
@@ -62,7 +63,7 @@ type RowState = "wait" | "run" | "unknown" | "closed" | "fail" | "idle";
 interface Row { readonly session: SessionSummary; readonly items: readonly AttentionItem[]; readonly state: RowState }
 interface Project { readonly key: string; readonly name: string; readonly detail: string | null; readonly rows: readonly Row[] }
 /** What a row says about its conversation to assistive technology, after the Agent's name (the Interaction board's words). */
-const STATE_WORDS: Readonly<Record<RowState, string>> = { wait: "等你处理", run: "进行中", unknown: "结果未知", closed: "已结束", fail: "上一轮失败", idle: "" };
+const STATE_WORDS: Readonly<Record<RowState, string>> = { wait: TURN_STATUS_WORDS.waiting, run: TURN_STATUS_WORDS.running, unknown: TURN_STATUS_WORDS.unknown, closed: "已结束", fail: "上一轮" + TURN_STATUS_WORDS.failed, idle: "" };
 const RANK: Readonly<Record<RowState, number>> = { wait: 0, run: 1, unknown: 2, closed: 2, fail: 2, idle: 2 };
 
 /**

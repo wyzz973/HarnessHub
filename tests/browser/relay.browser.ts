@@ -456,9 +456,9 @@ test("the line above the box says what will be handed over and asks for nothing;
   const card = page.locator(".relay-card");
   // The first hand-over to this Harness (the Gateway keeps no session of Codex's here yet, so it is the page that counts the Turns):
   // one line, nothing to press but the choice not to hand the history over, and no card.
-  await expect(card).toHaveText("这条消息会附上之前的对话记录交给 Codex · 可在设置里关闭只发这条消息");
+  await expect(card).toHaveText("这条消息会附上之前的对话记录交给 Codex · 可在设置里关闭");
   await expect(card).toHaveAttribute("data-relay", "intro");
-  await expect(card.getByRole("button")).toHaveText(["只发这条消息"]);
+  await expect(card.getByRole("button")).toHaveCount(0);
   // Nothing is drawn where the change happened until something went to the new Harness: that is the line's own business.
   await expect(log.getByRole("separator")).toHaveCount(0);
   await shoot(page, "owed-line-first");
@@ -471,11 +471,11 @@ test("the line above the box says what will be handed over and asks for nothing;
   await expect.poll(() => gateway.posted.length).toBe(1);
   assert.equal("relay" in gateway.posted[0]!, false);
   gateway.announce();
-  await expect(card).toHaveText("将交给 Codex：1 轮只发这条消息");
+  await expect(card).toHaveText("将交给 Codex：1 轮");
   await expect(card).toHaveAttribute("data-relay", "owed");
   // It is the Gateway's log that remembers, not this browser: a reload says it no more, and nothing is stored here for it.
   await page.reload();
-  await expect(card).toHaveText("将交给 Codex：1 轮只发这条消息");
+  await expect(card).toHaveText("将交给 Codex：1 轮");
   assert.equal(await page.evaluate(() => Object.keys(localStorage).filter(key => /intro/u.test(key)).length), 0);
   await shoot(page, "owed-line");
 
@@ -483,19 +483,19 @@ test("the line above the box says what will be handed over and asks for nothing;
   gateway.view = relayView({ handedOver: ["codex"], bindings: [CLAUDE_BOUND,
     { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, owed: { runs: 3, estTokens: 1700 } }] });
   gateway.announce();
-  await expect(card).toHaveText("将交给 Codex：3 轮 · 约 1.7k tokens只发这条消息");
+  await expect(card).toHaveText("将交给 Codex：3 轮 · 约 1.7k tokens");
   // The Gateway says nothing is owed to a Harness it keeps a session for: nothing is shown.
   gateway.view = relayView({ handedOver: ["codex"], bindings: [CLAUDE_BOUND, { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "E1", cleared: 0 }] });
   gateway.announce();
   await expect(card).toHaveCount(0);
   gateway.view = NO_CODEX(["codex"]); gateway.announce();
-  await expect(card).toHaveText("将交给 Codex：1 轮只发这条消息");
+  await expect(card).toHaveText("将交给 Codex：1 轮");
 
-  // "只发这条消息" is a choice for the next message only: it says what it costs, and the next send goes without the history.
-  const alone = card.getByRole("button", { name: "只发这条消息", exact: true });
-  await expect(alone).toHaveAttribute("aria-pressed", "false");
-  await alone.click();
-  await expect(alone).toHaveAttribute("aria-pressed", "true");
+  // "只发这条消息" is a choice for the next message only, held by the "+" menu of the message box: the line says what it costs once it is
+  // made, and the next send goes without the history.
+  const plus = page.getByRole("button", { name: "添加文件或上下文", exact: true }), alone = page.getByRole("menuitemcheckbox", { name: "只发这条消息", exact: true });
+  await plus.click(); await expect(alone).toHaveAttribute("aria-checked", "false"); await alone.click();
+  await plus.click(); await expect(alone).toHaveAttribute("aria-checked", "true"); await page.keyboard.press("Escape");
   await expect(card).toContainText("这条消息不附交接单，Codex 看不到之前的 1 轮");
   await shoot(page, "owed-alone");
   await composer.fill("先看第一步"); await composer.press("Enter");
@@ -503,7 +503,7 @@ test("the line above the box says what will be handed over and asks for nothing;
   assert.deepEqual(gateway.posted[1]?.relay, { attach: "none" });
   assert.equal(gateway.posted[1]?.text, "先看第一步");
   // Spent: the line is as it was before the choice, and an ordinary message after it carries no relay field at all.
-  await expect(alone).toHaveAttribute("aria-pressed", "false"); await expect(card).toContainText("将交给 Codex：1 轮");
+  await plus.click(); await expect(alone).toHaveAttribute("aria-checked", "false"); await page.keyboard.press("Escape"); await expect(card).toContainText("将交给 Codex：1 轮");
   await composer.fill("再来一条"); await composer.press("Enter");
   await expect.poll(() => gateway.posted.length).toBe(3);
   assert.equal("relay" in gateway.posted[2]!, false, "a message that chose nothing says nothing of the relay");
@@ -512,13 +512,14 @@ test("the line above the box says what will be handed over and asks for nothing;
 
 test("each Harness is told of once: a Harness the Gateway never handed a conversation to gets the line, one it did gets none", async t => {
   const first = await open(t, conversation("none"), { view: NO_CODEX() });
-  await expect(first.page.locator(".relay-card")).toHaveText("这条消息会附上之前的对话记录交给 Codex · 可在设置里关闭只发这条消息");
+  await expect(first.page.locator(".relay-card")).toHaveText("这条消息会附上之前的对话记录交给 Codex · 可在设置里关闭");
   // Handed a conversation before — by another conversation of this installation, from another browser — the Gateway says so.
   const told = await open(t, conversation("none"), { view: NO_CODEX(["codex", "hermes"]) });
-  await expect(told.page.locator(".relay-card")).toHaveText("将交给 Codex：1 轮只发这条消息");
+  await expect(told.page.locator(".relay-card")).toHaveText("将交给 Codex：1 轮");
   await expect(told.page.locator(".relay-card")).toHaveAttribute("data-relay", "owed");
   // The choice not to attach it makes the line say what that costs, whether or not it was the first.
-  await first.page.getByRole("button", { name: "只发这条消息", exact: true }).click();
+  await first.page.getByRole("button", { name: "添加文件或上下文", exact: true }).click();
+  await first.page.getByRole("menuitemcheckbox", { name: "只发这条消息", exact: true }).click();
   await expect(first.page.locator(".relay-card")).toContainText("这条消息不附交接单，Codex 看不到之前的 1 轮");
   await expect(first.page.locator(".relay-card")).toHaveAttribute("data-relay", "owed");
   assert.deepEqual([first.errors, told.errors], [[], []]);
@@ -540,7 +541,7 @@ test("with the setting off the line says the message goes with the words alone, 
   await expect(attach).toHaveAttribute("aria-pressed", "false");
   // Turned on again, the line is the ordinary one.
   gateway.prefs = "auto"; await page.reload();
-  await expect(card).toHaveText("将交给 Codex：1 轮只发这条消息");
+  await expect(card).toHaveText("将交给 Codex：1 轮");
   assert.deepEqual(errors, []);
 });
 

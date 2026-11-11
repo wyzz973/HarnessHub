@@ -1,5 +1,6 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import { readSseBlocks } from "./attention.js";
+import { decodeProtocolTurn } from "./lib/protocol/decode.js";
 import { createRelayApi, decodeRelayFrame, decodeRelayStreamEvent, decodeRunRelay, relayBody, type RelayApi, type RelayEvent, type RelayReply, type RelayRequest, type RelayTransport } from "./relay.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState } from "../../src/contracts/web.js";
@@ -9,6 +10,7 @@ import type { AttentionItem, HarnessSelection, PublicMessage, PublicRun, PublicS
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
 import { parseNativeOptions, commandId, messageId, runId, sessionId, switchId } from "../../src/contracts/session.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
+import { RUN_STATUS_WORDS } from "../../src/contracts/protocol-words.js";
 import type { NativeUsage } from "../../src/contracts/control.js";
 import { CAPABILITY_CHANGE_KINDS, CAPABILITY_DRIFT_STATES, CAPABILITY_KINDS, CAPABILITY_MECHANISMS, CAPABILITY_OWNERS, CAPABILITY_STATUSES, CAPABILITY_WARNINGS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityChangeCheck, type CapabilityChangeView,
   type CapabilityEdge, type CapabilityFacts, type CapabilityHistory, type CapabilityLinkChange, type CapabilityRestoreCheck, type CapabilitySkillPlan, type McpDefinitionView, type McpInventoryView, MCP_TARGET_STATES,
@@ -393,7 +395,16 @@ function decodeRun(value: unknown): PublicRun {
     error: publicError(row.error), ...(row.thinking === undefined ? {} : { thinking: text(row.thinking) }), ...(row.tools === undefined ? {} : { tools: list(row.tools, decodeTool, 128) }), ...decodeActivityFields(row),
     ...(row.attachments === undefined ? {} : { attachments: list(row.attachments, contentRef, 8) }), ...(row.timing === undefined ? {} : { timing: decodeTiming(row.timing) }),
     ...(row.retained === undefined ? {} : { retained: row.retained === true ? true as const : invalid() }), ...(row.reused === undefined ? {} : { reused: row.reused === true ? true as const : invalid() }),
-    ...relayField(row.relay), stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
+    ...relayField(row.relay), ...protocolField(row.protocol), stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
+}
+/**
+ * The Run as the protocol (hh/1) tells it, when the Gateway says so. Read leniently, like the relay facts: a Gateway without it, or
+ * one whose Turn this page cannot read, gives a Run without it, and the Run is drawn from the facts it always had; an item of a type
+ * this page does not know is kept as one line saying so (decodeProtocolTurn), never an invalid response.
+ */
+function protocolField(value: unknown): Pick<PublicRun, "protocol"> {
+  const protocol = value === undefined ? undefined : decodeProtocolTurn(value);
+  return protocol === undefined ? {} : { protocol };
 }
 /**
  * The relay facts a Turn carries (which packet, how its context continued, where it ran, and the delivery a newer Gateway
@@ -976,7 +987,5 @@ export function protocolLabel(protocol: ProviderProtocol | string): string {
   const labels: Record<string, string> = { "openai-responses": "OpenAI Responses", "openai-chat-completions": "OpenAI Chat", "anthropic-messages": "Anthropic Messages", gemini: "Gemini", "acp-v1": "ACP", "codex-app-server": "Codex 原生", "pi-rpc": "Pi RPC" };
   return labels[protocol] ?? protocol;
 }
-export function runStatusLabel(status: RunStatus): string {
-  const labels: Record<RunStatus, string> = { queued: "等待中", preparing: "准备中", running: "正在回复", settling: "正在结束", completed: "本轮结束", cancelled: "已取消", failed: "执行失败", unknown: "结果待核实" };
-  return labels[status];
-}
+/** A Run's state in words, for what is read aloud and shown where nothing else says it: the one table of state words (protocol-words.ts). */
+export function runStatusLabel(status: RunStatus): string { return RUN_STATUS_WORDS[status]; }

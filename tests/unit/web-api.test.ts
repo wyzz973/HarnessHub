@@ -136,9 +136,9 @@ test("the frozen Harnesses are hidden from new work unless shown, and the open c
 });
 
 test("a cancelled Turn says why: its execution budget, its wait for the user, a restart before it was sent, or the user's stop", () => {
-  assert.equal(cancelledLabel({ error: { code: "RUN_TIMEOUT" }, cancelRequested: false }), "已取消（执行预算用尽）");
-  assert.equal(cancelledLabel({ error: { code: "WAIT_EXPIRED" }, cancelRequested: true }), "已取消（等待你的决定超时）");
-  assert.equal(cancelledLabel({ error: { code: "OWNER_ENDED" } }), "已取消（服务重启，这条消息没有发出）");
-  assert.equal(cancelledLabel({ error: null, cancelRequested: true }), "已取消（用户停止）");
-  assert.equal(cancelledLabel({ error: null, cancelRequested: false }), "已取消");
+  assert.equal(cancelledLabel({ error: { code: "RUN_TIMEOUT" }, cancelRequested: false }), "已停止（执行预算用尽）");
+  assert.equal(cancelledLabel({ error: { code: "WAIT_EXPIRED" }, cancelRequested: true }), "已停止（等待你的决定超时）");
+  assert.equal(cancelledLabel({ error: { code: "OWNER_ENDED" } }), "已停止（服务重启，这条消息没有发出）");
+  assert.equal(cancelledLabel({ error: null, cancelRequested: true }), "已停止（用户停止）");
+  assert.equal(cancelledLabel({ error: null, cancelRequested: false }), "已停止");
 });

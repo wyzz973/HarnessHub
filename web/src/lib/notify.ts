@@ -67,7 +67,7 @@ export function notificationsOfferable(): boolean {
 
 /**
  * How a Turn ended, as the notification's title says it after the Agent's name. One the Runtime cancelled (its execution
- * budget used up, its wait deadline passed, the service restarted) says the contract's own words, "已取消（执行预算用尽）"
+ * budget used up, its wait deadline passed, the service restarted) says the contract's own words, "已停止（执行预算用尽）"
  * (ADR-054 ruling K); one the user stopped is not announced at all.
  */
 function outcome(run: Pick<PublicRun, "status" | "error" | "cancelRequested">): string | null {
@@ -84,7 +84,7 @@ function outcome(run: Pick<PublicRun, "status" | "error" | "cancelRequested">): 
  * cancellation is never "done". A Turn the user stopped is never offered for.
  */
 export function backgroundOutcome(status: RunStatus): string {
-  return status === "failed" ? "这一轮在后台失败了" : status === "unknown" ? "这一轮在后台结束，结果未知" : status === "cancelled" ? "这一轮在后台被取消了" : "回复在后台做完了";
+  return status === "failed" ? "这一轮在后台失败了" : status === "unknown" ? "这一轮在后台结束，结果未知" : status === "cancelled" ? "这一轮在后台被停止了" : "回复在后台做完了";
 }
 /**
  * Notifies that the open conversation's Turn ended while the page was hidden, when the user chose notifications here and

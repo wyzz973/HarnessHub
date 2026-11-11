@@ -1,12 +1,16 @@
 import type { ContentRef } from "../../../src/contracts/content.js";
+import { ITEM_STATUS_WORDS, RUN_STATUS_WORDS, TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import { cancelledLabel, type PublicRun, type PublicTool, type RunStatus } from "../../../src/contracts/session.js";
 import type { ToolDetailView } from "../api.js";
 import { toolParents } from "../tool-tree.js";
-import { elapsed } from "./format.js";
 
 export type Tool = PublicTool;
 export const TOOL_PENDING = new Set(["pending", "in_progress", "inProgress", "running"]);
-export const TOOL_STATUS: Readonly<Record<string, string>> = { pending: "等待", in_progress: "执行中", inProgress: "执行中", running: "执行中", completed: "完成", failed: "失败", declined: "已拒绝", cancelled: "已取消", interrupted: "已中断" };
+/** A tool's state in the words of the one table (protocol-words.ts), under each spelling a Harness reports it by. */
+export const TOOL_STATUS: Readonly<Record<string, string>> = {
+  pending: ITEM_STATUS_WORDS.pending, in_progress: ITEM_STATUS_WORDS.running, inProgress: ITEM_STATUS_WORDS.running, running: ITEM_STATUS_WORDS.running,
+  completed: ITEM_STATUS_WORDS.completed, failed: ITEM_STATUS_WORDS.failed, declined: ITEM_STATUS_WORDS.declined, cancelled: ITEM_STATUS_WORDS.cancelled, interrupted: ITEM_STATUS_WORDS.cancelled,
+};
 export function finished(status: RunStatus): boolean { return status === "completed" || status === "cancelled" || status === "failed" || status === "unknown"; }
 /**
  * Whether the user stopped this Run: the contract words its cancellation as a user stop, that is, the cancellation was
@@ -17,18 +21,18 @@ export function stoppedByUser(run: Pick<PublicRun, "error" | "cancelRequested">)
   return run.cancelRequested && cancelledLabel(run) === cancelledLabel({ error: null, cancelRequested: true });
 }
 /**
- * How a cancelled Run ended, in words (Interaction board, ADR-054 decision H): "已停止" when the user stopped it; any other
- * cancellation keeps the contract's own words ("已取消（执行预算用尽）"), since the Runtime's stop is never called the user's
- * (ADR-036). `short` is the header pill's word, "已停止" or "已取消". The header, the Turn and the details all use this.
+ * How a cancelled Run ended, in words: "已停止" when the user stopped it; any other cancellation says the same word with the
+ * contract's own cause after it ("已停止（执行预算用尽）"), since the Runtime's stop is never called the user's (ADR-036). `short`
+ * is the header pill's word, "已停止" whoever stopped it. The header, the Turn and the details all use this.
  */
 export function cancelledWords(run: Pick<PublicRun, "error" | "cancelRequested">, short = false): string {
-  return stoppedByUser(run) ? "已停止" : short ? "已取消" : cancelledLabel(run);
+  return stoppedByUser(run) || short ? TURN_STATUS_WORDS.cancelled : cancelledLabel(run);
 }
 export function toolFailed(tool: Pick<Tool, "status">): boolean { return tool.status === "failed" || tool.status === "declined"; }
 /** Once the Turn has ended, a tool whose end was never reported did not finish as far as anyone can tell. */
 export function toolUnfinished(tool: Pick<Tool, "status">, active: boolean): boolean { return !active && TOOL_PENDING.has(tool.status); }
-/** What a Run's state is called in facts and lists; the same words as the sidebar and the page header (ADR-054, X01). */
-export const RUN_STATE: Readonly<Record<RunStatus, string>> = { queued: "排队中", preparing: "正在启动", running: "正在执行", settling: "正在结束", completed: "完成", cancelled: "已停止", failed: "失败", unknown: "结果未知" };
+/** What a Run's state is called in facts and lists; the same words as the sidebar and the page header, from the one table (protocol-words.ts). */
+export const RUN_STATE: Readonly<Record<RunStatus, string>> = RUN_STATUS_WORDS;
 
 export type Category = "read" | "search" | "edit" | "execute" | "fetch" | "mcp" | "agent" | "other";
 /** The kind of step a tool is; a call with tools of its own is a sub-agent, whatever its kind. */
@@ -250,10 +254,10 @@ export function liveStatus(run: PublicRun | undefined, status: RunStatus, harnes
  */
 export function activityLabel(run: PublicRun | undefined, status: RunStatus, harness: string, now: number, startupHint?: { readonly seconds: number; readonly usual: boolean }, queue?: QueueNotice, waiting?: "approval" | "question"): string {
   switch (status) {
-    case "completed": return "已完成";
-    case "cancelled": return run ? cancelledWords(run) : "已取消";
-    case "failed": return "失败";
-    case "unknown": return "结果未知：可能已经执行，不会自动重发";
+    case "completed": return TURN_STATUS_WORDS.completed;
+    case "cancelled": return run ? cancelledWords(run) : TURN_STATUS_WORDS.cancelled;
+    case "failed": return TURN_STATUS_WORDS.failed;
+    case "unknown": return TURN_STATUS_WORDS.unknown + "：可能已经执行，不会自动重发";
     default: return liveStatus(run, status, harness, now, startupHint, queue, waiting).text;
   }
 }
@@ -315,14 +319,8 @@ export function runDuration(run: Pick<PublicRun, "timing">): number | null {
   const timing = run.timing;
   return timing?.endedAt === undefined ? null : timing.endedAt - timing.acceptedAt;
 }
-/**
- * The time a finished Turn took, in the words of the timer that counted it while it ran (Motion board #03): one decimal
- * under ten seconds ("3.6 秒"), then whole seconds as the timer last showed them ("42 秒", "1 分 05 秒"). Both are cut,
- * never rounded up, so the total never reads more than the timer could have shown.
- */
-export function spentText(milliseconds: number): string {
-  return milliseconds < 10_000 ? (Math.floor(Math.max(0, milliseconds) / 100) / 10).toFixed(1) + " 秒" : elapsed(milliseconds);
-}
+/** The time a finished Turn took, in the words of the timer that counted it (format.ts); the Turn and its tests read it from here. */
+export { spentText } from "./format.js";
 
 /**
  * Stored tool details, read once per page (stored content is never rewritten under its id): the steps, the changes panel

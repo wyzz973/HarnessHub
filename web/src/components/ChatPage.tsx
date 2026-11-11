@@ -4,6 +4,7 @@ import type { Dispatch, ReactNode, SetStateAction } from "react";
 import type { ContentRef } from "../../../src/contracts/content.js";
 import type { NativeExtensions, NativeModelCatalog } from "../../../src/contracts/control.js";
 import type { ProviderView } from "../../../src/contracts/provider.js";
+import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import type { AttentionItem, HarnessSelection, PublicPlan, PublicRun, SelectionRequest } from "../../../src/contracts/session.js";
 import type { HarnessReadinessView, HarnessView, NativeResumeView, NativeSessionListView, SessionView } from "../../../src/contracts/web.js";
 import { failureMessage, runStatusLabel } from "../api.js";
@@ -13,7 +14,7 @@ import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
 import { bannerOf, handoverOf, installationNotices, relayHasStory, relayLine, runNotes, userSequences } from "../lib/relay-state.js";
 import { useClosedNotices } from "../lib/use-relay.js";
 import { runRelayInfo, type RelayApi, type RelayPrefs, type RelayRequest, type RelayView } from "../relay.js";
-import { cancelledWords, changeCount, finished, toolTree, TOOL_PENDING, type QueueNotice } from "../lib/turn.js";
+import { cancelledWords, changeCount, finished, toolTree, type QueueNotice } from "../lib/turn.js";
 import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
 import { Dialog, Menu, useToast } from "../ui/overlay.js";
 import { EmptyState, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
@@ -24,8 +25,9 @@ import { BranchOrigin } from "./BranchOrigin.js";
 import { Composer, OPTION_NAMES, THINKING_NAMES, type DockedApproval } from "./Composer.js";
 import { DetailsPanel, type PanelTab } from "./DetailsPanel.js";
 import { RelayPacketDialog, type PacketTarget } from "./RelayDetails.js";
-import { RelayCard, RelayInstallation, type RelayNext } from "./RelayCard.js";
+import { RelayCard, RelayInstallation, SEND_ALONE, type RelayNext } from "./RelayCard.js";
 import { RelayDivider } from "./RelayDivider.js";
+import { hasProtocol, ProtocolTurn, type ProtocolRun } from "./ProtocolTurn.js";
 import { AssistantTurn, SwitchDivider, UserMessage } from "./Turn.js";
 import { Welcome } from "./Welcome.js";
 
@@ -332,6 +334,10 @@ export function ChatPage(props: ChatProps) {
   // What the relay did with a Turn's history when that is worth saying (a resend, everything again, words sent alone and why), under its message.
   const notes = useMemo(() => relay?.view ? runNotes({ runs: session?.runs ?? [], view: relay.view, name: harnessName }) : new Map<string, string>(), [session?.runs, relay?.view, harnesses]);
   const viewPacket = useCallback((packetId: string) => setViewing(packetId), []);
+  // The messages by identity, for the Turns the protocol draws: each reply and your message is found by the id its item names.
+  const messagesById = useMemo(() => new Map((session?.messages ?? []).map(message => [message.id as string, message])), [session?.messages]);
+  const messageOf = useCallback((id: string) => messagesById.get(id), [messagesById]);
+  const arrived = useCallback((id: string) => !known.current.messages.has(id), []);
   const relayNow = useMemo(() => session && relay?.fresh ? relayLine(session, relay.view, relay.prefs) : null, [session, relay?.view, relay?.fresh, relay?.prefs]);
   // What a binding asks the user to look at, for the Harness the conversation is on, once the conversation is idle: said once, and a closed one
   // of the same episode (its key, with the conversation and the Harness) does not come back.
@@ -472,8 +478,28 @@ export function ChatPage(props: ChatProps) {
         queue={queue?.runId === runId ? queueNotice : undefined} busyHolder={busyHolder(runId)}
         waiting={run && open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{run ? turnRequests(runId) : null}</AssistantTurn>;
     };
+    /** A Run that carries protocol items: its hand-over line, your message and its items are all drawn by its one component. */
+    const protocolTurn = (run: ProtocolRun) => {
+      const open = (current.permissions ?? []).filter(request => request.runId === run.id && !request.decided);
+      return <ProtocolTurn key={"turn:" + run.id} run={run} message={messageOf} arrived={arrived} detailed={detailed} onEdit={fillDraft}
+        onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
+        onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? current.runs.at(-1)?.id) === run.id} onViewPacket={relay ? viewPacket : undefined}
+        startupHint={startupHints.get(run.id)} queue={queue?.runId === run.id ? queueNotice : undefined} busyHolder={busyHolder(run.id)}
+        waiting={open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{turnRequests(run.id)}</ProtocolTurn>;
+    };
+    /** Whether the Turn that follows a legacy hand-over line is drawn from protocol items, which draw their own hand-over line. */
+    const protocolFollows = (divider: Divider) => hasProtocol(current.runs.find(item => (userSeq.get(item.id) ?? -1) > divider.change.throughSeq));
     for (const message of current.messages) {
       const run = runs.get(message.runId);
+      // THE FORK between the two ways a Turn is drawn. A Run that carries protocol items draws all of itself in one component
+      // (ProtocolTurn), from its items in order; any other Run is drawn from the facts it always had, below. The second way, with
+      // `covered`, `notes` and the hand-over lines of `handover`, goes when every Run carries protocol items.
+      if (hasProtocol(run)) {
+        if (!drawn.has(run.id)) { drawn.add(run.id); items.push(protocolTurn(run)); }
+        const divider = dividerAfter.get(message.id);
+        if (divider && !protocolFollows(divider)) items.push(handover(current, divider));
+        continue;
+      }
       if (message.role === "user") {
         const note = covered.has(message.runId) ? undefined : notes.get(message.runId);
         items.push(known.current.messages.has(message.id) ? <UserMessage key={message.id} message={message} run={run} onEdit={fillDraft} packet={packetOfRun.get(message.runId)} onViewPacket={viewPacket} note={note}/>
@@ -481,7 +507,7 @@ export function ChatPage(props: ChatProps) {
       }
       if (!drawn.has(message.runId) && (run !== undefined || message.role === "assistant")) { drawn.add(message.runId); items.push(turn(message.runId)); }
       const divider = dividerAfter.get(message.id);
-      if (divider) items.push(handover(current, divider));
+      if (divider && !protocolFollows(divider)) items.push(handover(current, divider));
     }
     return items;
   };
@@ -521,7 +547,13 @@ export function ChatPage(props: ChatProps) {
     return () => window.removeEventListener("keydown", handler, true);
   }, []);
 
-  const composer = <Composer {...props} onSendDraft={text => send(text)} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}
+  // The choice to send the next message without the earlier conversation lives in the message box's "+" menu, in the one case the line
+  // above the box offers it: something is owed, no banner is up, and the setting does not already send the words alone.
+  const sendAlone = relay && banner === null && relayNow !== null && !relayNow.off ? (() => {
+    const checked = relay.next?.option === SEND_ALONE.option && relay.next.for === SEND_ALONE.for;
+    return { checked, onToggle: () => relay.onNext(checked ? null : SEND_ALONE) };
+  })() : undefined;
+  const composer = <Composer {...props} sendAlone={sendAlone} onSendDraft={text => send(text)} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}
     onShowResume={session ? showResume : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} onEditLast={editLast} onReplaceDraft={fillDraft}
     above={session ? <>
       {relay ? <RelayCard line={relayNow} banner={banner} target={harnessName(session.selection.harnessId)} next={relay.next} onNext={relay.onNext}
@@ -540,7 +572,7 @@ export function ChatPage(props: ChatProps) {
   const latestRun = session?.runs.at(-1), current = active ?? (latestRun?.status === "queued" ? latestRun : null);
   const currentWaits = current ? (session?.permissions ?? []).filter(request => request.runId === current.id && !request.decided) : [];
   const currentState = current === null ? null : current.cancelRequested ? "正在停止回复" : currentWaits.length ? currentWaits.some(dockedRequest) ? "等你批准" : "等你回答"
-    : current.status === "queued" ? "排队中" : runStatusLabel(current.status);
+    : runStatusLabel(current.status);
   const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史"
     : currentState ?? (pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话");
   const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} tab={panelTab} onTab={setTab} runId={panelRun} onRun={setPanelRun} describe={describe}
@@ -668,9 +700,8 @@ function ChangeBadge({ count, news }: { readonly count: number; readonly news: b
 /**
  * The conversation's state in the header (Conversation and Interaction boards): who works and what it does now, in the
  * words the sidebar and the Turn use. Running work is blue with a breathing dot and a clock; waiting for the user is
- * amber; a failure is red; a Turn that ended quietly is grey: "已停止" when the user stopped it, "已取消" when the Runtime
- * cancelled it (ADR-036, decision H). A Turn waiting in the queue is not the active Run (only a started one is), and is
- * named 排队中 as the Turn names it (ruling N).
+ * amber; a failure is red; a Turn that ended quietly is grey: "已停止", whoever stopped it (the Turn's own line says whose). A Turn
+ * waiting in the queue is not the active Run (only a started one is), and is named 排队中 as the Turn names it (ruling N).
  */
 function HeaderState({ session, active, harnessName }: { readonly session: SessionView; readonly active: PublicRun | null; readonly harnessName: (id: string) => string }) {
   const now = useNow(active !== null);
@@ -684,22 +715,20 @@ function HeaderState({ session, active, harnessName }: { readonly session: Sessi
       if (open.length) return { text: open.some(dockedRequest) ? "等你批准" : "等你回答", tone: "amber" };
       const clockText = since ? " · " + since : "";
       switch (active.status) {
-        case "queued": return { text: "排队中", tone: "neutral" };
-        case "preparing": return { text: "正在启动" + clockText, tone: "accent", live: true };
-        case "settling": return { text: "正在结束", tone: "accent", live: true };
-        default: {
-          const tool = active.tools?.some(row => TOOL_PENDING.has(row.status)), replying = session.messages.some(message => message.runId === active.id && message.role === "assistant" && message.text);
-          return { text: (tool ? "正在执行" : replying ? "正在回复" : "正在思考") + clockText, tone: "accent", live: true };
-        }
+        case "queued": return { text: TURN_STATUS_WORDS.queued, tone: "neutral" };
+        case "preparing": return { text: TURN_STATUS_WORDS.preparing + clockText, tone: "accent", live: true };
+        // A Run being closed is still the Turn running; what it does (a tool, the reply, thinking) is said by the Turn's own line.
+        case "settling": return { text: TURN_STATUS_WORDS.running, tone: "accent", live: true };
+        default: return { text: TURN_STATUS_WORDS.running + clockText, tone: "accent", live: true };
       }
     }
     if (!latest) return { text: "", tone: "neutral" };
     switch (latest.status) {
-      case "queued": return { text: latest.cancelRequested ? "正在停止" : "排队中", tone: "neutral" };
-      case "completed": return { text: "已完成", tone: "neutral" };
-      case "failed": return { text: "失败", tone: "red" };
+      case "queued": return { text: latest.cancelRequested ? "正在停止" : TURN_STATUS_WORDS.queued, tone: "neutral" };
+      case "completed": return { text: TURN_STATUS_WORDS.completed, tone: "neutral" };
+      case "failed": return { text: TURN_STATUS_WORDS.failed, tone: "red" };
       case "cancelled": return { text: cancelledWords(latest, true), tone: "neutral" };
-      case "unknown": return { text: "结果未知", tone: "amber" };
+      case "unknown": return { text: TURN_STATUS_WORDS.unknown, tone: "amber" };
       default: return { text: "", tone: "neutral" };
     }
   })();

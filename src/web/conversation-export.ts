@@ -1,7 +1,8 @@
+import { RUN_STATUS_WORDS } from "../contracts/protocol-words.js";
 import { cancelledLabel, type PublicRun } from "../contracts/session.js";
 import type { SessionView } from "../contracts/web.js";
 
-const STATUS: Readonly<Record<string, string>> = { queued: "等待", preparing: "准备中", running: "进行中", settling: "结束中", completed: "完成", cancelled: "已取消", failed: "失败", unknown: "结果未核实" };
+const STATUS: Readonly<Record<string, string>> = RUN_STATUS_WORDS;
 /** A Turn's status as exported; a cancelled one says why, as the chat does (ADR-036). */
 function statusOf(run: PublicRun | undefined, status: string): string { return status === "cancelled" && run !== undefined ? cancelledLabel(run) : STATUS[status] ?? status; }
 function bytes(value: number): string { return value >= 1024 * 1024 ? (value / 1024 / 1024).toFixed(1) + " MB" : value >= 1024 ? Math.ceil(value / 1024) + " KB" : value + " B"; }

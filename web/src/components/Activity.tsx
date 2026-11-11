@@ -3,6 +3,7 @@ import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ReactNode } from "react";
 import type { ContentRef } from "../../../src/contracts/content.js";
 import type { NativeUsage } from "../../../src/contracts/control.js";
+import { ITEM_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import type { PublicActivity, PublicNotice, PublicOutput, PublicPlan } from "../../../src/contracts/session.js";
 import { contentUrl, errorMessage, type ToolDetailView } from "../api.js";
 import { cn } from "../lib/cn.js";
@@ -68,23 +69,31 @@ export function DiffView({ text, fallback = "改动", className }: { readonly te
 function Section({ title, children }: { readonly title: string; readonly children: ReactNode }) {
   return <section className="flex min-w-0 flex-col gap-1"><h5 className="m-0 text-caption font-medium text-fg-3">{title}</h5>{children}</section>;
 }
-/** The third layer of the process: what the program sent and got back for one tool, as it reported it. */
-function ToolDetail({ tool, load }: { readonly tool: Tool; readonly load: ToolDetailLoader | undefined }) {
-  const { detail, problem, loading } = useToolDetail(tool.detail, load, true);
+/**
+ * The third layer of the process: what the program sent and got back for one action, as it reported it, read from the stored detail
+ * when it is opened. `native` is the program's own name for the action, which belongs here as a small line and never in the action's
+ * own line; `fallback` names the file of a diff that carries no header.
+ */
+export function StoredDetail({ content, fallback, load, native }: { readonly content: ContentRef | undefined; readonly fallback: string; readonly load: ToolDetailLoader | undefined; readonly native?: string | undefined }) {
+  const { detail, problem, loading } = useToolDetail(content, load, true);
   const pre = "m-0 max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-code text-fg";
+  const names = [...new Set([native, detail?.name, detail?.kind].filter(Boolean))].join(" · ");
   return <div className="native-tool-detail mt-0.5 mb-2 ml-[30px] flex min-w-0 flex-col gap-2.5 rounded-block bg-inset px-3 py-2.5 text-ui-sm">
     {loading ? <p className="m-0 flex items-center gap-1.5 text-fg-3"><Spinner size={12} label=""/>读取工具详情…</p> : null}
     {problem ? <p className="m-0 text-red" role="status">{problem}</p> : null}
     {detail ? <>
-      {detail.name || detail.kind ? <p className="m-0 text-caption text-fg-3">{[detail.name, detail.kind].filter(Boolean).join(" · ")}</p> : null}
+      {names ? <p className="m-0 text-caption text-fg-3">{names}</p> : null}
       {detail.input ? <Section title="输入"><pre className={pre}>{detail.input}</pre></Section> : null}
-      {detail.diff ? <Section title="改动"><DiffView text={detail.diff} fallback={detail.locations?.[0] ?? tool.title} className="max-h-96 overflow-auto rounded-row bg-app shadow-hairline"/></Section> : null}
+      {detail.diff ? <Section title="改动"><DiffView text={detail.diff} fallback={detail.locations?.[0] ?? fallback} className="max-h-96 overflow-auto rounded-row bg-app shadow-hairline"/></Section> : null}
       {detail.output ? <Section title="输出"><pre className={pre}>{detail.output}</pre></Section> : null}
       {detail.locations?.length ? <Section title="位置"><ul className="m-0 list-none p-0">{detail.locations.map(path => <li key={path} className="min-w-0 break-all font-mono text-code text-fg-2">{path}</li>)}</ul></Section> : null}
       {detail.truncated ? <p className="m-0 text-caption text-fg-3">内容较长，已按预算截取显示。</p> : null}
       {!detail.input && !detail.output && !detail.diff && !detail.locations?.length ? <p className="m-0 text-fg-3">这个工具没有返回可显示的输入或输出。</p> : null}
     </> : null}
   </div>;
+}
+function ToolDetail({ tool, load }: { readonly tool: Tool; readonly load: ToolDetailLoader | undefined }) {
+  return <StoredDetail content={tool.detail} fallback={tool.title} load={load}/>;
 }
 
 /**
@@ -227,7 +236,7 @@ export function NoticeList({ notices }: { notices: readonly PublicNotice[] }) {
   </div>)}</div>;
 }
 export const ACTIVITY_KIND: Readonly<Record<PublicActivity["kind"], string>> = { subagent: "子 Agent", task: "后台任务", compaction: "上下文压缩", retry: "自动重试", review: "代码审查" };
-export const ACTIVITY_STATUS: Readonly<Record<PublicActivity["status"], string>> = { running: "进行中", completed: "完成", failed: "失败", cancelled: "已取消" };
+export const ACTIVITY_STATUS: Readonly<Record<PublicActivity["status"], string>> = { running: ITEM_STATUS_WORDS.running, completed: ITEM_STATUS_WORDS.completed, failed: ITEM_STATUS_WORDS.failed, cancelled: ITEM_STATUS_WORDS.cancelled };
 function activityIcon(kind: PublicActivity["kind"]): ReactNode {
   switch (kind) {
     case "compaction": return <Layers size={15} aria-hidden="true"/>;

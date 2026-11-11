@@ -409,7 +409,7 @@ test("the public conversation exports as Markdown or JSON without private native
   assert.equal(markdown.headers.get("content-disposition"), "attachment; filename*=UTF-8''" + encodeURIComponent("harnesshub-" + id + ".md"));
   const text = await markdown.text();
   assert.match(text, /^# first ``` quoted/u); assert.ok(text.includes("## 你\n\n```text\nfirst\n ```\nquoted\n```"), "a fence inside the user text cannot close the quote");
-  assert.ok(text.includes("## Web a · 完成")); assert.equal(text.includes("checkpoint"), false);
+  assert.ok(text.includes("## Web a · 已完成")); assert.equal(text.includes("checkpoint"), false);
   const json = await fetch(f.origin + `/api/v1/sessions/${id}/export?format=json`, { headers: { Cookie: f.cookie } });
   const exported = row(await json.json()); assert.equal(exported.application, "HarnessHub"); assertView(exported.session);
   assert.equal(JSON.stringify(exported).includes("nativeBindings"), false, "private native bindings are not exported");
@@ -417,8 +417,8 @@ test("the public conversation exports as Markdown or JSON without private native
   const view = exported.session as SessionView, ended = (error: string | null, cancelRequested: boolean) => conversationMarkdown({ ...view,
     runs: view.runs.map(run => ({ ...run, status: "cancelled" as const, error: error === null ? null : { code: error, message: "ended" }, cancelRequested })),
     messages: view.messages.map(message => ({ ...message, status: "cancelled" as const })) }, () => "Web a", new Date(0));
-  assert.ok(ended("RUN_TIMEOUT", false).includes("## Web a · 已取消（执行预算用尽）")); assert.ok(ended("WAIT_EXPIRED", false).includes("## Web a · 已取消（等待你的决定超时）"));
-  assert.ok(ended(null, true).includes("## Web a · 已取消（用户停止）"));
+  assert.ok(ended("RUN_TIMEOUT", false).includes("## Web a · 已停止（执行预算用尽）")); assert.ok(ended("WAIT_EXPIRED", false).includes("## Web a · 已停止（等待你的决定超时）"));
+  assert.ok(ended(null, true).includes("## Web a · 已停止（用户停止）"));
   assert.equal((await call(f, `/api/v1/sessions/${id}/export?format=pdf`)).status, 400);
   assert.equal((await fetch(f.origin + `/api/v1/sessions/${id}/export`)).status, 401);
 });

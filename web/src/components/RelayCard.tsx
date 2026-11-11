@@ -15,7 +15,10 @@ export interface RelayNext { readonly request: RelayRequest; readonly for: strin
 const LINE = "relay-card motion-fade-in flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-block bg-subtle py-1.5 pr-1.5 pl-3 text-ui-sm";
 const TOGGLE = "btn btn-ghost btn-sm flex-none aria-pressed:bg-accent-soft aria-pressed:text-accent-text";
 
-/** The next message's choice that sends it without the history, offered where something is owed. */
+/**
+ * The next message's choice that sends it without the history, offered where something is owed. It is held by the "+" menu of the
+ * message box (Composer), not by this line: the line only says what it costs once it is chosen.
+ */
 export const SEND_ALONE: RelayNext = { request: { attach: "none" }, for: "owed", option: "none" };
 /** The next message's choice that attaches the history to it, offered where the setting does not attach it by itself. */
 export const SEND_WITH: RelayNext = { request: { attach: "full" }, for: "off", option: "full" };
@@ -25,8 +28,9 @@ export const SEND_WITH: RelayNext = { request: { attach: "full" }, for: "off", o
  *  - what a binding asks the user to look at (a packet nothing confirmed, or a conversation cleared whose earlier part can be attached
  *    to the next message): said once, with the way to settle it, a choice for the next message; the next message goes whatever it
  *    says, and a closed one of the same episode does not come back;
- *  - when something is owed to the Harness the conversation is on: what will be handed over, and the way to send without it; the first
- *    time a Harness takes the history it also says where it goes (nothing to press, and it goes away with the message);
+ *  - when something is owed to the Harness the conversation is on: what will be handed over, and, once the "+" menu's choice to send
+ *    without it is made, what that costs; the first time a Harness takes the history it also says where it goes (nothing to press,
+ *    and it goes away with the message);
  *  - when the installation's setting does not hand the earlier conversation over by itself: that the message goes with the words
  *    alone, and the way to attach it.
  * Nothing is asked: the banner appears only when something was done or is in doubt, the line only informs. `target` is the name of
@@ -60,7 +64,6 @@ export function RelayCard({ line, banner, target, next, onNext, onDismissBanner 
     <span className="min-w-0 flex-1 py-0.5">{alone ? <>这条消息不附交接单，<strong className="font-semibold">{target}</strong> 看不到之前的 {line.runs} 轮</>
       : line.first ? <>这条消息会附上之前的对话记录交给 <strong className="font-semibold">{target}</strong> · 可在设置里关闭</>
       : <>将交给 <strong className="font-semibold">{target}</strong>：{line.runs} 轮{line.tokens === null ? "" : ` · 约 ${compact(line.tokens)} tokens`}</>}</span>
-    <button type="button" className={TOGGLE} aria-pressed={alone} onClick={() => onNext(alone ? null : SEND_ALONE)}>只发这条消息</button>
   </div>;
 }
 

@@ -2,6 +2,8 @@ import type { ProviderTarget } from "./provider.js";
 import type { BackendResult, CleanupEvidence, ControlEvent, HarnessControl, NativeOptions, NativePlanEntry, NativeUsage } from "./control.js";
 import type { ContentPort, ContentRef } from "./content.js";
 import type { BindingRelayState, RelayRows, RunRelay, RunRelayRequest, SwitchMode, SwitchTiming } from "./relay.js";
+import type { ReadTurn } from "./protocol-read.js";
+import { TURN_STATUS_WORDS } from "./protocol-words.js";
 
 declare const sessionBrand: unique symbol;
 declare const runBrand: unique symbol;
@@ -136,6 +138,11 @@ export interface PublicRun {
   readonly relay?: RunRelay;
   /** v13: the relay choice its request made (attach the history, or send alone), with its HMAC. Fixed at acceptance. */
   readonly relayRequest?: RunRelayRequest;
+  /**
+   * The Run as the HarnessHub protocol (hh/1) tells it: its Turn in order, as a client draws it. Added to the conversation view and
+   * its Run frames when read; never part of what is stored. A client without it draws the Run from the facts above.
+   */
+  readonly protocol?: ReadTurn;
   readonly stopRequested: boolean;
   readonly awaitingSwitchId: SwitchId | null;
 }
@@ -436,15 +443,17 @@ export function resolveTurnBudgets(input: { readonly executionSeconds?: string |
 }
 /**
  * Why a cancelled Turn ended, in the user's words, so the Runtime's own stops are never shown or exported as the user's
- * (ADR-036): its execution budget, its wait for the user, a restart before it was sent, or the user's stop.
+ * (ADR-036): its execution budget, its wait for the user, a restart before it was sent, or the user's stop. The state is said
+ * in the word of the one table (a stopped Turn is 已停止, protocol-words.ts), the cause after it.
  */
 export function cancelledLabel(run: { readonly error?: { readonly code: string } | null; readonly cancelRequested?: boolean }): string {
+  const stopped = TURN_STATUS_WORDS.cancelled;
   switch (run.error?.code) {
-    case "RUN_TIMEOUT": return "已取消（执行预算用尽）";
-    case "WAIT_EXPIRED": return "已取消（等待你的决定超时）";
-    case "OWNER_ENDED": return "已取消（服务重启，这条消息没有发出）";
+    case "RUN_TIMEOUT": return stopped + "（执行预算用尽）";
+    case "WAIT_EXPIRED": return stopped + "（等待你的决定超时）";
+    case "OWNER_ENDED": return stopped + "（服务重启，这条消息没有发出）";
   }
-  return run.cancelRequested === true ? "已取消（用户停止）" : "已取消";
+  return run.cancelRequested === true ? stopped + "（用户停止）" : stopped;
 }
 export interface SessionRuntimeOptions {
   readonly id: () => string;

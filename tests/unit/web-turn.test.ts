@@ -114,24 +114,24 @@ test("G054-DL5 the step an approval asks for is the latest open step of the Turn
   assert.deepEqual(steps(), [["r1", ["r1", "r2", "r3"]]]);
 });
 
-test("G054-DL7 a Turn the user stopped says 已停止; one the Runtime cancelled keeps the contract's words, and the header's short word is 已取消", () => {
+test("G054-DL7 a Turn the user stopped says 已停止; one the Runtime cancelled says the same state's word with the contract's cause after it, and the header's short word is 已停止 for both", () => {
   const cancelled = (code: string | null, cancelRequested: boolean) => ({ error: code === null ? null : { code, message: "" }, cancelRequested });
   // The user's stop: cancelRequested with none of the Runtime's causes, also when the program reported its own code for it.
   for (const run of [cancelled(null, true), cancelled("CANCELLED", true)]) {
     assert.equal(stoppedByUser(run), true); assert.deepEqual([cancelledWords(run), cancelledWords(run, true)], ["已停止", "已停止"]);
   }
-  // The Runtime's cancellations keep the contract's words, and are never the user's, even when a stop was asked for as well.
-  for (const [code, words] of [["RUN_TIMEOUT", "已取消（执行预算用尽）"], ["WAIT_EXPIRED", "已取消（等待你的决定超时）"], ["OWNER_ENDED", "已取消（服务重启，这条消息没有发出）"]] as const) {
+  // The Runtime's cancellations keep the contract's cause, and are never the user's, even when a stop was asked for as well.
+  for (const [code, words] of [["RUN_TIMEOUT", "已停止（执行预算用尽）"], ["WAIT_EXPIRED", "已停止（等待你的决定超时）"], ["OWNER_ENDED", "已停止（服务重启，这条消息没有发出）"]] as const) {
     for (const asked of [false, true]) {
       const run = cancelled(code, asked);
-      assert.equal(stoppedByUser(run), false, code); assert.deepEqual([cancelledWords(run), cancelledWords(run, true)], [words, "已取消"], code);
+      assert.equal(stoppedByUser(run), false, code); assert.deepEqual([cancelledWords(run), cancelledWords(run, true)], [words, "已停止"], code);
     }
   }
   // Cancelled without anyone asking (the program ended its own turn so): not the user's either.
-  assert.deepEqual([stoppedByUser(cancelled(null, false)), cancelledWords(cancelled(null, false)), cancelledWords(cancelled(null, false), true)], [false, "已取消", "已取消"]);
+  assert.deepEqual([stoppedByUser(cancelled(null, false)), cancelledWords(cancelled(null, false)), cancelledWords(cancelled(null, false), true)], [false, "已停止", "已停止"]);
   // The Turn's finished words follow the same rule.
   assert.equal(activityLabel({ ...runningRun(), status: "cancelled", ...cancelled(null, true) }, "cancelled", "Codex", 0), "已停止");
-  assert.equal(activityLabel({ ...runningRun(), status: "cancelled", ...cancelled("WAIT_EXPIRED", false) }, "cancelled", "Codex", 0), "已取消（等待你的决定超时）");
+  assert.equal(activityLabel({ ...runningRun(), status: "cancelled", ...cancelled("WAIT_EXPIRED", false) }, "cancelled", "Codex", 0), "已停止（等待你的决定超时）");
 });
 
 test("G054-FR7 a unified diff splits into files with numbered lines and counts, and text without headers keeps the given name", () => {

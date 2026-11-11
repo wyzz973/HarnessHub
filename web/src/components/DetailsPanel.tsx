@@ -251,7 +251,7 @@ function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe
       <BrandIcon brand={run.selection.harnessId} name={name(run.selection.harnessId)} size={18}/>
       {/* What the Turn did and its time stay whole: in the narrow panel the line wraps between its parts, never in a number */}
       <span className="min-w-0 flex-1 break-words"><span className="text-fg">{name(run.selection.harnessId)}</span>{[...(summary ? summary.split(" · ") : []), ...(time ? [time] : [])].map((part, index) => <Fragment key={index}> · <span className="whitespace-nowrap">{part}</span></Fragment>)}</span>
-      {active ? waiting ? <StatusDot tone="wait" label={waiting}/> : run.status === "queued" ? <StatusDot tone="idle" label={RUN_STATE.queued}/> : <StatusDot tone="run" label="进行中"/> : null}
+      {active ? waiting ? <StatusDot tone="wait" label={waiting}/> : run.status === "queued" ? <StatusDot tone="idle" label={RUN_STATE.queued}/> : <StatusDot tone="run" label={RUN_STATE.running}/> : null}
       <span className="flex-none text-caption text-fg-3">第 {index + 1} 轮</span>
       <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
     </button>
