@@ -472,70 +472,103 @@ svg .h{fill:currentColor} svg .ha{fill:var(--accent)}
     <div class="m-row"><b>运行了</b> <code>npm test</code> <span class="go">›</span></div>
     <div>修好了。<code>total</code> 现在先减折扣再算税，10 个测试里通过 7 个，剩下 3 个是另外两处问题。</div>
     <div class="m-foot">Codex · GPT · 用时 31 秒 · 输入 41k · 输出 1.1k</div>
-    <div class="m-box">
-      <div class="t">任务</div>
-      <div class="m-step done"><i>✓</i><span>修折扣后计税</span></div>
-      <div class="m-step now"><i>●</i><span>修金额补零</span></div>
-      <div class="m-step"><i>○</i><span>修德国和法国的税率</span></div>
-    </div>
-    <div class="m-box">
-      <div>修好了一个测试，改动在 src/cart.js，还没有提交。剩下 3 个失败是另外两处缺陷。</div>
-      <div><strong>接着修剩下的吗？</strong></div>
-      <div class="m-btns"><span class="m-btn p">接着修</span><span class="m-btn">先看改动</span></div>
-    </div>
     <div class="m-div"><span>Codex → Claude Code · 带上了之前 2 轮 · 查看</span></div>
     <div class="m-user">Codex 刚才改了什么？</div>
+  </div>
+
+  <h3>输入框上方：任务清单与“下一步”框</h3>
+  <p>这两样不在时间线里，在输入框上方的同一个位置。Claude 桌面版就是这样放的。</p>
+  <div class="cmp">
+    <div>
+      <div class="cap">回合进行中：任务清单</div>
+      <div class="mock">
+        <div class="m-box">
+          <div class="t">任务</div>
+          <div class="m-step done"><i>✓</i><span>修折扣后计税</span></div>
+          <div class="m-step now"><i>●</i><span>修金额补零</span></div>
+          <div class="m-step"><i>○</i><span>修德国和法国的税率</span></div>
+        </div>
+        <div class="m-box"><span class="m-foot">输入框</span></div>
+      </div>
+    </div>
+    <div>
+      <div class="cap">回合结束：“下一步”框</div>
+      <div class="mock">
+        <div class="m-box">
+          <div>修好了一个测试，改动在 src/cart.js，还没有提交。剩下 3 个失败是另外两处缺陷。</div>
+          <div><strong>接着修剩下的吗？</strong></div>
+          <div class="m-btns"><span class="m-btn p">接着修</span><span class="m-btn">先看改动</span></div>
+        </div>
+        <div class="m-box"><span class="m-foot">输入框</span></div>
+      </div>
+    </div>
   </div>
 
   <h3>规则</h3>
   <ul>
     <li><strong>按时间从上到下。</strong>中途的说明、动作、最终回答交错出现，是它实际发生的顺序。</li>
-    <li><strong>连续的动作合成一行摘要，默认折叠。</strong>只有一个动作时直接显示那一个。点开看每一条，再点开看输出或差异。</li>
+    <li><strong>两段文字之间连续的动作合成一行摘要，默认折叠。</strong>只有一个动作时直接显示那一个。点开看每一条，再点开看输出或差异。</li>
+    <li><strong>摘要怎么写：</strong>最多列三类动作，其余写成“还有 N 个动作”。数的是不同的文件和命令，不是调用次数。一组只动了一个文件时写成“读取并修改了 cart.js”。有失败、被拦、被停止的，在后面标出来，例如“1 个失败”。</li>
+    <li><strong>详细程度两档：</strong>普通（折叠）和详细（全部展开）。</li>
     <li><strong>不折叠的情形：</strong>正在进行的那一组；失败的动作；等你处理的审批。</li>
     <li><strong>思考默认折成一行</strong>“思考了 N 秒”。没有思考内容的 Harness 不显示这一行。</li>
-    <li><strong>任务清单</strong>固定在最新一轮的下方，只有一份。<strong>小结</strong>在回合结束处。</li>
+    <li><strong>任务清单和“下一步”框在输入框上方，不在时间线里。</strong>回合进行中显示任务清单，最多 12 步，更多的折成“前面还有 N 步”“后面还有 N 步”。回合结束并且有小结时显示“下一步”框，任务清单收起。</li>
+    <li><strong>“下一步”框：</strong>两三句小结，最多一个问题，一排按钮。第一个按钮是推荐的做法。</li>
     <li><strong>换家只有一种分隔线</strong>：从谁到谁，加一句带了什么。现在有五种说法。交接的补充说明都收进这一行。</li>
     <li><strong>每轮的脚注只有一种写法</strong>：Harness、模型、用时、输入、输出。拿不到的那一项不写。</li>
     <li><strong>输入框上方最多一条提示。</strong>现在代码里同屏最多可以出现 15 类提示位，接力就占 5 类。</li>
   </ul>
 
   <h3>措辞表</h3>
-  <p>每种动作四个说法。动词在进行中用“正在”，完成后用“了”。这和 Claude 桌面版的做法一样。</p>
+  <p>每种动作有进行中、完成、失败三套说法，完成的再分单个和多个。这和 Claude 桌面版的做法一样。</p>
   <div class="tw"><table>
-    <tr><th>条目</th><th>进行中</th><th>完成，单个</th><th>完成，多个</th></tr>
-    <tr><td>命令</td><td>正在运行 <code>npm test</code></td><td>运行了 <code>npm test</code></td><td>运行了 3 条命令</td></tr>
-    <tr><td>读文件</td><td>正在读取 cart.js</td><td>读取了 cart.js</td><td>读取了 5 个文件</td></tr>
-    <tr><td>改文件</td><td>正在修改 cart.js</td><td>修改了 cart.js +2 −2</td><td>修改了 2 个文件</td></tr>
-    <tr><td>搜索</td><td>正在搜索“taxFor”</td><td>搜索了“taxFor”</td><td>搜索了 4 次</td></tr>
-    <tr><td>联网</td><td>正在搜索网页</td><td>搜索了网页“…”</td><td>搜索了 3 次网页</td></tr>
-    <tr><td>MCP 工具</td><td>正在使用 服务 · 工具</td><td>使用了 服务 · 工具</td><td>使用了 3 个工具</td></tr>
-    <tr><td>Hub 的工具</td><td>正在查阅对话记录</td><td>查阅了对话记录</td><td>查阅了 3 次对话记录</td></tr>
-    <tr><td>子任务</td><td>正在运行子任务</td><td>运行了子任务“…”</td><td>运行了 2 个子任务</td></tr>
-    <tr><td>思考</td><td>思考中</td><td>思考了 12 秒</td><td>—</td></tr>
-    <tr><td>其他工具</td><td>正在使用 名字</td><td>使用了 名字</td><td>使用了 3 个工具</td></tr>
+    <tr><th>条目</th><th>进行中</th><th>完成，单个</th><th>完成，多个</th><th>失败</th></tr>
+    <tr><td>命令</td><td>正在运行 <code>npm test</code></td><td>运行了 <code>npm test</code></td><td>运行了 3 条命令</td><td>运行失败 <code>npm test</code></td></tr>
+    <tr><td>读文件</td><td>正在读取 cart.js</td><td>读取了 cart.js</td><td>读取了 5 个文件</td><td>读取失败 cart.js</td></tr>
+    <tr><td>改文件</td><td>正在修改 cart.js</td><td>修改了 cart.js +2 −2</td><td>修改了 2 个文件</td><td>修改失败 cart.js</td></tr>
+    <tr><td>搜索</td><td>正在搜索“taxFor”</td><td>搜索了“taxFor”</td><td>搜索了 4 处</td><td>搜索失败</td></tr>
+    <tr><td>联网</td><td>正在搜索网页</td><td>搜索了网页“…”</td><td>搜索了 3 次网页</td><td>联网失败</td></tr>
+    <tr><td>MCP 工具</td><td>正在使用 服务：工具</td><td>使用了 服务：工具</td><td>使用了 3 个工具</td><td>工具出错 服务：工具</td></tr>
+    <tr><td>Hub 的工具</td><td>正在查阅对话记录</td><td>查阅了对话记录</td><td>查阅了 3 次对话记录</td><td>查阅失败</td></tr>
+    <tr><td>子任务</td><td>正在运行子任务</td><td>运行了子任务“…”</td><td>运行了 2 个子任务</td><td>子任务失败</td></tr>
+    <tr><td>思考</td><td>思考中</td><td>思考了 12 秒</td><td>—</td><td>—</td></tr>
+    <tr><td>其他工具</td><td>正在使用 名字</td><td>使用了 名字</td><td>使用了 3 个工具</td><td>工具出错 名字</td></tr>
   </table></div>
   <p>状态词全界面只有第 4、5 节那一套。现在同一个状态在五六处用词不同，例如“完成”和“已完成”、“等待”“执行中”“进行中”“正在执行”。</p>
+
+  <h3>侧栏的一行</h3>
+  <div class="tw"><table>
+    <tr><th>部分</th><th>显示什么</th><th>数据从哪来</th></tr>
+    <tr><td>状态点</td><td>灰色闪动是进行中，黄色是等你处理，蓝色是有未读，红色是失败</td><td>回合状态、有没有待处理的审批或提问</td></tr>
+    <tr><td>第一行</td><td>对话标题</td><td>对话</td></tr>
+    <tr><td>第二行</td><td>一句话说现在的情况</td><td>进行中取任务清单里当前那一步；结束后取小结的第一句</td></tr>
+    <tr><td>子对话</td><td>缩进在父对话下面，父对话那一行汇总“1 个进行中”</td><td>委派产生的子对话</td></tr>
+  </table></div>
+  <p>第二行的那句话又用到了任务清单和小结。这份数据一共有三个用途：输入框上方的显示、侧栏的状态句、换家时的进展卡。</p>
 </section>
 
 <section id="s14">
   <h2><span class="n">14</span>视觉数值</h2>
-  <p>下面是从 Claude 桌面版的样式表里量出来的数值。只量数值，不用它的代码、素材和字体。</p>
+  <p>下面是从 Claude 桌面版的样式表里量出来的数值，以本机安装的当前版本为准。只量数值，不用它的代码、素材和字体。</p>
   <div class="tw"><table>
     <tr><th>项</th><th>Claude 桌面版的取值</th></tr>
-    <tr><td>正文字号</td><td>界面文字 13px，行高 19px；回复正文 14px，行高 20px</td></tr>
+    <tr><td>对话列</td><td>最宽 768px（可选 960、1280），两侧留白 32px</td></tr>
+    <tr><td>侧栏</td><td>宽 288px；一行高 26px，标题 13px，第二行 12px；状态点 6px</td></tr>
+    <tr><td>正文字号</td><td>界面文字 13px，行高 19px；回复正文 14px，行高 20px。默认档位没能确认，在 13 到 15px 之间</td></tr>
     <tr><td>小字与代码</td><td>说明 11px，脚注 12px，代码 12px 行高 17px</td></tr>
-    <tr><td>标题</td><td>小标题 14px，大标题 20px</td></tr>
     <tr><td>字重</td><td>常规 400，中等 500，粗 600</td></tr>
-    <tr><td>控件高度</td><td>默认 24px，大号 28px，嵌套的小控件 18px</td></tr>
+    <tr><td>控件高度</td><td>默认 24px，大号 28px</td></tr>
     <tr><td>间距</td><td>间隔 6、8、12、20、32；内边距 4、6、8、12、20</td></tr>
-    <tr><td>圆角</td><td>4 到 7px，大块 10px</td></tr>
-    <tr><td>表面</td><td>四层：页面底、基底、卡片、浮层</td></tr>
-    <tr><td>文字颜色</td><td>三级：主要、次要、弱化</td></tr>
+    <tr><td>圆角</td><td>控件 6px，卡片和消息气泡 10px，输入框 12px</td></tr>
+    <tr><td>用户消息气泡</td><td>很浅的灰底（中性色 5%），内边距 12×8，最宽占 85%</td></tr>
+    <tr><td>浅色</td><td>页面白；正文 90% 黑；次要文字 60% 黑；分隔线 8% 黑</td></tr>
+    <tr><td>深色</td><td>页面 #191919；侧栏 #1f1f1f；正文 93% 白；分隔线 4% 白</td></tr>
+    <tr><td>语义色</td><td>强调蓝 #257de0；成功绿 #10a122；警告黄 #fbb315；错误红 #dc3c3d</td></tr>
     <tr><td>改动状态色</td><td>新增绿、删除红、修改黄、合并紫、冲突橙，明暗各一套</td></tr>
-    <tr><td>动效时长</td><td>60、120、200、450 毫秒</td></tr>
+    <tr><td>动效</td><td>时长 60、120、200、300、450 毫秒；展开 0.2 秒；“进行中”的标签至少停留 0.65 秒，避免一闪而过</td></tr>
     <tr><td>字体</td><td>Anthropic 自己的字体，回退到系统字体。我们直接用系统字体</td></tr>
   </table></div>
-  <p class="warnbox">这些数值比我们现在的设计紧凑得多，也和 11 月 1 日定的设计语言 2.0 有出入（那版参照的是 DeepSeek Harness 和 Codex，输入框圆角 28）。按你现在的要求，这一版应当取代它。强调色怎么定见第 18 节。数值量自一个旧版本的安装包，本机当前版本的数值还在核对。</p>
+  <p class="warnbox">这些数值比我们现在的设计紧凑得多，也和 11 月 1 日定的设计语言 2.0 有出入（那版参照的是 DeepSeek Harness 和 Codex，输入框圆角 28）。按你现在的要求，这一版应当取代它。它的 Code 界面强调色本身就是蓝色，和我们现在用的蓝接近。有两点没能确认：字号的默认档位；工具行是否按种类配不同的图标。</p>
 </section>
 
 <section id="s15">
@@ -591,7 +624,7 @@ svg .h{fill:currentColor} svg .ha{fill:var(--accent)}
     <li><div><strong>一轮里按时间交错显示，同意吗？</strong><span class="rec">这要改存储格式。我的建议：做。这是和 Claude 桌面版结构一致的前提，也是“乱”的第二大来源。</span></div></li>
     <li><div><strong>思考内容怎么显示？</strong><span class="rec">我的建议：默认折成“思考了 N 秒”，可以点开。和 Claude 桌面版一致。</span></div></li>
     <li><div><strong>权限五档、思考强度五档的名字和划分，可以吗？</strong><span class="rec">见第 9 节。Hub 不模仿某家没有的档位。</span></div></li>
-    <li><div><strong>视觉向 Claude 桌面版对齐到什么程度？</strong><span class="rec">我的建议：结构、密度、字号、间距、圆角都对齐，取代设计语言 2.0。强调色不用它的品牌橙，继续用我们的蓝，避免看起来像仿冒。字体用系统字体。</span></div></li>
+    <li><div><strong>视觉向 Claude 桌面版对齐到什么程度？</strong><span class="rec">我的建议：结构、密度、字号、间距、圆角都对齐，取代设计语言 2.0。它的 Code 界面强调色本身是蓝色，和我们的接近，继续用我们的蓝。图标和应用名保持我们自己的，字体用系统字体。</span></div></li>
     <li><div><strong>旧对话只在打开时现算，不迁移内容，可以吗？</strong><span class="rec">我的建议：可以。4317 上的旧对话照常能看，只是没有新的细节。</span></div></li>
     <li><div><strong>“只发这条消息”还留不留？</strong><span class="rec">你试用时有一条消息是这样发出的，导致 Claude Code 没拿到 Hermes 那一轮。如果那次不是有意的，我建议把它从输入框旁拿掉，收进菜单。</span></div></li>
     <li><div><strong>“本轮改了哪些文件”由 Hub 自己记，还是用各家报的？</strong><span class="rec">DeepSeek Harness、Hermes、OpenClaw 不报差异。我的建议：Hub 在每轮前后各记一次工作区的状态，自己算出改动，六家就都有了。T3 Code 也是这么做的。这一项可以放到第 2 步之后。</span></div></li>
@@ -605,11 +638,11 @@ svg .h{fill:currentColor} svg .ha{fill:var(--accent)}
     <tr><td>你试用的那个对话</td><td>第 1、13 节的例子</td><td>只读了试用数据里的记录，并打开页面看过</td></tr>
     <tr><td>我们现在的代码</td><td>现状与缺口、第 16 节</td><td>读了公共契约、六家适配器和前端，带文件和行号的审计</td></tr>
     <tr><td>T3 Code</td><td>条目词汇、事件形状、折叠规则、它的教训</td><td>读源码，没有运行过它的产品</td></tr>
-    <tr><td>Claude 桌面版</td><td>界面目标、措辞方式、视觉数值、宿主提供工具的做法</td><td>两个拆解它的公开项目，以及我自己在这个界面里工作的了解。我截不了自己的窗口</td></tr>
+    <tr><td>Claude 桌面版</td><td>界面目标、措辞方式、视觉数值、宿主提供工具的做法</td><td>官方文档；本机安装的当前版本的前端包（只量数值、看结构）；两个拆解它的公开项目；我自己在这个界面里工作的了解。我截不了自己的窗口</td></tr>
   </table></div>
   <ul>
     <li>第 9 节的权限映射是提议，没有逐家在真机上核对。</li>
-    <li>第 14 节的数值量自旧版本的安装包。当前版本的界面结构和数值还有一路调研在核对，回来后会修正这一节和第 13 节。</li>
+    <li>第 13、14 节按本机当前版本核对过结构和数值，但没有真实截图。字号的默认档位、工具行的图标、命令输出和差异展开后的完整布局没能确认。你发几张截图可以补上这几处。</li>
     <li>这是设计稿。除了第 12 节标明“已做”的那一行，其余都还没有实现。</li>
   </ul>
 </section>
