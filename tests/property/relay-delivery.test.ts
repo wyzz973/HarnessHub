@@ -145,7 +145,7 @@ function send(w: World, ctx: Ctx, options: { readonly attach?: "full" | "none"; 
     turn = { kind: "carry", recorded: end.e1 && end.dispatched, ...carried };
   } else if (planned.kind === "alone") turn = { kind: "alone" };
   else turn = { kind: "plain", contextThroughSeq, agentOutput: end.agentOutput };
-  const settled = settleTurn({ relay, runId, turn, dispatched: end.dispatched, status: end.status, input: end.input, noop: false, cleared: null, declaration: DRIVERS[n.kind], unknownTurn: end.lost, endedSeq, time: endedSeq * 10 });
+  const settled = settleTurn({ relay, runId, turn, dispatched: end.dispatched, status: end.status, input: end.input, noop: false, cleared: false, declaration: DRIVERS[n.kind], unknownTurn: end.lost, endedSeq, time: endedSeq * 10 });
   n.relay = settled.relay;
   // What the Turn did to the budget of automatic resends: a packet known not to have been sent used none.
   const happened = end.dispatched && end.input !== "not_recorded";
@@ -173,7 +173,7 @@ function command(w: World, ctx: Ctx): void {
   const ran = how === "executed" || how === "lost" && ctx.random() < 0.5, reported = declaredEffect === "clear" && how === "executed" && ctx.random() < 0.8;
   w.trace.push(`${n.harnessId} /${declaredEffect} ${how}${reported ? " reported" : ""} state=${JSON.stringify(n.relay)}`);
   const settled = settleTurn({ relay: n.relay, runId: ("run-" + ++w.runs) as RunId, turn: { kind: "command", declared: declaredEffect }, dispatched: how !== "refused", status: how === "lost" ? null : how === "refused" ? null : "completed",
-    input: undefined, noop: how === "noop", cleared: reported ? { replaced: ctx.random() < 0.5 } : null, declaration: DRIVERS[n.kind], unknownTurn: false, endedSeq, time: endedSeq * 10 });
+    input: undefined, noop: how === "noop", cleared: reported, declaration: DRIVERS[n.kind], unknownTurn: false, endedSeq, time: endedSeq * 10 });
   const before = n.relay;
   n.relay = settled.relay;
   if (reported) { n.clears += 1; n.clearedAt = endedSeq; n.held = new Set(); n.autos = 0; n.userPending = false; assert.equal(n.relay.epoch, before.epoch + 1, "a clear the Driver reported is a new native session"); }

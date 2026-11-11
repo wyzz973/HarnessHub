@@ -110,11 +110,11 @@ test("Hermes: a replay with a frame that is no update fails the open", { timeout
   await assert.rejects(control.open(peer.workspace, undefined, undefined, "relay-session"));
 });
 
-test("no Driver reads its native history back: none has a check, a position, a vendor reading or a reader of replayed user entries, and every declaration says verify none", async t => {
+test("no Driver reads its native history back: none has a check, a position, a vendor reading or a reader of replayed user entries, and no declaration has a cell for one", async t => {
   const peer = await peerRoot(t);
   for (const harness of ["claude", "codex", "opencode", "dsh", "hermes", "openclaw"] as const) {
     const control = driver(t, harness, peer) as unknown as Record<string, unknown>;
     for (const member of ["verifyDelivered", "deliveryPosition", "relayVendor", "userTextOf"]) assert.equal(control[member], undefined, harness + " " + member);
-    assert.equal((control.relayCapabilities as { delivery: { verify: string } }).delivery.verify, "none", harness);
+    assert.deepEqual(Object.keys((control.relayCapabilities as { delivery: object }).delivery).sort(), ["live", "successProvesRecorded"], harness);
   }
 });

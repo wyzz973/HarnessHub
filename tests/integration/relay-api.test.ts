@@ -256,7 +256,7 @@ test("a relay choice enters the command's fingerprint, and auto is no choice", a
 
 test("A → B → A: the relay model lists the bindings and the packets, and the Run carries its delivery", async t => {
   const f = await fixture(t), id = await create(f);
-  const empty = await relayOf(f, id); assert.deepEqual(empty, { bindings: [], packets: [] }, "a conversation that handed nothing over");
+  const empty = await relayOf(f, id); assert.deepEqual(empty, { bindings: [], packets: [], handedOver: [] }, "a conversation that handed nothing over");
   await say(f, id, "first", "m1", 0); await switchTo(f, id, "rapi-b", "to-b"); await say(f, id, "second", "m2", 1);
   await switchTo(f, id, "rapi-a", "to-a"); await say(f, id, "third", "m3", 2);
   const conversation = await view(f, id), model = await relayOf(f, id);
@@ -266,8 +266,8 @@ test("A → B → A: the relay model lists the bindings and the packets, and the
   assert.equal(r0?.packetId, null); assert.equal(r0?.delivery, undefined, "a Run that carried nothing has no delivery");
   assert.ok(r1?.packetId); assert.deepEqual(r1.delivery, { state: "unknown", evidence: null });
   assert.ok(r2?.packetId); assert.deepEqual(r2.delivery, { state: "unknown", evidence: null }, "a packet no row tracks is unknown, never claimed delivered");
-  assert.deepEqual(model.bindings.map(item => [item.harnessId, item.controlId, item.nativeEpoch, item.sync, item.throughRun, item.evidence, item.cleared, item.probed]),
-    [["rapi-b", "rapi-b-control", 1, "pending", null, null, 0, false]], "only rapi-b keeps a native session; nothing proves its packet, nothing is claimed");
+  assert.deepEqual(model.bindings.map(item => [item.harnessId, item.controlId, item.nativeEpoch, item.sync, item.throughRun, item.evidence, item.cleared]),
+    [["rapi-b", "rapi-b-control", 1, "pending", null, null, 0]], "only rapi-b keeps a native session; nothing proves its packet, nothing is claimed");
   // What the binding is owed (the first Run it was handed in a packet nothing confirmed, and the third, which ran on rapi-a), whether its Driver can
   // confirm a delivery at all, and what the Runtime says it asks of the user: the packet is not confirmed, and "交接单 #1" is the one it is about.
   const [b] = model.bindings as [RelayBindingView];
@@ -287,7 +287,7 @@ test("A → B → A: the relay model lists the bindings and the packets, and the
     assert.ok(Number.isSafeInteger(packet.estTokens) && packet.estTokens > 0); assert.equal(packet.omissions, 0); assert.equal(packet.redactions, 0);
     assert.deepEqual([packet.delivery, packet.evidence], ["unknown", null]);
   }
-  for (const binding of model.bindings) assert.deepEqual(Object.keys(binding).sort(), ["attention", "canConfirm", "cleared", "controlId", "evidence", "harnessId", "nativeEpoch", "owed", "probed", "sync", "throughRun"]);
+  for (const binding of model.bindings) assert.deepEqual(Object.keys(binding).sort(), ["attention", "canConfirm", "cleared", "controlId", "evidence", "harnessId", "nativeEpoch", "owed", "sync", "throughRun"]);
   // Reading changes nothing of the conversation.
   assert.equal((await view(f, id)).lastSeq, conversation.lastSeq); assert.equal((await view(f, id)).version, conversation.version);
 });
@@ -344,7 +344,7 @@ test("a packet's text is served byte for byte as it was sent, with its sha256 as
 
 test("another conversation's packet is not found, and the answer does not say whether it exists", async t => {
   const f = await fixture(t), first = await stranded(f), second = await create(f), packet = (await relayOf(f, first)).packets[0]!.packetId;
-  assert.deepEqual(await relayOf(f, second), { bindings: [], packets: [] });
+  assert.deepEqual(await relayOf(f, second), { bindings: [], packets: [], handedOver: ["rapi-b"] });
   const foreign = await call(f, `/api/v1/sessions/${second}/relay/${packet}`);
   const unknown = await call(f, `/api/v1/sessions/${second}/relay/relay-${"0".repeat(20)}`);
   const own = await call(f, `/api/v1/sessions/${first}/relay/relay-${"0".repeat(20)}`);
@@ -482,25 +482,26 @@ function viewAt(session: string, lastSeq: number): SessionView {
 }
 const SECRET = { throughSeq: 6, chain: "c".repeat(64), lastPacketId: "relay-0123456789abcdefghjk", evidence: "E1", basis: "evidence" };
 
-test("the hub announces each of the four relay events, once each, under the watermark of a commit that holds several", () => {
+test("the hub announces the relay's one event for each Run it names, once each, under the watermark of a commit that holds several", () => {
   const session = "session-hub-relay", packet = "relay-0123456789abcdefghjk", run = "run-hub-one";
   let head = 10;
   const hub = new SessionStreamHub(() => viewAt(session, head)), socket = new FakeSocket();
   hub.open(sessionId(session), 0, Date.now() + 60_000, socket, () => {});
   assert.equal(frames(socket).length, 1);
-  // One commit holds three events; the Runtime publishes them one by one, and the first event's snapshot already holds the head.
+  // One commit holds three events; the Runtime publishes them one by one, and the first event's snapshot already holds the head. The title
+  // the relay sets on a native session is no notice: only the input recorded is.
   head = 13;
   hub.publish(sessionEvent(session, 11, "relay.input_recorded", { runId: run, packetId: packet, recordedAt: 1_700_000_000_123, mark: SECRET, live: "recorded_event" }));
-  hub.publish(sessionEvent(session, 12, "relay.verified", { verifiedRunIds: [run], moment: "open", plan: "pending", markers: [{ packetId: packet, result: "present" }, { packetId: packet, result: "present" }], recorded: [{ runId: run, mark: SECRET }], inRunId: "run-hub-two", sync: "synced" }));
-  hub.publish(sessionEvent(session, 13, "relay.clear_confirmed", { by: "user", runId: "run-hub-two", harnessId: "alpha", controlId: "alpha-acp", floor: 9, nativeEpoch: 2 }));
+  hub.publish(sessionEvent(session, 12, "relay.title_set", { runId: run, harnessId: "alpha", controlId: "alpha-acp", result: "set" }));
+  hub.publish(sessionEvent(session, 13, "relay.input_recorded", { runId: "run-hub-two", packetId: packet, mark: SECRET, live: "agent_output" }));
   const got = frames(socket).slice(1);
-  assert.deepEqual(got.map(item => [item.id, item.frame.type]), [[13, "snapshot"], [13, "relay"], [13, "relay"], [13, "relay"]], "one snapshot, then a notice per event, all at the head");
+  assert.deepEqual(got.map(item => [item.id, item.frame.type]), [[13, "snapshot"], [13, "relay"], [13, "relay"]], "one snapshot, then a notice per event, all at the head");
   const events = got.slice(1).map(item => item.frame as unknown as RelayStreamFrame);
-  assert.deepEqual(events.map(item => item.event.type), ["relay.input_recorded", "relay.verified", "relay.clear_confirmed"]);
-  assert.deepEqual(events.map(item => [item.sessionId, item.version, item.lastSeq]), [[session, 13, 13], [session, 13, 13], [session, 13, 13]]);
-  assert.deepEqual(events.map(item => [item.event.runId, item.event.packetId]), [[run, packet], ["run-hub-two", packet], ["run-hub-two", undefined]]);
+  assert.deepEqual(events.map(item => item.event.type), ["relay.input_recorded", "relay.input_recorded"]);
+  assert.deepEqual(events.map(item => [item.sessionId, item.version, item.lastSeq]), [[session, 13, 13], [session, 13, 13]]);
+  assert.deepEqual(events.map(item => [item.event.runId, item.event.packetId]), [[run, packet], ["run-hub-two", packet]]);
   assert.ok(events.every(item => item.event.at === Date.parse("2026-11-10T10:00:00.250Z")));
-  // The marks the events hold (the chain of what a binding holds) are not in what is announced.
+  // The marks the events hold (what a binding holds) are not in what is announced.
   const wire = got.slice(1).map(item => JSON.stringify(item.frame)).join("\n");
   for (const secret of ["c".repeat(64), "mark", "chain", "throughSeq", "\"recorded\"", "\"floor\"", "alpha-acp", "\"live\""]) assert.equal(wire.includes(secret), false, secret + " was announced");
   // An event of another kind is only the facts, as before; an event already announced is not announced twice by a later one.
@@ -527,7 +528,7 @@ test("a subscription that is backed up gets the facts later and no notice", () =
   let head = 5;
   const hub = new SessionStreamHub(() => viewAt(session, head)), slow = new FakeSocket(); slow.blocked = true;
   hub.open(sessionId(session), 0, Date.now() + 60_000, slow, () => {});
-  head = 6; hub.publish(sessionEvent(session, 6, "relay.verified", { inRunId: "run-slow" }));
+  head = 6; hub.publish(sessionEvent(session, 6, "relay.input_recorded", { runId: "run-slow" }));
   assert.deepEqual(frames(slow).map(item => item.frame.type), ["snapshot"], "nothing queued behind the first write");
   slow.blocked = false; slow.emit("drain");
   assert.deepEqual(frames(slow).map(item => [item.id, item.frame.type]), [[5, "snapshot"], [6, "snapshot"]], "the facts arrive whole");
@@ -538,16 +539,13 @@ test("a relay event is announced as the fields it names and nothing else", () =>
   const at = Date.parse("2026-11-10T10:00:00.250Z"), session = "session-unit";
   const packet = "relay-0123456789abcdefghjk", run = "run-unit-1";
   assert.deepEqual(relayStreamEvent(sessionEvent(session, 3, "relay.input_recorded", { runId: run, packetId: packet, mark: SECRET })), { type: "relay.input_recorded", sessionId: session, runId: run, packetId: packet, at });
-  assert.deepEqual(relayStreamEvent(sessionEvent(session, 3, "relay.verified", { inRunId: run, markers: [{ packetId: packet, result: "absent" }] })), { type: "relay.verified", sessionId: session, runId: run, packetId: packet, at });
-  assert.deepEqual(relayStreamEvent(sessionEvent(session, 3, "relay.verified", { inRunId: null, markers: [] })), { type: "relay.verified", sessionId: session, at }, "a check of nothing names nothing");
-  assert.deepEqual(relayStreamEvent(sessionEvent(session, 3, "relay.verified", { inRunId: run, markers: [{ packetId: packet }, { packetId: "relay-aaaaaaaaaaaaaaaaaaaa" }] })), { type: "relay.verified", sessionId: session, runId: run, at }, "several packets name none");
-  assert.deepEqual(relayStreamEvent(sessionEvent(session, 3, "relay.vendor_changed", { harnessId: "alpha", controlId: "alpha-acp", from: "openai", to: "gateway:llm.example.com", observedInRun: run })), { type: "relay.vendor_changed", sessionId: session, runId: run, at });
-  assert.deepEqual(relayStreamEvent(sessionEvent(session, 3, "relay.clear_confirmed", { by: "user", runId: run, floor: 4 })), { type: "relay.clear_confirmed", sessionId: session, runId: run, at });
+  // The events the relay no longer writes (a check afterwards, a change of vendor, a confirmed clear) announce nothing.
+  for (const type of ["relay.verified", "relay.vendor_changed", "relay.clear_confirmed", "relay.title_set"]) assert.equal(relayStreamEvent(sessionEvent(session, 3, type, { runId: run, inRunId: run, observedInRun: run })), undefined, type);
   // A name that is no identity is not passed on.
   assert.deepEqual(relayStreamEvent(sessionEvent(session, 3, "relay.input_recorded", { runId: "run-../../x", packetId: "relay-<script>" })), { type: "relay.input_recorded", sessionId: session, at });
   assert.deepEqual(relayStreamEvent(sessionEvent(session, 3, "relay.input_recorded", { runId: 5, packetId: { id: packet } })), { type: "relay.input_recorded", sessionId: session, at });
-  for (const other of ["run.ended", "run.context_prepared", "relay.pin_added", "relay.consent_recorded", "relay.title_set", "message.accepted"]) assert.equal(relayStreamEvent(sessionEvent(session, 3, other, { runId: run })), undefined, other);
-  assert.equal(relayStreamEvent({ ...sessionEvent(session, 3, "relay.verified", {}), timestamp: "not a time" })?.at, 0);
+  for (const other of ["run.ended", "run.context_prepared", "relay.title_set", "message.accepted"]) assert.equal(relayStreamEvent(sessionEvent(session, 3, other, { runId: run })), undefined, other);
+  assert.equal(relayStreamEvent({ ...sessionEvent(session, 3, "relay.input_recorded", {}), timestamp: "not a time" })?.at, 0);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -558,18 +556,15 @@ const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
 const hex = (char: string) => char.repeat(64) as Fingerprint;
 const digestOf = (text: string) => createHash("sha256").update(text, "utf8").digest("hex") as Fingerprint;
 function packetIdOf(seed: string): RelayPacketId { return relayPacketId("relay-" + Array.from(createHash("sha256").update(seed).digest().subarray(0, 20), byte => CROCKFORD[byte % 32]).join("")); }
-function manifest(seed: string, harnessId: string, extra: { readonly kind?: "packet" | "delta" | "anchor" | "resend"; readonly tier?: string; readonly redactions?: number; readonly omissions?: number; readonly model?: string | null } = {}): RelayPacket {
+function manifest(seed: string, harnessId: string, extra: { readonly kind?: "packet" | "delta"; readonly tier?: string; readonly redactions?: number; readonly omissions?: number; readonly model?: string | null } = {}): RelayPacket {
   const body = "packet " + seed;
-  return parseRelayPacket({ id: packetIdOf(seed), kind: extra.kind ?? "packet", tier: extra.tier ?? "full", complete: true,
+  return parseRelayPacket({ id: packetIdOf(seed), kind: extra.kind ?? "packet", tier: extra.tier ?? "full",
     target: { harnessId, controlId: harnessId + "-acp", model: extra.model ?? null, nativeEpoch: 1 },
-    source: { kind: "other", names: [{ harnessId: "bravo", model: null, runs: [0, 0] }] }, range: { fromSeq: 3, throughSeq: 3, fromRun: 0, throughRun: 0 }, basePacketId: null, supersedes: null,
-    policyVersion: "relay/1", language: "en", factsFingerprint: hex("f"),
-    inputs: { attachOverride: false, digestBehind: [], detailsMissing: [], noteIncluded: false, firstLineOmitted: null },
-    redaction: { profile: "egress", count: extra.redactions ?? 0, byClass: {}, overridden: 0, unscanned: 0 },
-    body: { sha256: digestOf(body), bytes: Buffer.byteLength(body, "utf8"), estTokens: 120 + seed.length, estimator: "est/2", untrustedTokens: 0, userTokens: 4 },
-    budget: { capTokens: 8000, userCap: 2500, untrustedCap: 3000, window: 200_000, fixedPrefix: 0, windowSource: "assumed", clampedBy: [] },
-    sections: [{ id: "words", author: "user", items: 1, estTokens: 4, dataClasses: ["user_text"] }], fold: [{ kind: "unit", runIndex: 0, grade: "verbatim", why: "tail" }],
-    omissions: extra.omissions === undefined ? [] : [{ category: "reply", count: extra.omissions, chars: null, runs: null, retrieval: "none" }, { category: "tool_output", count: 2, chars: 40, runs: [0, 0], retrieval: "hub_detail_view" }], userEdits: [] });
+    range: { fromSeq: 3, throughSeq: 3, fromRun: 0, throughRun: 0 }, runs: [0], supersedes: null, policyVersion: "relay/1", language: "en", repeat: false,
+    attachOverride: false, firstLineOmitted: null, redactions: extra.redactions ?? 0,
+    body: { sha256: digestOf(body), bytes: Buffer.byteLength(body, "utf8"), estTokens: 120 + seed.length },
+    budget: { capTokens: 8000, window: 200_000, windowSource: "assumed", clampedBy: [] },
+    omissions: extra.omissions === undefined ? [] : [{ kind: "replies", count: extra.omissions }, { kind: "outputs", count: 2 }] });
 }
 function delivery(run: string, packet: RelayPacket, outcome: DeliveryOutcome): DeliveryRecord {
   return parseDeliveryRecord({ runId: run, packetId: packet.id, channel: "text_block", outcome, handoffLogSeq: null, inputHmac: hex("c"),
@@ -584,7 +579,7 @@ function relayState(epoch: number, mark: number, extra: Partial<BindingRelayStat
 
 test("the read model over rows made by hand: every sync state, each delivery outcome, the numbering and the Run a mark reaches", () => {
   const id = sessionId("session-synthetic");
-  const packets = { recorded: manifest("recorded", "alpha", { redactions: 3 }), unknown: manifest("unknown", "bravo", { kind: "delta", omissions: 5, model: "gpt-x" }), refused: manifest("refused", "alpha", { kind: "resend", tier: "brief" }) };
+  const packets = { recorded: manifest("recorded", "alpha", { redactions: 3 }), unknown: manifest("unknown", "bravo", { kind: "delta", omissions: 5, model: "gpt-x" }), refused: manifest("refused", "alpha", { tier: "brief" }) };
   const noRelay = { packetId: null, kind: null, continuity: { kind: "native_resume" as const }, executedOn: null };
   const carrying = (packet: RelayPacket, harnessId: string) => ({ packetId: packet.id, kind: packet.kind, continuity: { kind: "rehydrate" as const, tier: "full" as const, complete: true }, executedOn: { harnessId, controlId: harnessId + "-acp", nativeEpoch: 1 } });
   const runs = [
@@ -618,10 +613,10 @@ test("the read model over rows made by hand: every sync state, each delivery out
   const ends = [10, 20, 30, 40, 50].map((seq, index) => sessionEvent(id, seq, "run.ended", { runId: runs[index]!.id }));
   const events = [...ends, sessionEvent(id, 51, "run.native_command", { runId: runs[4]!.id })];
   const reads: RelayReads = { relayDeliveries: () => rowsOf, relayPackets: () => Object.values(packets), relayPacket: () => { throw new Error("no packet here"); }, relayPacketBody: () => { throw new Error("no body here"); },
-    relayIndex: () => [], relayPrefs: () => ({}), setPref: () => { throw new Error("not written here"); },
+    relayIndex: () => [], relayPrefs: () => ({}), setPref: () => { throw new Error("not written here"); }, handoffs: () => [], handoffUsed: () => false,
     events: (_id, after, limit) => events.filter(item => item.seq > after).slice(0, limit ?? 100) };
   const api = new RelayApi({ reads, read: () => snapshot,
-    declaration: selection => selection.harnessId === "alpha" ? { ...codexRelayCapabilities, probed: true } : selection.harnessId === "bravo" ? codexRelayCapabilities : null,
+    declaration: selection => selection.harnessId === "alpha" ? codexRelayCapabilities : selection.harnessId === "bravo" ? codexRelayCapabilities : null,
     http: { json: () => { throw new Error("no HTTP here"); }, headers: () => {}, queries: () => {}, body: async () => { throw new Error("no HTTP here"); } } });
   const model = api.view(snapshot);
   const bindings = new Map<string, RelayBindingView[]>(); for (const item of model.bindings) bindings.set(item.harnessId, [...bindings.get(item.harnessId) ?? [], item]);
@@ -629,13 +624,13 @@ test("the read model over rows made by hand: every sync state, each delivery out
   // `canConfirm` follows the Driver's declaration (the Codex Driver records and can be asked; none declared cannot confirm); nothing is owed here
   // that the marks do not leave out, so only the bindings whose marks fall behind the Runs of other Harnesses are owed anything.
   const plainView = (item: RelayBindingView) => { const { owed: _owed, attention: _attention, ...rest } = item; return rest; };
-  assert.deepEqual(bindings.get("alpha")!.map(plainView), [{ harnessId: "alpha", controlId: "alpha-acp", nativeEpoch: 3, sync: "synced", throughRun: 2, evidence: null, cleared: 0, probed: true, canConfirm: true }],
-    "the mark at seq 31 covers the Runs that ended at 10, 20 and 30; a probed Driver says so; its packet's row is of epoch 1, not this one's, so no evidence stands for it");
-  assert.deepEqual(bindings.get("bravo")!.map(plainView), [{ harnessId: "bravo", controlId: "bravo-acp", nativeEpoch: 1, sync: "pending", throughRun: null, evidence: null, cleared: 0, probed: false, canConfirm: true }], "a declared Driver nothing proved is not probed");
-  assert.deepEqual(bindings.get("charlie")!.map(plainView), [{ harnessId: "charlie", controlId: "charlie-acp", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, probed: false, canConfirm: false }], "a Driver that declares none is not probed, and nothing it does confirms a handoff");
-  assert.deepEqual(bindings.get("delta")!.map(plainView), [{ harnessId: "delta", controlId: "delta-acp", nativeEpoch: 2, sync: "synced", throughRun: 1, evidence: null, cleared: 0, probed: false, canConfirm: false }], "a binding that is to be sent everything again still says where it last stood");
-  assert.deepEqual(bindings.get("echo")!.map(plainView), [{ harnessId: "echo", controlId: "echo-acp", nativeEpoch: 1, sync: "synced", throughRun: null, evidence: null, cleared: 0, probed: false, canConfirm: false }], "the history a Session started from covers no Run");
-  assert.deepEqual(bindings.get("foxtrot")!.map(plainView), [{ harnessId: "foxtrot", controlId: "foxtrot-acp", nativeEpoch: 2, sync: "fresh", throughRun: null, evidence: null, cleared: 1, probed: false, canConfirm: false }],
+  assert.deepEqual(bindings.get("alpha")!.map(plainView), [{ harnessId: "alpha", controlId: "alpha-acp", nativeEpoch: 3, sync: "synced", throughRun: 2, evidence: null, cleared: 0, canConfirm: true }],
+    "the mark at seq 31 covers the Runs that ended at 10, 20 and 30; its packet's row is of epoch 1, not this one's, so no evidence stands for it");
+  assert.deepEqual(bindings.get("bravo")!.map(plainView), [{ harnessId: "bravo", controlId: "bravo-acp", nativeEpoch: 1, sync: "pending", throughRun: null, evidence: null, cleared: 0, canConfirm: true }], "a declared Driver nothing proved is not probed");
+  assert.deepEqual(bindings.get("charlie")!.map(plainView), [{ harnessId: "charlie", controlId: "charlie-acp", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, canConfirm: false }], "a Driver that declares none is not probed, and nothing it does confirms a handoff");
+  assert.deepEqual(bindings.get("delta")!.map(plainView), [{ harnessId: "delta", controlId: "delta-acp", nativeEpoch: 2, sync: "synced", throughRun: 1, evidence: null, cleared: 0, canConfirm: false }], "a binding that is to be sent everything again still says where it last stood");
+  assert.deepEqual(bindings.get("echo")!.map(plainView), [{ harnessId: "echo", controlId: "echo-acp", nativeEpoch: 1, sync: "synced", throughRun: null, evidence: null, cleared: 0, canConfirm: false }], "the history a Session started from covers no Run");
+  assert.deepEqual(bindings.get("foxtrot")!.map(plainView), [{ harnessId: "foxtrot", controlId: "foxtrot-acp", nativeEpoch: 2, sync: "fresh", throughRun: null, evidence: null, cleared: 1, canConfirm: false }],
     "a native session a clear left is fresh and counts the clear that made it");
   for (const item of model.bindings) assert.equal(item.attention, undefined, "the Runtime was not asked, and says nothing of what a binding asks");
   assert.equal(bindings.get("alpha")![0]!.owed, undefined, "alpha holds everything of the Runs that ended before its mark");
@@ -643,7 +638,7 @@ test("the read model over rows made by hand: every sync state, each delivery out
   assert.deepEqual(model.packets, [
     { packetId: packets.recorded.id, runId: runs[1]!.id, runIndex: 1, number: 1, kind: "packet", tier: "full", target: { harnessId: "alpha", model: null }, estTokens: packets.recorded.body.estTokens, omissions: 0, redactions: 3, delivery: "recorded", evidence: "E3" },
     { packetId: packets.unknown.id, runId: runs[2]!.id, runIndex: 2, number: 2, kind: "delta", tier: "full", target: { harnessId: "bravo", model: "gpt-x" }, estTokens: packets.unknown.body.estTokens, omissions: 7, redactions: 0, delivery: "unknown", evidence: null },
-    { packetId: packets.refused.id, runId: runs[3]!.id, runIndex: 3, number: 3, kind: "resend", tier: "brief", target: { harnessId: "alpha", model: null }, estTokens: packets.refused.body.estTokens, omissions: 0, redactions: 0, delivery: "unknown", evidence: null },
+    { packetId: packets.refused.id, runId: runs[3]!.id, runIndex: 3, number: 3, kind: "packet", tier: "brief", target: { harnessId: "alpha", model: null }, estTokens: packets.refused.body.estTokens, omissions: 0, redactions: 0, delivery: "unknown", evidence: null },
   ], "the packet nothing stored is left out and takes its number with it");
   // The Run DTO: the delivery of each Run that carried a packet, from its row, else unknown; the rest untouched.
   const shown = api.runViews(snapshot);
@@ -665,11 +660,11 @@ test("the read model over rows made by hand: every sync state, each delivery out
   assert.throws(() => broken.view(snapshot), (error: unknown) => error instanceof SessionError && error.code === "INVALID_DATA", "asked for the model itself, the failure is said");
 
   // What the Runtime says each binding asks of the user is passed on as it is said, with the packet a wait is about.
-  const asking = new RelayApi({ reads, read: () => snapshot, declaration: selection => selection.harnessId === "alpha" ? { ...codexRelayCapabilities, probed: true } : selection.harnessId === "bravo" ? codexRelayCapabilities : null,
+  const asking = new RelayApi({ reads, read: () => snapshot, declaration: selection => selection.harnessId === "alpha" ? codexRelayCapabilities : selection.harnessId === "bravo" ? codexRelayCapabilities : null,
     attention: () => [
-      { harnessId: "alpha", controlId: "alpha-acp", probed: true, attention: null },
-      { harnessId: "bravo", controlId: "bravo-acp", probed: false, attention: { cause: "delivery_unconfirmed", options: ["attach_full"], counts: { runs: 1, packets: 1 }, key: "delivery_unconfirmed:" + packets.unknown.id } },
-      { harnessId: "foxtrot", controlId: "foxtrot-acp", probed: null, attention: { cause: "attach_available", options: ["attach_full"], counts: { runs: 2, packets: 0 }, key: "attach_available:2" } },
+      { harnessId: "alpha", controlId: "alpha-acp", attention: null },
+      { harnessId: "bravo", controlId: "bravo-acp", attention: { cause: "delivery_unconfirmed", options: ["attach_full"], counts: { runs: 1, packets: 1 }, key: "delivery_unconfirmed:" + packets.unknown.id } },
+      { harnessId: "foxtrot", controlId: "foxtrot-acp", attention: { cause: "attach_available", options: ["attach_full"], counts: { runs: 2, packets: 0 }, key: "attach_available:2" } },
     ],
     http: { json: () => {}, headers: () => {}, queries: () => {}, body: async () => null } });
   const asked = new Map(asking.view(snapshot).bindings.map(item => [item.harnessId, item]));
@@ -677,7 +672,6 @@ test("the read model over rows made by hand: every sync state, each delivery out
   assert.deepEqual(asked.get("bravo")!.attention, { cause: "delivery_unconfirmed", options: ["attach_full"], counts: { runs: 1, packets: 1 }, key: "delivery_unconfirmed:" + packets.unknown.id, packet: 2 },
     "the wait is about 交接单 #2: the packet its Run carried, which is the second Run to carry one");
   assert.deepEqual(asked.get("foxtrot")!.attention, { cause: "attach_available", options: ["attach_full"], counts: { runs: 2, packets: 0 }, key: "attach_available:2" });
-  assert.equal(asked.get("foxtrot")!.probed, false, "a factory that cannot tell is not a proof");
   // A Runtime that cannot be asked (or fails) leaves the view as it is: attention is a help, never a reason for the conversation to fail to load.
   const failing = new RelayApi({ reads, read: () => snapshot, declaration: () => null, attention: () => { throw new Error("no attention here"); },
     http: { json: () => {}, headers: () => {}, queries: () => {}, body: async () => null } });

@@ -282,18 +282,18 @@ test("waiting-request lists ride along a session stream without moving its curso
 // The relay's notice is a frame of the stream (ADR-055 §12.4): it follows the facts it names, with their watermark
 // ---------------------------------------------------------------------------------------------------------------------
 
-function relayFrame(base = snapshot(), type: RelayStreamFrame["event"]["type"] = "relay.verified"): RelayStreamFrame {
+function relayFrame(base = snapshot(), type: RelayStreamFrame["event"]["type"] = "relay.input_recorded"): RelayStreamFrame {
   return { type: "relay", sessionId: base.id, version: base.version, lastSeq: base.lastSeq, event: { type, sessionId: base.id, runId: base.runs[0]!.id, packetId: "relay-0123456789abcdefghjk", at: 1_794_305_941_906 } };
 }
 test("a relay notice is read by the page's decoder for its event, and takes nothing but the event", () => {
   const base = snapshot(), frame = relayFrame(base);
   assert.deepEqual(decodeSessionStreamFrame(JSON.parse(JSON.stringify(frame))), frame);
   // Without a Run or a packet it still is a notice that the relay changed.
-  const bare = { type: "relay", sessionId: base.id, version: base.version, lastSeq: base.lastSeq, event: { type: "relay.clear_confirmed", sessionId: base.id, at: 5 } };
+  const bare = { type: "relay", sessionId: base.id, version: base.version, lastSeq: base.lastSeq, event: { type: "relay.input_recorded", sessionId: base.id, at: 5 } };
   assert.deepEqual(decodeSessionStreamFrame(bare), bare);
   // A kind this page does not know is still a notice, and one that is no notice is refused whole.
   assert.equal(decodeSessionStreamFrame({ ...bare, event: { ...bare.event, type: "relay.something_new" } }).type, "relay");
-  for (const broken of [{ ...bare, event: null }, { ...bare, event: { sessionId: base.id, at: 5 } }, { ...bare, event: { type: "relay.verified", sessionId: base.id } }, { ...bare, version: 0 }, { ...bare, lastSeq: -1 },
+  for (const broken of [{ ...bare, event: null }, { ...bare, event: { sessionId: base.id, at: 5 } }, { ...bare, event: { type: "relay.input_recorded", sessionId: base.id } }, { ...bare, version: 0 }, { ...bare, lastSeq: -1 },
     { ...bare, extra: 1 }, { type: "relay", sessionId: base.id, version: 1, lastSeq: 1 }]) {
     assert.throws(() => decodeSessionStreamFrame(broken), (error: unknown) => (error as { code?: string }).code === "INVALID_RESPONSE", JSON.stringify(broken).slice(0, 60));
   }

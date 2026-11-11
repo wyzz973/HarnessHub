@@ -153,9 +153,9 @@ export type HostCloseReason = "idle" | "evicted" | "budget" | "stale_class" | "h
 export const HOST_CLOSE_REASONS: readonly HostCloseReason[] = ["idle", "evicted", "budget", "stale_class", "harness_upgrade", "config_changed", "exited", "unhealthy",
   "gateway_shutdown", "ended_by_user", "conversation_closed", "native_reset", "branched", "disabled", "selection_changed"];
 /** Why an open session was found not fresh (design §4.4); any one of them reopens the session or checks it first. */
-export type StaleReason = "foreign_turns" | "unknown_outcome" | "binding_unconfirmed" | "binding_forking" | "relay_pending" | "relay_suspect" | "context_effect"
+export type StaleReason = "foreign_turns" | "unknown_outcome" | "binding_unconfirmed" | "binding_forking" | "relay_pending" | "context_effect"
   | "config_changed" | "harness_upgraded" | "launch_bound_changed" | "workspace_identity_changed" | "host_unhealthy" | "undetectable";
-export const STALE_REASONS: readonly StaleReason[] = ["foreign_turns", "unknown_outcome", "binding_unconfirmed", "binding_forking", "relay_pending", "relay_suspect",
+export const STALE_REASONS: readonly StaleReason[] = ["foreign_turns", "unknown_outcome", "binding_unconfirmed", "binding_forking", "relay_pending",
   "context_effect", "config_changed", "harness_upgraded", "launch_bound_changed", "workspace_identity_changed", "host_unhealthy", "undetectable"];
 /** The freshness of a session open on a host before it is leased again, with what decided it; what cannot be decided is not fresh. */
 export type FreshnessVerdict =

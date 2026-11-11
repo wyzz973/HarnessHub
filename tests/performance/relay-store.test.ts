@@ -26,12 +26,11 @@ const clean: CleanupEvidence = { closed: true, exitCode: 0, signal: null, protoc
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
 function packetFor(seed: string, harnessId: string, controlId: string): { readonly packet: RelayPacket; readonly body: string } {
   const body = "packet " + seed, id = "relay-" + Array.from(createHash("sha256").update(seed).digest().subarray(0, 20), byte => CROCKFORD[byte % 32]).join("");
-  return { body, packet: parseRelayPacket({ id, kind: "packet", tier: "full", complete: true, target: { harnessId, controlId, model: null, nativeEpoch: 1 },
-    source: { kind: "other", names: [] }, range: { fromSeq: 0, throughSeq: 1, fromRun: 0, throughRun: 0 }, basePacketId: null, supersedes: null, policyVersion: "relay/1", language: "en",
-    factsFingerprint: hex("f"), inputs: { attachOverride: false, digestBehind: [], detailsMissing: [], noteIncluded: false, firstLineOmitted: null },
-    redaction: { profile: "egress", count: 0, byClass: {}, overridden: 0, unscanned: 0 },
-    body: { sha256: createHash("sha256").update(body).digest("hex"), bytes: Buffer.byteLength(body), estTokens: 3, estimator: "est/2", untrustedTokens: 0, userTokens: 0 },
-    budget: { capTokens: 8000, userCap: 2500, untrustedCap: 3000, window: 128_000, fixedPrefix: 0, windowSource: "assumed", clampedBy: [] }, sections: [], fold: [], omissions: [], userEdits: [] }) };
+  return { body, packet: parseRelayPacket({ id, kind: "packet", tier: "full", target: { harnessId, controlId, model: null, nativeEpoch: 1 },
+    range: { fromSeq: 0, throughSeq: 1, fromRun: 0, throughRun: 0 }, runs: [], supersedes: null, policyVersion: "relay/1", language: "en", repeat: false,
+    attachOverride: false, firstLineOmitted: null, redactions: 0,
+    body: { sha256: createHash("sha256").update(body).digest("hex"), bytes: Buffer.byteLength(body), estTokens: 3 },
+    budget: { capTokens: 8000, window: 128_000, windowSource: "assumed", clampedBy: [] }, omissions: [] }) };
 }
 
 test("G066-C08 the longest legal relay state of a binding and of a Run, committed through the Store, grows the snapshot by at most its bound", t => {

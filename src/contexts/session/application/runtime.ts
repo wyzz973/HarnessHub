@@ -162,17 +162,6 @@ const MAX_PERMISSION_WAIT_MS = 24 * 60 * 60 * 1000;
 function expectedFailure(error: unknown): boolean {
   return error instanceof RelayError || error instanceof SessionError && ["CONTEXT_TOO_LARGE", "OUTPUT_LIMIT", "QUEUE_FULL", "COMMAND_LIMIT", "RUN_LIMIT", "SESSION_LIMIT", "EVENT_LIMIT"].includes(error.code);
 }
-/**
- * What a Driver's report of a clear (BackendResult.native) is to the relay (ADR-055 §7.4, slim.md): a certain clear, the Hub giving
- * the native session up and opening a new one. One that replaced the native session (`replaced`) counts once the Turn's native
- * state is confirmed, and is not looked at otherwise; one that cleared it in place (`replaced` null: Hermes' fixed receipt,
- * OpenClaw's lifecycle revision) always counts. Null when nothing was reported or it cannot count.
- */
-export function clearReportOf(cleared: { readonly replaced: unknown } | undefined, confirmed: boolean): { readonly replaced: boolean } | null {
-  if (cleared === undefined) return null;
-  if (cleared.replaced === null) return { replaced: false };
-  return confirmed ? { replaced: true } : null;
-}
 /** Why a switch fails when the Turn it waited for ended without confirmed settlement (ADR-055 §9, RT2-04). */
 const STRANDED_SWITCH = { code: "SWITCH_SOURCE_UNKNOWN", message: "the Turn this switch waited for ended without confirmed settlement; the switch was not applied" } as const;
 /**
@@ -454,11 +443,6 @@ export class SessionRuntime {
     if (this.acceptedRelay.size > 4096) this.acceptedRelay.delete(this.acceptedRelay.keys().next().value!);
     this.schedule(id); return { sessionId: id, runId: nextId, replayed: false };
   }
-  /** The factory's static declaration of a selection's Driver; undefined without the method, null when it declares none or fails. */
-  private declarationOf(selection: HarnessSelection): RelayCapabilities | null | undefined {
-    if (this.factory.relayCapabilities === undefined) return undefined;
-    try { return this.factory.relayCapabilities(selection); } catch { return null; }
-  }
   /** The installation's handoff log and preference of a Store that keeps them (SqliteSessionStore); none otherwise. */
   private relayLog(): Partial<RelayLogPort> | null {
     const store = this.store as Partial<RelayLogPort>;
@@ -508,10 +492,10 @@ export class SessionRuntime {
    * What each of the conversation's native bindings asks the user to look at now (the read behind the `attention` of `GET …/relay`):
    * worked out from the state the conversation is in at this moment — whether a packet was sent and nothing confirmed it, and whether
    * the conversation was cleared and its earlier part can still be attached to the next message — and not from what its latest Turn
-   * happened to decide, so a banner stays while its cause does and goes when it ends. Also whether its Driver's relay mechanisms
-   * are proved. Read-only; a binding that needs nothing has `attention` null. Never a block: the next input goes whatever this says.
+   * happened to decide, so a banner stays while its cause does and goes when it ends. Read-only; a binding that needs nothing has
+   * `attention` null. Never a block: the next input goes whatever this says.
    */
-  relayAttention(id: SessionId): readonly { readonly harnessId: string; readonly controlId: string; readonly probed: boolean | null; readonly attention: RelayAttention | null }[] {
+  relayAttention(id: SessionId): readonly { readonly harnessId: string; readonly controlId: string; readonly attention: RelayAttention | null }[] {
     const state = this.load(id), originHistory = (state.origin?.history.length ?? 0) > 0;
     const originTurns = Math.max(1, (state.origin?.history ?? []).filter(row => row.role === "user").length);
     return (state.nativeBindings ?? []).filter(binding => binding.status !== "archived" && binding.relay !== undefined).map(binding => {
@@ -522,9 +506,7 @@ export class SessionRuntime {
       // A cleared conversation whose new native session has run nothing yet: its earlier part can be attached to the next message.
       const ran = state.runs.some(run => dispatched(run) && run.relay?.executedOn?.harnessId === h && run.relay.executedOn.controlId === c && run.relay.executedOn.nativeEpoch === relay.epoch);
       const attachableRuns = relay.floor >= 1 && relay.pending === null && !ran ? count(owed(relay, h, c, facts, { originHistory, lower: -1 })) : 0;
-      // Whether its Driver's relay mechanisms were proved by a real Harness: false for a Driver that declares none, null when the factory cannot tell.
-      const declared = this.declarationOf({ harnessId: h, controlId: c }), probed = declared === undefined ? null : declared !== null && declared.probed;
-      return { harnessId: h, controlId: c, probed, attention: attentionOf({ relay, owedRuns, attachableRuns }) };
+      return { harnessId: h, controlId: c, attention: attentionOf({ relay, owedRuns, attachableRuns }) };
     });
   }
   /**
@@ -1609,14 +1591,14 @@ export class SessionRuntime {
         const carriedConfiguration = carriedNativeConfiguration(current, run.selection, run.epoch);
         if (carriedConfiguration !== null) this.commit(id, current => ({ next: current, events: [event("native.config_carried", { runId: target, ...carriedConfiguration })] }));
         const nativeOptions = carriedConfiguration?.options === undefined ? run.selection.nativeOptions : { ...run.selection.nativeOptions, ...carriedConfiguration.options };
-        // A binding whose native session the Driver replaced by none yet (opensNew, R4) opens a new one: its checkpoint names the
+        // A binding whose native session the Driver gave up on a clear (opensNew, R4) opens a new one: its checkpoint names the
         // abandoned session, never resumed.
         const resumeFrom = previousNative?.opensNew === true ? undefined : previousNative?.checkpoint;
         const open = (on: HarnessControl, from: string | undefined) => on.open(execution.binding!.workspace, carriedConfiguration?.model ?? run.selection.nativeModel, nativeOptions, from);
         try { native = await open(control, resumeFrom); }
         catch (error) {
-          // C5 (ADR-055 §7.5; G068 fix batch 2, I-1b): a native session that holds nothing the relay counts on (Claude's empty
-          // session after its synthesized clear, never prompted) that the Driver refuses as one it does not have — that refusal
+          // C5 (ADR-055 §7.5; G068 fix batch 2, I-1b): a native session that holds nothing the relay counts on (one opened
+          // and never prompted) that the Driver refuses as one it does not have — that refusal
           // only, never a timeout or a failed connection — is replaced by a new one, its relay state and floor as they are, on a
           // new connection: the refused one may be failed by the refusal. A binding with a watermark is never replaced.
           if (resumeFrom === undefined || previousNative === undefined || fault(error).code !== "NATIVE_SESSION_NOT_FOUND" || !holdsNothing(current, previousNative)) throw error;
@@ -1724,7 +1706,8 @@ export class SessionRuntime {
             if (!context.text.endsWith("\n" + run.input)) throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render" }, "没能准备交接单：交接单与这条消息拼接不一致，这条消息没有发出。");
             const body = context.text.slice(0, context.text.length - run.input.length - 1), range = rangeOf(prepared, carrying.need, runs);
             const manifest = packetManifest({ state: prepared, run, relay: working, record: context.relay, body, range, runs, attachOverride: carrying.by === "user",
-              supersedes: carrying.resend !== null && working.pending !== null ? working.pending.packetId : null, firstLineOmitted: !context.relay.firstLine, window: resolved, clamped });
+              supersedes: carrying.resend !== null && working.pending !== null ? working.pending.packetId : null,
+              firstLineOmitted: context.relay.firstLine ? null : reading.kind === "content" ? "secret_hit" : "slash", clamped });
             packet = { manifest, body, record: context.relay, runs };
             turnText = { user: run.input, relay: { packetId: manifest.id, body, firstLine: context.relay.firstLine } };
             // The placed Turn measured as its Driver will place it; over the Driver's bound it goes as typed, the Driver's own refusal staying the backstop.
@@ -1830,9 +1813,9 @@ export class SessionRuntime {
       this.flushStream(execution);
       this.commit(id, current => ({ next: updatedRun(current, target, { status: "settling", backend }), events: [event("run.backend_settled", { runId: target, backend })] }));
       if (checkpointStored) {
-        // A native session the Driver replaced (Claude's synthesized clear, ADR-055 §7.5) is archived as it is: its reference
-        // after the Turn is not needed, so one the Driver no longer gives (it opened no session ahead, R4) fails nothing.
-        const replacing = nativeCleared?.replaced != null;
+        // The native session the Driver gave up on a clear is archived as it is: its reference after the Turn is not needed, so
+        // one the Driver no longer gives (it opened no session ahead) fails nothing.
+        const replacing = nativeCleared !== undefined;
         const after = replacing ? await control.checkpoint!().catch(() => null) : await control.checkpoint!(); this.owned(execution);
         const valid = typeof after === "string" && after !== "" && Buffer.byteLength(after) <= 8192 && !/[\0\r\n]/u.test(after);
         if (!valid && !replacing) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "original Harness lost its owned session reference");
@@ -1863,8 +1846,8 @@ export class SessionRuntime {
         try { await this.flushNative(execution); } catch (error) { problem ??= fault(error); }
       }
       // A finished Turn of a conversation that keeps its process hands the process over instead of closing it (ADR-030); not
-      // one whose Driver replaced the native session it cleared (its conversation changed, ADR-055 §7.5).
-      const keep = execution.binding === null || opened === null || nativeCleared?.replaced != null ? { keep: false }
+      // one whose Driver gave up the native session on a clear (its conversation changed, ADR-055 §7.5).
+      const keep = execution.binding === null || opened === null || nativeCleared !== undefined ? { keep: false }
         : this.keepable(id, execution, backend, problem, checkpointStored && nativeConfirmed);
       if (execution.binding && !keep.keep) {
         // A close that throws leaves the cleanup unconfirmed (the Turn is unknown); the Turn keeps the failure it ended with (M-8).
@@ -1890,8 +1873,8 @@ export class SessionRuntime {
       }
       try {
         this.store.assertOwner();
-        // Read only for a replaced native session, the one end that may clear a relay recovery failure (M-5).
-        const current = this.load(id), run = current.runs.find(run => run.id === target)!, failedOn = nativeCleared?.replaced != null ? this.recoveryFailureOn(current) : null;
+        // Read only for a clear, the one end that may clear a relay recovery failure (M-5).
+        const current = this.load(id), run = current.runs.find(run => run.id === target)!, failedOn = nativeCleared !== undefined ? this.recoveryFailureOn(current) : null;
         const unsafe = (execution.dispatched && backend === null) || (execution.binding !== null && cleanup === null && !keep.keep) || this.fatal !== null || this.unknownOwnership(problem);
         const closed = cleanup;
         // A Turn the Runtime stopped on its own (a budget ran out before it settled) is cancelled when it then settled, whatever
@@ -1906,16 +1889,12 @@ export class SessionRuntime {
         const confirmed = checkpointStored && checkpoint !== null && (keep.keep || closed?.closed === true && closed.protocolFailure === null) && (!execution.dispatched || nativeConfirmed && backend !== null);
         const continued = unsafe && checkpointStored && execution.dispatched && backend === null && cleanup?.closed === true && cleanup.protocolFailure === null && this.fatal === null && !this.unknownOwnership(problem)
           && execution.relay.declaration.execution === "process";
-        // What the Driver reported of a clear, as the relay takes it: a certain clear (clearReportOf; ADR-055 B7).
-        const clearReport = clearReportOf(nativeCleared, confirmed);
+        // What the Driver reported of a clear, as the relay takes it: a certain clear once the Turn's native state is confirmed (ADR-055 B7).
+        const clearReport = nativeCleared !== undefined && confirmed;
         // A command's effect counts only when it ran; it goes into the Turn's end event with what the driver knew of the input. A
         // clear its Driver confirmed is a clear, as the binding records it, whatever the Turn's status (R9e).
         const input: InputOutcome = !execution.dispatched ? "not_recorded" : evidence ?? "unknown";
-        const effect = command === null ? null : clearReport !== null ? "clear" as const : commandEffect(command.effect, commandOutcome(execution.dispatched, backend?.status ?? null, input, noop));
-        // Claude's synthesized clear (§7.5): the session the next Turn continues, or none (null) when it opens a new one (R4).
-        const replaced = confirmed && nativeCleared?.replaced != null ? nativeCleared.replaced : null;
-        const replacement = replaced !== null && typeof replaced.checkpoint === "string" && replaced.checkpoint !== "" && Buffer.byteLength(replaced.checkpoint) <= 8192 && !/[\0\r\n]/u.test(replaced.checkpoint)
-          ? replaced.checkpoint : null;
+        const effect = command === null ? null : clearReport ? "clear" as const : commandEffect(command.effect, commandOutcome(execution.dispatched, backend?.status ?? null, input, noop));
         // What the end did with the relay, for a retry without it (R6).
         const tried = { relayed: false, replaced: false };
         const ended = (withRelay: boolean) => (current: SessionSnapshot): SessionMutation => {
@@ -1938,7 +1917,7 @@ export class SessionRuntime {
               if (binding.harnessId !== pinned.harnessId || binding.controlId !== pinned.controlId || binding.status === "archived") return binding;
               // An unknown Turn continued keeps the reference it resumed from; its native position stays where it was.
               if (!confirmed) return { ...binding, status: "ready" as const, ...(relayed === null ? {} : { relay: relayed.relay }) };
-              // A replaced native session (§7.5) is archived as it was, its relay state frozen; the Turn ran in it.
+              // The native session a clear gave up (§7.5) is archived as it was, its relay state frozen; the Turn ran in it.
               if (relayed?.replaced) return { ...binding, status: "archived" as const, throughRunId: execution.dispatched ? run.id : binding.throughRunId };
               const { observed: earlier, opensNew: _opened, ...rest } = binding, latest = reported ? observed : earlier;
               // A native session this Turn opened anew and never dispatched into was never prompted, and another process cannot
@@ -1950,17 +1929,17 @@ export class SessionRuntime {
               return { ...rest, checkpoint: checkpoint!, status: "ready" as const, throughRunId: execution.dispatched ? run.id : binding.throughRunId, ...(latest === undefined ? {} : { observed: latest }),
                 ...(relayed === null ? {} : { relay: relayed.relay }) };
             }) ?? [] };
-            // Claude's synthesized clear (§7.5): the new binding of the same Harness control starts the next epoch at the clear's
-            // floor and inherits what the native session was last seen running. A relay recovery failure is cleared only when it
-            // names this Harness control (a Turn's end committed without its relay part, R6): the binding it named is replaced; one
-            // a recovery left names no binding, and only the user's native reset clears it (§9 S15; G068 fix batch 2, M-5).
-            // Without a session to continue (`replaced.checkpoint` null, R4) the next Turn opens a new one (opensNew), and the
-            // binding names the abandoned session it replaces, which is never resumed.
+            // A clear (§7.5): the new binding of the same Harness control starts the next epoch at the clear's floor and inherits what
+            // the native session was last seen running. A relay recovery failure is cleared only when it names this Harness control (a
+            // Turn's end committed without its relay part, R6): the binding it named is replaced; one a recovery left names no binding,
+            // and only the user's native reset clears it (§9 S15; G068 fix batch 2, M-5). The Driver gave the native session up and
+            // opened none ahead: the next Turn opens a new one (opensNew), and the binding names the abandoned session it replaces,
+            // which is never resumed.
             if (relayed?.replaced) {
               const latest = reported ? observed : own?.observed, { relayRecoveryFailed, ...rest } = next;
               const named = failedOn !== null && failedOn.harnessId === pinned.harnessId && failedOn.controlId === pinned.controlId;
-              next = { ...(named ? rest : next), nativeBindings: [...next.nativeBindings!, { harnessId: pinned.harnessId, controlId: pinned.controlId, checkpoint: replacement ?? own!.checkpoint, throughRunId: null, status: "ready" as const,
-                ...(latest === undefined ? {} : { observed: latest }), relay: relayed.relay, ...(replacement === null ? { opensNew: true as const } : {}) }] };
+              next = { ...(named ? rest : next), nativeBindings: [...next.nativeBindings!, { harnessId: pinned.harnessId, controlId: pinned.controlId, checkpoint: own!.checkpoint, throughRunId: null, status: "ready" as const,
+                ...(latest === undefined ? {} : { observed: latest }), relay: relayed.relay, opensNew: true as const }] };
             }
           } else if (relayed !== null && !relayed.replaced) {
             next = { ...next, nativeBindings: next.nativeBindings?.map(binding => binding.harnessId === pinned.harnessId && binding.controlId === pinned.controlId && binding.status !== "archived" ? { ...binding, relay: relayed.relay } : binding) ?? [] };

@@ -182,8 +182,8 @@ export interface NativeSessionBinding {
   readonly throughRunId: RunId | null;
   readonly status: "ready" | "unconfirmed" | "archived" | "fork-pending" | "forking";
   /**
-   * v13: the binding has no native session it can resume (ADR-055 §7.5): its Driver replaced the one it cleared by none yet
-   * (Claude's synthesized clear with `native.replaced.checkpoint` null, G068 fix batch R4), or the session a Turn opened for it
+   * v13: the binding has no native session it can resume (ADR-055 §7.5): its Driver gave the one it cleared up and opened none
+   * ahead (the Hub's clear, `native.cleared`), or the session a Turn opened for it
    * was never prompted because that Turn ended before dispatch (G068 fix batch 2, I-1a: another process cannot resume a session
    * never prompted). The next Turn opens a new native session, with this binding's relay state and observed configuration;
    * `checkpoint` names the session it gave up, which is never resumed and which the conversation no longer holds

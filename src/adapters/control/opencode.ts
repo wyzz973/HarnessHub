@@ -6,8 +6,7 @@ import type { ControlError } from "../../infrastructure/control/json-rpc-process
 import type { RelayCapabilities } from "../../contracts/relay.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import { AcpControl } from "./acp.js";
-import { HUB_CLEAR, OPENCODE_COMPACT as COMPACT, openCodeClassify, openCodeCommand as commandOf, openCodeNativeClassify, relayDeclaration, relayEntries } from "./relay-classify.js";
-import { harnessVendor, slashModelKey } from "./relay-vendor.js";
+import { OPENCODE_COMPACT as COMPACT, openCodeClassify, openCodeCommand as commandOf, openCodeNativeClassify, relayDeclaration } from "./relay-classify.js";
 import { type TurnText } from "../../contracts/control.js";
 
 /**
@@ -17,21 +16,12 @@ import { type TurnText } from "../../contracts/control.js";
  * events; one process per connection; no native title entry (not guaranteed before P13).
  */
 export const openCodeRelayCapabilities: RelayCapabilities = relayDeclaration({
-  probed: false,
-  delivery: { live: "none", verify: "none", successProvesRecorded: true, lateDelivery: true },
+  delivery: { live: "none", successProvesRecorded: true },
   execution: "process",
-  commands: { unlistedSlash: "text", hidden: relayEntries(HUB_CLEAR), classify: openCodeClassify },
+  commands: { classify: openCodeClassify },
   // Attachments go as ACP blocks after the two text blocks (G069 phase two, approval B8; to be probed).
-  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true, measure: measureBy("multiple", "chars", ["file"]) },
-  window: "session_report",
-  fixedPrefix: null,
-  cacheTtl: "unknown",
-  compactionEvidence: "event",
-  resolveVendor: harnessVendor("opencode"),
-  normalizeModel: slashModelKey,
+  placement: { parts: "multiple", maxInput: null, measure: measureBy("multiple", "chars", ["file"]) },
   title: "none",
-  hostPathRead: "none",
-  sessionTools: null,
 });
 /** A `/compact` that OpenCode answered with nothing at all: its ACP dropped the command instead of compacting. */
 const COMPACT_IGNORED: BackendResult = { status: "failed", reason: "native_error",

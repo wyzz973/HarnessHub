@@ -12,8 +12,7 @@ import { MAX_NATIVE_EXTENSIONS, MAX_NATIVE_SESSIONS, MAX_USAGE_REQUESTS, type Na
 import { checkInputs, fileMentions } from "../../infrastructure/control/attachments.js";
 import { randomUUID } from "node:crypto";
 import type { RelayCapabilities, RelayPacketId } from "../../contracts/relay.js";
-import { CODEX_SKILL_INPUT as SKILL_INPUT, CODEX_THREAD_COMMANDS as THREAD_COMMANDS, HUB_CLEAR, codexClassify, codexNativeClassify, codexThreadOperation as threadOperation, relayDeclaration, relayEntries } from "./relay-classify.js";
-import { harnessVendor, slashModelKey } from "./relay-vendor.js";
+import { CODEX_SKILL_INPUT as SKILL_INPUT, CODEX_THREAD_COMMANDS as THREAD_COMMANDS, codexClassify, codexNativeClassify, codexThreadOperation as threadOperation, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { singleText, type TurnText } from "../../contracts/control.js";
 import { bodyWithoutFirstLine, boundedRequests, carriesPacket, clearedNotice, COMMAND_REFUSED, exceedsInput, hubCleared, INPUT_LIMIT_REFUSED, TITLE_DEADLINE_MS, usageRequest, measureBy } from "./relay-turn.js";
 
@@ -26,23 +25,14 @@ import { bodyWithoutFirstLine, boundedRequests, carriesPacket, clearedNotice, CO
  * connection; the window from each turn's token usage; a native title by `thread/name/set` before the first turn.
  */
 export const codexRelayCapabilities: RelayCapabilities = relayDeclaration({
-  probed: false,
-  delivery: { live: "recorded_event", verify: "none", successProvesRecorded: false, lateDelivery: false },
+  delivery: { live: "recorded_event", successProvesRecorded: false },
   execution: "process",
-  commands: { unlistedSlash: "text", hidden: relayEntries(HUB_CLEAR), classify: codexClassify },
+  commands: { classify: codexClassify },
   // Files go as pointers at the end of the one text, after the words; images and audio as their own items after it (G069
   // phase two, approval B8; to be probed).
   // measure: the one text (packet, blank line, words; a skill input's is shorter) and each file's pointer (ADR-055 C3).
-  placement: { parts: "single", maxInput: { unit: "chars", limit: 1_048_576 }, pointersAfterUser: true, measure: measureBy("single", "chars", ["file"]) },
-  window: "turn_report",
-  fixedPrefix: null,
-  cacheTtl: "30m",
-  compactionEvidence: "event",
-  resolveVendor: harnessVendor("codex"),
-  normalizeModel: slashModelKey,
+  placement: { parts: "single", maxInput: { unit: "chars", limit: 1_048_576 }, measure: measureBy("single", "chars", ["file"]) },
   title: "set",
-  hostPathRead: "none",
-  sessionTools: null,
 });
 
 interface ActiveTurn {

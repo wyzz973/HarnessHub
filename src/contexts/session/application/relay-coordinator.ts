@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { CommandClass, ContextEffect } from "../../../contracts/control.js";
 import {
-  EPHEMERAL_KEY_ID, RELAY_MAX_RUNS, RELAY_MAX_SEQ, RELAY_PREF_DEFAULTS, RelayError, hmacDigest, parseExecutedOn, redactionTag, relayPacketId,
+  EPHEMERAL_KEY_ID, ITEM_KINDS, RELAY_MAX_RUNS, RELAY_MAX_SEQ, RELAY_PREF_DEFAULTS, RelayError, hmacDigest, parseExecutedOn, redactionTag, relayPacketId,
   type BindingRelayState, type ContinuityLevel, type DeliveryRecord, type ExecutedOn, type Fingerprint, type HmacDigest, type RedactionTag, type RelayAttention, type RelayCapabilities, type RelayDecision,
   type RelayDeliveryWrite, type RelayIndexRow, type RelayKeyPort, type RelayPacket, type RelayPacketId, type RelayPrefKey, type RunRelay, type RunRelayRequest, type SourceRange,
 } from "../../../contracts/relay.js";
@@ -9,7 +9,6 @@ import { SessionError, type PublicRun, type RunId, type SessionEvent, type Sessi
 import { commandOutcome, dispatched } from "../domain/relay/advance.js";
 import { commandTurnEvent, nothingOwed, owed, settledOutcome, step, type PacketRef, type RelayFact, type RelayEvent, type TurnPlan } from "../domain/relay/delivery.js";
 import type { RelayRecord } from "../domain/relay/packet.js";
-import { FIXED_PREFIX, type ResolvedWindow } from "../domain/relay/windows.js";
 import { terminal } from "../domain/state.js";
 
 /**
@@ -311,39 +310,24 @@ export function renderView(state: SessionSnapshot, harnessId: string, controlId:
 /** The relay policy the v13 manifest names: the contract's `relay/<n>`; the renderer's own version stays in `run.context_prepared`. */
 export const MANIFEST_POLICY = "relay/1" as const;
 /**
- * A packet manifest (§4 RelayPacket) for a packet the renderer made (its record and text): only what the record, the facts
- * and the budget it was folded to say; what is not kept stays conservative — no sections, no omission ledger, and no token counts
- * of the user's or the models' text (0) — and a reader never reads "complete" or "no omissions" from them. The Store checks it with
- * the text in the same transaction.
+ * A packet manifest (§4 RelayPacket) for a packet the renderer made (its record and text): who it went to, the facts and Runs it
+ * carries, what it left out by kind (the record's ledger), how it was budgeted and what is known of its text. The Store checks it
+ * with the text in the same transaction.
  */
 export function packetManifest(input: { readonly state: SessionSnapshot; readonly run: PublicRun; readonly relay: BindingRelayState; readonly record: RelayRecord; readonly body: string;
-    readonly range: SourceRange; readonly runs: readonly RunId[]; readonly attachOverride: boolean; readonly supersedes: RelayPacketId | null; readonly firstLineOmitted: boolean;
-    readonly window?: ResolvedWindow; readonly clamped?: readonly ("window" | "input_limit")[] }): RelayPacket {
-  const { state, run, record } = input, harnessId = run.selection.harnessId;
+    readonly range: SourceRange; readonly runs: readonly RunId[]; readonly attachOverride: boolean; readonly supersedes: RelayPacketId | null;
+    readonly firstLineOmitted: RelayPacket["firstLineOmitted"]; readonly clamped?: readonly ("window" | "input_limit")[] }): RelayPacket {
+  const { state, run, record } = input;
   const indexes = input.runs.map(id => state.runs.findIndex(row => row.id === id)).filter(index => index >= 0);
-  const sources = new Map<string, { harnessId: string; model: string | null; from: number; through: number }>();
-  for (const index of indexes) {
-    const source = state.runs[index]!, key = source.selection.harnessId, prior = sources.get(key);
-    sources.set(key, prior === undefined ? { harnessId: key, model: source.selection.nativeModel ?? null, from: index, through: index } : { ...prior, through: Math.max(prior.through, index), from: Math.min(prior.from, index) });
-  }
-  const names = [...sources.values()].slice(0, 64).map(item => ({ harnessId: item.harnessId, model: item.model === null ? null : item.model.slice(0, 1024), runs: [item.from, item.through] as const }));
-  const kind = names.length > 1 ? "multiple" as const : names.length === 1 && names[0]!.harnessId === harnessId ? "same_program" as const : "other" as const;
   const sha = (text: string) => createHash("sha256").update(text, "utf8").digest("hex") as Fingerprint;
-  const window = input.window;
-  const userCap = Math.min(2500, Math.floor(0.5 * record.budget.cap)), untrustedCap = Math.floor(0.6 * record.budget.cap);
   return {
-    id: relayPacketId(record.packetId), kind: record.kind, tier: record.tier, complete: record.complete,
-    target: { harnessId, controlId: run.selection.controlId, model: run.selection.nativeModel ?? null, nativeEpoch: input.relay.epoch },
-    source: { kind, names }, range: input.range, basePacketId: null, supersedes: input.supersedes, policyVersion: MANIFEST_POLICY, language: record.language,
-    factsFingerprint: sha(JSON.stringify({ runs: input.runs, range: input.range })),
-    inputs: { attachOverride: input.attachOverride, digestBehind: [], detailsMissing: [], noteIncluded: false, firstLineOmitted: input.firstLineOmitted ? "slash" : null },
-    redaction: { profile: "egress", count: record.redactions, byClass: {}, overridden: 0, unscanned: 0 },
-    body: { sha256: sha(input.body), bytes: Buffer.byteLength(input.body, "utf8"), estTokens: record.tokens, estimator: "est/2", untrustedTokens: 0, userTokens: 0 },
-    // `window` is the number the budget was judged against: the resolved window's (its source says where it came from).
-    budget: { capTokens: record.budget.cap, userCap, untrustedCap, window: window?.size ?? record.budget.window, fixedPrefix: window?.fixedPrefix ?? FIXED_PREFIX,
-      windowSource: window?.source ?? (record.budget.windowSource === "observed" ? "session_report" : "assumed"), clampedBy: [...new Set(input.clamped ?? [])] },
-    sections: [], fold: indexes.slice(0, RELAY_MAX_RUNS).map(runIndex => ({ kind: "unit" as const, runIndex, grade: record.complete ? "verbatim" as const : "compact" as const, why: "tail" as const })),
-    omissions: [], userEdits: [],
+    id: relayPacketId(record.packetId), kind: record.kind, tier: record.tier,
+    target: { harnessId: run.selection.harnessId, controlId: run.selection.controlId, model: run.selection.nativeModel ?? null, nativeEpoch: input.relay.epoch },
+    range: input.range, runs: indexes.slice(0, RELAY_MAX_RUNS), supersedes: input.supersedes, policyVersion: MANIFEST_POLICY, language: record.language, repeat: record.repeat,
+    attachOverride: input.attachOverride, firstLineOmitted: input.firstLineOmitted, redactions: record.redactions,
+    body: { sha256: sha(input.body), bytes: Buffer.byteLength(input.body, "utf8"), estTokens: record.tokens },
+    budget: { capTokens: record.budget.cap, window: record.budget.window, windowSource: record.budget.windowSource, clampedBy: [...new Set(input.clamped ?? [])] },
+    omissions: ITEM_KINDS.flatMap(kind => record.items[kind].omitted > 0 ? [{ kind, count: record.items[kind].omitted }] : []),
   };
 }
 /** How a Turn continued its context (§12.2), for its `relay`. */
@@ -411,11 +395,8 @@ export interface SettleInput {
   /** What the Driver knew of the input reaching the native history (BackendResult.input). */
   readonly input: "recorded" | "not_recorded" | undefined;
   readonly noop: boolean;
-  /**
-   * BackendResult.native: the Driver reported this Turn cleared the native history, and whether it replaced the session. A report is
-   * always taken as certain: a clear is the Hub opening a new native session.
-   */
-  readonly cleared: { readonly replaced: boolean } | null;
+  /** BackendResult.native: the Driver ran the Hub's clear this Turn (it gave the native session up) and the Turn's native state is confirmed. A report is taken as certain: a clear is the Hub opening a new native session. */
+  readonly cleared: boolean;
   readonly declaration: RelayDeclaration;
   /** The Turn ended unknown, its process group is confirmed ended, and its native session is continued. */
   readonly unknownTurn: boolean;
@@ -426,6 +407,7 @@ export interface SettleInput {
 export interface Settled {
   /** The binding's relay state after the Turn; with `replaced`, the archived binding keeps its own and the new one takes this. */
   readonly relay: BindingRelayState;
+  /** The Turn cleared the native session: the binding is archived and its successor opens a new one. */
   readonly replaced: boolean;
   readonly deliveries: readonly RelayDeliveryWrite[];
   /** `run.ended.delivery` of a carrying Turn: its packet and outcome. */
@@ -442,7 +424,7 @@ export function settleTurn(input: SettleInput): Settled {
   let relay = input.relay, replaced = false, delivery: Record<string, unknown> | null = null;
   const deliveries: RelayDeliveryWrite[] = [], before = relay;
   const apply = (event: RelayEvent): void => {
-    if (event.kind === "cleared" && input.cleared?.replaced === true) replaced = true;
+    if (event.kind === "cleared") replaced = true;
     relay = step(relay, event);
   };
   const turn = input.turn;
@@ -465,13 +447,13 @@ export function settleTurn(input: SettleInput): Settled {
     }
     case "command": {
       const outcome = commandOutcome(input.dispatched, input.status, !input.dispatched ? "not_recorded" : input.input ?? "unknown", input.noop);
-      const event = commandTurnEvent(turn.declared, outcome, { cleared: input.cleared !== null && input.dispatched, seq: input.endedSeq });
+      const event = commandTurnEvent(turn.declared, outcome, { cleared: input.cleared && input.dispatched, seq: input.endedSeq });
       if (event !== null) apply(event);
       break;
     }
   }
   // A clear the Driver confirmed is a clear whatever the Turn was: on a pending packet its delivery is no longer pursued.
-  if (turn.kind !== "command" && input.cleared !== null && input.dispatched) apply({ kind: "cleared", seq: input.endedSeq });
+  if (turn.kind !== "command" && input.cleared && input.dispatched) apply({ kind: "cleared", seq: input.endedSeq });
   if (input.unknownTurn && !replaced) apply({ kind: "rewound" });
   return { relay, replaced, deliveries, delivery,
     binding: { epoch: relay.epoch, mark: relay.mark, floor: relay.floor, pending: relay.pending !== null, resendAll: relay.resendAll, ...(before.epoch !== relay.epoch ? { cleared: true } : {}), ...(replaced ? { replaced: true } : {}) } };

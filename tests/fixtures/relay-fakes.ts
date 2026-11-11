@@ -29,14 +29,13 @@ export interface Declared {
  * unless said otherwise. Its commands are read as every native side reads them (the listed ones are commands).
  */
 export function declared(o: Declared = {}): RelayCapabilities {
-  return { probed: true, delivery: { live: o.live ?? "none", verify: "none", successProvesRecorded: o.successProvesRecorded ?? true, lateDelivery: false }, execution: o.execution ?? "process",
-    commands: { unlistedSlash: "text", hidden: [], classify: (text, catalog) => sharedReading(text, catalog === null ? null : (name, args) => {
+  return { delivery: { live: o.live ?? "none", successProvesRecorded: o.successProvesRecorded ?? true }, execution: o.execution ?? "process",
+    commands: { classify: (text, catalog) => sharedReading(text, catalog === null ? null : (name, args) => {
       const entry = catalog.find(row => row.name === name);
       return entry === undefined ? undefined : { effect: typeof entry.effect === "string" ? entry.effect : entry.effect.byArgs(args) };
     }) },
-    placement: { parts: "single", maxInput: o.maxInput ?? null, pointersAfterUser: true, measure: turn => typeof turn === "string" ? [...turn].length : [...turn.relay.body].length + [...turn.user].length + 2 },
-    window: "session_report", fixedPrefix: null, cacheTtl: "unknown", compactionEvidence: "none", resolveVendor: () => "unknown:fake", normalizeModel: model => model ?? "", title: o.title ?? "none",
-    hostPathRead: "none", sessionTools: null };
+    placement: { parts: "single", maxInput: o.maxInput ?? null, measure: turn => typeof turn === "string" ? [...turn].length : [...turn.relay.body].length + [...turn.user].length + 2 },
+    title: o.title ?? "none" };
 }
 /** A Driver that reports the input as an event (E1) and whose normal end proves nothing. */
 export const LIVE: Declared = { live: "recorded_event", successProvesRecorded: false };
@@ -53,11 +52,8 @@ export interface Script {
   readonly live?: boolean;
   /** false: the native side does not write the prompt (a lost Turn that never arrived). */
   readonly insert?: boolean;
-  /**
-   * true: the Driver confirms the clear (`native.cleared`) in place, as Hermes' fixed receipt does (`replaced` null). `{ replaced }`:
-   * the Driver gave the native session up and opens a new one, as Claude Code's synthesized clear does.
-   */
-  readonly cleared?: boolean | { readonly replaced: { readonly checkpoint: string | null } };
+  /** true: the Driver ran the Hub's clear (`native.cleared`): it sent nothing and gave the native session up, so the next Turn opens a new one. */
+  readonly cleared?: boolean;
 }
 /** In-process fake Harnesses. `declarations[harnessId]` is the Driver's static declaration (null: declares none). */
 export class Fakes implements SessionBindingFactory {
@@ -107,7 +103,7 @@ export class Fakes implements SessionBindingFactory {
         if (plan.live === true) output({ type: "input_recorded", ...(typeof turn === "object" ? { packetId: turn.relay.packetId } : {}) });
         output({ type: "text", text: "reply from " + harnessId });
         if (this.usage[harnessId] !== undefined) output({ type: "usage", usage: this.usage[harnessId]! });
-        const extra: Partial<BackendResult> = plan.cleared === true ? { native: { cleared: true, replaced: null } } : plan.cleared ? { native: { cleared: true, replaced: plan.cleared.replaced } } : {};
+        const extra: Partial<BackendResult> = plan.cleared === true ? { native: { cleared: true } } : {};
         let result: Promise<BackendResult>;
         switch (plan.result ?? "recorded") {
           case "recorded": result = Promise.resolve({ status: "completed", reason: "fake", input: "recorded", ...extra }); break;

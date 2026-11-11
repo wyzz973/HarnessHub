@@ -9,8 +9,7 @@ import { MAX_NATIVE_SESSIONS, type NativeOutput, type NativeSessionImport, type 
 import { MAX_CONTENT_BYTES, textual, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
 import type { RelayCapabilities } from "../../contracts/relay.js";
-import { dshClassify, HUB_CLEAR, nativeReading, relayDeclaration, relayEntries } from "./relay-classify.js";
-import { dshModelKey, harnessVendor } from "./relay-vendor.js";
+import { dshClassify, nativeReading, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { type TurnText } from "../../contracts/control.js";
 import { bodyWithoutFirstLine, clearedNotice, COMMAND_REFUSED, exceedsInput, hubCleared, INPUT_LIMIT_REFUSED, placeTurn, type RelayTurn, measureBy } from "./relay-turn.js";
 
@@ -137,26 +136,16 @@ function loaded(value: unknown): Record<string, unknown> {
  * DeepSeek Harness's relay declaration (ADR-055 §8.1, DeepSeek Harness row). dsh runs on this generic driver, which the
  * factory hands this declaration: two text blocks (dsh joins them into one user message); its first message, thought or
  * tool call is weak live evidence, and a completed turn proves nothing by itself; dsh has no commands, so every input, a slash
- * one included, is text, except the Hub's own clear (`/clear`, `/new`, `/reset` alone, relay-classify.ts HUB_CLEAR), which the
+ * one included, is text, except the Hub's own clear (`/clear`, `/new`, `/reset` alone, relay-classify.ts HUB_CLEAR_NAMES), which the
  * Hub runs itself; no compaction evidence; one process per connection; the window from its usage reports; no native title entry.
  */
 export const dshRelayCapabilities: RelayCapabilities = relayDeclaration({
-  probed: false,
-  delivery: { live: "agent_output", verify: "none", successProvesRecorded: false, lateDelivery: false },
+  delivery: { live: "agent_output", successProvesRecorded: false },
   execution: "process",
-  commands: { unlistedSlash: "text", hidden: relayEntries(HUB_CLEAR), classify: dshClassify },
+  commands: { classify: dshClassify },
   // Attachments go as ACP blocks after the two text blocks (G069 phase two, approval B8; to be probed).
-  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true, measure: measureBy("multiple", "chars", ["file"]) },
-  window: "session_report",
-  fixedPrefix: null,
-  cacheTtl: "hours",
-  compactionEvidence: "none",
-  resolveVendor: harnessVendor("dsh"),
-  // dsh reports its model as a JSON array text of the provider and the model; the key is the last item (relay-conformance.md F8).
-  normalizeModel: dshModelKey,
+  placement: { parts: "multiple", maxInput: null, measure: measureBy("multiple", "chars", ["file"]) },
   title: "none",
-  hostPathRead: "none",
-  sessionTools: null,
 });
 
 /** ACP v1 anti-corruption layer. Client filesystem and terminal capabilities are not advertised. */

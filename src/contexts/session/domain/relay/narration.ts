@@ -1,3 +1,4 @@
+import { ITEM_KINDS, type ItemKind } from "../../../../contracts/relay.js";
 import type { PublicRun, PublicTool, RunStatus, SessionSnapshot } from "../../../../contracts/session.js";
 import { estimateTokens } from "./budget.js";
 import { characters, codeUnitsOf, fence, headUnits, neutralize, normalize, visible, type RelayLanguage } from "./escape.js";
@@ -353,9 +354,8 @@ const WORDS: Readonly<Record<RelayLanguage, Words>> = {
 };
 function bytesLabel(bytes: number): string { return bytes < 1024 ? bytes + " B" : bytes < 1048576 ? Math.round(bytes / 1024) + " KB" : (bytes / 1048576).toFixed(1) + " MB"; }
 
-/** The kinds of item a packet counts: what it carries and what it leaves out are told by these, and add up to what the record holds. */
-export const ITEM_KINDS = ["userMessages", "replies", "outputs", "changes", "calls"] as const;
-export type ItemKind = typeof ITEM_KINDS[number];
+/** The kinds of item a packet counts (the contract's ITEM_KINDS): what it carries and what it leaves out are told by these, and add up to what the record holds. */
+export { ITEM_KINDS, type ItemKind };
 /** Where an item stands in its unit: the user's words, the lines of operations (a command's output under its line), an error, the reply. */
 export type ItemGroup = "user" | "ops" | "output" | "error" | "reply";
 /** One thing the record says that a packet may carry, whole or not at all. */

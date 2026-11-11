@@ -52,7 +52,7 @@ test("G069-R2 Claude Code reads an input with audio alone as it reads one withou
   refused(await run(control, id, relayTurn(ID_A, "/clear", false), [voice]), "a relay Turn whose words are the clear, with audio");
   assert.deepEqual(await prompts(peer), [], "nothing sent for it");
   const cleared = await run(control, id, "/clear", [voice]);
-  assert.deepEqual(cleared.result, { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true, replaced: { checkpoint: null } } }, "the driver runs the clear Claude Code would run");
+  assert.deepEqual(cleared.result, { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true } }, "the driver runs the clear Claude Code would run");
   assert.deepEqual(await prompts(peer), [], "nothing reached Claude");
   // An image beside the audio: the CLI's last block is the image's, so the input is content and goes as it is.
   const other = await peerRoot(t), next = await opened(t, "claude", other), picture = await attachment(other, "shot.png", "image"), sound = await attachment(other, "voice.wav", "audio");
@@ -98,7 +98,7 @@ test("G069-R2 OpenClaw refuses a relay Turn read as a command before anything of
 
 test("G069-R2 the generic driver refuses on its own (sendPrompt's reading): a declaration that reads commands refuses a relay Turn read as one with no Driver of its own before it, and carries the packet with content", { timeout: 30000 }, async t => {
   const peer = await peerRoot(t, { RELAY_COMMANDS: JSON.stringify([{ name: "compact", description: "compact" }]) });
-  const declaration: RelayCapabilities = { ...dshRelayCapabilities, commands: { unlistedSlash: "text", hidden: [], classify: sharedClassify } };
+  const declaration: RelayCapabilities = { ...dshRelayCapabilities, commands: { classify: sharedClassify } };
   const launch: ControlLaunch = { protocol: "acp-v1", executable: process.execPath, args: [join(process.cwd(), "tests/fixtures/relay-control-peer.mjs")], env: peer.env };
   const control = new AcpControl(launch, options(peer), declaration); t.after(() => control.close().then(() => undefined));
   await control.initialize(); const id = await control.open(peer.workspace); await control.models();

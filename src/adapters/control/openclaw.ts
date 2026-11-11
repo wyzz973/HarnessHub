@@ -6,8 +6,7 @@ import JSON5 from "json5";
 import { MAX_NATIVE_EXTENSIONS, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type CommandClass, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeInputs, type NativeModelCatalog, type NativeOption, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
 import type { RelayCapabilities } from "../../contracts/relay.js";
 import { AcpControl } from "./acp.js";
-import { OPENCLAW_HIDDEN, openClawClassify, openClawCommandEffect, openClawNativeClassify, relayDeclaration, relayEntries } from "./relay-classify.js";
-import { harnessVendor, slashModelKey } from "./relay-vendor.js";
+import { openClawClassify, openClawCommandEffect, openClawNativeClassify, relayDeclaration } from "./relay-classify.js";
 import { classifyRemoteFailure, ControlError, object } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import { string } from "../../infrastructure/control/json-rpc-process.js";
@@ -206,22 +205,13 @@ function unavailability(row: Readonly<Record<string, unknown>>): string {
  * session; the window from the session report; no native title until `_meta.sessionLabel` is probed.
  */
 export const openClawRelayCapabilities: RelayCapabilities = relayDeclaration({
-  probed: false,
-  delivery: { live: "none", verify: "none", successProvesRecorded: false, lateDelivery: true },
+  delivery: { live: "none", successProvesRecorded: false },
   execution: "gateway",
-  commands: { unlistedSlash: "text", hidden: relayEntries(OPENCLAW_HIDDEN), classify: openClawClassify },
+  commands: { classify: openClawClassify },
   // Attachments go as ACP blocks after the one text (G069 phase two, approval B8; what the bridge forwards is to be probed).
   // measure: the one text, each file's pointer, and the bridge's working-directory prefix (inputOverhead), in bytes (ADR-055 C3).
-  placement: { parts: "single", maxInput: { unit: "bytes", limit: 2_097_152 }, pointersAfterUser: true, measure: measureBy("single", "bytes", ["file"], CWD_PREFIX_ALLOWANCE) },
-  window: "session_report",
-  fixedPrefix: null,
-  cacheTtl: "5m",
-  compactionEvidence: "none",
-  resolveVendor: harnessVendor("openclaw"),
-  normalizeModel: slashModelKey,
+  placement: { parts: "single", maxInput: { unit: "bytes", limit: 2_097_152 }, measure: measureBy("single", "bytes", ["file"], CWD_PREFIX_ALLOWANCE) },
   title: "none",
-  hostPathRead: "none",
-  sessionTools: null,
 });
 export class OpenClawControl extends AcpControl {
   override readonly relayCapabilities: RelayCapabilities = openClawRelayCapabilities;

@@ -58,7 +58,7 @@ export function parseSendRelay(value: unknown): SendRelay {
  * What the API reads of the Store: the relay rows (a packet's manifest and its stored text included), the preferences it also
  * writes, and the events the ledgers page. Committed rows only; nothing is held between reads.
  */
-export interface RelayReads extends Pick<RelayStorePort, "relayDeliveries" | "relayPackets" | "relayPacket" | "relayPacketBody" | "relayIndex">, Pick<RelayLogPort, "relayPrefs" | "setPref"> {
+export interface RelayReads extends Pick<RelayStorePort, "relayDeliveries" | "relayPackets" | "relayPacket" | "relayPacketBody" | "relayIndex">, Pick<RelayLogPort, "relayPrefs" | "setPref" | "handoffs" | "handoffUsed"> {
   events(id: SessionId, afterSeq: number, limit?: number): readonly SessionEvent[];
 }
 /** The HTTP helpers of the server this API is mounted on (they live in server.ts). */
@@ -68,8 +68,8 @@ export interface RelayHttp {
   queries(url: URL, allowed: readonly string[]): void;
   body(request: IncomingMessage): Promise<unknown>;
 }
-/** What `Runtime.relayAttention` says of one binding: whether its Driver's mechanisms are proved (null: the factory cannot tell) and what it asks the user to look at. */
-export interface BindingAttention { readonly harnessId: string; readonly controlId: string; readonly probed: boolean | null; readonly attention: RelayAttention | null }
+/** What `Runtime.relayAttention` says of one binding: what it asks the user to look at. */
+export interface BindingAttention { readonly harnessId: string; readonly controlId: string; readonly attention: RelayAttention | null }
 export interface RelayApiOptions {
   readonly reads: RelayReads;
   /** The Session as the Runtime reads it (SESSION_NOT_FOUND for an identity it does not hold). */
@@ -93,8 +93,6 @@ function matches(header: string | undefined, etag: string): boolean {
   return header.split(",").some(part => { const tag = part.trim(); return (tag.startsWith("W/") ? tag.slice(2) : tag) === etag; });
 }
 const LIST = /^\/api\/v1\/sessions\/([^/]+)\/relay$/u, PACKET = /^\/api\/v1\/sessions\/([^/]+)\/relay\/(relay-[0-9a-hjkmnp-tv-z]{20})$/u;
-/** A vendor key that names a service by a fixed word (`openai`); a key with a colon carries a host, a provider id or an unknown Harness. */
-const NAMED_VENDOR = /^[a-z][a-z0-9-]{0,31}$/u;
 /** The Sessions whose decisions are kept at most (the least recently read go first). */
 const DECISION_SESSIONS = 64;
 
@@ -217,12 +215,19 @@ export class RelayApi {
       if (packet === undefined) continue;
       const row = rows.get(run.id), delivery = row === undefined ? UNTRACKED : deliveryView(row.outcome);
       packets.push({ packetId: packet.id, runId: run.id, runIndex, number, kind: packet.kind, tier: packet.tier, target: { harnessId: packet.target.harnessId, model: packet.target.model },
-        estTokens: packet.body.estTokens, omissions: packet.omissions.reduce((sum, item) => sum + item.count, 0), redactions: packet.redaction.count, delivery: delivery.state, evidence: delivery.evidence });
+        estTokens: packet.body.estTokens, omissions: packet.omissions.reduce((sum, item) => sum + item.count, 0), redactions: packet.redactions, delivery: delivery.state, evidence: delivery.evidence });
     }
     const attended = this.attended(snapshot.id);
     const bindings = (snapshot.nativeBindings ?? []).flatMap(binding => binding.status === "archived" || binding.relay === undefined ? [] : [this.bindingView(snapshot, binding, binding.relay, attended, numbers, rows, manifests)]);
     const installation = this.installation();
-    return { bindings, packets, ...(installation.length ? { installation } : {}) };
+    return { bindings, packets, handedOver: this.handedOver(), ...(installation.length ? { installation } : {}) };
+  }
+  /**
+   * The Harnesses the installation has handed a conversation to: its handoff log's rows that a delivery rests on (a row written for a
+   * handoff that then failed before it went is not one). A read that fails says none, so the explanation is told again, never left out.
+   */
+  private handedOver(): readonly string[] {
+    try { return this.options.reads.handoffs().filter(row => this.options.reads.handoffUsed(row.logSeq)).map(row => row.harnessId); } catch { return []; }
   }
   /** What the installation as a whole cannot do for the relay (the Runtime's `relayInstallation`); a read that fails says nothing. */
   private installation(): readonly RelayInstallationNotice[] {
@@ -237,7 +242,6 @@ export class RelayApi {
     let declared: RelayCapabilities | null | undefined;
     try { declared = this.options.declaration({ harnessId: binding.harnessId, controlId: binding.controlId }); } catch { declared = undefined; }
     const known = attended.get(binding.harnessId + "\0" + binding.controlId);
-    const probed = known?.probed ?? (declared?.probed === true);
     const canConfirm = declared === undefined ? undefined : declared !== null && (declared.delivery.live !== "none" || declared.delivery.successProvesRecorded);
     const need = this.owedNow(snapshot, binding);
     const asked = known?.attention ?? null;
@@ -255,7 +259,7 @@ export class RelayApi {
       if (row.outcome.kind === "recorded" && packet !== undefined && packet.target.harnessId === binding.harnessId && packet.target.controlId === binding.controlId && packet.target.nativeEpoch === relay.epoch && runId !== "") evidence = row.outcome.evidence;
     }
     return { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.epoch, sync: SYNC_KINDS.find(kind => kind === sync)!, throughRun: this.throughRun(snapshot, relay.mark),
-      evidence, cleared: relay.floor >= 1 ? 1 : 0, probed,
+      evidence, cleared: relay.floor >= 1 ? 1 : 0,
       ...(canConfirm === undefined ? {} : { canConfirm }),
       ...(need === undefined || need.runIds.length === 0 && !need.origin ? {} : { owed: { runs: this.owedRuns(snapshot, need), estTokens: this.estimate(snapshot, need) } }),
       ...(attention === undefined ? {} : { attention }) };

@@ -32,15 +32,13 @@ function publicEvent(event: ControlEvent, redact: (text: string) => string): Con
 }
 /** Prevents private injected credentials from entering committed public output or control diagnostics. */
 export class RedactedHarnessControl implements HarnessControl {
-  /** The relay's optional members pass through as the inner Driver has them (absent stays absent, ADR-055 §3.2). */
-  readonly userTextOf?: (replayed: string) => ReturnType<NonNullable<HarnessControl["userTextOf"]>>;
+  /** The relay's optional member passes through as the inner Driver has it (absent stays absent, ADR-055 §3.2). */
   readonly setTitle?: (id: NativeConversationId, title: string) => Promise<void>;
   /** The inner Driver's static relay declaration, the same object (ADR-055 §3.2). */
   readonly relayCapabilities?: RelayCapabilities;
   constructor(private readonly inner: HarnessControl, private readonly redact: (text: string) => string, private readonly stream: () => ProviderTextRedactor) {
     // A title carries no secret the Driver was given; failures are withheld as any other.
     if (inner.relayCapabilities !== undefined) this.relayCapabilities = inner.relayCapabilities;
-    if (inner.userTextOf) this.userTextOf = replayed => inner.userTextOf!(replayed);
     if (inner.setTitle) this.setTitle = (id, title) => this.safe(() => inner.setTitle!(id, title));
   }
 

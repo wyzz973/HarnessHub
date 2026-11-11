@@ -517,7 +517,7 @@ function relayStep(old: BindingRelayState | undefined, next: BindingRelayState |
  * Persisted history is append-only; an application bug cannot silently erase prior public facts.
  *
  * `events` are the drafts committed with `after`, empty unless given: they let a writer Run's `run.ended` reporting that its
- * Driver replaced the cleared native session (`native.cleared`, ADR-055 §7.5) archive its binding without a native-reset
+ * Driver gave the cleared native session up (`native.cleared`, ADR-055 §7.5) archive its binding without a native-reset
  * command, and a `session.recovered` record a relay recovery failure.
  */
 export function assertSessionTransition(before: SessionSnapshot, after: SessionSnapshot, events: readonly EventDraft[] = []): void {
@@ -539,7 +539,7 @@ export function assertSessionTransition(before: SessionSnapshot, after: SessionS
       || old.status === "forking" && next.status === "ready" || (old.status === "fork-pending" || old.status === "forking") && next.status === "archived" && next.checkpoint === old.checkpoint);
     if (!reset && !forked && (!writer || writer.selection.provider !== undefined || writer.selection.harnessId !== next.harnessId || writer.selection.controlId !== next.controlId || next.throughRunId !== null && next.throughRunId !== old?.throughRunId && next.throughRunId !== writer.id)) throw new SessionError("INVALID_TRANSITION", "native state changed without its original Run owner");
     // A Run archives its own binding only when its end reports the Driver replaced the cleared native session; it may then add
-    // the new binding of the same Harness control (Claude's synthesized clear, F04).
+    // the new binding of the same Harness control (the Hub's clear, F04).
     if (!reset && !forked && old !== undefined && next.status === "archived" && (!nativeCleared || !frozen)) throw new SessionError("INVALID_TRANSITION", "a native binding is archived only by a native reset, a failed branch or a confirmed native clear");
     relayStep(old?.relay, next.relay);
   }

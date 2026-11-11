@@ -64,7 +64,7 @@ test("G069-C03 Hermes: lstrip() of Python whitespace (half-width, U+3000, U+00A0
   ]);
 });
 
-test("G069-C03 Claude Code: a command only with the slash as the first character (the CLI strips nothing), a word outside the catalog is words (unlistedSlash text) except the hidden /clear aliases; a slash path is content", () => {
+test("G069-C03 Claude Code: a command only with the slash as the first character (the CLI strips nothing), a word outside the catalog is words except the hidden /clear aliases; a slash path is content", () => {
   const classify = claudeRelayCapabilities.commands.classify, catalog = entries(["compact", "compact"], ["export", "none"], ["review", "keep"]);
   check(classify, [
     // G074-F1 (probe record 2026-11-10, Claude Code 2.1.316 behind claude-agent-acp 0.99.1): the CLI ran no command for " /context"
@@ -100,12 +100,12 @@ test("G069-C03 Claude Code: a command only with the slash as the first character
     { rule: "audio alone leaves the input as it reads without attachments", read: [["/clear", null, ["audio"], ["command", "clear", "clear", ""]], ["/export", catalog, ["audio", "audio"], ["command", "export", "none", ""]],
       ["/review", null, ["audio"], ["possible_command", "review"]]], not: ["/clear", null, ["audio", "image"], ["content"]] },
   ]);
-  // The declaration says what the reading does: a word outside the catalog is text, and the four the CLI runs unlisted are hidden.
-  assert.equal(claudeRelayCapabilities.commands.unlistedSlash, "text");
-  assert.deepEqual(claudeRelayCapabilities.commands.hidden.map(entry => [entry.name, entry.effect]), [["clear", "clear"], ["reset", "clear"], ["new", "clear"], ["remote-control", "none"]]);
+  // What the reading does: a word outside the catalog is text, and the four the CLI runs unlisted are commands whatever the catalog lists.
+  assert.deepEqual(classify("/zzprobe-unlisted hello", catalog, []), { kind: "content" });
+  for (const [word, effect] of [["clear", "clear"], ["reset", "clear"], ["new", "clear"], ["remote-control", "none"]] as const) assert.deepEqual(row(classify("/" + word, [], [])), ["command", word, effect, ""], word);
 });
 
-test("G069-C03 Codex: exactly /export, /compact, the Hub's clear alone and a listed /skill: (which takes relay content); no lstrip, every other slash input is text (unlistedSlash text)", () => {
+test("G069-C03 Codex: exactly /export, /compact, the Hub's clear alone and a listed /skill: (which takes relay content); no lstrip, every other slash input is text", () => {
   const classify = codexRelayCapabilities.commands.classify, catalog = entries(["compact", "compact"], ["export", "none"], ["skill:review", "keep"]);
   check(classify, [
     { rule: "the thread operations, exactly", read: [["/compact", null, [], ["command", "compact", "compact", ""]], ["/export  ", null, [], ["command", "export", "none", ""]]],
@@ -156,9 +156,8 @@ test("G069-C03 OpenClaw: the bridge's listed commands with effects by arguments;
   ]);
 });
 
-test("G069-C03 DeepSeek Harness: unlistedSlash=text and no commands but the Hub's clear alone, so every other input is content, whatever a catalog lists", () => {
+test("G069-C03 DeepSeek Harness: no commands but the Hub's clear alone, so every other input is content, whatever a catalog lists", () => {
   const classify = dshRelayCapabilities.commands.classify, listing = entries(["clear", "keep"], ["compact", "compact"]);
-  assert.equal(dshRelayCapabilities.commands.unlistedSlash, "text");
   for (const text of ["　/clear", " /compact", "/compact", "/skill:x", "/Users/me", "hello", "", "/clear now", "/newer", "clear"]) for (const catalog of [null, [], listing] as const)
     assert.deepEqual(classify(text, catalog, []), { kind: "content" }, JSON.stringify(text));
   // The Hub's clear is /clear, /new or /reset alone, whatever a catalog lists (it lists /clear as a command that keeps the history), and not with an attachment.

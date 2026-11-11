@@ -14,9 +14,8 @@ const ref = (char: string, fromSeq: number, throughSeq: number): PacketRef => ({
 const state = (extra: Partial<BindingRelayState> = {}): BindingRelayState => ({ epoch: 1, mark: -1, floor: -1, pending: null, resendAll: false, ...extra });
 const pending = (char: string, fromSeq: number, throughSeq: number, autoResends: 0 | 1 = 0) => ({ packetId: packet(char), fromSeq, throughSeq, autoResends });
 
-const caps = (live: RelayCapabilities["delivery"]["live"], successProvesRecorded: boolean, execution: RelayCapabilities["execution"] = "process"): RelayCapabilities => ({ probed: true, delivery: { live, verify: "none", successProvesRecorded, lateDelivery: false }, execution,
-  commands: { unlistedSlash: "text", hidden: [], classify: () => ({ kind: "content" }) }, placement: { parts: "single", maxInput: null, pointersAfterUser: true, measure: () => 0 }, window: "none", fixedPrefix: null,
-  cacheTtl: "unknown", compactionEvidence: "none", resolveVendor: () => "local", normalizeModel: () => "", title: "none", hostPathRead: "none", sessionTools: null });
+const caps = (live: RelayCapabilities["delivery"]["live"], successProvesRecorded: boolean, execution: RelayCapabilities["execution"] = "process"): RelayCapabilities => ({ delivery: { live, successProvesRecorded }, execution,
+  commands: { classify: () => ({ kind: "content" }) }, placement: { parts: "single", maxInput: null, measure: () => 0 }, title: "none" });
 
 test("what a Driver's declaration says to the relay: whether a send can ever be confirmed, and where it runs", () => {
   assert.deepEqual([relayDeclaration(caps("none", false)).canConfirm, relayDeclaration(caps("recorded_event", false)).canConfirm, relayDeclaration(caps("agent_output", false)).canConfirm, relayDeclaration(caps("none", true)).canConfirm], [false, true, true, true]);
@@ -57,7 +56,7 @@ test("what a binding asks the user to look at: a packet nothing confirmed, or a 
 });
 
 const declaration = relayDeclaration(caps("none", true));
-const settle = (relay: BindingRelayState, extra: Partial<SettleInput>) => settleTurn({ relay, runId: "run-9" as RunId, turn: { kind: "none" }, dispatched: true, status: "completed", input: undefined, noop: false, cleared: null, declaration,
+const settle = (relay: BindingRelayState, extra: Partial<SettleInput>) => settleTurn({ relay, runId: "run-9" as RunId, turn: { kind: "none" }, dispatched: true, status: "completed", input: undefined, noop: false, cleared: false, declaration,
   unknownTurn: false, endedSeq: 20, time: 100, ...extra });
 
 test("the settlement of a Turn moves the binding by what the Turn showed", () => {
@@ -87,16 +86,15 @@ test("the settlement of a Turn moves the binding by what the Turn showed", () =>
   assert.equal(settle(state(), { turn: plain(true), dispatched: false, status: null }).relay.mark, -1, "never sent");
   assert.equal(settle(state({ mark: 3 }), { turn: plain(true) }).relay.mark, 3, "a binding that holds a part is left as it is");
   assert.deepEqual(settle(state(), { turn: { kind: "alone" } }).relay, state(), "sent alone changes nothing");
-  // Commands: a rewind that ran sends everything again; a compaction nothing; a confirmed clear is the next epoch (a new binding when the Driver replaced the session).
+  // Commands: a rewind that ran sends everything again; a compaction nothing; a confirmed clear is the next epoch (a new binding: the Driver gave the native session up).
   assert.equal(settle(state({ mark: 2 }), { turn: { kind: "command", declared: "rewind" } }).relay.resendAll, true);
   assert.deepEqual(settle(state({ mark: 2 }), { turn: { kind: "command", declared: "compact" } }).relay, state({ mark: 2 }));
   assert.deepEqual(settle(state({ mark: 2 }), { turn: { kind: "command", declared: "rewind" }, status: "failed", input: "not_recorded" }).relay, state({ mark: 2 }), "a refused command changed nothing");
-  const cleared = settle(state({ mark: 2, pending: pending("a", 1, 2) }), { turn: { kind: "command", declared: "clear" }, cleared: { replaced: false } });
-  assert.deepEqual([cleared.relay, cleared.replaced], [state({ epoch: 2, floor: 20 }), false]);
-  const replaced = settle(state({ mark: 2 }), { turn: { kind: "command", declared: "clear" }, cleared: { replaced: true } });
-  assert.deepEqual([replaced.relay, replaced.replaced], [state({ epoch: 2, floor: 20 }), true]);
+  const cleared = settle(state({ mark: 2, pending: pending("a", 1, 2) }), { turn: { kind: "command", declared: "clear" }, cleared: true });
+  assert.deepEqual([cleared.relay, cleared.replaced], [state({ epoch: 2, floor: 20 }), true], "the native session was given up for a new one");
+  assert.deepEqual(settle(state({ mark: 2 }), { turn: { kind: "command", declared: "clear" }, cleared: false }).relay, state({ mark: 2, resendAll: true }), "a clear nobody confirmed may have changed the history");
   // A clear the Driver reported counts whatever the Turn was, and ends the pending packet's pursuit.
-  const during = settle(state({ mark: 2 }), { turn: carrying(), status: "completed", cleared: { replaced: false } });
+  const during = settle(state({ mark: 2 }), { turn: carrying(), status: "completed", cleared: true });
   assert.deepEqual([during.relay, during.delivery?.outcome], [state({ epoch: 2, floor: 20 }), "recorded"]);
   // An unknown Turn continued sends everything again, and a packet it carried is still waited for.
   const lost = settle(state(), { turn: carrying(), status: null, dispatched: true, unknownTurn: true });

@@ -72,8 +72,6 @@ export const sharedClassify: RelayClassify = (text, catalog) => sharedReading(te
  * gives up the native session, and the next Turn opens a new one.
  */
 export const HUB_CLEAR_NAMES: readonly string[] = ["clear", "reset", "new"];
-/** The Hub's clear words as commands the declaration lists as hidden: the native side does not list them. */
-export const HUB_CLEAR: readonly NativeCommand[] = HUB_CLEAR_NAMES.map(name => ({ name, description: "清空会话上下文（HarnessHub 开一个新的原生会话）", contextEffect: "clear" as const }));
 /** A clear as the Hub reads it where the native side has none: the slash first, one word, nothing after it but whitespace. */
 const HUB_CLEAR_INPUT = /^\/(clear|reset|new)\s*$/u;
 /** The Hub's clear an input asks for, or null: exactly one of its words, with nothing before or after it, and no attachment. */
@@ -277,8 +275,6 @@ const HERMES_PROMPTING: ReadonlySet<string> = new Set(["queue", "steer"]);
 const HERMES_UNCHANGING_FLAGS: ReadonlySet<string> = new Set(["--preview", "--dry-run", "--dryrun", "--aggressive"]);
 /** A slash word that reads like a registry name (lower-case letters, digits, `-` and `_`, in any case). */
 export const HERMES_COMMAND_WORD = /^[a-z0-9][a-z0-9_-]*$/iu;
-/** Commands Hermes routes but does not announce (gateway_session_meta.py lists reset, not new or clear). */
-export const HERMES_HIDDEN: readonly NativeCommand[] = ["new", "clear"].map(name => ({ name, description: "清空 Hermes 的会话历史", contextEffect: "clear" as const }));
 /** A registry command's effect for these arguments: `/compress` with a flag that leaves the session alone changes nothing. */
 function hermesEffect(name: string, args: string): ContextEffect {
   if (name === "compress" && args.split(HERMES_SPACES).some(flag => HERMES_UNCHANGING_FLAGS.has(flag.toLowerCase()))) return "none";
@@ -333,8 +329,6 @@ export function hermesNativeClassify(text: string, catalog: NativeModelCatalog |
  */
 export const OPENCLAW_COMMAND_EFFECTS: Readonly<Record<string, ContextEffect>> = { new: "clear", reset: "clear", clear: "clear", compact: "compact", stop: "none", restart: "unknown", bash: "unknown",
   think: "none", verbose: "none", trace: "none", reasoning: "none", elevated: "none", model: "none", queue: "none", usage: "none", fast: "none" };
-/** The Hub's clear words the OpenClaw bridge does not list: `/clear` (the bridge lists `/new` and `/reset`). */
-export const OPENCLAW_HIDDEN: readonly NativeCommand[] = HUB_CLEAR.filter(command => command.name === "clear");
 /** The effect OPENCLAW_COMMAND_EFFECTS names for a command, or undefined: only its own entries count (no Object member). */
 export function openClawCommandEffect(name: string): ContextEffect | undefined { return Object.hasOwn(OPENCLAW_COMMAND_EFFECTS, name) ? OPENCLAW_COMMAND_EFFECTS[name] : undefined; }
 function openClawEffect(name: string, args: string): ContextEffect {

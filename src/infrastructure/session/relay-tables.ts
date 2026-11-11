@@ -28,12 +28,11 @@ export const RELAY_DDL = `
 CREATE TABLE relay_bodies(session_id TEXT NOT NULL REFERENCES sessions(id), sha256 TEXT NOT NULL, bytes INTEGER NOT NULL CHECK(bytes BETWEEN 1 AND 262144), body TEXT NOT NULL,
   PRIMARY KEY(session_id, sha256)) STRICT;                                             -- 按会话计量与回收（RT3 P14、RT1-m2）
 CREATE TABLE relay_packets(session_id TEXT NOT NULL REFERENCES sessions(id), packet_id TEXT NOT NULL CHECK(packet_id GLOB 'relay-*'),
-  kind TEXT NOT NULL CHECK(kind IN('packet','delta','anchor','resend')), tier TEXT NOT NULL CHECK(tier IN('full','brief')),
-  complete INTEGER NOT NULL CHECK(complete IN(0,1)),
+  kind TEXT NOT NULL CHECK(kind IN('packet','delta')), tier TEXT NOT NULL CHECK(tier IN('full','brief')),
   target_harness TEXT NOT NULL, target_control TEXT NOT NULL, target_model TEXT, native_epoch INTEGER NOT NULL,
-  from_seq INTEGER NOT NULL, through_seq INTEGER NOT NULL CHECK(through_seq>=from_seq), base_packet_id TEXT, supersedes_packet_id TEXT,
-  policy_version TEXT NOT NULL, language TEXT NOT NULL CHECK(language IN('zh','en')), facts_fingerprint TEXT NOT NULL,
-  body_sha256 TEXT NOT NULL, est_tokens INTEGER NOT NULL, untrusted_tokens INTEGER NOT NULL, user_tokens INTEGER NOT NULL, estimator TEXT NOT NULL,
+  from_seq INTEGER NOT NULL, through_seq INTEGER NOT NULL CHECK(through_seq>=from_seq), supersedes_packet_id TEXT,
+  policy_version TEXT NOT NULL, language TEXT NOT NULL CHECK(language IN('zh','en')),
+  body_sha256 TEXT NOT NULL, est_tokens INTEGER NOT NULL,
   manifest_json TEXT NOT NULL CHECK(json_valid(manifest_json) AND length(CAST(manifest_json AS BLOB))<=65536),      -- 只含由正文决定的字段；逐 Run 的（含脱敏上下文）在 relay_deliveries（F08）
   PRIMARY KEY(session_id, packet_id), FOREIGN KEY(session_id, body_sha256) REFERENCES relay_bodies(session_id, sha256)) STRICT;
 CREATE TABLE relay_deliveries(session_id TEXT NOT NULL, run_id TEXT NOT NULL, packet_id TEXT NOT NULL,
@@ -104,20 +103,17 @@ function runOf(state: SessionSnapshot, id: RunId, label: string): PublicRun {
 const TERMINAL = new Set<PublicRun["status"]>(["completed", "cancelled", "failed", "unknown"]);
 
 /**
- * The fold check that replaces K7's check of `sourceRunIds` (ADR-055 §14.1, RT1-M1, F12): every Run a packet's fold
- * quotes (a unit, a range, an exclusion) has finished and its user message came before the current input's.
+ * The check that replaces K7's check of `sourceRunIds` (ADR-055 §14.1, RT1-M1, F12): every Run a packet quotes has finished and
+ * its user message came before the current input's.
  */
-export function checkFold(state: SessionSnapshot, current: PublicRun, packet: RelayPacket): void {
+export function checkQuoted(state: SessionSnapshot, current: PublicRun, packet: RelayPacket): void {
   const before = userSeq(state, current);
   const quoted = (index: number): void => {
     const run = state.runs[index];
     if (run === undefined || run.id === current.id || !TERMINAL.has(run.status)) throw prepareFailed("render", "the relay packet quotes a Turn that has not finished");
     if (userSeq(state, run) >= before) throw prepareFailed("render", "the relay packet quotes a Turn accepted after the current input");
   };
-  for (const unit of packet.fold) {
-    if (unit.kind === "range") { for (let index = unit.fromRun; index <= unit.throughRun; index++) quoted(index); }
-    else quoted(unit.runIndex);
-  }
+  for (const index of packet.runs) quoted(index);
 }
 interface CheckedPacket { readonly packet: RelayPacket; readonly body: string; readonly manifest: string; readonly fresh: boolean; readonly freshBody: boolean }
 interface CheckedDelivery { readonly kind: "insert"; readonly record: DeliveryRecord }
@@ -131,7 +127,7 @@ const NONE: CheckedRelayRows = { packets: [], deliveries: [] };
 
 /**
  * Checks a transaction's authoritative relay rows against `next`, the snapshot they are committed with, reading what the
- * session already holds: packet manifests, fold, text digests and the 64 MiB text quota (RELAY_PREPARE_FAILED render,
+ * session already holds: packet manifests, quoted Runs, text digests and the 64 MiB text quota (RELAY_PREPARE_FAILED render,
  * render_mismatch, storage_quota); one delivery per Run, a packet each names, and outcome changes along
  * DELIVERY_TRANSITIONS (INVALID_TRANSITION otherwise). Runs no statement that writes.
  */
@@ -146,7 +142,7 @@ export function checkRelayRows(database: DatabaseSync, id: SessionId, next: Sess
     const bytes = utf8(write.body), digest = sha256(write.body);
     if (bytes < 1 || bytes > RELAY_BODY_BYTES || bytes !== packet.body.bytes || digest !== packet.body.sha256) throw prepareFailed("render", "the relay packet text does not match its manifest");
     if (packet.target.harnessId !== current.selection.harnessId || packet.target.controlId !== current.selection.controlId) throw prepareFailed("render", "the relay packet is for another Harness than its Turn's");
-    checkFold(next, current, packet);
+    checkQuoted(next, current, packet);
     const existing = database.prepare("SELECT body_sha256 FROM relay_packets WHERE session_id=? AND packet_id=?").get(id, packet.id);
     if (existing !== undefined && existing.body_sha256 !== digest) throw prepareFailed("render_mismatch", "a relay packet with this identity holds another text");
     if (packets.some(row => row.packet.id === packet.id && row.packet.body.sha256 !== digest)) throw prepareFailed("render_mismatch", "two relay packets with one identity hold different texts");
@@ -202,13 +198,13 @@ export function checkPacketReferences(database: DatabaseSync, id: SessionId, bef
 /** Writes rows checkRelayRows checked, in the same transaction; packets and texts already kept are left as they are. */
 export function writeRelayRows(database: DatabaseSync, id: SessionId, rows: CheckedRelayRows): void {
   const body = database.prepare("INSERT INTO relay_bodies(session_id,sha256,bytes,body) VALUES(?,?,?,?) ON CONFLICT(session_id, sha256) DO NOTHING");
-  const packet = database.prepare("INSERT INTO relay_packets(session_id,packet_id,kind,tier,complete,target_harness,target_control,target_model,native_epoch,from_seq,through_seq,base_packet_id,supersedes_packet_id,policy_version,language,facts_fingerprint,body_sha256,est_tokens,untrusted_tokens,user_tokens,estimator,manifest_json) " +
-    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id, packet_id) DO NOTHING");
+  const packet = database.prepare("INSERT INTO relay_packets(session_id,packet_id,kind,tier,target_harness,target_control,target_model,native_epoch,from_seq,through_seq,supersedes_packet_id,policy_version,language,body_sha256,est_tokens,manifest_json) " +
+    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id, packet_id) DO NOTHING");
   for (const row of rows.packets) {
     const p = row.packet;
     if (row.freshBody) body.run(id, p.body.sha256, p.body.bytes, row.body);
-    if (row.fresh) packet.run(id, p.id, p.kind, p.tier, p.complete ? 1 : 0, p.target.harnessId, p.target.controlId, p.target.model, p.target.nativeEpoch,
-      p.range.fromSeq, p.range.throughSeq, p.basePacketId, p.supersedes, p.policyVersion, p.language, p.factsFingerprint, p.body.sha256, p.body.estTokens, p.body.untrustedTokens, p.body.userTokens, p.body.estimator, row.manifest);
+    if (row.fresh) packet.run(id, p.id, p.kind, p.tier, p.target.harnessId, p.target.controlId, p.target.model, p.target.nativeEpoch,
+      p.range.fromSeq, p.range.throughSeq, p.supersedes, p.policyVersion, p.language, p.body.sha256, p.body.estTokens, row.manifest);
   }
   for (const row of rows.deliveries) {
     if (row.kind === "insert") {

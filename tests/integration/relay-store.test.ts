@@ -79,18 +79,14 @@ function seeded(store: SqliteSessionStore, workspace: string, name: string, opti
 }
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
 function packetIdOf(seed: string): string { return "relay-" + Array.from(createHash("sha256").update(seed).digest().subarray(0, 20), byte => CROCKFORD[byte % 32]).join(""); }
-/** A packet manifest for `body` as G070 will render one, quoting `fold` (Run indexes, or explicit fold entries). */
-function packetOf(body: string, fold: readonly (number | Readonly<Record<string, unknown>>)[], extra: Readonly<Record<string, unknown>> = {}): RelayPacket {
-  return parseRelayPacket({ id: packetIdOf(body), kind: "packet", tier: "full", complete: true,
+/** A packet manifest for `body` as the coordinator makes one, quoting the Runs `quoted` (their indexes in the Session). */
+function packetOf(body: string, quoted: readonly number[], extra: Readonly<Record<string, unknown>> = {}): RelayPacket {
+  return parseRelayPacket({ id: packetIdOf(body), kind: "packet", tier: "full",
     target: { harnessId: "alpha", controlId: "alpha-acp", model: null, nativeEpoch: 1 },
-    source: { kind: "other", names: [{ harnessId: "bravo", model: null, runs: [0, 1] }] }, range: { fromSeq: 0, throughSeq: 8, fromRun: 0, throughRun: 1 }, basePacketId: null, supersedes: null,
-    policyVersion: "relay/1", language: "en", factsFingerprint: hex("f"),
-    inputs: { attachOverride: false, digestBehind: [], detailsMissing: [], noteIncluded: false, firstLineOmitted: null },
-    redaction: { profile: "egress", count: 0, byClass: {}, overridden: 0, unscanned: 0 },
-    body: { sha256: sha(body), bytes: Buffer.byteLength(body, "utf8"), estTokens: 12, estimator: "est/2", untrustedTokens: 0, userTokens: 4 },
-    budget: { capTokens: 8000, userCap: 2500, untrustedCap: 3000, window: 200_000, fixedPrefix: 0, windowSource: "assumed", clampedBy: [] },
-    sections: [{ id: "words", author: "user", items: 1, estTokens: 4, dataClasses: ["user_text"] }],
-    fold: fold.map(unit => typeof unit === "number" ? { kind: "unit", runIndex: unit, grade: "verbatim", why: "tail" } : unit), omissions: [], userEdits: [], ...extra });
+    range: { fromSeq: 0, throughSeq: 8, fromRun: 0, throughRun: 1 }, runs: quoted, supersedes: null, policyVersion: "relay/1", language: "en", repeat: false,
+    attachOverride: false, firstLineOmitted: null, redactions: 0,
+    body: { sha256: sha(body), bytes: Buffer.byteLength(body, "utf8"), estTokens: 12 },
+    budget: { capTokens: 8000, window: 200_000, windowSource: "assumed", clampedBy: [] }, omissions: [], ...extra });
 }
 function deliveryOf(run: string, packet: RelayPacket, extra: Readonly<Record<string, unknown>> = {}): DeliveryRecord {
   return parseDeliveryRecord({ runId: run, packetId: packet.id, channel: "single_text", outcome: { kind: "in_flight" }, handoffLogSeq: null, inputHmac: hex("c"),
@@ -280,18 +276,18 @@ test("a migration killed with SIGKILL leaves a database at v12 or v13 with nothi
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// G066-C03: the fold check
+// G066-C03: the check of the Runs a packet quotes
 // ---------------------------------------------------------------------------------------------------------------------
 
-test("a packet whose fold quotes an unfinished Turn or one accepted after the current input fails that Turn only", t => {
+test("a packet that quotes an unfinished Turn or one accepted after the current input fails that Turn only", t => {
   const { workspace, store } = open(t), refused = seeded(store, workspace, "refused", { queued: 1 }), kept = seeded(store, workspace, "kept");
   const three = refused.runs[2]!, one = refused.runs[0]!;
   const attempt = (packet: RelayPacket, current = three) => () => write(store, refused.id, { packets: [{ runId: current.id, packet, body: bodyOf(packet) }], deliveries: [{ kind: "insert", record: deliveryOf(current.id, packet) }] });
   const bodies = new Map<string, string>(), bodyOf = (packet: RelayPacket) => bodies.get(packet.id)!;
-  const make = (text: string, fold: readonly (number | Readonly<Record<string, unknown>>)[]) => { const packet = packetOf(text, fold); bodies.set(packet.id, text); return packet; };
-  // The current Turn itself, a queued Turn and a range reaching it have not finished.
-  for (const fold of [[0, 2], [3], [{ kind: "range", fromRun: 0, throughRun: 2, units: 3 }], [{ kind: "excluded", runIndex: 3, by: "user" }]])
-    assert.throws(attempt(make("unfinished " + JSON.stringify(fold), fold)), reason("render"));
+  const make = (text: string, quoted: readonly number[]) => { const packet = packetOf(text, quoted); bodies.set(packet.id, text); return packet; };
+  // The current Turn itself and a queued Turn have not finished.
+  for (const quoted of [[0, 2], [3], [0, 1, 2]])
+    assert.throws(attempt(make("unfinished " + JSON.stringify(quoted), quoted)), reason("render"));
   // Run two's input came after Run one's: one cannot quote it.
   assert.throws(attempt(make("later input", [1]), one), reason("render"));
   const db = raw(join(workspace, "data"));
@@ -305,7 +301,7 @@ test("a packet whose fold quotes an unfinished Turn or one accepted after the cu
     events: [{ type: "run.ended", data: { runId: three.id, status: "failed", error: { code: "RELAY_PREPARE_FAILED", reason: "render" } } }] }));
   assert.equal(store.get(refused.id).runs[2]?.error?.code, "RELAY_PREPARE_FAILED");
   // Finished Turns accepted before the current input are quoted as they are.
-  const good = packetOf("quotes finished Turns", [0, 1, { kind: "range", fromRun: 0, throughRun: 1, units: 2 }]);
+  const good = packetOf("quotes finished Turns", [0, 1]);
   const committed = write(store, kept.id, { packets: [{ runId: kept.runs[2]!.id, packet: good, body: "quotes finished Turns" }], deliveries: [{ kind: "insert", record: deliveryOf(kept.runs[2]!.id, good) }] });
   assert.equal(committed.events.length, 1); assert.equal(outcomeOf(store, kept.id, kept.runs[2]!.id), "in_flight");
 });
@@ -520,6 +516,6 @@ test("no relay row holds an object shaped like a ContentRef: relay rows keep pos
     };
     for (const [table, columns] of [["relay_packets", ["manifest_json"]], ["relay_index", ["index_json"]]] as const)
       for (const row of db.prepare("SELECT " + columns.join(",") + " FROM " + table).all()) for (const column of columns) visit(JSON.parse(String(row[column])), table + "." + column);
-    assert.ok(objects >= 10, "the scan read the rows: " + objects + " objects");
+    assert.ok(objects >= 5, "the scan read the rows: " + objects + " objects");
   } finally { db.close(); }
 });

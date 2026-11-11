@@ -1,7 +1,7 @@
 import type { ControlProtocol } from "../contexts/catalog/domain/discovery.js";
 import type { ResolvedCommand } from "../contexts/catalog/domain/catalog.js";
 import type { ContentKind, ContentRef, ControlAttachment } from "./content.js";
-import type { DataClass, DeliveryPosition, RelayCapabilities, RelayPacketId, TurnText, VendorObservation, VerifyResult } from "./relay.js";
+import type { RelayCapabilities, RelayPacketId, TurnText } from "./relay.js";
 export type { TurnText };
 
 declare const nativeConversationBrand: unique symbol;
@@ -137,29 +137,18 @@ export interface BackendResult {
    */
   readonly command?: "noop";
   /**
-   * The Driver confirmed that this Turn emptied the native history (ADR-055 §3.2, F04): the native side's fixed receipt, a
-   * read that shows a new session, or the Driver's own replacement of the session (`replaced`): the old native session is
-   * abandoned, and the next Turn continues from `replaced.checkpoint`, or opens a new native session when that is null (a
-   * session never prompted cannot be resumed by another process, so a Driver does not open one ahead). Absent says nothing: a clear the Driver could not confirm stays unconfirmed. Transient: the
-   * Session writes its conclusion into the Turn's end event and never into the snapshot.
+   * The Driver ran the Hub's clear (decision log 2026-11-11: clearing is the Hub's, on every Harness): it sent nothing to the
+   * native side and gave the native session up, so the next Turn opens a new native session (a session never prompted cannot be
+   * resumed by another process, so a Driver does not open one ahead). Absent says nothing happened. The Session writes its
+   * conclusion into the Turn's end event; the snapshot never holds it.
    */
-  readonly native?: { readonly cleared: true; readonly replaced: { readonly checkpoint: string | null } | null };
+  readonly native?: { readonly cleared: true };
 }
 /**
  * The default placement of a Turn's text: the input alone, or the relay packet, a blank line and the user's words as one
  * text. A Driver whose declaration places them otherwise (RelayCapabilities.placement) does so itself.
  */
 export function singleText(text: TurnText): string { return typeof text === "string" ? text : `${text.relay.body}\n\n${text.user}`; }
-/**
- * What a check asks a Driver (ADR-055 §7.3): each packet's title line after the position its delivery recorded, oldest first.
- * `markers` may be empty: a check of an unconfirmed clear on a binding that stands on no packet asks only `historyEmpty`.
- */
-export interface VerifyRequest {
-  readonly markers: readonly { readonly packetId: RelayPacketId; readonly position: DeliveryPosition }[];
-  /** Whether the check needs to know that the native history is empty (an unconfirmed clear). */
-  readonly historyEmpty: boolean;
-}
-export const MAX_VERIFY_MARKERS = 8;
 export interface NativeOption {
   readonly id: string;
   readonly name: string;
@@ -270,8 +259,6 @@ export interface NativeModelCatalog {
   readonly canSelect: boolean;
   readonly options?: readonly NativeOption[];
   readonly commands?: readonly NativeCommand[];
-  /** Commands the native side runs although it does not list them (Claude's `/clear`), with their effects (ADR-055 R0d). */
-  readonly hiddenCommands?: readonly NativeCommand[];
 }
 export interface StopRequestReceipt { readonly requested: true }
 export interface CleanupEvidence {
@@ -372,27 +359,6 @@ export interface HarnessControl {
    * reference and recent messages. Sends no prompt and changes nothing; the connection is closed afterwards.
    */
   importSession?(id: string, cwd: string): Promise<NativeSessionImport>;
-  /**
-   * Where the native history of the open conversation stands now, read without changing it (ADR-055 §3.2, F20). Called after
-   * open() and before a Turn's input; a later check reads only the first user entry after it. `{ kind: "none" }` when this
-   * conversation has no readable position; absent when the Driver records none.
-   */
-  deliveryPosition?(id: NativeConversationId): Promise<DeliveryPosition>;
-  /**
-   * Reads the native history for the packets' title lines, each after its own position, and answers per marker; reads only,
-   * sends no prompt, and returns no native content (ADR-055 §7.3, R8). A marker it could not look for is "unavailable", never
-   * "absent". `historyEmpty` is true only after the Driver read the whole history and found nothing, false as soon as it saw an entry, null otherwise. A check never harms what it checks: its
-   * timeout or failure answers "unavailable" (or rejects) within about two seconds, and leaves the connection usable and a
-   * settled Turn's result as it was; it rejects only when the connection had already failed.
-   */
-  verifyDelivered?(id: NativeConversationId, request: VerifyRequest): Promise<VerifyResult>;
-  /**
-   * The endpoint and model this connection's conversation runs on, as the Driver resolved them from its own configuration
-   * layers after open() (ADR-055 §10.4); null when it cannot tell. Values never leave as text: host and layer only.
-   */
-  relayVendor?(): Promise<VendorObservation | null>;
-  /** The user's own words in a replayed native user entry, with what native wrapping was stripped (ADR-055 VF3-09). Pure. */
-  userTextOf?(replayed: string): { readonly user: string; readonly stripped: readonly { readonly kind: DataClass; readonly bytes: number }[] };
   /**
    * Names the open conversation on the native side, for a session a handoff created; called after open() and before its
    * first prompt, only when the declaration's `title` is "set". A failure never fails the Turn.

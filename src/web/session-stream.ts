@@ -33,26 +33,14 @@ const RELAY_EVENTS: ReadonlySet<string> = new Set(RELAY_STREAM_EVENTS);
 const RUN_IDENTITY = /^run-[A-Za-z0-9-]{1,96}$/u, PACKET_IDENTITY = /^relay-[0-9a-hjkmnp-tv-z]{20}$/u;
 /**
  * What the stream announces of a relay event (ADR-055 §12.4, §14.2): its kind, the Run and packet it names and when, picked
- * field by field from the event, which also holds a delivery's mark, a check's markers and counts. Nothing else of the event
- * is copied, so no text, native value or digest can leave through a notice (RT4 AP-01–AP-03). Undefined for any other event.
+ * field by field from the event, which also holds a delivery's mark and how it was shown. Nothing else of the event is copied, so
+ * no text, native value or digest can leave through a notice (RT4 AP-01–AP-03). Undefined for any other event.
  */
 export function relayStreamEvent(event: SessionEvent): RelayStreamEvent | undefined {
   if (!RELAY_EVENTS.has(event.type)) return undefined;
   const data = event.data;
-  // The Run an event names is the Turn it happened in: a check's Turn is `inRunId`, a vendor change was seen in `observedInRun`.
-  const named = event.type === "relay.verified" ? data.inRunId : event.type === "relay.vendor_changed" ? data.observedInRun : data.runId;
-  const runId = typeof named === "string" && RUN_IDENTITY.test(named) ? named : undefined;
-  let packetId: string | undefined;
-  if (event.type === "relay.input_recorded") packetId = typeof data.packetId === "string" && PACKET_IDENTITY.test(data.packetId) ? data.packetId : undefined;
-  else if (event.type === "relay.verified" && Array.isArray(data.markers)) {
-    // A check that looked at one packet names it; one that looked at several names none.
-    const asked = new Set<string>();
-    for (const marker of data.markers as readonly unknown[]) {
-      const id = marker !== null && typeof marker === "object" ? (marker as Readonly<Record<string, unknown>>).packetId : undefined;
-      if (typeof id === "string" && PACKET_IDENTITY.test(id)) asked.add(id);
-    }
-    if (asked.size === 1) packetId = [...asked][0];
-  }
+  const runId = typeof data.runId === "string" && RUN_IDENTITY.test(data.runId) ? data.runId : undefined;
+  const packetId = typeof data.packetId === "string" && PACKET_IDENTITY.test(data.packetId) ? data.packetId : undefined;
   const at = Date.parse(event.timestamp);
   return { type: event.type as RelayStreamEventType, sessionId: event.sessionId, ...(runId === undefined ? {} : { runId }), ...(packetId === undefined ? {} : { packetId }), at: Number.isFinite(at) ? at : 0 };
 }

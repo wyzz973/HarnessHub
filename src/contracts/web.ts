@@ -269,8 +269,6 @@ export interface SwitchWebSession { readonly selection: SelectionRequest; readon
 export interface WebError {
   readonly code: string;
   readonly message: string;
-  /** Only on the relay errors a user can answer (ADR-055 §12.4): which binding, why, and what the user may choose next. */
-  readonly relay?: RelayErrorView;
 }
 export interface AuthSession { readonly csrfToken: string }
 
@@ -282,7 +280,7 @@ export interface AuthSession { readonly csrfToken: string }
 /** What is known of a Run's packet reaching its binding's native history; it can still change after the Run ended. */
 export interface RelayDeliveryView {
   readonly state: DeliveryStatus;
-  /** Only when `recorded`: E1 (the native side said so), E2 (checked afterwards) or E3 (inferred when the Turn settled). */
+  /** Only when `recorded`: E1 (the native side said so: live evidence) or E3 (inferred when the Turn ended normally). */
   readonly evidence: DeliveryEvidence | null;
 }
 /**
@@ -291,7 +289,7 @@ export interface RelayDeliveryView {
  * resumable session); absent for a Run that carried none, and when the Session's delivery rows could not be read. `decision`
  * (`run.context_prepared.data.relay.decision`) is what the relay did with the Turn's history and why, present only for a Turn
  * that has one: an automatic resend, a send alone, a complete packet again, or the user's own choice. It is how the page tells
- * "this one went alone" from "taken over" (permissive-defaults §2.6).
+ * "this one went alone" from "taken over".
  */
 export interface RunRelayView extends RunRelay { readonly delivery?: RelayDeliveryView; readonly decision?: RelayDecision }
 /**
@@ -316,25 +314,14 @@ export interface RelayBindingView {
   readonly throughRun: number | null;
   /** The evidence the binding's latest recorded packet was decided by (E1 or E3); null when none was. */
   readonly evidence: EvidenceClass | null;
-  /**
-   * How many times this native session was cleared (a confirmed clear raises the epoch in place); a fresh native session that a clear
-   * left, because the Harness gave up the one it cleared (Claude Code), counts the clear that made it.
-   */
+  /** How many times this native session was cleared: a clear gives the native session up for a new one, which counts the clear that made it. */
   readonly cleared: number;
-  /** Whether the Driver's relay mechanisms were proved on a real Harness; false also when the Driver declares none. */
-  readonly probed: boolean;
   /**
-   * Whether anything this Harness does can tell the Gateway that a handoff arrived (a live signal, a check afterwards, or a
-   * prompt that ended and so proves its entry recorded). False for a Driver that declares none: a packet sent to it stays
-   * unconfirmed whatever happens, which is a fact about the Harness and not a fault. Absent when the Gateway cannot tell.
+   * Whether anything this Harness does can tell the Gateway that a handoff arrived (a live signal, or a prompt that ended and so
+   * proves its entry recorded). False for a Driver that declares none: a packet sent to it stays unconfirmed whatever happens, which
+   * is a fact about the Harness and not a fault. Absent when the Gateway cannot tell.
    */
   readonly canConfirm?: boolean;
-  /**
-   * The model service this binding's Harness was last seen running on, when it is a named one (`openai`, `anthropic`, `deepseek`…):
-   * what the page tells the user a handoff goes to. A gateway, router or provider of the user's own is named by a host or an id
-   * and is not given here (only an acknowledge names one, in `attention.vendor`); absent while the Harness has not run.
-   */
-  readonly vendor?: string;
   /**
    * What a handoff to this binding would carry now: the finished Runs of other Harnesses (or its earlier native epochs) it does not
    * hold, and an estimate of their tokens. The estimate errs high and is not the packet's size (the packet folds to its budget).
@@ -342,22 +329,15 @@ export interface RelayBindingView {
    */
   readonly owed?: { readonly runs: number; readonly estTokens: number };
   /**
-   * The latest time the model service this binding's Harness runs on changed, as the relay recorded it (`relay.vendor_changed`, which the
-   * defaults let go and note): the vendor keys it was and became (a named service, or a public key such as `gateway:<host>`), and the
-   * 0-based index, in the Session's Runs, of the Turn that saw it — the page says it under that Turn's message. Absent when it never changed.
-   */
-  readonly vendorChange?: { readonly from: string; readonly to: string; readonly runIndex: number };
-  /**
-   * What this binding asks the user to look at (permissive-defaults §2.6), read from the Runtime: never a block, the next input
-   * goes anyway. Absent when it needs nothing.
+   * What this binding asks the user to look at, read from the Runtime: never a block, the next input goes anyway. Absent when it
+   * needs nothing.
    */
   readonly attention?: RelayAttentionView;
 }
 /**
  * `Runtime.relayAttention` for one binding. `options` are the ways the user may settle it, each one field of the next send's
- * `relay` member (RELAY_OPTIONS); `send_alone` is never listed (the next input does it by itself). `key` names one episode: the
- * same cause within one wait is one key, so a banner that was closed does not come back. `packet` is the "交接单 #n" a
- * `delivery_unconfirmed` is about; `vendor` the key an `acknowledge` would be for (the only place the relay view names one).
+ * `relay` member (`attach_full` is `{ attach: "full" }`). `key` names one episode: the same cause within one wait is one key, so a
+ * banner that was closed does not come back. `packet` is the "交接单 #n" a `delivery_unconfirmed` is about.
  */
 export interface RelayAttentionView {
   readonly cause: RelayAttention["cause"];
@@ -365,7 +345,6 @@ export interface RelayAttentionView {
   readonly counts: RelayAttention["counts"];
   readonly key: string;
   readonly packet?: number;
-  readonly vendor?: string;
 }
 /** One packet-carrying Run (GET …/relay), in Run order; the same packet sent again by another Run is another entry. */
 export interface RelayPacketView {
@@ -379,7 +358,7 @@ export interface RelayPacketView {
   readonly tier: Tier;
   readonly target: { readonly harnessId: string; readonly model: string | null };
   readonly estTokens: number;
-  /** How many items the packet left out (the sum of its omission counts). */
+  /** How many items the packet left out whole (the sum of its ledger's omitted counts); 0 for a complete one. */
   readonly omissions: number;
   readonly redactions: number;
   readonly delivery: DeliveryStatus;
@@ -389,11 +368,10 @@ export interface RelayView {
   readonly bindings: readonly RelayBindingView[];
   readonly packets: readonly RelayPacketView[];
   /**
-   * Present (true) when the data directory is within reach of this conversation's workspace: a Harness working there can read every
-   * conversation. A warning the page shows at the workspace level, never a block (`relay.dataRootInWorkspace=block` is the setting
-   * that refuses).
+   * The Harnesses this installation has handed a conversation to before: its handoff log's rows that a delivery rests on, by Harness
+   * id. The first handoff to a Harness is told in one line above the message box, once; a Harness listed here needs no telling.
    */
-  readonly dataRootExposed?: true;
+  readonly handedOver: readonly string[];
   /**
    * What the installation as a whole cannot do for the relay while it stays so (the relay key file is unusable): a standing notice with its
    * reason, for every conversation, until it is mended. Absent when nothing is wrong (`Runtime.relayInstallation`).
@@ -402,36 +380,9 @@ export interface RelayView {
 }
 /** The installation's relay preferences, all of them: a key never set has its default (RELAY_PREF_DEFAULTS) (GET and PUT /api/v1/relay/prefs). */
 export interface RelayPrefsView { readonly prefs: Readonly<Record<RelayPrefKey, string>> }
-export interface RelayPrefWrite { readonly key: RelayPrefKey; readonly value: string }
-
-/**
- * What the user may choose next, each answered by a field of the next send's `relay` member: `attach_full` is
- * `{ attach: "full" }` (the complete handoff again), `send_alone` `{ attach: "none" }`, `new_native` `{ native: "new" }`,
- * `clear_confirmed` `{ clearConfirmed: true }`, `acknowledge` `{ consent: { vendor, decision: "acknowledged", scope } }`.
- */
-export const RELAY_OPTIONS = ["attach_full", "send_alone", "new_native", "clear_confirmed", "acknowledge"] as const;
-export type RelayOption = typeof RELAY_OPTIONS[number];
-/**
- * The `relay` member of an error body (ADR-055 §12.4): only on a relay error the user can answer (a 409 or the 429), and only
- * plain values — a Harness identity, the closed cause and option words, counts. Never text of the history.
- */
-export interface RelayErrorView {
-  /** The binding the input would have run on. */
-  readonly binding: { readonly harnessId: string; readonly controlId: string };
-  /** The error's closed reason: delivery_unconfirmed, verify_required, marker_absent, missing, vendor_changed, recovery_failed, … */
-  readonly cause?: string;
-  readonly options: readonly RelayOption[];
-  /**
-   * What the binding is owed and holds: `runs`, the finished Runs of other Harnesses (or of its earlier epochs) the next handoff to
-   * it carries; `packets`, the handoff packets it has recorded in its current native epoch.
-   */
-  readonly counts?: { readonly runs: number; readonly packets: number };
-  /** For `acknowledge`: the vendor key the consent would be for (present when the Runtime names it). */
-  readonly vendor?: string;
-}
 
 /** The session events the stream announces as `relay` frames (a notice, not the facts: the facts are in the snapshot before it). */
-export const RELAY_STREAM_EVENTS = ["relay.input_recorded", "relay.verified", "relay.vendor_changed", "relay.clear_confirmed"] as const;
+export const RELAY_STREAM_EVENTS = ["relay.input_recorded"] as const;
 export type RelayStreamEventType = typeof RELAY_STREAM_EVENTS[number];
 /** Names an event and where it happened; never the packet's text, a native value or a digest of one. `at` is epoch milliseconds. */
 export interface RelayStreamEvent {

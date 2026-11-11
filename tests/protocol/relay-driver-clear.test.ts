@@ -14,7 +14,7 @@ import { driver, gatewayOf, ID_A, peerRoot, prompts, relayTurn, run, type Harnes
 // relay peer, a real child process whose trace holds every line it received; OpenClaw's Gateway is a function that records its
 // calls. Nothing here runs a Harness.
 
-const CLEARED: BackendResult = { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true, replaced: { checkpoint: null } } };
+const CLEARED: BackendResult = { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true } };
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const methods = async (peer: Peer): Promise<readonly string[]> => (await peer.sent()).flatMap(line => typeof line.method === "string" ? [line.method] : []);
 const notices = (events: readonly ControlEvent[]) => events.flatMap(event => event.type === "diagnostic" ? [event.message] : []);

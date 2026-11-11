@@ -37,7 +37,7 @@ export function reportedWindow(state: SessionSnapshot, current: PublicRun): numb
 }
 export function resolveWindow(state: SessionSnapshot, current: PublicRun): ResolvedWindow {
   const reported = reportedWindow(state, current);
-  return { size: reported ?? ASSUMED_WINDOW, source: reported === null ? "assumed" : "session_report", fixedPrefix: FIXED_PREFIX };
+  return { size: reported ?? ASSUMED_WINDOW, source: reported === null ? "assumed" : "observed", fixedPrefix: FIXED_PREFIX };
 }
 /**
  * hardCap (§6.2): what the window leaves a packet — at most 5% of it, and no more than remains after the fixed prefix, the
@@ -55,7 +55,7 @@ export function hardCap(window: ResolvedWindow, inputTokens: number, channel: { 
  * assumption; in both cases no larger than `cap` (the hard cap), the share of the user's words following it.
  */
 export function packetBudget(window: ResolvedWindow, cap: number): RelayBudget {
-  const base = resolveRelayBudget(window.source === "session_report" ? window.size : null);
+  const base = resolveRelayBudget(window.source === "observed" ? window.size : null);
   if (cap >= base.cap) return base;
   const capped = Math.max(0, Math.floor(cap));
   return { ...base, cap: capped, user: Math.min(RELAY_BUDGET.userCap, Math.floor(0.5 * capped)) };

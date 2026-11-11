@@ -435,7 +435,7 @@ async function turn(h: Rig, open: Open, text: TurnText, label: string, options: 
     reply: replyText, hookFailure, timedOut, usage };
   const recorded = events.find(entry => entry.event.type === "input_recorded");
   h.turns.push({ label, status: result?.status ?? null, reason: result?.reason ?? null, input: result?.input ?? null, errorCode: result?.error?.code ?? failure?.code ?? null, command: result?.command ?? null,
-    cleared: result?.native === undefined ? null : { replaced: result.native.replaced === null ? null : { checkpointNull: result.native.replaced.checkpoint === null } }, ms: Math.round(ms), firstEventMs: turnRecord.firstEventMs, firstTextMs: turnRecord.firstTextMs,
+    cleared: result?.native?.cleared === true, ms: Math.round(ms), firstEventMs: turnRecord.firstEventMs, firstTextMs: turnRecord.firstTextMs,
     events: eventCounts(events), inputRecordedAtMs: recorded === undefined ? null : Math.round(recorded.at), usage: { turn: usage.turn, context: usage.context, cost: usage.cost }, replyChars: [...replyText].length,
     sentChars: [...(typeof text === "string" ? text : singleText(text))].length, packet: typeof text === "string" ? null : text.relay.packetId, hookFailure: hookFailure === null ? null : { code: (hookFailure as Record<string, unknown>).code ?? null, remoteCode: (hookFailure as Record<string, unknown>).remoteCode ?? null, remoteMessage: (hookFailure as Record<string, unknown>).remoteMessage ?? null },
     failure: failure === null ? null : { code: failure.code ?? null, remoteCode: failure.remoteCode ?? null, remoteMessage: failure.remoteMessage ?? null }, timedOut });
@@ -667,14 +667,13 @@ async function probeStatic(h: Rig): Promise<void> {
     h.facts.promptCapabilities = Object.fromEntries(Object.entries(record(capabilities.promptCapabilities)).filter(([, value]) => typeof value === "boolean"));
     h.facts.model = h.model ?? catalog?.defaultModel ?? null;
     h.facts.catalog = catalog === null ? null : { models: catalog.models.length, defaultModel: catalog.defaultModel, commands: catalog.commands?.length ?? null, authentication: catalog.authentication,
-      hidden: (catalog.hiddenCommands ?? []).map(command => command.name + ":" + (command.contextEffect ?? "unknown")), commandNames: (catalog.commands ?? []).map(command => command.name).filter(name => ["compact", "clear", "export", "context", "cost", "status", "usage", "model", "init", "review"].includes(name)) };
+      commandNames: (catalog.commands ?? []).map(command => command.name).filter(name => ["compact", "clear", "export", "context", "cost", "status", "usage", "model", "init", "review"].includes(name)) };
     if (caps === null) { h.find("CAT", "declaration", "refuted", "the Harness has a relay declaration", { declared: false }); return; }
-    h.facts.declaration = { probed: caps.probed, delivery: caps.delivery, execution: caps.execution, placement: caps.placement, window: caps.window, fixedPrefix: caps.fixedPrefix, cacheTtl: caps.cacheTtl,
-      compactionEvidence: caps.compactionEvidence, title: caps.title, hostPathRead: caps.hostPathRead, unlistedSlash: caps.commands.unlistedSlash, hidden: caps.commands.hidden.map(command => command.name) };
+    h.facts.declaration = { delivery: caps.delivery, execution: caps.execution, placement: caps.placement, title: caps.title };
     h.find("CAT", "declaration", control.relayCapabilities === caps ? "confirmed" : "refuted", "the instance carries the same frozen declaration the factory returns without an instance", { sameObject: control.relayCapabilities === caps });
     const readsBack = ["verifyDelivered", "deliveryPosition", "relayVendor", "userTextOf"].filter(member => member in control);
-    h.find("CAT", "delivery.verify", caps.delivery.verify === "none" && readsBack.length === 0 ? "confirmed" : "refuted",
-      "no Driver reads its native history back or reads a configuration for a vendor: the declaration says verify none and the instance has no check, no position, no vendor reading and no reader of replayed entries", { verify: caps.delivery.verify, readsBack });
+    h.find("CAT", "no read-back", readsBack.length === 0 ? "confirmed" : "refuted",
+      "no Driver reads its native history back or reads a configuration for a vendor: the instance has no check, no position, no vendor reading and no reader of replayed entries", { readsBack });
 
     // CLS: how the Hub reads a fixed set of inputs with this Harness's real catalog, by the Driver's own reading and by its declaration.
     const entries = catalog === null ? null : relayEntries(catalog.commands ?? []);
@@ -801,8 +800,8 @@ async function probePlacement(h: Rig): Promise<void> {
     const file = await attachmentOf(h, "notes.txt", "synthetic attachment for the placement probe\n");
     const t2 = await turn(h, first, built2.turn, "P1: relay Turn with a file", { attachments: [file] });
     const rec2 = live ? await recordOf(h, first, stored) : null, entry2 = entryOf(rec2, built2), landing = landingFacts(entry2, user2, file.name);
-    if (live) h.find("P1", "placement.pointersAfterUser", rec2 === null ? "unverified" : entry2 === undefined ? "refuted" : landing.nameAfterWords === true || landing.nonTextBlockAfterText === true ? "confirmed" : "observed",
-      "the attachment (a pointer in the text, or a block) lies after the user's words in the same native user entry", { ...landing, declared: caps.placement.pointersAfterUser, status: t2.result?.status ?? null, input: t2.result?.input ?? null, ...(entry2 === undefined ? {} : { placement: placementFacts(h, entry2, built2) }) });
+    if (live) h.find("P1", "attachments after the user's words", rec2 === null ? "unverified" : entry2 === undefined ? "refuted" : landing.nameAfterWords === true || landing.nonTextBlockAfterText === true ? "confirmed" : "observed",
+      "the attachment (a pointer in the text, or a block) lies after the user's words in the same native user entry", { ...landing, status: t2.result?.status ?? null, input: t2.result?.input ?? null, ...(entry2 === undefined ? {} : { placement: placementFacts(h, entry2, built2) }) });
     // P13: the titles the native side gave this conversation.
     await delay(2000);
     if (h.harnessId === "codex") { const thread = await codexThread(first); titles = { name: thread?.name ?? null, preview: typeof thread?.preview === "string" ? plain(thread.preview, 80) : null }; if (typeof thread?.path === "string") h.rollouts.add(thread.path); }
@@ -830,7 +829,7 @@ async function probePlacement(h: Rig): Promise<void> {
     } else {
       const facts = placementFacts(h, entryOf(rec, built1), built1), landing = landingFacts(entryOf(rec, built2), user2, "notes.txt");
       h.find("P1", "placement (title line, words, order)", placementHolds(facts) ? "confirmed" : "refuted", "the replayed user entry holds the title line, the packet and the user's words verbatim, in that order", { ...facts, reader: rec.source, replay: rec.facts });
-      h.find("P1", "placement.pointersAfterUser", entryOf(rec, built2) === undefined ? "refuted" : landing.nameAfterWords === true || landing.nonTextBlockAfterText === true ? "confirmed" : "observed", "the attachment lies after the user's words in the replayed entry", { ...landing, declared: caps.placement.pointersAfterUser });
+      h.find("P1", "attachments after the user's words", entryOf(rec, built2) === undefined ? "refuted" : landing.nameAfterWords === true || landing.nonTextBlockAfterText === true ? "confirmed" : "observed", "the attachment lies after the user's words in the replayed entry", { ...landing });
     }
   }
 }
@@ -868,10 +867,12 @@ async function probeSlash(h: Rig): Promise<void> {
     let rec: NativeRecord | null;
     if (readerOf(h) === "replay") { const id = (await open.control.checkpoint?.()) ?? open.id; await finish(open); rec = await replayAfter(h, id); } else rec = await recordOf(h, open, stored);
     const recordedAs = rec === null ? null : rec.entries.some(entry => entry.texts.join("") === word), called = modelCalled(unlisted);
-    const verdict: Verdict = caps.commands.unlistedSlash === "text" ? (called === true || recordedAs === true ? "confirmed" : called === false || recordedAs === false ? "refuted" : unlisted.reply.length > 0 ? "observed" : "unverified")
+    // What the 2026-11-10 probe found: every Driver's native side takes an unlisted slash word as text, Hermes's viewer runs it.
+    const unlistedSlash = h.harnessId === "hermes" ? "executed" : "text";
+    const verdict: Verdict = unlistedSlash === "text" ? (called === true || recordedAs === true ? "confirmed" : called === false || recordedAs === false ? "refuted" : unlisted.reply.length > 0 ? "observed" : "unverified")
       : (called === false ? "confirmed" : called === true ? "refuted" : "unverified");
-    h.find("SLASH", "commands.unlistedSlash", verdict, "declared text: the model is asked / the entry is recorded as typed; declared executed: the native side consumes it without asking the model",
-      { declared: caps.commands.unlistedSlash, status: unlisted.result?.status ?? null, reason: unlisted.result?.reason ?? null, input: unlisted.result?.input ?? "absent", modelCalled: called, recordedAsTyped: recordedAs, replyChars: [...unlisted.reply].length, tokens: unlisted.usage.turn });
+    h.find("SLASH", "an unlisted slash word", verdict, "text: the model is asked / the entry is recorded as typed; executed: the native side consumes it without asking the model",
+      { expected: unlistedSlash, status: unlisted.result?.status ?? null, reason: unlisted.result?.reason ?? null, input: unlisted.result?.input ?? "absent", modelCalled: called, recordedAsTyped: recordedAs, replyChars: [...unlisted.reply].length, tokens: unlisted.usage.turn });
     if (h.harnessId !== "claude") return;
     // Claude Code: with a file attached, a listed local command reads as content (the CLI looks for a command in the last block only).
     const local = ["context", "cost", "status", "usage"].find(name => open.catalog?.commands?.some(command => command.name === name));
@@ -901,7 +902,7 @@ async function probeClear(h: Rig): Promise<void> {
   const caps = h.caps;
   if (caps === null) throw new Error("this Harness has no relay declaration");
   if (h.harnessId !== "claude") {
-    h.find("P6", "clear", "unverified", "the Hub's clear on this Harness (/clear, /new, /reset: not sent, the native session given up) is tested against its protocol with a synthetic peer, not on the real Harness; this probe runs for Claude Code only", { hidden: caps.commands.hidden.map(command => command.name), clearListed: (h.facts.catalog as { hidden?: string[] } | null)?.hidden ?? [] });
+    h.find("P6", "clear", "unverified", "the Hub's clear on this Harness (/clear, /new, /reset: not sent, the native session given up) is tested against its protocol with a synthetic peer, not on the real Harness; this probe runs for Claude Code only", {});
     return;
   }
   const word = codewordOf(randomUUID()), first = await begin(h), stored = await claudeStored(h, first);
@@ -935,8 +936,8 @@ async function probeClear(h: Rig): Promise<void> {
     synthetic = await turn(h, resumed, "/clear", "P6: the Driver's synthetic clear", { counts: false });
     const prompts = h.wire.since(mark).filter(entry => entry.dir === "out" && entry.method === "session/prompt"), sizeAfterSynthetic = stored === null ? null : (await claudeRecord(h, stored))?.facts.bytes ?? null;
     const cleared = synthetic.result?.native;
-    h.find("P6", "synthetic clear", synthetic.result?.status === "completed" && synthetic.result.input === "not_recorded" && cleared?.cleared === true && cleared.replaced !== null && cleared.replaced.checkpoint === null && prompts.length === 0 && sizeBeforeSynthetic === sizeAfterSynthetic ? "confirmed" : "refuted",
-      "the Driver answers a /clear with native.cleared and no checkpoint, input=not_recorded, sends no prompt, and leaves the old transcript as it was", { status: synthetic.result?.status ?? null, input: synthetic.result?.input ?? "absent", cleared: cleared?.cleared ?? null, checkpointNull: cleared?.replaced?.checkpoint === null, promptsOnWire: prompts.length, transcriptBytesBefore: sizeBeforeSynthetic, transcriptBytesAfter: sizeAfterSynthetic });
+    h.find("P6", "synthetic clear", synthetic.result?.status === "completed" && synthetic.result.input === "not_recorded" && cleared?.cleared === true && prompts.length === 0 && sizeBeforeSynthetic === sizeAfterSynthetic ? "confirmed" : "refuted",
+      "the Driver answers a /clear with native.cleared, input=not_recorded, sends no prompt, and leaves the old transcript as it was", { status: synthetic.result?.status ?? null, input: synthetic.result?.input ?? "absent", cleared: cleared?.cleared ?? null, promptsOnWire: prompts.length, transcriptBytesBefore: sizeBeforeSynthetic, transcriptBytesAfter: sizeAfterSynthetic });
     // (3b) The same connection opens the next native session (the Runtime's next Turn): it must not know the codeword.
     const idAfter = await resumed.control.open(h.workspace, h.model, h.options), next: Open = { ...resumed, id: idAfter };
     h.sessions.add(idAfter);
@@ -989,9 +990,11 @@ async function lateOnce(h: Rig, variant: "at once" | "after the first output"): 
   } catch (error) { reopenFailure = failureOf(error); samples.push({ when: "after a close and a resume", present: null }); }
   const known = samples.filter(sample => sample.present !== null), lateSeen = known.some((sample, index) => sample.present === true && known.slice(0, index).some(earlier => earlier.present === false));
   const everSeen = known.some(sample => sample.present === true), result = cancelled.result;
-  h.find("LATE", "delivery.lateDelivery (" + variant + ")", lateSeen ? (caps.delivery.lateDelivery ? "confirmed" : "refuted") : "observed",
+  // What the 2026-11-10 probe found: OpenCode and OpenClaw take a cancelled prompt's input later (the declaration no longer says it: nothing reads it).
+  const expectedLate = h.harnessId === "opencode" || h.harnessId === "openclaw";
+  h.find("LATE", "a cancelled prompt's late delivery (" + variant + ")", lateSeen ? (expectedLate ? "confirmed" : "refuted") : "observed",
     "a late delivery is seen when the input is absent from the native record at the result and present later; one timing cannot prove its absence, so no late arrival is only an observation",
-    { declared: caps.delivery.lateDelivery, status: result?.status ?? null, reason: result?.reason ?? null, input: result?.input ?? "absent", cancelAtMs: cancelled.firstEventMs, samples, everRecorded: everSeen, replyChars: [...cancelled.reply].length, readable: known.length > 0, followUp: followUp === null ? null : { status: followUp.result?.status ?? null, input: followUp.result?.input ?? "absent" },
+    { expected: expectedLate, status: result?.status ?? null, reason: result?.reason ?? null, input: result?.input ?? "absent", cancelAtMs: cancelled.firstEventMs, samples, everRecorded: everSeen, replyChars: [...cancelled.reply].length, readable: known.length > 0, followUp: followUp === null ? null : { status: followUp.result?.status ?? null, input: followUp.result?.input ?? "absent" },
       reopenFailure, noNativeSessionLeft: reopenFailure !== null && reopenFailure.remoteCode === -32002 });
 }
 async function probeLate(h: Rig): Promise<void> {
@@ -1201,8 +1204,8 @@ async function probeHermes(h: Rig): Promise<void> {
     // The Hub's clear: nothing is sent to the viewer or the gateway, and the gateway's session keeps its history.
     const mark = h.wire.mark, cleared = await turn(h, after, "/clear", "HERMES: /clear (the Hub's)");
     const sentToViewer = h.wire.since(mark).filter(entry => entry.dir === "out" && (entry.method === "session/prompt" || entry.method === "session/close")).length;
-    h.find("HERMES", "the Hub's clear", cleared.result?.native?.cleared === true && cleared.result.native.replaced?.checkpoint === null && cleared.result.input === "not_recorded" && sentToViewer === 0 ? "confirmed" : "refuted",
-      "/clear is not sent (no prompt, no close), and is reported as native.cleared with no checkpoint", { status: cleared.result?.status ?? null, cleared: cleared.result?.native?.cleared ?? null, input: cleared.result?.input ?? "absent", sentToViewer });
+    h.find("HERMES", "the Hub's clear", cleared.result?.native?.cleared === true && cleared.result.input === "not_recorded" && sentToViewer === 0 ? "confirmed" : "refuted",
+      "/clear is not sent (no prompt, no close), and is reported as native.cleared", { status: cleared.result?.status ?? null, cleared: cleared.result?.native?.cleared ?? null, input: cleared.result?.input ?? "absent", sentToViewer });
   } finally { await finish(after); }
   const kept = await begin(h, checkpoint);
   try {
@@ -1223,8 +1226,8 @@ async function probeOpenClaw(h: Rig): Promise<void> {
     if (key === null) throw new Error("the OpenClaw Driver holds no session key");
     const mark = h.wire.mark, fresh = await turn(h, open, "/new", "OPENCLAW: /new (the Hub's)");
     const sentToBridge = h.wire.since(mark).filter(entry => entry.dir === "out" && (entry.method === "session/prompt" || entry.method === "session/close")).length;
-    h.find("OPENCLAW", "the Hub's clear", fresh.result?.native?.cleared === true && fresh.result.native.replaced?.checkpoint === null && fresh.result.input === "not_recorded" && sentToBridge === 0 && inner.sessionKey === null ? "confirmed" : "refuted",
-      "/new is not sent (no prompt, no close), is reported as native.cleared with no checkpoint, and the Driver holds no session key afterwards", { status: fresh.result?.status ?? null, cleared: fresh.result?.native?.cleared ?? null, input: fresh.result?.input ?? "absent", sentToBridge, keyLetGo: inner.sessionKey === null });
+    h.find("OPENCLAW", "the Hub's clear", fresh.result?.native?.cleared === true && fresh.result.input === "not_recorded" && sentToBridge === 0 && inner.sessionKey === null ? "confirmed" : "refuted",
+      "/new is not sent (no prompt, no close), is reported as native.cleared, and the Driver holds no session key afterwards", { status: fresh.result?.status ?? null, cleared: fresh.result?.native?.cleared ?? null, input: fresh.result?.input ?? "absent", sentToBridge, keyLetGo: inner.sessionKey === null });
   } finally { await finish(open); }
 }
 

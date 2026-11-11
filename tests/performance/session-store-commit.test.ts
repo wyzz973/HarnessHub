@@ -28,10 +28,10 @@ import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-stor
  */
 // G068 phase two (ADR-055 §6.1): run.context_prepared and run.authorized are one transaction, one commit fewer per Turn;
 // an ordinary Turn (nothing owed, the binding synced) reads no event and no Session more for the relay, and since the fix
-// batch (R8, §11.1) no relay row (delivery, packet, index) and no native position either.
+// batch (R8, §11.1) no relay row (delivery, packet, index) either; no Driver is asked anything about its history.
 const BASELINE = {
   beforeDispatch: { commits: 6, loads: 13, parses: 0 },
-  turn: { commits: 10, loads: 23, parses: 0, events: 11, eventReads: 0, relayReads: 0, positions: 0 },
+  turn: { commits: 10, loads: 23, parses: 0, events: 11, eventReads: 0, relayReads: 0 },
 } as const;
 /**
  * The reference target for the p95 from acceptance to dispatch (ADR-055 §11.2). CI asserts only the counts above (§11.1);
@@ -85,8 +85,6 @@ class CountingStore implements SessionStore {
 class ZeroDelayHarness implements SessionBindingFactory {
   dispatchedAt: number | null = null;
   atDispatch: ReturnType<CountingStore["counts"]> | null = null;
-  /** How often the relay asked a Driver where the native history stands (R8: only a Turn with a packet does). */
-  positions = 0;
   constructor(private readonly store: CountingStore) {}
   async validate(request: SelectionRequest): Promise<HarnessSelection> { return { harnessId: request.harnessId, controlId: request.harnessId + "-acp" }; }
   async prepare(selected: HarnessSelection, configuration: SessionConfiguration): Promise<PreparedSessionBinding> {
@@ -95,7 +93,6 @@ class ZeroDelayHarness implements SessionBindingFactory {
       initialize: async () => ({ protocol: "acp-v1", protocolVersion: 1, agentName: "zero-delay", agentVersion: "1", authenticationMethods: [], capabilities: {} }),
       open: async () => { opened = true; return nativeConversationId("native-" + selected.harnessId); },
       checkpoint: async () => opened ? "private-native-" + selected.harnessId : null,
-      deliveryPosition: async () => { this.positions += 1; return { kind: "seq", before: 0 }; },
       startText: async (_id, _text, output) => {
         this.dispatchedAt = performance.now(); this.atDispatch = this.store.counts();
         output({ type: "text", text: "继续好了" });
@@ -165,7 +162,7 @@ test("G075-C01 on an 8 MiB snapshot every Turn keeps the commit, load and parse 
     snapshotBytes = utf8Bytes(JSON.stringify(real.get(session.id)));
     assert.ok(snapshotBytes > MAX_SESSION_BYTES - 128 * 1024 && snapshotBytes < MAX_SESSION_BYTES - 32 * 1024, "an 8 MiB snapshot: " + snapshotBytes);
     for (let turn = 0; turn < TURNS_PER_SESSION; turn++) {
-      const before = store.counts(), seq = real.get(session.id).lastSeq, positionsBefore = harness.positions;
+      const before = store.counts(), seq = real.get(session.id).lastSeq;
       harness.dispatchedAt = null; harness.atDispatch = null;
       const started = performance.now(), receipt = app.send(session.id, "继续下一步 " + turn, "send-" + conversation + "-" + turn), accepted = performance.now();
       await app.wait(session.id);
@@ -176,7 +173,7 @@ test("G075-C01 on an 8 MiB snapshot every Turn keeps the commit, load and parse 
       const delta = (from: typeof before, to: typeof before) => ({ commits: to.commits - from.commits, loads: to.loads - from.loads, parses: to.parses - from.parses });
       const label = "conversation " + conversation + ", Turn " + turn;
       assert.deepEqual(delta(before, harness.atDispatch), BASELINE.beforeDispatch, label + " before dispatch");
-      assert.deepEqual({ ...delta(before, after), events: state.lastSeq - seq, eventReads: after.eventReads - before.eventReads, relayReads: after.relayReads - before.relayReads, positions: harness.positions - positionsBefore }, BASELINE.turn, label);
+      assert.deepEqual({ ...delta(before, after), events: state.lastSeq - seq, eventReads: after.eventReads - before.eventReads, relayReads: after.relayReads - before.relayReads }, BASELINE.turn, label);
       dispatch.push(harness.dispatchedAt - started); accept.push(accepted - started); whole.push(ended - started);
     }
   }
@@ -191,11 +188,9 @@ test("G075-C01 on an 8 MiB snapshot every Turn keeps the commit, load and parse 
 });
 
 /** The fakes' relay declaration for the commit count of E1: live entry reports (recorded_event), no check, success proves recorded. */
-const LIVE: RelayCapabilities = { ...dshRelayCapabilities, delivery: { live: "recorded_event", verify: "none", successProvesRecorded: true, lateDelivery: false } };
+const LIVE: RelayCapabilities = { ...dshRelayCapabilities, delivery: { live: "recorded_event", successProvesRecorded: true } };
 /** Zero-delay Harnesses alpha and bravo that resume their native sessions and report a packet's entry as recorded (E1) before replying. */
 class LiveHarnesses implements SessionBindingFactory {
-  positions = 0;
-  verifies = 0;
   async validate(request: SelectionRequest): Promise<HarnessSelection> { return { harnessId: request.harnessId, controlId: request.harnessId + "-acp" }; }
   async prepare(selected: HarnessSelection, configuration: SessionConfiguration): Promise<PreparedSessionBinding> {
     let opened = false;
@@ -204,8 +199,6 @@ class LiveHarnesses implements SessionBindingFactory {
       initialize: async () => ({ protocol: "acp-v1", protocolVersion: 1, agentName: "zero-delay", agentVersion: "1", authenticationMethods: [], capabilities: {} }),
       open: async () => { opened = true; return nativeConversationId("native-" + selected.harnessId); },
       checkpoint: async () => opened ? "private-native-" + selected.harnessId : null,
-      deliveryPosition: async () => { this.positions += 1; return { kind: "seq", before: 0 }; },
-      verifyDelivered: async request => { this.verifies += 1; return { markers: [], historyEmpty: null, compaction: null, foreignAfterLast: null, verifyMs: 0 }; },
       startText: async (_id, turn, output) => {
         if (typeof turn !== "string") output({ type: "input_recorded", packetId: turn.relay.packetId });
         output({ type: "text", text: "继续好了" });
@@ -226,17 +219,17 @@ test("G068 fix R8/R10f (A9, A14) an ordinary Turn reads no relay row, no log or 
   const configuration: SessionConfiguration = { workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true };
   const session = await app.create(configuration, { harnessId: "alpha" }, "create"), id = session.id;
   const measured = async (text: string, key: string) => {
-    const before = store.counts(), positions = harness.positions, verifies = harness.verifies, logs = store.logCalls, seq = real.get(id).lastSeq;
+    const before = store.counts(), logs = store.logCalls, seq = real.get(id).lastSeq;
     const receipt = app.send(id, text, key); await app.wait(id);
     const after = store.counts(), run = real.get(id).runs.find(row => row.id === receipt.runId)!;
     assert.equal(run.status, "completed", JSON.stringify(run.error));
     return { run, commits: after.commits - before.commits, relayReads: after.relayReads - before.relayReads, eventReads: after.eventReads - before.eventReads,
-      positions: harness.positions - positions, verifies: harness.verifies - verifies, logCalls: store.logCalls - logs, events: real.get(id).lastSeq - seq };
+      logCalls: store.logCalls - logs, events: real.get(id).lastSeq - seq };
   };
   await measured("第一步", "a1");
-  // Ordinary Turns on a binding that holds its own Turns: no relay row, no event, no log or preference, no position, no check (§11.1, R8).
+  // Ordinary Turns on a binding that holds its own Turns: no relay row, no event, no log or preference (§11.1, R8).
   const ordinary = await measured("第二步", "a2");
-  assert.deepEqual({ relayReads: ordinary.relayReads, eventReads: ordinary.eventReads, positions: ordinary.positions, verifies: ordinary.verifies, logCalls: ordinary.logCalls }, { relayReads: 0, eventReads: 0, positions: 0, verifies: 0, logCalls: 0 });
+  assert.deepEqual({ relayReads: ordinary.relayReads, eventReads: ordinary.eventReads, logCalls: ordinary.logCalls }, { relayReads: 0, eventReads: 0, logCalls: 0 });
   // bravo works, then alpha's next Turn carries bravo's Turn and its entry is reported: E1 is one transaction of its own (A14).
   app.switch(id, { harnessId: "bravo" }, "to-b"); await app.wait(id);
   await measured("在 bravo 上", "b1");
@@ -245,12 +238,12 @@ test("G068 fix R8/R10f (A9, A14) an ordinary Turn reads no relay row, no log or 
   assert.ok(carrying.run.relay?.packetId !== null && carrying.run.relay?.packetId !== undefined, "it carried a packet");
   assert.ok(real.events(id, 0, 100).some(row => row.type === "relay.input_recorded" && row.data.runId === carrying.run.id), "E1 was committed");
   assert.equal(carrying.commits, ordinary.commits + 1, "E1 adds one commit; the packet, its row and the authorization are one transaction");
-  // The relay builds the packet from the Hub's own record: no Driver is asked where its history stands, and no relay row is read for a binding that holds its own Turns.
-  assert.equal(carrying.positions, 0, "no position is asked"); assert.equal(carrying.relayReads, 0, "a binding that holds its own Turns has no row to read");
+  // The relay builds the packet from the Hub's own record: no relay row is read for a binding that holds its own Turns.
+  assert.equal(carrying.relayReads, 0, "a binding that holds its own Turns has no row to read");
   // Back to ordinary on the binding that now holds that packet: the same commits, and no row, log or preference read. The ledger still
   // pages the events since its last read, once: bravo's Turn is a foreign fact to place (§11.1).
   const again = await measured("第三步", "a4");
   assert.equal(again.commits, ordinary.commits);
-  assert.deepEqual({ relayReads: again.relayReads, eventReads: again.eventReads, positions: again.positions, verifies: again.verifies, logCalls: again.logCalls }, { relayReads: 0, eventReads: 1, positions: 0, verifies: 0, logCalls: 0 });
-  t.diagnostic("commits: ordinary " + ordinary.commits + ", carrying with E1 " + carrying.commits + "; reads after it " + JSON.stringify({ relayReads: again.relayReads, positions: again.positions, verifies: again.verifies, logCalls: again.logCalls }));
+  assert.deepEqual({ relayReads: again.relayReads, eventReads: again.eventReads, logCalls: again.logCalls }, { relayReads: 0, eventReads: 1, logCalls: 0 });
+  t.diagnostic("commits: ordinary " + ordinary.commits + ", carrying with E1 " + carrying.commits + "; reads after it " + JSON.stringify({ relayReads: again.relayReads, logCalls: again.logCalls }));
 });

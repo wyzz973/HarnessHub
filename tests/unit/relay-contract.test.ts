@@ -201,7 +201,7 @@ test("a writer Run archives its binding for a new one of the same Harness only w
   const busy = state({ busy: true }), fresh = { ...alpha, checkpoint: "native-alpha-new", throughRunId: null, status: "unconfirmed", relay: relay({ epoch: 2, floor: 4, mark: -1 }) };
   const replaced = { ...withBinding(busy, 0, { status: "archived" }), nativeBindings: [{ ...(busy.nativeBindings as Plain[])[0], status: "archived" }, fresh] };
   const end = (native: Plain | undefined) => [{ type: "run.ended", data: { runId: "run-two", status: "completed", ...(native === undefined ? {} : { native }) } }];
-  accepts(busy, replaced, end({ cleared: true, replaced: null }));
+  accepts(busy, replaced, end({ cleared: true }));
   rejects(busy, replaced, /archived only by a native reset/u, end(undefined));
   rejects(busy, replaced, /archived only by a native reset/u, end({ cleared: false }));
   rejects(busy, replaced, /archived only by a native reset/u, [{ type: "run.ended", data: { runId: "run-one", native: { cleared: true } } }]);

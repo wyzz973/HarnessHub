@@ -5,9 +5,8 @@ import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import type { ContentKind, ControlAttachment } from "../../contracts/content.js";
 import { AcpControl } from "./acp.js";
 import { gatewayRefusalMessage, hermesGatewayPreflight, type HermesGatewayPreflight } from "./hermes-gateway.js";
-import { HERMES_COMMAND_WORD as COMMAND_WORD, HERMES_EFFECTS as EFFECTS, HERMES_HIDDEN as HIDDEN, HERMES_LEADING_SPACE as LEADING_SPACE, HERMES_REGISTRY as REGISTRY,
-  hermesClassify, hermesCommand as commandOf, hermesNativeClassify, hermesReadsSlash as readsSlash, relayDeclaration, relayEntries } from "./relay-classify.js";
-import { harnessVendor, hermesModelKey } from "./relay-vendor.js";
+import { HERMES_COMMAND_WORD as COMMAND_WORD, HERMES_EFFECTS as EFFECTS, HERMES_LEADING_SPACE as LEADING_SPACE, HERMES_REGISTRY as REGISTRY,
+  hermesClassify, hermesCommand as commandOf, hermesNativeClassify, hermesReadsSlash as readsSlash, relayDeclaration } from "./relay-classify.js";
 import { type TurnText } from "../../contracts/control.js";
 import { placeTurn, TITLE_DEADLINE_MS, type RelayTurn, measureBy } from "./relay-turn.js";
 
@@ -23,20 +22,11 @@ import { placeTurn, TITLE_DEADLINE_MS, type RelayTurn, measureBy } from "./relay
  * before its precondition (setTitle's I2) is solved; this declaration turns to "set" with it.
  */
 export const hermesRelayCapabilities: RelayCapabilities = relayDeclaration({
-  probed: false,
-  delivery: { live: "none", verify: "none", successProvesRecorded: true, lateDelivery: false },
+  delivery: { live: "none", successProvesRecorded: true },
   execution: "gateway",
-  commands: { unlistedSlash: "executed", hidden: relayEntries(HIDDEN), classify: hermesClassify },
-  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true, measure: measureBy("multiple", "chars", ["file"]) },
-  window: "session_report",
-  fixedPrefix: null,
-  cacheTtl: "unknown",
-  compactionEvidence: "replay_marker",
-  resolveVendor: harnessVendor("hermes"),
-  normalizeModel: hermesModelKey,
+  commands: { classify: hermesClassify },
+  placement: { parts: "multiple", maxInput: null, measure: measureBy("multiple", "chars", ["file"]) },
   title: "none",
-  hostPathRead: "none",
-  sessionTools: null,
 });
 const EXPORT = { name: "export", description: "导出原生会话记录（Hermes 会话 JSONL）", contextEffect: "none" } as const;
 /**
@@ -283,7 +273,7 @@ export class HermesControl extends AcpControl {
       return { ...command, contextEffect: (name === undefined ? undefined : EFFECTS[name]) ?? command.contextEffect ?? "unknown" };
     });
     this.hubExport = !listed.some(command => command.name === EXPORT.name);
-    return { ...catalog, commands: this.hubExport ? [...listed, EXPORT] : listed, hiddenCommands: HIDDEN };
+    return { ...catalog, commands: this.hubExport ? [...listed, EXPORT] : listed };
   }
   private async exportSession(id: NativeConversationId, onEvent: (event: ControlEvent) => void): Promise<BackendResult> {
     try {

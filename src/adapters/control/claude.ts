@@ -6,15 +6,14 @@ import type { BackendResult, CommandClass, ControlEvent, ControlLaunch, ControlO
 import type { RelayCapabilities } from "../../contracts/relay.js";
 import { ControlError } from "../../infrastructure/control/json-rpc-process.js";
 import { AcpControl, refusedRun } from "./acp.js";
-import { CLAUDE_EXPORT as EXPORT, CLAUDE_HIDDEN as HIDDEN, claudeClassify, claudeListedEffect, claudeCommand as commandOf, claudeNativeClassify, claudeReadsSlash as readsSlash, relayDeclaration, relayEntries } from "./relay-classify.js";
-import { harnessVendor, slashModelKey } from "./relay-vendor.js";
+import { CLAUDE_EXPORT as EXPORT, claudeClassify, claudeListedEffect, claudeCommand as commandOf, claudeNativeClassify, claudeReadsSlash as readsSlash, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { type TurnText } from "../../contracts/control.js";
 import { measureBy } from "./relay-turn.js";
 
 /**
  * Claude Code's relay declaration (ADR-055 §8.1, Claude Code row): two text blocks; no live evidence, and a prompt that ended
  * or failed after insertion proves it recorded; commands as Claude Code reads them: a slash as the first character and a name
- * its catalog lists, while any other slash word is text (unlistedSlash `text`, which differs from §8.1's `executed`: the probe
+ * its catalog lists, while any other slash word is text (which differs from §8.1's `executed`: the probe
  * of 2026-11-10, F3, sent an unlisted word to the model) except `/clear`, `/reset`, `/new` and `/remote-control`, which the CLI
  * runs although the adapter lists none, the first three being the Hub's clear (the Hub runs it, the CLI never sees it);
  * compaction events; one process per connection; the window from its usage reports.
@@ -24,23 +23,14 @@ import { measureBy } from "./relay-turn.js";
  * session-index/connection.js:39-51) and answers any other client with method-not-found; the Hub does not pose as AIR.
  */
 export const claudeRelayCapabilities: RelayCapabilities = relayDeclaration({
-  probed: false,
-  delivery: { live: "none", verify: "none", successProvesRecorded: true, lateDelivery: false },
+  delivery: { live: "none", successProvesRecorded: true },
   execution: "process",
-  // text: "/zzprobe-unlisted hello" called the model and the transcript holds the text (relay-conformance.md F3); only the hidden
-  // four run without being listed, and claudeReading reads a word outside the catalog the same way (content).
-  commands: { unlistedSlash: "text", hidden: relayEntries(HIDDEN), classify: claudeClassify },
+  // A slash word outside the catalog is text: "/zzprobe-unlisted hello" called the model and the transcript holds the text
+  // (relay-conformance.md F3); only the hidden four run without being listed, and claudeReading reads it the same way (content).
+  commands: { classify: claudeClassify },
   // Attachments go as ACP blocks after the two text blocks (G069 phase two, approval B8; to be probed).
-  placement: { parts: "multiple", maxInput: null, pointersAfterUser: true, measure: measureBy("multiple", "chars", ["file"]) },
-  window: "session_report",
-  fixedPrefix: null,
-  cacheTtl: "auth_dependent",
-  compactionEvidence: "event",
-  resolveVendor: harnessVendor("claude"),
-  normalizeModel: slashModelKey,
+  placement: { parts: "multiple", maxInput: null, measure: measureBy("multiple", "chars", ["file"]) },
   title: "none",
-  hostPathRead: "none",
-  sessionTools: null,
 });
 /** Project directories searched for a transcript, as claude-agent-acp itself searches them. */
 const MAX_PROJECT_DIRECTORIES = 4096;
@@ -173,7 +163,7 @@ export class ClaudeControl extends AcpControl {
   override async models(): Promise<NativeModelCatalog> {
     const catalog = await super.models(), commands = (catalog.commands ?? []).filter(command => command.name !== REMOTE_CONTROL);
     this.hubExport = !commands.some(command => command.name === EXPORT.name);
-    return { ...catalog, commands: (this.hubExport ? [...commands, EXPORT] : commands).map(command => ({ ...command, contextEffect: command.contextEffect ?? claudeListedEffect(command.name) ?? "keep" })), hiddenCommands: HIDDEN };
+    return { ...catalog, commands: (this.hubExport ? [...commands, EXPORT] : commands).map(command => ({ ...command, contextEffect: command.contextEffect ?? claudeListedEffect(command.name) ?? "keep" })) };
   }
   override async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
     // A relay Turn whose words read as a command is refused before anything below runs (the clear and the export included).

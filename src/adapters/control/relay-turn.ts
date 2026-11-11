@@ -87,7 +87,7 @@ export const CWD_PREFIX_ALLOWANCE = 4128;
  */
 export function measureBy(parts: RelayCapabilities["placement"]["parts"], unit: "chars" | "bytes", pointerKinds: readonly ContentKind[], fixed = 0): (turn: TurnText, attachments: readonly ContentKind[]) => number {
   return (turn, attachments) => {
-    const placed = typeof turn === "string" ? [turn] : placeTurn(turn, { parts, maxInput: null, pointersAfterUser: true, measure: () => 0 });
+    const placed = typeof turn === "string" ? [turn] : placeTurn(turn, { parts, maxInput: null, measure: () => 0 });
     return placedSize(placed, unit) + attachments.filter(kind => pointerKinds.includes(kind)).length * POINTER_ALLOWANCE + fixed;
   };
 }
@@ -98,7 +98,7 @@ export function exceedsInput(parts: readonly string[], placement: RelayCapabilit
 }
 /** The result of a relay Turn a Driver refuses before sending anything: its placement exceeds the input bound (§8.1). */
 export const INPUT_LIMIT_REFUSED = { status: "failed", reason: "input_too_large", input: "not_recorded",
-  error: { code: "RELAY_INPUT_LIMIT", message: "这条消息和交接单合起来超过了这个 Harness 的输入上限，没有发出；需要降低交接单的档位或只发这条消息。" } } as const;
+  error: { code: "RELAY_INPUT_LIMIT", message: "这条消息和交接单合起来超过了这个 Harness 的输入上限，没有发出；可以只发这条消息。" } } as const;
 /**
  * The result of a relay Turn whose words the native side reads as a command, or as a word only its catalog can settle (ADR-055
  * §7.4, the approval agent's B4b): a command never carries a packet, and sending the words without it would let a Driver whose
@@ -117,11 +117,11 @@ export const TITLE_DEADLINE_MS = 2000;
 
 /**
  * The result of a clear the Hub runs itself (the decision log of 2026-11-11: clearing is the Hub's, on every Driver). Nothing
- * was sent to the native side. Its session was given up, and the next Turn opens a new one: `replaced.checkpoint` is null, since
- * a session never prompted cannot be resumed by another process, so none is opened ahead.
+ * was sent to the native side. Its session was given up, and the next Turn opens a new one: a session never prompted cannot be
+ * resumed by another process, so none is opened ahead.
  */
 export function hubCleared(): BackendResult {
-  return { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true, replaced: { checkpoint: null } } };
+  return { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true } };
 }
 /** What the Turn says of it: the command was not sent, and the old session is given up, not deleted. */
 export function clearedNotice(command: string, product: string): ControlEvent {

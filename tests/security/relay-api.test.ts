@@ -212,10 +212,10 @@ test("AP-01–AP-03: nothing of the history, no native value and no digest leave
   for (const run of conversation.runs) assert.equal("relayRequest" in run, false, "the Run holds no relayRequest");
   const events = await get(f, `/api/v1/sessions/${id}/events?limit=100`), accepted = (row(events.data).events as { type: string; data: Record<string, unknown> }[]).filter(item => item.type === "message.accepted");
   assert.ok(accepted.length >= 4, "the message events are in the page"); for (const item of accepted) assert.equal(JSON.stringify(item).includes("fingerprint"), false, "an accepted message keeps no fingerprint in the page of events");
-  const allowed = ["attention", "canConfirm", "cleared", "controlId", "evidence", "harnessId", "nativeEpoch", "owed", "probed", "sync", "throughRun"];
+  const allowed = ["attention", "canConfirm", "cleared", "controlId", "evidence", "harnessId", "nativeEpoch", "owed", "sync", "throughRun"];
   for (const binding of model.bindings) {
     assert.ok(Object.keys(binding).every(key => allowed.includes(key)), JSON.stringify(Object.keys(binding)));
-    for (const required of ["cleared", "controlId", "evidence", "harnessId", "nativeEpoch", "probed", "sync", "throughRun"]) assert.ok(required in binding, required);
+    for (const required of ["cleared", "controlId", "evidence", "harnessId", "nativeEpoch", "sync", "throughRun"]) assert.ok(required in binding, required);
     if (binding.attention !== undefined) {
       assert.ok(Object.keys(binding.attention).every(key => ["cause", "options", "counts", "key", "packet"].includes(key)), JSON.stringify(Object.keys(binding.attention)));
       assert.ok(["delivery_unconfirmed", "attach_available"].includes(binding.attention.cause) && binding.attention.options.every(option => option === "attach_full"), JSON.stringify(binding.attention));
@@ -248,7 +248,7 @@ test("a packet is plain text: its bytes cannot be read as a page, however hostil
 
 test("a packet is read only through its own conversation, and no read tells whether it exists in another", async t => {
   const f = await fixture(t), mine = await stranded(f), other = await create(f), packets = (await relayOf(f, mine)).packets;
-  assert.equal(packets.length, 2); assert.deepEqual(await relayOf(f, other), { bindings: [], packets: [] });
+  assert.equal(packets.length, 2); assert.deepEqual(await relayOf(f, other), { bindings: [], packets: [], handedOver: ["sec-b"] }, "nothing of another conversation, only the Harnesses this installation handed a conversation to");
   const unknown = await get(f, `/api/v1/sessions/${other}/relay/relay-${"0".repeat(20)}`);
   for (const packet of packets) {
     const path = `/api/v1/sessions/${other}/relay/${packet.packetId}`, etag = `"${sha256((await get(f, `/api/v1/sessions/${mine}/relay/${packet.packetId}`)).text)}"`;

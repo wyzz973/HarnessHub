@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
 import type { CommandClass, ControlLaunch, ControlOptions, HarnessControl } from "../../src/contracts/control.js";
-import { CONTEXT_EFFECTS, parseVendorKey, type RelayCapabilities } from "../../src/contracts/relay.js";
+import { CONTEXT_EFFECTS, type RelayCapabilities } from "../../src/contracts/relay.js";
 import type { HarnessSelection, PreparedSessionBinding, SelectionRequest, SessionBindingFactory, SessionConfiguration, SessionEvent } from "../../src/contracts/session.js";
 import { AcpControl, dshRelayCapabilities } from "../../src/adapters/control/acp.js";
 import { ClaudeControl, claudeRelayCapabilities } from "../../src/adapters/control/claude.js";
@@ -16,94 +16,70 @@ import type { HermesGatewayPreflight } from "../../src/adapters/control/hermes-g
 import { OpenClawControl, openClawRelayCapabilities } from "../../src/adapters/control/openclaw.js";
 import { OpenCodeControl, openCodeRelayCapabilities } from "../../src/adapters/control/opencode.js";
 import { nativeReading, relayEntries, type RelayCatalog } from "../../src/adapters/control/relay-classify.js";
-import { dshModelKey, hermesModelKey, slashModelKey } from "../../src/adapters/control/relay-vendor.js";
 
 // G069-D01, G069-D02: the declaration check (ADR-055 §8.1, INV-16): the six Drivers' static relay declarations, cell by cell, against the
 // table written out below as data. Plain cells are compared whole; the command cell, which is a function, is compared on the
 // inputs its table names. The decision log of 2026-11-11 took the probe gate, the vendor reading and the check of delivery out of
-// the Drivers: no declaration says verify, and a declaration's vendor key is the Harness's own name. What this test holds is that
-// each of the six declares, legally, what the Runtime reads of it.
+// the Drivers, and the slimming that followed took every cell nothing reads: a declaration says how a send is confirmed, where the
+// Driver runs, how it reads a command, how it places a packet and whether it names a native session. What this test holds is that
+// each of the six declares, legally, exactly that.
 
 type Harness = "claude" | "codex" | "opencode" | "dsh" | "hermes" | "openclaw";
-type Plain = Omit<RelayCapabilities, "commands" | "resolveVendor" | "normalizeModel" | "placement"> & { readonly commands: { readonly unlistedSlash: RelayCapabilities["commands"]["unlistedSlash"]; readonly hidden: readonly (readonly [string, string])[] };
+type Plain = Omit<RelayCapabilities, "commands" | "placement"> & {
   /** The placement's plain cells; its `measure` (a function, G072's C3) is checked by its own test below. */
   readonly placement: Omit<RelayCapabilities["placement"], "measure"> };
 interface Cells {
   readonly plain: Plain;
-  readonly normalizeModel: (model: string | null) => string;
   /** The command cell: an input, the catalog it is read with, and the reading (kind, name, effect, args, "relay" for acceptsRelay). */
   readonly classify: readonly (readonly [string, RelayCatalog | null, readonly (string | boolean)[]])[];
 }
-const unprobed = { probed: false, fixedPrefix: null, hostPathRead: "none", sessionTools: null } as const;
 const listed = (...names: readonly [string, "keep" | "none" | "compact" | "clear" | "rewind" | "unknown", boolean?][]): RelayCatalog => names.map(([name, effect, relay]) => ({ name, effect, ...(relay ? { acceptsRelay: true } : {}) }));
-/** The Hub's clear words, as a declaration lists them where the native side has none of its own. */
-const HUB_CLEAR_HIDDEN = [["clear", "clear"], ["reset", "clear"], ["new", "clear"]] as const;
 
 /**
  * Each Driver's declaration, row by row (relay-architecture.md §8.1, "七家逐家的组合与回退", as the decision log of 2026-11-11 left it;
- * WorkBuddy is not connected). `placement.pointersAfterUser` is true for all six: what each Driver's placement does (attachments,
- * as blocks, items or Hub's pointers, follow the user's words; the approval agent's B8 on db39cbd).
+ * WorkBuddy is not connected).
  */
 const TABLE: Readonly<Record<Harness, Cells>> = {
   claude: {
-    plain: { ...unprobed, delivery: { live: "none", verify: "none", successProvesRecorded: true, lateDelivery: false }, execution: "process",
-      // unlistedSlash: §8.1 writes "executed"; the 2026-11-10 probe (relay-conformance.md F3) called the model with an unlisted word,
-      // so it is "text" (G074-F3); the four the CLI does run unlisted are the hidden ones.
-      commands: { unlistedSlash: "text", hidden: [["clear", "clear"], ["reset", "clear"], ["new", "clear"], ["remote-control", "none"]] },
-      // title: §8.1 writes "set" (`_session/rename`); claude-agent-acp 0.99.1 routes it only for a JetBrains AIR client (G069 phase two).
-      placement: { parts: "multiple", maxInput: null, pointersAfterUser: true }, window: "session_report", cacheTtl: "auth_dependent", compactionEvidence: "event", title: "none" },
-    normalizeModel: slashModelKey,
+    // A slash word outside the catalog is text (§8.1 writes "executed"; the 2026-11-10 probe, relay-conformance.md F3, called the model
+    // with an unlisted word, G074-F3): only the four the CLI does run unlisted are commands, as the readings below show.
+    // title: §8.1 writes "set" (`_session/rename`); claude-agent-acp 0.99.1 routes it only for a JetBrains AIR client (G069 phase two).
+    plain: { delivery: { live: "none", successProvesRecorded: true }, execution: "process", placement: { parts: "multiple", maxInput: null }, title: "none" },
     // G074-F1: the slash as the first character; the CLI strips nothing, so a space or U+3000 before it makes the input words.
     classify: [["/clear", null, ["command", "clear", "clear", ""]], ["  /clear", null, ["content"]], ["　/clear", null, ["content"]], ["/reset", null, ["command", "reset", "clear", ""]], ["/remote-control", null, ["command", "remote-control", "none", ""]],
       ["/Users/me/notes.md", null, ["content"]], ["/my-skill", listed(["compact", "compact"]), ["content"]], ["/my-skill", null, ["possible_command", "my-skill"]], ["/compact", listed(["compact", "compact"]), ["command", "compact", "compact", ""]],
       ["/review", listed(["review", "keep"]), ["command", "review", "keep", ""]]],
   },
   codex: {
-    plain: { ...unprobed, delivery: { live: "recorded_event", verify: "none", successProvesRecorded: false, lateDelivery: false }, execution: "process",
-      commands: { unlistedSlash: "text", hidden: HUB_CLEAR_HIDDEN }, placement: { parts: "single", maxInput: { unit: "chars", limit: 1_048_576 }, pointersAfterUser: true },
-      window: "turn_report", cacheTtl: "30m", compactionEvidence: "event", title: "set" },
-    normalizeModel: slashModelKey,
+    plain: { delivery: { live: "recorded_event", successProvesRecorded: false }, execution: "process", placement: { parts: "single", maxInput: { unit: "chars", limit: 1_048_576 } }, title: "set" },
     classify: [["/compact", null, ["command", "compact", "compact", ""]], ["/export", null, ["command", "export", "none", ""]], [" /compact", null, ["content"]],
       ["/clear", null, ["command", "clear", "clear", ""]], ["/new  ", null, ["command", "new", "clear", ""]], ["/reset", listed(["compact", "compact"]), ["command", "reset", "clear", ""]],
       ["/clear now", null, ["content"]], [" /clear", null, ["content"]],
       ["/skill:review it", listed(["skill:review", "keep"]), ["command", "skill:review", "keep", "it", "relay"]], ["/review", listed(["skill:review", "keep"]), ["content"]]],
   },
   opencode: {
-    plain: { ...unprobed, delivery: { live: "none", verify: "none", successProvesRecorded: true, lateDelivery: true }, execution: "process",
-      commands: { unlistedSlash: "text", hidden: HUB_CLEAR_HIDDEN }, placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
-      window: "session_report", cacheTtl: "unknown", compactionEvidence: "event", title: "none" },
-    normalizeModel: slashModelKey,
+    plain: { delivery: { live: "none", successProvesRecorded: true }, execution: "process", placement: { parts: "multiple", maxInput: null }, title: "none" },
     classify: [["/compact", null, ["command", "compact", "compact", ""]], ["/review now", listed(["review", "unknown"]), ["command", "review", "keep", "now"]], ["/nope", listed(["review", "keep"]), ["content"]],
       ["/clear", null, ["command", "clear", "clear", ""]], ["  /new  ", null, ["command", "new", "clear", ""]], ["/reset", listed(["reset", "keep"]), ["command", "reset", "clear", ""]],
       ["/clear now", null, ["possible_command", "clear"]], ["/clear now", listed(["review", "keep"]), ["content"]]],
   },
   dsh: {
-    plain: { ...unprobed, delivery: { live: "agent_output", verify: "none", successProvesRecorded: false, lateDelivery: false }, execution: "process",
-      commands: { unlistedSlash: "text", hidden: HUB_CLEAR_HIDDEN }, placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
-      window: "session_report", cacheTtl: "hours", compactionEvidence: "none", title: "none" },
-    // normalizeModel: dsh reports its model as a JSON array text of the provider and the model; the key is the last item (G074-F8).
-    normalizeModel: dshModelKey,
+    plain: { delivery: { live: "agent_output", successProvesRecorded: false }, execution: "process", placement: { parts: "multiple", maxInput: null }, title: "none" },
     // No commands but the Hub's clear: every other input is content, whatever a catalog lists.
     classify: [["/clear", null, ["command", "clear", "clear", ""]], ["/reset ", null, ["command", "reset", "clear", ""]], ["/new", listed(["compact", "compact"]), ["command", "new", "clear", ""]],
       ["/clear now", null, ["content"]], ["/compact", listed(["compact", "compact"]), ["content"]], ["　/clear", null, ["content"]]],
   },
   hermes: {
-    plain: { ...unprobed, delivery: { live: "none", verify: "none", successProvesRecorded: true, lateDelivery: false }, execution: "gateway",
-      commands: { unlistedSlash: "executed", hidden: [["new", "clear"], ["clear", "clear"]] }, placement: { parts: "multiple", maxInput: null, pointersAfterUser: true },
-      // title: §8.1 writes "set" (D3, `/title`); not used before a probe and its two preconditions (B10, G072).
-      window: "session_report", cacheTtl: "unknown", compactionEvidence: "replay_marker", title: "none" },
-    normalizeModel: hermesModelKey,
+    // title: §8.1 writes "set" (D3, `/title`); not used before a probe and its two preconditions (B10, G072).
+    plain: { delivery: { live: "none", successProvesRecorded: true }, execution: "gateway", placement: { parts: "multiple", maxInput: null }, title: "none" },
     classify: [["　/clear", null, ["command", "clear", "clear", ""]], ["/new", null, ["command", "new", "clear", ""]], ["/reset", null, ["command", "new", "clear", ""]],
       ["/compress", null, ["command", "compress", "compact", ""]], ["/compress --preview", null, ["command", "compress", "none", "--preview"]], ["/undo", null, ["command", "undo", "rewind", ""]],
       ["/retry", null, ["command", "retry", "rewind", ""]], ["/queue later", null, ["command", "queue", "keep", "later", "relay"]], ["/steer left", null, ["command", "steer", "keep", "left", "relay"]],
       ["/etc/hosts", null, ["content"]]],
   },
   openclaw: {
-    plain: { ...unprobed, delivery: { live: "none", verify: "none", successProvesRecorded: false, lateDelivery: true }, execution: "gateway",
-      // `/clear` is the Hub's alone: the bridge lists `/new` and `/reset`.
-      commands: { unlistedSlash: "text", hidden: [["clear", "clear"]] }, placement: { parts: "single", maxInput: { unit: "bytes", limit: 2_097_152 }, pointersAfterUser: true },
-      window: "session_report", cacheTtl: "5m", compactionEvidence: "none", title: "none" },
-    normalizeModel: slashModelKey,
+    // `/clear` is the Hub's alone: the bridge lists `/new` and `/reset`.
+    plain: { delivery: { live: "none", successProvesRecorded: false }, execution: "gateway", placement: { parts: "single", maxInput: { unit: "bytes", limit: 2_097_152 } }, title: "none" },
     classify: (() => { const bridge = listed(["new", "clear"], ["reset", "clear"], ["compact", "compact"], ["stop", "none"], ["restart", "unknown"], ["bash", "unknown"]);
       return [["/new", bridge, ["command", "new", "clear", ""]], ["/reset soft", bridge, ["command", "reset", "compact", "soft"]], ["/reset", bridge, ["command", "reset", "clear", ""]],
         ["/compact", bridge, ["command", "compact", "compact", ""]], ["/stop", bridge, ["command", "stop", "none", ""]], ["/restart", bridge, ["command", "restart", "unknown", ""]],
@@ -115,28 +91,22 @@ const TABLE: Readonly<Record<Harness, Cells>> = {
 };
 const DECLARED: Readonly<Record<Harness, RelayCapabilities>> = { claude: claudeRelayCapabilities, codex: codexRelayCapabilities, opencode: openCodeRelayCapabilities,
   dsh: dshRelayCapabilities, hermes: hermesRelayCapabilities, openclaw: openClawRelayCapabilities };
-const KEYS = ["probed", "delivery", "execution", "commands", "placement", "window", "fixedPrefix", "cacheTtl", "compactionEvidence", "resolveVendor", "normalizeModel", "title", "hostPathRead", "sessionTools"].sort();
+const KEYS = ["commands", "delivery", "execution", "placement", "title"];
 
 function plain(declared: RelayCapabilities): Plain {
-  const { commands, resolveVendor: _vendor, normalizeModel: _model, placement: { measure: _measure, ...placement }, ...rest } = declared;
-  return { ...rest, placement, commands: { unlistedSlash: commands.unlistedSlash, hidden: commands.hidden.map(entry => [entry.name, typeof entry.effect === "string" ? entry.effect : "byArgs"] as const) } };
+  const { commands: _commands, placement: { measure: _measure, ...placement }, ...rest } = declared;
+  return { ...rest, placement };
 }
 function row(value: CommandClass): readonly (string | boolean)[] {
   return value.kind === "command" ? [value.kind, value.name, value.effect, value.args, ...(value.acceptsRelay ? ["relay"] : [])] : value.kind === "possible_command" ? [value.kind, value.name] : [value.kind];
 }
 
-test("G069-D01 each of the six declarations equals ADR-055 §8.1 cell by cell; probed is false for every one", () => {
+test("G069-D01 each of the six declarations equals ADR-055 §8.1 cell by cell, and says nothing the relay does not read", () => {
   for (const harness of Object.keys(TABLE) as Harness[]) {
     const declared = DECLARED[harness], cells = TABLE[harness];
     assert.deepEqual(Object.keys(declared).sort(), KEYS, harness + ": every field of RelayCapabilities, nothing else");
     assert.deepEqual(plain(declared), cells.plain, harness + ": plain cells");
-    assert.equal(declared.normalizeModel, cells.normalizeModel, harness + ": model key");
     for (const [text, catalog, expected] of cells.classify) assert.deepEqual(row(declared.commands.classify(text, catalog, [])), expected, harness + " classify " + JSON.stringify(text));
-    // The vendor key is the Harness's own name, whatever was observed; and it is a key the contract parses.
-    const none = { model: null, modelKey: "", authKind: null, endpoint: null, loopback: false };
-    assert.equal(parseVendorKey(declared.resolveVendor(none)), "unknown:" + harness, harness + ": vendor key");
-    assert.equal(declared.resolveVendor({ ...none, endpoint: { host: "api.example", layer: "environment" } }), "unknown:" + harness);
-    assert.equal(declared.delivery.verify, "none", harness + ": no Driver checks the native history afterwards");
   }
 });
 
@@ -147,7 +117,7 @@ test("G069-D02 the declarations are frozen module constants; each Driver's conne
     for (const [name, item] of Object.entries(value)) freeze(item, path + "." + name);
   };
   for (const [harness, declared] of Object.entries(DECLARED)) freeze(declared, harness);
-  assert.throws(() => { (openClawRelayCapabilities.delivery as { lateDelivery: boolean }).lateDelivery = false; }, TypeError);
+  assert.throws(() => { (openClawRelayCapabilities.delivery as { successProvesRecorded: boolean }).successProvesRecorded = true; }, TypeError);
   const options: ControlOptions = { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: 1000, maxFrameBytes: 65536, maxDiagnosticBytes: 65536, closeGraceMs: 50 };
   const acp: ControlLaunch = { protocol: "acp-v1", executable: "/nonexistent/g069-acp", args: [], env: {} }, codex: ControlLaunch = { protocol: "codex-app-server", executable: "/nonexistent/g069-codex", args: [], env: {} };
   const attached: HermesGatewayPreflight = async () => ({ kind: "attach", verdict: "A", explanation: "fixture gateway", evidence: [] });

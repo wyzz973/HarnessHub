@@ -178,7 +178,7 @@ test("G069-F2 Claude Code's /clear opens no session ahead: replaced.checkpoint i
   const { control, id } = await opened(t, "claude", peer);
   await run(control, id, "先说一句");
   const cleared = await run(control, id, "/clear");
-  assert.deepEqual(cleared.result, { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true, replaced: { checkpoint: null } } });
+  assert.deepEqual(cleared.result, { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true } });
   assert.equal(await control.checkpoint!(), null, "no session to resume: the next Turn opens one");
   const sent = (await peer.sent()).filter(line => line.method === "session/new" || line.method === "session/close");
   assert.deepEqual(sent.map(line => [line.method, line.params?.sessionId ?? null]), [["session/new", null], ["session/new", null], ["session/close", id]], "no session/new for the clear; the old session closed");
@@ -200,7 +200,7 @@ test("G069-F6 a clear the adapter does not acknowledge still clears: session/clo
     await run(control, id, "先说一句");
     const configuration = await control.nativeConfig!();
     const started = Date.now(), { result } = await run(control, id, "/clear");
-    assert.deepEqual(result.native, { cleared: true, replaced: { checkpoint: null } }, fault);
+    assert.deepEqual(result.native, { cleared: true }, fault);
     assert.equal(result.status, "completed", fault);
     assert.ok(Date.now() - started < 2600, fault + ": within about two seconds");
     assert.equal(control.healthy!(), true, fault);
@@ -249,7 +249,6 @@ test("G069-F10 a title line that names no packet does not hide the packet's own 
 test("G069-F11 every Driver places attachments after the user's words, as its declaration now says (pointersAfterUser true for all six, still to be probed)", { timeout: 60000 }, async t => {
   const declared: Readonly<Record<Harness, RelayCapabilities>> = { claude: claudeRelayCapabilities, codex: codexRelayCapabilities, opencode: openCodeRelayCapabilities, dsh: dshRelayCapabilities, hermes: hermesRelayCapabilities, openclaw: openClawRelayCapabilities };
   for (const harness of Object.keys(declared) as Harness[]) {
-    assert.equal(declared[harness].placement.pointersAfterUser, true, harness);
     const peer = await peerRoot(t, harness === "openclaw" ? { RELAY_OPENCLAW: "1" } : {}), attachment = await fileIn(peer), { control, id } = await opened(t, harness, peer);
     assert.equal((await run(control, id, relayTurn(ID_A, WORDS), [attachment])).result.status, "completed", harness);
     const sent = await peer.sent();

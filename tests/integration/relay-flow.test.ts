@@ -105,28 +105,28 @@ test("a Turn stopped right after its packet went: recorded when the Driver repor
 });
 
 test("a clear opens a new native session and leaves the earlier part behind; the next message carries none of it, and the user may attach it once", async t => {
-  for (const style of ["in place", "replaced"] as const) {
-    const { w, fakes, app, id } = await fromAlpha(t, { bravo: declared() }, "bravo");
-    await turn(app, id, "b1 before the clear", "k1");
-    const before = relayOf(app.read(id), "bravo");
-    fakes.script = (_harnessId, input) => input === "/clear" ? { cleared: style === "in place" ? true : { replaced: { checkpoint: null } } } : {};
-    const cleared = await turn(app, id, "/clear", "clear");
-    assert.equal(cleared.status, "completed"); assert.equal(fakes.to("bravo").at(-1)!.text, "/clear", "a command carries nothing");
-    const state = app.read(id), bravo = relayOf(state, "bravo");
-    assert.deepEqual([bravo.epoch, bravo.mark, bravo.pending, bravo.resendAll], [before.epoch + 1, -1, null, false], style);
-    assert.equal(bravo.floor, events(w.store, id).find(row => row.type === "run.ended" && row.data.runId === cleared.id)!.seq, "the clear is the floor");
-    if (style === "replaced") assert.deepEqual(state.nativeBindings!.filter(row => row.harnessId === "bravo").map(row => row.status), ["archived", "ready"]);
-    // The cleared conversation offers the earlier part once, and sends none of it by itself.
-    const offered = app.relayAttention(id).find(row => row.harnessId === "bravo")!.attention;
-    assert.deepEqual([offered?.cause, offered?.options, offered?.counts.runs], ["attach_available", ["attach_full"], 2]);
-    fakes.script = () => ({});
-    const attached = await turn(app, id, "b2 with the earlier part", "k2", { attach: "full" });
-    const packet = readRelayPrompt(fakes.to("bravo").at(-1)!.text);
-    assert.deepEqual(packet.history.map(row => row.user.text), ["a1 a fact on alpha", "b1 before the clear"], style);
-    assert.deepEqual(decisionOf(w.store, id, attached.id), { kind: "carry", by: "user" });
-    assert.equal(app.relayAttention(id).find(row => row.harnessId === "bravo")!.attention, null, "once: the Turn that ran after the clear ends the offer");
-    // Without the user's attach nothing before the clear goes (the second Session of the pair is the control).
-  }
+  const { w, fakes, app, id } = await fromAlpha(t, { bravo: declared() }, "bravo");
+  await turn(app, id, "b1 before the clear", "k1");
+  const before = relayOf(app.read(id), "bravo");
+  fakes.script = (_harnessId, input) => input === "/clear" ? { cleared: true } : {};
+  const cleared = await turn(app, id, "/clear", "clear");
+  assert.equal(cleared.status, "completed"); assert.equal(fakes.to("bravo").at(-1)!.text, "/clear", "a command carries nothing");
+  const state = app.read(id), bravo = relayOf(state, "bravo");
+  assert.deepEqual([bravo.epoch, bravo.mark, bravo.pending, bravo.resendAll], [before.epoch + 1, -1, null, false]);
+  assert.equal(bravo.floor, events(w.store, id).find(row => row.type === "run.ended" && row.data.runId === cleared.id)!.seq, "the clear is the floor");
+  assert.deepEqual(state.nativeBindings!.filter(row => row.harnessId === "bravo").map(row => row.status), ["archived", "ready"], "the native session was given up for a new one");
+  // The cleared conversation offers the earlier part once, and sends none of it by itself.
+  const offered = app.relayAttention(id).find(row => row.harnessId === "bravo")!.attention;
+  assert.deepEqual([offered?.cause, offered?.options, offered?.counts.runs], ["attach_available", ["attach_full"], 2]);
+  fakes.script = () => ({});
+  const attached = await turn(app, id, "b2 with the earlier part", "k2", { attach: "full" });
+  const packet = readRelayPrompt(fakes.to("bravo").at(-1)!.text);
+  assert.deepEqual(packet.history.map(row => row.user.text), ["a1 a fact on alpha", "b1 before the clear"]);
+  assert.deepEqual(decisionOf(w.store, id, attached.id), { kind: "carry", by: "user" });
+  assert.equal(app.relayAttention(id).find(row => row.harnessId === "bravo")!.attention, null, "once: the Turn that ran after the clear ends the offer");
+});
+
+test("without the user's attach nothing before a clear goes, and only what comes after it is owed", async t => {
   const { fakes, app, id } = await fromAlpha(t, { bravo: declared() }, "bravo");
   await turn(app, id, "b1 before the clear", "k1");
   fakes.script = (_harnessId, input) => input === "/clear" ? { cleared: true } : {};

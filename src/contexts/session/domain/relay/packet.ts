@@ -5,6 +5,7 @@ import { RELAY_POLICY_VERSION, estimateTokens, resolveRelayBudget, type RelayBud
 import { dataRegion, firstLine, type RelayLanguage } from "./escape.js";
 import { ITEM_KINDS, LEAST, Narrator, OUTPUT_LINES, candidatesOf, kindOf, opsLabel, relayUnits, type Candidate, type ItemKind, type RelayToolDetail, type RelayUnit } from "./narration.js";
 import { relayRedactor } from "./redaction.js";
+import { reportedWindow } from "./windows.js";
 
 /**
  * The relay packet (ADR-055 §5, slimmed 2026-11-11): the history a target does not hold, rendered on demand from the
@@ -104,16 +105,6 @@ function packetIdOf(text: string): string {
 }
 const PLACEHOLDER = "relay-" + "0".repeat(20);
 
-/** The latest context window the target reported (`usage.context.size` of its latest Run on the same Harness and control). */
-function windowOf(state: SessionSnapshot, current: PublicRun): number | null {
-  for (let index = state.runs.length - 1; index >= 0; index--) {
-    const run = state.runs[index]!;
-    if (run.id === current.id || run.selection.harnessId !== current.selection.harnessId || run.selection.controlId !== current.selection.controlId) continue;
-    const size = run.usage?.context?.size;
-    if (typeof size === "number" && Number.isSafeInteger(size) && size > 0) return size;
-  }
-  return null;
-}
 /** The binding the packet goes to: the current selection's native session, when it is not a managed Provider's. */
 function targetBinding(state: SessionSnapshot, current: PublicRun): NativeSessionBinding | undefined {
   if (current.selection.provider !== undefined) return undefined;
@@ -417,7 +408,7 @@ export function renderRelay(input: RelayRenderInput): RelayRendering {
   const n = new Narrator(language, redactor, input.names ?? (() => null)), units = relayUnits(state, input.sources, input.origin, input.details);
   const binding = targetBinding(state, current);
   const delta = binding !== undefined && (binding.throughRunId !== null || ((state.origin?.history.length ?? 0) > 0 && !input.origin));
-  const budget = input.budget ?? resolveRelayBudget(windowOf(state, current));
+  const budget = input.budget ?? resolveRelayBudget(reportedWindow(state, current));
   const first = input.firstLine !== false && redactor.redact(current.input).hits === 0 ? firstLine(current.input, language) : null;
   const repeat = input.repeat === true, draft = compose(n, units, budget, first, { delta, repeat, target: n.name(current.selection.harnessId), state });
   const packetId = packetIdOf(draft.head + PLACEHOLDER + draft.body + PLACEHOLDER + draft.tail);
