@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ContextEffect } from "../../src/contracts/control.js";
 import { commandId, messageId, runId, type PublicRun } from "../../src/contracts/session.js";
-import { advances, commandEffect, commandOutcome, dispatched, type CommandOutcome, type InputOutcome } from "../../src/contexts/session/domain/relay/advance.js";
+import { commandEffect, commandOutcome, dispatched, type CommandOutcome, type InputOutcome } from "../../src/contexts/session/domain/relay/advance.js";
 
-// The v12 transition rules of ADR-055 §7.6 (G067). Nothing here reads a store or a clock: each rule is checked over every
+// The rules that read a settled Turn (ADR-055 §7.6). Nothing here reads a store or a clock: each rule is checked over every
 // combination of its inputs against the rule as the design states it.
 
 const EFFECTS: readonly ContextEffect[] = ["keep", "none", "compact", "clear", "rewind", "unknown"];
@@ -28,25 +28,6 @@ test("G067-C06 a command Turn's outcome: undispatched or refused is not recorded
     assert.equal(commandOutcome(true, status, input, noop), expected, String(status) + " " + input + (noop ? " noop" : ""));
   }
   assert.equal(commandOutcome(true, "completed", "unknown"), "executed", "no word of a no-op is no no-op");
-});
-
-test("G067-C01 the native position moves only by advance ⇔ dispatched ∧ (due = ∅ ∨ carried ∧ (input = recorded ∨ input = unknown ∧ resent once))", () => {
-  const inputs: readonly InputOutcome[] = ["recorded", "not_recorded", "unknown"];
-  let combinations = 0;
-  for (const dispatchedTurn of [false, true]) for (const due of [0, 1, 3]) for (const carried of [false, true]) for (const input of inputs) for (const resend of [false, true]) {
-    const stated = dispatchedTurn && (due === 0 || carried && (input === "recorded" || input === "unknown" && resend));
-    assert.equal(advances({ dispatched: dispatchedTurn, due, carried, input, resend }), stated, JSON.stringify({ dispatchedTurn, due, carried, input, resend }));
-    combinations++;
-  }
-  assert.equal(combinations, 72);
-  // The four cases of G067-C01, named: nothing owed; carried and recorded; carried and unknown, first and after one resend; not recorded.
-  assert.equal(advances({ dispatched: true, due: 0, carried: false, input: "not_recorded", resend: false }), true, "nothing owed: even an input the native side never took advances");
-  assert.equal(advances({ dispatched: true, due: 2, carried: true, input: "recorded", resend: false }), true);
-  assert.equal(advances({ dispatched: true, due: 2, carried: true, input: "unknown", resend: false }), false);
-  assert.equal(advances({ dispatched: true, due: 2, carried: true, input: "unknown", resend: true }), true);
-  assert.equal(advances({ dispatched: true, due: 2, carried: true, input: "not_recorded", resend: true }), false);
-  // A command, or an input sent alone, owing facts never advances, whatever its outcome.
-  for (const input of inputs) assert.equal(advances({ dispatched: true, due: 1, carried: false, input, resend: false }), false, input);
 });
 
 test("a Run counts as dispatched by its recorded dispatch time, and a Run from before v10 by its settlement or unknown end", () => {

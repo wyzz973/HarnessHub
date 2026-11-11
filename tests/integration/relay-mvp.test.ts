@@ -14,7 +14,6 @@ import { SessionRuntime } from "../../src/contexts/session/application/runtime.j
 import { RELAY_POLICY_VERSION } from "../../src/contexts/session/domain/relay/budget.js";
 import type { RelayRecord } from "../../src/contexts/session/domain/relay/packet.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
-import { askWhenUnsure } from "../fixtures/relay-settings.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 
 // G070 MVP through the formal Runtime and a real SqliteSessionStore (ADR-055 §5, §7.6 on Session v12): the packet a Turn
@@ -27,8 +26,6 @@ interface World { readonly store: SqliteSessionStore; readonly content: LocalCon
 async function world(t: test.TestContext): Promise<World> {
   const root = await mkdtemp(join(tmpdir(), "relay-mvp-")), workspace = join(root, "workspace"); await mkdir(workspace);
   const store = new SqliteSessionStore(join(root, "data")), content = new LocalContentStore(join(root, "data"), () => store.assertOwner()), runtimes: SessionRuntime[] = [];
-  // These cases are the delivery rules of the strict design (the user is asked where the policy would settle it); the policy's own are relay-permissive.test.ts's.
-  askWhenUnsure(store);
   t.after(async () => {
     for (const app of runtimes) await app.close();
     try { store.close(); } finally { await rm(root, { recursive: true, force: true }); }
@@ -314,29 +311,33 @@ test("G070-MVP N3: a configuration the real factory cannot read is named in RELA
   assert.ok((await factory.relaySecrets(configuration, ["claude", "opencode"])).includes("corp-llm-synthetic-7d1q4x"), "fixed, it is read again");
 });
 
-test("G070-MVP N3: secrets are read only for a Turn that builds a packet; when they cannot be read that Turn alone fails with RELAY_PREPARE_FAILED, undispatched, and the next one carries what is still owed", async t => {
+test("G070-MVP N3: secrets are read only for a Turn that builds a packet; when they cannot be read that Turn goes as typed with the reason in its decision, never fails, and the next one carries what is still owed", async t => {
   const f = await world(t), fake = new SecretHarnesses(harnessId => "reply from " + harnessId, {}, [{ name: "review", description: "review", contextEffect: "keep" }]);
   const app = f.runtime(fake), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   const a1 = await sent(app, session.id, "first on alpha", "a1");
   await switched(app, session.id, "bravo", "to-b");
-  // A command owing history goes as typed and reads nothing for a packet, so a configuration it cannot read never fails it.
+  // A command owing history goes as typed and reads nothing for a packet, so a configuration it cannot read never touches it.
   fake.failure = new Error("must not be asked");
   const command = await sent(app, session.id, "/review the change", "b1");
   assert.equal(command.status, "completed"); assert.deepEqual(fake.asked, []); assert.deepEqual(fake.to("bravo"), ["/review the change"]);
-  const positions = () => JSON.stringify(app.read(session.id).nativeBindings ?? []), before = positions();
-  // The factory names what it cannot read: that Turn fails with it, is never dispatched, and moves no position.
+  const positions = () => JSON.stringify((app.read(session.id).nativeBindings ?? []).map(row => [row.harnessId, row.relay])), before = positions();
+  // The factory names what it cannot read: that Turn is sent as typed (the relay never fails a Turn), says why, and moves no position.
   fake.failure = new SessionError("RELAY_PREPARE_FAILED", "没能准备交接单：读不到 Alpha Harness 的配置文件 /tmp/alpha.json（超过 2 MiB）。修好或缩小这个文件后再发；也可以只发这条消息，不带交接单。");
-  const failed = await sent(app, session.id, "now continue", "b2");
-  assert.equal(failed.status, "failed"); assert.equal(failed.error?.code, "RELAY_PREPARE_FAILED"); assert.match(failed.error?.message ?? "", /Alpha Harness 的配置文件 \/tmp\/alpha\.json（超过 2 MiB）/u);
-  assert.deepEqual(fake.to("bravo"), ["/review the change"], "not dispatched"); assert.deepEqual(failed.sourceRunIds, []); assert.equal(positions(), before, "no native position moved");
-  // A failure the factory did not name is the relay's as well, never the target Harness's.
+  const typed = await sent(app, session.id, "now continue", "b2");
+  assert.equal(typed.status, "completed"); assert.equal(typed.error ?? null, null);
+  assert.deepEqual(fake.to("bravo"), ["/review the change", "now continue"], "as typed"); assert.deepEqual(typed.sourceRunIds, []); assert.equal(positions(), before, "no native position moved");
+  assert.deepEqual((prepared(f.store, session.id, typed.id).relay as { decision?: unknown }).decision, { kind: "alone", by: "policy", cause: "prepare_failed", reason: "redaction_failed" });
+  assert.ok(!JSON.stringify(prepared(f.store, session.id, typed.id)).includes("/tmp/alpha.json"), "the decision names the cause, not the file");
+  // A failure the factory did not name is the relay's as well, never the target Harness's: the Turn goes as typed again.
   fake.failure = Object.assign(new Error("EIO: i/o error, read"), { code: "EIO" });
   const again = await sent(app, session.id, "now continue", "b3");
-  assert.equal(again.error?.code, "RELAY_PREPARE_FAILED"); assert.match(again.error?.message ?? "", /^没能准备交接单：.*也可以只发这条消息，不带交接单。$/u);
-  assert.ok(!(again.error?.message ?? "").includes("EIO") && !(again.error?.message ?? "").includes("Harness operation failed"));
+  assert.equal(again.status, "completed"); assert.equal(again.error ?? null, null); assert.deepEqual(fake.to("bravo").slice(2), ["now continue"]);
+  assert.deepEqual((prepared(f.store, session.id, again.id).relay as { decision?: unknown }).decision, { kind: "alone", by: "policy", cause: "prepare_failed", reason: "redaction_failed" });
+  assert.ok(!JSON.stringify(prepared(f.store, session.id, again.id)).includes("EIO"));
+  assert.equal(positions(), before, "still owed");
   // Fixed: the next content input carries the packet with what is still owed, and the Runtime runs on.
   fake.failure = null;
-  const carried = await sent(app, session.id, "now continue", "b4"), packet = readRelayPrompt(fake.to("bravo")[1]!);
+  const carried = await sent(app, session.id, "now continue", "b4"), packet = readRelayPrompt(fake.to("bravo")[3]!);
   assert.equal(carried.status, "completed"); assert.equal(packet.kind, "packet"); assert.equal(packet.history[0]!.user.text, a1.input); assert.ok(carried.sourceRunIds.includes(a1.id));
   assert.deepEqual(fake.asked, [["alpha", "bravo"], ["alpha", "bravo"], ["alpha", "bravo"]]);
 });

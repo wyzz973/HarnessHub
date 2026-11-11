@@ -147,14 +147,10 @@ function aloneWords(decision: RelayDecisionInfo, ctx: NoteContext): string {
   const target = ctx.target, which = ctx.pending === null ? "上一份交接单" : `交接单 #${ctx.pending} `;
   switch (decision.cause) {
     case "delivery_unconfirmed": return ctx.cannotConfirm ? `${which}已发出，${target} 无法确认是否收到 · 这条只发了原话` : `${which}发了两次仍未确认送达 · 这条只发了原话`;
-    case "verify_required": return `未能核对 ${target} 原生会话里的交接内容 · 这条按原样发出`;
-    case "marker_absent": return `${target} 的原生会话里找不到之前的交接单 · 这条按原样发出`;
+    case "history_changed": return "这条消息只发了原话";
     case "input_limit": return decision.reason === "input_limit" ? `这条消息已接近 ${target} 的输入上限，放不下交接单 · 这条只发了原话` : `${target} 的上下文窗口放不下交接单 · 这条只发了原话`;
     case "recovery_failed": return "服务重启后没能恢复这个对话的交接记录 · 这条只发了原话";
-    case "consent_revoked": return `你已撤回对${ctx.service === null ? "该服务" : ` ${vendorWords(ctx.service)} `}的允许 · 这条只发了原话`;
-    case "consent_goal_only": return "跨厂商交接设为“只交目标” · 这条只发了原话";
     case "prepare_failed": return `这次没能准备交接单${prepareWords(decision.reason)} · 这条只发了原话，下一条会再试`;
-    case "classification_changed": return `这是 ${target} 的命令，不会附上交接单；交接单会随下一条普通消息发出`;
     case null: return "这条消息只发了原话";
   }
 }
@@ -173,8 +169,7 @@ export function decisionNote(info: RunRelayInfo, ctx: NoteContext): string | nul
         case "delivery_unconfirmed": return decision.resend === "grown"
           ? `这条消息补交了 ${info.continuity.runs ?? ctx.sourceRuns} 轮（含上次未确认送达的内容）${ctx.number === null ? "" : `（交接单 #${ctx.number}）`}`
           : `上一份交接单没有确认送达，这条消息已再附一次${packetWords(ctx.number, info.continuity.runs)}`;
-        case "verify_required": return `未能核对 ${ctx.target} 的原生会话，已补发完整交接单（可能与已有内容重复）`;
-        case "marker_absent": return `${ctx.target} 的原生会话里找不到之前的交接单，已在同一会话补发`;
+        case "history_changed": return `${ctx.target} 的原生会话可能被改动过，已补发完整交接单（可能与已有内容重复）`;
         default: break;
       }
       return downgradeNote(info, ctx);
@@ -352,15 +347,9 @@ export function bannerOf(binding: RelayBinding | undefined, target: string, clos
         const which = attention.packet === null ? "上一份交接单" : `交接单 #${attention.packet} `, sent = attention.counts.packets;
         return sent >= 2 ? `${which}发了${sent === 2 ? "两" : sent}次仍未确认送达 ${target} · 之后的消息只发原话，有新内容再附` : `${which}还没有确认送达 ${target}`;
       }
-      case "verify_required": return `未能核对 ${target} 原生会话里的交接内容`;
-      case "marker_absent": return `${target} 的原生会话里找不到之前的交接单`;
-      case "clear_unconfirmed": return "清空待确认 · 不确认的话，下次补交会带上清空前的记录";
-      case "recovery_failed": return "服务重启后没能恢复这个对话的交接记录 · 下一条消息只发原话";
-      case "input_limit": return `${target} 的上下文窗口放不下交接单 · 消息只发原话`;
-      case "consent_revoked": return `你已撤回对 ${named} 的允许 · 消息只发原话`;
-      case "consent_goal_only": return `跨厂商交接设为“只交目标”，目前只能发原话 · 想让 ${target} 接着做，可以重新允许`;
+      case "attach_available": return `上下文已清空，${target} 看不到之前的对话 · 想让它接着做，可以把之前的对话附到下一条消息`;
     }
-  })() + (cause === "input_limit" || cause === "clear_unconfirmed" ? "" : stake);
+  })() + (cause === "attach_available" ? "" : stake);
   const choice = choiceOf(binding), actions: BannerAction[] = [];
   // "只发这条消息" is never a button here: sending alone is what the next message does by itself, and the line above the box has the toggle.
   for (const option of attention.options) {
@@ -475,7 +464,7 @@ export function syncWords(binding: RelayBinding): string {
     case "synced": return (binding.throughRun === null ? "已同步" : `已同步到第 ${binding.throughRun + 1} 轮`) + (proof === null ? "" : `（${proof}）`) + cleared;
     case "fresh": return binding.cleared > 0 ? `上下文已清空，下一条不附历史 · 清空过 ${binding.cleared} 次` : "新会话，还没有收到过交接单";
     case "pending": return (binding.canConfirm === false ? "交接单已发出，这个 Harness 无法确认是否收到" : "交接单已发出，送达待确认") + cleared;
-    case "suspect": return (binding.attention?.cause === "clear_unconfirmed" ? "清空待确认" : "状态待核对") + " · 下一条消息发出前会核对" + cleared;
+    case "suspect": return "状态待核对" + cleared;
     case "unknown": return "状态未知" + cleared;
   }
 }

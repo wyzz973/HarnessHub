@@ -27,7 +27,7 @@ export type RelaySyncState = typeof RELAY_SYNC_STATES[number];
 export const RELAY_DELIVERY_STATES = ["in_flight", "recorded", "unknown", "not_recorded"] as const;
 export type RelayDeliveryState = typeof RELAY_DELIVERY_STATES[number];
 export type RelayDeliveryStatesAreListed = Holds<Exact<RelayDeliveryState, DeliveryStatus>>;
-export const RELAY_EVIDENCE = ["E1", "E2", "E3"] as const;
+export const RELAY_EVIDENCE = ["E1", "E3"] as const;
 export type RelayEvidence = typeof RELAY_EVIDENCE[number];
 export type RelayEvidenceIsListed = Holds<Exact<RelayEvidence, DeliveryEvidence>>;
 export const RELAY_CONTINUITY_KINDS = ["native_resume", "native_resume_delta", "rehydrate", "native_fork", "native_import", "native_cleared", "blocked"] as const;
@@ -38,20 +38,21 @@ export const RELAY_OPTIONS = ["attach_full", "send_alone", "new_native", "clear_
 export type RelayOption = typeof RELAY_OPTIONS[number];
 export const RELAY_CROSS_VENDOR = ["ask", "allow", "goal_only"] as const;
 export type RelayCrossVendor = typeof RELAY_CROSS_VENDOR[number];
-export const RELAY_PREF_CROSS_VENDOR = "relay.crossVendor" satisfies RelayPrefKey;
+// The relay now has the one preference "relay.attach" (slim.md); these two names are the page's old settings, not yet followed up (the interface is the next step).
+export const RELAY_PREF_CROSS_VENDOR = "relay.crossVendor";
 /** What the relay does when it is unsure (a delivery nothing confirmed, a history it could not check): settle it itself, or ask. */
 export const RELAY_WHEN_UNSURE = ["auto", "ask"] as const;
 export type RelayWhenUnsure = typeof RELAY_WHEN_UNSURE[number];
-export const RELAY_PREF_WHEN_UNSURE = "relay.whenUnsure" satisfies RelayPrefKey;
+export const RELAY_PREF_WHEN_UNSURE = "relay.whenUnsure";
 /** Why a binding asks the user to look at it (`attention.cause`), and what the relay decided for a Turn (`decision`): the words of the wire. */
-export const RELAY_ATTENTION_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent", "clear_unconfirmed", "recovery_failed", "input_limit", "consent_revoked", "consent_goal_only"] as const;
+export const RELAY_ATTENTION_CAUSES = ["delivery_unconfirmed", "attach_available"] as const;
 export type RelayAttentionCause = typeof RELAY_ATTENTION_CAUSES[number];
 export type RelayAttentionCausesAreListed = Holds<Exact<RelayAttentionCause, RelayAttention["cause"]>>;
 export const RELAY_DECISION_KINDS = ["carry", "alone", "plain"] as const;
 export type RelayDecisionKind = typeof RELAY_DECISION_KINDS[number];
 export type RelayDecisionKindsAreListed = Holds<Exact<RelayDecisionKind, RelayDecision["kind"]>>;
 /** How a `carry` decision sent a pending packet again: the automatic resend, a packet for newer facts that also holds the unconfirmed one's, the user's own. */
-export const RELAY_DECISION_RESENDS = ["auto", "grown", "user"] as const;
+export const RELAY_DECISION_RESENDS = ["auto", "grown", "all"] as const;
 export type RelayDecisionResend = typeof RELAY_DECISION_RESENDS[number];
 export type RelayDecisionResendsAreListed = Holds<Exact<RelayDecisionResend, NonNullable<RelayDecision["resend"]>>>;
 /** What the installation as a whole cannot do for the relay while it stays so (`installation` of the relay view). */
@@ -61,7 +62,7 @@ export type RelayInstallationCausesAreListed = Holds<Exact<RelayInstallationCaus
 export const RELAY_DECISION_BY = ["need", "policy", "user"] as const;
 export type RelayDecisionBy = typeof RELAY_DECISION_BY[number];
 export type RelayDecisionByIsListed = Holds<Exact<RelayDecisionBy, RelayDecision["by"]>>;
-export const RELAY_DECISION_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent", "input_limit", "recovery_failed", "consent_revoked", "consent_goal_only", "prepare_failed", "classification_changed"] as const;
+export const RELAY_DECISION_CAUSES = ["delivery_unconfirmed", "history_changed", "input_limit", "recovery_failed", "prepare_failed"] as const;
 export type RelayDecisionCause = typeof RELAY_DECISION_CAUSES[number];
 export type RelayDecisionCausesAreListed = Holds<Exact<RelayDecisionCause, NonNullable<RelayDecision["cause"]>>>;
 
@@ -369,7 +370,7 @@ export interface RelayApi {
   /** Sets one preference; rejects with a `RelayReadError` when the Gateway refuses it. */
   setPref<K extends keyof RelayPrefs>(name: K, value: RelayPrefs[K]): Promise<void>;
 }
-const PREF_KEYS: Readonly<Record<keyof RelayPrefs, RelayPrefKey>> = { crossVendor: RELAY_PREF_CROSS_VENDOR, whenUnsure: RELAY_PREF_WHEN_UNSURE };
+const PREF_KEYS: Readonly<Record<keyof RelayPrefs, string>> = { crossVendor: RELAY_PREF_CROSS_VENDOR, whenUnsure: RELAY_PREF_WHEN_UNSURE };
 export function createRelayApi(transport: RelayTransport): RelayApi {
   const id = encodeURIComponent;
   return {

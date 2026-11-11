@@ -1,16 +1,19 @@
 import type { ContentKind } from "./content.js";
 import type { CommandClass, ContextEffect } from "./control.js";
-import { SessionError, messageId, runId, sessionId, type MessageId, type RunId, type RunStatus, type SessionId, type SessionSnapshot } from "./session.js";
+import { SessionError, messageId, runId, type MessageId, type RunId, type RunStatus, type SessionId, type SessionSnapshot } from "./session.js";
 
 /**
- * The relay's contract (ADR-055, relay-architecture §4, §14): identities, closed unions, the per-binding and per-Run relay
- * state the Session v13 snapshot holds, the rows of the relay tables and the ports that write them. Every closed union is
- * also exported as an `as const` array, the one source the parsers below and the future JSON Schema (C006) check against.
+ * The relay's contract (ADR-055, slimmed 2026-11-11, docs/proposals/relay/slim.md): identities, closed unions, the per-binding
+ * and per-Run relay state the Session v13 snapshot holds, the rows of the relay tables and the ports that write them. Every
+ * closed union is also exported as an `as const` array, the one source the parsers below check against.
+ *
+ * A binding records four things: its `epoch` (which native session of its Harness control it is), its `mark` (how far into the
+ * conversation's facts it is known to hold), the packet sent to it that nothing confirmed yet (`pending`) and whether the next
+ * packet must carry everything (`resendAll`), with the clear boundary (`floor`) the epoch started from. Nothing else.
  *
  * External or persisted input enters as `unknown` and becomes one of these types only through a parser here, which checks
  * every field, rejects unknown fields and holds each value to the byte bound written next to it; failures are
- * SessionError("INVALID_DATA"). The bounds are chosen so that the longest legal relay state of a binding and of a Run fits
- * MAX_BINDING_RELAY_BYTES and MAX_RUN_RELAY_BYTES, which the parsers also check (INV-35).
+ * SessionError("INVALID_DATA").
  */
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -21,38 +24,26 @@ import { SessionError, messageId, runId, sessionId, type MessageId, type RunId, 
 export const RELAY_MAX_SEQ = 16_384;
 /** The most Runs a Session holds: MAX_RUNS of the Session domain; Run indexes are below it. */
 export const RELAY_MAX_RUNS = 256;
-/** Native epochs start at 1 and grow by one per new native session or confirmed clear, each after at least one event. */
+/** Native epochs start at 1 and grow by one per new native session or clear, each after at least one event. */
 export const RELAY_MAX_EPOCH = RELAY_MAX_SEQ + 1;
-/** A host name (DNS limit), the longest part of a gateway vendor key. */
+/** Bounds of the Drivers' declarations (host names, model identities, authentication kinds); the relay itself no longer reads them. */
 export const MAX_HOST_BYTES = 253;
-/** A model identity and its normalized key as a binding keeps them (ADR-055 §10.4); longer ones are not kept. */
 export const MAX_RELAY_MODEL_BYTES = 96;
-/** The authentication kind a Driver reports (account, api_key…), only shown in words. */
 export const MAX_AUTH_KIND_BYTES = 16;
-/** A named router or Provider in a vendor key. */
 export const MAX_VENDOR_NAME_BYTES = 128;
-/** Counters a native side reports (compactions, context tokens). */
+/** Counters a native side reports (context tokens). */
 export const MAX_RELAY_COUNTER = 2_147_483_647;
 /** Epoch milliseconds, as everywhere in the Session. */
 export const MAX_RELAY_TIME = 8.64e15;
-/**
- * The serialized `relay` of one binding. Relay-architecture §0 and §11.1 aim at 1,024 B; with the fields of §4 the longest
- * legal value is about twice that (a pending sync whose prior is a suspect carrying a packet, a 253-byte gateway host in
- * both the consent key and the observed endpoint), so this is the bound every legal value is held to (G066 records the
- * difference in ADR-055's implementation notes).
- */
-export const MAX_BINDING_RELAY_BYTES = 2048;
-/**
- * The serialized relay fields of one Run (`{ relay, relayRequest }`); the snapshot also gains contextReadyAt and recordedAt,
- * two bounded times (≤ 64 B with their keys). Relay-architecture §0 aims at 320 B; with 96-byte Harness and control
- * identities in `executedOn` and the 64-hex request fingerprint the longest legal value is 562 B, which this bound holds
- * (see MAX_BINDING_RELAY_BYTES).
- */
+/** The serialized `relay` of one binding: five small fields and at most one pending packet (163 B at the largest values). */
+export const MAX_BINDING_RELAY_BYTES = 256;
+/** The serialized relay fields of one Run (`{ relay, relayRequest }`); the snapshot also gains contextReadyAt and recordedAt. */
 export const MAX_RUN_RELAY_BYTES = 576;
-/** Relay table bounds (relay-architecture §14.1), checked on serialized bytes before any statement runs (INV-35). */
+/** Relay table bounds, checked on serialized bytes before any statement runs. */
 export const RELAY_BODY_BYTES = 262_144;
 export const RELAY_SESSION_BODY_BYTES = 64 * 1024 * 1024;
 export const RELAY_MANIFEST_BYTES = 65_536;
+/** The bound of a Driver's delivery position (a type kept for the Drivers' declarations, see below). */
 export const RELAY_POSITION_BYTES = 4096;
 export const RELAY_INDEX_BYTES = 2048;
 export const RELAY_DIGEST_BYTES = 65_536;
@@ -62,26 +53,21 @@ export const RELAY_PINS = 24;
 export const RELAY_PIN_BYTES = 2048;
 export const RELAY_PINS_BYTES = 12_288;
 export const RELAY_PREF_VALUE_BYTES = 64;
-/** The installation's consent log: rows kept before it is rotated, and rows its archive may reach. */
-export const RELAY_LOG_ROWS = 65_536;
-export const RELAY_LOG_ARCHIVE_ROWS = 1_048_576;
-/** How long an observed context window is kept and read (relay-architecture §14.1). */
-export const RELAY_WINDOW_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Identities
 // ---------------------------------------------------------------------------------------------------------------------
 
-declare const packetBrand: unique symbol, printBrand: unique symbol, pinBrand: unique symbol, tagBrand: unique symbol, exclBrand: unique symbol, hmacBrand: unique symbol;
+declare const packetBrand: unique symbol, printBrand: unique symbol, pinBrand: unique symbol, exclBrand: unique symbol, tagBrand: unique symbol, hmacBrand: unique symbol;
 /** "relay-" + 20 Crockford base32 digits (lower case) of the sha256 of the final text with a placeholder in its ID slot. */
 export type RelayPacketId = string & { readonly [packetBrand]: true };
-/** sha256, 64 lower-case hex digits; never of a value that may be a secret (INV-29: those use HmacDigest). */
+/** sha256, 64 lower-case hex digits; never of a value that may be a secret (those use HmacDigest). */
 export type Fingerprint = string & { readonly [printBrand]: true };
 export type PinId = string & { readonly [pinBrand]: true };
 export type ExclusionId = string & { readonly [exclBrand]: true };
 /** The first 8 hex digits of HMAC-SHA256(session subkey, value). */
 export type RedactionTag = string & { readonly [tagBrand]: true };
-/** HMAC-SHA256(session subkey, value), 64 hex digits: every fingerprint of what may be a secret (INV-29). */
+/** HMAC-SHA256(session subkey, value), 64 hex digits: every fingerprint of what may be a secret. */
 export type HmacDigest = string & { readonly [hmacBrand]: true };
 export type PolicyVersion = `relay/${number}`;
 
@@ -97,8 +83,6 @@ export function redactionTag(value: unknown): RedactionTag { return patterned(va
 export function pinId(value: unknown): PinId { return patterned(value, /^pin-[A-Za-z0-9-]{1,96}$/u, "pin identity"); }
 export function exclusionId(value: unknown): ExclusionId { return patterned(value, /^exclusion-[A-Za-z0-9-]{1,96}$/u, "exclusion identity"); }
 export function policyVersion(value: unknown): PolicyVersion { return patterned(value, /^relay\/(?:0|[1-9][0-9]{0,5})$/u, "relay policy version"); }
-/** sha256("") in hex: the chain of a mark that no packet built (relay-architecture §7.2, RT1-m6's legacy chain). */
-export const EMPTY_CHAIN = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" as Fingerprint;
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Closed unions
@@ -118,61 +102,22 @@ export type ContextEffectsAreListed = Holds<Exact<typeof CONTEXT_EFFECTS[number]
 /** A catalog entry's context effect; it may depend on the arguments (OpenClaw `/reset soft`, Hermes `/compress --preview`). */
 export type ContextEffectRule = ContextEffect | { readonly byArgs: (args: string) => ContextEffect };
 
+// ---- Kept for the Drivers -------------------------------------------------------------------------------------------
+// The types below are no longer read by the relay: the Drivers' static declarations (RelayCapabilities) and optional members
+// (HarnessControl.verifyDelivered, deliveryPosition, relayVendor) still name them until the Driver branch removes those.
+
 export const VENDOR_NAMES = ["anthropic", "openai", "deepseek", "google", "aws-bedrock", "google-vertex", "local"] as const;
 export const VENDOR_PREFIXES = ["gateway", "router", "provider", "unknown"] as const;
-/**
- * The vendor that serves a binding's model requests, as its Driver declares it from the endpoint it resolved itself
- * (ADR-055 §10.4); `allow` never overrides `unknown:*`, `gateway:*`, `router:*` or `provider:*`.
- */
 export type VendorKey = typeof VENDOR_NAMES[number] | `gateway:${string}` | `router:${string}` | `provider:${string}` | `unknown:${string}`;
 export const ENDPOINT_LAYERS = ["harness_default", "user_config", "project_config", "workspace_file", "environment"] as const;
 export type EndpointLayer = typeof ENDPOINT_LAYERS[number];
-/** The endpoint and model a Driver resolved; host and layer only feed the vendor key and consent records, never logs. */
 export interface VendorObservation {
-  /** ≤ MAX_RELAY_MODEL_BYTES; null when the Driver could not tell. */
   readonly model: string | null;
-  /** normalizeModel(model), ≤ MAX_RELAY_MODEL_BYTES; "" when the model is unknown. */
   readonly modelKey: string;
-  /** ≤ MAX_AUTH_KIND_BYTES. */
   readonly authKind: string | null;
-  /** host ≤ MAX_HOST_BYTES. */
   readonly endpoint: { readonly host: string; readonly layer: EndpointLayer } | null;
   readonly loopback: boolean;
 }
-
-/**
- * What a mark stands on: E1, E2, E3 (evidence of a packet), legacy (the v13 migration), origin (the history a session started
- * from), native (the binding's own Turn while nothing was owed), choice (the epoch base the user chose to send the complete
- * packet again from, F13). A delivery row is decided only by E1, E2 or E3 (DELIVERY_EVIDENCE).
- */
-export const EVIDENCE_CLASSES = ["E1", "E2", "E3", "legacy", "origin", "native", "choice"] as const;
-export type EvidenceClass = typeof EVIDENCE_CLASSES[number];
-export const DELIVERY_EVIDENCE = ["E1", "E2", "E3"] as const satisfies readonly EvidenceClass[];
-export type DeliveryEvidence = typeof DELIVERY_EVIDENCE[number];
-export const NOT_RECORDED_REASONS = ["rejected_before_insert", "driver_synthesized", "cancelled_before_insert", "never_dispatched", "gateway_refused"] as const;
-export const UNKNOWN_REASONS = ["no_evidence", "owner_ended", "verify_timeout", "verify_unavailable", "absent", "outside_window", "compacted", "late_delivery"] as const;
-export const DELIVERY_STATUSES = ["in_flight", "recorded", "not_recorded", "unknown"] as const;
-export type DeliveryStatus = typeof DELIVERY_STATUSES[number];
-/** What is known of one Run's packet reaching its binding's native history (R8): no evidence is unknown, never not recorded. */
-export type DeliveryOutcome =
-  | { readonly kind: "in_flight" }
-  | { readonly kind: "recorded"; readonly evidence: DeliveryEvidence; readonly decidedSeq: number; readonly decidedAt: number; readonly verifiedInRun: RunId | null }
-  | { readonly kind: "not_recorded"; readonly reason: typeof NOT_RECORDED_REASONS[number]; readonly decidedSeq: number; readonly decidedAt: number }
-  | { readonly kind: "unknown"; readonly reason: typeof UNKNOWN_REASONS[number]; readonly decidedSeq: number; readonly decidedAt: number };
-/**
- * The delivery outcomes a row may move between (relay-architecture §4): from in_flight to any decided one; from unknown to
- * recorded or not recorded; from not recorded to recorded (later positive evidence corrects a misjudgment, RT2-09); and the
- * same outcome again for unknown and recorded (a reason refined, realized counts settled), which is no transition (INV-31).
- */
-export const DELIVERY_TRANSITIONS: Readonly<Record<DeliveryStatus, readonly DeliveryStatus[]>> = {
-  in_flight: ["recorded", "not_recorded", "unknown"],
-  unknown: ["unknown", "recorded", "not_recorded"],
-  not_recorded: ["recorded"],
-  recorded: ["recorded"],
-};
-export function deliveryTransitionAllowed(from: DeliveryStatus, to: DeliveryStatus): boolean { return DELIVERY_TRANSITIONS[from].includes(to); }
-export const POSITION_KINDS = ["file_offset", "seq", "client_id", "none"] as const;
-/** Where the Driver read the native history before dispatch; a check reads only the first user entry after it (RT3 P03). */
 export type DeliveryPosition =
   | { readonly kind: "file_offset"; readonly path: string; readonly bytes: number }
   | { readonly kind: "seq"; readonly before: number }
@@ -187,36 +132,54 @@ export interface VerifyResult {
   readonly foreignAfterLast: number | null;
   readonly verifyMs: number;
 }
+
+// ---- Delivery -------------------------------------------------------------------------------------------------------
+
+/** What a delivery is decided by: E1, the native side's own report of the input (or the Turn's first agent output), and E3, the Turn's result. */
+export const DELIVERY_EVIDENCE = ["E1", "E3"] as const;
+export type DeliveryEvidence = typeof DELIVERY_EVIDENCE[number];
+/** The name the interface knows the evidence classes by. */
+export type EvidenceClass = DeliveryEvidence;
+export const NOT_RECORDED_REASONS = ["rejected_before_insert", "never_dispatched"] as const;
+export const UNKNOWN_REASONS = ["no_evidence", "owner_ended"] as const;
+export const DELIVERY_STATUSES = ["in_flight", "recorded", "not_recorded", "unknown"] as const;
+export type DeliveryStatus = typeof DELIVERY_STATUSES[number];
+/** What is known of one Run's packet reaching its binding's native history: no evidence is unknown, never not recorded. */
+export type DeliveryOutcome =
+  | { readonly kind: "in_flight" }
+  | { readonly kind: "recorded"; readonly evidence: DeliveryEvidence; readonly decidedSeq: number; readonly decidedAt: number }
+  | { readonly kind: "not_recorded"; readonly reason: typeof NOT_RECORDED_REASONS[number]; readonly decidedSeq: number; readonly decidedAt: number }
+  | { readonly kind: "unknown"; readonly reason: typeof UNKNOWN_REASONS[number]; readonly decidedSeq: number; readonly decidedAt: number };
+/** The delivery outcomes a row may move between: from in_flight to any decided one; a decided one only to itself (a reason refined). */
+export const DELIVERY_TRANSITIONS: Readonly<Record<DeliveryStatus, readonly DeliveryStatus[]>> = {
+  in_flight: ["recorded", "not_recorded", "unknown"],
+  unknown: ["unknown"],
+  not_recorded: ["not_recorded"],
+  recorded: ["recorded"],
+};
+export function deliveryTransitionAllowed(from: DeliveryStatus, to: DeliveryStatus): boolean { return DELIVERY_TRANSITIONS[from].includes(to); }
 export const DELIVERY_CHANNELS = ["text_block", "single_text"] as const;
 /**
  * The reserved `redaction.keyId` of a delivery row whose keyed digests were made under a key kept only in the memory of the
- * owner that wrote it (rows written before G072's relay-keys, and a Runtime composed without an installation key, A17): no
- * reader can check them. The installation key (RelayKeyPort) never takes this identity. A reader that finds a `keyId` other
- * than its current key's concludes "not checkable" (不可复核), never "different"; rows are never re-keyed afterwards.
+ * owner that wrote it (a Runtime composed without an installation key): no reader can check them. The installation key
+ * (RelayKeyPort) never takes this identity.
  */
 export const EPHEMERAL_KEY_ID = "ephemeral";
-export const REALIZED_CLOSED_BY = ["compaction", "clear", "epoch", "idle"] as const;
-export interface RealizedWindow { readonly requests: number; readonly cacheHits: number; readonly closedBy: typeof REALIZED_CLOSED_BY[number] }
-/**
- * One Run's delivery (at most one row per Run). The fields that vary per Run (consent seq, current input HMAC, redaction
- * context, compaction cursor at delivery, resend relation) live here, not in the packets deduplicated by text (F08).
- */
+/** One Run's delivery (at most one row per Run). */
 export interface DeliveryRecord {
   readonly runId: RunId;
   readonly packetId: RelayPacketId;
   readonly channel: typeof DELIVERY_CHANNELS[number];
-  /** Serialized ≤ RELAY_POSITION_BYTES. */
-  readonly position: DeliveryPosition;
   readonly outcome: DeliveryOutcome;
-  readonly consentLogSeq: number | null;
+  /** The installation's handoff log row of the first handoff to this Harness (relay_log), which the packet's delivery rests on. */
+  readonly handoffLogSeq: number | null;
   readonly inputHmac: HmacDigest;
   readonly redaction: { readonly rulesVersion: string; readonly keyId: string; readonly setHmac: RedactionTag };
-  readonly compactionAtDelivery: { readonly count: number; readonly digest: Fingerprint | null } | null;
-  readonly resendOf: RunId | null;
-  readonly attachOverride: boolean;
-  readonly verifyMs: number | null;
-  readonly realized: RealizedWindow | null;
+  /** The packet was the one automatic resend of the pending packet. */
+  readonly autoResend: boolean;
 }
+
+// ---- Drivers' declarations ------------------------------------------------------------------------------------------
 
 export const DELIVERY_LIVE = ["recorded_event", "agent_output", "none"] as const;
 export const DELIVERY_VERIFY = ["after_turn", "on_next_open", "none"] as const;
@@ -230,9 +193,10 @@ export const TITLE_MODES = ["set", "none"] as const;
 export const HOST_PATH_READ = ["verified", "declared", "needs_grant", "none"] as const;
 export const PRE_APPROVAL = ["session_allow_list", "read_only_auto", "unknown"] as const;
 /**
- * A Driver's static relay declaration (relay-architecture §3.2, §8): only mechanisms, never product names; a missing item
- * is the most conservative value (INV-16). A module-level constant, read at admission without a control instance (F10).
- * Drivers declare it (G069: each Driver module's relayCapabilities, also HarnessControl.relayCapabilities).
+ * A Driver's static relay declaration: only mechanisms, never product names; a missing item is the most conservative value. A
+ * module-level constant, read at admission without a control instance. What the relay reads of it: `delivery.live` and
+ * `delivery.successProvesRecorded` (whether a send can ever be confirmed), `execution`, `commands.classify`, `placement`,
+ * `window` and `title`. The other members are still filled by the Drivers and read by nothing.
  */
 export interface RelayCapabilities {
   readonly probed: boolean;
@@ -242,19 +206,16 @@ export interface RelayCapabilities {
     readonly unlistedSlash: typeof UNLISTED_SLASH[number];
     readonly hidden: readonly { readonly name: string; readonly effect: ContextEffectRule; readonly acceptsRelay?: boolean }[];
     /**
-     * The native side's reading of an input (VF1-06): the same reading as the Driver's HarnessControl.classify, over a
-     * catalog of this shape (null before one is read) and the kinds of the input's attachments, which some native sides read
-     * by (an image makes Hermes run no command; any attachment makes Codex's thread operations text). Pure and synchronous.
+     * The native side's reading of an input: the same reading as the Driver's HarnessControl.classify, over a catalog of this
+     * shape (null before one is read) and the kinds of the input's attachments, which some native sides read by. Pure and synchronous.
      */
     readonly classify: (text: string, catalog: readonly { readonly name: string; readonly effect: ContextEffectRule; readonly acceptsRelay?: boolean }[] | null, attachments: readonly ContentKind[]) => CommandClass;
   };
   readonly placement: { readonly parts: typeof PLACEMENT_PARTS[number]; readonly maxInput: { readonly unit: "chars" | "bytes"; readonly limit: number } | null; readonly pointersAfterUser: boolean;
     /**
      * The size of what this Driver hands its native side for `turn` (the placed text, with an allowance for what the native
-     * side or the Driver adds that is unknown before dispatch: each attachment's pointer, a working-directory prefix), in
-     * `maxInput`'s unit (Unicode code points without a bound). Pure and synchronous: the coordinator chooses the packet's
-     * size by it before dispatch (ADR-055 C3, the approval agent's decision on the stage-two review); the Driver's own refusal
-     * of a Turn over the bound (INPUT_LIMIT_REFUSED) stays as the backstop. Never smaller than what the Driver measures itself.
+     * side or the Driver adds that is unknown before dispatch), in `maxInput`'s unit. Pure and synchronous: the coordinator
+     * chooses the packet's size by it before dispatch; the Driver's own refusal of a Turn over the bound stays as the backstop.
      */
     readonly measure: (turn: TurnText, attachments: readonly ContentKind[]) => number };
   readonly window: typeof WINDOW_REPORTS[number];
@@ -267,8 +228,10 @@ export interface RelayCapabilities {
   readonly hostPathRead: typeof HOST_PATH_READ[number];
   readonly sessionTools: null | { readonly owner: "program"; readonly listFrozenAtCreate: true; readonly preApproval: typeof PRE_APPROVAL[number] };
 }
-/** What a Turn hands its Driver: the input alone, or the user's words with a relay packet the Driver places (§3.2). */
+/** What a Turn hands its Driver: the input alone, or the user's words with a relay packet the Driver places. */
 export type TurnText = string | { readonly user: string; readonly relay: { readonly packetId: RelayPacketId; readonly body: string; readonly firstLine: boolean } };
+
+// ---- The packet manifest --------------------------------------------------------------------------------------------
 
 export const DATA_CLASSES = ["user_text", "hub_text", "harness_text", "exec_output", "external_output", "file_diff", "credential_path", "workspace_meta", "thinking"] as const;
 export type DataClass = typeof DATA_CLASSES[number];
@@ -287,8 +250,9 @@ export type Grade = typeof GRADES[number];
 export const PACKET_KINDS = ["packet", "delta", "anchor", "resend"] as const;
 export type RelayPacketKind = typeof PACKET_KINDS[number];
 export const SOURCE_KINDS = ["other", "same_program", "multiple"] as const;
-export const WINDOW_SOURCES = ["session_report", "observed_recent", "documented", "assumed_cloud", "assumed_gateway", "assumed_local"] as const;
-export const BUDGET_CLAMPS = ["window", "input_limit", "cost_tier", "latency_tier", "cliff_tier"] as const;
+/** Where the window a packet was budgeted against came from: what the target's own Turn reported, or the assumption. */
+export const WINDOW_SOURCES = ["session_report", "assumed"] as const;
+export const BUDGET_CLAMPS = ["window", "input_limit"] as const;
 export const FOLD_WHY = ["tail", "head", "anchor", "user", "middle"] as const;
 export const USER_EDIT_KINDS = ["excluded_run", "excluded_section", "note_added", "tier_changed", "pinned", "revealed"] as const;
 export const FIRST_LINE_OMITTED = ["slash", "secret_hit"] as const;
@@ -298,8 +262,7 @@ export interface RelayPacket {
   readonly kind: RelayPacketKind;
   readonly tier: Tier;
   readonly complete: boolean;
-  readonly reanchor: boolean;
-  readonly target: { readonly harnessId: string; readonly controlId: string; readonly model: string | null; readonly vendor: VendorKey; readonly nativeEpoch: number };
+  readonly target: { readonly harnessId: string; readonly controlId: string; readonly model: string | null; readonly nativeEpoch: number };
   readonly source: { readonly kind: typeof SOURCE_KINDS[number]; readonly names: readonly { readonly harnessId: string; readonly model: string | null; readonly runs: readonly [number, number] }[] };
   readonly range: SourceRange;
   readonly basePacketId: RelayPacketId | null;
@@ -310,7 +273,7 @@ export interface RelayPacket {
   readonly workspaceObservationSeq: number | null;
   readonly inputs: { readonly attachOverride: boolean; readonly digestBehind: readonly number[]; readonly detailsMissing: readonly number[]; readonly noteIncluded: boolean; readonly firstLineOmitted: typeof FIRST_LINE_OMITTED[number] | null };
   readonly redaction: { readonly profile: "egress"; readonly count: number; readonly byClass: Readonly<Record<string, number>>; readonly overridden: number; readonly unscanned: number };
-  readonly body: { readonly sha256: Fingerprint; readonly bytes: number; readonly estTokens: number; readonly estimator: "est/2"; readonly family: string; readonly untrustedTokens: number; readonly userTokens: number };
+  readonly body: { readonly sha256: Fingerprint; readonly bytes: number; readonly estTokens: number; readonly estimator: "est/2"; readonly untrustedTokens: number; readonly userTokens: number };
   readonly budget: { readonly capTokens: number; readonly userCap: number; readonly untrustedCap: number; readonly window: number; readonly fixedPrefix: number; readonly windowSource: typeof WINDOW_SOURCES[number]; readonly clampedBy: readonly typeof BUDGET_CLAMPS[number][] };
   readonly sections: readonly { readonly id: SectionId; readonly author: Author; readonly items: number; readonly estTokens: number; readonly dataClasses: readonly DataClass[] }[];
   readonly fold: readonly ({ readonly kind: "unit"; readonly runIndex: number; readonly grade: Grade; readonly why: typeof FOLD_WHY[number] } | { readonly kind: "range"; readonly fromRun: number; readonly throughRun: number; readonly units: number } | { readonly kind: "excluded"; readonly runIndex: number; readonly by: "user" | "unscanned" })[];
@@ -320,7 +283,7 @@ export interface RelayPacket {
 
 /** Where a Run ran: its binding's Harness, control and native epoch at dispatch; null when no native session holds it. */
 export interface ExecutedOn { readonly harnessId: string; readonly controlId: string; readonly nativeEpoch: number }
-/** The narrow index of one finished Run's digest (about 200 B), read without parsing the digest (RT3 P05). G070 builds it. */
+/** The narrow index of one finished Run's digest (about 200 B), read without parsing the digest. */
 export interface RunDigestIndex {
   readonly runId: RunId; readonly index: number; readonly seq: number; readonly executedOn: ExecutedOn | null; readonly dispatched: boolean;
   readonly status: RunStatus; readonly input: "recorded" | "not_recorded" | "unknown"; readonly commandEffect: ContextEffect | null; readonly failed: boolean; readonly hasPlan: boolean; readonly detailsMissing: boolean;
@@ -329,8 +292,8 @@ export interface RunDigestIndex {
   readonly line: { readonly displayName: string; readonly model: string | null; readonly result: string; readonly userHead: string; readonly files: number; readonly commands: number; readonly failedCommands: number };
 }
 /**
- * The index a v13 migration writes for each finished dispatched Run of a v12 Session (status behind, policy "relay/0"):
- * only what the Run's events say, chiefly where it ran (relay-architecture §14.4); the digest is rebuilt lazily (§6.4).
+ * The index a v13 migration writes for each finished dispatched Run of a v12 Session (status behind, policy "relay/0"): only
+ * what the Run's events say, chiefly where it ran; the digest is rebuilt lazily.
  */
 export interface RelayBehindIndex {
   readonly runId: RunId; readonly index: number; readonly seq: number; readonly executedOn: ExecutedOn | null; readonly dispatched: true;
@@ -340,7 +303,7 @@ export const NARRATED_KINDS = ["read", "search", "edit", "create", "delete", "mo
 export const FILE_OPS = ["edit", "create", "delete", "move", "unknown"] as const;
 export const APPROVAL_OUTCOMES = ["approved", "denied", "closed", "expired"] as const;
 export const DIGEST_BOUND_ORDER = ["narrated", "commands", "failures", "files", "plan", "approvals", "reply", "user"] as const;
-/** One finished Run's digest, ≤48 KiB once bound (the CHECK of 65,536 B is only a bug assertion). G070 builds it. */
+/** One finished Run's digest, ≤48 KiB once bound. */
 export interface RunDigest {
   readonly runId: RunId; readonly index: number; readonly seq: number; readonly policyVersion: PolicyVersion; readonly secretSetHmac: RedactionTag;
   readonly executedOn: ExecutedOn | null; readonly by: { readonly harnessId: string; readonly model: string | null }; readonly status: RunStatus; readonly dispatched: boolean; readonly input: RunDigestIndex["input"];
@@ -365,60 +328,37 @@ export const DIGEST_STATUSES = ["current", "behind"] as const;
 // Binding and Run relay state (Session v13)
 // ---------------------------------------------------------------------------------------------------------------------
 
-export const MARK_BASES = ["evidence", "origin", "legacy", "native"] as const;
-/** The upper bound of facts the binding is known to hold, by positive evidence or by running them itself. */
-export interface DeliveredMark { readonly throughSeq: number; readonly chain: Fingerprint; readonly lastPacketId: RelayPacketId | null; readonly evidence: EvidenceClass; readonly basis: typeof MARK_BASES[number] }
-export const FRESH_BASES = ["new", "user_cleared", "reset"] as const;
-export const SUSPECT_CAUSES = ["rewind", "unknown_command", "legacy", "marker_absent", "clear_unconfirmed", "unknown_turn"] as const;
-export type SuspectCause = typeof SUSPECT_CAUSES[number];
+/** A packet that was sent and not confirmed: its identity and the facts it covers (seqs of the facts; the origin is 0). */
+export interface PendingPacket {
+  readonly packetId: RelayPacketId;
+  /** The lowest and the highest fact seq the packet carries. */
+  readonly fromSeq: number;
+  readonly throughSeq: number;
+  /** How many times the relay sent this packet's facts again by itself: 0 or 1, never more. A packet for newer facts starts at 0. */
+  readonly autoResends: 0 | 1;
+}
 /**
- * The causes a suspect state may keep a packet for (`carried`): a packet still unconfirmed when the binding became suspect —
- * a pending packet under a rewind, an unknown command or an unconfirmed clear, and an unknown Turn's packet (D6). legacy and
- * marker_absent never arise from a pending binding (ADR-055 implementation notes, the approval agent's decisions of 2026-11-09).
+ * A native binding's relay state (Session v13: NativeSessionBinding.relay). Serialized ≤ MAX_BINDING_RELAY_BYTES.
+ * - `epoch`: which native session of its Harness control it is (1 for the first; a clear or a new native session takes the next).
+ *   A fact is foreign to the binding unless it ran on this very Harness control in this very epoch.
+ * - `mark`: the highest fact seq the binding is known to hold (a recorded packet's, the history it started from is 0); −1: none.
+ * - `floor`: the clear boundary the epoch started from; facts at or below it are not owed (unless the user attaches them); −1: none.
+ *   Along the bindings of one Harness control it never goes down.
+ * - `pending`: the packet sent and not confirmed, if any.
+ * - `resendAll`: a command that may have changed the native history ran (rewind, unknown) or an unknown Turn was continued: the
+ *   next packet carries everything since `floor`, saying it may repeat.
  */
-export const CARRIED_CAUSES = ["rewind", "unknown_command", "clear_unconfirmed", "unknown_turn"] as const satisfies readonly SuspectCause[];
-/**
- * A sync state a pending sync can return to. Neither the prior nested in `carried` nor a pending sync's prior carries a
- * packet itself: a packet is built only on a state that carries none (a suspect binding moves back first, retreatedPrior).
- */
-export type SyncPrior =
-  | { readonly kind: "fresh"; readonly basis: typeof FRESH_BASES[number] }
-  | { readonly kind: "synced"; readonly mark: DeliveredMark }
-  | { readonly kind: "suspect"; readonly mark: DeliveredMark | null; readonly cause: SuspectCause; readonly floorCandidate: number | null;
-      /**
-       * Only with a cause of CARRIED_CAUSES: the packet `packetId` that was pending when the binding became suspect, the prior it
-       * was built on, and the pending sync's one-time attach, which a return to pending gives back (VF1-07; kept since the
-       * review of 2026-11-10).
-       */
-      readonly carried: { readonly prior: SyncPrior; readonly packetId: RelayPacketId; readonly range: SourceRange; readonly attachOverride: boolean } | null;
-      /**
-       * True only with cause clear_unconfirmed: this unconfirmed clear met a rewind-like suspicion (rewind, unknown_command,
-       * marker_absent) not yet checked, in either order, so a marker missing from the chain cannot be put down to the clear
-       * (the clear check's rule 4 does not apply). False otherwise (the approval agent's decision of 2026-11-10).
-       */
-      readonly rewound: boolean };
-export const SYNC_KINDS = ["fresh", "synced", "pending", "suspect"] as const;
-export type BindingSync =
-  | SyncPrior
-  | { readonly kind: "pending"; readonly prior: SyncPrior; readonly packetId: RelayPacketId; readonly range: SourceRange; readonly autoResends: 0 | 1; readonly manualResends: number; readonly attachOverride: boolean };
-/** A native binding's relay state (Session v13: NativeSessionBinding.relay). Serialized ≤ MAX_BINDING_RELAY_BYTES. */
 export interface BindingRelayState {
-  readonly nativeEpoch: number;
-  readonly sync: BindingSync;
-  readonly originIncluded: boolean;
-  readonly reanchor: boolean;
-  readonly packetsInEpoch: number;
-  /** The clear floor: −1 for none; inherited along the binding lineage; need starts above max(mark, epochFloor). */
-  readonly epochFloor: number;
-  readonly compactionSeen: { readonly count: number; readonly digest: Fingerprint | null };
-  readonly consentKey: VendorKey | null;
-  readonly vendorObserved: VendorObservation | null;
-  readonly cache: { readonly lastRequestStartedAt: number | null; readonly contextUsed: number | null; readonly contextSize: number | null };
+  readonly epoch: number;
+  readonly mark: number;
+  readonly floor: number;
+  readonly pending: PendingPacket | null;
+  readonly resendAll: boolean;
 }
 
-export const BLOCKED_CODES = ["RELAY_INPUT_LIMIT", "NATIVE_STATE_UNCONFIRMED", "RELAY_CONSENT_REQUIRED", "RELAY_CHOICE_REQUIRED", "RELAY_TARGET_UNVERIFIED", "RELAY_UNAVAILABLE"] as const;
+export const BLOCKED_CODES = ["NATIVE_STATE_UNCONFIRMED", "RELAY_PREPARE_FAILED"] as const;
 export const CONTINUITY_KINDS = ["native_resume", "native_resume_delta", "rehydrate", "native_fork", "native_import", "native_cleared", "blocked"] as const;
-/** How a Turn continued its context (relay-architecture §12.2): an object since v13; v12 events wrote a string. */
+/** How a Turn continued its context: an object since v13; v12 events wrote a string. */
 export type ContinuityLevel =
   | { readonly kind: "native_resume" }
   | { readonly kind: "native_resume_delta"; readonly tier: Tier; readonly runs: number }
@@ -428,7 +368,7 @@ export type ContinuityLevel =
   | { readonly kind: "blocked"; readonly code: typeof BLOCKED_CODES[number] };
 /**
  * The strings v12 events wrote for continuity, and the level each reads as. A v12 rehydration is read as an incomplete
- * standard one: no v12 event says what was folded (relay-architecture §14.4, read conservatively).
+ * standard one: no v12 event says what was folded.
  */
 export const LEGACY_CONTINUITY: Readonly<Record<string, ContinuityLevel>> = {
   public_context_rehydrate: { kind: "rehydrate", tier: "standard", complete: false },
@@ -439,112 +379,68 @@ export const LEGACY_CONTINUITY: Readonly<Record<string, ContinuityLevel>> = {
 /** PublicRun.relay (v13). Serialized with relayRequest ≤ MAX_RUN_RELAY_BYTES; immutable once the Run is running. */
 export interface RunRelay { readonly packetId: RelayPacketId | null; readonly kind: RelayPacketKind | null; readonly continuity: ContinuityLevel; readonly executedOn: ExecutedOn | null }
 export const ATTACH_CHOICES = ["auto", "full", "none"] as const;
-export const NATIVE_CHOICES = ["continue", "new"] as const;
-/** PublicRun.relayRequest (v13): the request's relay choices and an HMAC of all of them; notes and reveals live in relay rows. */
-export interface RunRelayRequest { readonly tier?: Tier; readonly attach?: typeof ATTACH_CHOICES[number]; readonly native?: typeof NATIVE_CHOICES[number]; readonly resend?: true; readonly fingerprint: HmacDigest }
-/** A request's relay options (they enter the command fingerprint, RT2-19). */
-export interface RelayRequest {
-  readonly tier?: Tier; readonly attach?: typeof ATTACH_CHOICES[number]; readonly native?: typeof NATIVE_CHOICES[number]; readonly resend?: true;
-  readonly excludeRuns?: readonly number[]; readonly excludeSections?: readonly SectionId[]; readonly note?: string;
-  readonly reveal?: readonly { readonly runId: RunId; readonly ref: string; readonly offset: number; readonly length: number; readonly tag: RedactionTag }[];
-  readonly consent?: { readonly vendor: VendorKey; readonly decision: "acknowledged" | "goal_only"; readonly scope: "session" | "global" };
-  /**
-   * The user's ［确认已清空］ on a binding whose clear is unconfirmed (relay-architecture §9, the approval agent's decision of
-   * 2026-11-10): the clear is taken as confirmed (event e at its floor candidate). Only the user's own choice in the chat sets it.
-   */
-  readonly clearConfirmed?: true;
-}
+/** PublicRun.relayRequest (v13): the request's relay choice and an HMAC of it. */
+export interface RunRelayRequest { readonly attach?: "full" | "none"; readonly fingerprint: HmacDigest }
 export const SWITCH_MODES = ["wait_current", "cancel_current"] as const;
 export type SwitchMode = typeof SWITCH_MODES[number];
 /** When a switch was requested, validated and became effective (epoch milliseconds, the Runtime's clock). */
 export interface SwitchTiming { readonly requestedAt: number; readonly validatedAt?: number; readonly effectiveAt?: number }
 
-export const CONSENT_DECISIONS = ["acknowledged", "goal_only", "revoked"] as const;
-/** One consent decision for a vendor key; append-only, the latest row per (vendor, scope) decides (relay-architecture §10.4). */
-export interface ConsentRecord {
-  readonly logSeq: number;
-  readonly commandId: string;
-  readonly vendor: VendorKey;
-  readonly scope: { readonly kind: "global" } | { readonly kind: "session"; readonly sessionId: SessionId };
-  readonly decision: typeof CONSENT_DECISIONS[number];
-  readonly categories: readonly DataClass[];
-  readonly policyVersion: PolicyVersion;
-  readonly authKind: string | null;
-  readonly decidedAt: number;
-}
+/**
+ * The installation's handoff log: one row for the first handoff to each Harness (the key is the Harness's id), written before the
+ * packet that is the handoff leaves, never changed. The delivery rows of that Harness name it; the interface shows the one-time
+ * explanation for a Harness that has a row and none before it.
+ */
+export interface HandoffRecord { readonly logSeq: number; readonly harnessId: string; readonly firstAt: number }
+
 export const FILE_CHANGES = ["modified", "added", "deleted", "renamed", "untracked"] as const;
 export const OBSERVATION_STATUSES = ["complete", "partial"] as const;
 export const WORKSPACE_UNAVAILABLE_REASONS = ["timeout", "error", "no_workspace", "lease_not_held", "gitdir_outside", "root_is_home", "root_is_fs", "data_root_inside"] as const;
-/** A workspace observation kept with a packet, ≤ RELAY_WORKSPACE_FILES entries and ≤ RELAY_WORKSPACE_BYTES of files (RT3 P04). */
+/** A workspace observation kept with a packet, ≤ RELAY_WORKSPACE_FILES entries and ≤ RELAY_WORKSPACE_BYTES of files. */
 export type WorkspaceObservation =
   | { readonly kind: "git"; readonly status: typeof OBSERVATION_STATUSES[number]; readonly branch: string | null; readonly head: string | null; readonly fingerprint: Fingerprint; readonly durationMs: number;
       readonly files: readonly { readonly path: string; readonly change: typeof FILE_CHANGES[number]; readonly added: number | null; readonly removed: number | null; readonly credentialPath: boolean; readonly lfs: boolean }[];
       readonly counted: { readonly total: number; readonly listed: number }; readonly neutralized: readonly string[]; readonly attributesIncluded: boolean }
   | { readonly kind: "tree"; readonly status: typeof OBSERVATION_STATUSES[number]; readonly fingerprint: Fingerprint; readonly durationMs: number; readonly files: readonly { readonly path: string; readonly size: number; readonly mtimeMs: number }[]; readonly scanned: number; readonly counted: number }
   | { readonly kind: "unavailable"; readonly reason: typeof WORKSPACE_UNAVAILABLE_REASONS[number] };
-export const RELAY_PREF_KEYS = ["relay.crossVendor", "relay.returnPreference", "relay.allowUnprobed", "relay.localModelsOffline", "relay.whenUnsure", "relay.dataRootInWorkspace"] as const;
+/** The one installation preference: whether a switch to another Harness attaches the earlier conversation by itself (`auto`, the default) or not (`off`; the user may still attach it per message). */
+export const RELAY_PREF_KEYS = ["relay.attach"] as const;
 export type RelayPrefKey = typeof RELAY_PREF_KEYS[number];
-/** The values each installation preference takes (public-api.md, relay-architecture §3.1, §7.3, §10.4, permissive-defaults §4). */
 export const RELAY_PREF_VALUES: Readonly<Record<RelayPrefKey, readonly string[]>> = {
-  "relay.crossVendor": ["ask", "allow", "goal_only"],
-  "relay.returnPreference": ["continue", "new_when_cold", "ask"],
-  "relay.allowUnprobed": ["true", "false"],
-  "relay.localModelsOffline": ["true", "false"],
-  "relay.whenUnsure": ["auto", "ask"],
-  "relay.dataRootInWorkspace": ["warn", "block"],
+  "relay.attach": ["auto", "off"],
 };
-/**
- * What each preference is while none is stored (the owner's decision of 2026-11-10: relay is permissive by default, the strict
- * behaviors are settings): a handoff to another vendor is allowed and logged, an unprobed Driver takes history, what the relay
- * is unsure of it settles itself, and a data directory in the workspace is warned about, not refused.
- */
 export const RELAY_PREF_DEFAULTS: Readonly<Record<RelayPrefKey, string>> = {
-  "relay.crossVendor": "allow",
-  "relay.returnPreference": "continue",
-  "relay.allowUnprobed": "true",
-  "relay.localModelsOffline": "false",
-  "relay.whenUnsure": "auto",
-  "relay.dataRootInWorkspace": "warn",
-};
-/** The four preferences that turn every strict behavior of the design back on (the relay before the permissive defaults; permissive-defaults P9). */
-export const RELAY_STRICT_PREFS: Readonly<Partial<Record<RelayPrefKey, string>>> = {
-  "relay.crossVendor": "ask",
-  "relay.allowUnprobed": "false",
-  "relay.whenUnsure": "ask",
-  "relay.dataRootInWorkspace": "block",
+  "relay.attach": "auto",
 };
 
 // ---------------------------------------------------------------------------------------------------------------------
-// What the relay decided for a Turn, and what a binding asks the user to look at (permissive-defaults §2.6)
+// What the relay decided for a Turn, and what a binding asks the user to look at
 // ---------------------------------------------------------------------------------------------------------------------
 
 export const DECISION_KINDS = ["carry", "alone", "plain"] as const;
-/** Who decided: the need alone (an ordinary packet), the policy (an automatic resend, a send alone, a complete packet again), or the user's own choice. */
+/** Who decided: the need alone (an ordinary packet), the policy (an automatic resend, a send alone, everything again), or the user's own choice. */
 export const DECISION_BY = ["need", "policy", "user"] as const;
 /**
- * The situation a decision of the policy answered (the 409 causes of the strict mode and the failures that no longer stop a Turn):
- * the delivery of a packet is unconfirmed, a suspect binding could not be checked, the marker is gone, the smallest packet does
- * not fit, the relay's record could not be recovered, the vendor's consent was withdrawn (or is for the goal only, which the
- * MVP cannot render), a packet could not be prepared, or the reading of the input changed after the open.
+ * The situation a decision of the policy answered: a packet is unconfirmed and its one automatic resend is spent; the native
+ * history may have changed (a rewind, an unknown command, an unknown Turn), so everything goes again; even the smallest packet
+ * does not fit; the relay's record could not be recovered; a packet could not be prepared (`reason` says why).
  */
-export const DECISION_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent", "input_limit", "recovery_failed", "consent_revoked", "consent_goal_only", "prepare_failed", "classification_changed"] as const;
+export const DECISION_CAUSES = ["delivery_unconfirmed", "history_changed", "input_limit", "recovery_failed", "prepare_failed"] as const;
 /**
- * Which kind of resend a `carry` decision is, when its packet superseded a pending one: `auto`, the one automatic resend of an
- * unconfirmed packet (the same facts again); `grown`, a packet for newer facts that also carries what the unconfirmed one carried
- * (permissive-defaults row 3, "补交 N 轮（含上次未确认送达的内容）"); `user`, the user's own "再附一次" (or attach on a pending packet).
- * Absent for a packet that supersedes none.
+ * Which kind of resend a `carry` decision is: `auto`, the one automatic resend of an unconfirmed packet (the same facts again);
+ * `grown`, a packet for newer facts that also carries what the unconfirmed one carried; `all`, everything since the epoch's start.
+ * Absent for a packet that resends nothing.
  */
-export const DECISION_RESENDS = ["auto", "grown", "user"] as const;
+export const DECISION_RESENDS = ["auto", "grown", "all"] as const;
 /**
  * `run.context_prepared.data.relay.decision`: what the relay did with a content Turn's history. `reason` names the failure of a
- * `prepare_failed` (a RELAY_PREPARE_REASONS or RELAY_UNAVAILABLE_REASONS value). An ordinary Turn that owes nothing records none.
+ * `prepare_failed` or an `input_limit`. An ordinary Turn that owes nothing records none.
  */
 export interface RelayDecision {
   readonly kind: typeof DECISION_KINDS[number];
   readonly by: typeof DECISION_BY[number];
   readonly cause?: typeof DECISION_CAUSES[number];
   readonly reason?: string;
-  /** Only on a `carry` that sent a pending packet again: how (DECISION_RESENDS). */
   readonly resend?: typeof DECISION_RESENDS[number];
 }
 /** The decision a `run.context_prepared` event records; null when it records none (or something that is not one). */
@@ -561,23 +457,19 @@ export function relayDecisionOf(data: Readonly<Record<string, unknown>> | undefi
     ...(resend === undefined ? {} : { resend }) };
 }
 /**
- * What the installation as a whole cannot do for the relay, as long as it stays so (not what one conversation asks): `key_unavailable`,
- * the relay key file is unusable, so no packet can be keyed and every handoff goes as the words alone until it is mended.
- * `detail` is the Gateway's reason in a few words, never a path or a value.
+ * What the installation as a whole cannot do for the relay, as long as it stays so: `key_unavailable`, the relay key file is
+ * unusable, so no packet can be keyed and every handoff goes as the words alone until it is mended. `detail` is the Gateway's
+ * reason in a few words, never a path or a value.
  */
 export const INSTALLATION_NOTICE_CAUSES = ["key_unavailable"] as const;
 export interface RelayInstallationNotice { readonly cause: typeof INSTALLATION_NOTICE_CAUSES[number]; readonly detail?: string }
-export const ATTENTION_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent", "clear_unconfirmed", "recovery_failed", "input_limit", "consent_revoked", "consent_goal_only"] as const;
+/** Why a binding asks the user to look at it: a packet was sent and nothing confirmed it, or the conversation was cleared and the earlier part can still be attached. */
+export const ATTENTION_CAUSES = ["delivery_unconfirmed", "attach_available"] as const;
+export const ATTENTION_OPTIONS = ["attach_full"] as const;
 /**
- * The user's ways out, as the buttons of a banner (the options of the 409's error body, relay-architecture §12.4, stage3-workstreams §3).
- * `send_alone` is the 409's own option: under the defaults sending alone is what the next input does without being asked, so a banner
- * never lists it.
- */
-export const ATTENTION_OPTIONS = ["attach_full", "send_alone", "new_native", "clear_confirmed", "acknowledge"] as const;
-/**
- * What a binding asks the user to look at (`GET …/relay`, per binding): why, the options that answer it (never a block: the next
+ * What a binding asks the user to look at (`GET …/relay`, per binding): why, the option that answers it (never a block: the next
  * input goes anyway), how much is at stake (`runs` of the conversation's Turns it still owes, `packets` sent and not confirmed),
- * and `key`, which names one episode (the same cause within one wait for a check shows once, and a closed banner does not come back).
+ * and `key`, which names one episode (the same cause within one wait shows once, and a closed banner does not come back).
  */
 export interface RelayAttention {
   readonly cause: typeof ATTENTION_CAUSES[number];
@@ -590,44 +482,17 @@ export interface RelayAttention {
 // Errors
 // ---------------------------------------------------------------------------------------------------------------------
 
-export const RELAY_PREPARE_REASONS = ["render", "render_mismatch", "redaction_failed", "storage", "storage_quota", "target_start", "classification_changed"] as const;
-export const RELAY_UNAVAILABLE_REASONS = ["data_root_in_workspace", "consent_log_full", "recovery_failed"] as const;
-/** Why the next content input needs the user's choice (relay-architecture §9 "需要用户选择"), the cause of RELAY_CHOICE_REQUIRED. */
-export const RELAY_CHOICE_CAUSES = ["delivery_unconfirmed", "verify_required", "marker_absent"] as const;
-/**
- * Why the target takes no relay content (D11, G072): `unprobed`, its Driver declares relay mechanisms its probes have not
- * proved on the latest release (and `relay.allowUnprobed` is off, which is the strict design; the default is on); `undeclared`, its
- * Driver declares none (WorkBuddy, Pi, Cursor, a control the Gateway cannot place), which the same preference opens in the default.
- */
-export const RELAY_TARGET_REASONS = ["unprobed", "undeclared"] as const;
-/** Why the target's vendor needs the user's consent (§10.4): none recorded (or withdrawn), the vendor changed in this epoch, or withdrawn since the Turn was prepared. */
-export const RELAY_CONSENT_REASONS = ["missing", "vendor_changed", "revoked"] as const;
-/**
- * Why the smallest packet does not fit (§6.2, G072): `min_packet`, the target's window (conservative at admission, refined at
- * the open) leaves less than MIN_PACKET of its family; `input_limit`, the placed Turn exceeds the Driver's input bound.
- */
-export const RELAY_LIMIT_REASONS = ["min_packet", "input_limit"] as const;
-export type RelayErrorReason =
-  | { readonly code: "RELAY_PREPARE_FAILED"; readonly reason: typeof RELAY_PREPARE_REASONS[number] }
-  | { readonly code: "RELAY_UNAVAILABLE"; readonly reason: typeof RELAY_UNAVAILABLE_REASONS[number] }
-  | { readonly code: "RELAY_CHOICE_REQUIRED"; readonly reason: typeof RELAY_CHOICE_CAUSES[number] }
-  | { readonly code: "RELAY_TARGET_UNVERIFIED"; readonly reason: typeof RELAY_TARGET_REASONS[number] }
-  | { readonly code: "RELAY_CONSENT_REQUIRED"; readonly reason: typeof RELAY_CONSENT_REASONS[number] }
-  | { readonly code: "RELAY_INPUT_LIMIT"; readonly reason: typeof RELAY_LIMIT_REASONS[number] };
-/**
- * What a relay error tells the page besides its code and reason (G073 turns it into the error body's `relay` member, §12.4):
- * the vendor key a consent is asked for and the one consented to before, the Harness control it concerns. Plain values, never
- * a secret, a path or the history's text.
- */
+/** Why a packet could not be prepared when the user asked for it explicitly (otherwise the input goes alone and the Run records the reason). */
+export const RELAY_PREPARE_REASONS = ["render", "render_mismatch", "redaction_failed", "storage", "storage_quota", "input_limit", "recovery_failed"] as const;
+export type RelayErrorReason = { readonly code: "RELAY_PREPARE_FAILED"; readonly reason: typeof RELAY_PREPARE_REASONS[number] };
+/** What a relay error tells the page besides its code and reason: the Harness control it concerns. Plain values, never a secret, a path or the history's text. */
 export interface RelayErrorDetail {
-  readonly vendor?: VendorKey;
-  readonly previousVendor?: VendorKey;
   readonly harnessId?: string;
   readonly controlId?: string;
 }
 /**
- * An expected relay failure (INV-35): it fails one Run or one consent command and nothing else. The Store throws it before
- * any statement of the failing write runs, so it never disables the Store; `reason` is the code's closed reason.
+ * An expected relay failure: it fails one Run and nothing else. The Store throws it before any statement of the failing write
+ * runs, so it never disables the Store; `reason` is the code's closed reason.
  */
 export class RelayError extends SessionError {
   readonly reason: RelayErrorReason["reason"];
@@ -644,7 +509,7 @@ export interface RelayPacketWrite { readonly runId: RunId; readonly packet: Rela
 /** A delivery row: inserted in flight with the packet, then decided by evidence along DELIVERY_TRANSITIONS. */
 export type RelayDeliveryWrite =
   | { readonly kind: "insert"; readonly record: DeliveryRecord }
-  | { readonly kind: "outcome"; readonly runId: RunId; readonly outcome: Exclude<DeliveryOutcome, { readonly kind: "in_flight" }>; readonly verifyMs?: number };
+  | { readonly kind: "outcome"; readonly runId: RunId; readonly outcome: Exclude<DeliveryOutcome, { readonly kind: "in_flight" }> };
 export interface RelayPin { readonly pinId: PinId; readonly messageId: MessageId; readonly author: "user" | "assistant"; readonly offset: number; readonly length: number; readonly quoteHmac: HmacDigest; readonly pinnedSeq: number }
 export type RelayPinWrite = { readonly kind: "add"; readonly pin: RelayPin } | { readonly kind: "withdraw"; readonly pinId: PinId; readonly withdrawnSeq: number };
 export interface RelayExclusion { readonly exclusionId: ExclusionId; readonly kind: "run" | "section"; readonly ref: string; readonly addedSeq: number }
@@ -661,7 +526,7 @@ export interface RelayDerivedRows { readonly digests?: readonly RelayDigestWrite
  * What a Session transaction writes besides its snapshot and events (SessionMutation.relay). Authoritative rows (packets,
  * deliveries, pins, exclusions) are checked in full before any statement runs: an expected failure is a RelayError for
  * the Run (RELAY_PREPARE_FAILED) and the transaction writes nothing. `derived` is called inside a SAVEPOINT, so a failure of
- * its own (a scanner error, a bound, a statement) rolls back only those rows and the commit says so.
+ * its own rolls back only those rows and the commit says so.
  */
 export interface RelayRows {
   readonly packets?: readonly RelayPacketWrite[];
@@ -672,100 +537,68 @@ export interface RelayRows {
 }
 /** How a transaction's derived rows went: none given, written, or left behind (rolled back to their SAVEPOINT). */
 export interface RelayCommitResult { readonly derived: "none" | "written" | "behind"; readonly diagnostic?: string }
-/** Rows the Store writes outside snapshots without moving the Session version (relay-architecture §3.2, F07). */
-export interface RelayWriteRows { readonly digests?: readonly RelayDigestWrite[]; readonly realized?: readonly { readonly runId: RunId; readonly realized: RealizedWindow }[] }
+/** Rows the Store writes outside snapshots without moving the Session version. */
+export interface RelayWriteRows { readonly digests?: readonly RelayDigestWrite[] }
 export type RelayWriteResult = { readonly written: true } | { readonly written: false; readonly diagnostic: string };
-/** An observed context window of one Harness control and model (installation level, last writer wins). */
-export interface RelayWindow { readonly harnessId: string; readonly controlId: string; readonly modelKey: string; readonly size: number; readonly firstTurnUsed: number | null; readonly observedAt: number }
-/** A consent decision to append; the log assigns its seq. */
-export type ConsentAppend = Omit<ConsentRecord, "logSeq">;
-/** The command identity every default-allow row of the log starts with: the source of a row is `default` when it does, `user` otherwise. */
-export const DEFAULT_ALLOW_PREFIX = "default-allow:";
-/**
- * The command identity of the row a vendor's first use writes while `relay.crossVendor` allows it by default (permissive-defaults
- * §2.4): `default-allow:<vendor key>:<policy>` (`relay/1` spelled `relay-1`), the same for every first use of that vendor under that policy, so a repeat is the
- * same command. A key too long (a gateway host may take 253 bytes) or not spelled for a command identity is named by a 64-bit
- * FNV-1a digest of its text instead: an identity for an idempotent row, not a secret and not a proof of anything.
- */
-export function defaultAllowCommand(vendor: VendorKey, policy: PolicyVersion): string {
-  // A command identity has no "/": the policy `relay/1` is spelled `relay-1` in it.
-  const spelled = policy.replace("/", "-"), readable = DEFAULT_ALLOW_PREFIX + vendor + ":" + spelled;
-  if (utf8(readable) <= 128 && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(readable)) return readable;
-  let digest = 0xcbf29ce484222325n;
-  for (const byte of new TextEncoder().encode(vendor)) digest = BigInt.asUintN(64, (digest ^ BigInt(byte)) * 0x100000001b3n);
-  return DEFAULT_ALLOW_PREFIX + "fnv-" + digest.toString(16).padStart(16, "0") + ":" + spelled;
-}
-/** Where a row of the consent log came from: the user's own decision, or the default that allowed a vendor's first use. */
-export function consentSourceOf(record: Pick<ConsentRecord, "commandId">): "default" | "user" {
-  return record.commandId.startsWith(DEFAULT_ALLOW_PREFIX) ? "default" : "user";
-}
 /** One Run's delivery changed by recovery. */
 export interface RelayRecoveredDelivery { readonly runId: RunId; readonly outcome: Exclude<DeliveryOutcome, { readonly kind: "in_flight" }> }
 /** What recovery changes of a Session's relay state besides recoverSession's own changes. */
 export interface RelayRecovery { readonly next: SessionSnapshot; readonly deliveries: readonly RelayRecoveredDelivery[] }
 /**
- * The relay part of recovery (relay-architecture §9, S15): given a Session as recoverSession left it and its delivery rows,
- * the Session with its bindings' relay state recovered and the deliveries to decide; null when nothing changes. Pure and
- * synchronous; the Store calls it in claimAndRecover's transaction, inside a SAVEPOINT of the Session's own. G068 provides it.
- * `packets` are the Session's packet manifests (a resend never dispatched goes back to waiting for the packet it superseded,
- * whose range its manifest holds; G068 fix batch R9g); a caller without them passes none.
+ * The relay part of recovery: given a Session as recoverSession left it and its delivery rows, the Session with its bindings'
+ * relay state recovered and the deliveries to decide; null when nothing changes. Pure and synchronous; the Store calls it in
+ * claimAndRecover's transaction, inside a SAVEPOINT of the Session's own. `packets` are the Session's packet manifests (the
+ * range of a packet that was in flight comes from its manifest); a caller without them passes none.
  */
 export type RecoverRelay = (state: SessionSnapshot, deliveries: readonly DeliveryRecord[], packets?: readonly RelayPacket[]) => RelayRecovery | null;
-/** The Session Store's relay writes and reads beyond SessionStore (relay-architecture §3.2). */
+/** The Session Store's relay writes and reads beyond SessionStore. */
 export interface RelayStorePort {
   /**
-   * Writes derived rows (rebuilt digests, settled realized counts) in a transaction of their own without moving the
-   * Session's version, so a concurrent transact neither conflicts with it nor loses its own rows. A row it would replace that
-   * a transaction wrote as current, and realized counts already settled, are kept. A failure of its statements rolls it back
-   * and is returned as a diagnostic (also kept in relayDiagnostics) instead of disabling the Store; invalid rows throw.
+   * Writes derived rows (rebuilt digests) in a transaction of their own without moving the Session's version, so a concurrent
+   * transact neither conflicts with it nor loses its own rows. A failure of its statements rolls it back and is returned as a
+   * diagnostic (also kept in relayDiagnostics) instead of disabling the Store; invalid rows throw.
    */
   relayWrite(id: SessionId, rows: RelayWriteRows): RelayWriteResult;
   /** Deletes a closed Session that keeps no process, with its events, create key and every relay row, in one transaction. */
   deleteSession(id: SessionId): void;
   /** The Session's delivery rows in Run order. */
   relayDeliveries(id: SessionId): readonly DeliveryRecord[];
-  /** The manifests of the packets the Session keeps (G068 phase two: the range, text digest and epoch a check reads). */
+  /** The manifests of the packets the Session keeps. */
   relayPackets(id: SessionId): readonly RelayPacket[];
   /** One packet's manifest by its identity in the Session; null when the Session keeps no such packet (another Session's packet is none). */
   relayPacket(id: SessionId, packetId: string): RelayPacket | null;
   /**
-   * The text the Session keeps for a body digest, exactly as it was stored when the packet was sent (never scanned again, §10.2);
+   * The text the Session keeps for a body digest, exactly as it was stored when the packet was sent (never scanned again);
    * null when none is kept. INVALID_DATA when what is kept is not text. Reads committed rows only and holds nothing between reads.
    */
   relayPacketBody(id: SessionId, bodySha256: string): string | null;
   /** The Session's digest index rows (every policy version), as plain objects; the migration's are RelayBehindIndex. */
   relayIndex(id: SessionId): readonly RelayIndexRow[];
 }
-/** One row of relay_digests' narrow index (relay-architecture §14.1): which Run, under which policy, and its index object. */
+/** One row of relay_digests' narrow index: which Run, under which policy, and its index object. */
 export interface RelayIndexRow { readonly runId: RunId; readonly policyVersion: PolicyVersion; readonly status: typeof DIGEST_STATUSES[number]; readonly index: Readonly<Record<string, unknown>> }
-/** The installation's relay log, windows and preferences (relay-architecture §3.1, §14.1). */
+/** The installation's handoff log and preference. */
 export interface RelayLogPort {
   /**
-   * Appends one consent decision in a transaction of its own and returns it with its seq; the same command again returns the
-   * first record, a different one under the same command id is IDEMPOTENCY_CONFLICT. At RELAY_LOG_ROWS rows the log is first
-   * rotated in the same transaction (the latest row of each vendor, scope and Session stays); RelayError RELAY_UNAVAILABLE
-   * (consent_log_full) when it would still be full or its archive would pass RELAY_LOG_ARCHIVE_ROWS.
+   * The log row of the first handoff to `harnessId`, written in a transaction of its own when there is none; the same Harness
+   * again returns the first row unchanged. `created` says whether this call wrote it.
    */
-  appendRelayLog(record: ConsentAppend): ConsentRecord;
-  /** Keeps the latest observed window of one Harness control and model; the last writer wins. */
-  upsertWindow(window: RelayWindow): void;
-  /** The window last observed for one Harness control and model key (G072, the window's second source, §6.2); null when none is kept. */
-  relayWindow(harnessId: string, controlId: string, modelKey: string): RelayWindow | null;
+  logHandoff(harnessId: string): { readonly record: HandoffRecord; readonly created: boolean };
+  /** The log rows, oldest first (one per Harness that was ever handed history). */
+  handoffs(): readonly HandoffRecord[];
+  /** Whether any delivery row of any Session names the log row `logSeq` (its `handoffLogSeq`): a packet was sent to that Harness on it. */
+  handoffUsed(logSeq: number): boolean;
   /** Sets one installation preference to one of its values; the last writer wins. */
   setPref(key: RelayPrefKey, value: string): void;
   relayPrefs(): Readonly<Partial<Record<RelayPrefKey, string>>>;
-  /** The current consent view: the latest record of each vendor and scope. */
-  relayConsents(): readonly ConsentRecord[];
-  /** Whether any delivery row of any Session names the log row `logSeq` (its `consentLogSeq`): the row has been used by a handoff. */
-  consentUsed(logSeq: number): boolean;
 }
 
 /**
- * The installation's relay key as the relay uses it (ADR-055 §10.2, D5, INV-29; G072's relay-keys): HMACs under a subkey
- * derived per Session (HMAC(installation key, "relay-tag/1" ‖ sessionId)), so one value keys differently in every Session and
- * nothing in a relay row can be checked against a guessed value without the key. The key itself is never exported. `keyId`
- * names the key in the rows; it is never EPHEMERAL_KEY_ID (A17). Each method may throw a RelayError (RELAY_PREPARE_FAILED,
- * redaction_failed) when the key cannot be used; nothing is then written with a digest of another key.
+ * The installation's relay key as the relay uses it (ADR-055 §10.2, D5; relay-keys.ts): HMACs under a subkey derived per Session
+ * (HMAC(installation key, "relay-tag/1" ‖ sessionId)), so one value keys differently in every Session and nothing in a relay row
+ * can be checked against a guessed value without the key. The key itself is never exported. `keyId` names the key in the rows;
+ * it is never EPHEMERAL_KEY_ID. Each method may throw a RelayError (RELAY_PREPARE_FAILED, redaction_failed) when the key cannot
+ * be used; nothing is then written with a digest of another key.
  */
 export interface RelayKeyPort {
   readonly keyId: string;
@@ -775,7 +608,7 @@ export interface RelayKeyPort {
   inputHmac(session: SessionId, text: string): HmacDigest;
   /** The first 8 hex of the HMAC of a known-secret set (a delivery row's redaction.setHmac): the same set, whatever its order, tags alike. */
   setTag(session: SessionId, secrets: readonly string[]): RedactionTag;
-  /** HMAC-SHA256 of a request's relay options as canonical JSON (PublicRun.relayRequest.fingerprint, RT2-19). */
+  /** HMAC-SHA256 of a request's relay choice as canonical JSON (PublicRun.relayRequest.fingerprint). */
   requestFingerprint(session: SessionId, canonical: string): HmacDigest;
 }
 
@@ -818,12 +651,13 @@ export function catalogIdentity(value: unknown, label: string): string {
   if (!/^[a-z][a-z0-9-]*$/u.test(text)) invalid(label);
   return text;
 }
-/** A host name or address literal as a gateway key holds it: lower case, ≤ MAX_HOST_BYTES. */
+/** A host name or address literal as a gateway key holds it: lower case, ≤ MAX_HOST_BYTES (kept for the Drivers' vendor declarations). */
 function host(value: unknown, label: string): string {
   const text = bounded(value, label, MAX_HOST_BYTES);
   if (!/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*|\[[0-9a-f:.]{2,45}\])$/u.test(text)) invalid(label);
   return text;
 }
+/** Kept for the Drivers' vendor declarations (their tests): the relay itself reads no vendor key any more. */
 export function parseVendorKey(value: unknown): VendorKey {
   if (typeof value === "string" && (VENDOR_NAMES as readonly string[]).includes(value)) return value as VendorKey;
   if (typeof value !== "string") invalid("vendor key");
@@ -849,84 +683,23 @@ export function parseSourceRange(value: unknown): SourceRange {
   if (throughSeq < fromSeq || throughRun < fromRun) invalid("source range");
   return { fromSeq, throughSeq, fromRun, throughRun };
 }
-export function parseDeliveredMark(value: unknown): DeliveredMark {
-  const item = object(value, "delivered mark"); only(item, ["throughSeq", "chain", "lastPacketId", "evidence", "basis"], "delivered mark");
-  return { throughSeq: seq(item.throughSeq, "mark throughSeq"), chain: fingerprint(item.chain), lastPacketId: nullable(item.lastPacketId, relayPacketId),
-    evidence: choice(item.evidence, EVIDENCE_CLASSES, "mark evidence"), basis: choice(item.basis, MARK_BASES, "mark basis") };
-}
-/** A sync prior; `nested` is the prior inside a suspect's `carried`, which carries nothing itself. */
-function syncPrior(value: unknown, nested: boolean): SyncPrior {
-  const item = object(value, "sync state");
-  switch (item.kind) {
-    case "fresh": only(item, ["kind", "basis"], "fresh sync"); return { kind: "fresh", basis: choice(item.basis, FRESH_BASES, "fresh basis") };
-    case "synced": only(item, ["kind", "mark"], "synced sync"); return { kind: "synced", mark: parseDeliveredMark(item.mark) };
-    case "suspect": {
-      only(item, ["kind", "mark", "cause", "floorCandidate", "carried", "rewound"], "suspect sync");
-      const cause = choice(item.cause, SUSPECT_CAUSES, "suspect cause");
-      const carried = nullable(item.carried, raw => {
-        if (nested) throw new SessionError("INVALID_DATA", "a nested prior carries no packet");
-        const row = object(raw, "carried packet"); only(row, ["prior", "packetId", "range", "attachOverride"], "carried packet");
-        return { prior: syncPrior(row.prior, true), packetId: relayPacketId(row.packetId), range: parseSourceRange(row.range), attachOverride: flag(row.attachOverride, "carried attach override") };
-      });
-      if (carried !== null && !(CARRIED_CAUSES as readonly string[]).includes(cause)) throw new SessionError("INVALID_DATA", "a suspect state of this cause carries no packet");
-      const rewound = flag(item.rewound, "suspect rewound");
-      if (rewound && cause !== "clear_unconfirmed") throw new SessionError("INVALID_DATA", "only an unconfirmed clear is marked rewound");
-      return { kind: "suspect", mark: nullable(item.mark, parseDeliveredMark), cause, floorCandidate: nullable(item.floorCandidate, raw => integer(raw, "floor candidate", 1, RELAY_MAX_SEQ)), carried, rewound };
-    }
-  }
-  throw new SessionError("INVALID_DATA", "unknown sync state kind");
-}
-export function parseBindingSync(value: unknown): BindingSync {
-  const item = object(value, "binding sync");
-  if (item.kind !== "pending") return syncPrior(item, false);
-  only(item, ["kind", "prior", "packetId", "range", "autoResends", "manualResends", "attachOverride"], "pending sync");
-  const autoResends = integer(item.autoResends, "automatic resends", 0, 1) as 0 | 1;
-  // A pending sync's prior carries no packet: a packet is built on a state that carries none.
-  return { kind: "pending", prior: syncPrior(item.prior, true), packetId: relayPacketId(item.packetId), range: parseSourceRange(item.range), autoResends,
-    manualResends: integer(item.manualResends, "manual resends", 0, RELAY_MAX_RUNS), attachOverride: flag(item.attachOverride, "attach override") };
+function parsePending(value: unknown): PendingPacket {
+  const row = object(value, "pending packet"); only(row, ["packetId", "fromSeq", "throughSeq", "autoResends"], "pending packet");
+  const fromSeq = seq(row.fromSeq, "pending fromSeq"), throughSeq = seq(row.throughSeq, "pending throughSeq");
+  if (throughSeq < fromSeq) invalid("pending packet range");
+  return { packetId: relayPacketId(row.packetId), fromSeq, throughSeq, autoResends: integer(row.autoResends, "automatic resends", 0, 1) as 0 | 1 };
 }
 /** NativeSessionBinding.relay (v13), checked field by field and then against MAX_BINDING_RELAY_BYTES. */
 export function parseBindingRelayState(value: unknown): BindingRelayState {
   const item = object(value, "binding relay state");
-  only(item, ["nativeEpoch", "sync", "originIncluded", "reanchor", "packetsInEpoch", "epochFloor", "compactionSeen", "consentKey", "vendorObserved", "cache"], "binding relay state");
-  const compaction = object(item.compactionSeen, "compaction cursor"); only(compaction, ["count", "digest"], "compaction cursor");
-  const cache = object(item.cache, "relay cache"); only(cache, ["lastRequestStartedAt", "contextUsed", "contextSize"], "relay cache");
-  const state: BindingRelayState = { nativeEpoch: integer(item.nativeEpoch, "native epoch", 1, RELAY_MAX_EPOCH), sync: parseBindingSync(item.sync),
-    originIncluded: flag(item.originIncluded, "origin included"), reanchor: flag(item.reanchor, "reanchor"), packetsInEpoch: integer(item.packetsInEpoch, "packets in epoch", 0, RELAY_MAX_RUNS),
-    epochFloor: integer(item.epochFloor, "clear floor", -1, RELAY_MAX_SEQ),
-    compactionSeen: { count: counter(compaction.count, "compaction count"), digest: nullable(compaction.digest, fingerprint) },
-    consentKey: nullable(item.consentKey, parseVendorKey), vendorObserved: nullable(item.vendorObserved, parseVendorObservation),
-    cache: { lastRequestStartedAt: nullable(cache.lastRequestStartedAt, raw => time(raw, "last request start")), contextUsed: nullable(cache.contextUsed, raw => counter(raw, "context used")),
-      contextSize: nullable(cache.contextSize, raw => integer(raw, "context size", 1, MAX_RELAY_COUNTER)) } };
+  only(item, ["epoch", "mark", "floor", "pending", "resendAll"], "binding relay state");
+  const state: BindingRelayState = { epoch: integer(item.epoch, "epoch", 1, RELAY_MAX_EPOCH), mark: integer(item.mark, "mark", -1, RELAY_MAX_SEQ), floor: integer(item.floor, "clear floor", -1, RELAY_MAX_SEQ),
+    pending: nullable(item.pending, parsePending), resendAll: flag(item.resendAll, "resend all") };
   if (utf8(JSON.stringify(state)) > MAX_BINDING_RELAY_BYTES) throw new SessionError("INVALID_DATA", "binding relay state exceeds its byte budget");
   return state;
 }
-/** The mark a sync state stands on: a synced or suspect mark, or a pending sync's prior's; none for fresh. */
-export function markOf(sync: BindingSync): DeliveredMark | null {
-  switch (sync.kind) {
-    case "fresh": return null;
-    case "synced": return sync.mark;
-    case "suspect": return sync.mark;
-    case "pending": return markOf(sync.prior);
-  }
-}
-/** Every packet identity a sync state names, for the Store's check that they exist (relay-architecture §14.3). */
-export function packetsOf(sync: BindingSync): readonly RelayPacketId[] {
-  const ids: RelayPacketId[] = [];
-  const visit = (state: BindingSync): void => {
-    switch (state.kind) {
-      case "fresh": return;
-      case "synced": if (state.mark.lastPacketId !== null) ids.push(state.mark.lastPacketId); return;
-      case "suspect":
-        if (state.mark?.lastPacketId != null) ids.push(state.mark.lastPacketId);
-        if (state.carried !== null) { ids.push(state.carried.packetId); visit(state.carried.prior); }
-        return;
-      case "pending": ids.push(state.packetId); visit(state.prior); return;
-    }
-  };
-  visit(sync);
-  return [...new Set(ids)];
-}
+/** Every packet identity a binding's relay state names, for the Store's check that they exist. */
+export function packetsOf(relay: BindingRelayState): readonly RelayPacketId[] { return relay.pending === null ? [] : [relay.pending.packetId]; }
 /**
  * A continuity level: an object, or (with `legacy`) one of the strings v12 events wrote (LEGACY_CONTINUITY). Snapshot
  * fields are v13 and take objects only.
@@ -959,11 +732,8 @@ export function parseRunRelay(value: unknown): RunRelay {
 }
 /** PublicRun.relayRequest (v13). */
 export function parseRunRelayRequest(value: unknown): RunRelayRequest {
-  const item = object(value, "Run relay request"); only(item, ["tier", "attach", "native", "resend", "fingerprint"], "Run relay request");
-  if (item.resend !== undefined && item.resend !== true) invalid("relay resend choice");
-  return { ...(item.tier === undefined ? {} : { tier: choice(item.tier, TIERS, "requested tier") }), ...(item.attach === undefined ? {} : { attach: choice(item.attach, ATTACH_CHOICES, "requested attach") }),
-    ...(item.native === undefined ? {} : { native: choice(item.native, NATIVE_CHOICES, "requested native session") }), ...(item.resend === undefined ? {} : { resend: true as const }),
-    fingerprint: hmacDigest(item.fingerprint) };
+  const item = object(value, "Run relay request"); only(item, ["attach", "fingerprint"], "Run relay request");
+  return { ...(item.attach === undefined ? {} : { attach: choice(item.attach, ["full", "none"] as const, "requested attach") }), fingerprint: hmacDigest(item.fingerprint) };
 }
 /** The serialized relay fields of one Run, held to MAX_RUN_RELAY_BYTES. */
 export function assertRunRelayBytes(relay: RunRelay | undefined, request: RunRelayRequest | undefined): void {
@@ -982,8 +752,8 @@ export function parseDeliveryOutcome(value: unknown): DeliveryOutcome {
   const item = object(value, "delivery outcome");
   switch (item.kind) {
     case "in_flight": only(item, ["kind"], "delivery outcome"); return { kind: "in_flight" };
-    case "recorded": only(item, ["kind", "evidence", "decidedSeq", "decidedAt", "verifiedInRun"], "delivery outcome");
-      return { kind: "recorded", evidence: choice(item.evidence, DELIVERY_EVIDENCE, "delivery evidence"), decidedSeq: integer(item.decidedSeq, "decided seq", 1, RELAY_MAX_SEQ), decidedAt: time(item.decidedAt, "decided at"), verifiedInRun: nullable(item.verifiedInRun, runId) };
+    case "recorded": only(item, ["kind", "evidence", "decidedSeq", "decidedAt"], "delivery outcome");
+      return { kind: "recorded", evidence: choice(item.evidence, DELIVERY_EVIDENCE, "delivery evidence"), decidedSeq: integer(item.decidedSeq, "decided seq", 1, RELAY_MAX_SEQ), decidedAt: time(item.decidedAt, "decided at") };
     case "not_recorded": only(item, ["kind", "reason", "decidedSeq", "decidedAt"], "delivery outcome");
       return { kind: "not_recorded", reason: choice(item.reason, NOT_RECORDED_REASONS, "not recorded reason"), decidedSeq: integer(item.decidedSeq, "decided seq", 1, RELAY_MAX_SEQ), decidedAt: time(item.decidedAt, "decided at") };
     case "unknown": only(item, ["kind", "reason", "decidedSeq", "decidedAt"], "delivery outcome");
@@ -991,33 +761,14 @@ export function parseDeliveryOutcome(value: unknown): DeliveryOutcome {
   }
   return invalid("delivery outcome");
 }
-export function parseDeliveryPosition(value: unknown): DeliveryPosition {
-  const item = object(value, "delivery position");
-  let position: DeliveryPosition;
-  switch (item.kind) {
-    case "file_offset": only(item, ["kind", "path", "bytes"], "delivery position"); position = { kind: "file_offset", path: bounded(item.path, "position path", RELAY_POSITION_BYTES - 64), bytes: integer(item.bytes, "position bytes", 0, Number.MAX_SAFE_INTEGER) }; break;
-    case "seq": only(item, ["kind", "before"], "delivery position"); position = { kind: "seq", before: integer(item.before, "position seq", 0, Number.MAX_SAFE_INTEGER) }; break;
-    case "client_id": only(item, ["kind", "id"], "delivery position"); position = { kind: "client_id", id: bounded(item.id, "position client id", 512) }; break;
-    case "none": only(item, ["kind"], "delivery position"); position = { kind: "none" }; break;
-    default: return invalid("delivery position");
-  }
-  if (utf8(JSON.stringify(position)) > RELAY_POSITION_BYTES) throw new SessionError("INVALID_DATA", "delivery position exceeds its byte budget");
-  return position;
-}
-const cursor = (value: unknown, label: string) => { const row = object(value, label); only(row, ["count", "digest"], label); return { count: counter(row.count, label + " count"), digest: nullable(row.digest, fingerprint) }; };
-export function parseRealizedWindow(value: unknown): RealizedWindow {
-  const item = object(value, "realized window"); only(item, ["requests", "cacheHits", "closedBy"], "realized window");
-  return { requests: counter(item.requests, "realized requests"), cacheHits: counter(item.cacheHits, "realized cache hits"), closedBy: choice(item.closedBy, REALIZED_CLOSED_BY, "realized close") };
-}
 export function parseDeliveryRecord(value: unknown): DeliveryRecord {
   const item = object(value, "delivery record");
-  only(item, ["runId", "packetId", "channel", "position", "outcome", "consentLogSeq", "inputHmac", "redaction", "compactionAtDelivery", "resendOf", "attachOverride", "verifyMs", "realized"], "delivery record");
+  only(item, ["runId", "packetId", "channel", "outcome", "handoffLogSeq", "inputHmac", "redaction", "autoResend"], "delivery record");
   const redaction = object(item.redaction, "delivery redaction context"); only(redaction, ["rulesVersion", "keyId", "setHmac"], "delivery redaction context");
-  return { runId: runId(item.runId), packetId: relayPacketId(item.packetId), channel: choice(item.channel, DELIVERY_CHANNELS, "delivery channel"), position: parseDeliveryPosition(item.position),
-    outcome: parseDeliveryOutcome(item.outcome), consentLogSeq: nullable(item.consentLogSeq, raw => integer(raw, "consent log seq", 1, Number.MAX_SAFE_INTEGER)), inputHmac: hmacDigest(item.inputHmac),
+  return { runId: runId(item.runId), packetId: relayPacketId(item.packetId), channel: choice(item.channel, DELIVERY_CHANNELS, "delivery channel"),
+    outcome: parseDeliveryOutcome(item.outcome), handoffLogSeq: nullable(item.handoffLogSeq, raw => integer(raw, "handoff log seq", 1, Number.MAX_SAFE_INTEGER)), inputHmac: hmacDigest(item.inputHmac),
     redaction: { rulesVersion: bounded(redaction.rulesVersion, "redaction rules version", 64), keyId: bounded(redaction.keyId, "redaction key id", 64), setHmac: redactionTag(redaction.setHmac) },
-    compactionAtDelivery: nullable(item.compactionAtDelivery, raw => cursor(raw, "compaction at delivery")), resendOf: nullable(item.resendOf, runId), attachOverride: flag(item.attachOverride, "attach override"),
-    verifyMs: nullable(item.verifyMs, raw => counter(raw, "verify ms")), realized: nullable(item.realized, parseRealizedWindow) };
+    autoResend: flag(item.autoResend, "automatic resend") };
 }
 const ids = (value: unknown, label: string) => list(value, label, RELAY_MAX_RUNS, raw => integer(raw, label, 0, RELAY_MAX_RUNS - 1));
 const tokens = (value: unknown, label: string) => counter(value, label);
@@ -1027,22 +778,22 @@ const runSpan = (value: unknown, label: string): readonly [number, number] => {
   if (through < from) invalid(label);
   return [from, through];
 };
-/** A packet manifest as G070 renders it, checked field by field and against RELAY_MANIFEST_BYTES. */
+/** A packet manifest, checked field by field and against RELAY_MANIFEST_BYTES. */
 export function parseRelayPacket(value: unknown): RelayPacket {
   const item = object(value, "relay packet");
-  only(item, ["id", "kind", "tier", "complete", "reanchor", "target", "source", "range", "basePacketId", "supersedes", "policyVersion", "language", "factsFingerprint", "workspaceObservationSeq", "inputs", "redaction", "body", "budget", "sections", "fold", "omissions", "userEdits"], "relay packet");
-  const target = object(item.target, "packet target"); only(target, ["harnessId", "controlId", "model", "vendor", "nativeEpoch"], "packet target");
+  only(item, ["id", "kind", "tier", "complete", "target", "source", "range", "basePacketId", "supersedes", "policyVersion", "language", "factsFingerprint", "workspaceObservationSeq", "inputs", "redaction", "body", "budget", "sections", "fold", "omissions", "userEdits"], "relay packet");
+  const target = object(item.target, "packet target"); only(target, ["harnessId", "controlId", "model", "nativeEpoch"], "packet target");
   const source = object(item.source, "packet source"); only(source, ["kind", "names"], "packet source");
   const inputs = object(item.inputs, "packet inputs"); only(inputs, ["attachOverride", "digestBehind", "detailsMissing", "noteIncluded", "firstLineOmitted"], "packet inputs");
   const redaction = object(item.redaction, "packet redaction"); only(redaction, ["profile", "count", "byClass", "overridden", "unscanned"], "packet redaction");
-  const body = object(item.body, "packet body"); only(body, ["sha256", "bytes", "estTokens", "estimator", "family", "untrustedTokens", "userTokens"], "packet body");
+  const body = object(item.body, "packet body"); only(body, ["sha256", "bytes", "estTokens", "estimator", "untrustedTokens", "userTokens"], "packet body");
   const budget = object(item.budget, "packet budget"); only(budget, ["capTokens", "userCap", "untrustedCap", "window", "fixedPrefix", "windowSource", "clampedBy"], "packet budget");
   const byClass = object(redaction.byClass, "packet redaction classes");
   if (redaction.profile !== "egress" || body.estimator !== "est/2") invalid("packet redaction profile or estimator");
   const packet: RelayPacket = {
-    id: relayPacketId(item.id), kind: choice(item.kind, PACKET_KINDS, "packet kind"), tier: choice(item.tier, TIERS, "packet tier"), complete: flag(item.complete, "packet completeness"), reanchor: flag(item.reanchor, "packet reanchor"),
+    id: relayPacketId(item.id), kind: choice(item.kind, PACKET_KINDS, "packet kind"), tier: choice(item.tier, TIERS, "packet tier"), complete: flag(item.complete, "packet completeness"),
     target: { harnessId: catalogIdentity(target.harnessId, "packet target Harness"), controlId: catalogIdentity(target.controlId, "packet target control"), model: nullable(target.model, raw => bounded(raw, "packet target model", 1024)),
-      vendor: parseVendorKey(target.vendor), nativeEpoch: integer(target.nativeEpoch, "packet target epoch", 1, RELAY_MAX_EPOCH) },
+      nativeEpoch: integer(target.nativeEpoch, "packet target epoch", 1, RELAY_MAX_EPOCH) },
     source: { kind: choice(source.kind, SOURCE_KINDS, "packet source kind"), names: list(source.names, "packet source names", 64, raw => { const row = object(raw, "packet source name"); only(row, ["harnessId", "model", "runs"], "packet source name");
       return { harnessId: catalogIdentity(row.harnessId, "packet source Harness"), model: nullable(row.model, raw => bounded(raw, "packet source model", 1024)), runs: runSpan(row.runs, "packet source runs") }; }) },
     range: parseSourceRange(item.range), basePacketId: nullable(item.basePacketId, relayPacketId), supersedes: nullable(item.supersedes, relayPacketId),
@@ -1052,7 +803,7 @@ export function parseRelayPacket(value: unknown): RelayPacket {
       noteIncluded: flag(inputs.noteIncluded, "packet note included"), firstLineOmitted: nullable(inputs.firstLineOmitted, raw => choice(raw, FIRST_LINE_OMITTED, "packet first line omission")) },
     redaction: { profile: "egress", count: counter(redaction.count, "packet redactions"), byClass: Object.fromEntries(Object.entries(byClass).map(([key, count]) => [bounded(key, "redaction class", 64), counter(count, "redaction class count")])),
       overridden: counter(redaction.overridden, "packet redactions overridden"), unscanned: counter(redaction.unscanned, "packet unscanned") },
-    body: { sha256: fingerprint(body.sha256), bytes: integer(body.bytes, "packet body bytes", 1, RELAY_BODY_BYTES), estTokens: tokens(body.estTokens, "packet tokens"), estimator: "est/2", family: bounded(body.family, "packet model family", 64),
+    body: { sha256: fingerprint(body.sha256), bytes: integer(body.bytes, "packet body bytes", 1, RELAY_BODY_BYTES), estTokens: tokens(body.estTokens, "packet tokens"), estimator: "est/2",
       untrustedTokens: tokens(body.untrustedTokens, "packet untrusted tokens"), userTokens: tokens(body.userTokens, "packet user tokens") },
     budget: { capTokens: tokens(budget.capTokens, "packet cap"), userCap: tokens(budget.userCap, "packet user cap"), untrustedCap: tokens(budget.untrustedCap, "packet untrusted cap"), window: tokens(budget.window, "packet window"),
       fixedPrefix: tokens(budget.fixedPrefix, "packet fixed prefix"), windowSource: choice(budget.windowSource, WINDOW_SOURCES, "packet window source"), clampedBy: list(budget.clampedBy, "packet clamps", BUDGET_CLAMPS.length, raw => choice(raw, BUDGET_CLAMPS, "packet clamp")) },
@@ -1107,18 +858,9 @@ export function parseWorkspaceObservation(value: unknown): WorkspaceObservation 
   }
   return invalid("workspace observation");
 }
-export function parseConsentRecord(value: unknown): ConsentRecord {
-  const item = object(value, "consent record"); only(item, ["logSeq", "commandId", "vendor", "scope", "decision", "categories", "policyVersion", "authKind", "decidedAt"], "consent record");
-  const scope = object(item.scope, "consent scope");
-  const parsedScope: ConsentRecord["scope"] = scope.kind === "global" ? (only(scope, ["kind"], "consent scope"), { kind: "global" })
-    : scope.kind === "session" ? (only(scope, ["kind", "sessionId"], "consent scope"), { kind: "session", sessionId: sessionId(scope.sessionId) }) : invalid("consent scope");
-  const commandId = bounded(item.commandId, "consent command", 128);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(commandId)) invalid("consent command");
-  const categories = list(item.categories, "consent categories", DATA_CLASSES.length, raw => choice(raw, DATA_CLASSES, "consent category"));
-  if (new Set(categories).size !== categories.length) invalid("consent categories");
-  return { logSeq: integer(item.logSeq, "consent log seq", 1, Number.MAX_SAFE_INTEGER), commandId, vendor: parseVendorKey(item.vendor), scope: parsedScope,
-    decision: choice(item.decision, CONSENT_DECISIONS, "consent decision"), categories, policyVersion: policyVersion(item.policyVersion),
-    authKind: nullable(item.authKind, raw => bounded(raw, "consent authentication kind", MAX_AUTH_KIND_BYTES)), decidedAt: time(item.decidedAt, "consent decided at") };
+export function parseHandoffRecord(value: unknown): HandoffRecord {
+  const item = object(value, "handoff record"); only(item, ["logSeq", "harnessId", "firstAt"], "handoff record");
+  return { logSeq: integer(item.logSeq, "handoff log seq", 1, Number.MAX_SAFE_INTEGER), harnessId: catalogIdentity(item.harnessId, "handoff Harness"), firstAt: time(item.firstAt, "handoff first at") };
 }
 export function parseRelayPin(value: unknown): RelayPin {
   const item = object(value, "relay pin"); only(item, ["pinId", "messageId", "author", "offset", "length", "quoteHmac", "pinnedSeq"], "relay pin");
@@ -1130,11 +872,6 @@ export function parseRelayExclusion(value: unknown): RelayExclusion {
   const kind = choice(item.kind, ["run", "section"] as const, "exclusion kind");
   const ref = kind === "section" ? choice(item.ref, SECTION_IDS, "excluded section") : runId(item.ref);
   return { exclusionId: exclusionId(item.exclusionId), kind, ref, addedSeq: integer(item.addedSeq, "exclusion seq", 1, RELAY_MAX_SEQ) };
-}
-export function parseRelayWindow(value: unknown): RelayWindow {
-  const item = object(value, "relay window"); only(item, ["harnessId", "controlId", "modelKey", "size", "firstTurnUsed", "observedAt"], "relay window");
-  return { harnessId: catalogIdentity(item.harnessId, "window Harness"), controlId: catalogIdentity(item.controlId, "window control"), modelKey: bounded(item.modelKey, "window model key", MAX_RELAY_MODEL_BYTES, true),
-    size: integer(item.size, "window size", 1, MAX_RELAY_COUNTER), firstTurnUsed: nullable(item.firstTurnUsed, raw => counter(raw, "first Turn tokens")), observedAt: time(item.observedAt, "window observed at") };
 }
 export function parseRelayPref(key: unknown, value: unknown): { readonly key: RelayPrefKey; readonly value: string } {
   const name = choice(key, RELAY_PREF_KEYS, "relay preference key");

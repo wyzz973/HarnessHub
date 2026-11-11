@@ -7,12 +7,12 @@ import {
   type CommandId, type EventDraft, type SessionCommit, type SessionEvent, type SessionId,
   type SessionMutation, type SessionSnapshot, type SessionStore,
 } from "../../contracts/session.js";
-import type { ConsentAppend, ConsentRecord, DeliveryRecord, RecoverRelay, RelayCommitResult, RelayIndexRow, RelayLogPort, RelayPacket, RelayPrefKey, RelayStorePort, RelayWindow, RelayWriteResult, RelayWriteRows } from "../../contracts/relay.js";
+import type { DeliveryRecord, HandoffRecord, RecoverRelay, RelayCommitResult, RelayIndexRow, RelayLogPort, RelayPacket, RelayPrefKey, RelayStorePort, RelayWriteResult, RelayWriteRows } from "../../contracts/relay.js";
 import { MAX_EVENT_BYTES, MAX_EVENT_LOG_BYTES, MAX_READ_BYTES, MAX_READ_ITEMS, MAX_SESSION_BYTES, MAX_SESSION_EVENTS, assertSessionTransition, parseSession, recoverSession, utf8Bytes } from "../../contexts/session/domain/state.js";
 import { migrateSession, type MigrationEvent } from "../../contexts/session/domain/relay/migrate.js";
 import { MAX_SNAPSHOT_CACHE_BYTES, SnapshotCache, type SnapshotCacheStats } from "./snapshot-cache.js";
-import { RELAY_DDL, repairRelayPrefs, checkPacketReferences, checkRelayRows, checkRelayWrite, deleteRelayRows, diagnosticOf, pruneRelayWindows, readDeliveries, readIndexRows, readPacket, readPacketBody, readPackets, readRelayWindow, relayRowCounts, upsertRelayWindow, writeBehindIndexes, writeDerivedRows, writeRelayRows, writeRelayWrite } from "./relay-tables.js";
-import { appendConsent, consentNamed, currentConsents, readPrefs, writePref } from "./relay-log.js";
+import { RELAY_DDL, repairRelayPrefs, checkPacketReferences, checkRelayRows, checkRelayWrite, deleteRelayRows, diagnosticOf, readDeliveries, readIndexRows, readPacket, readPacketBody, readPackets, relayRowCounts, writeBehindIndexes, writeDerivedRows, writeRelayRows, writeRelayWrite } from "./relay-tables.js";
+import { handoffNamed, handoffRows, logHandoff, readPrefs, writePref } from "./relay-log.js";
 
 const activeRoots = new Set<string>();
 /** The business database version this build owns (Session v13, ADR-055 §14.4); 1–12 are migrated to it. */
@@ -499,25 +499,17 @@ export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLo
     this.assertOwner(); sessionId(id);
     return this.read(() => readIndexRows(this.database, id));
   }
-  appendRelayLog(record: ConsentAppend): ConsentRecord {
+  logHandoff(harnessId: string): { readonly record: HandoffRecord; readonly created: boolean } {
     this.assertOwner();
-    return this.transaction(() => appendConsent(this.database, record, this.time()));
+    return this.transaction(() => logHandoff(this.database, harnessId, this.time()));
   }
-  upsertWindow(window: RelayWindow): void {
-    this.assertOwner();
-    this.transaction(() => { upsertRelayWindow(this.database, window); });
-  }
-  relayWindow(harnessId: string, controlId: string, modelKey: string): RelayWindow | null {
-    this.assertOwner();
-    return this.read(() => readRelayWindow(this.database, harnessId, controlId, modelKey));
-  }
+  handoffs(): readonly HandoffRecord[] { this.assertOwner(); return this.read(() => handoffRows(this.database)); }
+  handoffUsed(logSeq: number): boolean { this.assertOwner(); return this.read(() => handoffNamed(this.database, logSeq)); }
   setPref(key: RelayPrefKey, value: string): void {
     this.assertOwner();
     this.transaction(() => { writePref(this.database, key, value, this.time()); });
   }
   relayPrefs(): Readonly<Partial<Record<RelayPrefKey, string>>> { this.assertOwner(); return this.read(() => readPrefs(this.database)); }
-  relayConsents(): readonly ConsentRecord[] { this.assertOwner(); return this.read(() => currentConsents(this.database)); }
-  consentUsed(logSeq: number): boolean { this.assertOwner(); return this.read(() => consentNamed(this.database, logSeq)); }
 
   close(): void {
     if (this.closed) return;
@@ -755,8 +747,6 @@ export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLo
       const generation = prior.generation + 1;
       if (!Number.isSafeInteger(generation)) throw new SessionError("INVALID_DATA", "owner generation exhausted");
       db.prepare("UPDATE owner_metadata SET owner_generation=?,owner_pid=?,owner_token=?,owner_active=1 WHERE singleton=1").run(generation, process.pid, this.token);
-      // Windows nobody observed for 30 days are not read any more (ADR-055 §14.1).
-      pruneRelayWindows(db, this.time());
       for (const row of db.prepare("SELECT id FROM sessions ORDER BY rowid").all()) {
         const state = this.readSession(sessionId(row.id)), recovered = recoverSession(state);
         const budget = db.prepare("SELECT COALESCE(SUM(length(CAST(event_json AS BLOB))),0) AS bytes,COALESCE(MAX(length(CAST(event_json AS BLOB))),0) AS maximum,COALESCE(MAX(owner_generation),0) AS generation FROM events WHERE session_id=?").get(state.id);
@@ -787,7 +777,7 @@ export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLo
       const relay = this.recoverRelay(recovered.next, readDeliveries(db, state.id, state), readPackets(db, state.id));
       if (relay === null) { db.exec("RELEASE relay_recovery"); return at(recovered.next, recovered.events); }
       const result = at(relay.next, withRelay({ failed: false, deliveries: relay.deliveries.map(row => ({ runId: row.runId, outcome: row.outcome.kind })),
-        bindings: (relay.next.nativeBindings ?? []).flatMap(binding => binding.relay === undefined ? [] : [{ harnessId: binding.harnessId, controlId: binding.controlId, sync: binding.relay.sync.kind }]) }));
+        bindings: (relay.next.nativeBindings ?? []).flatMap(binding => binding.relay === undefined ? [] : [{ harnessId: binding.harnessId, controlId: binding.controlId, epoch: binding.relay.epoch, pending: binding.relay.pending !== null }]) }));
       writeRelayRows(db, state.id, checkRelayRows(db, state.id, result.next, { deliveries: relay.deliveries.map(row => ({ kind: "outcome" as const, runId: row.runId, outcome: row.outcome })) }));
       checkPacketReferences(db, state.id, state, result.next);
       db.exec("RELEASE relay_recovery");

@@ -1,17 +1,17 @@
 import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { RelayLedger, vendorKeyOf, type RequestedConsent } from "../contexts/session/application/relay-coordinator.js";
+import { RelayLedger } from "../contexts/session/application/relay-coordinator.js";
 import type { RelayChoice } from "../contexts/session/application/runtime.js";
 import { dispatched } from "../contexts/session/domain/relay/advance.js";
 import { estimateTokens, resolveRelayBudget } from "../contexts/session/domain/relay/budget.js";
-import { heldSince, owed } from "../contexts/session/domain/relay/delivery.js";
+import { owed } from "../contexts/session/domain/relay/delivery.js";
 import { terminal } from "../contexts/session/domain/state.js";
 import {
-  ATTACH_CHOICES, NATIVE_CHOICES, RELAY_PREF_DEFAULTS, RELAY_PREF_KEYS, RELAY_PREF_VALUES, TIERS, markOf, parseVendorKey, relayDecisionOf,
-  type BindingRelayState, type DeliveredMark, type DeliveryOutcome, type DeliveryRecord, type RelayAttention, type RelayCapabilities, type RelayDecision, type RelayIndexRow, type RelayInstallationNotice, type RelayLogPort, type RelayPrefKey, type RelayStorePort, type Tier, type VendorKey,
+  ATTACH_CHOICES, RELAY_PREF_DEFAULTS, RELAY_PREF_KEYS, RELAY_PREF_VALUES, relayDecisionOf,
+  type BindingRelayState, type DeliveryEvidence, type DeliveryOutcome, type DeliveryRecord, type RelayAttention, type RelayCapabilities, type RelayDecision, type RelayIndexRow, type RelayInstallationNotice, type RelayLogPort, type RelayPacket, type RelayPrefKey, type RelayStorePort,
 } from "../contracts/relay.js";
 import { SessionError, sessionId, type HarnessSelection, type NativeSessionBinding, type SessionEvent, type SessionId, type SessionSnapshot } from "../contracts/session.js";
-import type { RelayAttentionView, RelayBindingView, RelayDeliveryView, RelayErrorView, RelayOption, RelayPacketView, RelayPrefsView, RelayView, WebRun } from "../contracts/web.js";
+import { SYNC_KINDS, type RelayAttentionView, type RelayBindingView, type RelayDeliveryView, type RelayPacketView, type RelayPrefsView, type RelayView, type WebRun } from "../contracts/web.js";
 
 /**
  * The relay's HTTP API (ADR-055 §12.4, G073's server side): the choices a send makes, the error bodies the user can answer,
@@ -24,9 +24,7 @@ import type { RelayAttentionView, RelayBindingView, RelayDeliveryView, RelayErro
 // The relay member of a send request
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** Longest note (附言) a request carries, in UTF-8 bytes; the packet's own budget for it is tokens (G070). */
-const MAX_NOTE_BYTES = 4096;
-const SEND_FIELDS = ["attach", "resend", "clearConfirmed", "native", "tier", "note", "consent"] as const;
+const SEND_FIELDS = ["attach"] as const;
 function invalid(message: string): never { throw new SessionError("INVALID_INPUT", message); }
 function plain(value: unknown, label: string): Readonly<Record<string, unknown>> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) invalid(label + " must be an object");
@@ -36,92 +34,20 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], label: s
   if (typeof value !== "string" || !(allowed as readonly string[]).includes(value)) invalid(label + " is not one of its values");
   return value as T;
 }
-function onlyTrue(value: unknown, label: string): true | undefined {
-  if (value === undefined) return undefined;
-  if (value !== true) invalid(label + " must be true");
-  return true;
-}
-function noteText(value: unknown): string {
-  if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value, "utf8") > MAX_NOTE_BYTES || /[\0-\x08\x0b\x0c\x0e-\x1f\x7f]/u.test(value)) invalid("relay.note must be text of at most " + MAX_NOTE_BYTES + " bytes");
-  return value;
-}
-/** What a request asks to record as the user's consent (relay-architecture §10.4); the vendor key is checked, not trusted. */
-export type { RequestedConsent };
-function consentOf(value: unknown): RequestedConsent {
-  const row = plain(value, "relay.consent");
-  if (Object.keys(row).some(key => key !== "vendor" && key !== "decision" && key !== "scope") || !("vendor" in row) || !("decision" in row) || !("scope" in row)) invalid("relay.consent names a vendor, a decision and a scope");
-  let vendor: VendorKey;
-  try { vendor = parseVendorKey(row.vendor); } catch { return invalid("relay.consent.vendor must be a vendor key"); }
-  return { vendor, decision: oneOf(row.decision, ["acknowledged", "goal_only"] as const, "relay.consent.decision"), scope: oneOf(row.scope, ["session", "global"] as const, "relay.consent.scope") };
-}
 export interface SendRelay {
-  /**
-   * What the Runtime is handed: `runtime.send`'s fifth argument, which also puts the choices in the command's fingerprint; the
-   * target's tier, a new native session (`native:"new"`) and a consent to record go with the three history choices. Undefined when the
-   * request made no choice.
-   */
+  /** What the Runtime is handed: `runtime.send`'s fifth argument, which also puts the choice in the command's fingerprint. Undefined when the request made no choice. */
   readonly choices: RelayChoice | undefined;
 }
 /**
- * The `relay` member of `POST …/messages`, checked field by field: an object of only the known fields, each with one of its
- * values (INVALID_INPUT, an HTTP 400, for anything else, with a fixed text that quotes nothing of the request). `attach:
- * "auto"` is no choice. An input sent alone (`attach: "none"`) carries no other choice, as the Runtime holds it. A `note` is
- * checked and goes no further: the Runtime takes no note until the packet does (G070), and a request that has one is neither
- * refused nor changed by it.
+ * The `relay` member of `POST …/messages`, checked field by field: an object of only the known field (`attach`), with one of its
+ * values (INVALID_INPUT, an HTTP 400, for anything else, with a fixed text that quotes nothing of the request). `attach: "auto"` is no choice.
  */
 export function parseSendRelay(value: unknown): SendRelay {
   if (value === undefined) return { choices: undefined };
   const item = plain(value, "relay");
   if (Object.keys(item).some(key => !(SEND_FIELDS as readonly string[]).includes(key))) invalid("relay has a field this Gateway does not know");
   const attach = item.attach === undefined ? undefined : oneOf(item.attach, ATTACH_CHOICES, "relay.attach");
-  const resend = onlyTrue(item.resend, "relay.resend"), clearConfirmed = onlyTrue(item.clearConfirmed, "relay.clearConfirmed");
-  const native = item.native === undefined ? undefined : oneOf(item.native, NATIVE_CHOICES, "relay.native");
-  const tier = item.tier === undefined ? undefined : oneOf(item.tier, TIERS, "relay.tier");
-  if (item.note !== undefined) noteText(item.note);
-  const consent = item.consent === undefined ? undefined : consentOf(item.consent);
-  if (attach === "none" && (resend === true || clearConfirmed === true || native === "new" || consent !== undefined)) invalid("an input sent alone carries no other relay choice");
-  const choices: { attach?: "full" | "none"; resend?: true; clearConfirmed?: true; tier?: Tier; native?: "continue" | "new"; consent?: RequestedConsent } = {
-    ...(attach === "full" || attach === "none" ? { attach } : {}), ...(resend === true ? { resend: true as const } : {}), ...(clearConfirmed === true ? { clearConfirmed: true as const } : {}),
-    ...(tier === undefined ? {} : { tier }), ...(native === undefined ? {} : { native }), ...(consent === undefined ? {} : { consent }) };
-  return { choices: Object.keys(choices).length ? choices : undefined };
-}
-
-// ---------------------------------------------------------------------------------------------------------------------
-// Error bodies
-// ---------------------------------------------------------------------------------------------------------------------
-
-/** The relay errors a send answers with a `relay` member: the ones the user can answer by choosing (ADR-055 §9, §12.4). */
-const ANSWERABLE = new Set(["RELAY_CHOICE_REQUIRED", "RELAY_CONSENT_REQUIRED", "RELAY_TARGET_UNVERIFIED", "RELAY_UNAVAILABLE", "RELAY_INPUT_LIMIT"]);
-const CATALOG_IDENTITY = /^[a-z][a-z0-9-]{0,95}$/u, REASON = /^[a-z][a-z_]{0,63}$/u;
-/** The Harness control and vendor key a relay error names itself, when the Runtime says (RelayError.detail); checked, never trusted. */
-function namedBy(error: SessionError): { readonly harnessId?: string; readonly controlId?: string; readonly vendor?: string } {
-  const detail = (error as { readonly detail?: unknown }).detail;
-  if (detail === null || typeof detail !== "object") return {};
-  const row = detail as Readonly<Record<string, unknown>>;
-  const harnessId = typeof row.harnessId === "string" && CATALOG_IDENTITY.test(row.harnessId) ? row.harnessId : undefined;
-  const controlId = typeof row.controlId === "string" && CATALOG_IDENTITY.test(row.controlId) ? row.controlId : undefined;
-  let vendor: string | undefined;
-  try { vendor = row.vendor === undefined ? undefined : parseVendorKey(row.vendor); } catch { vendor = undefined; }
-  return { ...(harnessId !== undefined && controlId !== undefined ? { harnessId, controlId } : {}), ...(vendor === undefined ? {} : { vendor }) };
-}
-/**
- * What the user may choose after a relay error (relay-architecture §9, §12.1 T2; the user's decision of 2026-11-10 keeps these
- * 409s to what only the user can settle): by the error's code and reason and the binding's state.
- */
-export function relayOptions(code: string, reason: string | undefined, binding: NativeSessionBinding | undefined): readonly RelayOption[] {
-  switch (code) {
-    case "RELAY_CHOICE_REQUIRED": {
-      const options: RelayOption[] = ["attach_full", "send_alone", "new_native"];
-      // An unconfirmed clear whose check settles nothing can be confirmed by the user (relay-architecture §9).
-      const relay = binding?.relay;
-      if (reason === "verify_required" && relay !== undefined && relay.sync.kind === "suspect" && relay.sync.cause === "clear_unconfirmed" && relay.sync.floorCandidate !== null && relay.sync.floorCandidate > relay.epochFloor) options.push("clear_confirmed");
-      return options;
-    }
-    case "RELAY_CONSENT_REQUIRED": return ["acknowledge", "send_alone"];
-    case "RELAY_UNAVAILABLE": return reason === "recovery_failed" ? ["send_alone", "new_native"] : ["send_alone"];
-    case "RELAY_TARGET_UNVERIFIED": case "RELAY_INPUT_LIMIT": return ["send_alone"];
-    default: return [];
-  }
+  return { choices: attach === "full" || attach === "none" ? { attach } : undefined };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -152,8 +78,6 @@ export interface RelayApiOptions {
   readonly declaration: (selection: HarnessSelection) => RelayCapabilities | null | undefined;
   /** What each of a Session's bindings asks the user to look at (the Runtime's `relayAttention`); none when the Runtime is not asked. */
   readonly attention?: (id: SessionId) => readonly BindingAttention[];
-  /** Whether the data directory is within reach of the Session's workspace (the Runtime's `relayDataRootExposed`). */
-  readonly dataRootExposed?: (id: SessionId) => boolean;
   /** What the installation as a whole cannot do for the relay while it stays so (the Runtime's `relayInstallation`). */
   readonly installation?: () => readonly RelayInstallationNotice[];
   readonly http: RelayHttp;
@@ -190,22 +114,17 @@ function mayHaveDecisions(snapshot: SessionSnapshot): boolean {
   }
   return false;
 }
-/** The latest allowed change of vendor of a binding, as `relay.vendor_changed` recorded it: the keys and the Run that saw it. */
-interface VendorChange { readonly from: VendorKey; readonly to: VendorKey; readonly runId: string }
-/** What the relay's events of a Session say that the API shows: the decision of each Run, and each binding's latest change of vendor. */
-interface RelayFacts { readonly decisions: ReadonlyMap<string, RelayDecision>; readonly changes: ReadonlyMap<string, VendorChange> }
 /**
- * The relay decision each Run's `run.context_prepared` recorded (`relayDecisionOf`), by Run — or the one a `relay.withheld` took back to
- * — and the latest change of vendor of each binding (`relay.vendor_changed` the defaults let go). Events are append-only, so each
+ * The relay decision each Run's `run.context_prepared` recorded (`relayDecisionOf`), by Run. Events are append-only, so each
  * Session's are read once, from where the last read stopped; a Session the process has not seen is read from its start. Bounded:
  * the least recently read Sessions are forgotten.
  */
 class DecisionLedger {
-  private readonly sessions = new Map<SessionId, { after: number; readonly byRun: Map<string, RelayDecision>; readonly changes: Map<string, VendorChange> }>();
+  private readonly sessions = new Map<SessionId, { after: number; readonly byRun: Map<string, RelayDecision> }>();
   constructor(private readonly events: (id: SessionId, afterSeq: number, limit: number) => readonly SessionEvent[]) {}
-  of(state: SessionSnapshot): RelayFacts {
+  of(state: SessionSnapshot): ReadonlyMap<string, RelayDecision> {
     let known = this.sessions.get(state.id);
-    if (known === undefined || known.after > state.lastSeq) known = { after: 0, byRun: new Map(), changes: new Map() };
+    if (known === undefined || known.after > state.lastSeq) known = { after: 0, byRun: new Map() };
     // Used last: moved to the end of the map, which is where the forgetting starts from the other side.
     this.sessions.delete(state.id); this.sessions.set(state.id, known);
     if (this.sessions.size > DECISION_SESSIONS) this.sessions.delete(this.sessions.keys().next().value!);
@@ -214,21 +133,13 @@ class DecisionLedger {
       if (!page.length) break;
       for (const item of page) {
         const run = item.data.runId;
-        if (item.type === "relay.vendor_changed") { this.changed(known.changes, item.data); continue; }
-        // The last word wins: a packet withheld at the last moment (`relay.withheld`) takes back what `run.context_prepared` decided.
-        if (item.type !== "run.context_prepared" && item.type !== "relay.withheld" || typeof run !== "string") continue;
+        if (item.type !== "run.context_prepared" || typeof run !== "string") continue;
         const decision = relayDecisionOf(item.data);
         if (decision !== null) known.byRun.set(run, decision);
       }
       known.after = page.at(-1)!.seq;
     }
-    return { decisions: known.byRun, changes: known.changes };
-  }
-  /** A change the relay let go and noted (`allowed`), by the Harness control it was seen on; one it refused, or whose keys are no keys, is left out. */
-  private changed(into: Map<string, VendorChange>, data: Readonly<Record<string, unknown>>): void {
-    const { harnessId, controlId, observedInRun } = data;
-    if (data.allowed !== true || typeof harnessId !== "string" || typeof controlId !== "string" || typeof observedInRun !== "string") return;
-    try { into.set(harnessId + "\0" + controlId, { from: parseVendorKey(data.from), to: parseVendorKey(data.to), runId: observedInRun }); } catch { /* Not a key: not shown. */ }
+    return known.byRun;
   }
 }
 /** What a binding is owed now: the Runs a handoff to it would carry, and whether the history the Session started from goes too. */
@@ -240,8 +151,6 @@ const FRAME_TOKENS = 300;
 export class RelayApi {
   private readonly ledger: RelayLedger;
   private readonly decisions: DecisionLedger;
-  /** The `relay` member of the errors a send was answered with, by the error that is answered (see `explain`). */
-  private readonly explained = new WeakMap<object, RelayErrorView>();
   constructor(private readonly options: RelayApiOptions) {
     this.ledger = new RelayLedger((id, afterSeq, limit) => options.reads.events(id, afterSeq, limit));
     this.decisions = new DecisionLedger((id, afterSeq, limit) => options.reads.events(id, afterSeq, limit));
@@ -267,7 +176,7 @@ export class RelayApi {
     }
     let decisions: ReadonlyMap<string, RelayDecision> = new Map();
     if (mayHaveDecisions(snapshot)) {
-      try { decisions = this.decisions.of(snapshot).decisions; }
+      try { decisions = this.decisions.of(snapshot); }
       catch (error) { if (!(error instanceof SessionError && error.code === "INVALID_DATA")) throw error; }
     }
     const shown = snapshot.runs.map(run => {
@@ -310,70 +219,60 @@ export class RelayApi {
       packets.push({ packetId: packet.id, runId: run.id, runIndex, number, kind: packet.kind, tier: packet.tier, target: { harnessId: packet.target.harnessId, model: packet.target.model },
         estTokens: packet.body.estTokens, omissions: packet.omissions.reduce((sum, item) => sum + item.count, 0), redactions: packet.redaction.count, delivery: delivery.state, evidence: delivery.evidence });
     }
-    const attended = this.attended(snapshot.id), changes = this.vendorChanges(snapshot);
-    const bindings = (snapshot.nativeBindings ?? []).flatMap(binding => binding.status === "archived" || binding.relay === undefined ? [] : [this.bindingView(snapshot, binding, binding.relay, attended, numbers, changes)]);
+    const attended = this.attended(snapshot.id);
+    const bindings = (snapshot.nativeBindings ?? []).flatMap(binding => binding.status === "archived" || binding.relay === undefined ? [] : [this.bindingView(snapshot, binding, binding.relay, attended, numbers, rows, manifests)]);
     const installation = this.installation();
-    return { bindings, packets, ...(this.exposed(snapshot.id) ? { dataRootExposed: true as const } : {}), ...(installation.length ? { installation } : {}) };
+    return { bindings, packets, ...(installation.length ? { installation } : {}) };
   }
   /** What the installation as a whole cannot do for the relay (the Runtime's `relayInstallation`); a read that fails says nothing. */
   private installation(): readonly RelayInstallationNotice[] {
     try { return (this.options.installation?.() ?? []).map(notice => ({ cause: notice.cause, ...(notice.detail === undefined ? {} : { detail: notice.detail.slice(0, 200) }) })); } catch { return []; }
   }
-  /** The latest change of vendor of each of the Session's bindings, by binding. */
-  private vendorChanges(snapshot: SessionSnapshot): ReadonlyMap<string, VendorChange> {
-    if (!mayHaveDecisions(snapshot)) return new Map();
-    try { return this.decisions.of(snapshot).changes; }
-    catch (error) { if (error instanceof SessionError && error.code === "INVALID_DATA") return new Map(); throw error; }
-  }
   /** What the Runtime says each binding asks the user to look at, by binding; none when it says nothing (or cannot be asked). */
   private attended(id: SessionId): ReadonlyMap<string, BindingAttention> {
     try { return new Map((this.options.attention?.(id) ?? []).map(row => [row.harnessId + "\0" + row.controlId, row])); } catch { return new Map(); }
   }
-  private exposed(id: SessionId): boolean { try { return this.options.dataRootExposed?.(id) === true; } catch { return false; } }
-  private bindingView(snapshot: SessionSnapshot, binding: NativeSessionBinding, relay: BindingRelayState, attended: ReadonlyMap<string, BindingAttention>, numbers: ReadonlyMap<string, number>, changes: ReadonlyMap<string, VendorChange>): RelayBindingView {
-    const mark = markOf(relay.sync);
+  private bindingView(snapshot: SessionSnapshot, binding: NativeSessionBinding, relay: BindingRelayState, attended: ReadonlyMap<string, BindingAttention>, numbers: ReadonlyMap<string, number>,
+      rows: ReadonlyMap<string, DeliveryRecord>, manifests: ReadonlyMap<string, RelayPacket>): RelayBindingView {
     let declared: RelayCapabilities | null | undefined;
     try { declared = this.options.declaration({ harnessId: binding.harnessId, controlId: binding.controlId }); } catch { declared = undefined; }
     const known = attended.get(binding.harnessId + "\0" + binding.controlId);
     const probed = known?.probed ?? (declared?.probed === true);
-    // The named service the Harness runs on (a fixed word), never a host or a provider id of the user's own.
-    const service = relay.vendorObserved == null ? undefined : vendorKeyOf(declared, binding.harnessId, relay.vendorObserved);
-    const named = service !== undefined && NAMED_VENDOR.test(service) ? service : undefined;
-    const canConfirm = declared === undefined ? undefined : declared !== null && (declared.delivery.live !== "none" || declared.delivery.verify !== "none" || declared.delivery.successProvesRecorded);
+    const canConfirm = declared === undefined ? undefined : declared !== null && (declared.delivery.live !== "none" || declared.delivery.successProvesRecorded);
     const need = this.owedNow(snapshot, binding);
     const asked = known?.attention ?? null;
     let attention: RelayAttentionView | undefined;
     if (asked !== null) {
-      const packet = relay.sync.kind === "pending" ? numbers.get(relay.sync.packetId) : undefined;
-      // The vendor an `acknowledge` is for is the one place the relay view names one: the page cannot answer the banner without it.
-      const vendor = asked.options.includes("acknowledge") ? vendorKeyOf(declared, binding.harnessId, relay.vendorObserved ?? null) : undefined;
-      attention = { cause: asked.cause, options: asked.options, counts: asked.counts, key: asked.key, ...(packet === undefined ? {} : { packet }), ...(vendor === undefined ? {} : { vendor }) };
+      const packet = relay.pending === null ? undefined : numbers.get(relay.pending.packetId);
+      attention = { cause: asked.cause, options: asked.options, counts: asked.counts, key: asked.key, ...(packet === undefined ? {} : { packet }) };
     }
-    // A clear raises the epoch within the native session it cleared; one that replaced the native session (Claude Code's, which gives up the
-    // old one) raises none in the new one, and the fresh state it left says it was a clear.
-    const clears = Math.max(0, relay.nativeEpoch - heldSince(relay, snapshot.nativeBindings ?? [], binding.harnessId, binding.controlId));
-    const cleared = clears === 0 && relay.sync.kind === "fresh" && relay.sync.basis === "user_cleared" ? 1 : clears;
-    const change = changes.get(binding.harnessId + "\0" + binding.controlId), changeIndex = change === undefined ? -1 : snapshot.runs.findIndex(run => run.id === change.runId);
-    return { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.nativeEpoch, sync: relay.sync.kind, throughRun: this.throughRun(snapshot, mark),
-      evidence: mark?.evidence ?? null, cleared, probed,
-      ...(canConfirm === undefined ? {} : { canConfirm }), ...(named === undefined ? {} : { vendor: named }),
+    // The native session holds a part of the conversation once a packet was recorded on it or it ran a Turn of its own while nothing was owed (its mark).
+    const sync = relay.pending !== null ? "pending" : relay.mark >= 0 ? "synced" : "fresh";
+    // What its latest recorded packet was decided by.
+    let evidence: DeliveryEvidence | null = null;
+    for (const [runId, row] of rows) {
+      const packet = manifests.get(row.packetId);
+      if (row.outcome.kind === "recorded" && packet !== undefined && packet.target.harnessId === binding.harnessId && packet.target.controlId === binding.controlId && packet.target.nativeEpoch === relay.epoch && runId !== "") evidence = row.outcome.evidence;
+    }
+    return { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.epoch, sync: SYNC_KINDS.find(kind => kind === sync)!, throughRun: this.throughRun(snapshot, relay.mark),
+      evidence, cleared: relay.floor >= 1 ? 1 : 0, probed,
+      ...(canConfirm === undefined ? {} : { canConfirm }),
       ...(need === undefined || need.runIds.length === 0 && !need.origin ? {} : { owed: { runs: this.owedRuns(snapshot, need), estTokens: this.estimate(snapshot, need) } }),
-      ...(change === undefined || changeIndex < 0 ? {} : { vendorChange: { from: change.from, to: change.to, runIndex: changeIndex } }),
       ...(attention === undefined ? {} : { attention }) };
   }
   /**
    * The index (in the Session's Runs) of the latest finished Run whose fact the mark covers: a Run's fact is placed by its
-   * `run.ended` (RelayLedger), and a mark covers the facts up to its `throughSeq`. None when it covers none (a mark of the
-   * history the Session started from, or no mark).
+   * `run.ended` (RelayLedger), and a mark covers the facts up to it. None when it covers none (a mark of the history the Session
+   * started from, or no mark).
    */
-  private throughRun(snapshot: SessionSnapshot, mark: DeliveredMark | null): number | null {
-    if (mark === null || mark.throughSeq <= 0) return null;
+  private throughRun(snapshot: SessionSnapshot, mark: number): number | null {
+    if (mark <= 0) return null;
     let through: number | null = null;
     for (let index = 0; index < snapshot.runs.length; index++) {
       const run = snapshot.runs[index]!;
       if (!terminal(run.status)) continue;
       const seq = this.ledger.endedSeq(snapshot, run.id);
-      if (seq !== undefined && seq <= mark.throughSeq) through = index;
+      if (seq !== undefined && seq <= mark) through = index;
     }
     return through;
   }
@@ -385,8 +284,8 @@ export class RelayApi {
       // The migration's index rows place a v12 Run (where it ran); a Session without migrated Runs needs none of them.
       let index: readonly RelayIndexRow[] = [];
       if (snapshot.runs.some(run => run.relay === undefined && terminal(run.status) && dispatched(run))) index = this.options.reads.relayIndex(snapshot.id);
-      const facts = this.ledger.facts(snapshot, index, { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.nativeEpoch });
-      const need = owed(relay, binding.harnessId, binding.controlId, facts, { originHistory: (snapshot.origin?.history.length ?? 0) > 0, heldSince: heldSince(relay, snapshot.nativeBindings ?? [], binding.harnessId, binding.controlId) });
+      const facts = this.ledger.facts(snapshot, index, { harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.epoch });
+      const need = owed(relay, binding.harnessId, binding.controlId, facts, { originHistory: (snapshot.origin?.history.length ?? 0) > 0 });
       return { runIds: need.facts.map(fact => fact.runId as string), origin: need.origin };
     } catch { return undefined; }
   }
@@ -401,41 +300,6 @@ export class RelayApi {
     for (const message of snapshot.messages) if (wanted.has(message.runId)) tokens += estimateTokens(message.text);
     if (need.origin) for (const turn of snapshot.origin?.history ?? []) tokens += estimateTokens(turn.text);
     return Math.min(resolveRelayBudget(null).cap, tokens);
-  }
-
-  // ---- the error body ------------------------------------------------------------------------------------------------
-
-  /**
-   * Remembers, for the error a send is about to be answered with, the `relay` member of its body: the binding the input would
-   * have run on (the pending switch's target, else the selection, as admission takes it), the closed reason, what the user may
-   * choose and what a handoff to that binding is owed. The error itself is left as it is, so the status and message keep their
-   * own rules. Never throws: an error that cannot be explained is answered with its code and message alone.
-   */
-  explain(error: unknown, id: SessionId): void {
-    if (!(error instanceof SessionError) || !ANSWERABLE.has(error.code)) return;
-    try {
-      const snapshot = this.options.read(id), named = namedBy(error);
-      const pending = snapshot.pendingSwitchId === null ? undefined : snapshot.switches.find(item => item.id === snapshot.pendingSwitchId);
-      const target = pending?.target ?? snapshot.selection;
-      const harnessId = named.harnessId ?? target.harnessId, controlId = named.controlId ?? target.controlId;
-      const binding = snapshot.nativeBindings?.find(row => row.harnessId === harnessId && row.controlId === controlId && row.status !== "archived");
-      const raw = (error as { readonly reason?: unknown }).reason, reason = typeof raw === "string" && REASON.test(raw) ? raw : undefined;
-      const counts = error.code === "RELAY_CHOICE_REQUIRED" || error.code === "RELAY_CONSENT_REQUIRED" ? this.counts(snapshot, binding) : undefined;
-      this.explained.set(error, { binding: { harnessId, controlId }, ...(reason === undefined ? {} : { cause: reason }), options: relayOptions(error.code, reason, binding),
-        ...(counts === undefined ? {} : { counts }), ...(named.vendor === undefined ? {} : { vendor: named.vendor }) });
-    } catch { /* The answer keeps its code and message. */ }
-  }
-  /** The `relay` member to add to the body an error is answered with; none for an error `explain` did not explain. */
-  errorBody(error: unknown): { readonly relay?: RelayErrorView } {
-    const view = typeof error === "object" && error !== null ? this.explained.get(error) : undefined;
-    return view === undefined ? {} : { relay: view };
-  }
-  /** What the binding is owed now (the Runs a handoff would carry) and how many packets it was sent in its epoch; none when it cannot be told. */
-  private counts(snapshot: SessionSnapshot, binding: NativeSessionBinding | undefined): RelayErrorView["counts"] | undefined {
-    const relay = binding?.relay;
-    if (binding === undefined || relay === undefined) return undefined;
-    const need = this.owedNow(snapshot, binding);
-    return need === undefined ? undefined : { runs: this.owedRuns(snapshot, need), packets: relay.packetsInEpoch };
   }
   /**
    * How many Turns a handoff to the binding would carry: the finished Runs it owes, and the Turns of the history the Session started

@@ -105,12 +105,12 @@ function ledger(app: App, id: SessionId, state: SessionSnapshot, run: PublicRun)
   const prepared = pick("run.context_prepared")[0], relay = prepared?.relay as Record<string, unknown> | null | undefined, ended = pick("run.ended")[0];
   const row = app.store.relayDeliveries(id).find(delivery => delivery.runId === run.id), timing = run.timing;
   return {
-    decision: relay?.decision ?? null, consent: prepared?.consent ?? null, vendor: prepared?.vendor ?? null, returnChoice: prepared?.returnChoice ?? null,
-    checks: pick("relay.verified").map(check => ({ plan: check.plan, moment: check.moment, result: check.result, unasked: check.unasked ?? null })),
+    decision: relay?.decision ?? null, handoff: relay?.handoff ?? null,
     live: pick("relay.input_recorded").map(event => event.live ?? "recorded_event"), title: pick("relay.title_set").map(event => event.outcome ?? event.result ?? "set"),
-    vendorChanged: pick("relay.vendor_changed").length, withheld: pick("relay.withheld").length, input: ended?.input ?? null, contextEffect: ended?.contextEffect ?? null,
-    delivery: row === undefined ? null : { outcome: row.outcome.kind, evidence: "evidence" in row.outcome ? row.outcome.evidence : null, reason: "reason" in row.outcome ? row.outcome.reason : null, position: row.position.kind, consentLogged: row.consentLogSeq !== null },
-    bindings: (state.nativeBindings ?? []).filter(binding => binding.status !== "archived").map(binding => ({ harness: binding.harnessId, status: binding.status, sync: binding.relay?.sync.kind ?? null, epoch: binding.relay?.nativeEpoch ?? null })),
+    input: ended?.input ?? null, contextEffect: ended?.contextEffect ?? null,
+    delivery: row === undefined ? null : { outcome: row.outcome.kind, evidence: "evidence" in row.outcome ? row.outcome.evidence : null, reason: "reason" in row.outcome ? row.outcome.reason : null, handoffLogged: row.handoffLogSeq !== null, autoResend: row.autoResend },
+    bindings: (state.nativeBindings ?? []).filter(binding => binding.status !== "archived").map(binding => ({ harness: binding.harnessId, status: binding.status, epoch: binding.relay?.epoch ?? null, mark: binding.relay?.mark ?? null,
+      pending: binding.relay?.pending != null, resendAll: binding.relay?.resendAll ?? null })),
     prepareMs: timing?.dispatchedAt !== undefined && timing.preparingAt !== undefined ? timing.dispatchedAt - timing.preparingAt : null,
     turnMs: timing?.endedAt !== undefined && timing.dispatchedAt !== undefined ? timing.endedAt - timing.dispatchedAt : null,
   };

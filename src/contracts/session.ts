@@ -134,7 +134,7 @@ export interface PublicRun {
    * packet's fold as what the packet carried (A12).
    */
   readonly relay?: RunRelay;
-  /** v13: the relay choices its request made, with their HMAC; notes, reveals and exclusions stay in relay rows. Fixed at acceptance. */
+  /** v13: the relay choice its request made (attach the history, or send alone), with its HMAC. Fixed at acceptance. */
   readonly relayRequest?: RunRelayRequest;
   readonly stopRequested: boolean;
   readonly awaitingSwitchId: SwitchId | null;
@@ -161,7 +161,7 @@ export interface PublicSwitch {
   readonly acknowledgedUnknown?: readonly RunId[];
 }
 /** The relay's user commands (v13), whose results live in relay rows. */
-export const RELAY_COMMAND_KINDS = ["relay-pin", "relay-unpin", "relay-exclude", "relay-include", "relay-consent", "relay-consent-revoke", "relay-redaction-override", "relay-title"] as const;
+export const RELAY_COMMAND_KINDS = ["relay-pin", "relay-unpin", "relay-exclude", "relay-include", "relay-redaction-override", "relay-title"] as const;
 export interface CommandRecord {
   readonly id: CommandId;
   readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission" | "native-reset" | "retention" | "native-close" | typeof RELAY_COMMAND_KINDS[number];
@@ -472,20 +472,10 @@ export interface SessionRuntimeOptions {
   readonly harnessName?: (harnessId: string) => string | null;
   /**
    * The installation's relay key (ADR-055 §10.2, D5; relay-keys.ts): the HMACs of delivery rows and of a request's relay
-   * options. Without it the Runtime keys them under a key it keeps only in memory and names EPHEMERAL_KEY_ID (A17), which no
+   * choice. Without it the Runtime keys them under a key it keeps only in memory and names EPHEMERAL_KEY_ID (A17), which no
    * reader can check; the Gateway's own entries always give one.
    */
   readonly relayKeys?: import("./relay.js").RelayKeyPort;
-  /**
-   * Whether this Gateway's data directory and relay key are out of a workspace's reach (ADR-055 §10.1, INV-36): neither inside
-   * the workspace nor holding it, compared by device and inode, and no data directory's marker found in it. A cross-vendor
-   * handoff into a workspace that is not is refused (RELAY_UNAVAILABLE{data_root_in_workspace}) while `relay.dataRootInWorkspace`
-   * is "block", and goes on, flagged for the workspace's notice, with its default "warn". Synchronous and cheap: the
-   * marker search is the composition's, cached. `fresh` asks for the search to be made again, ignoring what was cached: the
-   * Runtime asks it where the answer decides whether a handoff goes ("block"), and not for the notice ("warn"). Absent: nothing
-   * can be told, and the check is the composition's to wire.
-   */
-  readonly relayIsolated?: (workspace: string, fresh?: boolean) => boolean;
 }
 export interface SendReceipt { readonly sessionId: SessionId; readonly runId: RunId; readonly replayed: boolean }
 export interface SwitchReceipt { readonly sessionId: SessionId; readonly switchId: SwitchId; readonly replayed: boolean }

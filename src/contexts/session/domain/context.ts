@@ -48,6 +48,11 @@ export interface PublicContextOptions {
    * of the target's channel); the renderer's own (the target's last reported window, or the assumed one) otherwise.
    */
   readonly budget?: RelayBudget;
+  /**
+   * Part of the packet may be in the target's native history already (an automatic resend, a packet sent again for newer facts,
+   * everything again after a rewind): the renderer says so at the head of the packet, so the target does not take it for new work.
+   */
+  readonly mayRepeat?: boolean;
 }
 
 /**
@@ -71,6 +76,8 @@ export function buildPublicContext(state: SessionSnapshot, current: PublicRun, s
   const position = new Map(state.runs.map((run, index) => [run.id, index]));
   const ordered = [...sources].sort((a, b) => position.get(a.id)! - position.get(b.id)!);
   const rendered = renderRelay({ state, current, sources: ordered, origin: options.origin ?? false, ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
-    ...(options.names === undefined ? {} : { names: options.names }), ...(options.firstLine === undefined ? {} : { firstLine: options.firstLine }), ...(options.details === undefined ? {} : { details: options.details }), ...(options.budget === undefined ? {} : { budget: options.budget }) });
+    ...(options.names === undefined ? {} : { names: options.names }), ...(options.firstLine === undefined ? {} : { firstLine: options.firstLine }), ...(options.details === undefined ? {} : { details: options.details }), ...(options.budget === undefined ? {} : { budget: options.budget }),
+    // Read by a renderer that says so at the head of a packet; one that does not know it renders as before.
+    ...(options.mayRepeat === true ? { mayRepeat: true } : {}) });
   return { text: rendered.text, throughSeq: state.lastSeq, sourceRunIds: ordered.map(run => run.id), continuity: "public_context_rehydrate", relay: rendered.record };
 }

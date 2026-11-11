@@ -8,7 +8,7 @@ import {
 import type { BackendResult, CleanupEvidence, NativeOptions, NativeUsage } from "../../../contracts/control.js";
 import { MAX_RUN_OUTPUTS, parseAttachmentRefs, parseContentRef } from "../../../contracts/content.js";
 import { RELAY_COMMAND_KINDS, type EventDraft } from "../../../contracts/session.js";
-import { assertRunRelayBytes, markOf, parseBindingRelayState, parseRunRelay, parseRunRelayRequest, parseSwitchTiming, type BindingRelayState } from "../../../contracts/relay.js";
+import { assertRunRelayBytes, parseBindingRelayState, parseRunRelay, parseRunRelayRequest, parseSwitchTiming, type BindingRelayState } from "../../../contracts/relay.js";
 import { dispatched } from "./relay/advance.js";
 
 export const MAX_RUNS = 256;
@@ -249,7 +249,7 @@ function command(value: unknown): CommandRecord {
   const fingerprint = text(item.fingerprint, "command fingerprint", 64);
   if (!/^[a-f0-9]{64}$/u.test(fingerprint)) throw new SessionError("INVALID_DATA", "invalid command fingerprint");
   const resultId = text(item.resultId, "command resultId", 128);
-  // A relay command's result is a relay row (a pin, an exclusion, a consent record): an identity, not part of the snapshot.
+  // A relay command's result is a relay row: an identity, not part of the snapshot.
   if (relayCommand(kind) && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(resultId)) throw new SessionError("INVALID_DATA", "invalid relay command result");
   return { id: commandId(item.id), kind, fingerprint, resultId };
 }
@@ -336,7 +336,7 @@ function relayFields(result: SessionSnapshot): void {
   for (const binding of bindings) {
     if (binding.relay === undefined) throw new SessionError("INVALID_DATA", "every v13 native binding has its relay state");
     const key = binding.harnessId + ":" + binding.controlId, earlier = lineage.get(key);
-    if (earlier !== undefined && (binding.relay.nativeEpoch <= earlier.nativeEpoch || binding.relay.epochFloor < earlier.epochFloor))
+    if (earlier !== undefined && (binding.relay.epoch <= earlier.epoch || binding.relay.floor < earlier.floor))
       throw new SessionError("INVALID_DATA", "the native epochs and clear floors of one Harness control go forward along its bindings");
     lineage.set(key, binding.relay);
   }
@@ -508,19 +508,14 @@ function clearedNative(value: unknown): boolean {
 }
 /**
  * One binding's relay state moving on (ADR-055 §14.3): its native epoch never goes back and its clear floor never goes down;
- * within one epoch its mark goes down (or away) only when it was suspect, the one state whose check may move it back; and no
- * mark lies below the clear floor. A confirmed clear starts a new epoch, so the mark it drops is no decrease within one.
+ * within one epoch its mark never goes down. A clear starts a new epoch, so the mark it drops is no decrease within one.
  */
 function relayStep(old: BindingRelayState | undefined, next: BindingRelayState | undefined): void {
   if (next === undefined) { if (old !== undefined) throw new SessionError("INVALID_TRANSITION", "a binding's relay state cannot be dropped"); return; }
-  const mark = markOf(next.sync);
-  if (mark !== null && mark.throughSeq < next.epochFloor) throw new SessionError("INVALID_TRANSITION", "a delivered mark cannot lie below the clear floor");
   if (old === undefined) return;
-  if (next.nativeEpoch < old.nativeEpoch) throw new SessionError("INVALID_TRANSITION", "a binding's native epoch cannot go back");
-  if (next.epochFloor < old.epochFloor) throw new SessionError("INVALID_TRANSITION", "a binding's clear floor cannot go down");
-  const prior = markOf(old.sync);
-  if (next.nativeEpoch === old.nativeEpoch && prior !== null && (mark === null || mark.throughSeq < prior.throughSeq) && old.sync.kind !== "suspect")
-    throw new SessionError("INVALID_TRANSITION", "a delivered mark goes back within an epoch only when a suspect binding is checked");
+  if (next.epoch < old.epoch) throw new SessionError("INVALID_TRANSITION", "a binding's native epoch cannot go back");
+  if (next.floor < old.floor) throw new SessionError("INVALID_TRANSITION", "a binding's clear floor cannot go down");
+  if (next.epoch === old.epoch && next.mark < old.mark) throw new SessionError("INVALID_TRANSITION", "a binding's mark cannot go down within an epoch");
 }
 /**
  * Persisted history is append-only; an application bug cannot silently erase prior public facts.
@@ -586,12 +581,8 @@ export function assertSessionTransition(before: SessionSnapshot, after: SessionS
     if ((old.cancelRequested && !next.cancelRequested) || (old.stopRequested && !next.stopRequested)) throw new SessionError("INVALID_TRANSITION", "cancel/stop tombstones cannot be undone");
     if ((old.backend !== null && !same(old.backend, next.backend)) || (old.cleanup !== null && !same(old.cleanup, next.cleanup))) throw new SessionError("INVALID_TRANSITION", "backend/cleanup facts cannot be overwritten");
     if (old.status !== "queued" && (!same(old.selection, next.selection) || old.epoch !== next.epoch)) throw new SessionError("INVALID_TRANSITION", "dispatched Run selection is immutable");
-    // What a Turn prepared to send, its relay packet and when it was ready included (v13), is fixed once it runs. One exception, a
-    // way out and never a way in: a Turn not yet dispatched whose packet was withheld at the last moment (its consent was withdrawn,
-    // G072 review m1) loses the packet it prepared — its `relay.withheld` event names it — and goes as typed, keeping where it ran.
-    const withheld = old.timing?.dispatchedAt === undefined && old.relay?.packetId != null && next.relay !== undefined && next.relay.packetId === null && next.relay.kind === null && next.sourceRunIds.length === 0
-      && same(old.relay.executedOn, next.relay.executedOn) && events.some(event => event.type === "relay.withheld" && event.data.runId === old.id && event.data.packetId === old.relay!.packetId);
-    if (["running", "settling"].includes(old.status) && (old.contextThroughSeq !== next.contextThroughSeq || !withheld && (!same(old.sourceRunIds, next.sourceRunIds) || !same(old.relay, next.relay)) ||
+    // What a Turn prepared to send, its relay packet and when it was ready included (v13), is fixed once it runs.
+    if (["running", "settling"].includes(old.status) && (old.contextThroughSeq !== next.contextThroughSeq || !same(old.sourceRunIds, next.sourceRunIds) || !same(old.relay, next.relay) ||
         old.timing?.contextReadyAt !== next.timing?.contextReadyAt)) throw new SessionError("INVALID_TRANSITION", "dispatched context cannot change");
   }
   for (let index = 0; index < before.messages.length; index++) {

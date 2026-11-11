@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
-  DELIVERY_TRANSITIONS, RELAY_PREF_KEYS, RELAY_BODY_BYTES, RELAY_DIGEST_BYTES, RELAY_INDEX_BYTES, RELAY_PINS, RELAY_PINS_BYTES, RELAY_SESSION_BODY_BYTES, RELAY_WINDOW_RETENTION_MS, RELAY_WORKSPACE_BYTES,
-  RelayError, packetsOf, parseDeliveryOutcome, parseDeliveryRecord, parseRelayExclusion, parseRelayPacket, parseRelayPin, parseRelayWindow, parseWorkspaceObservation, policyVersion,
+  DELIVERY_TRANSITIONS, RELAY_PREF_KEYS, RELAY_BODY_BYTES, RELAY_DIGEST_BYTES, RELAY_INDEX_BYTES, RELAY_PINS, RELAY_PINS_BYTES, RELAY_SESSION_BODY_BYTES, RELAY_WORKSPACE_BYTES,
+  RelayError, packetsOf, parseDeliveryOutcome, parseDeliveryRecord, parseRelayExclusion, parseRelayPacket, parseRelayPin, parseWorkspaceObservation, policyVersion,
   redactionTag, type DeliveryOutcome, type DeliveryRecord, type DeliveryStatus, type RelayBehindIndex, type RelayCommitResult, type RelayDerivedRows, type RelayDigestWrite,
-  type RelayExclusion, type RelayIndexRow, type RelayPacket, type RelayPin, type RelayRows, type RelayWindow, type RelayWorkspaceWrite, type RelayWriteRows, type RunRelay,
+  type RelayExclusion, type RelayIndexRow, type RelayPacket, type RelayPin, type RelayRows, type RelayWorkspaceWrite, type RelayWriteRows, type RunRelay,
 } from "../../contracts/relay.js";
 import { SessionError, runId, type PublicRun, type RunId, type SessionId, type SessionSnapshot } from "../../contracts/session.js";
 
@@ -22,7 +22,7 @@ import { SessionError, runId, type PublicRun, type RunId, type SessionId, type S
 export const RELAY_PREFS_DDL = "CREATE TABLE relay_prefs(key TEXT PRIMARY KEY CHECK(key IN(" + RELAY_PREF_KEYS.map(key => "'" + key + "'").join(",") + ")),\n"
   + "  value TEXT NOT NULL CHECK(length(value)<=64), updated_at INTEGER NOT NULL) STRICT;";
 /**
- * The 11 tables and 4 triggers of relay-architecture §14.1, verbatim with their comments; its closing
+ * The relay tables and triggers of relay-architecture §14.1 as slim.md left them; its closing
  * `PRAGMA user_version=13` is the migration's, which sets it once every Session is converted.
  */
 export const RELAY_DDL = `
@@ -30,21 +30,19 @@ CREATE TABLE relay_bodies(session_id TEXT NOT NULL REFERENCES sessions(id), sha2
   PRIMARY KEY(session_id, sha256)) STRICT;                                             -- 按会话计量与回收（RT3 P14、RT1-m2）
 CREATE TABLE relay_packets(session_id TEXT NOT NULL REFERENCES sessions(id), packet_id TEXT NOT NULL CHECK(packet_id GLOB 'relay-*'),
   kind TEXT NOT NULL CHECK(kind IN('packet','delta','anchor','resend')), tier TEXT NOT NULL CHECK(tier IN('goal','brief','standard','fidelity','full')),
-  complete INTEGER NOT NULL CHECK(complete IN(0,1)), reanchor INTEGER NOT NULL CHECK(reanchor IN(0,1)),
-  target_harness TEXT NOT NULL, target_control TEXT NOT NULL, target_model TEXT, target_vendor TEXT NOT NULL, native_epoch INTEGER NOT NULL,
+  complete INTEGER NOT NULL CHECK(complete IN(0,1)),
+  target_harness TEXT NOT NULL, target_control TEXT NOT NULL, target_model TEXT, native_epoch INTEGER NOT NULL,
   from_seq INTEGER NOT NULL, through_seq INTEGER NOT NULL CHECK(through_seq>=from_seq), base_packet_id TEXT, supersedes_packet_id TEXT,
   policy_version TEXT NOT NULL, language TEXT NOT NULL CHECK(language IN('zh','en')), facts_fingerprint TEXT NOT NULL, observation_seq INTEGER,
   body_sha256 TEXT NOT NULL, est_tokens INTEGER NOT NULL, untrusted_tokens INTEGER NOT NULL, user_tokens INTEGER NOT NULL, estimator TEXT NOT NULL,
   manifest_json TEXT NOT NULL CHECK(json_valid(manifest_json) AND length(CAST(manifest_json AS BLOB))<=65536),      -- 只含由正文决定的字段；逐 Run 的（含脱敏上下文）在 relay_deliveries（F08）
   PRIMARY KEY(session_id, packet_id), FOREIGN KEY(session_id, body_sha256) REFERENCES relay_bodies(session_id, sha256)) STRICT;
 CREATE TABLE relay_deliveries(session_id TEXT NOT NULL, run_id TEXT NOT NULL, packet_id TEXT NOT NULL,
-  channel TEXT NOT NULL CHECK(channel IN('text_block','single_text')), position_json TEXT NOT NULL CHECK(json_valid(position_json) AND length(CAST(position_json AS BLOB))<=4096),
-  consent_log_seq INTEGER, input_hmac TEXT NOT NULL, attach_override INTEGER NOT NULL CHECK(attach_override IN(0,1)), resend_of TEXT,
+  channel TEXT NOT NULL CHECK(channel IN('text_block','single_text')),
+  handoff_log_seq INTEGER, input_hmac TEXT NOT NULL, auto_resend INTEGER NOT NULL CHECK(auto_resend IN(0,1)),         -- 第一次向该 Harness 交接时写的 relay_log 行；是否为自动补发的那一次
   redaction_rules_version TEXT NOT NULL, redaction_key_id TEXT NOT NULL, redaction_set_hmac TEXT NOT NULL,            -- 本次渲染的脱敏上下文：逐 Run，不进按正文去重的清单
-  compaction_count INTEGER, compaction_digest TEXT,                                                                     -- 送达时的压缩游标（VF1-08）
   outcome TEXT NOT NULL CHECK(outcome IN('in_flight','recorded','not_recorded','unknown')),
-  evidence TEXT CHECK(evidence IN('E1','E2','E3','legacy','origin','native')), reason TEXT, decided_seq INTEGER, decided_at INTEGER, verify_ms INTEGER, verified_in_run TEXT,
-  realized_requests INTEGER, realized_cache_hits INTEGER, realized_closed_by TEXT CHECK(realized_closed_by IN('compaction','clear','epoch','idle')),
+  evidence TEXT CHECK(evidence IN('E1','E3')), reason TEXT, decided_seq INTEGER, decided_at INTEGER,
   PRIMARY KEY(session_id, run_id), FOREIGN KEY(session_id, packet_id) REFERENCES relay_packets(session_id, packet_id),
   CHECK((outcome='in_flight') = (evidence IS NULL AND reason IS NULL AND decided_seq IS NULL)),
   CHECK(outcome<>'recorded' OR evidence IS NOT NULL), CHECK(outcome NOT IN('not_recorded','unknown') OR reason IS NOT NULL)) STRICT;
@@ -62,41 +60,34 @@ CREATE TABLE relay_pins(session_id TEXT NOT NULL REFERENCES sessions(id), pin_id
   pinned_seq INTEGER NOT NULL, withdrawn_seq INTEGER, PRIMARY KEY(session_id, pin_id)) STRICT;                                                -- 界面写“≤680 字”（RT1-B6）
 CREATE TABLE relay_exclusions(session_id TEXT NOT NULL REFERENCES sessions(id), exclusion_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN('run','section')), ref TEXT NOT NULL,
   added_seq INTEGER NOT NULL, withdrawn_seq INTEGER, PRIMARY KEY(session_id, exclusion_id)) STRICT;                                           -- RT4 M12
-CREATE TABLE relay_windows(harness_id TEXT NOT NULL, control_id TEXT NOT NULL, model_key TEXT NOT NULL DEFAULT '', size INTEGER NOT NULL CHECK(size>0),
-  first_turn_used INTEGER, observed_at INTEGER NOT NULL, PRIMARY KEY(harness_id, control_id, model_key)) STRICT;                                 -- model_key 经 normalizeModel；'' 为模型未知（VF2-04）
-CREATE TABLE relay_log(seq INTEGER PRIMARY KEY AUTOINCREMENT, command_id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL CHECK(kind IN('consent','revoke')),
-  vendor TEXT NOT NULL, scope TEXT NOT NULL CHECK(scope IN('global','session')), session_id TEXT NOT NULL DEFAULT '',
-  decision TEXT NOT NULL CHECK(decision IN('acknowledged','goal_only','revoked')), categories_json TEXT NOT NULL CHECK(json_valid(categories_json)),
-  policy_version TEXT NOT NULL, auth_kind TEXT, decided_at INTEGER NOT NULL) STRICT;                                                          -- 安装级、只追加（RT1-M9）
-CREATE TABLE relay_log_archive(seq INTEGER PRIMARY KEY, command_id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, vendor TEXT NOT NULL, scope TEXT NOT NULL, session_id TEXT NOT NULL,
-  decision TEXT NOT NULL, categories_json TEXT NOT NULL, policy_version TEXT NOT NULL, auth_kind TEXT, decided_at INTEGER NOT NULL, archived_at INTEGER NOT NULL) STRICT;   -- 触顶轮转（F21）
+CREATE TABLE relay_log(seq INTEGER PRIMARY KEY AUTOINCREMENT, harness_id TEXT NOT NULL UNIQUE, first_at INTEGER NOT NULL) STRICT;       -- 第一次向某个 Harness 交接：安装级、只追加、每个 Harness 一行
 ${RELAY_PREFS_DDL}                                                          -- 安装级偏好（F07）
 CREATE TRIGGER relay_bodies_immutable BEFORE UPDATE ON relay_bodies BEGIN SELECT RAISE(ABORT,'relay body is immutable'); END;
 CREATE TRIGGER relay_packets_immutable BEFORE UPDATE ON relay_packets BEGIN SELECT RAISE(ABORT,'relay packet is immutable'); END;
 CREATE TRIGGER relay_log_immutable BEFORE UPDATE ON relay_log BEGIN SELECT RAISE(ABORT,'relay log is append-only'); END;
 CREATE TRIGGER relay_deliveries_transition BEFORE UPDATE OF outcome ON relay_deliveries
-  WHEN NOT ((OLD.outcome='in_flight') OR (OLD.outcome='unknown' AND NEW.outcome IN('unknown','recorded','not_recorded'))
-            OR (OLD.outcome='not_recorded' AND NEW.outcome='recorded') OR (OLD.outcome='recorded' AND NEW.outcome='recorded'))
-  BEGIN SELECT RAISE(ABORT,'illegal delivery transition'); END;                                                                               -- 同值写放行：reason 细化与 realized 结算（VF1-12）
+  WHEN NOT ((OLD.outcome='in_flight') OR (OLD.outcome=NEW.outcome))
+  BEGIN SELECT RAISE(ABORT,'illegal delivery transition'); END;                                                                               -- 同值写放行：reason 细化
 `;
 /**
- * Brings the preferences table of a database made when the contract had fewer keys (the CHECK of a v13 made by G072 listed four) up
- * to the contract's: the table is rebuilt with its rows (renamed, recreated, copied, dropped), inside the caller's transaction. A
- * database that already lists every key is left alone; one without the table is not a v13 one. Returns whether it rebuilt it.
+ * Brings the preferences table of a database made when the contract listed other keys (its CHECK lists the keys of its time) up
+ * to the contract's: the table is rebuilt with the rows whose key the contract still lists (renamed, recreated, copied, dropped),
+ * inside the caller's transaction. A database whose table lists exactly the contract's keys is left alone; one without the table
+ * is not a v13 one. Returns whether it rebuilt it.
  */
 export function repairRelayPrefs(database: DatabaseSync): boolean {
   const row = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='relay_prefs'").get();
   if (row === undefined) return false;
-  const definition = String(row.sql);
-  if (RELAY_PREF_KEYS.every(key => definition.includes("'" + key + "'"))) return false;
+  const definition = String(row.sql), listed = [...definition.matchAll(/'(relay\.[A-Za-z]+)'/gu)].map(match => match[1]!);
+  if (listed.length === RELAY_PREF_KEYS.length && RELAY_PREF_KEYS.every(key => listed.includes(key))) return false;
   database.exec("ALTER TABLE relay_prefs RENAME TO relay_prefs_old");
   database.exec(RELAY_PREFS_DDL);
-  database.exec("INSERT INTO relay_prefs(key,value,updated_at) SELECT key,value,updated_at FROM relay_prefs_old");
+  database.exec("INSERT INTO relay_prefs(key,value,updated_at) SELECT key,value,updated_at FROM relay_prefs_old WHERE key IN(" + RELAY_PREF_KEYS.map(key => "'" + key + "'").join(",") + ")");
   database.exec("DROP TABLE relay_prefs_old");
   return true;
 }
 /** The relay tables, the order deleteSession empties a Session's (references before what they reference). */
-export const RELAY_TABLES = ["relay_deliveries", "relay_packets", "relay_bodies", "relay_digests", "relay_workspace", "relay_pins", "relay_exclusions", "relay_windows", "relay_log", "relay_log_archive", "relay_prefs"] as const;
+export const RELAY_TABLES = ["relay_deliveries", "relay_packets", "relay_bodies", "relay_digests", "relay_workspace", "relay_pins", "relay_exclusions", "relay_log", "relay_prefs"] as const;
 const SESSION_TABLES = RELAY_TABLES.slice(0, 7);
 /** The policy version of the index rows a v13 migration writes: no relay policy rendered them (§14.4). */
 export const MIGRATED_POLICY = "relay/0";
@@ -152,7 +143,7 @@ export function checkFold(state: SessionSnapshot, current: PublicRun, packet: Re
 }
 interface CheckedPacket { readonly packet: RelayPacket; readonly body: string; readonly manifest: string; readonly fresh: boolean; readonly freshBody: boolean }
 interface CheckedDelivery { readonly kind: "insert"; readonly record: DeliveryRecord }
-interface CheckedOutcome { readonly kind: "outcome"; readonly runId: RunId; readonly from: DeliveryStatus; readonly outcome: Exclude<DeliveryOutcome, { readonly kind: "in_flight" }>; readonly verifyMs: number | undefined }
+interface CheckedOutcome { readonly kind: "outcome"; readonly runId: RunId; readonly from: DeliveryStatus; readonly outcome: Exclude<DeliveryOutcome, { readonly kind: "in_flight" }> }
 /** Authoritative rows checked against the snapshot they are written with; only statements that cannot fail remain. */
 export interface CheckedRelayRows {
   readonly packets: readonly CheckedPacket[];
@@ -213,8 +204,7 @@ export function checkRelayRows(database: DatabaseSync, id: SessionId, next: Sess
     const from = touched.get(write.runId) ?? (stored === undefined ? undefined : stored.outcome as DeliveryStatus);
     if (from === undefined) throw new SessionError("INVALID_DATA", "a delivery outcome names a Turn without a delivery");
     if (!DELIVERY_TRANSITIONS[from].includes(outcome.kind)) throw new SessionError("INVALID_TRANSITION", "illegal delivery transition " + from + " → " + outcome.kind);
-    if (write.verifyMs !== undefined && (!Number.isSafeInteger(write.verifyMs) || write.verifyMs < 0)) throw new SessionError("INVALID_DATA", "verify time is invalid");
-    touched.set(write.runId, outcome.kind); deliveries.push({ kind: "outcome", runId: write.runId, from, outcome, verifyMs: write.verifyMs });
+    touched.set(write.runId, outcome.kind); deliveries.push({ kind: "outcome", runId: write.runId, from, outcome });
   }
   const pins: CheckedRelayRows["pins"][number][] = [];
   const active = database.prepare("SELECT pin_id,length FROM relay_pins WHERE session_id=? AND withdrawn_seq IS NULL").all(id).map(row => ({ pinId: String(row.pin_id), length: integer(row.length, "pin length") }));
@@ -254,11 +244,11 @@ export function checkRelayRows(database: DatabaseSync, id: SessionId, next: Sess
  */
 export function checkPacketReferences(database: DatabaseSync, id: SessionId, before: SessionSnapshot | null, next: SessionSnapshot): void {
   const known = new Set<string>();
-  const named = (sync: Parameters<typeof packetsOf>[0] | undefined) => sync === undefined ? [] : packetsOf(sync);
-  for (const binding of before?.nativeBindings ?? []) for (const packetId of named(binding.relay?.sync)) known.add(packetId);
+  const named = (relay: Parameters<typeof packetsOf>[0] | undefined) => relay === undefined ? [] : packetsOf(relay);
+  for (const binding of before?.nativeBindings ?? []) for (const packetId of named(binding.relay)) known.add(packetId);
   for (const run of before?.runs ?? []) if (run.relay?.packetId != null) known.add(run.relay.packetId);
   const wanted = new Set<string>();
-  for (const binding of next.nativeBindings ?? []) for (const packetId of named(binding.relay?.sync)) if (!known.has(packetId)) wanted.add(packetId);
+  for (const binding of next.nativeBindings ?? []) for (const packetId of named(binding.relay)) if (!known.has(packetId)) wanted.add(packetId);
   for (const run of next.runs) { const relay: RunRelay | undefined = run.relay; if (relay?.packetId != null && !known.has(relay.packetId)) wanted.add(relay.packetId); }
   for (const packetId of wanted) if (database.prepare("SELECT 1 AS found FROM relay_packets WHERE session_id=? AND packet_id=?").get(id, packetId) === undefined)
     throw new SessionError("INVALID_DATA", "a relay state names a packet this conversation does not keep");
@@ -266,27 +256,26 @@ export function checkPacketReferences(database: DatabaseSync, id: SessionId, bef
 /** Writes rows checkRelayRows checked, in the same transaction; packets and texts already kept are left as they are. */
 export function writeRelayRows(database: DatabaseSync, id: SessionId, rows: CheckedRelayRows): void {
   const body = database.prepare("INSERT INTO relay_bodies(session_id,sha256,bytes,body) VALUES(?,?,?,?) ON CONFLICT(session_id, sha256) DO NOTHING");
-  const packet = database.prepare("INSERT INTO relay_packets(session_id,packet_id,kind,tier,complete,reanchor,target_harness,target_control,target_model,target_vendor,native_epoch,from_seq,through_seq,base_packet_id,supersedes_packet_id,policy_version,language,facts_fingerprint,observation_seq,body_sha256,est_tokens,untrusted_tokens,user_tokens,estimator,manifest_json) " +
-    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id, packet_id) DO NOTHING");
+  const packet = database.prepare("INSERT INTO relay_packets(session_id,packet_id,kind,tier,complete,target_harness,target_control,target_model,native_epoch,from_seq,through_seq,base_packet_id,supersedes_packet_id,policy_version,language,facts_fingerprint,observation_seq,body_sha256,est_tokens,untrusted_tokens,user_tokens,estimator,manifest_json) " +
+    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id, packet_id) DO NOTHING");
   for (const row of rows.packets) {
     const p = row.packet;
     if (row.freshBody) body.run(id, p.body.sha256, p.body.bytes, row.body);
-    if (row.fresh) packet.run(id, p.id, p.kind, p.tier, p.complete ? 1 : 0, p.reanchor ? 1 : 0, p.target.harnessId, p.target.controlId, p.target.model, p.target.vendor, p.target.nativeEpoch,
+    if (row.fresh) packet.run(id, p.id, p.kind, p.tier, p.complete ? 1 : 0, p.target.harnessId, p.target.controlId, p.target.model, p.target.nativeEpoch,
       p.range.fromSeq, p.range.throughSeq, p.basePacketId, p.supersedes, p.policyVersion, p.language, p.factsFingerprint, p.workspaceObservationSeq, p.body.sha256, p.body.estTokens, p.body.untrustedTokens, p.body.userTokens, p.body.estimator, row.manifest);
   }
   for (const row of rows.deliveries) {
     if (row.kind === "insert") {
       const r = row.record;
-      database.prepare("INSERT INTO relay_deliveries(session_id,run_id,packet_id,channel,position_json,consent_log_seq,input_hmac,attach_override,resend_of,redaction_rules_version,redaction_key_id,redaction_set_hmac,compaction_count,compaction_digest,outcome,verify_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'in_flight',?)")
-        .run(id, r.runId, r.packetId, r.channel, JSON.stringify(r.position), r.consentLogSeq, r.inputHmac, r.attachOverride ? 1 : 0, r.resendOf, r.redaction.rulesVersion, r.redaction.keyId, r.redaction.setHmac,
-          r.compactionAtDelivery?.count ?? null, r.compactionAtDelivery?.digest ?? null, r.verifyMs);
+      database.prepare("INSERT INTO relay_deliveries(session_id,run_id,packet_id,channel,handoff_log_seq,input_hmac,auto_resend,redaction_rules_version,redaction_key_id,redaction_set_hmac,outcome) VALUES(?,?,?,?,?,?,?,?,?,?,'in_flight')")
+        .run(id, r.runId, r.packetId, r.channel, r.handoffLogSeq, r.inputHmac, r.autoResend ? 1 : 0, r.redaction.rulesVersion, r.redaction.keyId, r.redaction.setHmac);
       continue;
     }
-    const o = row.outcome, evidence = o.kind === "recorded" ? o.evidence : null, reason = o.kind === "recorded" ? null : o.reason, verified = o.kind === "recorded" ? o.verifiedInRun : null;
-    // The outcome is set only when it changes, so the transition trigger never sees a same-value write (VF1-12).
+    const o = row.outcome, evidence = o.kind === "recorded" ? o.evidence : null, reason = o.kind === "recorded" ? null : o.reason;
+    // The outcome is set only when it changes, so the transition trigger never sees a same-value write.
     const outcome = row.from === o.kind ? "" : "outcome=?,";
-    const values = [...(row.from === o.kind ? [] : [o.kind]), evidence, reason, o.decidedSeq, o.decidedAt, verified, ...(row.verifyMs === undefined ? [] : [row.verifyMs]), id, row.runId];
-    database.prepare("UPDATE relay_deliveries SET " + outcome + "evidence=?,reason=?,decided_seq=?,decided_at=?,verified_in_run=?" + (row.verifyMs === undefined ? "" : ",verify_ms=?") + " WHERE session_id=? AND run_id=?").run(...values);
+    const values = [...(row.from === o.kind ? [] : [o.kind]), evidence, reason, o.decidedSeq, o.decidedAt, id, row.runId];
+    database.prepare("UPDATE relay_deliveries SET " + outcome + "evidence=?,reason=?,decided_seq=?,decided_at=? WHERE session_id=? AND run_id=?").run(...values);
   }
   for (const row of rows.pins) {
     if (row.kind === "add") { const p = row.pin; database.prepare("INSERT INTO relay_pins(session_id,pin_id,message_id,author,start_offset,length,quote_hmac,pinned_seq) VALUES(?,?,?,?,?,?,?,?)").run(id, p.pinId, p.messageId, p.author, p.offset, p.length, p.quoteHmac, p.pinnedSeq); }
@@ -358,33 +347,21 @@ export function writeDerivedRows(database: DatabaseSync, id: SessionId, state: S
     return { derived: "behind", diagnostic: diagnosticOf(error) };
   }
 }
-/** Checks rows relayWrite writes outside snapshots (digests, realized counts); invalid rows throw before any statement. */
-export function checkRelayWrite(database: DatabaseSync, id: SessionId, state: SessionSnapshot, rows: RelayWriteRows): { readonly digests: readonly CheckedDigest[]; readonly realized: readonly { readonly runId: RunId; readonly requests: number; readonly cacheHits: number; readonly closedBy: string }[] } {
-  const digests = (rows.digests ?? []).map(write => checkDigest(state, write));
-  const realized = (rows.realized ?? []).map(row => {
-    runOf(state, row.runId, "realized counts");
-    const value = row.realized;
-    if (!Number.isSafeInteger(value.requests) || value.requests < 0 || !Number.isSafeInteger(value.cacheHits) || value.cacheHits < 0 || !["compaction", "clear", "epoch", "idle"].includes(value.closedBy)) throw new SessionError("INVALID_DATA", "realized counts are invalid");
-    if (database.prepare("SELECT 1 AS found FROM relay_deliveries WHERE session_id=? AND run_id=?").get(id, row.runId) === undefined) throw new SessionError("INVALID_DATA", "realized counts name a Turn without a delivery");
-    return { runId: row.runId, requests: value.requests, cacheHits: value.cacheHits, closedBy: value.closedBy };
-  });
-  return { digests, realized };
+/** Checks rows relayWrite writes outside snapshots (digests); invalid rows throw before any statement. */
+export function checkRelayWrite(_database: DatabaseSync, _id: SessionId, state: SessionSnapshot, rows: RelayWriteRows): { readonly digests: readonly CheckedDigest[] } {
+  return { digests: (rows.digests ?? []).map(write => checkDigest(state, write)) };
 }
-/** Writes checked relayWrite rows: a current digest stays, settled realized counts stay; the outcome is never written. */
+/** Writes checked relayWrite rows: a current digest stays; the outcome is never written. */
 export function writeRelayWrite(database: DatabaseSync, id: SessionId, rows: ReturnType<typeof checkRelayWrite>): void {
   for (const row of rows.digests) writeDigest(database, id, row, true);
-  for (const row of rows.realized)
-    database.prepare("UPDATE relay_deliveries SET realized_requests=?,realized_cache_hits=?,realized_closed_by=? WHERE session_id=? AND run_id=? AND realized_closed_by IS NULL").run(row.requests, row.cacheHits, row.closedBy, id, row.runId);
 }
 /** The Session's delivery rows in Run order (by the snapshot's Run order). */
 export function readDeliveries(database: DatabaseSync, id: SessionId, state: SessionSnapshot): readonly DeliveryRecord[] {
   const order = new Map(state.runs.map((run, index) => [run.id as string, index]));
   const rows = database.prepare("SELECT * FROM relay_deliveries WHERE session_id=?").all(id).map(row => parseDeliveryRecord({
-    runId: row.run_id, packetId: row.packet_id, channel: row.channel, position: JSON.parse(String(row.position_json)), consentLogSeq: row.consent_log_seq, inputHmac: row.input_hmac,
+    runId: row.run_id, packetId: row.packet_id, channel: row.channel, handoffLogSeq: row.handoff_log_seq, inputHmac: row.input_hmac, autoResend: row.auto_resend === 1,
     redaction: { rulesVersion: row.redaction_rules_version, keyId: row.redaction_key_id, setHmac: row.redaction_set_hmac },
-    compactionAtDelivery: row.compaction_count === null ? null : { count: row.compaction_count, digest: row.compaction_digest }, resendOf: row.resend_of, attachOverride: row.attach_override === 1,
-    verifyMs: row.verify_ms, realized: row.realized_closed_by === null ? null : { requests: row.realized_requests, cacheHits: row.realized_cache_hits, closedBy: row.realized_closed_by },
-    outcome: row.outcome === "in_flight" ? { kind: "in_flight" } : row.outcome === "recorded" ? { kind: "recorded", evidence: row.evidence, decidedSeq: row.decided_seq, decidedAt: row.decided_at, verifiedInRun: row.verified_in_run }
+    outcome: row.outcome === "in_flight" ? { kind: "in_flight" } : row.outcome === "recorded" ? { kind: "recorded", evidence: row.evidence, decidedSeq: row.decided_seq, decidedAt: row.decided_at }
       : { kind: row.outcome, reason: row.reason, decidedSeq: row.decided_seq, decidedAt: row.decided_at },
   }));
   return rows.sort((a, b) => (order.get(a.runId) ?? 0) - (order.get(b.runId) ?? 0));
@@ -432,20 +409,4 @@ export function deleteRelayRows(database: DatabaseSync, id: SessionId): void {
 /** Row counts of the relay tables, for reading a backup back (ADR-049). */
 export function relayRowCounts(database: DatabaseSync): Readonly<Record<string, number>> {
   return Object.fromEntries(RELAY_TABLES.map(table => [table, integer(database.prepare("SELECT count(*) AS count FROM " + table).get()?.count, table + " rows")]));
-}
-/** Keeps the latest observed window of a Harness control and model (installation level; the last writer wins). */
-export function upsertRelayWindow(database: DatabaseSync, window: RelayWindow): void {
-  const row = parseRelayWindow(window);
-  database.prepare("INSERT INTO relay_windows(harness_id,control_id,model_key,size,first_turn_used,observed_at) VALUES(?,?,?,?,?,?) ON CONFLICT(harness_id, control_id, model_key) DO UPDATE SET size=excluded.size,first_turn_used=excluded.first_turn_used,observed_at=excluded.observed_at")
-    .run(row.harnessId, row.controlId, row.modelKey, row.size, row.firstTurnUsed, row.observedAt);
-}
-/** The window kept for a Harness control and model key, read back through its parser; null when none is kept (G072). */
-export function readRelayWindow(database: DatabaseSync, harnessId: string, controlId: string, modelKey: string): RelayWindow | null {
-  const row = database.prepare("SELECT harness_id,control_id,model_key,size,first_turn_used,observed_at FROM relay_windows WHERE harness_id=? AND control_id=? AND model_key=?").get(harnessId, controlId, modelKey);
-  if (row === undefined) return null;
-  return parseRelayWindow({ harnessId: row.harness_id, controlId: row.control_id, modelKey: row.model_key, size: row.size, firstTurnUsed: row.first_turn_used, observedAt: row.observed_at });
-}
-/** Removes windows observed more than RELAY_WINDOW_RETENTION_MS before `now` (at each start, §14.1); returns how many. */
-export function pruneRelayWindows(database: DatabaseSync, now: number): number {
-  return Number(database.prepare("DELETE FROM relay_windows WHERE observed_at<?").run(now - RELAY_WINDOW_RETENTION_MS).changes);
 }

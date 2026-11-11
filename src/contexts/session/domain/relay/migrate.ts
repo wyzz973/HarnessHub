@@ -1,16 +1,17 @@
-import { EMPTY_CHAIN, MAX_RELAY_COUNTER, MAX_RELAY_MODEL_BYTES, type BindingRelayState, type BindingSync, type ContextEffect, type DeliveredMark, type ExecutedOn, type RelayBehindIndex, type VendorObservation } from "../../../../contracts/relay.js";
-import { SessionError, type NativeSessionBinding, type PublicRun, type RunId, type SessionSnapshot } from "../../../../contracts/session.js";
+import type { BindingRelayState, ContextEffect, ExecutedOn, RelayBehindIndex } from "../../../../contracts/relay.js";
+import { SessionError, type PublicRun, type RunId, type SessionSnapshot } from "../../../../contracts/session.js";
 import { terminal } from "../state.js";
 import { commandEffect, commandOutcome, dispatched, type InputOutcome } from "./advance.js";
 
 /**
- * The v12 → v13 relay inference (ADR-055 §14.4) and the relay state of a new binding, shared by the migration and the
- * Runtime. Pure: it reads a v12 snapshot and its events and says, for every native binding, its native epoch and sync
- * state, and for every finished dispatched Run where it ran. Nothing here reads a clock, a store or a process.
+ * The v12 → v13 relay inference (ADR-055 §14.4) for a v12 Session: for every native binding its native epoch, the mark the
+ * events prove, the clear floor and whether a command or a refusal may have changed the native session while facts are owed
+ * (then `resendAll`), and for every finished dispatched Run where it ran. Pure: it reads a v12 snapshot and its events;
+ * nothing here reads a clock, a store or a process.
  *
  * The rule throughout is "only down, never up": a mark never exceeds what the events prove the native session received
  * (a packet whose sources cover every owed fact up to it, or a Turn it ran itself while nothing was owed), and what the
- * events cannot settle is read as not delivered, or as suspect where the native context may have changed.
+ * events cannot settle is read as not delivered, or as to be sent again where the native context may have changed.
  */
 
 /** One stored event as the migration reads it: its seq, type and data. */
@@ -28,29 +29,6 @@ export interface MigratedSession {
   /** Each finished dispatched Run in Run order, with its fact seq and where it ran (its index row, status behind). */
   readonly runs: readonly RelayBehindIndex[];
 }
-/** Where a new binding comes from: a Turn's new native session, an import (ADR-029) or a branch's native fork (ADR-025). */
-export type BindingSource = "new" | "import" | "fork";
-
-const NO_CACHE = { lastRequestStartedAt: null, contextUsed: null, contextSize: null } as const;
-function state(nativeEpoch: number, sync: BindingSync, originIncluded: boolean, epochFloor: number, vendorObserved: VendorObservation | null = null, cache: BindingRelayState["cache"] = NO_CACHE): BindingRelayState {
-  return { nativeEpoch, sync, originIncluded, reanchor: false, packetsInEpoch: 0, epochFloor, compactionSeen: { count: 0, digest: null }, consentKey: null, vendorObserved, cache };
-}
-const ORIGIN_MARK: DeliveredMark = { throughSeq: 0, chain: EMPTY_CHAIN, lastPacketId: null, evidence: "origin", basis: "origin" };
-function legacyMark(throughSeq: number): DeliveredMark { return { throughSeq, chain: EMPTY_CHAIN, lastPacketId: null, evidence: "legacy", basis: "legacy" }; }
-
-/**
- * The relay state a binding starts with (ADR-055 §7.5, §14.4): an import's or a branch's native session holds the history
- * the Session started from (synced at the origin, epoch 1); any other new native session is fresh (`reset` after an earlier
- * binding of the same Harness control, `new` otherwise), takes the next native epoch of that Harness control and inherits
- * the highest clear floor along its bindings.
- */
-export function initialBindingRelay(bindings: readonly NativeSessionBinding[], harnessId: string, controlId: string, source: BindingSource): BindingRelayState {
-  const lineage = bindings.flatMap(binding => binding.harnessId === harnessId && binding.controlId === controlId && binding.relay !== undefined ? [binding.relay] : []);
-  const epoch = Math.max(0, ...lineage.map(relay => relay.nativeEpoch)) + 1, floor = Math.max(-1, ...lineage.map(relay => relay.epochFloor));
-  if (source !== "new") return state(epoch, { kind: "synced", mark: ORIGIN_MARK }, true, floor);
-  return state(epoch, { kind: "fresh", basis: lineage.length ? "reset" : "new" }, false, floor);
-}
-
 function text(value: unknown): string | undefined { return typeof value === "string" ? value : undefined; }
 function strings(value: unknown): readonly string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []; }
 function object(value: unknown): Readonly<Record<string, unknown>> | undefined {
@@ -109,10 +87,10 @@ export function migrateSession(state12: SessionSnapshot, events: readonly Migrat
   };
   // Pass 2: the binding lineage. Bindings are made by the Session's creation (an import, a branch's native fork) and by each
   // `native.binding_prepared{resumed: false}`; each takes the next epoch of its Harness control, a confirmed clear adds one.
-  interface Lineage { readonly harnessId: string; readonly controlId: string; readonly source: BindingSource; epoch: number; readonly startEpoch: number; archivedAt: number | null }
+  interface Lineage { readonly harnessId: string; readonly controlId: string; readonly source: "new" | "import" | "fork"; epoch: number; readonly startEpoch: number; archivedAt: number | null }
   const made: Lineage[] = [], active = new Map<string, number>(), maxEpoch = new Map<string, number>();
   const runBinding = new Map<string, number>(), runEpoch = new Map<string, number>();
-  const make = (harnessId: string, controlId: string, source: BindingSource): void => {
+  const make = (harnessId: string, controlId: string, source: "new" | "import" | "fork"): void => {
     const key = harnessId + ":" + controlId, epoch = (maxEpoch.get(key) ?? 0) + 1;
     maxEpoch.set(key, epoch); active.set(key, made.length); made.push({ harnessId, controlId, source, epoch, startEpoch: epoch, archivedAt: null });
   };
@@ -215,22 +193,14 @@ export function migrateSession(state12: SessionSnapshot, events: readonly Migrat
       } else if (rejected) suspicious = true;
     }
     floors.set(key, floor);
-    const last = runs.findLast(run => runBinding.get(run.id) === index && dispatched(run) && run.usage?.context !== undefined)?.usage?.context;
-    const cache = last === undefined ? NO_CACHE : { lastRequestStartedAt: null, contextUsed: last.used <= MAX_RELAY_COUNTER ? last.used : null, contextSize: last.size !== undefined && last.size <= MAX_RELAY_COUNTER ? last.size : null };
-    const model = snapshot.observed?.model ?? null;
-    const vendor: VendorObservation | null = snapshot.observed === undefined ? null
-      : { model: model !== null && new TextEncoder().encode(model).byteLength <= MAX_RELAY_MODEL_BYTES ? model : null, modelKey: "", authKind: null, endpoint: null, loopback: false };
-    const finalEpoch = binding.epoch, withSync = (sync: BindingSync) => state(finalEpoch, sync, originIncluded, floor, vendor, cache);
+    const epochNow = binding.epoch;
     // A clear after the last packet: the native session holds nothing the Hub must count on (§14.4).
-    if (cleared) return withSync({ kind: "fresh", basis: "user_cleared" });
+    if (cleared) return { epoch: epochNow, mark: -1, floor, pending: null, resendAll: false };
     // An import's or a branch's native session holds the Session's starting history (§14.4, RT1-B2).
-    if (binding.source !== "new") return withSync({ kind: "synced", mark: ORIGIN_MARK });
-    const need = owed(Math.max(mark ?? -1, floor), asOf, finalEpoch), owing = need.origin || need.facts.length > 0;
-    // Without any evidence of what it holds a binding is fresh, or suspect when a command or a refusal may have changed it
-    // while facts are owed (the D1 shape, RT1-B1).
-    if (mark === null) return withSync(suspicious && owing ? { kind: "suspect", mark: null, cause: "legacy", floorCandidate: null, carried: null, rewound: false }
-      : { kind: "fresh", basis: made.slice(0, index).some(row => row.harnessId === binding.harnessId && row.controlId === binding.controlId) ? "reset" : "new" });
-    return withSync(owing && suspicious ? { kind: "suspect", mark: legacyMark(mark), cause: "legacy", floorCandidate: null, carried: null, rewound: false } : { kind: "synced", mark: legacyMark(mark) });
+    if (binding.source !== "new") return { epoch: epochNow, mark: 0, floor, pending: null, resendAll: false };
+    const need = owed(Math.max(mark ?? -1, floor), asOf, epochNow), owing = need.origin || need.facts.length > 0;
+    // A binding a command or a refusal may have changed while facts are owed is sent everything again (the D1 shape, RT1-B1).
+    return { epoch: epochNow, mark: mark ?? -1, floor, pending: null, resendAll: owing && suspicious };
   });
   const indexes = runs.flatMap((run, index): RelayBehindIndex[] => {
     const seq = factSeq(run);

@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test, type TestContext } from "node:test";
 import { listedCommand, nativeConversationId, type BackendResult, type CleanupEvidence, type HarnessControl, type NativeCommand } from "../../src/contracts/control.js";
 import type { ContentPort } from "../../src/contracts/content.js";
-import { markOf, type BindingRelayState, type RelayBehindIndex } from "../../src/contracts/relay.js";
+import type { BindingRelayState, RelayBehindIndex } from "../../src/contracts/relay.js";
 import { SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type SessionSnapshot } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { migrateSession, type MigrationEvent } from "../../src/contexts/session/domain/relay/migrate.js";
@@ -15,7 +15,7 @@ import { parseSession } from "../../src/contexts/session/domain/state.js";
 import { RELAY_TABLES } from "../../src/infrastructure/session/relay-tables.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 
-// G066-C02 (ADR-055 §14.4): random v12 conversations migrated to v13. The conversations are made by the formal
+// Random v12 conversations (ADR-055 §14.4): random v12 conversations migrated to v13. The conversations are made by the formal
 // SessionRuntime and a real SqliteSessionStore with an in-process model Harness that keeps the ground truth of every native
 // session: which public Turns it ever received in a packet. The store's v13 relay fields are then taken away again, which
 // gives exactly the v12 data the v12 runtime wrote (G066 changed the runtime only there), optionally with the event fields
@@ -41,7 +41,7 @@ class ModelHarnesses implements SessionBindingFactory {
   readonly truth = new Map<string, Truth>();
   readonly sent: { readonly session: string; readonly input: string; readonly text: string }[] = [];
   private opened = 0;
-  constructor(private store: SqliteSessionStore, private readonly decide: (run: string, command: boolean) => Ending) {}
+  constructor(private store: SqliteSessionStore, private readonly decide: (run: string, command: boolean) => Ending, private readonly legacy = false) {}
   use(store: SqliteSessionStore): void { this.store = store; }
   async validate(request: SelectionRequest): Promise<HarnessSelection> {
     if (!(HARNESSES as readonly string[]).includes(request.harnessId)) throw new SessionError("HARNESS_UNAVAILABLE", "unknown model Harness");
@@ -73,7 +73,11 @@ class ModelHarnesses implements SessionBindingFactory {
         const truth = this.truth.get(current!)!, ending = this.decide(run, command);
         const sources = (prepared?.data.sourceRunIds as readonly string[] | undefined) ?? [];
         const inserted = ending === "recorded" || ending === "failed_after_insert" || ending === "no_evidence" || ending === "lost" && this.decide(run + ":inserted", command) === "recorded";
-        if (inserted) { for (const source of sources) truth.delivered.add(source); if (prepared?.data.carriedOrigin === true) truth.knowsOrigin = true; }
+        // A packet carried the starting history when its range starts at it (the v13 Runtime says so by the range, as a v12 build did by carriedOrigin);
+        // a build before G067 repeated that history in every packet.
+        const range = prepared?.data.range as { readonly fromSeq?: number } | undefined, origin = (this.store.get(session).origin?.history.length ?? 0) > 0;
+        const carriedOrigin = prepared?.data.carriedOrigin === true || range?.fromSeq === 0 || this.legacy && origin && sources.length > 0;
+        if (inserted) { for (const source of sources) truth.delivered.add(source); if (carriedOrigin) truth.knowsOrigin = true; }
         if (ending !== "lost") output({ type: "text", text: "reply" });
         const result: Promise<BackendResult> = ending === "lost" ? new Promise((_resolve, reject) => { setImmediate(() => reject(new SessionError("CONTROL_FAILED", "the connection ended without a result"))); })
           : Promise.resolve(ending === "rejected" ? { status: "failed", reason: "request_rejected", error: { code: "REMOTE_ERROR", message: "refused" }, input: "not_recorded" }
@@ -97,7 +101,7 @@ const content: ContentPort = {
   materialize: async () => { throw new Error("refused before copied"); },
 };
 interface World { readonly root: string; readonly data: string; readonly workspace: string; store: SqliteSessionStore; readonly harness: ModelHarnesses; runtime: SessionRuntime; readonly next: () => string }
-function world(t: TestContext, seed: number, outcomes: { readonly rejected: number; readonly lost: number }): World {
+function world(t: TestContext, seed: number, outcomes: { readonly rejected: number; readonly lost: number }, legacy = false): World {
   const root = mkdtempSync(join(tmpdir(), "g066-property-")); t.after(() => rmSync(root, { recursive: true, force: true }));
   const data = join(root, "data"), workspace = root, store = new SqliteSessionStore(data);
   const unit = (key: string) => createHash("sha256").update(seed + ":" + key).digest()[0]! / 256;
@@ -105,7 +109,7 @@ function world(t: TestContext, seed: number, outcomes: { readonly rejected: numb
     const draw = unit(run);
     if (command) return draw < outcomes.rejected ? "rejected" : "recorded";
     return draw < outcomes.rejected ? "rejected" : draw < outcomes.rejected + 0.04 ? "failed_after_insert" : draw < outcomes.rejected + 0.09 ? "no_evidence" : draw < outcomes.rejected + 0.09 + outcomes.lost ? "lost" : "recorded";
-  });
+  }, legacy);
   let ids = 0;
   const next = () => String(++ids);
   const runtime = new SessionRuntime(store, harness, { id: next, now: () => new Date(Date.UTC(2026, 10, 9) + ids * 1000), publish: () => {}, content, fingerprint: value => createHash("sha256").update(value).digest("hex") });
@@ -147,6 +151,11 @@ function v12(state: SessionSnapshot): SessionSnapshot {
     return { ...run, timing };
   }), ...(state.nativeBindings === undefined ? {} : { nativeBindings: state.nativeBindings.map(({ relay: _relay, opensNew: _opensNew, ...binding }) => binding) }) });
 }
+/** What a v12 build wrote in `run.context_prepared` that the v13 Runtime says by its range: that the packet carried the starting history. */
+function v12Event(event: MigrationEvent): MigrationEvent {
+  const range = event.data.range as { readonly fromSeq?: number } | undefined;
+  return event.type === "run.context_prepared" && range?.fromSeq === 0 && event.data.carriedOrigin !== true ? { ...event, data: { ...event.data, carriedOrigin: true } } : event;
+}
 /** The event data G067 added (2026-11-03), taken away: what an older v12 build wrote. */
 function older(event: MigrationEvent): MigrationEvent {
   const strip = (keys: readonly string[]) => ({ ...event, data: Object.fromEntries(Object.entries(event.data).filter(([key]) => !keys.includes(key))) });
@@ -186,6 +195,10 @@ function downgrade(data: string): void {
   try {
     db.exec("BEGIN");
     for (const row of db.prepare("SELECT id,snapshot FROM sessions").all()) db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify(v12(parseSession(JSON.parse(String(row.snapshot))))), String(row.id));
+    for (const row of db.prepare("SELECT session_id,seq,event_json FROM events WHERE json_extract(event_json,'$.type')='run.context_prepared'").all()) {
+      const event = JSON.parse(String(row.event_json)) as MigrationEvent, changed = v12Event(event);
+      if (changed !== event) db.prepare("UPDATE events SET event_json=? WHERE session_id=? AND seq=?").run(JSON.stringify(changed), String(row.session_id), Number(row.seq));
+    }
     for (const table of RELAY_TABLES) db.exec("DROP TABLE " + table);
     db.exec("COMMIT"); db.exec("PRAGMA user_version=12");
   } finally { db.close(); }
@@ -195,9 +208,9 @@ function check(label: string, state: SessionSnapshot, bindings: readonly Binding
   const facts = runs.filter(run => run.commandEffect === null);
   const lineage = new Map<string, number>();
   for (const [index, binding] of (state.nativeBindings ?? []).entries()) {
-    const relay = bindings[index]!, mark = markOf(relay.sync), key = binding.harnessId + ":" + binding.controlId, where = label + " binding " + index + " (" + key + ")";
+    const relay = bindings[index]!, mark = relay.mark >= 0 ? { throughSeq: relay.mark } : null, key = binding.harnessId + ":" + binding.controlId, where = label + " binding " + index + " (" + key + ")";
     // Epochs strictly grow along the bindings of one Harness control.
-    assert.ok(relay.nativeEpoch > (lineage.get(key) ?? 0), where + ": epoch " + relay.nativeEpoch); lineage.set(key, relay.nativeEpoch);
+    assert.ok(relay.epoch > (lineage.get(key) ?? 0), where + ": epoch " + relay.epoch); lineage.set(key, relay.epoch);
     // Only down: never past the v12 native position.
     const position = binding.throughRunId === null ? 0 : runs.find(run => run.runId === binding.throughRunId)?.seq ?? 0;
     if (mark !== null) assert.ok(mark.throughSeq <= position, where + ": mark " + mark.throughSeq + " passes the v12 position " + position);
@@ -206,18 +219,17 @@ function check(label: string, state: SessionSnapshot, bindings: readonly Binding
     // Never more than delivered: every fact the mark claims for this binding reached its native session.
     if (mark !== null) {
       for (const fact of facts) {
-        const foreign = fact.executedOn === null || fact.executedOn.harnessId !== binding.harnessId || fact.executedOn.controlId !== binding.controlId || fact.executedOn.nativeEpoch !== relay.nativeEpoch;
-        if (foreign && fact.seq > relay.epochFloor && fact.seq <= mark.throughSeq) assert.ok(native.delivered.has(fact.runId), where + ": the mark " + mark.throughSeq + " claims " + fact.runId + " (seq " + fact.seq + ") it never received");
+        const foreign = fact.executedOn === null || fact.executedOn.harnessId !== binding.harnessId || fact.executedOn.controlId !== binding.controlId || fact.executedOn.nativeEpoch !== relay.epoch;
+        if (foreign && fact.seq > relay.floor && fact.seq <= mark.throughSeq) assert.ok(native.delivered.has(fact.runId), where + ": the mark " + mark.throughSeq + " claims " + fact.runId + " (seq " + fact.seq + ") it never received");
       }
-      if (mark.throughSeq >= 0 && relay.epochFloor < 0 && !relay.originIncluded && (state.origin?.history.length ?? 0) > 0) assert.ok(native.knowsOrigin, where + ": the mark claims the starting history");
+      if (mark.throughSeq >= 0 && relay.floor < 0 && (state.origin?.history.length ?? 0) > 0) assert.ok(native.knowsOrigin, where + ": the mark claims the starting history");
     }
-    if (relay.originIncluded) assert.ok(native.knowsOrigin || relay.epochFloor >= 0, where + ": origin included without it");
   }
 }
 
 for (const [seed, legacy] of [[1, false], [2, false], [3, true], [4, false], [5, true], [6, true], [7, false], [8, true]] as const) {
   test("G066-C02 seed " + seed + (legacy ? " (pre-G067 events)" : "") + ": migrated marks stay within what each native session received and its v12 position, epochs grow along bindings", async t => {
-    const random = generator(seed), w = world(t, seed, { rejected: 0.08, lost: 0.04 });
+    const random = generator(seed), w = world(t, seed, { rejected: 0.08, lost: 0.04 }, legacy);
     const sessions: SessionId[] = [];
     for (let index = 0; index < 4; index++) {
       const shape = random(), harnesses = HARNESSES.slice(0, 1 + Math.floor(random() * 3));
@@ -232,7 +244,7 @@ for (const [seed, legacy] of [[1, false], [2, false], [3, true], [4, false], [5,
       await play(w, session.id, random, 12 + Math.floor(random() * 8), harnesses);
     }
     await w.runtime.close();
-    const states = sessions.map(id => ({ state: v12(w.store.get(id)), events: all(w.store, id).map(event => ({ seq: event.seq, type: event.type, data: event.data })) }));
+    const states = sessions.map(id => ({ state: v12(w.store.get(id)), events: all(w.store, id).map(event => v12Event({ seq: event.seq, type: event.type, data: event.data })) }));
     w.store.close();
     let bindings = 0;
     for (const [index, { state, events }] of states.entries()) {
@@ -267,7 +279,7 @@ test("G066-C02 a v12 conversation on one Harness, migrated, sends its next 20 in
     downgrade(w.data);
     w.store = new SqliteSessionStore(w.data); w.harness.use(w.store);
     const relay = w.store.get(session.id).nativeBindings![0]!.relay!;
-    assert.ok(relay.sync.kind === "synced" || relay.sync.kind === "fresh", "seed " + seed + ": nothing is owed to its only binding (" + relay.sync.kind + ")");
+    assert.equal(relay.resendAll, false, "seed " + seed + ": nothing is owed to its only binding");
     w.runtime = new SessionRuntime(w.store, w.harness, { id: w.next, now: () => new Date(Date.UTC(2026, 10, 10)), publish: () => {}, content, fingerprint: value => createHash("sha256").update(value).digest("hex") });
     const before = w.harness.sent.length;
     for (let round = 0; round < 20; round++) { w.runtime.send(session.id, "after the migration " + round, "after-" + round); await w.runtime.wait(session.id); }
@@ -304,7 +316,7 @@ test("G066-C02 before G067 a command moved the position past what it owed: the n
     check("D1 before G067" + (legacy ? " (pre-G067 events)" : ""), state, migrated.bindings, migrated.runs, w.harness.truth);
     const alpha = migrated.bindings[state.nativeBindings!.findIndex(binding => binding.harnessId === "alpha")]!;
     const b1 = migrated.runs.find(row => row.runId === runs.find(run => run.input === "b1")!.id)!;
-    assert.ok((markOf(alpha.sync)?.throughSeq ?? -1) < b1.seq, "alpha's mark stays before bravo's first Turn, which is still owed (" + (markOf(alpha.sync)?.throughSeq ?? "none") + " < " + b1.seq + ")");
+    assert.ok(alpha.mark < b1.seq, "alpha's mark stays before bravo's first Turn, which is still owed (" + alpha.mark + " < " + b1.seq + ")");
   }
   w.store.close();
 });

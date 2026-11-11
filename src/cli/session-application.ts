@@ -2,10 +2,9 @@ import type { NativeEnvironment } from "../infrastructure/session/native-environ
 import { LocalHarnessManagement, type ManagementOptions } from "../infrastructure/management/service.js";
 import { LocalProviderService } from "../infrastructure/provider/service.js";
 import { createHash, randomUUID } from "node:crypto";
-import { lstatSync, mkdirSync, opendirSync, realpathSync, statSync, type Dir } from "node:fs";
+import { lstatSync, mkdirSync } from "node:fs";
 import { totalmem } from "node:os";
-import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
-import { performance } from "node:perf_hooks";
+import { isAbsolute, join, normalize, resolve } from "node:path";
 import { resolveHostBudgets } from "../contracts/native-host.js";
 import { SessionError, type SelectionRequest, type SessionEvent } from "../contracts/session.js";
 import { HostTmpdirs, defaultHostTmpdirRoot } from "../infrastructure/session/host-tmpdir.js";
@@ -27,92 +26,6 @@ export function dataRoot(value: string | undefined): string {
   if ((value !== undefined && !value.trim()) || path.length > 4096 || /[\0\r\n]/u.test(path)) throw new SessionError("INVALID_INPUT", "invalid data directory");
   return path;
 }
-/** The ownership marker every data directory holds (sqlite-store.ts), searched for in a workspace within these bounds. */
-const DATA_MARKER = ".harness-gateway.json", MARKER_DEPTH = 6, MARKER_ENTRIES = 2000, MARKER_MS = 100;
-/**
- * Where a data directory lies relative to a workspace (ADR-055 §10.1): whether one contains the other, compared by device
- * and inode along each one's parent directories and never by spelling (case-insensitive volumes, symbolic links and
- * firmlinks spell one directory several ways), the data directory's parents both as it resolves and as it is spelled (a
- * link in the workspace that leads to it puts it in the workspace's reach); and the workspace directories holding a data
- * directory's ownership marker (a copy left behind when the data was moved), found within 6 levels, 2,000 entries and
- * 100 ms, however large one directory is, where a symbolic link is looked at (a marker it names, or one in the directory it
- * leads to) but never entered. Paths are relative to the workspace: what a workspace observation leaves out, with `.tmp`.
- * Read-only; what cannot be read proves nothing.
- */
-export interface DataRootPlacement {
-  readonly containment: "separate" | "data_root_in_workspace" | "workspace_in_data_root";
-  readonly markers: readonly string[];
-}
-/**
- * Only the containment part of dataRootPlacement (no marker search): a few stats along both directories' parents, cheap
- * enough for every relay admission (ADR-055 §10.1). `null` when either cannot be read (nothing proved).
- */
-export function dataRootContainment(root: string, workspace: string): { readonly containment: DataRootPlacement["containment"]; readonly place: string } | null {
-  const identity = (path: string) => { const info = statSync(path, { bigint: true }); return info.dev + ":" + info.ino; };
-  const within = (path: string, ancestor: string): boolean => {
-    for (let current = path; ; current = dirname(current)) {
-      if (identity(current) === ancestor) return true;
-      if (dirname(current) === current) return false;
-    }
-  };
-  try {
-    const data = realpathSync(root), spelled = resolve(root), place = realpathSync(workspace);
-    const workspaceIdentity = identity(place);
-    return { place, containment: within(data, workspaceIdentity) || spelled !== data && within(spelled, workspaceIdentity) ? "data_root_in_workspace"
-      : within(place, identity(data)) ? "workspace_in_data_root" : "separate" };
-  } catch { return null; }
-}
-export function dataRootPlacement(root: string, workspace: string): DataRootPlacement {
-  const isFile = (path: string): boolean => { try { return statSync(path).isFile(); } catch { return false; } };
-  const contained = dataRootContainment(root, workspace);
-  if (contained === null) return { containment: "separate", markers: [] };
-  const { place, containment } = contained;
-  const markers: string[] = [], deadline = performance.now() + MARKER_MS, pending: { readonly path: string; readonly depth: number }[] = [{ path: place, depth: 0 }];
-  let entries = 0;
-  while (pending.length && entries < MARKER_ENTRIES && performance.now() < deadline) {
-    const { path, depth } = pending.shift()!;
-    let directory: Dir;
-    try { directory = opendirSync(path); } catch { continue; }
-    try {
-      // One entry at a time, so a single large directory is held to the same bounds.
-      for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
-        if (++entries > MARKER_ENTRIES || performance.now() >= deadline) break;
-        const at = join(path, entry.name);
-        // A symbolic link is looked at but not followed into, so the search stays in the workspace.
-        if (entry.isSymbolicLink()) { if (entry.name === DATA_MARKER ? isFile(at) : isFile(join(at, DATA_MARKER))) markers.push(relative(place, entry.name === DATA_MARKER ? path : at) || "."); }
-        else if (entry.isFile() && entry.name === DATA_MARKER) markers.push(relative(place, path) || ".");
-        else if (entry.isDirectory() && depth < MARKER_DEPTH) pending.push({ path: at, depth: depth + 1 });
-      }
-    } catch { /* A directory that cannot be read further proves nothing. */ } finally { directory.closeSync(); }
-  }
-  return { containment, markers };
-}
-/**
- * Whether the data directory and the relay key are out of a workspace's reach (ADR-055 §10.1, INV-36), for the relay's
- * cross-vendor check at admission and at the open (SessionRuntimeOptions.relayIsolated): neither contains the other by device
- * and inode (each call: a few stats), no data directory's marker is in the workspace (the bounded search, only at a
- * workspace's first check and again when its own directory's mtime changed, cached for 64 workspaces), and the relay key file
- * is neither in the workspace nor beside it. What cannot be read is not isolated: the handoff is refused rather than risked.
- * The cache is a convenience for the notice: a marker made deeper in the workspace does not move its own directory's mtime, so
- * the answer that decides whether a handoff goes (`fresh`, asked while `relay.dataRootInWorkspace` is "block") searches again.
- */
-export function relayIsolation(root: string, keyFile: string | null): (workspace: string, fresh?: boolean) => boolean {
-  const searched = new Map<string, { readonly mtimeMs: number; readonly markers: number }>();
-  return (workspace, fresh = false) => {
-    let mtimeMs: number;
-    try { mtimeMs = statSync(workspace).mtimeMs; } catch { return false; }
-    const contained = dataRootContainment(root, workspace);
-    if (contained === null || contained.containment !== "separate") return false;
-    let known = fresh ? undefined : searched.get(workspace);
-    if (known === undefined || known.mtimeMs !== mtimeMs) {
-      known = { mtimeMs, markers: dataRootPlacement(root, workspace).markers.length };
-      if (searched.size >= 64 && !searched.has(workspace)) searched.delete(searched.keys().next().value!);
-      searched.set(workspace, known);
-    }
-    if (known.markers > 0) return false;
-    return keyFile === null || !insideByIdentity(keyFile, contained.place) && !insideByIdentity(contained.place, dirname(keyFile));
-  };
-}
 /**
  * The installation's relay key for this composition (ADR-055 D5): opened at `path`, which must lie outside the data directory;
  * null (the Runtime then keys under a key it keeps in memory only) when it is inside it or cannot be opened, said on stderr.
@@ -127,13 +40,6 @@ export function openRelayKeys(path: string, root: string): RelayKeys | null {
     process.stderr.write("HarnessGateway: RELAY_KEY_UNAVAILABLE (" + (error !== null && typeof error === "object" && "code" in error ? String(error.code).slice(0, 32) : "unreadable") + ")\n");
     return null;
   }
-}
-/** The startup warning for a data directory a workspace's Harnesses can read (ADR-055 §10.1, D8); null when there is none. */
-export function dataRootWarning(placement: DataRootPlacement): string | null {
-  if (placement.containment === "data_root_in_workspace") return "数据目录在工作区里，工作区里的 Harness 能直接读到全部对话（含其他 Harness 的内容）；请用 --data-dir 把数据目录放到工作区外。";
-  if (placement.containment === "workspace_in_data_root") return "工作区在数据目录里，Harness 在工作区里的读写都落在 HarnessGateway 的数据目录中；请用 --data-dir 把数据目录换成工作区之外的独立目录。";
-  if (placement.markers.length) return "工作区里有 HarnessGateway 的数据目录（" + placement.markers.slice(0, 4).map(path => path === "." ? "." : "./" + path).join("、") + (placement.markers.length > 4 ? " 等" : "") + "），工作区里的 Harness 能读到它们；数据目录应放在工作区外。";
-  return null;
 }
 export function selection(value: string, explicitControl?: string): SelectionRequest {
   const [harnessId, embeddedControl, ...extra] = value.split(":");
@@ -221,10 +127,10 @@ export function application(root: string, publish: (event: SessionEvent) => void
       if (names === undefined) { try { names = new Map(loadBuiltinCatalog(catalogTarget()).map(definition => [definition.id, definition.name])); } catch { names = new Map(); } }
       return names.get(harnessId) ?? null;
     };
-    // The relay's installation key and the data directory's isolation from a workspace (ADR-055 §10.1, §10.2, INV-36).
+    // The relay's installation key (ADR-055 §10.2, INV-36).
     const relayKeys = options.relayKeyFile === undefined ? null : openRelayKeys(options.relayKeyFile, root);
     const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, ...(options.budgets ?? {}),
-      ...(relayKeys === null ? {} : { relayKeys }), relayIsolated: relayIsolation(root, relayKeys?.path ?? options.relayKeyFile ?? null),
+      ...(relayKeys === null ? {} : { relayKeys }),
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
     // Upgrades see and close this runtime's conversations' processes (ADR-043).
     management.attachProgramUsers({ list: harnessId => runtime.programUsers(harnessId), closeIdle: harnessId => runtime.releaseForUpgrade(harnessId) });

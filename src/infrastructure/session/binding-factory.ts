@@ -195,8 +195,8 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
    * A8): the Driver createNativeControl picks for its Harness and the control's protocol — the protocol this factory resolved
    * for the control, else the built-in catalog's — read without starting anything, building a control or reading a file. Null
    * when that Driver declares none, and when the control's protocol cannot be told (a manifest's control not resolved by this
-   * owner yet): the relay then reads the most conservative declaration, which takes no relay content (RELAY_TARGET_UNVERIFIED
-   * {undeclared}), never one that would let more through. A managed Provider's selection carries no native relay.
+   * owner yet): the relay then reads the most conservative declaration (a Driver that declares nothing), never one that would
+   * let more through. A managed Provider's selection carries no native relay.
    */
   relayCapabilities(selection: HarnessSelection): RelayCapabilities | null {
     if (selection.provider !== undefined) return null;

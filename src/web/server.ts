@@ -266,7 +266,7 @@ function publicFailure(error: unknown, homes: readonly string[]): { readonly sta
   if (error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError || error instanceof CapabilityError) {
     const code = error.code;
     const status = code.includes("NOT_FOUND") ? 404 : code === "INVALID_INPUT" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
-      : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code.endsWith("_CHANGED") || code.includes("REFUSED") || code.endsWith("_EXPIRED") || code.includes("INCOMPATIBLE") || code.endsWith("_REQUIRED") || code === "RELAY_TARGET_UNVERIFIED" ? 409 : 502;
+      : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code.endsWith("_CHANGED") || code.includes("REFUSED") || code.endsWith("_EXPIRED") || code.includes("INCOMPATIBLE") || code.endsWith("_REQUIRED") ? 409 : 502;
     // Write ~ before cutting: every whole spelling of the home is replaced first, so a home that crosses the 512th
     // character can no longer leave its first half in the answer; the cut then only shortens text that already says ~.
     return { status, code, message: homeText(homes)(error.message).slice(0, 512) };
@@ -382,7 +382,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   relayApi = new RelayApi({ reads: app.store, read: id => app.runtime.read(id),
     declaration: selection => { const factory: SessionBindingFactory = app.factory; return factory.relayCapabilities?.(selection); },
     // What each binding asks the user to look at, and whether the data directory is in the workspace's reach: the Runtime's reads (never a block).
-    attention: id => app.runtime.relayAttention(id), dataRootExposed: id => app.runtime.relayDataRootExposed(id), installation: () => app.runtime.relayInstallation(), http: { json, headers, queries, body } });
+    attention: id => app.runtime.relayAttention(id), installation: () => app.runtime.relayInstallation(), http: { json, headers, queries, body } });
   // This build: every compiled Gateway file by name and content (ADR-033), also named in a Turn's diagnostics (ADR-037).
   const revision = buildRevision(fileURLToPath(new URL("..", import.meta.url)));
   // Derived observations only; a file this version cannot adopt is reported and left as it is. Catalogs are reused only by
@@ -1068,11 +1068,10 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         if (action === "messages") {
           const input = record(await body(request), ["text", "commandId", "attachments", "relay"], ["text", "commandId"]); if (typeof input.text !== "string") throw new HttpError(400, "INVALID_INPUT", "Message text required");
           if (input.attachments !== undefined && (!Array.isArray(input.attachments) || input.attachments.length > MAX_RUN_ATTACHMENTS || input.attachments.some(value => typeof value !== "string"))) throw new HttpError(400, "INVALID_INPUT", "Invalid attachments");
-          // The user's relay choices (ADR-055 §12.4), checked as a whole before the Runtime sees any of them: they go with the input, and
-          // so into the command's fingerprint. A refusal that waits for the user's choice is answered with the binding, the cause and the options.
+          // The user's relay choice (ADR-055 §12.4), checked before the Runtime sees it: it goes with the input, and so into the
+          // command's fingerprint. The relay never refuses an input.
           const relay = parseSendRelay(input.relay);
-          try { json(response, 202, app.runtime.send(id, input.text, command(input.commandId), (input.attachments ?? []) as string[], relay.choices)); }
-          catch (error) { relayApi.explain(error, id); throw error; }
+          json(response, 202, app.runtime.send(id, input.text, command(input.commandId), (input.attachments ?? []) as string[], relay.choices));
           return;
         }
         if (action === "switches") { const input = record(await body(request), ["selection", "commandId"], ["selection", "commandId"]); json(response, 202, app.runtime.switch(id, select(input.selection), command(input.commandId))); return; }
@@ -1107,8 +1106,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     running++;
     void route(request, response).catch(error => {
       const fault = publicFailure(error, homeForms());
-      // A relay error the user can answer also names the binding, the reason and the choices (ADR-055 §12.4).
-      json(response, fault.status, { code: fault.code, message: app.providers.redact(fault.message), ...relayApi.errorBody(error) }); request.resume();
+      json(response, fault.status, { code: fault.code, message: app.providers.redact(fault.message) }); request.resume();
     }).finally(() => { running--; });
   });
   server.headersTimeout = 10000; server.requestTimeout = 15000; server.keepAliveTimeout = 5000; server.maxConnections = 32;

@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { dataRoot, dataRootPlacement, dataRootWarning } from "./session-application.js";
+import { dataRoot } from "./session-application.js";
 import { MAX_PARALLEL_CONVERSATIONS, SessionError, resolveTurnBudgets } from "../contracts/session.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { resolveInstallationPolicy } from "../contexts/catalog/domain/catalog.js";
@@ -44,9 +44,6 @@ export async function main(args: readonly string[]): Promise<number> {
       ...(values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] }),
       ...(values["assets-dir"] === undefined ? {} : { assetsDirectory: resolve(values["assets-dir"]) }) });
     process.stdout.write("HarnessGateway\n" + gateway.url + "\n");
-    // A data directory the workspace's Harnesses can read is said once at start (ADR-055 §10.1); the default stays as it is (D8).
-    const exposed = dataRootWarning(dataRootPlacement(root, configuration.workspace));
-    if (exposed !== null) process.stderr.write("HarnessGateway: " + exposed + "\n");
     // What this service runs with (ADR-036), so its log says it without reading the code.
     process.stdout.write(`HarnessGateway: up to ${MAX_PARALLEL_CONVERSATIONS} conversations run at once; each Turn may work ${budgets.executionBudgetMs / 1000} s and wait ${budgets.waitBudgetMs / 60_000} min for the user\n`);
     await new Promise<void>(done => {

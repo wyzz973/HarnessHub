@@ -7,12 +7,11 @@ import { performance } from "node:perf_hooks";
 import test from "node:test";
 import { nativeConversationId, type CleanupEvidence, type HarnessControl } from "../../src/contracts/control.js";
 import type { CommandId, EventDraft, HarnessSelection, PreparedSessionBinding, PublicRun, SelectionRequest, SessionBindingFactory, SessionCommit, SessionConfiguration, SessionId, SessionMutation, SessionSnapshot, SessionStore } from "../../src/contracts/session.js";
-import type { DeliveryRecord, RelayCapabilities, RelayIndexRow, RelayPacket } from "../../src/contracts/relay.js";
+import type { DeliveryRecord, HandoffRecord, RelayCapabilities, RelayIndexRow, RelayPacket, RelayPrefKey } from "../../src/contracts/relay.js";
 import { dshRelayCapabilities } from "../../src/adapters/control/acp.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { MAX_SESSION_BYTES, utf8Bytes } from "../../src/contexts/session/domain/state.js";
-import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
-import { EMPTY_CHAIN } from "../../src/contracts/relay.js";
+import { initialBindingRelay } from "../../src/contexts/session/domain/relay/delivery.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 
 // G075-C01 (ADR-055 §11.2): from acceptance to dispatch on an 8 MiB snapshot, through the formal SessionRuntime and a real
@@ -56,6 +55,8 @@ class CountingStore implements SessionStore {
   eventReads = 0;
   /** Reads of the relay rows (RelayStorePort's relayDeliveries, relayPackets and relayIndex), which the Runtime finds here too. */
   relayReads = 0;
+  /** Calls of the installation's handoff log and preference (RelayLogPort), which only a Turn that hands history over has any reason to make. */
+  logCalls = 0;
   constructor(readonly inner: SqliteSessionStore) {}
   get ownerGeneration(): number { return this.inner.ownerGeneration; }
   assertOwner(): void { this.inner.assertOwner(); }
@@ -70,6 +71,11 @@ class CountingStore implements SessionStore {
   relayDeliveries(id: SessionId): readonly DeliveryRecord[] { this.relayReads += 1; return this.inner.relayDeliveries(id); }
   relayPackets(id: SessionId): readonly RelayPacket[] { this.relayReads += 1; return this.inner.relayPackets(id); }
   relayIndex(id: SessionId): readonly RelayIndexRow[] { this.relayReads += 1; return this.inner.relayIndex(id); }
+  logHandoff(harnessId: string): { readonly record: HandoffRecord; readonly created: boolean } { this.logCalls += 1; return this.inner.logHandoff(harnessId); }
+  handoffs(): readonly HandoffRecord[] { this.logCalls += 1; return this.inner.handoffs(); }
+  handoffUsed(logSeq: number): boolean { this.logCalls += 1; return this.inner.handoffUsed(logSeq); }
+  setPref(key: RelayPrefKey, value: string): void { this.logCalls += 1; this.inner.setPref(key, value); }
+  relayPrefs(): Readonly<Partial<Record<RelayPrefKey, string>>> { this.logCalls += 1; return this.inner.relayPrefs(); }
   close(): void { this.inner.close(); }
   counts(): { readonly commits: number; readonly loads: number; readonly parses: number; readonly eventReads: number; readonly relayReads: number } {
     return { commits: this.commits, loads: this.loads, parses: this.inner.cacheStats().misses, eventReads: this.eventReads, relayReads: this.relayReads };
@@ -136,7 +142,7 @@ function seed(store: SqliteSessionStore, id: SessionId, count: number, target: n
     messages: current.messages.map(message => message.runId === last.id ? { ...message, status: "completed" as const } : message),
     // Its own Turns, recorded while nothing was owed, made its native mark (ADR-055 §7.2 b + j), as the v13 Runtime leaves it.
     nativeBindings: [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-alpha", throughRunId: last.id, status: "ready",
-      relay: { ...current.nativeBindings![0]!.relay!, sync: { kind: "synced", mark: { throughSeq: last.contextThroughSeq, chain: EMPTY_CHAIN, lastPacketId: null, evidence: "native", basis: "native" } } } }] },
+      relay: { ...current.nativeBindings![0]!.relay!, mark: last.contextThroughSeq } }] },
     events: [{ type: "run.ended", data: { runId: last.id, status: "completed" } }] }));
 }
 function percentile(values: readonly number[], p: number): number {
@@ -211,7 +217,7 @@ class LiveHarnesses implements SessionBindingFactory {
   }
 }
 
-test("G068 fix R8/R10f (A9, A14) an ordinary Turn reads no relay row, asks no position and no check; a Turn that carries a packet and sees E1 makes one commit more than an ordinary one", async t => {
+test("G068 fix R8/R10f (A9, A14) an ordinary Turn reads no relay row, no log or preference and asks no position and no check; a Turn that carries a packet and sees E1 makes one commit more than an ordinary one", async t => {
   const root = await mkdtemp(join(tmpdir(), "g068-commit-")), workspace = join(root, "workspace"); await mkdir(workspace);
   const real = new SqliteSessionStore(join(root, "data")), store = new CountingStore(real), harness = new LiveHarnesses();
   let next = 0;
@@ -220,17 +226,17 @@ test("G068 fix R8/R10f (A9, A14) an ordinary Turn reads no relay row, asks no po
   const configuration: SessionConfiguration = { workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true };
   const session = await app.create(configuration, { harnessId: "alpha" }, "create"), id = session.id;
   const measured = async (text: string, key: string) => {
-    const before = store.counts(), positions = harness.positions, verifies = harness.verifies, seq = real.get(id).lastSeq;
+    const before = store.counts(), positions = harness.positions, verifies = harness.verifies, logs = store.logCalls, seq = real.get(id).lastSeq;
     const receipt = app.send(id, text, key); await app.wait(id);
     const after = store.counts(), run = real.get(id).runs.find(row => row.id === receipt.runId)!;
     assert.equal(run.status, "completed", JSON.stringify(run.error));
     return { run, commits: after.commits - before.commits, relayReads: after.relayReads - before.relayReads, eventReads: after.eventReads - before.eventReads,
-      positions: harness.positions - positions, verifies: harness.verifies - verifies, events: real.get(id).lastSeq - seq };
+      positions: harness.positions - positions, verifies: harness.verifies - verifies, logCalls: store.logCalls - logs, events: real.get(id).lastSeq - seq };
   };
   await measured("第一步", "a1");
-  // Ordinary Turns on a binding synced on its own Turns: no relay row, no event, no position, no check (§11.1, R8).
+  // Ordinary Turns on a binding that holds its own Turns: no relay row, no event, no log or preference, no position, no check (§11.1, R8).
   const ordinary = await measured("第二步", "a2");
-  assert.deepEqual({ relayReads: ordinary.relayReads, eventReads: ordinary.eventReads, positions: ordinary.positions, verifies: ordinary.verifies }, { relayReads: 0, eventReads: 0, positions: 0, verifies: 0 });
+  assert.deepEqual({ relayReads: ordinary.relayReads, eventReads: ordinary.eventReads, positions: ordinary.positions, verifies: ordinary.verifies, logCalls: ordinary.logCalls }, { relayReads: 0, eventReads: 0, positions: 0, verifies: 0, logCalls: 0 });
   // bravo works, then alpha's next Turn carries bravo's Turn and its entry is reported: E1 is one transaction of its own (A14).
   app.switch(id, { harnessId: "bravo" }, "to-b"); await app.wait(id);
   await measured("在 bravo 上", "b1");
@@ -239,11 +245,12 @@ test("G068 fix R8/R10f (A9, A14) an ordinary Turn reads no relay row, asks no po
   assert.ok(carrying.run.relay?.packetId !== null && carrying.run.relay?.packetId !== undefined, "it carried a packet");
   assert.ok(real.events(id, 0, 100).some(row => row.type === "relay.input_recorded" && row.data.runId === carrying.run.id), "E1 was committed");
   assert.equal(carrying.commits, ordinary.commits + 1, "E1 adds one commit; the packet, its row and the authorization are one transaction");
-  assert.equal(carrying.positions, 1, "the packet's position, read once"); assert.equal(carrying.relayReads, 0, "a binding synced on its own Turns has no row to read");
-  // Back to ordinary on the binding now synced on that packet: the same commits, and no row read (no check at the open looks at
-  // it). The ledger still pages the events since its last read, once: bravo's Turn is a foreign fact to place (§11.1).
+  // The relay builds the packet from the Hub's own record: no Driver is asked where its history stands, and no relay row is read for a binding that holds its own Turns.
+  assert.equal(carrying.positions, 0, "no position is asked"); assert.equal(carrying.relayReads, 0, "a binding that holds its own Turns has no row to read");
+  // Back to ordinary on the binding that now holds that packet: the same commits, and no row, log or preference read. The ledger still
+  // pages the events since its last read, once: bravo's Turn is a foreign fact to place (§11.1).
   const again = await measured("第三步", "a4");
   assert.equal(again.commits, ordinary.commits);
-  assert.deepEqual({ relayReads: again.relayReads, eventReads: again.eventReads, positions: again.positions, verifies: again.verifies }, { relayReads: 0, eventReads: 1, positions: 0, verifies: 0 });
-  t.diagnostic("commits: ordinary " + ordinary.commits + ", carrying with E1 " + carrying.commits + "; reads after it " + JSON.stringify({ relayReads: again.relayReads, positions: again.positions, verifies: again.verifies }));
+  assert.deepEqual({ relayReads: again.relayReads, eventReads: again.eventReads, positions: again.positions, verifies: again.verifies, logCalls: again.logCalls }, { relayReads: 0, eventReads: 1, positions: 0, verifies: 0, logCalls: 0 });
+  t.diagnostic("commits: ordinary " + ordinary.commits + ", carrying with E1 " + carrying.commits + "; reads after it " + JSON.stringify({ relayReads: again.relayReads, positions: again.positions, verifies: again.verifies, logCalls: again.logCalls }));
 });

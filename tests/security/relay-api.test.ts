@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { application } from "../../src/cli/session-application.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
-import { RELAY_PREF_KEYS, type RelayCapabilities } from "../../src/contracts/relay.js";
+import type { RelayCapabilities } from "../../src/contracts/relay.js";
 import type { SessionBindingFactory } from "../../src/contracts/session.js";
 import type { RelayView, SessionView } from "../../src/contracts/web.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
@@ -26,10 +26,9 @@ function row(value: unknown): Record<string, unknown> {
 const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 
 /**
- * A Codex app-server peer that keeps what it was told in its thread's file, as a real one keeps its turns: it answers the
- * Driver's reading of the thread (`thread/turns/list`), so a packet it was sent can be found again afterwards (E2), and in the
- * mode `e1` it also says at once that it recorded the user's entry (E1). In the mode `late` it cannot be read until a file
- * `ready` appears in its workspace. `session-peer.mjs` does none of this. (The same peer as tests/integration/relay-api.test.ts.)
+ * A Codex app-server peer that keeps what it was told in its thread's file, as a real one keeps its turns, and in the mode `e1`
+ * says at once that it recorded the user's entry (E1). `session-peer.mjs` does none of this. (The same peer as
+ * tests/integration/relay-api.test.ts.)
  */
 const RECORDING_PEER = `import{existsSync,readFileSync,writeFileSync}from'node:fs';import{createInterface}from'node:readline';
 const mode=process.argv[2]??'quiet';let thread='thread-'+process.pid,counter=0;
@@ -122,17 +121,8 @@ async function switchTo(f: Fixture, id: string, harnessId: string, key: string):
   for (let at = 0; at < 500; at++) { const current = await view(f, id); if (current.epoch === epoch + 1 && current.pendingSwitchId === null) return; await delay(20); }
   throw new Error("the switch did not take effect");
 }
-/**
- * These tests look at the answers a user is given when the Runtime asks them to choose. Where the Runtime has a preference for
- * how it settles an uncertain delivery itself (`relay.whenUnsure`), they choose `ask`; where it has none, this is nothing.
- */
-async function askWhenUnsure(f: Fixture): Promise<void> {
-  if (!(RELAY_PREF_KEYS as readonly string[]).includes("relay.whenUnsure")) return;
-  const reply = await write(f, "PUT", "/api/v1/relay/prefs", { key: "relay.whenUnsure", value: "ask" }); assert.equal(reply.status, 200, reply.text);
-}
-/** A → B → B: two packets reach sec-b and nothing confirms either; the first user message holds `first`. */
+/** A → B → B: two packets reach sec-b (the second is the first sent again) and nothing confirms either; the first user message holds `first`. */
 async function stranded(f: Fixture, first = "first"): Promise<string> {
-  await askWhenUnsure(f);
   const id = await create(f);
   assert.equal((await say(f, id, first, "m1", 0)).status, 202);
   await switchTo(f, id, "sec-b", "to-b");
@@ -177,19 +167,21 @@ async function openStream(f: Fixture, id: string): Promise<Stream> {
 const MARKER = "RELAY-MARKER-" + "7f3a91c2e4", KEY_SHAPE = "sk-" + "ant-" + "fixture" + "0123456789abcdef0123456789", HOME_PATH = "/Users/" + "someone/.ssh/id_rsa";
 
 test("AP-01–AP-03: nothing of the history, no native value and no digest leaves through the relay's own answers", async t => {
-  const f = await fixture(t); await askWhenUnsure(f);
+  const f = await fixture(t);
   const id = await create(f), live = await openStream(f, id);
   const first = `please keep ${MARKER}, the key ${KEY_SHAPE} and the file ${HOME_PATH}`;
   assert.equal((await say(f, id, first, "m1", 0)).status, 202);
-  // sec-c says it recorded the entry (E1: an event with a mark in it); sec-b leaves its packets unconfirmed, until the user has to choose.
+  // sec-c says it recorded the entry (E1: an event with a mark in it); sec-b leaves its packets unconfirmed.
   await switchTo(f, id, "sec-c", "to-c");
   assert.equal((await say(f, id, "second", "m2", 1)).status, 202);
   await switchTo(f, id, "sec-b", "to-b");
   assert.equal((await say(f, id, "third", "m3", 2)).status, 202);
   assert.equal((await say(f, id, "fourth", "m4", 3)).status, 202);
-  const asked = await write(f, "POST", `/api/v1/sessions/${id}/messages`, { text: "fifth", commandId: "m5" });
-  assert.equal(asked.status, 409, asked.text);
+  // Nothing is refused for the relay's sake: the fifth goes as typed, and says why in fixed words.
+  const fifth = await write(f, "POST", `/api/v1/sessions/${id}/messages`, { text: "fifth", commandId: "m5" });
+  assert.equal(fifth.status, 202, fifth.text); await waitRun(f, id, 4);
   const model = await relayOf(f, id), conversation = await view(f, id);
+  assert.deepEqual(conversation.runs[4]!.relay?.decision, { kind: "alone", by: "policy", cause: "delivery_unconfirmed" });
   assert.equal(model.packets.length, 3);
   assert.deepEqual(model.packets.map(item => [item.target.harnessId, item.delivery, item.evidence]), [["sec-c", "recorded", "E1"], ["sec-b", "unknown", null], ["sec-b", "unknown", null]]);
   // What the packets hold is the history itself; the check below is that the answers about them hold none of it.
@@ -199,22 +191,23 @@ test("AP-01–AP-03: nothing of the history, no native value and no digest leave
   }
   assert.ok(bodies.some(text => text.includes(MARKER)), "the packet carries the user's words, as it was sent (the premise of this test)");
   const hidden = [MARKER, KEY_SHAPE, HOME_PATH, ...bodies.map(text => sha256(text)), ...bodies.map(text => createHash("sha1").update(text).digest("hex")), sha256(MARKER), sha256(first), sha256(KEY_SHAPE),
-    f.root, f.data, f.workspace, "relay_bodies", "gateway.sqlite", "file_offset", "position", "inputHmac", "setHmac", "consentLogSeq", "keyId"];
+    f.root, f.data, f.workspace, "relay_bodies", "gateway.sqlite", "file_offset", "position", "inputHmac", "setHmac", "handoffLogSeq", "keyId"];
   await delay(150);
-  const answers: [string, string][] = [["GET …/relay", JSON.stringify(model)], ["the 409 body", JSON.stringify(asked.data)],
+  const answers: [string, string][] = [["GET …/relay", JSON.stringify(model)], ["the answer to the fifth message", JSON.stringify(fifth.data)],
     ...live.frames.filter(frame => frame.type === "relay").map((frame, index): [string, string] => ["relay frame " + index, JSON.stringify(frame)]),
     ...conversation.runs.map((run, index): [string, string] => ["Run " + index + " relay member", JSON.stringify(run.relay)]),
     ...live.frames.flatMap((frame, index): [string, string][] => frame.type === "snapshot" ? (row(frame.session).runs as { relay?: unknown }[]).map((run, at): [string, string] => ["snapshot " + index + " Run " + at + " relay member", JSON.stringify(run.relay ?? null)]) : [])];
   const kinds = new Set(live.frames.filter(frame => frame.type === "relay").map(frame => row(frame.event).type));
-  assert.ok(kinds.has("relay.input_recorded") && kinds.has("relay.verified"), "the flow produced the relay frames to look at: " + [...kinds].join());
+  assert.ok(kinds.has("relay.input_recorded"), "the flow produced the relay frames to look at: " + [...kinds].join());
   // No keyed or plain digest of anything, nor a mark, whatever its field is called: 64 hex digits appear in none of them.
   for (const [label, wire] of answers) assert.equal(/[0-9a-f]{64}/u.test(wire), false, label + " holds a digest");
   for (const [label, wire] of answers) for (const needle of hidden) assert.equal(wire.includes(needle), false, label + " holds " + needle.slice(0, 24));
   // And the shapes are closed: a field nobody listed cannot appear unnoticed.
-  assert.deepEqual(Object.keys(row(asked.data)).sort(), ["code", "message", "relay"]); assert.deepEqual(Object.keys(row(row(asked.data).relay)).sort(), ["binding", "cause", "counts", "options"]);
-  assert.deepEqual(Object.keys(row(row(row(asked.data).relay).binding)).sort(), ["controlId", "harnessId"]);
+  assert.deepEqual(Object.keys(row(fifth.data)).sort(), ["replayed", "runId", "sessionId"]);
   for (const frame of live.frames.filter(item => item.type === "relay")) { assert.deepEqual(Object.keys(frame).sort(), ["event", "lastSeq", "sessionId", "type", "version"]); assert.ok(Object.keys(row(frame.event)).every(key => ["type", "sessionId", "runId", "packetId", "at"].includes(key))); }
   for (const run of conversation.runs) if (run.relay !== undefined) assert.ok(Object.keys(run.relay).every(key => ["packetId", "kind", "continuity", "executedOn", "delivery", "decision"].includes(key)), JSON.stringify(Object.keys(run.relay)));
+  // What a Run says of the relay's decision is fixed words: a kind, who decided, a cause from the closed list, a reason word, and how a packet was sent again.
+  for (const run of conversation.runs) for (const [key, value] of Object.entries(run.relay?.decision ?? {})) assert.ok(["kind", "by", "cause", "reason", "resend"].includes(key) && /^[a-z_]{1,40}$/u.test(String(value)), key + "=" + String(value));
   // A Run's `relayRequest` holds an HMAC of the user's choices: it does not leave, not with the Run and not in the events either.
   for (const run of conversation.runs) assert.equal("relayRequest" in run, false, "the Run holds no relayRequest");
   const events = await get(f, `/api/v1/sessions/${id}/events?limit=100`), accepted = (row(events.data).events as { type: string; data: Record<string, unknown> }[]).filter(item => item.type === "message.accepted");
@@ -223,7 +216,10 @@ test("AP-01–AP-03: nothing of the history, no native value and no digest leave
   for (const binding of model.bindings) {
     assert.ok(Object.keys(binding).every(key => allowed.includes(key)), JSON.stringify(Object.keys(binding)));
     for (const required of ["cleared", "controlId", "evidence", "harnessId", "nativeEpoch", "probed", "sync", "throughRun"]) assert.ok(required in binding, required);
-    if (binding.attention !== undefined) assert.ok(Object.keys(binding.attention).every(key => ["cause", "options", "counts", "key", "packet", "vendor"].includes(key)), JSON.stringify(Object.keys(binding.attention)));
+    if (binding.attention !== undefined) {
+      assert.ok(Object.keys(binding.attention).every(key => ["cause", "options", "counts", "key", "packet"].includes(key)), JSON.stringify(Object.keys(binding.attention)));
+      assert.ok(["delivery_unconfirmed", "attach_available"].includes(binding.attention.cause) && binding.attention.options.every(option => option === "attach_full"), JSON.stringify(binding.attention));
+    }
   }
   // The text of a packet is a real read of the user's data, so it is not served to a caller that is not logged in.
   for (const packet of model.packets) assert.equal((await send(f, { path: `/api/v1/sessions/${id}/relay/${packet.packetId}`, login: false })).status, 401);
@@ -308,7 +304,7 @@ test("every relay route needs the login, and a write needs this Gateway's own or
   const reads = [`/api/v1/sessions/${id}/relay`, `/api/v1/sessions/${id}/relay/${packet}`, "/api/v1/relay/prefs"];
   // Not logged in: nothing is read and nothing is written.
   for (const path of reads) { const reply = await send(f, { path, login: false }); assert.equal(reply.status, 401, path); assert.equal(row(reply.data).code, "AUTH_REQUIRED"); }
-  for (const [method, path, value] of [["PUT", "/api/v1/relay/prefs", { key: "relay.crossVendor", value: "ask" }], ["POST", `/api/v1/sessions/${id}/messages`, { text: "x", commandId: "nologin", relay: { attach: "none" } }]] as const) {
+  for (const [method, path, value] of [["PUT", "/api/v1/relay/prefs", { key: "relay.attach", value: "off" }], ["POST", `/api/v1/sessions/${id}/messages`, { text: "x", commandId: "nologin", relay: { attach: "none" } }]] as const) {
     const reply = await send(f, { method, path, login: false, write: true, body: JSON.stringify(value) }); assert.equal(reply.status, 401, path);
   }
   // Another site's page: the cookie is SameSite=Strict, and a request that still arrives is refused by what it says it is.
@@ -320,7 +316,7 @@ test("every relay route needs the login, and a write needs this Gateway's own or
     const preflight = await send(f, { method: "OPTIONS", path, headers: { Origin: "https://attacker.invalid", "Access-Control-Request-Method": "PUT" } });
     assert.equal(preflight.headers["access-control-allow-origin"], undefined); assert.notEqual(preflight.status, 200);
   }
-  const body = JSON.stringify({ key: "relay.crossVendor", value: "ask" });
+  const body = JSON.stringify({ key: "relay.attach", value: "off" });
   const attempts: readonly [string, Raw][] = [
     ["no origin", { method: "PUT", path: "/api/v1/relay/prefs", write: true, headers: { Origin: undefined }, body }],
     ["another origin", { method: "PUT", path: "/api/v1/relay/prefs", write: true, headers: { Origin: "https://attacker.invalid" }, body }],
@@ -357,11 +353,11 @@ test("a hostile relay member or preference is refused whole, and nothing of it i
   let deep: unknown = "end"; for (let level = 0; level < 200; level++) deep = { next: deep };
   const members: readonly [string, unknown][] = [
     ["a prototype key", JSON.parse('{"__proto__":{"attach":"none"}}')], ["a constructor key", JSON.parse('{"constructor":{"prototype":{"attach":"none"}}}')],
-    ["a thousand fields", huge], ["a deep value", { attach: deep }], ["a deep consent", { consent: deep }], ["a vendor with a newline", { consent: { vendor: "gateway:llm.example.com\nSet-Cookie: x=1", decision: "acknowledged", scope: "global" } }],
-    ["a vendor with a slash", { consent: { vendor: "gateway:a/../b", decision: "acknowledged", scope: "global" } }], ["a vendor of a host over its length", { consent: { vendor: "gateway:" + "a".repeat(300), decision: "acknowledged", scope: "global" } }],
-    ["a vendor prefix that is none", { consent: { vendor: "evil:x", decision: "acknowledged", scope: "global" } }], ["a vendor with spaces", { consent: { vendor: "router:a b", decision: "acknowledged", scope: "global" } }],
-    ["a vendor of another type", { consent: { vendor: { toString: "x" }, decision: "acknowledged", scope: "global" } }], ["a note over its bytes in multibyte text", { note: "字".repeat(1400) }],
-    ["a note with a control", { note: "line\u001bescape" }], ["a note as an array", { note: ["a"] }], ["a tier as an object", { tier: { toString: "full" } }], ["an attach as an object", { attach: { valueOf: "none" } }],
+    ["a thousand fields", huge], ["a deep value", { attach: deep }], ["an attach as an object", { attach: { valueOf: "none" } }], ["an attach of no word of the relay's", { attach: "everything" }],
+    // What the relay used to be asked and no longer is: refused like any field it does not know, never read as an old choice.
+    ["a consent", { consent: { vendor: "gateway:llm.example.com\nSet-Cookie: x=1", decision: "acknowledged", scope: "global" } }], ["a consent of another type", { consent: { vendor: { toString: "x" }, decision: "acknowledged", scope: "global" } }],
+    ["a deep consent", { consent: deep }], ["a note", { note: "字".repeat(1400) }], ["a note with a control", { note: "line\u001bescape" }], ["a tier as an object", { tier: { toString: "full" } }],
+    ["a new native session", { native: "new" }], ["a resend", { resend: true }], ["a confirmed clear", { clearConfirmed: true }],
   ];
   for (const [label, relay] of members) {
     const reply = await write(f, "POST", `/api/v1/sessions/${id}/messages`, { text: "hostile", commandId: "hostile-" + ++sequence, relay });
@@ -370,26 +366,29 @@ test("a hostile relay member or preference is refused whole, and nothing of it i
   }
   assert.equal(({} as Record<string, unknown>).attach, undefined, "no prototype was touched"); assert.equal(Object.hasOwn(Object.prototype, "attach"), false);
   assert.equal((await view(f, id)).runs.length, 0, "no refused request made a Run");
-  const hostile: readonly [string, unknown][] = [["a key that is a path", { key: "../../etc/passwd", value: "ask" }], ["a key with SQL", { key: "relay.crossVendor' OR '1'='1", value: "ask" }], ["a value with SQL", { key: "relay.crossVendor", value: "ask'); DROP TABLE relay_prefs;--" }],
-    ["a value over its bytes", { key: "relay.crossVendor", value: "a".repeat(65) }], ["a huge value", { key: "relay.crossVendor", value: "a".repeat(100_000) }], ["a key with NUL", { key: "relay.crossVendor\u0000", value: "ask" }],
-    ["inherited fields", JSON.parse('{"key":"relay.crossVendor","value":"ask","__proto__":{"x":1}}')]];
+  const hostile: readonly [string, unknown][] = [["a key that is a path", { key: "../../etc/passwd", value: "off" }], ["a key with SQL", { key: "relay.attach' OR '1'='1", value: "off" }], ["a value with SQL", { key: "relay.attach", value: "off'); DROP TABLE relay_prefs;--" }],
+    ["a value over its bytes", { key: "relay.attach", value: "a".repeat(65) }], ["a huge value", { key: "relay.attach", value: "a".repeat(100_000) }], ["a key with NUL", { key: "relay.attach\u0000", value: "off" }],
+    ["a key the relay no longer has", { key: "relay.crossVendor", value: "ask" }], ["a value of another key", { key: "relay.attach", value: "ask" }],
+    ["inherited fields", JSON.parse('{"key":"relay.attach","value":"off","__proto__":{"x":1}}')]];
   for (const [label, input] of hostile) { const reply = await write(f, "PUT", "/api/v1/relay/prefs", input); assert.ok([400, 413].includes(reply.status), label + " → " + reply.status); assert.doesNotMatch(reply.text, /DROP TABLE|passwd|Error:|node:internal/u, label); }
   assert.equal((await get(f, "/api/v1/relay/prefs")).text, prefs, "no refused write changed a preference");
   // The table the preferences live in is still there, with its constraint: a legal write still works afterwards.
-  assert.equal((await write(f, "PUT", "/api/v1/relay/prefs", { key: "relay.crossVendor", value: "allow" })).status, 200);
+  assert.equal((await write(f, "PUT", "/api/v1/relay/prefs", { key: "relay.attach", value: "off" })).status, 200);
+  assert.deepEqual(row(row((await get(f, "/api/v1/relay/prefs")).data).prefs), { "relay.attach": "off" });
   // A body past the Gateway's limit, and one that is not UTF-8 JSON, are refused before they are read as a request.
-  assert.equal((await send(f, { method: "PUT", path: "/api/v1/relay/prefs", write: true, body: JSON.stringify({ key: "relay.crossVendor", value: "x".repeat(200_000) }) })).status, 413);
+  assert.equal((await send(f, { method: "PUT", path: "/api/v1/relay/prefs", write: true, body: JSON.stringify({ key: "relay.attach", value: "x".repeat(200_000) }) })).status, 413);
   assert.equal((await send(f, { method: "PUT", path: "/api/v1/relay/prefs", write: true, body: Buffer.from([0x7b, 0x22, 0xff, 0xfe, 0x22, 0x7d]) })).status, 400);
   assert.equal((await send(f, { method: "POST", path: `/api/v1/sessions/${id}/messages`, write: true, body: '{"text":"x","commandId":"c","relay":' })).status, 400);
   assert.equal((await view(f, id)).runs.length, 0);
 });
 
-test("a refusal at the door leaves the conversation as it was, and the answer to a choice names only what the user can choose", async t => {
+test("nothing is refused for the relay's sake, and what a Run says of it names only fixed words, never a path of this computer", async t => {
   const f = await fixture(t), id = await stranded(f);
-  const before = await view(f, id);
-  const asked = await write(f, "POST", `/api/v1/sessions/${id}/messages`, { text: "fourth", commandId: "m4" }); assert.equal(asked.status, 409);
-  const relay = row(row(asked.data).relay);
-  assert.ok((relay.options as string[]).every(option => ["attach_full", "send_alone", "new_native", "clear_confirmed", "acknowledge"].includes(option)));
-  assert.equal(JSON.stringify(asked.data).includes(f.root), false, "no path of this computer is in an answer");
-  const after = await view(f, id); assert.equal(after.lastSeq, before.lastSeq, "the 409 wrote nothing"); assert.equal(after.runs.length, before.runs.length);
+  const before = await view(f, id), model = await relayOf(f, id);
+  // Two packets went and nothing confirmed either: the page is offered the one way out, and the next message still goes.
+  const binding = model.bindings.find(item => item.attention !== undefined);
+  assert.deepEqual([binding?.attention?.cause, binding?.attention?.options], ["delivery_unconfirmed", ["attach_full"]]);
+  const fourth = await write(f, "POST", `/api/v1/sessions/${id}/messages`, { text: "fourth", commandId: "m4" }); assert.equal(fourth.status, 202, fourth.text); await waitRun(f, id, 3);
+  const after = await view(f, id); assert.equal(after.runs.length, before.runs.length + 1); assert.equal(after.runs[3]!.status, "completed");
+  assert.equal(JSON.stringify(after.runs.map(run => run.relay)).includes(f.root), false, "no path of this computer is in what a Run says of the relay"); assert.equal(JSON.stringify(await relayOf(f, id)).includes(f.root), false); assert.equal(fourth.text.includes(f.root), false);
 });

@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test, type TestContext } from "node:test";
 import { SessionError, commandId, messageId, runId, sessionId, type EventDraft, type NativeSessionBinding, type SessionEvent, type SessionSnapshot } from "../../src/contracts/session.js";
 import { parseSession } from "../../src/contexts/session/domain/state.js";
-import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
+import { initialBindingRelay } from "../../src/contexts/session/domain/relay/delivery.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { RELAY_TABLES } from "../../src/infrastructure/session/relay-tables.js";
 

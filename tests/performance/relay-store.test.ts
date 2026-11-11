@@ -8,11 +8,11 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { CleanupEvidence } from "../../src/contracts/control.js";
 import {
-  EMPTY_CHAIN, MAX_BINDING_RELAY_BYTES, MAX_RUN_RELAY_BYTES, RELAY_MAX_SEQ, parseBindingRelayState, parseDeliveryRecord, parseRelayPacket, parseRunRelay, parseRunRelayRequest,
+  MAX_BINDING_RELAY_BYTES, MAX_RUN_RELAY_BYTES, RELAY_MAX_SEQ, parseBindingRelayState, parseDeliveryRecord, parseRelayPacket, parseRunRelay, parseRunRelayRequest,
   type RelayPacket, type RelayRows,
 } from "../../src/contracts/relay.js";
 import { commandId, messageId, runId, sessionId, type NativeSessionBinding, type PublicRun, type SessionSnapshot } from "../../src/contracts/session.js";
-import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
+import { initialBindingRelay } from "../../src/contexts/session/domain/relay/delivery.js";
 import { MAX_EVENT_LOG_BYTES, MAX_SESSION_EVENTS } from "../../src/contexts/session/domain/state.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { V12_DDL, loadV12Fixture, renamed } from "../fixtures/relay/v12/database.js";
@@ -26,12 +26,12 @@ const clean: CleanupEvidence = { closed: true, exitCode: 0, signal: null, protoc
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
 function packetFor(seed: string, harnessId: string, controlId: string): { readonly packet: RelayPacket; readonly body: string } {
   const body = "packet " + seed, id = "relay-" + Array.from(createHash("sha256").update(seed).digest().subarray(0, 20), byte => CROCKFORD[byte % 32]).join("");
-  return { body, packet: parseRelayPacket({ id, kind: "packet", tier: "standard", complete: true, reanchor: false, target: { harnessId, controlId, model: null, vendor: "local", nativeEpoch: 1 },
+  return { body, packet: parseRelayPacket({ id, kind: "packet", tier: "standard", complete: true, target: { harnessId, controlId, model: null, nativeEpoch: 1 },
     source: { kind: "other", names: [] }, range: { fromSeq: 0, throughSeq: 1, fromRun: 0, throughRun: 0 }, basePacketId: null, supersedes: null, policyVersion: "relay/1", language: "en",
     factsFingerprint: hex("f"), workspaceObservationSeq: null, inputs: { attachOverride: false, digestBehind: [], detailsMissing: [], noteIncluded: false, firstLineOmitted: null },
     redaction: { profile: "egress", count: 0, byClass: {}, overridden: 0, unscanned: 0 },
-    body: { sha256: createHash("sha256").update(body).digest("hex"), bytes: Buffer.byteLength(body), estTokens: 3, estimator: "est/2", family: "o200k", untrustedTokens: 0, userTokens: 0 },
-    budget: { capTokens: 8000, userCap: 2500, untrustedCap: 3000, window: 128_000, fixedPrefix: 0, windowSource: "assumed_cloud", clampedBy: [] }, sections: [], fold: [], omissions: [], userEdits: [] }) };
+    body: { sha256: createHash("sha256").update(body).digest("hex"), bytes: Buffer.byteLength(body), estTokens: 3, estimator: "est/2", untrustedTokens: 0, userTokens: 0 },
+    budget: { capTokens: 8000, userCap: 2500, untrustedCap: 3000, window: 128_000, fixedPrefix: 0, windowSource: "assumed", clampedBy: [] }, sections: [], fold: [], omissions: [], userEdits: [] }) };
 }
 
 test("G066-C08 the longest legal relay state of a binding and of a Run, committed through the Store, grows the snapshot by at most its bound", t => {
@@ -43,7 +43,7 @@ test("G066-C08 the longest legal relay state of a binding and of a Run, committe
     let state = store.create({ schemaVersion: 13, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: { workspace: root, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true }, selection,
       activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: commandId("create"), kind: "create", fingerprint: hex("a"), resultId: id }] }, [{ type: "session.created", data: {} }]).session;
-    const request = parseRunRelayRequest({ tier: "fidelity", attach: "full", native: "continue", resend: true, fingerprint: hex("9") });
+    const request = parseRunRelayRequest({ attach: "full", fingerprint: hex("9") });
     const make = (suffix: string, status: PublicRun["status"], extra: Partial<PublicRun> = {}): PublicRun => ({ id: runId("run-" + suffix), commandId: commandId("send-" + suffix), input: "input " + suffix,
       userMessageId: messageId("message-" + suffix + "-user"), assistantMessageId: messageId("message-" + suffix + "-reply"), selection, epoch: 1, status, cancelRequested: false, contextThroughSeq: 0, sourceRunIds: [],
       backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: null, timing: { acceptedAt: 10 }, ...extra });
@@ -57,15 +57,8 @@ test("G066-C08 the longest legal relay state of a binding and of a Run, committe
     // The packets the longest sync state names, kept for the Session as the Store requires.
     const packets = ["a", "b", "c", "d"].map(char => packetFor(char, harnessId, controlId));
     step(current => current, { packets: packets.map(row => ({ runId: runId("run-one"), packet: row.packet, body: row.body })) });
-    const mark = (index: number) => ({ throughSeq: RELAY_MAX_SEQ, chain: EMPTY_CHAIN, lastPacketId: packets[index]!.packet.id, evidence: "legacy", basis: "evidence" });
-    const range = { fromSeq: RELAY_MAX_SEQ, throughSeq: RELAY_MAX_SEQ, fromRun: 255, throughRun: 255 };
-    const longest = parseBindingRelayState({ nativeEpoch: RELAY_MAX_SEQ + 1, epochFloor: RELAY_MAX_SEQ, packetsInEpoch: 256, reanchor: false, originIncluded: false,
-      // Since G068 the longest sync is a suspect state of the longest cause carrying a packet (a pending sync's prior carries none).
-      sync: { kind: "suspect", mark: mark(2), cause: "clear_unconfirmed", floorCandidate: RELAY_MAX_SEQ,
-        carried: { prior: { kind: "suspect", mark: mark(0), cause: "clear_unconfirmed", floorCandidate: RELAY_MAX_SEQ, carried: null, rewound: false }, packetId: packets[1]!.packet.id, range, attachOverride: false }, rewound: false },
-      compactionSeen: { count: 2_147_483_647, digest: hex("e") }, consentKey: "gateway:" + "h".repeat(253),
-      vendorObserved: { model: "m".repeat(96), modelKey: "k".repeat(96), authKind: "a".repeat(16), endpoint: { host: "h".repeat(253), layer: "harness_default" }, loopback: false },
-      cache: { lastRequestStartedAt: 8.64e15, contextUsed: 2_147_483_647, contextSize: 2_147_483_647 } });
+    const longest = parseBindingRelayState({ epoch: RELAY_MAX_SEQ + 1, mark: RELAY_MAX_SEQ, floor: RELAY_MAX_SEQ, resendAll: true,
+      pending: { packetId: packets[1]!.packet.id, fromSeq: RELAY_MAX_SEQ, throughSeq: RELAY_MAX_SEQ, autoResends: 1 } });
     const bytesOf = () => Number(new DatabaseSync(join(root, "data", "gateway.sqlite"), { readOnly: true }).prepare("SELECT octet_length(snapshot) AS bytes FROM sessions WHERE id=?").get(id)?.bytes);
     const before = bytesOf();
     step(current => ({ ...current, nativeBindings: [{ ...current.nativeBindings![0]!, relay: longest }] }));
@@ -90,8 +83,8 @@ test("G066-C08 the longest legal relay state of a binding and of a Run, committe
     t.diagnostic("binding relay " + relayBytes + " B (bound " + MAX_BINDING_RELAY_BYTES + ", design target 1,024); Run relay fields " + runBytes + " B (bound " + MAX_RUN_RELAY_BYTES + ", design target 320); " +
       "a Run's snapshot growth with contextReadyAt and recordedAt " + runGrowth + " B; snapshot " + queued + " → " + bytesOf() + " B");
     // The delivery the longest Run sends is kept with it (a pending sync's packet).
-    step(current => current, { deliveries: [{ kind: "insert", record: parseDeliveryRecord({ runId: accepted.id, packetId: packets[3]!.packet.id, channel: "text_block", position: { kind: "none" }, outcome: { kind: "in_flight" },
-      consentLogSeq: null, inputHmac: hex("8"), redaction: { rulesVersion: "egress/1", keyId: "key", setHmac: "01234567" }, compactionAtDelivery: null, resendOf: null, attachOverride: false, verifyMs: null, realized: null }) }] });
+    step(current => current, { deliveries: [{ kind: "insert", record: parseDeliveryRecord({ runId: accepted.id, packetId: packets[3]!.packet.id, channel: "text_block", outcome: { kind: "in_flight" },
+      handoffLogSeq: null, inputHmac: hex("8"), redaction: { rulesVersion: "egress/1", keyId: "key", setHmac: "01234567" }, autoResend: false }) }] });
   } finally { store.close(); }
 });
 

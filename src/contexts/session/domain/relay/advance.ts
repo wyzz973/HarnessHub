@@ -2,47 +2,13 @@ import type { ContextEffect } from "../../../../contracts/control.js";
 import type { PublicRun } from "../../../../contracts/session.js";
 
 /**
- * The v12 transition rules of the relay (ADR-055 §7.6, P0): Session v12 has one native position per binding
- * (`throughRunId`), and these pure rules decide when a settled Turn moves it, what a command Turn did to the native context,
- * and which Runs count as dispatched. v13 replaces the position rule by delivery watermarks; nothing here reads a clock,
- * a store or a process.
+ * What a settled Turn's facts say, as pure rules (ADR-055 §7.6): what is known of its input reaching the native history, what
+ * became of a command Turn and what it did to the native context, and which Runs count as dispatched. Nothing here reads a
+ * clock, a store or a process.
  */
 
 /** What is known of a dispatched Turn's input reaching the native history; no evidence is unknown, never not recorded. */
 export type InputOutcome = "recorded" | "not_recorded" | "unknown";
-
-/** The facts of one settled Turn on its binding that decide whether the binding's native position moves to it. */
-export interface TurnFacts {
-  /** The input was handed to the Harness (`run.dispatched` was committed). */
-  readonly dispatched: boolean;
-  /**
-   * How many public facts the Turn owed its binding when it started (the due set); the history a branch or an import
-   * started from counts as one while the binding's native session does not hold it.
-   */
-  readonly due: number;
-  /** The Turn sent those facts with its input instead of the input alone. */
-  readonly carried: boolean;
-  readonly input: InputOutcome;
-  /** The Turn sent again what an earlier Turn on the binding carried with an unknown outcome (`relayResendOf`). */
-  readonly resend: boolean;
-}
-
-/**
- * advance ⇔ dispatched ∧ (due = ∅ ∨ carried ∧ (input = recorded ∨ input = unknown ∧ resent once)). Without facts owed,
- * every dispatched Turn advances, one the native side never took included, so the next Turn goes unchanged. With facts
- * owed, a command or an input sent alone never advances, a carried Turn advances once recorded, and an unknown one only
- * after it was sent again once (which can deliver the facts twice; v13 checks instead). A not recorded one never advances.
- */
-export function advances(turn: TurnFacts): boolean {
-  if (!turn.dispatched) return false;
-  if (turn.due === 0) return true;
-  if (!turn.carried) return false;
-  switch (turn.input) {
-    case "recorded": return true;
-    case "unknown": return turn.resend;
-    case "not_recorded": return false;
-  }
-}
 
 /**
  * What became of a command Turn: executed (the native side ran it), not_recorded (it never reached the native side, or

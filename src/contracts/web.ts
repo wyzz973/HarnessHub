@@ -1,7 +1,7 @@
 import type { ProviderView } from "./provider.js";
 import type { HarnessManagementView, InstallationJobView, InstallationLog } from "./management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunId, SelectionRequest, SessionEvent, SessionOrigin, SessionSnapshot } from "./session.js";
-import type { DeliveryEvidence, DeliveryStatus, EvidenceClass, RelayAttention, RelayDecision, RelayInstallationNotice, RelayPacketId, RelayPacketKind, RelayPrefKey, RunRelay, SYNC_KINDS, Tier } from "./relay.js";
+import type { DeliveryEvidence, DeliveryStatus, EvidenceClass, RelayAttention, RelayDecision, RelayInstallationNotice, RelayPacketId, RelayPacketKind, RelayPrefKey, RunRelay, Tier } from "./relay.js";
 
 /**
  * A conversation's title as summaries and the sidebar give it, the same in the Gateway and the page: its first message,
@@ -301,6 +301,11 @@ export interface RunRelayView extends RunRelay { readonly delivery?: RelayDelive
  */
 export type WebRun = Omit<PublicRun, "relay" | "relayRequest"> & { readonly relay?: RunRelayView };
 
+/**
+ * What a binding is, in the words the page knows: `fresh`, its native session holds nothing of the conversation (no mark, nothing run on it);
+ * `synced`, it holds a part (a recorded packet, or Turns of its own); `pending`, a packet was sent to it and nothing confirmed it.
+ */
+export const SYNC_KINDS = ["fresh", "synced", "pending"] as const;
 /** One native binding of a Session as the details panel's "接续" row shows it (GET …/relay). */
 export interface RelayBindingView {
   readonly harnessId: string;
@@ -309,7 +314,7 @@ export interface RelayBindingView {
   readonly sync: typeof SYNC_KINDS[number];
   /** The 0-based index (in the Session's Runs) of the latest finished Run the binding's mark covers; null when it covers none. */
   readonly throughRun: number | null;
-  /** What the mark stands on (E1, E2, E3, legacy, origin, native, choice); null when there is no mark. */
+  /** The evidence the binding's latest recorded packet was decided by (E1 or E3); null when none was. */
   readonly evidence: EvidenceClass | null;
   /**
    * How many times this native session was cleared (a confirmed clear raises the epoch in place); a fresh native session that a clear

@@ -12,7 +12,7 @@ import { nativeConversationId, singleText, type BackendResult, type CleanupEvide
 import { SessionError, STREAM_WINDOW_MS, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { MAX_OUTPUT_BYTES } from "../../src/contexts/session/domain/state.js";
-import { initialBindingRelay } from "../../src/contexts/session/domain/relay/migrate.js";
+import { initialBindingRelay } from "../../src/contexts/session/domain/relay/delivery.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
