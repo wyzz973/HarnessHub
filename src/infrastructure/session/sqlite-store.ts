@@ -7,11 +7,11 @@ import {
   type CommandId, type EventDraft, type SessionCommit, type SessionEvent, type SessionId,
   type SessionMutation, type SessionSnapshot, type SessionStore,
 } from "../../contracts/session.js";
-import type { DeliveryRecord, HandoffRecord, RecoverRelay, RelayCommitResult, RelayIndexRow, RelayLogPort, RelayPacket, RelayPrefKey, RelayStorePort, RelayWriteResult, RelayWriteRows } from "../../contracts/relay.js";
+import type { DeliveryRecord, HandoffRecord, RecoverRelay, RelayIndexRow, RelayLogPort, RelayPacket, RelayPrefKey, RelayStorePort } from "../../contracts/relay.js";
 import { MAX_EVENT_BYTES, MAX_EVENT_LOG_BYTES, MAX_READ_BYTES, MAX_READ_ITEMS, MAX_SESSION_BYTES, MAX_SESSION_EVENTS, assertSessionTransition, parseSession, recoverSession, utf8Bytes } from "../../contexts/session/domain/state.js";
 import { migrateSession, type MigrationEvent } from "../../contexts/session/domain/relay/migrate.js";
 import { MAX_SNAPSHOT_CACHE_BYTES, SnapshotCache, type SnapshotCacheStats } from "./snapshot-cache.js";
-import { RELAY_DDL, repairRelayPrefs, checkPacketReferences, checkRelayRows, checkRelayWrite, deleteRelayRows, diagnosticOf, readDeliveries, readIndexRows, readPacket, readPacketBody, readPackets, relayRowCounts, writeBehindIndexes, writeDerivedRows, writeRelayRows, writeRelayWrite } from "./relay-tables.js";
+import { RELAY_DDL, repairRelayPrefs, checkPacketReferences, checkRelayRows, deleteRelayRows, readDeliveries, readIndexRows, readPacket, readPacketBody, readPackets, relayRowCounts, writeBehindIndexes, writeRelayRows } from "./relay-tables.js";
 import { handoffNamed, handoffRows, logHandoff, readPrefs, writePref } from "./relay-log.js";
 
 const activeRoots = new Set<string>();
@@ -19,8 +19,6 @@ const activeRoots = new Set<string>();
 const CURRENT_VERSION = 13;
 /** The relay part of recovery until G068 provides it: nothing to recover (no Turn writes relay rows before G068). */
 const NO_RELAY_RECOVERY: RecoverRelay = () => null;
-/** How many relayWrite failures the Store keeps for diagnostics. */
-const RELAY_DIAGNOSTICS = 32;
 interface FileIdentity { readonly dev: string; readonly ino: string }
 interface OwnerRow { readonly generation: number; readonly pid: number; readonly token: string; readonly active: boolean }
 function sameFile(left: FileIdentity, right: FileIdentity): boolean { return left.dev === right.dev && left.ino === right.ino; }
@@ -235,14 +233,12 @@ export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLo
   private failed: SessionError | null = null;
   /** The relay part of recovery, called per Session inside claimAndRecover's transaction (ADR-055 §9 S15). */
   private readonly recoverRelay: RecoverRelay;
-  /** The latest relayWrite failures, newest last (ADR-055 §6.4: a derived row that cannot be written waits for next time). */
-  private readonly relayFailures: string[] = [];
 
   /**
    * Opens `root` as its single owner: takes the OS lock (`owner.sqlite`), then in one transaction migrates a v1–v12 business
    * database to v13, advances the owner generation and recovers unfinished executions. A new database is made as v13. The
    * v12 → v13 step makes the relay tables, gives every native binding its relay state as its Session's events show it
-   * (migrateSession, ADR-055 §14.4) and writes a behind digest index row for every finished dispatched Run; any failure rolls
+   * (migrateSession, ADR-055 §14.4) and writes an index row for every finished dispatched Run; any failure rolls
    * the whole transaction back and leaves the database at its version, with the backup kept.
    *
    * Before such a migration, with the lock already held and before that transaction begins, the business database is copied
@@ -395,10 +391,9 @@ export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLo
     });
   }
   /**
-   * One aggregate transaction. With `relay` rows (v13) the same transaction writes them: authoritative rows are checked in
-   * full before anything is written, so an expected relay failure throws a RelayError (RELAY_PREPARE_FAILED) and writes
-   * nothing, never disabling the Store (INV-35); derived rows go into a SAVEPOINT and only report `behind` when they fail.
-   * Every packet the next relay state names must be kept for the Session (INVALID_DATA otherwise).
+   * One aggregate transaction. With `relay` rows (v13) the same transaction writes them: the rows are checked in full before
+   * anything is written, so an expected relay failure throws a RelayError (RELAY_PREPARE_FAILED) and writes nothing, never
+   * disabling the Store (INV-35). Every packet the next relay state names must be kept for the Session (INVALID_DATA otherwise).
    */
   transact(id: SessionId, expectedVersion: number, mutate: (current: SessionSnapshot) => SessionMutation): SessionCommit {
     this.assertOwner(); sessionId(id);
@@ -426,9 +421,8 @@ export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLo
       const updated = this.database.prepare("UPDATE sessions SET version=?,last_seq=?,snapshot=? WHERE id=? AND version=?").run(next.version, next.lastSeq, serialized, id, expectedVersion);
       if (updated.changes !== 1) throw new SessionError("VERSION_CONFLICT", "Session compare-and-swap failed");
       const logBytes = this.insertEvents(id, current.lastSeq, committed);
-      const derived: RelayCommitResult | undefined = mutation.relay === undefined ? undefined : writeDerivedRows(this.database, id, next, mutation.relay.derived);
       freeze(next); cached = { next, bytes: Buffer.byteLength(serialized, "utf8"), logBytes };
-      return { session: next, events: committed, ...(derived === undefined ? {} : { relay: derived }) };
+      return { session: next, events: committed };
     }, () => { if (cached !== null) this.cache.put(cached.next, cached.bytes, cached.logBytes); });
   }
   events(id: SessionId, afterSeq: number, limit?: number): readonly SessionEvent[] {
@@ -439,35 +433,6 @@ export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLo
   /** How the snapshot cache has been used (ADR-055 §11.2), for diagnostics and tests; reading it changes nothing. */
   cacheStats(): SnapshotCacheStats { return this.cache.stats(); }
 
-  relayWrite(id: SessionId, rows: RelayWriteRows): RelayWriteResult {
-    this.assertOwner(); sessionId(id);
-    if (rows === null || typeof rows !== "object" || Array.isArray(rows)) throw new SessionError("INVALID_INPUT", "relay rows must be an object");
-    let checked: ReturnType<typeof checkRelayWrite>;
-    try {
-      this.database.exec("BEGIN IMMEDIATE");
-      this.observeWriters();
-      checked = checkRelayWrite(this.database, id, this.session(id), rows);
-    } catch (error) { this.abandon(error); throw this.failed ?? error; }
-    try { writeRelayWrite(this.database, id, checked); }
-    catch (error) {
-      if (!sqliteError(error)) { this.abandon(error); throw this.failed ?? error; }
-      // A derived row that cannot be written now is left for the next time; the Store keeps serving (ADR-055 §6.4, F07).
-      const diagnostic = diagnosticOf(error);
-      this.abandon(null);
-      if (this.failed) throw this.failed;
-      this.relayFailures.push(diagnostic); if (this.relayFailures.length > RELAY_DIAGNOSTICS) this.relayFailures.shift();
-      return { written: false, diagnostic };
-    }
-    try {
-      this.assertPaths();
-      const metadata = this.readOwner();
-      if (metadata.generation !== this.ownerGeneration || metadata.token !== this.token) throw new SessionError("OWNER_LOST", "owner generation changed inside transaction");
-      this.database.exec("COMMIT");
-    } catch (error) { this.abandon(error); throw this.failed ?? error; }
-    return { written: true };
-  }
-  /** The latest relayWrite failures this Store kept (at most RELAY_DIAGNOSTICS), oldest first; reading them changes nothing. */
-  relayDiagnostics(): readonly string[] { return [...this.relayFailures]; }
   deleteSession(id: SessionId): void {
     this.assertOwner(); sessionId(id);
     this.transaction(() => {
@@ -526,14 +491,6 @@ export class SqliteSessionStore implements SessionStore, RelayStorePort, RelayLo
     if (failure !== null) throw failure;
   }
 
-  /** Rolls back a write of relayWrite: a SQLite `cause` or a failed rollback disables the Store, ownership loss as always. */
-  private abandon(cause: unknown): void {
-    try { if (this.database.isTransaction) this.database.exec("ROLLBACK"); }
-    catch (rollbackError) { this.failed = storageFailure(rollbackError); }
-    if (cause !== null && sqliteError(cause)) this.failed = storageFailure(cause);
-    if (cause instanceof SessionError && cause.code === "OWNER_LOST") this.failed = cause;
-    if (this.failed) this.cache.clear();
-  }
   private time(): number {
     try { return this.now().getTime(); } catch { throw new SessionError("INVALID_INPUT", "clock did not provide a valid Date"); }
   }

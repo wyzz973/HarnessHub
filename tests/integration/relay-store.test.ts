@@ -10,7 +10,7 @@ import { test, type TestContext } from "node:test";
 import { parseContentRef } from "../../src/contracts/content.js";
 import type { CleanupEvidence } from "../../src/contracts/control.js";
 import {
-  RELAY_PINS, RelayError, parseDeliveryRecord, parseRelayPacket, parseWorkspaceObservation, redactionTag,
+  RelayError, parseDeliveryRecord, parseRelayPacket,
   type BindingRelayState, type DeliveryRecord, type RecoverRelay, type RelayBehindIndex, type RelayPacket, type RelayRows,
 } from "../../src/contracts/relay.js";
 import { SessionError, commandId, messageId, runId, sessionId, type NativeSessionBinding, type PublicRun, type SessionId, type SessionSnapshot } from "../../src/contracts/session.js";
@@ -84,7 +84,7 @@ function packetOf(body: string, fold: readonly (number | Readonly<Record<string,
   return parseRelayPacket({ id: packetIdOf(body), kind: "packet", tier: "standard", complete: true,
     target: { harnessId: "alpha", controlId: "alpha-acp", model: null, nativeEpoch: 1 },
     source: { kind: "other", names: [{ harnessId: "bravo", model: null, runs: [0, 1] }] }, range: { fromSeq: 0, throughSeq: 8, fromRun: 0, throughRun: 1 }, basePacketId: null, supersedes: null,
-    policyVersion: "relay/1", language: "en", factsFingerprint: hex("f"), workspaceObservationSeq: null,
+    policyVersion: "relay/1", language: "en", factsFingerprint: hex("f"),
     inputs: { attachOverride: false, digestBehind: [], detailsMissing: [], noteIncluded: false, firstLineOmitted: null },
     redaction: { profile: "egress", count: 0, byClass: {}, overridden: 0, unscanned: 0 },
     body: { sha256: sha(body), bytes: Buffer.byteLength(body, "utf8"), estTokens: 12, estimator: "est/2", untrustedTokens: 0, userTokens: 4 },
@@ -142,12 +142,9 @@ function described(binding: NativeSessionBinding): string {
   const relay = binding.relay!;
   return [binding.harnessId, binding.status, "e" + relay.epoch, "f" + relay.floor, "m" + relay.mark, ...(relay.resendAll ? ["resendAll"] : []), ...(relay.pending === null ? [] : ["pending"])].join(" ");
 }
-/** The behind index rows of a Session, by Run. */
-function indexes(db: DatabaseSync, id: string): ReadonlyMap<string, RelayBehindIndex & { readonly status: string }> {
-  return new Map(db.prepare("SELECT run_id,status,policy_version,digest_json,index_json FROM relay_digests WHERE session_id=?").all(id).map(row => {
-    assert.equal(row.status, "behind"); assert.equal(row.policy_version, "relay/0"); assert.equal(row.digest_json, "{}");
-    return [String(row.run_id), JSON.parse(String(row.index_json)) as RelayBehindIndex & { readonly status: string }];
-  }));
+/** The index rows of a Session, by Run. */
+function indexes(db: DatabaseSync, id: string): ReadonlyMap<string, RelayBehindIndex> {
+  return new Map(db.prepare("SELECT run_id,index_json FROM relay_index WHERE session_id=?").all(id).map(row => [String(row.run_id), JSON.parse(String(row.index_json)) as RelayBehindIndex]));
 }
 /**
  * What a migrated binding is owed, computed here independently of the migration from its index rows: finished
@@ -310,7 +307,7 @@ test("a packet whose fold quotes an unfinished Turn or one accepted after the cu
   // Finished Turns accepted before the current input are quoted as they are.
   const good = packetOf("quotes finished Turns", [0, 1, { kind: "range", fromRun: 0, throughRun: 1, units: 2 }]);
   const committed = write(store, kept.id, { packets: [{ runId: kept.runs[2]!.id, packet: good, body: "quotes finished Turns" }], deliveries: [{ kind: "insert", record: deliveryOf(kept.runs[2]!.id, good) }] });
-  assert.equal(committed.relay?.derived, "none"); assert.equal(outcomeOf(store, kept.id, kept.runs[2]!.id), "in_flight");
+  assert.equal(committed.events.length, 1); assert.equal(outcomeOf(store, kept.id, kept.runs[2]!.id), "in_flight");
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -354,41 +351,10 @@ test("delivery rows move along the table: in flight to any decided outcome, a de
 // G066-C05: fault injection
 // ---------------------------------------------------------------------------------------------------------------------
 
-test("overlong pins, 20,000 files, a digest full of Chinese, identity clashes, a scanner error and same-value writes never disable the Store", t => {
+test("identity clashes and same-value writes never disable the Store, and a refused write leaves a bystander conversation working", t => {
   const { root, workspace, store } = open(t), target = seeded(store, workspace, "faults"), bystander = seeded(store, workspace, "bystander", { running: false });
   const three = target.runs[2]!;
   const bystanderStill = () => { const now = store.get(bystander.id); store.transact(bystander.id, now.version, state => ({ next: state, events: [{ type: "fixture.alive", data: {} }] })); };
-  const message = target.messages.find(row => row.runId === target.runs[0]!.id && row.role === "user")!;
-  const pin = (index: number, length = 4, offset = 0) => ({ kind: "add" as const, pin: { pinId: "pin-" + index, messageId: message.id, author: "user" as const, offset, length, quoteHmac: hex("d"), pinnedSeq: 2 } as never });
-  // Pins: too long, too many, more bytes than all may hold, outside the message.
-  assert.throws(() => write(store, target.id, { pins: [pin(1, 2049)] }), code("INVALID_DATA"));
-  assert.throws(() => write(store, target.id, { pins: [pin(1, 8, 4)] }), code("INVALID_INPUT"));
-  write(store, target.id, { pins: Array.from({ length: RELAY_PINS }, (_, index) => pin(index, 1)) });
-  assert.throws(() => write(store, target.id, { pins: [pin(99, 1)] }), code("RELAY_PIN_LIMIT"));
-  assert.throws(() => write(store, target.id, { pins: [pin(5, 1)] }), code("INVALID_INPUT"), "a pin identity taken");
-  bystanderStill();
-  // Derived rows that break their bounds, or whose producer throws (the scanner), roll back to their SAVEPOINT only.
-  const files = Array.from({ length: 20_000 }, (_, index) => ({ path: "src/file-" + index + ".ts", change: "modified", added: 1, removed: 0, credentialPath: false, lfs: false }));
-  const observation = { kind: "git", status: "complete", branch: "main", head: "a".repeat(40), fingerprint: hex("e"), durationMs: 75, files, counted: { total: 20_000, listed: 20_000 }, neutralized: [], attributesIncluded: false };
-  const chinese = "这是一段被写满的中文摘要内容。".repeat(1600);
-  const digest = (body: Readonly<Record<string, unknown>>, index: Readonly<Record<string, unknown>> = { runId: target.runs[0]!.id }) => ({ runId: target.runs[0]!.id, runIndex: 0, policyVersion: "relay/1" as const, status: "current" as const, secretSetHmac: "" as const, index, digest: body });
-  for (const [label, derived] of [
-    ["20,000 files", () => ({ workspace: [{ observedSeq: 2, runId: three.id, observation: observation as never }] })],
-    ["a digest full of Chinese", () => ({ digests: [digest({ user: { head: chinese } })] })],
-    ["an index full of Chinese", () => ({ digests: [digest({}, { line: chinese.slice(0, 800) })] })],
-    ["a scanner error", () => { throw new Error("injected scanner failure"); }],
-  ] as const) {
-    const committed = write(store, target.id, { derived });
-    assert.equal(committed.relay?.derived, "behind", label); assert.ok(committed.relay?.diagnostic, label);
-  }
-  // A statement of a derived row that SQLite refuses is contained the same way.
-  const db = raw(root);
-  db.exec("CREATE TRIGGER fixture_refuse_digest BEFORE INSERT ON relay_digests BEGIN SELECT RAISE(ABORT,'injected digest failure'); END");
-  assert.equal(write(store, target.id, { derived: () => ({ digests: [digest({ ok: true })] }) }).relay?.derived, "behind");
-  db.exec("DROP TRIGGER fixture_refuse_digest");
-  assert.equal(write(store, target.id, { derived: () => ({ digests: [digest({ ok: true })] }) }).relay?.derived, "written");
-  assert.equal(count(db, "relay_digests", "session_id='session-faults'"), 1); assert.equal(count(db, "relay_workspace"), 0);
-  db.close();
   // Identity clashes: one packet identity with two texts, a second delivery for one Turn.
   const packet = packetOf("first text", [0]);
   write(store, target.id, { packets: [{ runId: three.id, packet, body: "first text" }], deliveries: [{ kind: "insert", record: deliveryOf(three.id, packet) }] });
@@ -396,6 +362,7 @@ test("overlong pins, 20,000 files, a digest full of Chinese, identity clashes, a
   assert.throws(() => write(store, target.id, { packets: [{ runId: three.id, packet: clash, body: "other text" }] }), reason("render_mismatch"));
   assert.throws(() => write(store, target.id, { deliveries: [{ kind: "insert", record: deliveryOf(three.id, packet) }] }), reason("storage"));
   assert.throws(() => write(store, target.id, { packets: [{ runId: three.id, packet, body: "first text but longer" }] }), reason("render"), "a text that is not its manifest's");
+  bystanderStill();
   // The same text sent again by the same packet identity is kept once (ON CONFLICT DO NOTHING).
   write(store, target.id, { packets: [{ runId: three.id, packet, body: "first text" }] });
   // Same-value writes.
@@ -403,7 +370,7 @@ test("overlong pins, 20,000 files, a digest full of Chinese, identity clashes, a
   write(store, target.id, { deliveries: [{ kind: "outcome", runId: three.id, outcome: { kind: "unknown", reason: "owner_ended", decidedSeq: 9, decidedAt: 50 } }] });
   bystanderStill(); store.assertOwner();
   const check = raw(root);
-  try { assert.equal(count(check, "relay_packets", "session_id='session-faults'"), 1); assert.equal(count(check, "relay_bodies", "session_id='session-faults'"), 1); assert.equal(count(check, "relay_pins", "session_id='session-faults'"), RELAY_PINS); }
+  try { assert.equal(count(check, "relay_packets", "session_id='session-faults'"), 1); assert.equal(count(check, "relay_bodies", "session_id='session-faults'"), 1); }
   finally { check.close(); }
 });
 
@@ -415,45 +382,6 @@ test("a relay state that names a packet the conversation does not keep is refuse
   assert.throws(() => move(), code("INVALID_DATA"));
   move({ packets: [{ runId: state.runs[2]!.id, packet: missing, body: "never written" }], deliveries: [{ kind: "insert", record: deliveryOf(state.runs[2]!.id, missing) }] });
   assert.equal(store.get(state.id).nativeBindings?.[0]?.relay?.pending?.packetId, missing.id);
-});
-
-// ---------------------------------------------------------------------------------------------------------------------
-// G066-C07: relayWrite
-// ---------------------------------------------------------------------------------------------------------------------
-
-test("relayWrite keeps derived rows without moving the version, never overwrites what a transaction wrote, and a failure only waits for next time", t => {
-  const { root, workspace, store } = open(t), state = seeded(store, workspace, "background");
-  const three = state.runs[2]!, packet = packetOf("background packet", [0]);
-  write(store, state.id, { packets: [{ runId: three.id, packet, body: "background packet" }], deliveries: [{ kind: "insert", record: deliveryOf(three.id, packet) }] });
-  const before = store.get(state.id);
-  const rebuilt = (index: number, status: "current" | "behind", note: string) => ({ runId: before.runs[index]!.id, runIndex: index, policyVersion: "relay/1" as const, status, secretSetHmac: redactionTag("a1b2c3d4"), index: { note }, digest: { note } });
-  assert.deepEqual(store.relayWrite(state.id, { digests: [rebuilt(0, "current", "lazy one")] }), { written: true });
-  assert.equal(store.get(state.id).version, before.version, "no version moved");
-  // A transaction prepared on the version before relayWrite still commits: nothing conflicted.
-  const after = store.transact(state.id, before.version, now => ({ next: now, events: [{ type: "fixture.after", data: {} }], relay: { deliveries: [{ kind: "outcome", runId: three.id, outcome: decided("recorded", before.lastSeq + 1) }],
-    derived: () => ({ digests: [rebuilt(1, "current", "from run.ended")] }) } }));
-  assert.equal(after.session.version, before.version + 1); assert.equal(after.relay?.derived, "written");
-  // relayWrite does not overwrite the transaction's current row, nor the outcome.
-  assert.deepEqual(store.relayWrite(state.id, { digests: [rebuilt(1, "behind", "stale rebuild")] }), { written: true });
-  const db = raw(root);
-  try {
-    const notes = db.prepare("SELECT run_id,status,index_json FROM relay_digests WHERE session_id=? ORDER BY run_index").all(state.id).map(row => [row.status, JSON.parse(String(row.index_json)).note]);
-    assert.deepEqual(notes, [["current", "lazy one"], ["current", "from run.ended"]]);
-    const delivery = store.relayDeliveries(state.id).find(row => row.runId === three.id)!;
-    assert.equal(delivery.outcome.kind, "recorded");
-    // A newer policy's row replaces the Run's older ones in the same transaction.
-    store.relayWrite(state.id, { digests: [{ ...rebuilt(0, "current", "policy two"), policyVersion: "relay/2" }] });
-    assert.deepEqual(db.prepare("SELECT policy_version FROM relay_digests WHERE session_id=? AND run_id=?").all(state.id, before.runs[0]!.id).map(row => row.policy_version), ["relay/2"]);
-    // A statement SQLite refuses is a diagnostic; the Store goes on and the next attempt writes.
-    db.exec("CREATE TRIGGER fixture_refuse_rebuild BEFORE INSERT ON relay_digests BEGIN SELECT RAISE(ABORT,'injected rebuild failure'); END");
-    const failed = store.relayWrite(state.id, { digests: [rebuilt(0, "current", "after the failure")] });
-    assert.equal(failed.written, false); assert.match(store.relayDiagnostics().at(-1) ?? "", /constraint|abort|injected/iu);
-    store.assertOwner(); store.transact(state.id, store.get(state.id).version, now => ({ next: now, events: [{ type: "fixture.still", data: {} }] }));
-    db.exec("DROP TRIGGER fixture_refuse_rebuild");
-    assert.deepEqual(store.relayWrite(state.id, { digests: [rebuilt(0, "current", "after the failure")] }), { written: true });
-  } finally { db.close(); }
-  // Invalid rows are the caller's bug and throw.
-  assert.throws(() => store.relayWrite(state.id, { digests: [{ ...rebuilt(0, "current", "x"), runIndex: 7 }] }), code("INVALID_DATA"));
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -551,11 +479,10 @@ test("deleteSession removes a closed conversation with every relay row in one tr
   const { root, workspace, store } = open(t), gone = seeded(store, workspace, "gone"), other = seeded(store, workspace, "other");
   for (const state of [gone, other]) {
     const three = state.runs[2]!, packet = packetOf("rows of " + state.id, [0]);
-    write(store, state.id, { packets: [{ runId: three.id, packet, body: "rows of " + state.id }], deliveries: [{ kind: "insert", record: deliveryOf(three.id, packet) }],
-      pins: [{ kind: "add", pin: { pinId: "pin-1", messageId: state.messages[0]!.id, author: "user", offset: 0, length: 2, quoteHmac: hex("d"), pinnedSeq: 2 } as never }],
-      exclusions: [{ kind: "add", exclusion: { exclusionId: "exclusion-1", kind: "run", ref: state.runs[0]!.id, addedSeq: 2 } as never }],
-      derived: () => ({ digests: [{ runId: state.runs[0]!.id, runIndex: 0, policyVersion: "relay/1", status: "current", secretSetHmac: "", index: {}, digest: {} }],
-        workspace: [{ observedSeq: 2, runId: three.id, observation: { kind: "unavailable" as const, reason: "timeout" as const } }] }) });
+    write(store, state.id, { packets: [{ runId: three.id, packet, body: "rows of " + state.id }], deliveries: [{ kind: "insert", record: deliveryOf(three.id, packet) }] });
+    // The index rows a migration writes for the Runs it indexed.
+    const side = raw(root);
+    try { side.prepare("INSERT INTO relay_index(session_id,run_id,run_index,index_json) VALUES(?,?,0,'{}')").run(state.id, state.runs[0]!.id); } finally { side.close(); }
   }
   assert.throws(() => store.deleteSession(gone.id), code("SESSION_BUSY"), "an open conversation stays");
   const now = store.get(gone.id);
@@ -565,7 +492,7 @@ test("deleteSession removes a closed conversation with every relay row in one tr
   assert.throws(() => store.get(gone.id), code("SESSION_NOT_FOUND"));
   const db = raw(root);
   try {
-    for (const table of ["relay_bodies", "relay_packets", "relay_deliveries", "relay_digests", "relay_workspace", "relay_pins", "relay_exclusions", "events"]) {
+    for (const table of ["relay_bodies", "relay_packets", "relay_deliveries", "relay_index", "events"]) {
       assert.equal(count(db, table, "session_id='session-gone'"), 0, table); assert.ok(count(db, table, "session_id='session-other'") > 0, table + " of the other one");
     }
     assert.equal(count(db, "create_keys", "session_id='session-gone'"), 0); assert.equal(count(db, "sessions"), 1);
@@ -576,13 +503,11 @@ test("deleteSession removes a closed conversation with every relay row in one tr
 test("no relay row holds an object shaped like a ContentRef: relay rows keep positions, counts and fingerprints, never content references", t => {
   const { root, workspace, store } = open(t), state = seeded(store, workspace, "content");
   const three = state.runs[2]!, packet = packetOf("content-store.ts is named in the text, which is fine", [0, 1]);
-  write(store, state.id, { packets: [{ runId: three.id, packet, body: "content-store.ts is named in the text, which is fine" }], deliveries: [{ kind: "insert", record: deliveryOf(three.id, packet) }],
-    pins: [{ kind: "add", pin: { pinId: "pin-1", messageId: state.messages[0]!.id, author: "user", offset: 0, length: 2, quoteHmac: hex("d"), pinnedSeq: 2 } as never }],
-    derived: () => ({ digests: [{ runId: state.runs[0]!.id, runIndex: 0, policyVersion: "relay/1", status: "current", secretSetHmac: "", index: { runId: state.runs[0]!.id, files: 2 }, digest: { user: { attachments: [{ name: "a.png", mediaType: "image/png", bytes: 8 }] } } }],
-      workspace: [{ observedSeq: 2, runId: three.id, observation: parseWorkspaceObservation({ kind: "tree", status: "complete", fingerprint: hex("e"), durationMs: 3, files: [{ path: "src/a.ts", size: 3, mtimeMs: 1 }], scanned: 1, counted: 1 }) }] }) });
+  write(store, state.id, { packets: [{ runId: three.id, packet, body: "content-store.ts is named in the text, which is fine" }], deliveries: [{ kind: "insert", record: deliveryOf(three.id, packet) }] });
   store.logHandoff("anthropic");
   const db = raw(root);
   try {
+    db.prepare("INSERT INTO relay_index(session_id,run_id,run_index,index_json) VALUES(?,?,0,?)").run(state.id, state.runs[0]!.id, JSON.stringify({ runId: state.runs[0]!.id, index: 0, seq: 3, executedOn: { harnessId: "alpha", controlId: "alpha-acp", nativeEpoch: 1 }, dispatched: true, status: "completed", input: "recorded", commandEffect: null }));
     let objects = 0;
     const visit = (value: unknown, where: string): void => {
       if (Array.isArray(value)) { value.forEach(item => visit(item, where)); return; }
@@ -593,7 +518,7 @@ test("no relay row holds an object shaped like a ContentRef: relay rows keep pos
       assert.throws(() => parseContentRef(value), SessionError, where);
       for (const item of Object.values(value)) visit(item, where);
     };
-    for (const [table, columns] of [["relay_packets", ["manifest_json"]], ["relay_digests", ["index_json", "digest_json"]], ["relay_workspace", ["files_json"]]] as const)
+    for (const [table, columns] of [["relay_packets", ["manifest_json"]], ["relay_index", ["index_json"]]] as const)
       for (const row of db.prepare("SELECT " + columns.join(",") + " FROM " + table).all()) for (const column of columns) visit(JSON.parse(String(row[column])), table + "." + column);
     assert.ok(objects >= 10, "the scan read the rows: " + objects + " objects");
   } finally { db.close(); }

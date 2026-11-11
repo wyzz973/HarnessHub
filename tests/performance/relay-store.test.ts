@@ -28,7 +28,7 @@ function packetFor(seed: string, harnessId: string, controlId: string): { readon
   const body = "packet " + seed, id = "relay-" + Array.from(createHash("sha256").update(seed).digest().subarray(0, 20), byte => CROCKFORD[byte % 32]).join("");
   return { body, packet: parseRelayPacket({ id, kind: "packet", tier: "standard", complete: true, target: { harnessId, controlId, model: null, nativeEpoch: 1 },
     source: { kind: "other", names: [] }, range: { fromSeq: 0, throughSeq: 1, fromRun: 0, throughRun: 0 }, basePacketId: null, supersedes: null, policyVersion: "relay/1", language: "en",
-    factsFingerprint: hex("f"), workspaceObservationSeq: null, inputs: { attachOverride: false, digestBehind: [], detailsMissing: [], noteIncluded: false, firstLineOmitted: null },
+    factsFingerprint: hex("f"), inputs: { attachOverride: false, digestBehind: [], detailsMissing: [], noteIncluded: false, firstLineOmitted: null },
     redaction: { profile: "egress", count: 0, byClass: {}, overridden: 0, unscanned: 0 },
     body: { sha256: createHash("sha256").update(body).digest("hex"), bytes: Buffer.byteLength(body), estTokens: 3, estimator: "est/2", untrustedTokens: 0, userTokens: 0 },
     budget: { capTokens: 8000, userCap: 2500, untrustedCap: 3000, window: 128_000, fixedPrefix: 0, windowSource: "assumed", clampedBy: [] }, sections: [], fold: [], omissions: [], userEdits: [] }) };

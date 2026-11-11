@@ -1,7 +1,7 @@
 import type { ProviderTarget } from "./provider.js";
 import type { BackendResult, CleanupEvidence, ControlEvent, HarnessControl, NativeOptions, NativePlanEntry, NativeUsage } from "./control.js";
 import type { ContentPort, ContentRef } from "./content.js";
-import type { BindingRelayState, RelayCommitResult, RelayRows, RunRelay, RunRelayRequest, SwitchMode, SwitchTiming } from "./relay.js";
+import type { BindingRelayState, RelayRows, RunRelay, RunRelayRequest, SwitchMode, SwitchTiming } from "./relay.js";
 
 declare const sessionBrand: unique symbol;
 declare const runBrand: unique symbol;
@@ -319,7 +319,7 @@ export interface SessionEvent extends EventDraft {
 /** A transaction's result: the next snapshot, its events and (v13) the relay rows to write with them. */
 export interface SessionMutation { readonly next: SessionSnapshot; readonly events: readonly EventDraft[]; readonly relay?: RelayRows }
 /** A committed transaction; `relay` says how the relay rows it was given went. */
-export interface SessionCommit { readonly session: SessionSnapshot; readonly events: readonly SessionEvent[]; readonly relay?: RelayCommitResult }
+export interface SessionCommit { readonly session: SessionSnapshot; readonly events: readonly SessionEvent[] }
 /** Aggregate-scoped synchronous transaction boundary. Callbacks cannot return promises. */
 export interface SessionStore {
   readonly ownerGeneration: number;

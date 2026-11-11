@@ -333,7 +333,7 @@ export function packetManifest(input: { readonly state: SessionSnapshot; readonl
     id: relayPacketId(record.packetId), kind: record.kind, tier: "standard", complete: record.complete,
     target: { harnessId, controlId: run.selection.controlId, model: run.selection.nativeModel ?? null, nativeEpoch: input.relay.epoch },
     source: { kind, names }, range: input.range, basePacketId: null, supersedes: input.supersedes, policyVersion: MANIFEST_POLICY, language: record.language,
-    factsFingerprint: sha(JSON.stringify({ runs: input.runs, range: input.range })), workspaceObservationSeq: null,
+    factsFingerprint: sha(JSON.stringify({ runs: input.runs, range: input.range })),
     inputs: { attachOverride: input.attachOverride, digestBehind: [], detailsMissing: [], noteIncluded: false, firstLineOmitted: input.firstLineOmitted ? "slash" : null },
     redaction: { profile: "egress", count: record.redactions, byClass: {}, overridden: 0, unscanned: 0 },
     body: { sha256: sha(input.body), bytes: Buffer.byteLength(input.body, "utf8"), estTokens: record.tokens, estimator: "est/2", untrustedTokens: 0, userTokens: 0 },

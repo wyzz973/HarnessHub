@@ -563,7 +563,7 @@ function manifest(seed: string, harnessId: string, extra: { readonly kind?: "pac
   return parseRelayPacket({ id: packetIdOf(seed), kind: extra.kind ?? "packet", tier: extra.tier ?? "standard", complete: true,
     target: { harnessId, controlId: harnessId + "-acp", model: extra.model ?? null, nativeEpoch: 1 },
     source: { kind: "other", names: [{ harnessId: "bravo", model: null, runs: [0, 0] }] }, range: { fromSeq: 3, throughSeq: 3, fromRun: 0, throughRun: 0 }, basePacketId: null, supersedes: null,
-    policyVersion: "relay/1", language: "en", factsFingerprint: hex("f"), workspaceObservationSeq: null,
+    policyVersion: "relay/1", language: "en", factsFingerprint: hex("f"),
     inputs: { attachOverride: false, digestBehind: [], detailsMissing: [], noteIncluded: false, firstLineOmitted: null },
     redaction: { profile: "egress", count: extra.redactions ?? 0, byClass: {}, overridden: 0, unscanned: 0 },
     body: { sha256: digestOf(body), bytes: Buffer.byteLength(body, "utf8"), estTokens: 120 + seed.length, estimator: "est/2", untrustedTokens: 0, userTokens: 4 },
