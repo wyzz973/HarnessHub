@@ -100,15 +100,34 @@ RUN HH_REAL_TABLE=1 HH_REAL_HARNESSES=claude,codex HH_REAL_MODEL_CLAUDE=haiku HH
 
 ## 结果
 
-待真机运行后填写：提交号与日期、两家的版本与模型、证据文件、每格结果（表由脚本打印）、费用、没跑通的格和原因。
+**2026-11-11 真机**。真实的 Claude Code（模型 haiku）与 Codex（默认模型，`reasoning_effort` low），本机原安装与登录。每格一遍，两个方向各一格。证据在 `~/.cache/harnesshub-acceptance/evidence/2026-11-11-ruler/`（`ruler-baseline.json`、`ruler-table.json`）。每趟前后配置守护一致。
 
-| 任务 | 方式 | 路线 | 结果 | 问题 | 第 2 步工具 | reads | reread | tests | explore | 交接单 token |
-|---|---|---|---|---|---|---|---|---|---|---|
-| | | | | | | | | | | |
+基线（代码 `1b8ad08`，没有桌子，36 条真实提示）：
+
+| 任务 | 全程一家 | 换家（交接单） | 换家且不给交接单 |
+|---|---|---|---|
+| cart：按用户定的规矩接着修 | 2/2 | 2/2 | 0/2（改了测试或汇率文件） |
+| booking：按上一家的结论修根因 | 2/2 | 2/2 | 2/2 |
+| worker：问完整输出里的细节 | 2/2 | 0/2（答不上） | 0/2 |
+
+带桌子（代码 `895f210`，`HH_REAL_TABLE=1`，工具经管家装进两家的用户级配置，只跑换家，12 条真实提示）：
+
+| 任务 | 路线 | 结果 | 第 2 步调用 Hub 工具 | 交接单 token |
+|---|---|---|---|---|
+| cart | claude>codex | 通过 | 0 | 1329 |
+| cart | codex>claude | 通过 | 0 | 1890 |
+| booking | claude>codex | 通过 | 0 | 1491 |
+| booking | codex>claude | 通过 | 0 | 1455 |
+| worker | claude>codex | 通过 | 1（search） | 900 |
+| worker | codex>claude | 通过 | 2（search、read_turn） | 870 |
+
+- worker 从 0/2 变成 2/2：两家都真的调用了 Hub 的工具，读回上一家那条命令的完整输出，答对了。工具条目的加载、会话标识的转发、模型主动调用，在两家上都第一次得到真机证据。
+- cart 与 booking 里新那家没有调用工具（交接单够用），结果与基线相同。交接单因多了“怎么取更多”一段，大了约 150–200 token。
+- 换家的额外成本（基线，booking 第 2 步中位数）：工具调用 2 → 3.5 次，重读文件 0 → 5 个，耗时约 14 → 16 秒；不给交接单是 5.5 次、5.5 个、约 23 秒。
 
 ## 没验证与已知局限
 
-- 真机没跑；只有 Claude Code 与 Codex；每格一遍，不是统计（`HH_REAL_REPEAT`）。
+- 只有 Claude Code 与 Codex；每格一遍，不是统计（`HH_REAL_REPEAT`）；带桌子时没有重跑“全程一家”和“不给交接单”。
 - 带桌子的真机路径（`HH_REAL_TABLE=1` 不加 `HH_REAL_DRY`）没有对真实的 Harness 跑过：网页服务的起停与桌子的接线用夹具进程（一个会用环境变量读回对话的 ACP 夹具）测过，工具条目在 Claude Code 与 Codex 里的加载、环境变量的转发、模型会不会调用，都要等第一遍真机。每格要多起一次网页服务（含一次发现扫描和各家的版本探测，与 4317 启动时做的相同），整趟会慢一些。
 - 三个任务小，A、B 对强一点的模型可能太容易，地板与接力就拉不开；到时按结果调任务，不调判分。
 - Hub 起的原生会话留在各家自己的存储里（工作目录都在 `hh-ruler-*` 下），脚本不去动它们。清 Claude Code 的：`rm -rf ~/.claude/projects/*hh-ruler-*`；Codex 的线程自己在 Codex 里删。
