@@ -13,7 +13,7 @@ import { runId, type PublicRun } from "../../src/contracts/session.js";
 import { endLines, fenced, readRelayPrompt, TITLE } from "../fixtures/relay-packet.js";
 import { conversation, longConversation, names, s1, s1Delta, s3, tool, type RunSpec, type Scenario } from "../fixtures/relay-scenarios.js";
 
-// The slim relay packet (relay/1-mvp.5, ADR-055 §5 as cut down on 2026-11-11) rendered from public snapshots: facts only, two
+// The slim relay packet (relay/1-mvp.6, ADR-055 §5 as cut down on 2026-11-11) rendered from public snapshots: facts only, two
 // tiers, whole items or none, a ledger that adds up, and never a failure. Pure domain code; the formal Runtime's use of it is
 // in tests/integration/relay-mvp.test.ts.
 
@@ -857,4 +857,98 @@ test("G070-slim ordinary development output and commands stay whole; credential 
   const output = ["api:test: PASS src/routes/token.test.ts", "auth: passed", "token: expired at 2026-11-08T10:00:00Z"].join("\n") + "\n";
   const scenario = conversation([{ input: "跑测试", harnessId: "claude", reply: "有一个没过。", tools: [tool("x1", "pnpm -r test", "execute", { exitCode: 1, status: "failed" })] }, { input: "继续", harnessId: "codex" }], [], { "run-1/x1": { input: "pnpm -r test", output } });
   assert.ok(renderRelay(input(scenario)).text.includes("  api:test: PASS src/routes/token.test.ts\n  auth: passed\n  token: expired at 2026-11-08T10:00:00Z\n"));
+});
+
+
+// ---------------------------------------------------------------------------------------------------------------------
+// A target that has the Hub's tools (docs/decisions/LOG.md, 2026-11-11): told how to read the rest back, and which outputs are there
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The sentences a packet says only to a target that has the Hub's tools, and what each language's says of turns the tools do not keep. */
+const PULL = { zh: /^这份交接单是摘要，不是完整的对话。HarnessHub 里保存着完整的对话，包括每一轮的工具调用和每条命令的完整输出，可以用工具 hub_turns、hub_read_turn、hub_search 读回（这里的第 N 轮就是那里的第 N 轮）。用户问到的细节、或你需要的事实不在这份交接单里时，先用这些工具查，查不到再说不知道；也不要为了拿回输出而重跑有副作用的命令。$/mu,
+  en: /^This record is a digest, not the whole conversation\. HarnessHub keeps the whole of it, with every turn's tool calls and the full output of every command; you can read it back with the tools hub_turns, hub_read_turn and hub_search \(turn N here is turn N there\)\. When the user asks about a detail, or you need a fact, that is not in this record, look it up with those tools before you say you do not know, and do not re-run a command that has side effects just to see its output again\.$/mu } as const;
+
+test("G070-slim a target without the Hub's tools gets the packet it always got, byte for byte; with them, the packet also says how to read the rest back, in both languages", async () => {
+  for (const language of ["zh", "en"] as const) for (const [scenario, sources] of [[s1(language), s1(language).sources], [s1Delta(language), s1Delta(language).sources.slice(2)], [s3(language), s3(language).sources]] as const) {
+    const plain = renderRelay(input(scenario, { sources })), off = renderRelay(input(scenario, { sources, hubTools: false })), on = renderRelay(input(scenario, { sources, hubTools: true }));
+    assert.equal(off.text, plain.text, "false is the same as not said"); assert.deepEqual(off.record, plain.record); assert.equal(plain.record.hubTools, undefined, "nothing is recorded of tools that were not offered");
+    assert.doesNotMatch(plain.text, /hub_turns|not attached|未附/u);
+    // With the tools: the same packet with the sentences in front of the last one, and the record says so.
+    const lines = on.text.split("\n"), at = lines.findIndex(line => PULL[language].test(line));
+    assert.ok(at > 0, "the sentences are there once"); assert.equal(lines.filter(line => PULL[language].test(line)).length, 1);
+    assert.ok(lines[at + 1]!.startsWith(language === "zh" ? "只有最后“以下是用户现在的指令（原话）”" : "Only the text after the last line"), "the last statement stays last");
+    assert.equal(on.record.hubTools, true); assert.equal(on.record.policyVersion, RELAY_POLICY_VERSION); assert.notEqual(on.packetId, plain.packetId); assert.notEqual(on.record.sha256, plain.record.sha256);
+    assert.deepEqual(violations(on.text, scenario.current.input), [], "frame lines, fences and slots as ever"); assert.doesNotMatch(on.text, JUDGMENTS, "still facts and instructions to read them, no verdict of the Hub's");
+    assert.equal(readRelayPrompt(on.text).currentInput.text, scenario.current.input); assert.deepEqual(readRelayPrompt(on.text).history, readRelayPrompt(plain.text).history, "the same turns, the same words");
+    assert.ok(on.record.tokens <= on.record.budget.cap, "within the budget it was folded to");
+    // The facts it carries are the same ones: the notes and the sentences change no count.
+    assert.deepEqual(on.record.items, plain.record.items); assert.deepEqual(on.record.turns, plain.record.turns);
+  }
+});
+
+test("G070-slim S1 with the Hub's tools renders byte for byte as its golden packet, in Chinese and in English", async () => {
+  for (const language of ["zh", "en"] as const) {
+    const rendered = renderRelay(input(s1(language), { hubTools: true }));
+    await golden("s1-packet-tools." + language + ".md", rendered.text);
+    assert.equal(rendered.record.tier, "full"); assert.equal(rendered.record.hubTools, true);
+    // npm test, which succeeded in turn 1, is a command whose output the packet does not carry; the one that failed carries its tail and says nothing more.
+    assert.match(rendered.text, language === "zh" ? /^- 执行 `npm test` → 退出码 0 · 输出共 2 行，未附$/mu : /^- Ran `npm test` → exit code 0 · output: 2 lines, not attached$/mu);
+    assert.match(rendered.text, language === "zh" ? /^- 执行 `npm test` → 退出码 1\n {2}Claude Code 记录的输出（共 5 行）：$/mu : /^- Ran `npm test` → exit code 1\n {2}Output recorded by Claude Code \(5 lines\):$/mu);
+  }
+});
+
+test("G070-slim with the Hub's tools a command whose output the packet does not carry says how long it is; one whose tail is carried, one kept back by rule, and one with nothing recorded say nothing", () => {
+  const rows = (count: number) => Array.from({ length: count }, (_, index) => "row " + (index + 1)).join("\n") + "\n";
+  const specs = (language: "zh" | "en"): RunSpec[] => [{ input: language === "zh" ? "跑一遍" : "run the jobs", harnessId: "claude", reply: language === "zh" ? "好了。" : "done", tools: [
+    tool("a", "node scripts/worker.js", "execute", { exitCode: 0 }), tool("b", "make", "execute", { exitCode: 2, status: "failed" }), tool("c", "ls", "execute", { exitCode: 0 }), tool("d", "cat .env", "execute", { exitCode: 0 }),
+    tool("e", "true", "execute", { exitCode: 0 }), tool("f", "yes", "execute", { exitCode: 0 }), tool("g", "pwd", "execute", { exitCode: 0 }), tool("h", "date", "execute")] },
+    { input: language === "zh" ? "继续" : "go on", harnessId: "codex" }];
+  const details: Record<string, RelayToolDetail> = { "run-1/a": { input: "node scripts/worker.js", output: rows(100) }, "run-1/b": { input: "make", output: rows(30) }, "run-1/c": { input: "ls", output: "one\n" },
+    "run-1/d": { input: "cat .env", output: "A=1\n" }, "run-1/e": { input: "true", output: "\n  \n" }, "run-1/f": { input: "yes", output: rows(2000), truncated: true }, "run-1/h": { input: "date", output: rows(3) } };
+  const en = renderRelay(input(conversation(specs("en"), [], details), { hubTools: true })).text;
+  for (const line of ["- Ran `node scripts/worker.js` → exit code 0 · output: 100 lines, not attached", "- Ran `ls` → exit code 0 · output: 1 line, not attached", "- Ran `yes` → exit code 0 · output: at least 2000 lines, not attached",
+    "- Ran `date` (no exit code reported) · output: 3 lines, not attached"]) assert.ok(en.split("\n").includes(line), line + "\n" + en);
+  // The failed command carries its tail (and says its own size); the credential file's output is not the tools' to give either; nothing was recorded for the others.
+  for (const line of ["- Ran `make` → exit code 2", "- Ran `cat .env` → exit code 0", "- Ran `true` → exit code 0", "- Ran `pwd` → exit code 0"]) assert.ok(en.split("\n").includes(line), line);
+  assert.match(en, /^ {2}Output recorded by Claude Code \(last 20 of 30 lines\):$/mu); assert.equal(en.split("\n").filter(line => /not attached/u.test(line)).length, 4);
+  const zh = renderRelay(input(conversation(specs("zh"), [], details), { hubTools: true })).text;
+  for (const line of ["- 执行 `node scripts/worker.js` → 退出码 0 · 输出共 100 行，未附", "- 执行 `ls` → 退出码 0 · 输出共 1 行，未附", "- 执行 `yes` → 退出码 0 · 输出至少 2000 行，未附", "- 执行 `date`（没有报告退出码）· 输出共 3 行，未附"]) assert.ok(zh.split("\n").includes(line), line + "\n" + zh);
+  // The same conversation to a target without the tools: not a word of it.
+  assert.doesNotMatch(renderRelay(input(conversation(specs("en"), [], details))).text, /not attached|hub_turns/u);
+});
+
+test("G070-slim a command's note comes and goes with its output: said while the output tail is left out, gone when it is carried, and the packet stays within its budget either way", () => {
+  for (const language of ["zh", "en"] as const) {
+    const scenario = s3(language), seen = new Set<string>();
+    for (let cap = 700; cap <= 2600; cap += 25) {
+      const rendered = renderRelay(input(scenario, { hubTools: true, budget: budgetOf(cap) })), record = rendered.record, again = renderRelay(input(scenario, { hubTools: true, budget: budgetOf(cap) }));
+      const lines = rendered.text.split("\n"), failed = lines.findIndex(line => /^- (?:Ran|执行) `node scripts\/check-version\.js` → (?:exit code|退出码) 1/u.test(line));
+      assert.equal(again.text, rendered.text, "the same bytes"); assert.deepEqual(violations(rendered.text, scenario.current.input), [], language + " " + cap);
+      for (const kind of ITEM_KINDS) assert.equal(record.items[kind].included + record.items[kind].omitted, record.items[kind].total, kind);
+      if (record.tokens > cap) { assert.equal(record.items.userMessages.included, 0, "only the least packet is ever over its budget: " + cap); continue; }
+      if (failed < 0) continue;
+      const carried = /^ {2}(?:Output recorded by|.* 记录的输出)/u.test(lines[failed + 1] ?? "");
+      assert.equal(/ · (?:output: 1 line, not attached|输出共 1 行，未附)$/u.test(lines[failed]!), !carried, language + " " + cap + " " + lines[failed]);
+      assert.equal(record.items.outputs.included === 1, carried, "the ledger agrees"); seen.add(carried ? "carried" : "left out");
+    }
+    assert.deepEqual([...seen].sort(), ["carried", "left out"], language + ": the budgets tried cover both cases");
+  }
+});
+
+test("G070-slim the sentences about the Hub's tools are said only when the tools hold something of what the packet carries: not for nothing owed, not for a branch's or an import's own history alone, and a mix says which is which", () => {
+  const base = conversation([{ input: "first", harnessId: "claude", reply: "ok" }, { input: "here", harnessId: "codex" }]);
+  const history = [{ role: "user" as const, text: "branch one", status: "completed" as const }, { role: "assistant" as const, text: "answer one", status: "completed" as const, harnessId: "claude" }];
+  const state = { ...base.state, origin: { kind: "fork" as const, sessionId: base.state.id, throughRunId: runId("run-9"), history } };
+  // Nothing owed.
+  const none = renderRelay(input(base, { sources: [], hubTools: true })); assert.doesNotMatch(none.text, /hub_turns/u); assert.equal(none.record.hubTools, undefined);
+  // Only the history the Session started from: the tools do not keep it.
+  const only = renderRelay({ state, current: base.current, sources: [], origin: true, names, hubTools: true }); assert.doesNotMatch(only.text, /hub_turns/u); assert.equal(only.record.hubTools, undefined);
+  // Both: the sentences say that a source turn is not kept there.
+  const mixed = renderRelay({ state, current: base.current, sources: base.sources, origin: true, names, hubTools: true });
+  assert.match(mixed.text, /\(turn N here is turn N there; a "source turn" is not kept there\)/u); assert.equal(mixed.record.hubTools, true);
+  const zh = conversation([{ input: "第一", harnessId: "claude", reply: "好" }, { input: "到这里", harnessId: "codex" }]);
+  assert.match(renderRelay({ state: { ...zh.state, origin: { ...state.origin, sessionId: zh.state.id } }, current: zh.current, sources: zh.sources, origin: true, names, hubTools: true }).text, /（这里的第 N 轮就是那里的第 N 轮；“来源第 N 轮”不在那里）/u);
+  // A packet whose record is all left out (the least budget) still says it: that is when the tools are most of what the target has.
+  const least = renderRelay(input(s3("en"), { hubTools: true, budget: budgetOf(0) }));
+  assert.match(least.text, PULL.en); assert.equal(least.record.items.userMessages.included, 0);
 });

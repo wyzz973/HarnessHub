@@ -437,17 +437,19 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const capabilityChanges = new CapabilityChanges({ root: realpathSync(options.root), generation: app.store.ownerGeneration, assertOwner: () => app.store.assertOwner(),
     environment: app.factory.discoveryEnvironment, homes: homeForms(), ...(options.github === undefined ? {} : { github: options.github }),
     ...(options.hubTools === undefined ? {} : { hubTools: options.hubTools }), ...(options.claude === undefined ? {} : { claude: options.claude }) });
-  /**
-   * The installed Harnesses a capability read or change covers: each one's official installation the Gateway uses, as a
-   * scan at this request finds them (these reads and checks are the user's own requests; ADR-050 leaves them as they were).
-   */
-  const installedHarnesses = async (): Promise<readonly InstalledHarness[]> => (await rescan()).flatMap(harness => {
+  /** The installed Harnesses of a scan's views: each one's official installation the Gateway uses. */
+  const installedIn = (views: readonly HarnessView[]): readonly InstalledHarness[] => views.flatMap(harness => {
     const products = harness.installations.filter(item => item.role === "product"), chosen = products.find(item => item.active) ?? products[0];
     if (!chosen) return [];
     // The channel record tells OpenCode 1 from OpenCode 2 (package, formula, tap); the view itself carries no such record.
     const channel = installationChannels.get(chosen.ref);
     return [{ harnessId: harness.id, name: harness.name, version: chosen.version, ...(channel === undefined ? {} : { channel }) }];
   });
+  /**
+   * The installed Harnesses a capability read or change covers, as a scan at this request finds them (these reads and checks are
+   * the user's own requests; ADR-050 leaves them as they were).
+   */
+  const installedHarnesses = async (): Promise<readonly InstalledHarness[]> => installedIn(await rescan());
   /** Answers with a capability value only when it names no path by its absolute home form (ADR-044's privacy guard). */
   const privateJson = (response: ServerResponse, value: unknown) => {
     if (homePathsIn(value, homeForms(), 1 << 20).length) throw new HttpError(500, "PRIVACY_GUARD", "a capability answer named a path by its absolute home form");
@@ -1146,7 +1148,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   server.headersTimeout = 10000; server.requestTimeout = 15000; server.keepAliveTimeout = 5000; server.maxConnections = 32;
   const close = (): Promise<void> => {
     if (closing) return closing;
-    stopping = true; table.listening(null);
+    stopping = true; table.listening(null); table.toolsIn(null);
     streams.close(); attention.close();
     closing = (async () => {
       const listener = new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done()));
@@ -1181,6 +1183,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("Local listener unavailable");
     host = "127.0.0.1:" + address.port; origin = "http://" + host;
+    // A native process this Hub starts is told it has the Hub's tools only when its Harness's configuration holds the entry. Answered from the
+    // last completed scan, not a new one: starting a process must not start a discovery.
+    table.toolsIn(harnessId => capabilityChanges.hubToolsInstalled(harnessId, installedIn(harnesses)));
     table.listening(origin);
     return { url: origin + "/#token=" + bootstrap, close };
   } catch (error) {

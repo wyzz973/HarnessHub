@@ -8,9 +8,12 @@ import { promisify } from "node:util";
 import type { PermissionRequest } from "../../src/contracts/session.js";
 import { clean, diffTrees, disturbed, hashTree, parseTap, runTests } from "../real/ruler/judge.js";
 import { oneTimeAllow, planCells, promptCount } from "../real/ruler/run.js";
-import { renderTable, outcome, type CellRow, type StepRow } from "../real/ruler/table.js";
+import { WatchedMount } from "../real/ruler/mount.js";
+import { hubCell, renderTable, outcome, type CellRow, type StepRow, type StepTable } from "../real/ruler/table.js";
 import { CART_FIRST, CART_REST, CART_SECOND, TASKS, WORKER_FIRST, applyOverlay, askedJob, classifyAnswer, fixture, makeJobs, workerSecond, type Built, type TaskDef, type TaskId } from "../real/ruler/tasks.js";
-import { classifyTool, filesNamed, summarizeTools, type ToolRecord } from "../real/ruler/tools.js";
+import { classifyTool, filesNamed, hubCalls, hubToolOf, summarizeTools, type ToolRecord } from "../real/ruler/tools.js";
+import { sessionId } from "../../src/contracts/session.js";
+import { TABLE_ENV } from "../../src/contracts/table.js";
 
 // The relay ruler's parts that need no Harness (tests/real/relay-task.real.ts): the fixture repos, the judges that read them,
 // the tool counts and the table. The repos are built and their tests run for real, with Node's own runner, in temporary
@@ -243,7 +246,7 @@ test("the plan: three tasks in three ways of running, both directions, is 18 cel
 test("the table has a line per cell and one per task and way of running", () => {
   const tools = (total: number, read: number, reread: number): StepRow["tools"] => ({ total, byClass: { read, search: 0, edit: 1, run: total - read - 1, other: 0 }, testRuns: 2, explore: total - 1, filesRead: Array.from({ length: read }, (_, i) => "f" + i), filesEdited: ["f0"], reread: Array.from({ length: reread }, (_, i) => "f" + i) });
   const step = (n: 1 | 2, harness: string, total: number, handoff: number | null): StepRow => ({ n, harness, status: "completed", error: null, timedOut: false, wallMs: 41_000, prepareMs: 500, turnMs: 40_000, tokens: 212_000, usage: null, tools: tools(total, 3, 2),
-    handoff: handoff === null ? null : { kind: "packet", tokens: handoff, tier: "full", complete: true, turns: { total: 1, shown: 1, absent: 0 }, items: {}, carriedRuns: 1 }, approvals: { allowed: 2, questions: 0, unanswered: 0 }, reply: "ok", relay: null });
+    handoff: handoff === null ? null : { kind: "packet", tokens: handoff, tier: "full", complete: true, turns: { total: 1, shown: 1, absent: 0 }, items: {}, carriedRuns: 1 }, approvals: { allowed: 2, questions: 0, unanswered: 0 }, reply: "ok", relay: null, table: null });
   const row = (mode: CellRow["mode"], problems: readonly string[], total: number, handoff: number | null, extra: Partial<CellRow> = {}): CellRow => ({ task: "cart", mode, route: mode === "solo" ? "claude" : "claude>codex", repeat: 1, valid: true, invalid: null, problems, firstChecks: {}, checks: {},
     steps: [step(1, "claude", 8, null), step(2, mode === "solo" ? "claude" : "codex", total, handoff)], error: null, ms: 90_000, ...extra });
   const rows = [row("solo", [], 6, null), row("relay", [], 8, 612), row("floor", ["rates-edited"], 12, null), row("floor", [], 0, null, { valid: false, invalid: "step 1 did not fix the money test", steps: [step(1, "claude", 3, null)] }),
@@ -259,4 +262,61 @@ test("the table has a line per cell and one per task and way of running", () => 
   assert.match(text, /^cart\s+relay\s+2\s+1\s+0\s+0\s+1\s+8\s+3\s+2\s+7\s+612\s+41$/mu, "the relay line counts its error and takes medians over the cell that measured");
   assert.match(text, /^cart\s+floor\s+2\s+0\s+1\s+1\s+0\s+12\s+/mu);
   assert.match(text, /^cart\s+solo\s+1\s+1\s+0\s+0\s+0\s+6\s+/mu);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The Hub's tools in the evidence (HH_REAL_TABLE=1)
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("a call of the Hub's tools is told by the name the Harness gives it, however it spells the server in front, and not by a command or a search that merely holds the word", () => {
+  const call = (name: string | undefined, title: string, kind?: string) => hubToolOf({ ...(name === undefined ? {} : { name }), title, ...(kind === undefined ? {} : { kind }) });
+  // Claude Code's names (mcp__<server>__<tool>), Codex's (<server>/<tool>, titled <server>.<tool>), a server-prefixed name, and a Driver that gives a title alone.
+  assert.equal(call("mcp__harnesshub__hub_read_turn", "mcp__harnesshub__hub_read_turn"), "hub_read_turn");
+  assert.equal(call("harnesshub/hub_search", "harnesshub.hub_search", "mcp"), "hub_search");
+  assert.equal(call("harnesshub_hub_turns", "hub_turns", "other"), "hub_turns");
+  assert.equal(call(undefined, "harnesshub - hub_read_turn (MCP)", "other"), "hub_read_turn");
+  // Not calls: a command that holds the word, a search for it, another server's tool, the tools of the repo.
+  assert.equal(call("shell", "grep -rn hub_turns src/", "execute"), null); assert.equal(call("Bash", "grep -rn hub_search ."), null); assert.equal(call("Grep", "hub_read_turn", "search"), null);
+  assert.equal(call("mcp__docs__search", "docs search"), null); assert.equal(call("Read", "Read src/hub_turns.ts", "read"), null);
+  const calls = hubCalls([{ name: "mcp__harnesshub__hub_search", title: "x" }, { name: "Bash", title: "node --test", kind: "execute" }, { name: "mcp__harnesshub__hub_read_turn", title: "y" }, { name: "mcp__harnesshub__hub_read_turn", title: "z" }]);
+  assert.deepEqual(calls, { calls: 3, called: ["hub_search", "hub_read_turn", "hub_read_turn"] });
+  assert.deepEqual(hubCalls([]), { calls: 0, called: [] });
+  // A tool call of the Hub's is no read, search or run of the repo: it is not counted as exploring the files.
+  assert.equal(classifyTool({ id: "t", title: "mcp__harnesshub__hub_read_turn", status: "completed", name: "mcp__harnesshub__hub_read_turn", kind: "other" }, "/w", ["a.js"]).cls, "other");
+  assert.equal(classifyTool({ id: "t", title: "harnesshub.hub_read_turn", status: "completed", name: "harnesshub/hub_read_turn", kind: "mcp" }, "/w", ["a.js"]).cls, "other");
+});
+
+test("the table gets a column for the Hub's tools only in a run that mounted the table, and says how far they reached the step's process and what it called", () => {
+  const base = (table: StepTable | null): StepRow => ({ n: 2, harness: "codex", status: "completed", error: null, timedOut: false, wallMs: 41_000, prepareMs: 500, turnMs: 40_000, tokens: 212_000, usage: null,
+    tools: { total: 3, byClass: { read: 1, search: 0, edit: 0, run: 1, other: 1 }, testRuns: 0, explore: 3, filesRead: [], filesEdited: [], reread: [] }, handoff: { kind: "packet", tokens: 612, tier: "full", complete: true, turns: { total: 1, shown: 1, absent: 0 }, items: {}, carriedRuns: 1 },
+    approvals: { allowed: 0, questions: 0, unanswered: 0 }, reply: "ok", relay: null, table });
+  const row = (table: StepTable | null): CellRow => ({ task: "worker", mode: "relay", route: "claude>codex", repeat: 1, valid: true, invalid: null, problems: [], firstChecks: {}, checks: {}, steps: [{ ...base(null), n: 1, harness: "claude" }, base(table)], error: null, ms: 90_000 });
+  const told: StepTable = { carried: true, tools: true, told: true, calls: 2, called: ["hub_search", "hub_read_turn"] };
+  assert.equal(hubCell(null), "-"); assert.equal(hubCell(told), "tools+told 2:search,read_turn");
+  assert.equal(hubCell({ carried: true, tools: true, told: false, calls: 1, called: ["hub_turns"] }), "tools 1:turns", "the entry is there, the packet said nothing (no packet, or a Hub that did not know)");
+  assert.equal(hubCell({ carried: true, tools: false, told: false, calls: 0, called: [] }), "env 0", "the process had the table, its Harness holds no entry");
+  assert.equal(hubCell({ carried: false, tools: false, told: false, calls: 0, called: [] }), "no-env 0");
+  const without = renderTable([row(null)]), mounted = renderTable([row(told)]);
+  assert.doesNotMatch(without, /hub/u, "a run without the table prints the table it always did");
+  assert.match(mounted.split("\n")[0]!, /s2 tokens\s+s2 hub$/u); assert.match(mounted.split("\n")[1]!, /212k\s+tools\+told 2:search,read_turn$/u);
+  assert.match(mounted, /handoff tok\s+s2 s\s+hub calls$/mu); assert.match(mounted, /^worker\s+relay\s+1\s+1\s+0\s+0\s+0\s+3\s+0\s+0\s+3\s+612\s+41\s+2$/mu, "the median of the calls");
+  // The first step's flags do not count: a table of one run that mounted it in only one step still gets the column, with "-" where there is none.
+  assert.match(renderTable([{ ...row(null), steps: [{ ...base(null), n: 1, harness: "claude", table: told }, base(null)] }]), /s2 hub\n.*\s-$/mu);
+});
+
+test("a watched mount remembers which Harness's process of which conversation had the table's environment, and when", () => {
+  const mount = new WatchedMount(), one = sessionId("session-one"), two = sessionId("session-two");
+  assert.equal(mount.attach({ sessionId: one, harnessId: "claude", controlId: "claude-acp" }), null, "while the Hub has no address nothing is given, and nothing is remembered");
+  assert.equal(mount.carried(one, "claude", 0, Date.now() + 1000), false);
+  mount.listening("http://127.0.0.1:4317");
+  const before = Date.now(), attached = mount.attach({ sessionId: one, harnessId: "claude", controlId: "claude-acp" })!;
+  assert.equal(attached.env[TABLE_ENV.url], "http://127.0.0.1:4317"); assert.ok(mount.grants.resolve(attached.env[TABLE_ENV.session]!), "what it gives is the mount's own token");
+  const during = Date.now() + 1;
+  assert.equal(mount.carried(one, "claude", before, during), true); assert.equal(mount.carried(one, "codex", before, during), false, "another Harness"); assert.equal(mount.carried(two, "claude", before, during), false, "another conversation");
+  attached.detach();
+  assert.equal(mount.grants.resolve(attached.env[TABLE_ENV.session]!), null, "the token goes with the process");
+  const ended = Date.now();
+  assert.equal(mount.carried(one, "claude", before, ended), true, "a process alive at some moment of the window");
+  assert.equal(mount.carried(one, "claude", ended + 5, ended + 10), false, "not one that had ended before the window began");
+  assert.equal(mount.carried(one, "claude", 0, before - 1), false, "nor one that began after it ended");
 });

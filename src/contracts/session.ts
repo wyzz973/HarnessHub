@@ -365,6 +365,13 @@ export interface PreparedSessionBinding {
    * Harness's configuration references by name. In memory only: never logged, stored, published or sent. Absent is none.
    */
   readonly secrets?: readonly string[];
+  /**
+   * Whether the native process this binding started has the Hub's tools (src/contracts/table.ts): it was started with the context
+   * table's environment (the Hub's address and its own token) and its Harness's own configuration holds the Hub's tool entry as the
+   * Hub writes it. Said only by a factory that checked both when it started the process; a process kept for later Turns keeps
+   * what it was started with. Absent is no: nothing is promised the packet could repeat.
+   */
+  readonly hubTools?: boolean;
   assertOwned(): void;
   close(): Promise<CleanupEvidence>;
 }

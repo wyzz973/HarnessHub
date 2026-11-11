@@ -1,6 +1,6 @@
 # 接力尺子：真实的编码任务做到一半换家（2026-11-11）
 
-**证据等级**：脚本、夹具、判分和演练模式写好了，合成测试与演练通过；**真机一次都没有跑**，下面“结果”是空的，等主负责人跑完再填。演练用脚本化的假 Harness，只证明尺子分得出“被告知的”和“没被告知的”，不说明任何模型怎么样。
+**证据等级**：脚本、夹具、判分和演练模式写好了，合成测试与演练通过；**真机一次都没有跑**，下面“结果”是空的，等主负责人跑完再填。演练用脚本化的假 Harness，只证明尺子分得出“被告知的”和“没被告知的”，不说明任何模型怎么样。带上上下文桌的开关（`HH_REAL_TABLE=1`，见“带上上下文桌”一节）同样只做了演练和夹具进程的测试，没有对真实的 Claude Code、Codex 跑过。
 
 ## 量什么
 
@@ -60,8 +60,28 @@ RUN HH_REAL_HARNESSES=claude,codex HH_REAL_MODEL_CLAUDE=haiku HH_REAL_MODEL_CODE
 | `HH_REAL_STEP_MINUTES` | 一步的执行预算（脚本另有多 1 分钟的兜底） | 5 |
 | `HH_REAL_TOKEN_LIMIT` | 一步超过这么多 token 就停整趟 | 2000000 |
 | `HH_REAL_KEEP=1` | 不删临时目录（排查某格的仓库） | 删 |
+| `HH_REAL_TABLE=1` | 带上上下文桌，见下一节 | 不带（行为与此前完全一样） |
 
 token 上限比玩具走查的 15 万高得多：编码的一步每次工具调用都要重读上下文，回合用量把这些读取累加起来（多数是缓存读取）；一步的时间上限更紧。
+
+## 带上上下文桌（`HH_REAL_TABLE=1`）
+
+默认的尺子直接用 `application()` 的 Runtime，不起网页服务，`TableMount` 没有地址，原生进程拿不到桌子的环境变量，换家的交接单也不会提工具。要量“交接单 + 经 Hub 的工具读回”这条路，打开这个开关：
+
+- **每格起一个真实的网页服务**（`startWebServer`，回环的随机端口，与 4317 是同一份实现），回合仍由尺子直接驱动这个服务的应用实例，所以 Hub 起的每个原生进程都带 `HARNESSHUB_URL` 与自己的令牌，Harness 配置里有 Hub 工具条目时就能调用 `hub_turns`、`hub_read_turn`、`hub_search`。关闭时一切与以前一样，基线可以重跑对比，终端表格也不多列。
+- **尺子不安装工具条目，只读。** 条目是管家的事，要先装：用管家的接口 `POST /api/v1/capabilities/hub-tools/install`，请求体 `{"harnessId":"claude"}` 与 `{"harnessId":"codex"}`（登录与 CSRF 同其他写接口；`GET /api/v1/capabilities/hub-tools` 看两家现在的状态；不用时同路径换 `uninstall` 取下）。**必须从跑尺子的同一份构建装**：条目里写的是 Hub 所用的 Node 和这份构建的 `dist/src/cli/hub-tools.js` 的路径，路径与 Hub 现在要写的不一致（在别的 worktree 里装的、构建搬了位置）就被判为没装，状态会是 `outdated` 或 `different`，那一格的证据里 `tools` 为 false，交接单也不会提工具。
+- **交接单只在事实成立时提工具**：目标这家的进程带着桌子的环境变量，并且它的用户级配置里有 Hub 现在会写的那条条目（装好了、没被改过、指向这份构建）。成立时说明部分多三句（这是摘要、完整对话与每条命令的完整输出在 HarnessHub 里可用三个工具读回、轮次编号相同、查不到再说不知道、别为拿输出重跑有副作用的命令），并在每条“没附输出”的命令后标“输出共 N 行，未附”。不成立时交接单与以前逐字节相同。
+- **证据里每一步多一项 `table`**：`carried`（这一步的进程带了桌子的环境变量）、`tools`（这家的配置里有 Hub 的工具条目，按步骤结束时读到的算）、`told`（这一步的交接单提了工具，没有交接单的步骤为 false）、`calls` 与 `called`（这一步调用了几次 `hub_*` 工具、各是哪个；按工具名里是否含 `hub_turns`、`hub_read_turn`、`hub_search` 数，所以 `mcp__harnesshub__hub_read_turn`、`harnesshub/hub_read_turn` 这类带前缀的都算；名字不含这几个词、只在标题里提到的，要标题同时含 `harnesshub` 才算，shell 命令里出现这些词不算）。`relay.hubTools` 是交接单自己记下的“提过工具”。证据文件顶层多 `tableMounted`。
+- **终端表格多一列 `s2 hub`**（汇总表多 `hub calls`，第 2 步调用次数的中位数）：`no-env`（进程没带桌子）、`env`（带了环境变量，这家配置里没有条目）、`tools`（有条目，交接单没提）、`tools+told`（有条目，交接单也提了），后面是调用次数和各是哪个，例如 `tools+told 2:search,read_turn`。
+
+真机只在上面的命令里多一个变量，先试一格再整趟（装好条目之后）：
+
+```sh
+RUN HH_REAL_TABLE=1 HH_REAL_HARNESSES=claude,codex HH_REAL_MODEL_CLAUDE=haiku HH_REAL_MODEL_CODEX=gpt-6-luna HH_REAL_EVIDENCE="$EVIDENCE/ruler-table-one.json" \
+  HH_REAL_TASKS=worker HH_REAL_MODES=relay HH_REAL_DIRECTIONS=forward node --test dist/tests/real/relay-task.real.js      # 1 格，2 条提示：任务 C，claude 换到 codex
+```
+
+演练也能带上它：`HH_REAL_DRY=1 HH_REAL_TABLE=1 node --test dist/tests/real/relay-task.real.js`（约 15 秒，仍然不启动任何 Harness）。脚本化的 Harness 在这里扮演“配置里已有 Hub 工具条目”的 Harness：每个绑定拿到桌子的环境变量并声明有工具，一个回环上的小服务为这一格的 Runtime 回答 Hub 真正的 `/api/table` 路由；worker 的第 2 步里，被交接单告知有工具的那家，用 Hub 真正的工具程序（`cli/hub-tools.js`，作为独立进程、带着拿到的环境变量）先搜后读，把第 1 步的完整输出取回来，答出 etag；没被告知的（地板）答“不知道”。这证明环境变量经 `TableMount` 到了进程里、令牌在真实的 `/api/table` 路由上有效、工具程序读得回一轮、尺子分得出“有工具且被告知”和“没有”，**不证明**真实的 Claude Code 与 Codex 会把环境变量转给 MCP 服务器、会加载条目、会照说明去调用。
 
 ## 每跑一遍大约多少条真实提示
 
@@ -89,6 +109,7 @@ token 上限比玩具走查的 15 万高得多：编码的一步每次工具调�
 ## 没验证与已知局限
 
 - 真机没跑；只有 Claude Code 与 Codex；每格一遍，不是统计（`HH_REAL_REPEAT`）。
+- 带桌子的真机路径（`HH_REAL_TABLE=1` 不加 `HH_REAL_DRY`）没有对真实的 Harness 跑过：网页服务的起停与桌子的接线用夹具进程（一个会用环境变量读回对话的 ACP 夹具）测过，工具条目在 Claude Code 与 Codex 里的加载、环境变量的转发、模型会不会调用，都要等第一遍真机。每格要多起一次网页服务（含一次发现扫描和各家的版本探测，与 4317 启动时做的相同），整趟会慢一些。
 - 三个任务小，A、B 对强一点的模型可能太容易，地板与接力就拉不开；到时按结果调任务，不调判分。
 - Hub 起的原生会话留在各家自己的存储里（工作目录都在 `hh-ruler-*` 下），脚本不去动它们。清 Claude Code 的：`rm -rf ~/.claude/projects/*hh-ruler-*`；Codex 的线程自己在 Codex 里删。
-- 夹具在 `tests/fixtures/ruler/`，判分与驱动在 `tests/real/ruler/`，单测在 `tests/unit/relay-ruler.test.ts`，演练的端到端在 `tests/integration/relay-ruler.test.ts`（都进 `pnpm test`）。
+- 夹具在 `tests/fixtures/ruler/`，判分与驱动在 `tests/real/ruler/`（带桌子的部分：`mount.ts` 记录哪个进程拿到过桌子、`web.ts` 起真实的网页服务、`dry.ts` 的 `dryTableHub`），单测在 `tests/unit/relay-ruler.test.ts`，演练的端到端在 `tests/integration/relay-ruler.test.ts`，网页服务那一格用夹具进程测的在 `tests/integration/relay-ruler-web.test.ts`（都进 `pnpm test`）。

@@ -278,6 +278,8 @@ export class CapabilityChanges {
   checkMcpRemove(name: string, harnessId: string, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> { return this.checking(() => this.mcp.checkRemove(name, harnessId, installed)); }
   /** Where the Hub's own tools stand in every installed Harness (docs/decisions/LOG.md, 2026-11-11). Read only. */
   hubTools(installed: readonly InstalledHarness[]): Promise<HubToolsView> { return this.checking(() => this.hub.view(installed)); }
+  /** Whether one Harness's configuration holds the Hub's own tools as an install now would write them (HubTools.isInstalled). Read only. */
+  hubToolsInstalled(harnessId: string, installed: readonly InstalledHarness[]): Promise<boolean> { return this.checking(() => this.hub.isInstalled(harnessId, installed)); }
   /** Writes the Hub's own tools into one Harness's MCP configuration: the check and the apply of any server of the list, in one request. */
   installHubTools(harnessId: string, installed: readonly InstalledHarness[]): Promise<HubToolsResult> { return this.checking(() => this.hub.install(harnessId, installed)); }
   /** Takes the Hub's own tools out of one Harness's MCP configuration; only the entry HarnessHub wrote, unchanged since. */

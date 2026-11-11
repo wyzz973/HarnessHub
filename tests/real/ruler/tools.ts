@@ -1,3 +1,5 @@
+import { TABLE_MCP_NAME, TABLE_TOOLS, type TableTool } from "../../../src/contracts/table.js";
+
 /*
  * What a Turn did with the repo, counted from its tool calls (relay-task.real.ts): how many tools it ran, of which kinds, which
  * files it read and edited, how often it ran the tests, and how much it explored before its first edit. This is the "cost of
@@ -116,4 +118,19 @@ export function summarizeTools(facts: readonly ToolFacts[], earlier: ReadonlySet
   return { total: facts.length, byClass, testRuns: facts.filter(fact => fact.test).length,
     explore: (firstEdit < 0 ? facts : facts.slice(0, firstEdit)).filter(fact => fact.cls !== "edit").length,
     filesRead, filesEdited: unique("edit"), reread: filesRead.filter(file => earlier.has(file)) };
+}
+
+/** Which of the Hub's tools (hub_turns, hub_read_turn, hub_search) a tool call was, or null when it was none of them. */
+export function hubToolOf(tool: Pick<ToolRecord, "name" | "title" | "kind">): TableTool | null {
+  // Each Harness spells an MCP tool its own way (`mcp__harnesshub__hub_read_turn`, `harnesshub/hub_read_turn`, `harnesshub_hub_read_turn`): by what its name holds.
+  // A title counts only when it also names the server (a search for the word `hub_turns` is not a call of the tool, nor is a command that holds it).
+  const named = TABLE_TOOLS.find(name => (tool.name ?? "").includes(name));
+  if (named !== undefined) return named;
+  const shell = tool.kind === "execute" || /^(?:Bash|bash|shell)$/u.test(tool.name ?? "");
+  return shell || !tool.title.includes(TABLE_MCP_NAME) ? null : TABLE_TOOLS.find(name => tool.title.includes(name)) ?? null;
+}
+/** The Hub's tools a Turn called, in the order it called them: how many calls, and which tool each was. */
+export function hubCalls(tools: readonly Pick<ToolRecord, "name" | "title" | "kind">[]): { readonly calls: number; readonly called: readonly TableTool[] } {
+  const called = tools.flatMap(tool => { const name = hubToolOf(tool); return name === null ? [] : [name]; });
+  return { calls: called.length, called };
 }

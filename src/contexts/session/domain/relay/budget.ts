@@ -9,8 +9,10 @@
  * coefficient, a cap or the Unicode tables of the running Node changes what is rendered and must change this version.
  * relay/1-mvp.4: facts only and two tiers (complete, brief), whole items or none, a ledger that adds up.
  * relay/1-mvp.5: and one sentence saying that what the user stated in the record still holds.
+ * relay/1-mvp.6: and, only for a target that has the Hub's tools this Turn, three sentences saying how to read the rest back, and a note
+ * on every command whose recorded output the packet does not carry; for any other target the text is what mvp.5 made, byte for byte.
  */
-export const RELAY_POLICY_VERSION = "relay/1-mvp.5";
+export const RELAY_POLICY_VERSION = "relay/1-mvp.6";
 
 /**
  * What the one cap of a packet is made of: T = min(8,000, 5% of the target's context window), the window assumed when the

@@ -75,6 +75,8 @@ export class Fakes implements SessionBindingFactory {
   constructor(readonly declarations: Readonly<Record<string, RelayCapabilities | null>>) {}
   /** true: the Hub cannot read the known secrets a packet must hide (RELAY_PREPARE_FAILED, as the factory reports it). */
   secretsFail = false;
+  /** The Harnesses whose processes have the Hub's tools, as a binding says it (PreparedSessionBinding.hubTools): none unless added. */
+  readonly hubTools = new Set<string>();
   /** Runs when the Runtime enables permissions: after the Turn's authorization, right before its dispatch. */
   onAuthorized: ((harnessId: string) => void) | null = null;
   relayCapabilities(selection: HarnessSelection): RelayCapabilities | null { return this.declarations[selection.harnessId] ?? null; }
@@ -120,7 +122,7 @@ export class Fakes implements SessionBindingFactory {
       },
       close: async () => { const closed = this.closing[harnessId] ?? CLEAN; if (closed instanceof Error) throw closed; return closed; },
     };
-    return { control, workspace: configuration.workspace, assertOwned: () => {}, close: () => control.close() };
+    return { control, workspace: configuration.workspace, assertOwned: () => {}, close: () => control.close(), ...(this.hubTools.has(harnessId) ? { hubTools: true } : {}) };
   }
   /** What reached `harnessId`, in order. */
   to(harnessId: string): readonly { readonly text: string; readonly turn: TurnText; readonly session: string }[] { return this.prompts.filter(row => row.harnessId === harnessId); }

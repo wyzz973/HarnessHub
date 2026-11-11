@@ -84,6 +84,20 @@ export class HubTools {
     return found;
   }
 
+  /**
+   * Whether a Harness's configuration holds the Hub's tools exactly as an install now would write them (or an identical entry
+   * nobody recorded): what a native process the Hub starts there can be told it has. The entry as HarnessHub wrote it earlier but
+   * that differs from today's (another build, another Node), one someone changed, and a same-named entry of someone else's are
+   * not known to work and say no, as does a Harness the tools are not written into and a tool program that is not built. Read only;
+   * reads the one Harness's file.
+   */
+  async isInstalled(harnessId: string, installed: readonly InstalledHarness[]): Promise<boolean> {
+    const mine = installed.filter(item => item.harnessId === harnessId);
+    if (mine.length === 0 || unavailable(harnessId) !== null || !this.program().present) return false;
+    const state = (await this.stateOf(this.wanted(), harnessId, mine)).state;
+    return state === "synced" || state === "claimable";
+  }
+
   /** Where the Hub's tools stand in every installed Harness, by what an install now would write. Read only. */
   async view(installed: readonly InstalledHarness[]): Promise<HubToolsView> {
     const { node, tool, present } = this.program(), wanted = this.wanted(), targets = await this.host.mcp.targets(TABLE_MCP_NAME, wanted, installed);

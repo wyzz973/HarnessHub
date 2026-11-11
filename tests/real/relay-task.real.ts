@@ -9,10 +9,12 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, guardTargets, recheck, snapshot, standaloneHeader, type EvidenceHeader, type GuardCheck } from "./guard.js";
 import { closeApp, list, selection } from "./relay-support.js";
-import { DRY_HARNESSES, ScriptedHarnesses, dryHub, dryProblems } from "./ruler/dry.js";
+import { DRY_HARNESSES, ScriptedHarnesses, dryHub, dryProblems, dryTableHub } from "./ruler/dry.js";
+import { WatchedMount } from "./ruler/mount.js";
 import { planCells, promptCount, runRuler, type CellHub, type CellSpec } from "./ruler/run.js";
 import { MODES, outcome, renderTable, type CellRow, type Mode } from "./ruler/table.js";
 import { TASK_IDS, type TaskId } from "./ruler/tasks.js";
+import { openWebHub } from "./ruler/web.js";
 
 /**
  * The relay ruler (docs/verification/relay-ruler.md): how well a real coding task survives a change of Harness half-way, measured
@@ -34,10 +36,15 @@ import { TASK_IDS, type TaskId } from "./ruler/tasks.js";
  * the run, 2000000: a coding step re-reads its context at every tool call and the count adds those reads up, so the toy walks'
  * 150000 is far too low; the step's time limit is the tighter bound), HH_REAL_KEEP=1
  * (keep the temporary directory), HH_REAL_DRY=1 (no Harness is started: scripted ones play both, to show the ruler can tell a
- * Harness that was told from one that was not). Evidence holds verdicts, counts, times and the start of each reply; the repos
- * are synthetic and removed afterwards. Native sessions the Harnesses keep in their own stores are theirs to keep.
+ * Harness that was told from one that was not), HH_REAL_TABLE=1 (mount the Hub's context table: each cell's Hub is the Hub's web
+ * server on a random loopback port, so the native processes get the table's address and a token and a Harness whose configuration
+ * holds the Hub's tool entry can read the conversation back; with HH_REAL_DRY=1 the scripted Harnesses stand in for such Harnesses
+ * and the Hub's real tool program reads back for them. The ruler installs nothing: the entry is the manager's to write first, from
+ * the build that runs the ruler, and every step's evidence says whether its Harness held it, whether the packet told of it and
+ * what the step called; without the variable the run is what it was). Evidence holds verdicts, counts, times and the start of each
+ * reply; the repos are synthetic and removed afterwards. Native sessions the Harnesses keep in their own stores are theirs to keep.
  */
-const dry = process.env.HH_REAL_DRY === "1";
+const dry = process.env.HH_REAL_DRY === "1", mounted = process.env.HH_REAL_TABLE === "1";
 const evidencePath = process.env.HH_REAL_EVIDENCE;
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
@@ -89,16 +96,17 @@ test("a real coding task survives a change of Harness: the repo, judged by its t
   assert.ok(cells.length > 0, "nothing to run: HH_REAL_TASKS and HH_REAL_MODES leave no cell");
   const before = dry ? undefined : await snapshot(harnesses, environment);
   const root = await realpath(await mkdtemp(join(process.env.HH_REAL_TMP ?? tmpdir(), "hh-ruler-"))), locks = join(root, "locks");
-  const scripted = new ScriptedHarnesses();
+  // The watched mount of the context table, when mounted: the Hub's own mount, which also remembers which processes it gave the table to.
+  const mount = mounted ? new WatchedMount() : undefined, scripted = new ScriptedHarnesses(mount === undefined ? {} : { table: mount });
   let header: EvidenceHeader | null = null, guard: GuardCheck | undefined, failure: unknown, rows: readonly CellRow[] = [];
   const plan = { tasks: [...new Set(cells.map(cell => cell.task))], modes: [...new Set(cells.map(cell => cell.mode))], cells: cells.length, prompts: promptCount(cells), repeat: Math.max(...cells.map(cell => cell.repeat)), stepMinutes };
   const write = async (done: readonly CellRow[]): Promise<void> => {
     if (evidencePath === undefined) return;
     await writeFile(evidencePath, JSON.stringify({ header, harnesses, models: Object.fromEntries(harnesses.map(id => [id, selection(id).nativeModel ?? null])),
-      options: Object.fromEntries(harnesses.map(id => [id, process.env["HH_REAL_OPTIONS_" + id.toUpperCase()] ?? null])), dry, plan, rows: done, table: renderTable(done),
+      options: Object.fromEntries(harnesses.map(id => [id, process.env["HH_REAL_OPTIONS_" + id.toUpperCase()] ?? null])), dry, tableMounted: mounted, plan, rows: done, table: renderTable(done),
       guard: guard === undefined ? null : { unchanged: guard.unchanged, description: describeGuard(guard) }, failure: failure instanceof Error ? failure.message : failure === undefined ? null : String(failure) }, null, 2) + "\n", { mode: 0o600 });
   };
-  process.stdout.write("\nrelay ruler" + (dry ? " (dry run: scripted Harnesses)" : "") + ": " + plan.cells + " cells, " + plan.prompts + " prompts, " + first + " and " + second + "\n");
+  process.stdout.write("\nrelay ruler" + (dry ? " (dry run: scripted Harnesses)" : "") + (mounted ? " (context table mounted)" : "") + ": " + plan.cells + " cells, " + plan.prompts + " prompts, " + first + " and " + second + "\n");
   try {
     if (!dry) {
       const workspace = join(root, "header-workspace"); await mkdir(workspace);
@@ -106,7 +114,8 @@ test("a real coding task survives a change of Harness: the repo, judged by its t
       header = await standaloneHeader(harnesses, { root, workspaceLockRoot: locks, policy: realInstallations, configuration });
     }
     const open = async (_spec: CellSpec, where: { readonly workspace: string; readonly data: string }): Promise<CellHub> => {
-      if (dry) return dryHub(where, scripted);
+      if (dry) return mounted ? dryTableHub(where, scripted) : dryHub(where, scripted);
+      if (mount !== undefined) return openWebHub(where, { mount, installations: realInstallations, locks, budgets: { executionBudgetMs: stepLimitMs, waitBudgetMs: DEFAULT_WAIT_BUDGET_MS }, ...(process.env.HH_REAL_MANIFEST ? { manifest: process.env.HH_REAL_MANIFEST } : {}) });
       const app = application(where.data, () => {}, { installations: realInstallations, workspaceLockRoot: locks, budgets: { executionBudgetMs: stepLimitMs, waitBudgetMs: DEFAULT_WAIT_BUDGET_MS } });
       try {
         const configuration = await prepareConfiguration({ workspace: where.workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });

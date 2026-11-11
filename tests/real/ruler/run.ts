@@ -5,9 +5,10 @@ import { performance } from "node:perf_hooks";
 import type { PermissionRequest, PublicRun, SelectionRequest, SessionConfiguration, SessionId } from "../../../src/contracts/session.js";
 import type { LocalContentStore } from "../../../src/infrastructure/session/content-store.js";
 import { reply, summary, type Hub } from "../relay-support.js";
-import { MODES, outcome, type CellRow, type Mode, type StepRow } from "./table.js";
+import type { WatchedMount } from "./mount.js";
+import { MODES, hubCell, outcome, type CellRow, type Mode, type StepRow, type StepTable } from "./table.js";
 import { TASKS, TASK_IDS, type Built, type JudgeContext, type StepJudgement, type TaskId, type Verdict } from "./tasks.js";
-import { classifyTool, summarizeTools, type ToolRecord } from "./tools.js";
+import { classifyTool, hubCalls, summarizeTools, type ToolRecord } from "./tools.js";
 
 /*
  * The relay ruler's driver (relay-task.real.ts, and the same code against fake Harnesses in the dry run): for each task and way
@@ -20,6 +21,8 @@ import { classifyTool, summarizeTools, type ToolRecord } from "./tools.js";
 export interface CellHub extends Hub {
   readonly content: Pick<LocalContentStore, "read">;
   readonly configuration: SessionConfiguration;
+  /** The watched mount the Hub's native processes get the context table from (HH_REAL_TABLE=1); absent: the table is not mounted and the evidence says nothing of it. */
+  readonly table?: Pick<WatchedMount, "carried" | "hasTools">;
   close(): Promise<void>;
 }
 export interface CellSpec { readonly task: TaskId; readonly mode: Mode; readonly first: string; readonly second: string; readonly repeat: number }
@@ -175,9 +178,9 @@ async function runCell(options: RulerOptions, spec: CellSpec, index: number): Pr
     /** Sends one message and reads everything the judge and the table need of the Turn. */
     const step = async (n: 1 | 2, text: string, relay: { readonly attach: "none" } | undefined): Promise<StepRow> => {
       options.announce?.(spec, repo, n);
-      const approvals: Approvals = { allowed: 0, questions: 0, unanswered: 0 }, began = performance.now();
+      const approvals: Approvals = { allowed: 0, questions: 0, unanswered: 0 }, began = performance.now(), sentAt = Date.now();
       open.runtime.send(id, text, "send-" + randomUUID(), [], relay);
-      const ended = await settle(open, id, options.stepLimitMs, approvals), wallMs = Math.round(performance.now() - began);
+      const ended = await settle(open, id, options.stepLimitMs, approvals), wallMs = Math.round(performance.now() - began), settledAt = Date.now();
       const state = open.runtime.read(id), run = state.runs.at(-1)!;
       let digest: Record<string, unknown> | null = null;
       try { digest = summary(open, id, state, run); } catch { /* a Turn that failed before it prepared has no record to summarize */ }
@@ -185,15 +188,19 @@ async function runCell(options: RulerOptions, spec: CellSpec, index: number): Pr
       for (const file of [...tools.filesRead, ...tools.filesEdited]) earlier.add(file);
       const relayRecord = digest?.relay as Record<string, unknown> | null | undefined, used = run.usage?.turn === undefined ? null : run.usage.turn.total ?? ((run.usage.turn.input ?? 0) + (run.usage.turn.output ?? 0));
       const said = reply(state, run);
+      // The Hub's tools to this step: whether its process had the table, whether its Harness holds the tool entry, whether the packet said so, and what it called.
+      const table: StepTable | null = open.table === undefined ? null : { carried: open.table.carried(id, run.selection.harnessId, sentAt, settledAt), tools: await open.table.hasTools(run.selection.harnessId),
+        told: relayRecord?.hubTools === true, ...hubCalls(records) };
       replies.push(said); toolSets.push(records);
       const row: StepRow = { n, harness: run.selection.harnessId, status: run.status, error: run.error?.code ?? null, timedOut: ended === "late", wallMs,
         prepareMs: run.timing?.dispatchedAt !== undefined && run.timing.preparingAt !== undefined ? run.timing.dispatchedAt - run.timing.preparingAt : null,
         turnMs: run.timing?.endedAt !== undefined && run.timing.dispatchedAt !== undefined ? run.timing.endedAt - run.timing.dispatchedAt : null,
         tokens: used, usage: numeric(run.usage?.turn as Readonly<Record<string, unknown>> | undefined), tools,
         handoff: relayRecord == null || relayRecord.kind === undefined ? null : { kind: relayRecord.kind, tokens: relayRecord.tokens, tier: relayRecord.tier, complete: relayRecord.complete, turns: relayRecord.turns, items: relayRecord.items, carriedRuns: run.sourceRunIds.length },
-        approvals, reply: said.slice(0, 600), relay: digest };
+        approvals, reply: said.slice(0, 600), relay: digest, table };
       steps.push(row);
-      options.log?.("    step " + n + " " + row.harness + ": " + row.status + " in " + Math.round(wallMs / 1000) + " s, " + tools.total + " tools" + (row.handoff === null ? "" : ", handoff " + String(row.handoff.tokens) + " tok"));
+      options.log?.("    step " + n + " " + row.harness + ": " + row.status + " in " + Math.round(wallMs / 1000) + " s, " + tools.total + " tools" + (row.handoff === null ? "" : ", handoff " + String(row.handoff.tokens) + " tok")
+        + (table === null ? "" : ", hub " + hubCell(table)));
       if (used !== null && used > options.tokenLimit) { halt = true; throw new StopLine("a step reported " + used + " tokens, past the " + options.tokenLimit + " stop line"); }
       return row;
     };

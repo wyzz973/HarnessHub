@@ -5,25 +5,28 @@ import { characters, codeUnitsOf, fence, headUnits, neutralize, normalize, visib
 import { marksIn, namesCredentialFile, restoreLabels, type RelayRedactor } from "./redaction.js";
 
 /**
- * Narration of the record for the slim relay packet (relay/1-mvp.5, ADR-055 §5.2): what one turn of the history says, as
+ * Narration of the record for the slim relay packet (relay/1-mvp.6, ADR-055 §5.2): what one turn of the history says, as
  * facts and nothing else, cut into items — the user's words, a reply, the lines of what was read, changed and run, a failed
  * command's output tail, an error — each of which a packet carries whole or leaves out whole. Only committed public facts
  * enter: the user's words, the tools' titles, kinds, statuses and exit codes, attachments, errors and replies; tool details
  * only when the caller read them. Thinking, plans, diffs and the output of commands that succeeded never do. Pure.
  */
 
-/** What a tool's stored detail adds when its caller could read it (ADR-055 §6.4): the command, its output, its diff, where. */
-export interface RelayToolDetail { readonly input?: string; readonly output?: string; readonly diff?: string; readonly locations?: readonly string[] }
+/**
+ * What a tool's stored detail adds when its caller could read it (ADR-055 §6.4): the command, its output, its diff, where.
+ * `truncated`: the Driver cut a preview to its byte budget when it stored it (an output keeps its last 64 KiB), so what is here is not all there was.
+ */
+export interface RelayToolDetail { readonly input?: string; readonly output?: string; readonly diff?: string; readonly locations?: readonly string[]; readonly truncated?: true }
 
 /**
  * A stored tool detail (the JSON the Runtime keeps for a tool, read back as `unknown`) as far as the packet uses it: its
- * input, output and diff when they are text, and up to 16 locations; null when it is not an object.
+ * input, output and diff when they are text, up to 16 locations, and whether it was cut; null when it is not an object.
  */
 export function parseToolDetail(value: unknown): RelayToolDetail | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const row = value as Readonly<Record<string, unknown>>, locations = Array.isArray(row.locations) ? row.locations.filter((item): item is string => typeof item === "string").slice(0, 16) : [];
   return { ...(typeof row.input === "string" ? { input: row.input } : {}), ...(typeof row.output === "string" ? { output: row.output } : {}),
-    ...(typeof row.diff === "string" ? { diff: row.diff } : {}), ...(locations.length ? { locations } : {}) };
+    ...(typeof row.diff === "string" ? { diff: row.diff } : {}), ...(locations.length ? { locations } : {}), ...(row.truncated === true ? { truncated: true as const } : {}) };
 }
 
 /** One unit of the history, built from the public snapshot by `relayUnits`: a Run, or a turn of the history a branch or an import started from. */
@@ -121,7 +124,11 @@ const OUTPUT_CHARS = 1200;
  */
 export class Narrator {
   private readonly names = new Map<string, string>();
-  constructor(readonly language: RelayLanguage, private readonly redactor: RelayRedactor, private readonly naming: (harnessId: string) => string | null) {}
+  /**
+   * `tools`: the Harness the packet goes to has the Hub's tools this Turn (hub_turns, hub_read_turn, hub_search), so that what the
+   * packet leaves out can be read back: the packet then says how, and notes every command whose output it does not carry.
+   */
+  constructor(readonly language: RelayLanguage, private readonly redactor: RelayRedactor, private readonly naming: (harnessId: string) => string | null, readonly tools = false) {}
   get zh(): boolean { return this.language === "zh"; }
   /** A Harness's display name: its catalog name when known, else its id; an unknown one for none. Always a name, never "the other". */
   name(harnessId: string | null): string {
@@ -300,6 +307,14 @@ function locationOf(detail: RelayToolDetail | undefined): string | null {
 }
 /** A title fully wrapped in one pair of backticks (as some drivers write commands) without them. */
 function unwrapped(title: string): string { return /^`[^`]+`$/u.test(title) ? title.slice(1, -1) : title; }
+/** The lines of a command's recorded output as the table counts them: normalized like any output, blank lines at either end not counted; 0 for none. */
+function linesOf(output: string): number {
+  const lines = normalize(output, "output").split("\n");
+  let from = 0, to = lines.length;
+  while (from < to && lines[from]!.trim() === "") from++;
+  while (to > from && lines[to - 1]!.trim() === "") to--;
+  return to - from;
+}
 /** The command a tool ran, unquoted: its detail's input when read, else its title. */
 function commandSource(unit: RelayUnit, tool: PublicTool): string {
   const input = unit.details.get(tool.id)?.input;
@@ -322,6 +337,8 @@ interface Words {
   readonly open: string;
   readonly counts: (added: number | null, removed: number | null) => string;
   readonly exit: (tool: PublicTool) => string;
+  /** What a command's line says of its output when the packet does not carry it: how many lines it has ("at least" when the stored output was cut), and that they are not attached. */
+  readonly unattached: (lines: number, atLeast: boolean) => string;
 }
 function countsOf(added: number | null, removed: number | null): string {
   return [added ? "+" + added : "", removed ? "−" + removed : ""].filter(Boolean).join(" ");
@@ -338,6 +355,7 @@ const WORDS: Readonly<Record<RelayLanguage, Words>> = {
     unread: "（路径未读取）", failed: "（失败）", open: "（未完成）",
     counts: (added, removed) => { const text = countsOf(added, removed); return text === "" ? "" : "（" + text + "）"; },
     exit: tool => tool.exitCode !== undefined ? " → 退出码 " + tool.exitCode : toolEnd(tool) === "failed" ? " → 失败（没有报告退出码）" : toolEnd(tool) === "open" ? "（未完成）" : "（没有报告退出码）",
+    unattached: (lines, atLeast) => "输出" + (atLeast ? "至少" : "共") + " " + lines + " 行，未附",
   },
   en: {
     user: "The user's words:", empty: "(empty)",
@@ -350,6 +368,7 @@ const WORDS: Readonly<Record<RelayLanguage, Words>> = {
     unread: " (path not read)", failed: " (failed)", open: " (not finished)",
     counts: (added, removed) => { const text = countsOf(added, removed); return text === "" ? "" : " (" + text + ")"; },
     exit: tool => tool.exitCode !== undefined ? " → exit code " + tool.exitCode : toolEnd(tool) === "failed" ? " → failed (no exit code reported)" : toolEnd(tool) === "open" ? " (not finished)" : " (no exit code reported)",
+    unattached: (lines, atLeast) => "output: " + (atLeast ? "at least " : "") + lines + (lines === 1 ? " line" : " lines") + ", not attached",
   },
 };
 function bytesLabel(bytes: number): string { return bytes < 1024 ? bytes + " B" : bytes < 1048576 ? Math.round(bytes / 1024) + " KB" : (bytes / 1048576).toFixed(1) + " MB"; }
@@ -372,6 +391,11 @@ export interface Candidate {
   readonly raw: number;
   /** The item it stands under: a command's output goes only with the command. */
   readonly needs: Candidate | null;
+  /**
+   * For a command of a target that has the Hub's tools whose recorded output can be read back (Narrator.tools): the note its line takes
+   * when its output is not in the packet — not as a failed command's output tail, which says its own size. Null: nothing to say.
+   */
+  readonly unattached: { readonly text: string; readonly tokens: number } | null;
   /** Whether a rule keeps it out whatever the budget (the output of a command that reads a credential file). */
   readonly withheld: boolean;
   /** The rendering, made once; null when the item cannot be carried whole (too long, or nothing is left of it). */
@@ -389,9 +413,9 @@ export const LEAST = RANK.call;
 export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): readonly Candidate[] {
   const out: Candidate[] = [], words = WORDS[n.language], name = n.name(unit.harnessId);
   let seq = 0;
-  const add = (kind: ItemKind, group: ItemGroup, rank: number, raw: number, make: (counted: Tally) => string | null, needs: Candidate | null = null, withheld = false): Candidate => {
+  const add = (kind: ItemKind, group: ItemGroup, rank: number, raw: number, make: (counted: Tally) => string | null, needs: Candidate | null = null, withheld = false, unattached: string | null = null): Candidate => {
     let made: Piece | null | undefined;
-    const candidate: Candidate = { kind, group, unit: index, seq: seq++, rank, raw, needs, withheld, piece() {
+    const candidate: Candidate = { kind, group, unit: index, seq: seq++, rank, raw, needs, withheld, unattached: unattached === null ? null : { text: unattached, tokens: estimateTokens(unattached) }, piece() {
       if (made === undefined) {
         const counted: Tally = { hits: 0 }, text = withheld ? null : make(counted);
         made = text === null ? null : { text, tokens: estimateTokens(text), hits: counted.hits };
@@ -419,14 +443,16 @@ export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): reado
       if (files === null) add("changes", "ops", RANK.change, tool.title.length, counted => { const code = n.code(unwrapped(tool.title), counted); return code === null ? null : line(op, code, words.unread + status(tool)); });
       else for (const file of files) add("changes", "ops", RANK.change, file.path.length, counted => { const code = n.code(file.path, counted); return code === null ? null : line(file.op, code, words.counts(file.added, file.removed) + status(tool)); });
     } else if (kind === "execute") {
-      const source = commandSource(unit, tool);
-      const command = add("calls", "ops", RANK.command, source.length, counted => { const code = n.code(source, counted); return code === null ? null : line("ran", code, words.exit(tool)); });
-      const output = detail?.output;
+      const source = commandSource(unit, tool), exit = words.exit(tool), keptBack = namesCredentialFile(source), output = detail?.output;
+      // With the Hub's tools the whole output can be read back, so the line says there is one the packet does not carry (never for a rule's withheld output: the table keeps it back too).
+      const lines = n.tools && !keptBack && typeof output === "string" ? linesOf(output) : 0;
+      const command = add("calls", "ops", RANK.command, source.length, counted => { const code = n.code(source, counted); return code === null ? null : line("ran", code, exit); }, null, false,
+        lines > 0 ? n.dot(exit) + words.unattached(lines, detail?.truncated === true) : null);
       if (commandFailed(tool) && typeof output === "string" && output.trim() !== "")
         add("outputs", "output", RANK.output, 0, counted => {
           const tail = n.tail(output, counted);
           return tail === null || tail === "unfit" ? null : words.output(name, tail.shown, tail.total) + "\n" + tail.block;
-        }, command, namesCredentialFile(source));
+        }, command, keptBack);
     } else {
       const raw = kind === "read" ? locationOf(detail) ?? unwrapped(tool.title)
         : kind === "search" && typeof detail?.input === "string" && detail.input.trim() !== "" && !detail.input.includes("\n") ? detail.input : unwrapped(tool.title);

@@ -278,6 +278,10 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       // process the Harness starts inside it. Added after the class identity above: a token per process must not make a class per Turn.
       attached = this.table?.attach({ sessionId: session, harnessId: selection.harnessId, controlId: selection.controlId }) ?? null;
       if (attached !== null) Object.assign(environment, attached.env);
+      // Whether this process has the Hub's tools, as a fact of how it is started (the packet may repeat it to the model): it carries the table's
+      // environment, it reads the configuration the Hub's tool entry is written in (the user's own, not a generated or an isolated home), and
+      // that Harness's configuration holds the entry. A kept process keeps this answer; a probe that cannot tell says no.
+      const hubTools = attached !== null && this.table !== null && selection.provider === undefined && configuration.configHome === null && await this.table.hasTools(selection.harnessId);
       const launch: ControlLaunch = { ...observed.selected.command, env: environment, protocol };
       // The Turn's budgets are the Runtime's (ADR-036); the driver's own timeout only backstops a hung protocol. The close grace
       // is the host budgets' (ADR-056 §4.11); a Turn's close never waits for what left the program's group.
@@ -291,7 +295,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       // Gateway's environment holds, and whatever its configuration references by name.
       const base = nativeBaseValues(this.nativeEnvironment, home, selection.harnessId);
       const secrets = credentialValues({ environments: [environment, this.nativeEnvironment.values], referenced: Object.entries(referenced).filter(([name]) => !(name in base)) }, existsSync);
-      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, temporary, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage, secrets, attached);
+      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, temporary, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage, secrets, attached, hubTools);
     } catch (error) {
       attached?.detach();
       let cleanupError: unknown;
@@ -440,7 +444,7 @@ class DirectoryPreparedBinding implements PreparedSessionBinding {
   private closed = false;
   constructor(readonly control: HarnessControl, readonly workspace: string, private readonly lease: WorkspaceLease,
     private readonly root: string, private readonly temporary: HostTmpdir, private readonly owner: () => void, readonly installation: NonNullable<PreparedSessionBinding["installation"]>, private readonly usage?: NativeUsageLease,
-    readonly secrets: readonly string[] = [], private readonly table: TableAttachment | null = null) {}
+    readonly secrets: readonly string[] = [], private readonly table: TableAttachment | null = null, readonly hubTools = false) {}
   assertOwned(): void {
     if (this.closed || this.closing !== null) throw new SessionError("BINDING_CLOSED", "binding is closing or closed");
     this.owner(); this.lease.assertOwned(); this.usage?.assertOwned();

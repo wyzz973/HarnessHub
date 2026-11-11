@@ -23,11 +23,27 @@ export interface TableAttachment {
  */
 export class TableMount {
   private address: string | null = null;
+  private installed: ((harnessId: string) => Promise<boolean>) | null = null;
   private readonly live = new Map<SessionId, number>();
   constructor(readonly grants: TableGrants = new MemoryTableGrants()) {}
   /** The Hub's address (the origin the tool process calls) once it listens; null before, and again once it stops. */
   listening(url: string | null): void { this.address = url; }
   get url(): string | null { return this.address; }
+  /**
+   * Who can tell whether a Harness's own configuration holds the Hub's tool entry as the Hub writes it now (the capability
+   * service reads those files): given by whoever composes the Hub, null to take it back. Until it is given, no Harness is known to have the tools.
+   */
+  toolsIn(probe: ((harnessId: string) => Promise<boolean>) | null): void { this.installed = probe; }
+  /**
+   * Whether a native process of this Harness started now has the Hub's tools: the Harness's configuration holds the Hub's tool
+   * entry (what a process started with the table's environment then runs). A probe that fails is a no; it never fails a start.
+   * The caller has the process carry the environment (`attach`) and reads its own configuration home: this knows nothing of either.
+   */
+  async hasTools(harnessId: string): Promise<boolean> {
+    const probe = this.installed;
+    if (probe === null) return false;
+    try { return await probe(harnessId) === true; } catch { return false; }
+  }
   /** Mints a token for a process about to start; null while the Hub has no address, when the process then starts without the table. */
   attach(grant: TableGrant): TableAttachment | null {
     const url = this.address;

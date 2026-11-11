@@ -54,6 +54,8 @@ export interface PublicContextOptions {
    * the packet, so the target does not take it for new work.
    */
   readonly repeat?: boolean;
+  /** The target has the Hub's tools this Turn (PreparedSessionBinding.hubTools): the packet then says how to read the rest back and notes the outputs it does not carry. False unless given. */
+  readonly hubTools?: boolean;
 }
 
 /**
@@ -79,6 +81,6 @@ export function buildPublicContext(state: SessionSnapshot, current: PublicRun, s
   const ordered = [...sources].sort((a, b) => position.get(a.id)! - position.get(b.id)!);
   const rendered = renderRelay({ state, current, sources: ordered, origin: options.origin ?? false, ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
     ...(options.names === undefined ? {} : { names: options.names }), ...(options.firstLine === undefined ? {} : { firstLine: options.firstLine }), ...(options.details === undefined ? {} : { details: options.details }), ...(options.budget === undefined ? {} : { budget: options.budget }),
-    ...(options.repeat === undefined ? {} : { repeat: options.repeat }) });
+    ...(options.repeat === undefined ? {} : { repeat: options.repeat }), ...(options.hubTools === undefined ? {} : { hubTools: options.hubTools }) });
   return { text: rendered.text, throughSeq: state.lastSeq, sourceRunIds: ordered.map(run => run.id), continuity: "public_context_rehydrate", relay: rendered.record };
 }

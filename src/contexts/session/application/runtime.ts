@@ -1582,7 +1582,8 @@ export class SessionRuntime {
       const relayFor = async (state: SessionSnapshot, sources: readonly PublicRun["id"][], origin: boolean): Promise<PublicContextOptions> => {
         const details = await this.relayDetails(state, sources), secrets = [...(execution.binding?.secrets ?? []), ...await this.relaySecretsOf(state, run, sources, origin)];
         this.continue(execution);
-        return { origin, secrets, firstLine: reading.kind === "content", details, ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
+        // The binding says whether its process has the Hub's tools (it was started with the table's environment and its Harness holds the tool entry): a fact of this Turn's process, which the packet may then repeat.
+        return { origin, secrets, firstLine: reading.kind === "content", details, hubTools: execution.binding?.hubTools === true, ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
       };
       if (native === null) {
         const observation = await control.initialize(); this.continue(execution);
