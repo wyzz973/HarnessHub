@@ -79,9 +79,14 @@ function reply(state: SessionSnapshot, run: PublicRun): string {
   return state.messages.filter(message => message.runId === run.id && message.role === "assistant").map(message => message.text).join("");
 }
 function digits(text: string): readonly string[] { return text.match(/\d{3,}/gu) ?? []; }
+/** Every event of the Session, read a page at a time (the Store reads at most 100 at once). */
+function everyEvent(app: App, id: SessionId): ReturnType<App["store"]["events"]>[number][] {
+  const all: ReturnType<App["store"]["events"]>[number][] = [];
+  for (let after = 0; ; ) { const page = app.store.events(id, after, 100); all.push(...page); if (page.length < 100) return all; after = page.at(-1)!.seq; }
+}
 /** What the Turn's own run.context_prepared recorded of the packet it handed over, or null when it owed nothing. */
 function relayOf(app: App, id: SessionId, run: PublicRun): Record<string, unknown> | null {
-  const events = app.store.events(id, 0, 100), prepared = events.find(event => event.type === "run.context_prepared" && event.data.runId === run.id);
+  const events = everyEvent(app, id), prepared = events.find(event => event.type === "run.context_prepared" && event.data.runId === run.id);
   assert.ok(prepared, "the Turn recorded what it prepared");
   const relay = prepared.data.relay;
   return relay !== null && typeof relay === "object" && !Array.isArray(relay) ? relay as Record<string, unknown> : null;
@@ -90,9 +95,29 @@ function tokens(run: PublicRun): number | null {
   const turn = run.usage?.turn;
   return turn === undefined ? null : turn.total ?? ((turn.input ?? 0) + (turn.output ?? 0));
 }
+/**
+ * What the relay did around one Turn, as the Store holds it: its decision, the checks and their answers, the live evidence, the
+ * delivery row and every binding's state afterwards. Shapes and verdicts only, never a packet or a reply.
+ */
+function ledger(app: App, id: SessionId, state: SessionSnapshot, run: PublicRun): Record<string, unknown> {
+  const mine = everyEvent(app, id).filter(event => event.data.runId === run.id || event.data.observedInRun === run.id);
+  const pick = (type: string) => mine.filter(event => event.type === type).map(event => event.data as Record<string, unknown>);
+  const prepared = pick("run.context_prepared")[0], relay = prepared?.relay as Record<string, unknown> | null | undefined, ended = pick("run.ended")[0];
+  const row = app.store.relayDeliveries(id).find(delivery => delivery.runId === run.id), timing = run.timing;
+  return {
+    decision: relay?.decision ?? null, consent: prepared?.consent ?? null, vendor: prepared?.vendor ?? null, returnChoice: prepared?.returnChoice ?? null,
+    checks: pick("relay.verified").map(check => ({ plan: check.plan, moment: check.moment, result: check.result, unasked: check.unasked ?? null })),
+    live: pick("relay.input_recorded").map(event => event.live ?? "recorded_event"), title: pick("relay.title_set").map(event => event.outcome ?? event.result ?? "set"),
+    vendorChanged: pick("relay.vendor_changed").length, withheld: pick("relay.withheld").length, input: ended?.input ?? null, contextEffect: ended?.contextEffect ?? null,
+    delivery: row === undefined ? null : { outcome: row.outcome.kind, evidence: "evidence" in row.outcome ? row.outcome.evidence : null, reason: "reason" in row.outcome ? row.outcome.reason : null, position: row.position.kind, consentLogged: row.consentLogSeq !== null },
+    bindings: (state.nativeBindings ?? []).filter(binding => binding.status !== "archived").map(binding => ({ harness: binding.harnessId, status: binding.status, sync: binding.relay?.sync.kind ?? null, epoch: binding.relay?.nativeEpoch ?? null })),
+    prepareMs: timing?.dispatchedAt !== undefined && timing.preparingAt !== undefined ? timing.dispatchedAt - timing.preparingAt : null,
+    turnMs: timing?.endedAt !== undefined && timing.dispatchedAt !== undefined ? timing.endedAt - timing.dispatchedAt : null,
+  };
+}
 function summary(app: App, id: SessionId, state: SessionSnapshot, run: PublicRun): Record<string, unknown> {
   const relay = relayOf(app, id, run), text = reply(state, run);
-  return { harness: run.selection.harnessId, status: run.status, error: run.error?.code ?? null, carried: run.sourceRunIds.length, digits: digits(text), replyBytes: Buffer.byteLength(text), tokens: tokens(run),
+  return { harness: run.selection.harnessId, status: run.status, error: run.error?.code ?? null, carried: run.sourceRunIds.length, digits: digits(text), replyBytes: Buffer.byteLength(text), tokens: tokens(run), ledger: ledger(app, id, state, run),
     relay: relay === null ? null : { kind: relay.kind, language: relay.language, tokens: relay.tokens, budget: relay.budget, complete: relay.complete, units: relay.units, userWords: relay.userWords, redactions: relay.redactions } };
 }
 
@@ -159,6 +184,25 @@ if (probeTargets.length === 0) test("installed Harnesses hand a conversation ove
     // The second's answer differs from the first's own number, so the first can know it only from the delta.
     assert.ok(says(reply(three.state, three.run)), "back on its own native session, the first Harness knows the second's answer from the delta");
     assert.ok(three.state.nativeBindings?.some(binding => binding.harnessId === first && binding.status === "ready"), "the first Harness's native binding is ready again");
+
+    // HH_REAL_RELAY_WALK=1 goes on through the situations the relay has rules for, and only records what happened (each
+    // Turn's ledger is the evidence): another Turn on the same Harness, a Turn stopped right after it was sent, the Turn
+    // after that, a clear, and the Turn after the clear. Nothing below is asserted beyond "the Session still answers".
+    if (process.env.HH_REAL_RELAY_WALK === "1") {
+      const brief = "只回复一个词，不要调用任何工具。";
+      await ask("再说一遍 " + displayName(second) + " 回复的那个数字。" + brief);
+      await switchTo(second);
+      app.runtime.send(id, "从 1 数到 3，每个数字单独一行，不要调用任何工具。", "send-" + randomUUID());
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      app.runtime.cancel(id, "cancel-" + randomUUID()); await settle("the stopped Turn");
+      { const state = app.runtime.read(id), run = state.runs.at(-1)!; turns.push({ step: "stopped", ...summary(app, id, state, run) }); }
+      await ask("刚才 " + displayName(first) + " 最后回复的数字是多少？" + brief);
+      await ask("这段对话里你一共回答过几次？" + brief);
+      await switchTo(first);
+      await ask("/clear");
+      await ask("这段对话里最早出现的那个五位数是多少？不知道就回复“不知道”。" + brief);
+      turns.push({ step: "attention", attention: app.runtime.relayAttention(id) });
+    }
   } catch (error) { failure = error; }
   finally {
     try { await closeApp(app); } catch (error) { failure ??= error; }
