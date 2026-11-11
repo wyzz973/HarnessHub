@@ -96,8 +96,12 @@ function tokens(run: PublicRun): number | null {
   return turn === undefined ? null : turn.total ?? ((turn.input ?? 0) + (turn.output ?? 0));
 }
 /**
- * What the relay did around one Turn, as the Store holds it: its decision, the checks and their answers, the live evidence, the
- * delivery row and every binding's state afterwards. Shapes and verdicts only, never a packet or a reply.
+ * What the relay did around one Turn, as the Store holds it (slim.md: nothing is read back from the native side): its decision
+ * (`decision`: carry, alone or plain, who decided and why), the first-handoff trace (`handoff`), the live evidence the Driver gave
+ * (`live`: the input recorded as an event), the native title it set, the delivery row (outcome, evidence E1/E3, reason, whether it
+ * was the one automatic resend), what the Driver knew of the input and of the command's effect, every live binding's state
+ * afterwards (`epoch`, `mark`, whether a packet is `pending`, `resendAll`) and the milliseconds spent preparing and running.
+ * Shapes and verdicts only, never a packet or a reply.
  */
 function ledger(app: App, id: SessionId, state: SessionSnapshot, run: PublicRun): Record<string, unknown> {
   const mine = everyEvent(app, id).filter(event => event.data.runId === run.id || event.data.observedInRun === run.id);
@@ -200,6 +204,8 @@ if (probeTargets.length === 0) test("installed Harnesses hand a conversation ove
       await ask("这段对话里你一共回答过几次？" + brief);
       await switchTo(first);
       await ask("/clear");
+      // What the cleared binding offers before the next message: the earlier part, to attach once ("attach_available").
+      turns.push({ step: "attention-after-clear", attention: app.runtime.relayAttention(id) });
       await ask("这段对话里最早出现的那个五位数是多少？不知道就回复“不知道”。" + brief);
       turns.push({ step: "attention", attention: app.runtime.relayAttention(id) });
     }

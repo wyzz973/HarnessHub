@@ -26,7 +26,7 @@ const clean: CleanupEvidence = { closed: true, exitCode: 0, signal: null, protoc
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
 function packetFor(seed: string, harnessId: string, controlId: string): { readonly packet: RelayPacket; readonly body: string } {
   const body = "packet " + seed, id = "relay-" + Array.from(createHash("sha256").update(seed).digest().subarray(0, 20), byte => CROCKFORD[byte % 32]).join("");
-  return { body, packet: parseRelayPacket({ id, kind: "packet", tier: "standard", complete: true, target: { harnessId, controlId, model: null, nativeEpoch: 1 },
+  return { body, packet: parseRelayPacket({ id, kind: "packet", tier: "full", complete: true, target: { harnessId, controlId, model: null, nativeEpoch: 1 },
     source: { kind: "other", names: [] }, range: { fromSeq: 0, throughSeq: 1, fromRun: 0, throughRun: 0 }, basePacketId: null, supersedes: null, policyVersion: "relay/1", language: "en",
     factsFingerprint: hex("f"), inputs: { attachOverride: false, digestBehind: [], detailsMissing: [], noteIncluded: false, firstLineOmitted: null },
     redaction: { profile: "egress", count: 0, byClass: {}, overridden: 0, unscanned: 0 },
@@ -73,7 +73,7 @@ test("G066-C08 the longest legal relay state of a binding and of a Run, committe
     step(current => ({ ...current, runs: [...current.runs, accepted], messages: [...current.messages, { id: accepted.userMessageId, runId: accepted.id, role: "user", text: accepted.input, seq: current.lastSeq + 1, status: "queued" }],
       commands: [...current.commands, { id: accepted.commandId, kind: "send", fingerprint: hex("b"), resultId: accepted.id }] }));
     const queued = bytesOf();
-    const runRelay = parseRunRelay({ packetId: packets[3]!.packet.id, kind: "resend", continuity: { kind: "native_resume_delta", tier: "fidelity", runs: 256 }, executedOn: { harnessId, controlId, nativeEpoch: RELAY_MAX_SEQ + 1 } });
+    const runRelay = parseRunRelay({ packetId: packets[3]!.packet.id, kind: "packet", continuity: { kind: "native_resume_delta", tier: "brief", runs: 256 }, executedOn: { harnessId, controlId, nativeEpoch: RELAY_MAX_SEQ + 1 } });
     step(current => ({ ...current, activeRunId: accepted.id, runs: current.runs.map(row => row.id === accepted.id ? { ...row, status: "running" as const, contextThroughSeq: current.lastSeq, relay: runRelay,
       timing: { acceptedAt: 10, preparingAt: 8.64e15 - 4, contextReadyAt: 8.64e15 - 3, readyAt: 8.64e15 - 2, dispatchedAt: 8.64e15 - 1, recordedAt: 8.64e15 } } : row),
       messages: current.messages.map(message => message.runId === accepted.id ? { ...message, status: "running" as const } : message) }));

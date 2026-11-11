@@ -332,7 +332,7 @@ export function packetManifest(input: { readonly state: SessionSnapshot; readonl
   const window = input.window;
   const userCap = Math.min(2500, Math.floor(0.5 * record.budget.cap)), untrustedCap = Math.floor(0.6 * record.budget.cap);
   return {
-    id: relayPacketId(record.packetId), kind: record.kind, tier: "standard", complete: record.complete,
+    id: relayPacketId(record.packetId), kind: record.kind, tier: record.tier, complete: record.complete,
     target: { harnessId, controlId: run.selection.controlId, model: run.selection.nativeModel ?? null, nativeEpoch: input.relay.epoch },
     source: { kind, names }, range: input.range, basePacketId: null, supersedes: input.supersedes, policyVersion: MANIFEST_POLICY, language: record.language,
     factsFingerprint: sha(JSON.stringify({ runs: input.runs, range: input.range })),
@@ -349,7 +349,7 @@ export function packetManifest(input: { readonly state: SessionSnapshot; readonl
 /** How a Turn continued its context (§12.2), for its `relay`. */
 export function continuityOf(decision: TurnDecision | null, record: RelayRecord | null, runs: number): ContinuityLevel {
   if (decision?.kind !== "carry" || record === null) return { kind: "native_resume" };
-  return record.kind === "delta" ? { kind: "native_resume_delta", tier: "standard", runs: Math.max(1, Math.min(RELAY_MAX_RUNS, runs)) } : { kind: "rehydrate", tier: "standard", complete: record.complete };
+  return record.kind === "delta" ? { kind: "native_resume_delta", tier: record.tier, runs: Math.max(1, Math.min(RELAY_MAX_RUNS, runs)) } : { kind: "rehydrate", tier: record.tier, complete: record.complete };
 }
 export function runRelayOf(packet: RelayPacket | null, continuity: ContinuityLevel, executedOn: ExecutedOn | null): RunRelay {
   return { packetId: packet?.id ?? null, kind: packet === null ? null : packet.kind, continuity, executedOn };

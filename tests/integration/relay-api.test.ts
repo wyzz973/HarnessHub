@@ -210,7 +210,7 @@ test("a send's relay member is checked field by field, and a refusal accepts not
     ["null", null], ["a string", "full"], ["an array", ["full"]], ["an unknown field", { nonsense: true }], ["a field of a later slice", { excludeRuns: [1] }],
     ["attach out of range", { attach: "everything" }], ["attach of another type", { attach: 1 }], ["attach as a list", { attach: ["full"] }],
     ["a choice the relay no longer has: resend", { resend: true }], ["a choice the relay no longer has: clearConfirmed", { clearConfirmed: true }], ["a choice the relay no longer has: native", { native: "new" }],
-    ["a choice the relay no longer has: tier", { tier: "goal" }], ["a choice the relay no longer has: a note", { note: "a note" }], ["a choice the relay no longer has: a consent", { consent: { vendor: "openai", decision: "acknowledged", scope: "global" } }],
+    ["a choice the relay no longer has: tier", { tier: "brief" }], ["a choice the relay no longer has: a note", { note: "a note" }], ["a choice the relay no longer has: a consent", { consent: { vendor: "openai", decision: "acknowledged", scope: "global" } }],
   ];
   for (const [label, relay] of bad) {
     const reply = await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "never accepted", commandId: "bad-" + ++sequence, relay });
@@ -280,7 +280,7 @@ test("A → B → A: the relay model lists the bindings and the packets, and the
   assert.deepEqual([p1.number, p2.number], [1, 2]); assert.deepEqual([p1.runIndex, p2.runIndex], [1, 2]);
   assert.deepEqual([p1.runId, p2.runId], [conversation.runs[1]!.id, conversation.runs[2]!.id]);
   assert.deepEqual([p1.packetId, p2.packetId], [r1.packetId, r2.packetId]);
-  assert.deepEqual([p1.kind, p1.tier, p1.target], ["packet", "standard", { harnessId: "rapi-b", model: null }]);
+  assert.deepEqual([p1.kind, p1.tier, p1.target], ["packet", "full", { harnessId: "rapi-b", model: null }]);
   assert.deepEqual([p2.kind, p2.target.harnessId], ["packet", "rapi-a"]);
   for (const packet of model.packets) {
     assert.deepEqual(Object.keys(packet).sort(), ["delivery", "estTokens", "evidence", "kind", "number", "omissions", "packetId", "redactions", "runId", "runIndex", "target", "tier"], "exactly the fields of the contract");
@@ -511,7 +511,7 @@ test("the hub announces each of the four relay events, once each, under the wate
 
 test("a Run's frame carries its delivery like the snapshot does", () => {
   const session = "session-hub-run", active = "run-hub-active";
-  const run = { ...runAt(0, "alpha", "running", { packetId: packetIdOf("hub"), kind: "packet", continuity: { kind: "rehydrate", tier: "standard", complete: true }, executedOn: null }) };
+  const run = { ...runAt(0, "alpha", "running", { packetId: packetIdOf("hub"), kind: "packet", continuity: { kind: "rehydrate", tier: "full", complete: true }, executedOn: null }) };
   const at = (lastSeq: number): SessionView => ({ ...viewAt(session, lastSeq), activeRunId: runId(active), runs: [{ ...run, id: runId(active), relay: { ...run.relay!, delivery: { state: "recorded", evidence: "E1" } } }] });
   let head = 4;
   const hub = new SessionStreamHub(() => at(head)), socket = new FakeSocket();
@@ -560,7 +560,7 @@ const digestOf = (text: string) => createHash("sha256").update(text, "utf8").dig
 function packetIdOf(seed: string): RelayPacketId { return relayPacketId("relay-" + Array.from(createHash("sha256").update(seed).digest().subarray(0, 20), byte => CROCKFORD[byte % 32]).join("")); }
 function manifest(seed: string, harnessId: string, extra: { readonly kind?: "packet" | "delta" | "anchor" | "resend"; readonly tier?: string; readonly redactions?: number; readonly omissions?: number; readonly model?: string | null } = {}): RelayPacket {
   const body = "packet " + seed;
-  return parseRelayPacket({ id: packetIdOf(seed), kind: extra.kind ?? "packet", tier: extra.tier ?? "standard", complete: true,
+  return parseRelayPacket({ id: packetIdOf(seed), kind: extra.kind ?? "packet", tier: extra.tier ?? "full", complete: true,
     target: { harnessId, controlId: harnessId + "-acp", model: extra.model ?? null, nativeEpoch: 1 },
     source: { kind: "other", names: [{ harnessId: "bravo", model: null, runs: [0, 0] }] }, range: { fromSeq: 3, throughSeq: 3, fromRun: 0, throughRun: 0 }, basePacketId: null, supersedes: null,
     policyVersion: "relay/1", language: "en", factsFingerprint: hex("f"),
@@ -584,9 +584,9 @@ function relayState(epoch: number, mark: number, extra: Partial<BindingRelayStat
 
 test("the read model over rows made by hand: every sync state, each delivery outcome, the numbering and the Run a mark reaches", () => {
   const id = sessionId("session-synthetic");
-  const packets = { recorded: manifest("recorded", "alpha", { redactions: 3 }), unknown: manifest("unknown", "bravo", { kind: "delta", omissions: 5, model: "gpt-x" }), refused: manifest("refused", "alpha", { kind: "resend", tier: "goal" }) };
+  const packets = { recorded: manifest("recorded", "alpha", { redactions: 3 }), unknown: manifest("unknown", "bravo", { kind: "delta", omissions: 5, model: "gpt-x" }), refused: manifest("refused", "alpha", { kind: "resend", tier: "brief" }) };
   const noRelay = { packetId: null, kind: null, continuity: { kind: "native_resume" as const }, executedOn: null };
-  const carrying = (packet: RelayPacket, harnessId: string) => ({ packetId: packet.id, kind: packet.kind, continuity: { kind: "rehydrate" as const, tier: "standard" as const, complete: true }, executedOn: { harnessId, controlId: harnessId + "-acp", nativeEpoch: 1 } });
+  const carrying = (packet: RelayPacket, harnessId: string) => ({ packetId: packet.id, kind: packet.kind, continuity: { kind: "rehydrate" as const, tier: "full" as const, complete: true }, executedOn: { harnessId, controlId: harnessId + "-acp", nativeEpoch: 1 } });
   const runs = [
     runAt(0, "bravo", "completed", noRelay),
     runAt(1, "alpha", "completed", carrying(packets.recorded, "alpha")),
@@ -641,9 +641,9 @@ test("the read model over rows made by hand: every sync state, each delivery out
   assert.equal(bindings.get("alpha")![0]!.owed, undefined, "alpha holds everything of the Runs that ended before its mark");
   // One entry per Run that carried a packet whose text is kept, numbered by the Runs that carried one; an untracked packet is unknown.
   assert.deepEqual(model.packets, [
-    { packetId: packets.recorded.id, runId: runs[1]!.id, runIndex: 1, number: 1, kind: "packet", tier: "standard", target: { harnessId: "alpha", model: null }, estTokens: packets.recorded.body.estTokens, omissions: 0, redactions: 3, delivery: "recorded", evidence: "E3" },
-    { packetId: packets.unknown.id, runId: runs[2]!.id, runIndex: 2, number: 2, kind: "delta", tier: "standard", target: { harnessId: "bravo", model: "gpt-x" }, estTokens: packets.unknown.body.estTokens, omissions: 7, redactions: 0, delivery: "unknown", evidence: null },
-    { packetId: packets.refused.id, runId: runs[3]!.id, runIndex: 3, number: 3, kind: "resend", tier: "goal", target: { harnessId: "alpha", model: null }, estTokens: packets.refused.body.estTokens, omissions: 0, redactions: 0, delivery: "unknown", evidence: null },
+    { packetId: packets.recorded.id, runId: runs[1]!.id, runIndex: 1, number: 1, kind: "packet", tier: "full", target: { harnessId: "alpha", model: null }, estTokens: packets.recorded.body.estTokens, omissions: 0, redactions: 3, delivery: "recorded", evidence: "E3" },
+    { packetId: packets.unknown.id, runId: runs[2]!.id, runIndex: 2, number: 2, kind: "delta", tier: "full", target: { harnessId: "bravo", model: "gpt-x" }, estTokens: packets.unknown.body.estTokens, omissions: 7, redactions: 0, delivery: "unknown", evidence: null },
+    { packetId: packets.refused.id, runId: runs[3]!.id, runIndex: 3, number: 3, kind: "resend", tier: "brief", target: { harnessId: "alpha", model: null }, estTokens: packets.refused.body.estTokens, omissions: 0, redactions: 0, delivery: "unknown", evidence: null },
   ], "the packet nothing stored is left out and takes its number with it");
   // The Run DTO: the delivery of each Run that carried a packet, from its row, else unknown; the rest untouched.
   const shown = api.runViews(snapshot);

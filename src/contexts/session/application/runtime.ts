@@ -14,7 +14,7 @@ import { commandEffect, commandOutcome, dispatched, type InputOutcome } from "..
 import { initialBindingRelay, owed, plan, type RelayFact } from "../domain/relay/delivery.js";
 import { BLOCKED_CODES, RelayError, type BindingRelayState, type DeliveryRecord, type RelayAttention, type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayInstallationNotice, type RelayKeyPort, type RelayLogPort, type RelayPacket, type RelayPrefKey, type RelayStorePort } from "../../../contracts/relay.js";
 import { relayRedactor } from "../domain/relay/redaction.js";
-import { fitsMinPacket, hardCap, packetBudget, resolveWindow, type ResolvedWindow } from "../domain/relay/windows.js";
+import { hardCap, packetBudget, resolveWindow, type ResolvedWindow } from "../domain/relay/windows.js";
 import { estimateTokens, type RelayBudget } from "../domain/relay/budget.js";
 /**
  * How long a relay read on a Turn's connection (setting the native title) may take before it counts as unavailable (ADR-055 §6.1,
@@ -1706,10 +1706,10 @@ export class SessionRuntime {
           const carrying = decision;
           try {
             const runs = needRuns(prepared, run, carrying.need);
-            // The window the packet is budgeted against, and what the channel leaves it: even the smallest packet must fit, else the input goes as typed.
+            // The window the packet is budgeted against, and what the channel leaves it. The history is left out whole to fit; the renderer
+            // never fails, and when even its least packet is over the cap (below) the input goes as typed.
             const resolved = resolveWindow(prepared, run), limit = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(run.input, kinds) ?? [...run.input].length;
             const cap = hardCap(resolved, estimateTokens(run.input), limit, size);
-            if (!fitsMinPacket(cap)) throw inputLimit(run.selection);
             const budget: RelayBudget = packetBudget(resolved, cap), standard = packetBudget(resolved, Number.POSITIVE_INFINITY);
             window = resolved;
             if (budget.cap < standard.cap) clamped = [limit !== null && hardCap(resolved, estimateTokens(run.input), null, size) >= standard.cap ? "input_limit" : "window"];
@@ -1719,6 +1719,8 @@ export class SessionRuntime {
             packetSecrets = options.secrets ?? [];
             const context = buildPublicContext(renderView(prepared, h, c, carrying.whole || working.mark < 0), run, runs, { ...options, budget, ...(carrying.repeat ? { repeat: true } : {}) });
             this.continue(execution);
+            // The least packet there is (the title line, the sentences, the ledger, the end line) is over the cap: the history cannot be carried at all.
+            if (context.relay.tokens > context.relay.budget.cap) throw inputLimit(run.selection);
             if (!context.text.endsWith("\n" + run.input)) throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render" }, "没能准备交接单：交接单与这条消息拼接不一致，这条消息没有发出。");
             const body = context.text.slice(0, context.text.length - run.input.length - 1), range = rangeOf(prepared, carrying.need, runs);
             const manifest = packetManifest({ state: prepared, run, relay: working, record: context.relay, body, range, runs, attachOverride: carrying.by === "user",

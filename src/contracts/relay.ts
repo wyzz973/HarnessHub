@@ -82,7 +82,8 @@ export function policyVersion(value: unknown): PolicyVersion { return patterned(
 type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Holds<T extends true> = T;
 
-export const TIERS = ["goal", "brief", "standard", "fidelity", "full"] as const;
+/** The two tiers of a packet: everything of the record fits (`full`), or whole items were left out and the ledger says which (`brief`). */
+export const TIERS = ["full", "brief"] as const;
 export type Tier = typeof TIERS[number];
 export const LANGUAGES = ["zh", "en"] as const;
 export type Language = typeof LANGUAGES[number];
@@ -318,10 +319,10 @@ export type ContinuityLevel =
   | { readonly kind: "blocked"; readonly code: typeof BLOCKED_CODES[number] };
 /**
  * The strings v12 events wrote for continuity, and the level each reads as. A v12 rehydration is read as an incomplete
- * standard one: no v12 event says what was folded.
+ * (brief) one: no v12 event says what was folded.
  */
 export const LEGACY_CONTINUITY: Readonly<Record<string, ContinuityLevel>> = {
-  public_context_rehydrate: { kind: "rehydrate", tier: "standard", complete: false },
+  public_context_rehydrate: { kind: "rehydrate", tier: "brief", complete: false },
   native_resume: { kind: "native_resume" },
   native_fork: { kind: "native_fork" },
   native_import: { kind: "native_import" },

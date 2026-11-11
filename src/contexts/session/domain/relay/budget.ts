@@ -15,22 +15,13 @@ export const RELAY_POLICY_VERSION = "relay/1-mvp.4";
  * What the one cap of a packet is made of: T = min(8,000, 5% of the target's context window), the window assumed when the
  * target never reported one, and the share of T the user's earlier words may take before replies and outputs are chosen (U).
  * Only the window and the channel lower T (windows.ts hardCap); what a handoff costs in money or time decides nothing.
- * `untrustedRatio` is read by windows.ts alone: the renderer no longer divides the cap between kinds of text.
  */
 export const RELAY_BUDGET = Object.freeze({
   standardCap: 8000,
   windowShare: 0.05,
   assumedWindow: 128_000,
-  untrustedRatio: 0.6,
   userCap: 2500,
 });
-
-/**
- * Which limits may lower a packet's cap (permissive-defaults §2.4, the owner's decision of 2026-11-10: "可以不在乎预算"). Kept
- * only because tests/unit/relay-return-policy.test.ts still reads it; nothing in the renderer does. Delete it with that test
- * when return-policy's estimates of cost and time go.
- */
-export const BUDGET_DEMOTIONS = Object.freeze({ window: true, channel: true, cost: false, latency: false, cliff: false });
 
 /** A Han, kana, Hangul, CJK punctuation or full-width code point: what the estimate and the language choice count apart. */
 export function cjk(code: number): boolean {
@@ -68,8 +59,6 @@ export function estimateTokens(text: string): number {
 export interface RelayBudget {
   /** T: the whole packet, its frame, the history it carries and its ledger. */
   readonly cap: number;
-  /** Not read by the renderer; windows.ts still derives it from the cap (see RELAY_BUDGET). */
-  readonly untrusted: number;
   /** U: the user's earlier words, chosen before replies and outputs, up to this much (the latest one may take more if it fits). */
   readonly user: number;
   /** The target's context window the cap was derived from, and whether the target reported it or it was assumed. */
@@ -87,6 +76,5 @@ export function resolveRelayBudget(window: number | null): RelayBudget {
   const observed = window !== null && Number.isSafeInteger(window) && window > 0;
   const size = observed ? window : RELAY_BUDGET.assumedWindow;
   const cap = Math.min(RELAY_BUDGET.standardCap, Math.floor(RELAY_BUDGET.windowShare * size));
-  return { cap, untrusted: Math.floor(RELAY_BUDGET.untrustedRatio * cap), user: Math.min(RELAY_BUDGET.userCap, Math.floor(0.5 * cap)),
-    window: size, windowSource: observed ? "observed" : "assumed" };
+  return { cap, user: Math.min(RELAY_BUDGET.userCap, Math.floor(0.5 * cap)), window: size, windowSource: observed ? "observed" : "assumed" };
 }

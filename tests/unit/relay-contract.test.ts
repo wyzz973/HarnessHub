@@ -82,10 +82,10 @@ test("a handoff log row is the first handoff to one Harness", () => {
 });
 
 test("continuity levels are objects in snapshots and read v12's strings only as legacy", () => {
-  assert.deepEqual(parseContinuityLevel({ kind: "native_resume_delta", tier: "standard", runs: 2 }), { kind: "native_resume_delta", tier: "standard", runs: 2 });
-  assert.deepEqual(parseContinuityLevel("public_context_rehydrate", true), { kind: "rehydrate", tier: "standard", complete: false });
+  assert.deepEqual(parseContinuityLevel({ kind: "native_resume_delta", tier: "brief", runs: 2 }), { kind: "native_resume_delta", tier: "brief", runs: 2 });
+  assert.deepEqual(parseContinuityLevel("public_context_rehydrate", true), { kind: "rehydrate", tier: "brief", complete: false });
   assert.deepEqual(parseContinuityLevel("native_fork", true), { kind: "native_fork" });
-  for (const value of ["public_context_rehydrate", { kind: "rehydrate", tier: "standard" }, { kind: "blocked", code: "ELSEWHERE" }, { kind: "native_resume", extra: 1 }])
+  for (const value of ["public_context_rehydrate", { kind: "rehydrate", tier: "brief" }, { kind: "blocked", code: "ELSEWHERE" }, { kind: "native_resume", extra: 1 }])
     assert.throws(() => parseContinuityLevel(value), SessionError);
   for (const value of ["constructor", "toString", "blocked", "unsupported"]) assert.throws(() => parseContinuityLevel(value, true), SessionError, value);
   assert.deepEqual(parseRunRelay({ packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: { ...alpha, nativeEpoch: 2 } }).executedOn?.nativeEpoch, 2);
@@ -189,7 +189,7 @@ test("a Run's relay fields are fixed once it runs, and its relay request once ac
   const preparing = state({ busy: true, runs: runs(undefined, { acceptedAt: 10, preparingAt: 11 }, "preparing") });
   const running = state({ busy: true, runs: runs(executed, { acceptedAt: 10, preparingAt: 11, contextReadyAt: 12, readyAt: 13 }) });
   accepts(preparing, running);
-  rejects(running, state({ busy: true, runs: runs({ ...executed, continuity: { kind: "rehydrate", tier: "standard", complete: true } }, { acceptedAt: 10, preparingAt: 11, contextReadyAt: 12, readyAt: 13 }) }), /dispatched context cannot change/u);
+  rejects(running, state({ busy: true, runs: runs({ ...executed, continuity: { kind: "rehydrate", tier: "full", complete: true } }, { acceptedAt: 10, preparingAt: 11, contextReadyAt: 12, readyAt: 13 }) }), /dispatched context cannot change/u);
   rejects(running, state({ busy: true, runs: runs(executed, { acceptedAt: 10, preparingAt: 11, contextReadyAt: 13, readyAt: 13 }) }), /dispatched context cannot change/u);
   const request = { attach: "none", fingerprint: hex("c") };
   const queued = (relayRequest: Plain) => state({ runs: [run("one", 2), run("two", 4, alpha, { status: "queued", backend: null, cleanup: null, contextThroughSeq: 0, timing: { acceptedAt: 10 }, relayRequest })],
@@ -225,8 +225,8 @@ test("the longest legal relay state of a binding and of a Run stays within its b
   const bytes = Buffer.byteLength(JSON.stringify(parseBindingRelayState(longest)));
   assert.ok(bytes <= MAX_BINDING_RELAY_BYTES, bytes + " B"); assert.ok(bytes > MAX_BINDING_RELAY_BYTES - 128, "the bound is close to the longest value: " + bytes + " B");
   const id = "a" + "b".repeat(95);
-  // The longest continuity level is a delta of the most Runs at a long tier name; "resend" is the longest packet kind.
-  const runRelay = { packetId: packet("f"), kind: "resend", continuity: { kind: "native_resume_delta", tier: "fidelity", runs: 256 }, executedOn: { harnessId: id, controlId: id, nativeEpoch: RELAY_MAX_SEQ + 1 } };
+  // The longest continuity level is a delta of the most Runs at the longer tier name; "packet" is the longer packet kind.
+  const runRelay = { packetId: packet("f"), kind: "packet", continuity: { kind: "native_resume_delta", tier: "brief", runs: 256 }, executedOn: { harnessId: id, controlId: id, nativeEpoch: RELAY_MAX_SEQ + 1 } };
   const request = { attach: "full", fingerprint: hex("f") };
   const runBytes = Buffer.byteLength(JSON.stringify({ relay: parseRunRelay(runRelay), relayRequest: parseRunRelayRequest(request) }));
   assert.ok(runBytes <= MAX_RUN_RELAY_BYTES, runBytes + " B");

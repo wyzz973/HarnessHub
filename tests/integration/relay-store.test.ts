@@ -81,7 +81,7 @@ const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
 function packetIdOf(seed: string): string { return "relay-" + Array.from(createHash("sha256").update(seed).digest().subarray(0, 20), byte => CROCKFORD[byte % 32]).join(""); }
 /** A packet manifest for `body` as G070 will render one, quoting `fold` (Run indexes, or explicit fold entries). */
 function packetOf(body: string, fold: readonly (number | Readonly<Record<string, unknown>>)[], extra: Readonly<Record<string, unknown>> = {}): RelayPacket {
-  return parseRelayPacket({ id: packetIdOf(body), kind: "packet", tier: "standard", complete: true,
+  return parseRelayPacket({ id: packetIdOf(body), kind: "packet", tier: "full", complete: true,
     target: { harnessId: "alpha", controlId: "alpha-acp", model: null, nativeEpoch: 1 },
     source: { kind: "other", names: [{ harnessId: "bravo", model: null, runs: [0, 1] }] }, range: { fromSeq: 0, throughSeq: 8, fromRun: 0, throughRun: 1 }, basePacketId: null, supersedes: null,
     policyVersion: "relay/1", language: "en", factsFingerprint: hex("f"),

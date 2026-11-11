@@ -22,7 +22,7 @@ function input(scenario: Scenario, extra: Partial<RelayRenderInput> = {}): Relay
   return { state: scenario.state, current: scenario.current, sources: scenario.sources, origin: false, names, details: scenario.details, ...extra };
 }
 /** A budget of `cap` tokens as windows.ts makes one for a window of 128k: the share of the user's words is half of it, at most 2,500. */
-function budgetOf(cap: number): RelayBudget { return { cap, untrusted: Math.floor(0.6 * cap), user: Math.min(2500, Math.floor(0.5 * cap)), window: 128_000, windowSource: "assumed" }; }
+function budgetOf(cap: number): RelayBudget { return { cap, user: Math.min(2500, Math.floor(0.5 * cap)), window: 128_000, windowSource: "assumed" }; }
 /**
  * Compares a rendering with its golden file byte for byte; RELAY_GOLDEN=update rewrites the file instead (then review it).
  * The file holds the rendering and one final LF, as every Markdown file of the repository ends (tools/check_design.py).
@@ -221,9 +221,9 @@ test("G070-slim the first line: the user's first ≤200 characters, never a comm
 });
 
 test("G070-slim the budget: T = min(8,000, 5% of the window), U half of it at most 2,500; a window that is not a positive whole number is assumed", () => {
-  assert.deepEqual(resolveRelayBudget(null), { cap: 6400, untrusted: 3840, user: 2500, window: 128000, windowSource: "assumed" });
-  assert.deepEqual(resolveRelayBudget(200000), { cap: 8000, untrusted: 4800, user: 2500, window: 200000, windowSource: "observed" });
-  assert.deepEqual(resolveRelayBudget(32000), { cap: 1600, untrusted: 960, user: 800, window: 32000, windowSource: "observed" });
+  assert.deepEqual(resolveRelayBudget(null), { cap: 6400, user: 2500, window: 128000, windowSource: "assumed" });
+  assert.deepEqual(resolveRelayBudget(200000), { cap: 8000, user: 2500, window: 200000, windowSource: "observed" });
+  assert.deepEqual(resolveRelayBudget(32000), { cap: 1600, user: 800, window: 32000, windowSource: "observed" });
   for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(resolveRelayBudget(invalid).windowSource, "assumed", String(invalid));
   assert.equal(estimateTokens(""), 0); assert.equal(estimateTokens("abcd"), 2); assert.equal(estimateTokens("中文"), 3); assert.ok(estimateTokens("a".repeat(100) + "b") <= estimateTokens("a".repeat(100)) + estimateTokens("b"));
 });

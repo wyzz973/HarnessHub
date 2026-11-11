@@ -19,7 +19,7 @@ type Holds<T extends true> = T;
 // Vocabulary: the words of the wire, each list checked against the contract it mirrors.
 // ---------------------------------------------------------------------------------------------------------------------
 
-export const RELAY_TIERS = ["goal", "brief", "standard", "fidelity", "full"] as const;
+export const RELAY_TIERS = ["full", "brief"] as const;
 export type RelayTier = typeof RELAY_TIERS[number];
 export type RelayTiersAreListed = Holds<Exact<RelayTier, Tier>>;
 export const RELAY_SYNC_STATES = ["fresh", "synced", "pending", "suspect"] as const;

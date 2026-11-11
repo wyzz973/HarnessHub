@@ -14,17 +14,11 @@ import { finished } from "./turn.js";
 // Words
 // ---------------------------------------------------------------------------------------------------------------------
 
-/**
- * The names of a packet's size (12.2). "完整记录" is only for a packet that is complete, which a tier alone does not say: a
- * full-tier packet that left things out is "保真".
- */
-export function tierWords(tier: RelayTier | null, complete?: boolean): string {
+/** The names of a packet's two tiers: everything of the record fits (完整), or whole items were left out and the packet's ledger says which (精简). */
+export function tierWords(tier: RelayTier | null): string {
   switch (tier) {
-    case "goal": return "只交目标";
     case "brief": return "精简";
-    case "standard": return "标准";
-    case "fidelity": return "保真";
-    case "full": return complete === true ? "完整记录" : "保真";
+    case "full": return "完整";
     case null: return "交接单";
   }
 }
@@ -33,7 +27,7 @@ export function continuityWords(level: RunRelayInfo["continuity"]): { readonly m
   switch (level.kind) {
     case "native_resume": return { main: "继续原会话", sub: null };
     case "native_resume_delta": return { main: "继续原会话", sub: level.runs ? `补交 ${level.runs} 轮` : "补交新增的部分" };
-    case "rehydrate": return { main: "新会话", sub: `交接单（${tierWords(level.tier ?? null, level.complete)}）` };
+    case "rehydrate": return { main: "新会话", sub: `交接单（${tierWords(level.tier ?? null)}）` };
     case "native_fork": return { main: "原生分支", sub: null };
     case "native_import": return { main: "接续本机会话", sub: null };
     case "native_cleared": return { main: "上下文已清空", sub: null };
@@ -157,7 +151,7 @@ function aloneWords(decision: RelayDecisionInfo, ctx: NoteContext): string {
 /** A packet cut down for a small window: said when the Turn carried one that is not the standard size. */
 function downgradeNote(info: RunRelayInfo, ctx: NoteContext): string | null {
   const tier = info.continuity.tier;
-  return info.packetId !== null && (tier === "brief" || tier === "goal") ? `${ctx.target} 的窗口较小，交接单已缩为${tierWords(tier)}` : null;
+  return info.packetId !== null && tier === "brief" ? `${ctx.target} 的窗口较小，交接单已缩为${tierWords(tier)}` : null;
 }
 export function decisionNote(info: RunRelayInfo, ctx: NoteContext): string | null {
   const decision = info.decision;
