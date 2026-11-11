@@ -22,6 +22,7 @@ import { MAX_CATALOG_BYTES, type ControlObservation, type InstallationPolicy, ty
 import { captureNativeEnvironment, nativeBaseValues, nativeValues, referencedNativeValues, nativeDescriptorValues, NativeConfigError, type NativeEnvironment } from "./native-environment.js";
 import { credentialValues } from "../../contexts/session/domain/relay/redaction.js";
 import { HostTmpdirs, type HostTmpdir, type HostTmpdirIdentity } from "./host-tmpdir.js";
+import type { TableAttachment, TableMount } from "../table/mount.js";
 import type { NativeExtensions, NativeModelCatalog, NativeSessionImport, NativeSessionPage } from "../../contracts/control.js";
 /** Reading a long native history (an ACP agent replays it in full) is bounded separately from Turn budgets. */
 const NATIVE_IMPORT_MS = 120_000;
@@ -205,17 +206,21 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
   }
   private readonly budgets: HostBudgets;
   private readonly tmpdirs: HostTmpdirs | null;
+  private readonly table: TableMount | null;
   /**
    * `installations` is what this Gateway counts as an installation (ADR-044); its Harness list observes with the same policy.
    * `hosts` gives the host budgets (the close grace and the TMPDIR limits; resolveHostBudgets' defaults when absent) and the
    * host classes' TMPDIRs. Without the latter they go to `hosts` in the workspace leases'
    * directory, which keeps them shared exactly where the leases are, reporting on stderr and with no data directory to
    * keep apart from; a lease provider without a directory leaves none, and prepare() then refuses with HOST_TMPDIR_FAILED.
+   * `table` is the context table's mount: every process a Session starts carries the Hub's address and its own token in its
+   * environment (TableMount); without it, or while the Hub has no address, none does.
    */
   constructor(private readonly workspaces: WorkspaceLeaseProvider, private readonly assertOwner: () => void, readonly installations: InstallationPolicy, private readonly providers?: LocalProviderService, private readonly management?: ManagedResolver,
     private readonly nativeEnvironment: NativeEnvironment = captureNativeEnvironment(), private readonly nativeLocks?: NativeInstallationLocks,
-    hosts?: { readonly budgets?: HostBudgets; readonly tmpdirs?: HostTmpdirs }) {
+    hosts?: { readonly budgets?: HostBudgets; readonly tmpdirs?: HostTmpdirs; readonly table?: TableMount }) {
     if (installations !== "official" && installations !== "any") throw new SessionError("INVALID_INPUT", "installation policy must be official or any");
+    this.table = hosts?.table ?? null;
     const budgets = this.budgets = hosts?.budgets ?? resolveHostBudgets({ physicalMemoryBytes: totalmem() });
     this.tmpdirs = hosts?.tmpdirs ?? (workspaces.namespace === undefined ? null : new HostTmpdirs(join(workspaces.namespace, "hosts"), { maxBytes: budgets.hostTmpdirMaxBytes,
       maxEntries: budgets.hostTmpdirMaxEntries, unusedMs: budgets.hostTmpdirUnusedMs, closeWaitMs: budgets.hostTmpdirCloseWaitMs, report: problem => { process.stderr.write("HarnessGateway: HOST_TMPDIR (" + problem + ")\n"); } }));
@@ -243,7 +248,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
   async prepare(selection: HarnessSelection, configuration: SessionConfiguration, session: SessionId, run: string): Promise<PreparedSessionBinding> {
     this.assertOwner();
     const lease = this.workspaces.acquire(configuration.workspace, session, run);
-    let root: string | undefined, control: HarnessControl | undefined, usage: NativeUsageLease | undefined, temporary: HostTmpdir | undefined;
+    let root: string | undefined, control: HarnessControl | undefined, usage: NativeUsageLease | undefined, temporary: HostTmpdir | undefined, attached: TableAttachment | null = null;
     try {
       usage = this.nativeLocks?.read(selection.harnessId);
       root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-binding-")));
@@ -269,6 +274,10 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       if (this.tmpdirs === null) throw new SessionError("HOST_TMPDIR_FAILED", "host temporary directories are unavailable");
       temporary = await this.tmpdirs.acquire(await hostTmpdirIdentity(selection, observed.selected.command, observed.managed, configuration.workspace, environment, root));
       environment.TMPDIR = temporary.path;
+      // The context table (docs/decisions/LOG.md, 2026-11-11): the Hub's address and a token of this process alone, for the tool
+      // process the Harness starts inside it. Added after the class identity above: a token per process must not make a class per Turn.
+      attached = this.table?.attach({ sessionId: session, harnessId: selection.harnessId, controlId: selection.controlId }) ?? null;
+      if (attached !== null) Object.assign(environment, attached.env);
       const launch: ControlLaunch = { ...observed.selected.command, env: environment, protocol };
       // The Turn's budgets are the Runtime's (ADR-036); the driver's own timeout only backstops a hung protocol. The close grace
       // is the host budgets' (ADR-056 §4.11); a Turn's close never waits for what left the program's group.
@@ -282,8 +291,9 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       // Gateway's environment holds, and whatever its configuration references by name.
       const base = nativeBaseValues(this.nativeEnvironment, home, selection.harnessId);
       const secrets = credentialValues({ environments: [environment, this.nativeEnvironment.values], referenced: Object.entries(referenced).filter(([name]) => !(name in base)) }, existsSync);
-      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, temporary, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage, secrets);
+      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, temporary, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage, secrets, attached);
     } catch (error) {
+      attached?.detach();
       let cleanupError: unknown;
       let quiescent = control === undefined;
       if (control) try { await control.close(); quiescent = true; } catch (failure) { cleanupError = failure; }
@@ -430,7 +440,7 @@ class DirectoryPreparedBinding implements PreparedSessionBinding {
   private closed = false;
   constructor(readonly control: HarnessControl, readonly workspace: string, private readonly lease: WorkspaceLease,
     private readonly root: string, private readonly temporary: HostTmpdir, private readonly owner: () => void, readonly installation: NonNullable<PreparedSessionBinding["installation"]>, private readonly usage?: NativeUsageLease,
-    readonly secrets: readonly string[] = []) {}
+    readonly secrets: readonly string[] = [], private readonly table: TableAttachment | null = null) {}
   assertOwned(): void {
     if (this.closed || this.closing !== null) throw new SessionError("BINDING_CLOSED", "binding is closing or closed");
     this.owner(); this.lease.assertOwned(); this.usage?.assertOwned();
@@ -441,15 +451,16 @@ class DirectoryPreparedBinding implements PreparedSessionBinding {
   }
   private async closeOwned(): Promise<CleanupEvidence> {
     let evidence: CleanupEvidence;
+    // The process's token goes with the close, whether or not the close could confirm the process ended: the Hub no longer answers it.
     try { evidence = await this.control.close(); }
     catch (error) {
-      this.closed = true;
+      this.closed = true; this.table?.detach();
       this.usage?.release(false);
       try { this.lease.release(false); }
       catch { throw new SessionError("BINDING_CLEANUP_FAILED", "control and workspace lease cleanup both failed"); }
       throw error;
     }
-    this.closed = true;
+    this.closed = true; this.table?.detach();
     // Handed back while the workspace lease still keeps the class to this Turn (an oversized directory is moved aside then);
     // a close that failed above keeps it held, since its program may still run.
     await this.temporary.release();

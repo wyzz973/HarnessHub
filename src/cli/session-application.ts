@@ -18,6 +18,7 @@ import { DirectorySessionBindingFactory } from "../infrastructure/session/bindin
 import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { NativeInstallationLocks } from "../infrastructure/management/native-lock.js";
 import { LocalContentStore } from "../infrastructure/session/content-store.js";
+import type { TableMount } from "../infrastructure/table/mount.js";
 import { loadBuiltinCatalog } from "../adapters/catalog.js";
 import { catalogTarget } from "../infrastructure/catalog/platform.js";
 import { MemoryTableGrants } from "../infrastructure/session/table-grants.js";
@@ -98,7 +99,9 @@ export function application(root: string, publish: (event: SessionEvent) => void
    */
   readonly relayKeyFile?: string;
   /** The context table's tokens (src/contracts/table.ts): the instance whoever starts native processes mints from and the web server resolves with; a private in-memory one when not given. */
-  readonly tableGrants?: TableGrants } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime; readonly grants: TableGrants } {
+  readonly tableGrants?: TableGrants;
+  /** The context table's mount (docs/decisions/LOG.md, 2026-11-11): the native processes the Sessions start carry its address and a token each. None: they carry neither. */
+  readonly table?: TableMount } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime; readonly grants: TableGrants } {
   // Recovery decides the relay deliveries a previous owner left in flight, per Session in its own SAVEPOINT (ADR-055 §9 S15).
   const store = new SqliteSessionStore(root, { recoverRelay });
   let providers: LocalProviderService | undefined;
@@ -118,7 +121,8 @@ export function application(root: string, publish: (event: SessionEvent) => void
     // Starting, before any Turn: class directories unused for a week go (ADR-056 §4.12), unless a host of another Gateway
     // sharing the namespace is live; what is moved aside is removed in the background.
     tmpdirs.sweep();
-    const factory = new DirectorySessionBindingFactory(workspaces, () => store.assertOwner(), options.installations ?? "official", providers, management, options.nativeEnvironment, nativeLocks, { budgets: hostBudgets, tmpdirs });
+    const factory = new DirectorySessionBindingFactory(workspaces, () => store.assertOwner(), options.installations ?? "official", providers, management, options.nativeEnvironment, nativeLocks,
+      { budgets: hostBudgets, tmpdirs, ...(options.table === undefined ? {} : { table: options.table }) });
     // The owner is exclusive and quiescent here, so unreferenced content from earlier owners can be collected safely.
     const content = new LocalContentStore(root, () => store.assertOwner());
     content.collect(store.contentReferences());
@@ -138,6 +142,6 @@ export function application(root: string, publish: (event: SessionEvent) => void
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
     // Upgrades see and close this runtime's conversations' processes (ADR-043).
     management.attachProgramUsers({ list: harnessId => runtime.programUsers(harnessId), closeIdle: harnessId => runtime.releaseForUpgrade(harnessId) });
-    return { store, content, factory, runtime, providers, management, grants: options.tableGrants ?? new MemoryTableGrants() };
+    return { store, content, factory, runtime, providers, management, grants: options.tableGrants ?? options.table?.grants ?? new MemoryTableGrants() };
   } catch (error) { try { management?.close(); } finally { try { providers?.close(); } finally { store.close(); } } throw error; }
 }

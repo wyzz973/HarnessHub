@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { capabilityReadTables, harnessDirectories, opencodeWriteDialect, type HarnessReadTable, type PluginSource, type ReadEnvironment } from "../../adapters/capability-reads.js";
 import { CAPABILITY_CHECK_MS, CapabilityError, LOCAL_SKILL_SOURCE, SKILL_SNAPSHOT_CHANGES, type CapabilityChangeCheck, type CapabilityChangeKind, type CapabilityChangeView, type CapabilityDrift, type CapabilityDriftState, type CapabilityHistory,
-  type CapabilityLinkChange, type CapabilityOrphan, type CapabilityRestoreCheck, type InstructionCheckOption, type InstructionsView, type McpDefinitionView, type McpInventoryView, type SkillSourceListing,
+  type CapabilityLinkChange, type CapabilityOrphan, type CapabilityRestoreCheck, type HubToolsResult, type HubToolsView, type InstructionCheckOption, type InstructionsView, type McpDefinitionView, type McpInventoryView, type SkillSourceListing,
   type SkillTextView, type SkillUpdateView, type SubagentDefinitionView, type SubagentInventoryView } from "../../contracts/capabilities.js";
 import { ManagementError } from "../../contracts/management.js";
 import { unifiedDiff } from "../control/unified-diff.js";
@@ -23,6 +23,7 @@ import { CapabilityStore, sha256, WRITTEN_DELETED, type LedgerEntry, type Stored
 import type { GithubFetch } from "./github.js";
 import { SkillChanges, type PreparedPackage } from "./skill-changes.js";
 import { McpInventory } from "./mcp-changes.js";
+import { HubTools, type HubToolsOptions } from "./hub-tools.js";
 import { InstructionInventory } from "./instruction-changes.js";
 import { SubagentInventory } from "./subagent-changes.js";
 import { sweepClaudeCopies, systemClaude, type ClaudeRunner } from "./claude-mcp.js";
@@ -52,6 +53,8 @@ export interface ChangeOptions {
   readonly claude?: ClaudeRunner;
   /** Reads plugin manifests and managed settings for plugin switches; this computer's files by default. */
   readonly pluginFiles?: PluginFiles;
+  /** The Node and the tool program the Hub's own MCP entry runs (HubTools); the Node running the Hub and this build's `cli/hub-tools.js` by default. */
+  readonly hubTools?: HubToolsOptions;
 }
 export type OpenclawRunner = (args: readonly string[], options: { readonly env: Readonly<Record<string, string>>; readonly writable: readonly string[] }, signal: AbortSignal) => Promise<void>;
 type Planned = Exclude<SwitchPlan, { kind: "none" }>;
@@ -135,6 +138,7 @@ export class CapabilityChanges {
   private readonly prepared = new Map<string, PreparedEdit | PreparedLinks | PreparedRestore | PreparedPackage>();
   private readonly skills: SkillChanges;
   private readonly mcp: McpInventory;
+  private readonly hub: HubTools;
   private readonly instructions: InstructionInventory;
   private readonly subagents: SubagentInventory;
   private readonly queues = new Map<string, Promise<unknown>>();
@@ -152,6 +156,7 @@ export class CapabilityChanges {
     this.mcp = new McpInventory({ environment: options.environment, store: this.store, now: () => this.now(), shown: path => this.shown(path), owned: () => this.owned(), tables: installed => this.tables(installed),
       runningNotes: harnessId => this.runningNotes(harnessId, "mcp"),
       offerEdit: (change, harnessId, subject, enabled, file, read, plan, blocked, notes) => this.offerEdit(change, harnessId, subject, enabled, file, read, plan, blocked, notes, null) });
+    this.hub = new HubTools({ mcp: this.mcp, apply: (fingerprint, commandId) => this.apply(fingerprint, commandId), show: homeText(options.homes), command: () => "hub-tools-" + randomUUID() }, options.hubTools);
     this.instructions = new InstructionInventory({ environment: options.environment, store: this.store, homes: options.homes, now: () => this.now(), shown: path => this.shown(path), owned: () => this.owned(),
       tables: installed => this.tables(installed), runningNotes: harnessId => this.runningNotes(harnessId, "instructions"), ccSwitchRunning: () => this.ccSwitchRunning(),
       offerEdit: (change, harnessId, subject, enabled, file, read, plan, blocked, notes) => this.offerEdit(change, harnessId, subject, enabled, file, read, plan, blocked, notes, null) });
@@ -271,6 +276,12 @@ export class CapabilityChanges {
   checkSubagentSync(name: string, harnessId: string, overwrite: boolean, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> { return this.checking(() => this.subagents.checkSync(name, harnessId, overwrite, installed)); }
   checkSubagentRemove(name: string, harnessId: string, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> { return this.checking(() => this.subagents.checkRemove(name, harnessId, installed)); }
   checkMcpRemove(name: string, harnessId: string, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> { return this.checking(() => this.mcp.checkRemove(name, harnessId, installed)); }
+  /** Where the Hub's own tools stand in every installed Harness (docs/decisions/LOG.md, 2026-11-11). Read only. */
+  hubTools(installed: readonly InstalledHarness[]): Promise<HubToolsView> { return this.checking(() => this.hub.view(installed)); }
+  /** Writes the Hub's own tools into one Harness's MCP configuration: the check and the apply of any server of the list, in one request. */
+  installHubTools(harnessId: string, installed: readonly InstalledHarness[]): Promise<HubToolsResult> { return this.checking(() => this.hub.install(harnessId, installed)); }
+  /** Takes the Hub's own tools out of one Harness's MCP configuration; only the entry HarnessHub wrote, unchanged since. */
+  uninstallHubTools(harnessId: string, installed: readonly InstalledHarness[]): Promise<HubToolsResult> { return this.checking(() => this.hub.uninstall(harnessId, installed)); }
   /** Whether Hermes reads the shared directory through its `skills.external_dirs` now. */
   private async hermesReadsShared(): Promise<boolean> {
     const { hermesHome, tables } = await this.tables(), file = tables.find(table => table.harnessId === "hermes")?.skills.externalDirs?.file;

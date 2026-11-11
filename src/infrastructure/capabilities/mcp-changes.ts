@@ -3,6 +3,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { opencodeWriteDialect, type HarnessReadTable, type ReadEnvironment } from "../../adapters/capability-reads.js";
 import { CapabilityError, type CapabilityChangeCheck, type CapabilityChangeView, type McpCandidateView, type McpDefinitionView, type McpInventoryView, type McpServerView, type McpTargetView } from "../../contracts/capabilities.js";
+import { TABLE_ENV } from "../../contracts/table.js";
 import { parsed, UnsafeEdit } from "./edits.js";
 import { readTarget, type TargetRead } from "./files.js";
 import { canonical, commandLine, definitionProblem, MCP_NAME, mcpNameProblem, mcpVariables, ownedOf, readMcp, renderMcp, sameMcp, type McpDefinition, type McpRender, type McpStyle } from "./mcp-definitions.js";
@@ -40,6 +41,8 @@ const AFTER: Readonly<Record<string, string>> = {
   dsh: "写在 ~/.dsh/cordis.patch.yml（每个 profile 都会读，包括 HarnessHub 用的 acp）；新开的会话才读到改动。DeepSeek Harness 启动服务器时会去掉名字像凭据的环境变量，所以变量都显式写在 env 里。",
 };
 function hash(value: unknown): string { return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex"); }
+/** The variables a server needs from the user's environment: not the two the Hub sets itself in every native process it starts (TABLE_ENV). */
+function userVariables(definition: McpDefinition): readonly string[] { return mcpVariables(definition).filter(variable => !(Object.values(TABLE_ENV) as readonly string[]).includes(variable)); }
 /** The ledger key recording that HarnessHub created a Harness's file (DeepSeek Harness's patch layer), so that it can delete it again once emptied. */
 export const CREATED_KEY = "file/created";
 function isStyle(harnessId: string): harnessId is McpStyle { return ["claude", "codex", "cursor", "opencode", "gemini", "hermes", "dsh"].includes(harnessId); }
@@ -119,13 +122,21 @@ export class McpInventory {
       : { harnessId, state: "different", reason: "已有同名的服务器，定义不同；HarnessHub 不覆盖", file: shown };
   }
 
+  /** The list's definition of a server as stored, or undefined when the list has none. */
+  listed(name: string): McpDefinition | undefined { return this.list().find(item => item.name === name)?.definition; }
+  /** Where a definition stands in each installed Harness, as `inventory` shows a listed server's; the definition need not be listed. */
+  async targets(name: string, definition: McpDefinition, installed: readonly InstalledHarness[]): Promise<readonly McpTargetView[]> {
+    const { tables } = await this.host.tables(installed);
+    return Promise.all(installed.map(async harness => this.target(name, definition, harness.harnessId, await this.targetFile(tables.find(table => table.harnessId === harness.harnessId), harness.harnessId))));
+  }
+
   /** The list with every server's state per installed Harness, and the servers the Harnesses have that could be listed. */
   async inventory(installed: readonly InstalledHarness[]): Promise<McpInventoryView> {
     const { tables } = await this.host.tables(installed), located = new Map<string, Awaited<ReturnType<McpInventory["targetFile"]>>>();
     for (const harness of installed) located.set(harness.harnessId, await this.targetFile(tables.find(table => table.harnessId === harness.harnessId), harness.harnessId));
     const list = this.list(), values = this.host.environment.values;
     const servers: McpServerView[] = list.map(item => ({ name: item.name, definition: this.view(item.definition), command: commandLine(item.definition) === null ? null : this.shownText(commandLine(item.definition)!),
-      variables: mcpVariables(item.definition).map(name => ({ name, set: typeof values[name] === "string" && values[name] !== "" })),
+      variables: userVariables(item.definition).map(name => ({ name, set: typeof values[name] === "string" && values[name] !== "" })),
       targets: installed.map(harness => this.target(item.name, item.definition, harness.harnessId, located.get(harness.harnessId)!)), updatedAt: item.updatedAt }));
     return { servers, candidates: await this.candidates(installed, tables, list), harnesses: installed.map(harness => { const where = located.get(harness.harnessId)!; return { harnessId: harness.harnessId, name: harness.name, writable: !("reason" in where), reason: "reason" in where ? where.reason : null }; }) };
   }
@@ -235,9 +246,10 @@ export class McpInventory {
   async checkSync(name: string, harnessId: string, overwrite: boolean, installed: readonly InstalledHarness[]): Promise<CapabilityChangeCheck> {
     const { item, located, read, value } = await this.prepare(name, harnessId, installed);
     const state = this.target(name, item.definition, harnessId, located), rendered = rendering(name, item.definition, located.style);
-    const command = commandLine(item.definition), variables = mcpVariables(item.definition), values = this.host.environment.values, harnessName = installed.find(harness => harness.harnessId === harnessId)?.name ?? harnessId;
+    const command = commandLine(item.definition), variables = userVariables(item.definition), tableVariables = mcpVariables(item.definition).filter(variable => !variables.includes(variable)), values = this.host.environment.values, harnessName = installed.find(harness => harness.harnessId === harnessId)?.name ?? harnessId;
     const notes = [command === null ? "服务器在 " + item.definition.url + "，" + harnessName + " 会连接它。" : "目标 Harness 会以你的身份运行这个程序：" + this.shownText(command),
       ...(variables.length ? ["需要的环境变量：" + variables.map(variable => variable + (typeof values[variable] === "string" && values[variable] !== "" ? "（已设置）" : "（HarnessHub 的环境里未设置）")).join("、") + "。值不写进配置文件。"] : []),
+      ...(tableVariables.length ? [tableVariables.join("、") + " 由 HarnessHub 在它起的每个会话的原生进程里设置，配置里只写变量名；从别处启动这个 Harness 时它们不存在，这个服务器什么也不做。"] : []),
       ...await this.host.runningNotes(harnessId), AFTER[harnessId] ?? "", "note" in located && located.note !== undefined ? located.note : ""].filter(Boolean);
     let blocked: string | null = null;
     if (!rendered.ok) blocked = rendered.reason;

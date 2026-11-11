@@ -361,6 +361,45 @@ export interface McpInventoryView {
   readonly harnesses: readonly { readonly harnessId: string; readonly name: string; readonly writable: boolean; readonly reason: string | null }[];
 }
 
+/**
+ * The Hub's own tools in the Harnesses' user-level MCP configuration (docs/decisions/LOG.md, 2026-11-11): a server of the
+ * name `name` that runs the Hub's tool program. It is one of HarnessHub's MCP list and is checked, backed up and read back
+ * like any other; this is the one request that installs it, removes it, or says where it stands.
+ */
+export interface HubToolsTargetView {
+  readonly harnessId: string;
+  readonly name: string;
+  /** The states of the MCP list (MCP_TARGET_STATES), by what an install now would write; `unsupported` when the tools are not written there. */
+  readonly state: typeof MCP_TARGET_STATES[number];
+  /** Whether an install can write it there now. */
+  readonly writable: boolean;
+  /** Why it is in this state, or why the tools are not written into this Harness. */
+  readonly reason: string | null;
+  /** The file the entry lives in, with ~. */
+  readonly file: string | null;
+}
+export interface HubToolsView {
+  /** The name of the entry in a Harness's MCP configuration. */
+  readonly name: string;
+  /** What the entry runs, as written (home as ~), and whether the tool program is built where this Hub expects it. */
+  readonly tool: { readonly command: string; readonly present: boolean };
+  readonly harnesses: readonly HubToolsTargetView[];
+}
+/**
+ * What one install or uninstall did. `done`: the Harness's configuration was changed (or an identical entry recorded as
+ * HarnessHub's, no file changed); `unchanged`: it already was as asked; `failed`: written, but not as planned (the change says
+ * why, and its backup). Refusals are errors, not results.
+ */
+export interface HubToolsResult {
+  readonly harnessId: string;
+  readonly action: "install" | "uninstall";
+  readonly status: "done" | "unchanged" | "failed";
+  /** Where the entry stands in that Harness afterwards. */
+  readonly state: typeof MCP_TARGET_STATES[number];
+  readonly changes: readonly CapabilityChangeView[];
+  readonly notes: readonly string[];
+}
+
 /** The source shown for a skill HarnessHub wrote from the user's text (ADR-045 step 5), where a repository's address is shown otherwise. */
 export const LOCAL_SKILL_SOURCE = "HarnessHub 新建";
 /** A skill's texts as HarnessHub writes them into its SKILL.md: the one-paragraph description and the body. */

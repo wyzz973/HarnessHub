@@ -26,7 +26,6 @@ import { observedPackageVersion } from "../infrastructure/management/system-vers
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
 import { RelayApi, parseSendRelay } from "./relay-routes.js";
 import { TableApi } from "./table-routes.js";
-import { MemoryTableGrants } from "../infrastructure/session/table-grants.js";
 import type { TableGrants } from "../contracts/table.js";
 import { AttentionStreamHub } from "./attention-stream.js";
 import { HarnessModels } from "./harness-models.js";
@@ -39,6 +38,9 @@ import { CapabilityService, type InstalledChannel, type InstalledHarness } from 
 import { CapabilityChanges, homeText } from "../infrastructure/capabilities/changes.js";
 import { CapabilityError, INSTRUCTION_CHECK_OPTIONS, type InstructionCheckOption, type McpDefinitionView } from "../contracts/capabilities.js";
 import type { GithubFetch } from "../infrastructure/capabilities/github.js";
+import { TableMount } from "../infrastructure/table/mount.js";
+import type { HubToolsOptions } from "../infrastructure/capabilities/hub-tools.js";
+import type { ClaudeRunner } from "../infrastructure/capabilities/claude-mcp.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -75,6 +77,12 @@ export interface WebServerOptions {
   readonly relayKeyFile?: string;
   /** The context table's tokens (src/contracts/table.ts) when this server composes its own application; it makes its own otherwise. */
   readonly tableGrants?: TableGrants;
+  /** The context table's mount, shared with whatever answers its tokens; this server makes its own when none is given, and sets its address once it listens. */
+  readonly table?: TableMount;
+  /** The Node and the tool program the Hub's own MCP entry runs (docs/decisions/LOG.md, 2026-11-11); the Node running the Hub and this build's `cli/hub-tools.js` by default. */
+  readonly hubTools?: HubToolsOptions;
+  /** Runs the user's `claude` for its own MCP commands (ADR-045 step 3b); the sandboxed system one by default. */
+  readonly claude?: ClaudeRunner;
 }
 export interface WebServer { readonly url: string; close(): Promise<void> }
 /** A list of Harness identities in a request body: unique, at most 16. */
@@ -359,6 +367,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     throw error;
   });
   let app: ReturnType<typeof composeApplication>;
+  // The context table's mount (docs/decisions/LOG.md, 2026-11-11): the native processes the application starts carry this server's address and a token each.
+  const table = options.table ?? new TableMount(options.tableGrants);
   // The relay's API (ADR-055 §12.4): its routes, the delivery state of the Runs it shows and the bodies of the errors it explains.
   let relayApi: RelayApi;
   // A Turn waits for its workspace or, when every slot is taken, for a slot (ADR-036).
@@ -382,11 +392,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const made = (options.application ?? ((root, publish) => composeApplication(root, publish, { ...(options.budgets === undefined ? {} : { budgets: options.budgets }),
     ...(options.workspaceLockRoot === undefined ? {} : { workspaceLockRoot: options.workspaceLockRoot }),
     ...(options.installations === undefined ? {} : { installations: options.installations }), ...(options.relayKeyFile === undefined ? {} : { relayKeyFile: options.relayKeyFile }),
-    ...(options.tableGrants === undefined ? {} : { tableGrants: options.tableGrants }) })))(options.root, event => {
+    table, tableGrants: table.grants })))(options.root, event => {
     try { streams.publish(event); } finally { if (app !== undefined) attention.changed(); }
   });
   // An application put together by hand may bring no tokens for the context table: it then has a table nobody can enter.
-  app = { ...made, grants: made.grants ?? options.tableGrants ?? new MemoryTableGrants() };
+  app = { ...made, grants: made.grants ?? table.grants };
   relayApi = new RelayApi({ reads: app.store, read: id => app.runtime.read(id),
     declaration: selection => { const factory: SessionBindingFactory = app.factory; return factory.relayCapabilities?.(selection); },
     // What each binding asks the user to look at, and whether the data directory is in the workspace's reach: the Runtime's reads (never a block).
@@ -425,7 +435,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const homeForms = (): readonly string[] => { const home = app.factory.discoveryEnvironment.home; try { return [...new Set([home, realpathSync(home)])]; } catch { return [home]; } };
   // Changes to a Harness's own configuration (ADR-045 §3): checked, shown, applied once on confirmation, with backups.
   const capabilityChanges = new CapabilityChanges({ root: realpathSync(options.root), generation: app.store.ownerGeneration, assertOwner: () => app.store.assertOwner(),
-    environment: app.factory.discoveryEnvironment, homes: homeForms(), ...(options.github === undefined ? {} : { github: options.github }) });
+    environment: app.factory.discoveryEnvironment, homes: homeForms(), ...(options.github === undefined ? {} : { github: options.github }),
+    ...(options.hubTools === undefined ? {} : { hubTools: options.hubTools }), ...(options.claude === undefined ? {} : { claude: options.claude }) });
   /**
    * The installed Harnesses a capability read or change covers: each one's official installation the Gateway uses, as a
    * scan at this request finds them (these reads and checks are the user's own requests; ADR-050 leaves them as they were).
@@ -658,6 +669,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       const name = text(url.searchParams.get("name"), "server name", 64), harnessId = text(url.searchParams.get("harnessId"), "Harness", 128);
       privateJson(response, path.endsWith("/sync") ? await capabilityChanges.checkMcpSync(name, harnessId, overwrite === "true", await installedHarnesses())
         : await capabilityChanges.checkMcpRemove(name, harnessId, await installedHarnesses())); return;
+    }
+    // The Hub's own tools (docs/decisions/LOG.md, 2026-11-11) in a Harness's user-level MCP configuration: where they stand, and one
+    // request to install or remove them there, through the same check, backup and read-back as any server of the list.
+    if (path === "/api/v1/capabilities/hub-tools" && method === "GET") { queries(url, []); privateJson(response, await capabilityChanges.hubTools(await installedHarnesses())); return; }
+    if ((path === "/api/v1/capabilities/hub-tools/install" || path === "/api/v1/capabilities/hub-tools/uninstall") && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["harnessId"], ["harnessId"]), harnessId = text(input.harnessId, "Harness", 128);
+      privateJson(response, path.endsWith("/install") ? await capabilityChanges.installHubTools(harnessId, await installedHarnesses()) : await capabilityChanges.uninstallHubTools(harnessId, await installedHarnesses())); return;
     }
     // HarnessHub's instructions (ADR-045 §6, step 4): saving the texts changes no Harness file; writing them into a Harness
     // goes through a check shown first and /changes.
@@ -1128,7 +1146,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   server.headersTimeout = 10000; server.requestTimeout = 15000; server.keepAliveTimeout = 5000; server.maxConnections = 32;
   const close = (): Promise<void> => {
     if (closing) return closing;
-    stopping = true;
+    stopping = true; table.listening(null);
     streams.close(); attention.close();
     closing = (async () => {
       const listener = new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done()));
@@ -1163,6 +1181,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("Local listener unavailable");
     host = "127.0.0.1:" + address.port; origin = "http://" + host;
+    table.listening(origin);
     return { url: origin + "/#token=" + bootstrap, close };
   } catch (error) {
     streams.close(); attention.close();

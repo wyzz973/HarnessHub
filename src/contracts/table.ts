@@ -98,3 +98,17 @@ export interface TableSearchView {
   readonly turns: number; readonly unsearched: number;
   readonly notes?: readonly string[];
 }
+
+/** What a native process the Hub started for a Session carries: the Hub's address and that process's own token. */
+export interface TableEnvironment { readonly url: string; readonly session: string }
+/**
+ * The table variables of a process's environment, or null when it is not a Hub Session's process: either variable absent,
+ * or not what the Hub sets (its own loopback origin, an opaque token). Only that shape counts, so the tool never sends a token
+ * anywhere else, and a Harness that hands a tool the text of a variable it was not given (Claude Code passes an unset
+ * `${HARNESSHUB_URL}` through as that text) reads as a process outside the Hub.
+ */
+export function readTableEnv(env: Readonly<Record<string, string | undefined>>): TableEnvironment | null {
+  const url = env[TABLE_ENV.url], session = env[TABLE_ENV.session];
+  if (url === undefined || session === undefined || !/^http:\/\/127\.0\.0\.1:[0-9]{1,5}$/u.test(url) || !/^[A-Za-z0-9_-]{16,128}$/u.test(session)) return null;
+  return { url, session };
+}
