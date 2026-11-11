@@ -881,6 +881,14 @@ test("what the relay decided for a Turn's history is said under its message in p
   await shoot(first.page, "divider-alone");
   assert.deepEqual(first.errors, []);
 
+  const clearedFirst = conversation("completed", own(CODEX)); clearedFirst.runs[1]!.backend = { status: "completed", reason: "cleared" };
+  const clearedOpen = await open(t, clearedFirst);
+  // The first message after the change was the Hub's clear: nothing went to the Harness, and the line says neither that its session goes on nor that it took over.
+  const clearedLine = separator(clearedOpen.log, "交给 Codex · 上下文已清空 · 之前的对话没有交给它");
+  await expect(clearedLine).toBeVisible(); await expect(clearedLine.locator("..")).toHaveAttribute("data-handover", "alone");
+  await expect(clearedOpen.log.getByRole("separator", { name: /接手|继续原会话/u })).toHaveCount(0);
+  assert.deepEqual(clearedOpen.errors, []);
+
   // The packet went and nothing confirmed it; the next messages: sent again once, then alone. Each says what it was.
   const unconfirmed = third(conversation("completed", packetRelay(CODEX)), packetRelay(CODEX, { packetId: SECOND_PACKET, continuity: { kind: "rehydrate", tier: "full", runs: 2 }, decision: { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" } }));
   const resent = await open(t, unconfirmed, { view: relayView({ packets: [packetRow("unknown", null), packetRow("unknown", null, { packetId: SECOND_PACKET, number: 2, runId: "run-3", runIndex: 2 })] }) });
@@ -1117,6 +1125,10 @@ test("the hand-over line follows the evidence: every state, and what each says b
   assert.equal((aloneBy({ kind: "alone", by: "user" }) as { note: string }).note, "这条消息按你的选择只发了原话");
   assert.equal((aloneBy({ kind: "alone", by: "policy", cause: "recovery_failed" }) as { note: string }).note, "服务重启后没能恢复这个对话的交接记录 · 这条只发了原话");
   assert.equal(aloneBy({ kind: "plain", by: "need" }).kind, "taken", "a Turn that owed nothing any more went as typed, and the Harness took the conversation over");
+  // The Hub's clear as the first message after the change: nothing was sent to the Harness and its session was given up, so the line says
+  // that, and not that the original session goes on or that the Harness took the conversation over.
+  const clearedFirst = conversation("completed", own(CODEX)); clearedFirst.runs[1]!.backend = { status: "completed", reason: "cleared" };
+  assert.deepEqual(handover(clearedFirst, relayView()), { kind: "alone", runId: "run-2", note: "上下文已清空 · 之前的对话没有交给它", number: null, packetId: null, fresh: false });
   assert.equal(handover(conversation("running", { ...own(CODEX), decision: { kind: "alone", by: "policy", cause: "input_limit" } }), relayView()).kind, "alone", "handed to the Harness, and said so at once");
   assert.equal(handover(conversation("preparing", { ...own(CODEX), decision: { kind: "alone", by: "policy", cause: "input_limit" } }), relayView()).kind, "none");
   const early = conversation("preparing", own(CODEX)); assert.equal(handover(early, relayView()).kind, "none");

@@ -200,6 +200,9 @@ export function handoverOf(input: {
   const fresh = run.timing !== undefined && (input.now ?? Date.now()) - run.timing.acceptedAt < NEWS_MS;
   const binding = input.view?.bindings.find(item => item.harnessId === (info.executedOn?.harnessId ?? run.selection.harnessId));
   if (info.packetId === null) {
+    // The Hub's clear: the Harness's native session was given up and nothing was sent to it, so none of the earlier part went with the
+    // message that opens its turn. Said so, and not "continues the original session".
+    if (run.backend?.reason === "cleared") return !handedOver ? { kind: "none" } : { kind: "alone", runId: run.id, note: "上下文已清空 · 之前的对话没有交给它", number: null, packetId: null, fresh };
     // Words sent alone (by the relay's policy or the user's choice): the history did not go with them, so the Harness did not take the
     // conversation over. Said so, with why.
     if (info.decision?.kind === "alone") {
