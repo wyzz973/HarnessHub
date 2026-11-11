@@ -1,6 +1,6 @@
 import type { ProviderTextRedactor } from "../../contracts/provider.js";
-import type { CleanupEvidence, ControlEvent, ControlRun, HarnessControl, NativeConversationId, NativeOptions, NativeToolDetail, ProtocolObservation, TurnText, VerifyRequest } from "../../contracts/control.js";
-import type { DeliveryPosition, RelayCapabilities, VendorObservation, VerifyResult } from "../../contracts/relay.js";
+import type { CleanupEvidence, ControlEvent, ControlRun, HarnessControl, NativeConversationId, NativeOptions, NativeToolDetail, ProtocolObservation, TurnText } from "../../contracts/control.js";
+import type { RelayCapabilities } from "../../contracts/relay.js";
 import { SessionError } from "../../contracts/session.js";
 import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
 
@@ -33,19 +33,13 @@ function publicEvent(event: ControlEvent, redact: (text: string) => string): Con
 /** Prevents private injected credentials from entering committed public output or control diagnostics. */
 export class RedactedHarnessControl implements HarnessControl {
   /** The relay's optional members pass through as the inner Driver has them (absent stays absent, ADR-055 §3.2). */
-  readonly deliveryPosition?: (id: NativeConversationId) => Promise<DeliveryPosition>;
-  readonly verifyDelivered?: (id: NativeConversationId, request: VerifyRequest) => Promise<VerifyResult>;
-  readonly relayVendor?: () => Promise<VendorObservation | null>;
   readonly userTextOf?: (replayed: string) => ReturnType<NonNullable<HarnessControl["userTextOf"]>>;
   readonly setTitle?: (id: NativeConversationId, title: string) => Promise<void>;
   /** The inner Driver's static relay declaration, the same object (ADR-055 §3.2). */
   readonly relayCapabilities?: RelayCapabilities;
   constructor(private readonly inner: HarnessControl, private readonly redact: (text: string) => string, private readonly stream: () => ProviderTextRedactor) {
-    // Reads of the native history, the vendor and a title carry no secret the Driver was given; failures are withheld as any other.
+    // A title carries no secret the Driver was given; failures are withheld as any other.
     if (inner.relayCapabilities !== undefined) this.relayCapabilities = inner.relayCapabilities;
-    if (inner.deliveryPosition) this.deliveryPosition = id => this.safe(() => inner.deliveryPosition!(id));
-    if (inner.verifyDelivered) this.verifyDelivered = (id, request) => this.safe(() => inner.verifyDelivered!(id, request));
-    if (inner.relayVendor) this.relayVendor = () => this.safe(() => inner.relayVendor!());
     if (inner.userTextOf) this.userTextOf = replayed => inner.userTextOf!(replayed);
     if (inner.setTitle) this.setTitle = (id, title) => this.safe(() => inner.setTitle!(id, title));
   }

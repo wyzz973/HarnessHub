@@ -308,7 +308,7 @@ test("under the defaults nothing is asked: an unconfirmed handoff is sent again 
   for (const run of shown.runs) assert.equal("relayRequest" in run, false, "the Run keeps its choices' HMAC to itself");
   // What the binding asks of the user: two packets went and nothing confirmed either; the page offers the ways out and does not wait for them.
   const [b] = model.bindings as [RelayBindingView];
-  assert.deepEqual([b.sync, b.attention?.cause, b.attention?.options, b.attention?.counts?.packets, b.attention?.packet], ["pending", "delivery_unconfirmed", ["attach_full"], 1, 2]);
+  assert.deepEqual([b.sync, b.attention?.cause, b.attention?.options, b.attention?.counts?.packets, b.attention?.packet], ["pending", "delivery_unconfirmed", ["attach_full"], 2, 2]);
   assert.deepEqual(model.packets.map(item => item.number), [1, 2]);
   // The way out the banner offers is a field of the next send: [再附一次] attaches the handoff, and it is a Run like the others.
   const again = await say(f, id, "sixth", "m6", 5, { attach: "full" }); assert.equal(again.status, 202, again.text);

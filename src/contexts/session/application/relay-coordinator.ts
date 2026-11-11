@@ -273,10 +273,12 @@ export interface AttentionInput {
  * packet sent and not confirmed, or a conversation cleared whose earlier part can still be attached to the next message. A banner
  * stays while its cause does and goes the moment it ends. Never a block: the next input goes anyway. Null when the binding needs
  * nothing. `key` names the episode: the same cause within one wait is the same key, so a banner shown once and closed does not come back.
+ * `counts.packets` is how many times the unconfirmed packet went and nothing confirmed it: once, or twice when the one automatic
+ * resend was spent (the page says "sent twice" from it).
  */
 export function attentionOf(input: AttentionInput): RelayAttention | null {
   const { relay } = input;
-  if (relay.pending !== null) return { cause: "delivery_unconfirmed", options: ["attach_full"], counts: { runs: input.owedRuns, packets: 1 }, key: "delivery_unconfirmed:" + relay.pending.packetId };
+  if (relay.pending !== null) return { cause: "delivery_unconfirmed", options: ["attach_full"], counts: { runs: input.owedRuns, packets: 1 + relay.pending.autoResends }, key: "delivery_unconfirmed:" + relay.pending.packetId };
   if (input.attachableRuns > 0) return { cause: "attach_available", options: ["attach_full"], counts: { runs: input.attachableRuns, packets: 0 }, key: "attach_available:" + relay.epoch };
   return null;
 }

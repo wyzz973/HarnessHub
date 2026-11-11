@@ -51,7 +51,8 @@ test("what a Turn records of its decision, and which failures only send the word
 test("what a binding asks the user to look at: a packet nothing confirmed, or a cleared conversation whose earlier part can be attached", () => {
   assert.equal(attentionOf({ relay: state({ mark: 3 }), owedRuns: 0, attachableRuns: 0 }), null);
   assert.deepEqual(attentionOf({ relay: state({ pending: pending("a", 1, 2, 1) }), owedRuns: 2, attachableRuns: 5 }),
-    { cause: "delivery_unconfirmed", options: ["attach_full"], counts: { runs: 2, packets: 1 }, key: "delivery_unconfirmed:" + packet("a") }, "an unconfirmed packet is asked about first");
+    { cause: "delivery_unconfirmed", options: ["attach_full"], counts: { runs: 2, packets: 2 }, key: "delivery_unconfirmed:" + packet("a") }, "an unconfirmed packet is asked about first, and it went twice when its one resend was spent");
+  assert.equal(attentionOf({ relay: state({ pending: pending("a", 1, 2, 0) }), owedRuns: 2, attachableRuns: 0 })?.counts.packets, 1, "it went once");
   assert.deepEqual(attentionOf({ relay: state({ epoch: 3, floor: 9 }), owedRuns: 0, attachableRuns: 4 }), { cause: "attach_available", options: ["attach_full"], counts: { runs: 4, packets: 0 }, key: "attach_available:3" });
 });
 
