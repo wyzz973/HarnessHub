@@ -7,7 +7,7 @@ import {
 } from "../../../contracts/session.js";
 import type { BackendResult, CleanupEvidence, NativeOptions, NativeUsage } from "../../../contracts/control.js";
 import { MAX_RUN_OUTPUTS, parseAttachmentRefs, parseContentRef } from "../../../contracts/content.js";
-import { RELAY_COMMAND_KINDS, type EventDraft } from "../../../contracts/session.js";
+import type { EventDraft } from "../../../contracts/session.js";
 import { assertRunRelayBytes, parseBindingRelayState, parseRunRelay, parseRunRelayRequest, parseSwitchTiming, type BindingRelayState } from "../../../contracts/relay.js";
 import { dispatched } from "./relay/advance.js";
 
@@ -242,18 +242,15 @@ function publicSwitch(value: unknown): PublicSwitch {
     ...(item.timing === undefined ? {} : { timing: parseSwitchTiming(item.timing) }),
     ...(item.acknowledgedUnknown === undefined ? {} : { acknowledgedUnknown: array(item.acknowledgedUnknown, "acknowledged unknown Runs", MAX_RUNS, runId) }) };
 }
-const COMMAND_KINDS: readonly CommandRecord["kind"][] = ["create", "send", "switch", "cancel", "close", "permission", "native-reset", "retention", "native-close", ...RELAY_COMMAND_KINDS];
+const COMMAND_KINDS: readonly CommandRecord["kind"][] = ["create", "send", "switch", "cancel", "close", "permission", "native-reset", "retention", "native-close"];
 function command(value: unknown): CommandRecord {
   const item = record(value, "command"); keys(item, ["id", "kind", "fingerprint", "resultId"], "command");
   const kind = choiceOf(item.kind, COMMAND_KINDS, "command kind");
   const fingerprint = text(item.fingerprint, "command fingerprint", 64);
   if (!/^[a-f0-9]{64}$/u.test(fingerprint)) throw new SessionError("INVALID_DATA", "invalid command fingerprint");
   const resultId = text(item.resultId, "command resultId", 128);
-  // A relay command's result is a relay row: an identity, not part of the snapshot.
-  if (relayCommand(kind) && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(resultId)) throw new SessionError("INVALID_DATA", "invalid relay command result");
   return { id: commandId(item.id), kind, fingerprint, resultId };
 }
-function relayCommand(kind: CommandRecord["kind"]): boolean { return (RELAY_COMMAND_KINDS as readonly string[]).includes(kind); }
 function retainedProcess(value: unknown): RetainedProcess {
   const item = record(value, "kept native process"); keys(item, ["harnessId", "controlId", "runId", "since", "process"], "kept native process");
   const harnessId = text(item.harnessId, "kept native Harness", 96), controlId = text(item.controlId, "kept native control", 96);
@@ -326,7 +323,7 @@ function unique(values: readonly string[], label: string): void {
 function relayFields(result: SessionSnapshot): void {
   const bindings = result.nativeBindings ?? [];
   if (result.schemaVersion < 13) {
-    if (bindings.some(binding => binding.relay !== undefined) || result.relayRecoveryFailed !== undefined || result.commands.some(entry => relayCommand(entry.kind)) ||
+    if (bindings.some(binding => binding.relay !== undefined) || result.relayRecoveryFailed !== undefined ||
         result.runs.some(run => run.relay !== undefined || run.relayRequest !== undefined || run.backend?.input !== undefined || run.timing?.contextReadyAt !== undefined || run.timing?.recordedAt !== undefined) ||
         result.switches.some(entry => entry.mode !== undefined || entry.timing !== undefined || entry.acknowledgedUnknown !== undefined))
       throw new SessionError("INVALID_DATA", "relay fields require Session v13");
@@ -465,8 +462,7 @@ export function parseSession(value: unknown, before?: SessionSnapshot): SessionS
   if (last?.target !== undefined && last.target !== null && !same(last.target, result.selection)) throw new SessionError("INVALID_DATA", "selection does not match last effective switch");
   if (result.commands.filter(entry => entry.kind === "create").length !== 1 || !result.commands.every(entry =>
     entry.kind === "send" ? result.runs.some(run => run.id === entry.resultId) : entry.kind === "switch" ? result.switches.some(sw => sw.id === entry.resultId) : entry.kind === "cancel" ? entry.resultId === "none" || result.runs.some(run => run.id === entry.resultId) : entry.kind === "permission" ? result.runs.some(run => run.id === entry.resultId)
-      // A relay command's result is a relay row, checked where that row is written.
-      : relayCommand(entry.kind) || entry.resultId === result.id)) throw new SessionError("INVALID_DATA", "command relation is inconsistent");
+      : entry.resultId === result.id)) throw new SessionError("INVALID_DATA", "command relation is inconsistent");
   if (utf8Bytes(JSON.stringify(result)) > MAX_SESSION_BYTES) throw new SessionError("SESSION_LIMIT", "Session aggregate byte limit reached");
   return result;
 }
@@ -530,8 +526,6 @@ export function assertSessionTransition(before: SessionSnapshot, after: SessionS
   const oldBindings = before.nativeBindings ?? [], newBindings = after.nativeBindings ?? [];
   if (newBindings.length < oldBindings.length) throw new SessionError("INVALID_TRANSITION", "native state references cannot be silently erased");
   const added = after.commands.slice(before.commands.length), writer = after.runs.find(run => run.id === (before.activeRunId ?? after.activeRunId));
-  // The user's relay commands change a binding's relay state without a Run (ADR-055 §14.3); nothing else of it.
-  const relayCommandAdded = added.some(entry => relayCommand(entry.kind));
   const nativeCleared = writer !== undefined && events.some(event => event.type === "run.ended" && event.data.runId === writer.id && clearedNative(event.data.native));
   for (let index = 0; index < newBindings.length; index++) {
     const old = oldBindings[index], next = newBindings[index]!;
@@ -543,8 +537,7 @@ export function assertSessionTransition(before: SessionSnapshot, after: SessionS
     // A branch's native fork advances without a Run: pending → dispatched → ready with the new reference, or archived unchanged.
     const forked = old !== undefined && frozen && next.throughRunId === null && (old.status === "fork-pending" && next.status === "forking" && next.checkpoint === old.checkpoint
       || old.status === "forking" && next.status === "ready" || (old.status === "fork-pending" || old.status === "forking") && next.status === "archived" && next.checkpoint === old.checkpoint);
-    const relayOnly = old !== undefined && relayCommandAdded && same({ ...old, relay: undefined }, { ...next, relay: undefined });
-    if (!reset && !forked && !relayOnly && (!writer || writer.selection.provider !== undefined || writer.selection.harnessId !== next.harnessId || writer.selection.controlId !== next.controlId || next.throughRunId !== null && next.throughRunId !== old?.throughRunId && next.throughRunId !== writer.id)) throw new SessionError("INVALID_TRANSITION", "native state changed without its original Run owner");
+    if (!reset && !forked && (!writer || writer.selection.provider !== undefined || writer.selection.harnessId !== next.harnessId || writer.selection.controlId !== next.controlId || next.throughRunId !== null && next.throughRunId !== old?.throughRunId && next.throughRunId !== writer.id)) throw new SessionError("INVALID_TRANSITION", "native state changed without its original Run owner");
     // A Run archives its own binding only when its end reports the Driver replaced the cleared native session; it may then add
     // the new binding of the same Harness control (Claude's synthesized clear, F04).
     if (!reset && !forked && old !== undefined && next.status === "archived" && (!nativeCleared || !frozen)) throw new SessionError("INVALID_TRANSITION", "a native binding is archived only by a native reset, a failed branch or a confirmed native clear");

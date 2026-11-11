@@ -113,14 +113,12 @@ test("v13 snapshots carry relay state on every binding and v13 fields only from 
     ["a v13 binding without relay", withBinding(value, 0, { relay: undefined })],
     ["relay on a v12 binding", { ...v12, nativeBindings: [{ ...(v12.nativeBindings as Plain[])[0], relay: relay() }] }],
     ["contextReadyAt before v13", { ...v12, runs: (v12.runs as Plain[]).map(row => ({ ...row, timing: { acceptedAt: 10, contextReadyAt: 11 } })) }],
-    ["a relay command before v13", { ...v12, commands: [...(v12.commands as Plain[]), { id: "pin", kind: "relay-pin", fingerprint: hex("a"), resultId: "pin-1" }] }],
     ["backend input before v13", { ...v12, runs: (v12.runs as Plain[]).map(row => ({ ...row, backend: { status: "completed", reason: "fixture", input: "recorded" } })) }],
     ["relayRecoveryFailed before v13", { ...v12, relayRecoveryFailed: 3 }], ["relayRecoveryFailed after the events", { ...value, relayRecoveryFailed: 5 }],
     ["executedOn of another Harness", { ...value, runs: [runs[0], { ...runs[1], relay: { packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: { ...bravo, nativeEpoch: 1 } } }] }],
     ["recordedAt before dispatch", { ...value, runs: [runs[0], { ...runs[1], timing: { acceptedAt: 10, dispatchedAt: 14, recordedAt: 13, endedAt: 20 } }] }],
     ["recordedAt without dispatch", { ...value, runs: [runs[0], { ...runs[1], timing: { acceptedAt: 10, recordedAt: 13 } }] }],
     ["contextReadyAt after readyAt", { ...value, runs: [runs[0], { ...runs[1], timing: { acceptedAt: 10, readyAt: 12, contextReadyAt: 13 } }] }],
-    ["a relay command result that is no identity", { ...value, commands: [...(value.commands as Plain[]), { id: "pin", kind: "relay-pin", fingerprint: hex("a"), resultId: "has space" }] }],
     ["an epoch that does not grow along a lineage", { ...value, nativeBindings: [{ ...(value.nativeBindings as Plain[])[0], status: "archived" }, { ...alpha, checkpoint: "native-alpha-2", throughRunId: null, status: "ready", relay: relay({ mark: -1 }) }] }],
     ["a floor that goes down along a lineage", { ...value, nativeBindings: [{ ...(value.nativeBindings as Plain[])[0], status: "archived", relay: relay({ floor: 2 }) }, { ...alpha, checkpoint: "native-alpha-2", throughRunId: null, status: "ready", relay: relay({ epoch: 2, floor: 1, mark: -1 }) }] }],
   ] as const) assert.throws(() => parsed(invalid as Plain), SessionError, label);
@@ -151,19 +149,16 @@ test("G066 a recovery switch acknowledges unknown Runs by acknowledgedUnknown as
     commands: [...(opened.commands as Plain[]), { id: "again", kind: "switch", fingerprint: hex("a"), resultId: "switch-s" }] }, /only by a recovery switch/u);
 });
 
-test("a binding's relay state changes only by the Run that ran on it, a relay command, migration or recovery", () => {
+test("a binding's relay state changes only by the Run that ran on it, migration or recovery", () => {
   const busy = state({ busy: true });
   accepts(busy, withRelay(busy, 0, { mark: 4 }));
   // A Run of bravo changing alpha's relay state: invalid.
   const bravoRun = run("two", 4, bravo, { status: "running", backend: null, cleanup: null, timing: { acceptedAt: 10, preparingAt: 11 } });
   const foreign = state({ busy: true, runs: [run("one", 2), bravoRun] });
   rejects(foreign, withRelay(foreign, 0, { resendAll: true }), /without its original Run owner/u);
-  // Without any Run (idle): invalid, unless the change only touches relay and comes with a relay command.
+  // Without any Run (idle): invalid, whatever else is committed with it.
   const idle = state();
   rejects(idle, withRelay(idle, 0, { resendAll: true }), /without its original Run owner/u);
-  const command = { id: "pin-1", kind: "relay-pin", fingerprint: hex("a"), resultId: "pin-1" };
-  accepts(idle, { ...withRelay(idle, 0, { resendAll: true }), commands: [...(idle.commands as Plain[]), command] });
-  rejects(idle, { ...withBinding(withRelay(idle, 0, { resendAll: true }), 0, { checkpoint: "elsewhere" }), commands: [...(idle.commands as Plain[]), command] }, /without its original Run owner/u);
 });
 
 test("native epochs, clear floors and marks only move forward, except a clear that starts the next epoch", () => {

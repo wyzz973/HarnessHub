@@ -160,11 +160,9 @@ export interface PublicSwitch {
    */
   readonly acknowledgedUnknown?: readonly RunId[];
 }
-/** The relay's user commands (v13), whose results live in relay rows. */
-export const RELAY_COMMAND_KINDS = ["relay-pin", "relay-unpin", "relay-exclude", "relay-include", "relay-redaction-override", "relay-title"] as const;
 export interface CommandRecord {
   readonly id: CommandId;
-  readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission" | "native-reset" | "retention" | "native-close" | typeof RELAY_COMMAND_KINDS[number];
+  readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission" | "native-reset" | "retention" | "native-close";
   readonly fingerprint: string;
   readonly resultId: string;
 }
