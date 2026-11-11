@@ -1,0 +1,9 @@
+{
+  "name": "job-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "work": "node scripts/worker.js"
+  }
+}
