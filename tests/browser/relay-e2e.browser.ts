@@ -307,9 +307,14 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   assert.equal(await opened(root, "codex"), codexSessions + 1, "a new native session");
   assert.equal((await prompts(root, "codex")).at(-1), "清空之后的 Codex：只发这一条", "as typed: no packet");
   await expect(banner).toHaveCount(0, { timeout: 30_000 });
-  // The hand-overs that carried a packet have its link; every change of Harness has its line, and a message to the same Harness has none.
-  await expect(log.getByRole("button", { name: "查看交接单", exact: true })).toHaveCount(3);
-  await expect(log.getByRole("separator")).toHaveCount(5);
+  // Every message that carried a packet has its link, and every change of Harness its line. A message to the same Harness has a line
+  // only when it still carried the conversation (again, by the banner's choice, after a clear) or went alone though something was owed:
+  // that line names no hand-over, only what the message carried.
+  await expect(separator(/^又带了一次之前的内容 · 未确认收到$/u)).toHaveCount(1);
+  await expect(separator(/^只发了原话$/u)).toHaveCount(1);
+  await expect(separator(/^带上了之前.*$/u)).toHaveCount(2);
+  await expect(log.getByRole("button", { name: "查看交接单", exact: true })).toHaveCount(6);
+  await expect(log.getByRole("separator")).toHaveCount(9);
   await shoot(page, "e2e-15-codex-new-session");
 
   // ---- Nothing was refused and nothing failed -----------------------------------------------------------------------------------
