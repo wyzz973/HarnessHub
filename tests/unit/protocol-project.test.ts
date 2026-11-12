@@ -114,6 +114,10 @@ test("what a Turn brought along from the Executor before it, read from the relay
   // The same Harness on another model is the same native session: nothing needed.
   assert.deepEqual(row(next({ relay: relay() }, "claude", "claude-opus-5-5")), ["native", "resumed", undefined, undefined, undefined, "completed"]);
   assert.equal(next({ relay: relay() }, "claude"), undefined, "no change of Harness or model, no switch");
+  // The same executor went on, and the message still carried the conversation again, or went alone: said between it and itself.
+  const again = next({ relay: relay({ packetId: packet, continuity: { kind: "native_resume_delta", tier: "full", runs: 1 }, decision: { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" }, delivery: { state: "recorded", evidence: "E3" } }) }, "claude");
+  assert.deepEqual([row(again), again?.from, again?.to], [["resend", "resumed", 1, "confirmed", packet, "completed"], { harnessId: "claude", harness: "Claude Code" }, { harnessId: "claude", harness: "Claude Code" }]);
+  assert.deepEqual(row(next({ relay: relay({ decision: { kind: "alone", by: "user" } }) }, "claude")), ["none", "resumed", undefined, undefined, undefined, "completed"]);
   // A Run from before the relay kept facts says nothing of what was brought.
   assert.deepEqual(row(next({})), ["unknown", "unknown", undefined, undefined, undefined, "completed"]);
   // `from` is who ran the Turn before, `to` who runs this one, models as a person reads them.

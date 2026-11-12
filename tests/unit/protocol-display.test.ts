@@ -224,6 +224,11 @@ test("where another Harness took over is one line, from → to and what it was g
   assert.equal(switchLine(item({ context: "resend" })).text, "Codex → Claude Code · 又带了一次之前的内容");
   assert.equal(switchLine(item({ context: "none" })).text, "Codex → Claude Code · 只发了原话");
   assert.equal(switchLine(item({ context: "native" })).text, "Codex → Claude Code");
+  // Nobody took over: the same executor on both sides, and the line says only what this message carried.
+  const same = harness("claude", "Claude Code");
+  assert.deepEqual([switchLine(item({ from: same, to: same, context: "resend" })).text, switchLine(item({ from: same, to: same, context: "resend" })).head], ["又带了一次之前的内容", null]);
+  assert.equal(switchLine(item({ from: same, to: same, context: "none" })).text, "只发了原话");
+  assert.equal(switchLine(item({ from: same, to: same, context: "delta", turns: 1, delivery: "unconfirmed" })).text, "带上了之前 1 轮 · 未确认收到");
   // Not said: whether the session is new or the earlier one went on (the tooltip has it), and a delivery that is confirmed.
   assert.equal(switchLine(item({ session: "resumed", delivery: "confirmed" })).text, "Codex → Claude Code · 带上了之前的全部 2 轮");
   assert.equal(switchLine(item({ delivery: "unconfirmed" })).text, "Codex → Claude Code · 带上了之前的全部 2 轮 · 未确认收到");

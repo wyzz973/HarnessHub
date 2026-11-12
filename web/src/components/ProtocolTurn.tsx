@@ -222,9 +222,9 @@ function SwitchView({ item, fresh }: { readonly item: SwitchItem; readonly fresh
             <path pathLength={1} className={entering ? "motion-draw" : undefined} style={entering ? motionStyle({ duration: 160, delay: 100 }) : undefined} d="M5 12h14M12 5l7 7-7 7"/></svg>
           <span className={cn("flex flex-none", entering && "motion-pop-in")} style={entering ? motionStyle({ delay: 220, scaleFrom: .6 }) : undefined}>{icon(item.to.harnessId, item.to.harness)}</span>
           <span aria-hidden="true" className={cn("font-medium text-fg", entering && "motion-fade-in")} style={entering ? motionStyle({ delay: 300 }) : undefined}>{line.to}</span></>
-          : <>{icon(item.to.harnessId, item.to.harness)}<span aria-hidden="true" className="font-medium text-fg">{line.changed ? line.from + " → " + line.to : item.to.harness + " 的设置已更换"}</span></>}
-        {line.context ? <span aria-hidden="true">· {line.context}</span> : null}
-        {line.flag ? <span aria-hidden="true" className={cn("flex-none", line.attention ? "text-amber-on-tint" : undefined)}>· {line.flag}</span> : null}
+          : <>{icon(item.to.harnessId, item.to.harness)}{line.head !== null ? <span aria-hidden="true" className="font-medium text-fg">{line.head}</span> : null}</>}
+        {line.context ? <span aria-hidden="true">{line.head !== null ? "· " : ""}{line.context}</span> : null}
+        {line.flag ? <span aria-hidden="true" className={cn("flex-none", line.attention ? "text-amber-on-tint" : undefined)}>{line.head !== null || line.context ? "· " : ""}{line.flag}</span> : null}
       </span>
       {edge("right")}
     </div>

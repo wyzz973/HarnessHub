@@ -108,7 +108,8 @@ export type ErrorClass = typeof ERROR_CLASSES[number];
 export interface ErrorItem extends ItemBase { readonly type: "error"; readonly class: ErrorClass; readonly code?: string; readonly message: string }
 export interface ContextEventItem extends ItemBase { readonly type: "context_event"; readonly kind: "compaction" | "clear" | "rewind" }
 /**
- * The executor changed before this Turn. `context` is what the new one was given: the whole conversation, what it had missed, the
+ * The executor changed before this Turn, or stayed the same while this message still carried the conversation or went alone
+ * though something was owed (then `from` and `to` are the same executor). `context` is what it was given: the whole conversation, what it had missed, the
  * same again, nothing but the user's words, or nothing needed (`native`: the native session it continues already holds the
  * conversation, as when the same Harness runs another model). `unknown`, in `context` and in `session`: the Turn carries no relay
  * facts (one from before the relay kept them), so what was brought and where it ran are not known; never read as `none` or `new`.

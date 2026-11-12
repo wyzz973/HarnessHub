@@ -18,6 +18,8 @@ export interface SwitchLine {
   readonly from: string; readonly to: string;
   /** Whether the two sides differ; when they do not, only the Harness's settings changed and the line draws no arrow. */
   readonly changed: boolean;
+  /** "<从> → <到>", or "<Harness> 的设置已更换", or null when the same executor simply went on and the line says only what this message carried. */
+  readonly head: string | null;
   /** What the new one was given, when that is worth saying. */
   readonly context: string | null;
   /** What is not as it should be about the delivery: 送达中, 未确认收到, 没有发出. */
@@ -60,9 +62,12 @@ export function switchLine(item: SwitchItem): SwitchLine {
   const from = same ? modelOf(item.from) : item.from.harness, to = same ? modelOf(item.to) : item.to.harness, changed = from !== to;
   const delivery = item.delivery === undefined ? null : DELIVERY[item.delivery], gone = item.delivery === "not_sent";
   const context = gone ? null : carried(item), flag = delivery?.flag ?? null;
-  const head = changed ? `${from} → ${to}` : `${item.to.harness} 的设置已更换`;
+  // The Hub puts the same executor on both sides when nobody took over and the message still carried the conversation again, or
+  // went alone: the line then says only that. With nothing carried to say, the same two sides mean the Harness's settings changed.
+  const unchanged = same && (item.from.model?.id ?? null) === (item.to.model?.id ?? null);
+  const head = changed ? `${from} → ${to}` : unchanged && (context !== null || flag !== null) ? null : `${item.to.harness} 的设置已更换`;
   const details = [item.session === "new" ? "新会话" : item.session === "resumed" ? "继续原会话" : null, item.context === "native" ? null : delivery?.detail ?? null].filter(Boolean).join(" · ");
-  return { text: [head, context, flag].filter(Boolean).join(" · "), from, to, changed, context, flag, details, packetId: item.packetId ?? null, attention: item.delivery === "unconfirmed" || gone };
+  return { text: [head, context, flag].filter(Boolean).join(" · "), from, to, changed, head, context, flag, details, packetId: item.packetId ?? null, attention: item.delivery === "unconfirmed" || gone };
 }
 
 export interface EndLine {

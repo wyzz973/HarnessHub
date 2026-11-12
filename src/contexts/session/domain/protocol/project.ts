@@ -114,6 +114,9 @@ export function projectTurn(input: ProjectionInput, index: number, env: Projecti
   const seq = () => items.length;
 
   if (previous !== undefined && changed(previous, run)) items.push(switchOf(run, executorOf(previous, bindings, latest, env), executor, seq()));
+  // The same executor went on, and this message still carried the conversation (again, or what a clear had cut off) or went alone
+  // though something was owed: that is said too, between the same executor and itself, so the line names no hand-over.
+  else if (run.relay !== undefined && (run.relay.packetId !== null || run.relay.decision?.kind === "alone")) items.push(switchOf(run, executor, executor, seq()));
   const user: UserMessageItem = { id: "hh:user", seq: seq(), status: "completed", type: "user_message", messageId: run.userMessageId };
   items.push(user);
   if (run.thinking !== undefined && run.thinking !== "") {
