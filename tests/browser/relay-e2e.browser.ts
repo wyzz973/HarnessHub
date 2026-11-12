@@ -159,7 +159,7 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   // ---- 1. Claude Code answers, on a conversation of its own --------------------------------------------------------------------
   await pick("选择 Harness", "Claude Code");
   await say("先帮我想一个项目名，要短一点", 0, CLAUDE_REPLY);
-  await expect(card).toHaveCount(0); await expect(page.locator(".relay-divider, .relay-note, [data-relay]")).toHaveCount(0);
+  await expect(card).toHaveCount(0); await expect(page.locator(".switch-divider, [data-relay]")).toHaveCount(0);
   assert.deepEqual(await prompts(root, "claude"), ["先帮我想一个项目名，要短一点"], "a conversation that stays on one Harness hands nothing over: the words as typed");
   await shoot(page, "e2e-1-claude");
 
@@ -176,22 +176,22 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   // Codex's native side shows the user's message late: the hand-over is on its way, and the line says so and not more.
   await fixture.mode({ echoDelayMs: 2500 });
   await composer.fill("接着把项目名写进 README"); await composer.press("Enter");
-  const pending = separator("交给 Codex · 交接单 #1 · 送达中");
+  const pending = separator(/^Claude Code → Codex · 带上了之前的全部(?: \d+ 轮|对话) · 送达中$/u);
   await expect(pending).toBeVisible({ timeout: 20_000 });
-  await expect(log.getByRole("separator", { name: /接手/u })).toHaveCount(0);
+  await expect(pending.locator("..")).toHaveAttribute("data-delivery", "sending");
   await shoot(page, "e2e-3-pending");
-  // The evidence arrives (Codex says it recorded the entry): now the Harness took over, with how and the proof.
-  const taken = separator("从这里起由 Codex 接手 · 新会话 · 交接单（完整） · #1");
+  // The evidence arrives (Codex says it recorded the entry): the line loses its flag, and says no more than what the Turn carried.
+  const taken = separator(/^Claude Code → Codex · 带上了之前的全部(?: \d+ 轮|对话)$/u);
   await expect(taken).toBeVisible({ timeout: 30_000 });
-  await expect(taken.locator("..")).toHaveAttribute("data-handover", "taken"); await expect(taken.locator("..")).toHaveAttribute("data-evidence", "E1");
+  await expect(taken.locator("..")).toHaveAttribute("data-delivery", "confirmed");
   await expect(log.locator(".assistant-message").nth(1)).toContainText(CODEX_REPLY, { timeout: 30_000 });
   await expect(log.locator(".assistant-message").nth(1)).toHaveAttribute("data-run-status", "completed", { timeout: 30_000 });
   await fixture.mode({});
   await expect(card).toHaveCount(0);
   await shoot(page, "e2e-4-taken");
-  // The message went with its packet: the strip opens the packet's text exactly as it was sent, which is what Codex was sent.
-  const strip = log.getByRole("button", { name: "附交接单 #1", exact: true });
-  await expect(strip).toBeVisible();
+  // The message went with its packet: the line's link opens the packet's text exactly as it was sent, which is what Codex was sent.
+  const strip = log.getByRole("button", { name: "查看交接单", exact: true });
+  await expect(strip).toHaveCount(1);
   await strip.click();
   const dialog = page.getByRole("dialog", { name: "交接单 #1" });
   const packet = dialog.locator(".relay-packet-text");
@@ -203,7 +203,7 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   await page.keyboard.press("Escape"); await expect(dialog).toHaveCount(0);
   const first = readRelayPrompt((await prompts(root, "codex"))[0]!);
   assert.deepEqual([first.packet, first.currentInput.text.trim(), first.history.map(row => row.user.text)], [true, "接着把项目名写进 README", ["先帮我想一个项目名，要短一点"]], "Codex was sent the packet and the words");
-  assert.equal(text.trim(), first.body.trim(), "the strip shows the text that was sent");
+  assert.equal(text.trim(), first.body.trim(), "the link shows the text that was sent");
 
   // ---- 3. Back to Claude Code: what Codex did in between goes with the next message, as an increment ------------------------------
   await switchTo("Claude Code", "claude");
@@ -212,9 +212,9 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   await expect(card.getByRole("button")).toHaveCount(0);
   await shoot(page, "e2e-6-return-line");
   await say("回到这里，再检查一下 README", 2, CLAUDE_REPLY);
-  const back = separator(/^从这里起由 Claude Code 接手 · 继续原会话 · 补交 1 轮/u);
+  const back = separator(/^Codex → Claude Code · 带上了之前 1 轮/u);
   await expect(back).toBeVisible({ timeout: 30_000 });
-  await expect(log.getByRole("button", { name: /^附交接单 #2$/u })).toBeVisible();
+  await expect(log.getByRole("button", { name: "查看交接单", exact: true })).toHaveCount(2);
   await expect(card).toHaveCount(0);
   await shoot(page, "e2e-7-back");
   const returned = readRelayPrompt((await prompts(root, "claude")).at(-1)!);
@@ -227,9 +227,9 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   await expect(card).toContainText("将交给 Codex：1 轮");
   await fixture.mode({ RELAY_HOOK: "1" });
   await say("第四条：补一条边界测试", 3, CODEX_REPLY);
-  const unconfirmed = separator("Codex 已回复，但没有确认收到交接单；下一条消息会再附上一次");
+  const unconfirmed = separator(/^Claude Code → Codex · 带上了.* · 未确认收到$/u);
   await expect(unconfirmed).toBeVisible({ timeout: 30_000 });
-  await expect(log.getByRole("separator", { name: /接手/u })).toHaveCount(2);
+  await expect(log.getByRole("separator")).toHaveCount(3);
   // The banner says what is so, and asks for nothing: the next message goes by itself.
   await expect(banner).toBeVisible();
   await expect(banner).toHaveText("交接单 #3 还没有确认送达 Codex再附一次");
@@ -239,7 +239,6 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   await expect(banner).toHaveCount(0);
   // The next message sends the packet again by itself (once), and says so; what Codex was sent says it may repeat.
   await say("第五条：再补一条", 4, CODEX_REPLY);
-  await expect(log.locator(".relay-note").last()).toContainText("上一份交接单没有确认送达，这条消息已再附一次（交接单 #4");
   const resent = readRelayPrompt((await prompts(root, "codex")).at(-1)!);
   assert.deepEqual([resent.packet, resent.currentInput.text.trim()], [true, "第五条：再补一条"]);
   assert.ok(resent.body.includes("可能有你已经收到过的部分"), "the packet says that parts of it may already be there");
@@ -248,7 +247,6 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   await shoot(page, "e2e-9-resent");
   // The one after goes alone, said under the message, as typed to the native side; nothing was asked, nothing failed.
   await say("第六条：只发这一条的话", 5, CODEX_REPLY);
-  await expect(log.locator(".relay-note").last()).toHaveText("交接单 #4 发了两次仍未确认送达 · 这条只发了原话");
   assert.equal((await prompts(root, "codex")).at(-1), "第六条：只发这一条的话", "alone: the words as typed");
   await expect(banner).toBeVisible();
   await expect(banner.locator("button[data-option]")).toHaveText(["再附一次"]);
@@ -273,7 +271,8 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   await say("/clear", 7, "");
   assert.equal((await prompts(root, "claude")).length, claudePrompts, "the clear was not sent to Claude Code");
   // The conversation changed hands with a clear: nothing was handed over, and the line says so instead of "continues the original session".
-  await expect(separator("交给 Claude Code · 上下文已清空 · 之前的对话没有交给它")).toBeVisible();
+  await expect(separator(/^Codex → Claude Code · 只发了原话$/u)).toBeVisible();
+  await expect(log.locator(".quiet-line[data-item=context_event]").last()).toHaveText("上下文已清空，下一条消息开新会话");
   await expect(banner).toBeVisible();
   await expect(banner).toHaveAttribute("data-cause", "attach_available");
   await expect(banner).toContainText("Claude Code 的上下文已清空 · 下一条不附历史");
@@ -284,8 +283,7 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   await banner.getByRole("button", { name: "附上交接单", exact: true }).click();
   await expect(banner).toContainText("下一条会附上之前对话的交接单");
   await say("清空之后接着做：把这份交接单里的第一件事说一遍", 8, CLAUDE_REPLY);
-  await expect(log.getByRole("button", { name: /^附交接单 #\d+$/u }).last()).toBeVisible({ timeout: 30_000 });
-  await expect(banner).toHaveCount(0);
+  await expect(banner).toHaveCount(0, { timeout: 30_000 });
   assert.equal(await opened(root, "claude"), 2, "the first message after the clear opened a new native session");
   const attached = readRelayPrompt((await prompts(root, "claude")).at(-1)!);
   assert.deepEqual([attached.packet, attached.kind, attached.currentInput.text.trim()], [true, "packet", "清空之后接着做：把这份交接单里的第一件事说一遍"]);
@@ -297,7 +295,7 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   const codexPrompts = (await prompts(root, "codex")).length, codexSessions = await opened(root, "codex");
   await say("/clear", 9, "");
   assert.equal((await prompts(root, "codex")).length, codexPrompts, "the clear was not sent to Codex");
-  await expect(separator("交给 Codex · 上下文已清空 · 之前的对话没有交给它")).toBeVisible();
+  await expect(separator(/^Claude Code → Codex · 只发了原话$/u)).toBeVisible();
   assert.equal(await opened(root, "codex"), codexSessions, "and its session is given up, not replaced ahead of the next message");
   await expect(banner).toBeVisible();
   await expect(banner).toHaveAttribute("data-cause", "attach_available");
@@ -309,9 +307,9 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   assert.equal(await opened(root, "codex"), codexSessions + 1, "a new native session");
   assert.equal((await prompts(root, "codex")).at(-1), "清空之后的 Codex：只发这一条", "as typed: no packet");
   await expect(banner).toHaveCount(0, { timeout: 30_000 });
-  await expect(log.getByRole("button", { name: /^附交接单/u })).toHaveCount(6);
-  // Where a Harness took the conversation over: the two hand-overs that carried a packet with evidence, and no other line says so.
-  await expect(log.getByRole("separator", { name: /接手/u })).toHaveCount(2);
+  // The hand-overs that carried a packet have its link; every change of Harness has its line, and a message to the same Harness has none.
+  await expect(log.getByRole("button", { name: "查看交接单", exact: true })).toHaveCount(3);
+  await expect(log.getByRole("separator")).toHaveCount(5);
   await shoot(page, "e2e-15-codex-new-session");
 
   // ---- Nothing was refused and nothing failed -----------------------------------------------------------------------------------

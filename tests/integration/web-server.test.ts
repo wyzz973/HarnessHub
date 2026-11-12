@@ -414,12 +414,13 @@ test("the public conversation exports as Markdown or JSON without private native
   const exported = row(await json.json()); assert.equal(exported.application, "HarnessHub"); assertView(exported.session);
   assert.equal(JSON.stringify(exported).includes("nativeBindings"), false, "private native bindings are not exported");
   assert.equal(JSON.stringify(exported).includes("\"protocol\""), false, "the protocol view reads stored tool details, which an export leaves out");
-  // A cancelled Turn is exported with why it ended, as the chat shows it (ADR-036).
-  const view = exported.session as SessionView, ended = (error: string | null, cancelRequested: boolean) => conversationMarkdown({ ...view,
-    runs: view.runs.map(run => ({ ...run, status: "cancelled" as const, error: error === null ? null : { code: error, message: "ended" }, cancelRequested })),
-    messages: view.messages.map(message => ({ ...message, status: "cancelled" as const })) }, () => "Web a", new Date(0));
-  assert.ok(ended("RUN_TIMEOUT", false).includes("## Web a · 已停止（执行预算用尽）")); assert.ok(ended("WAIT_EXPIRED", false).includes("## Web a · 已停止（等待你的决定超时）"));
-  assert.ok(ended(null, true).includes("## Web a · 已停止（用户停止）"));
+  // The Markdown is worded from the protocol Turns, as the page words them: the Turn's model and numbers, and a Turn the Hub stopped with why it ended (ADR-036).
+  assert.match(text, /^统计：用时 [0-9.]+ 秒/mu, "the Turn's time is written as the page writes it");
+  const live = row((await call(f, `/api/v1/sessions/${id}`)).data) as unknown as SessionView, ended = (stopReason: "budget" | "user_stopped" | "cleared") => conversationMarkdown({ ...live,
+    runs: live.runs.map(run => ({ ...run, status: "cancelled" as const, protocol: { ...run.protocol!, status: "cancelled" as const, stopReason } })),
+    messages: live.messages.map(message => ({ ...message, status: "cancelled" as const })) }, () => "Web a", new Date(0));
+  assert.ok(ended("budget").includes("## Web a · 已停止 · 超过了这一轮的时间上限")); assert.ok(ended("user_stopped").includes("## Web a · 已停止 · 你停止了这一轮"));
+  assert.ok(ended("cleared").includes("## Web a · 已停止 · 已清空，下一条消息开新会话"));
   assert.equal((await call(f, `/api/v1/sessions/${id}/export?format=pdf`)).status, 400);
   assert.equal((await fetch(f.origin + `/api/v1/sessions/${id}/export`)).status, 401);
 });

@@ -62,7 +62,8 @@ test("the conversation view and its live stream carry each Run as a protocol Tur
   const view = await f.until(id, current => current.runs[0]?.status === "completed" && current.runs[0].tools?.length === 7 && current.runs[0].tools.every(tool => tool.status === "completed" && (tool.detail !== undefined || tool.id === "h-term" || tool.id === "x-odd")));
   const turn = turnOf(view);
   assert.equal(turn.version, "hh/1"); assert.equal(turn.n, 1); assert.equal(turn.runId, view.runs[0]!.id); assert.equal(turn.status, "completed"); assert.equal(turn.stopReason, "end_turn");
-  assert.deepEqual(turn.executor, { harnessId: "native-alpha", harness: "native-alpha" });
+  // The Harness is named as the Harness list names it (here the fixture manifest's), the built-in catalog's name only for one the scan has not seen.
+  assert.deepEqual(turn.executor, { harnessId: "native-alpha", harness: "alpha" });
   assert.deepEqual(turn.items.map(item => item.type), ["user_message", "command", "file_read", "command", "mcp_tool", "file_change", "command", "tool", "assistant_message"]);
   // DeepSeek Harness's `bash` and `read` have only their names for titles: the Hub reads what they ran and read from their stored details.
   const [bash, read, test, hub, edit, terminal, odd] = turn.items.slice(1, 8);

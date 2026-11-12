@@ -9,10 +9,10 @@ import { chromium, expect, type Browser, type BrowserContext, type Locator, type
 /*
  * A Turn drawn from the protocol's items (docs/proposals/protocol/hub-protocol.html §13), in a real browser: the same lines for every
  * Harness, each item in the order it came, consecutive actions folded into one summary line that opens to their lines, a thought as
- * one line, the hand-over as one line, one footer. The Gateway does not send protocol items yet (it gives each Run its facts as it
- * always has), so the page is given a conversation whose Runs carry them, by a fake Gateway written here: it serves the built page
- * and the few calls the page makes, with the shapes the real Gateway sends. Everything it says is data the test sets; what the test
- * checks is what the page makes of it. A Run whose protocol Turn the page cannot read is drawn as it was before.
+ * one line, the hand-over as one line, one footer. The page is given a conversation whose Runs carry protocol Turns, by a fake Gateway
+ * written here: it serves the built page and the few calls the page makes, with the shapes the real Gateway sends. Everything it says
+ * is data the test sets; what the test checks is what the page makes of it. A Run whose protocol Turn the page cannot read says so,
+ * with the reason, and is drawn from nothing else.
  *
  * Run: `pnpm build && pnpm web:build && node --test dist/tests/browser/protocol.browser.js` (it needs the built page and Chromium).
  * Pictures of each state, light and dark, are written to artifacts/protocol-ui/ (not committed).
@@ -189,9 +189,12 @@ test("a Turn is drawn from its items in the order they came: a thought, an actio
   await expect(log).not.toContainText("首字"); await expect(log).not.toContainText("其他工具");
   const first = log.locator("article.assistant-message").nth(0);
   await expect(first).toHaveAttribute("data-run-status", "completed");
-  // In the order they came: the thought, the one read, the notice, the run (with its three lines inside), the answer.
+  // In the order they came: the thought, the one read, the notice, the run (folded, with its three lines inside), the answer.
   const order = await first.locator(".reasoning-row, .action-row, .native-notice, .action-group, .markdown").evaluateAll(nodes => nodes.map(node => node.className.split(" ")[0]));
-  assert.deepEqual(order, ["reasoning-row", "action-row", "native-notice", "action-group", "action-row", "action-row", "action-row", "markdown"]);
+  assert.deepEqual(order, ["reasoning-row", "action-row", "native-notice", "action-group", "markdown"], "the run with a failure in it is folded: its lines are not in the page until it is opened");
+  await first.locator(".action-group").getByRole("button").first().click();
+  const opened = await first.locator(".reasoning-row, .action-row, .native-notice, .action-group, .markdown").evaluateAll(nodes => nodes.map(node => node.className.split(" ")[0]));
+  assert.deepEqual(opened, ["reasoning-row", "action-row", "native-notice", "action-group", "action-row", "action-row", "action-row", "markdown"]);
   await expect(first.locator(".reasoning-row")).toContainText("思考了 3 秒");
   await expect(first.locator(".action-row").first()).toHaveText("读取了 cart.js");
   await expect(first.locator(".native-notice")).toContainText("先看一眼购物车的实现");
@@ -214,12 +217,14 @@ test("a thought is one line that opens to what was thought", async t => {
   assert.deepEqual(errors, []);
 });
 
-test("a run with something that failed is open, says what failed after the words it belongs to, and each line opens its input, output or diff", async t => {
+test("a run with something that failed is folded like any other, says what failed after the words it belongs to, and each line opens its input, output or diff", async t => {
   const { log, errors } = await open(t, mixed());
   const first = log.locator("article.assistant-message").nth(0), group = first.locator(".action-group");
-  // Two commands and one edit of one file: counted, with the failure after the words it belongs to; open because something in it failed.
+  // Two commands and one edit of one file: counted, with the failure after the words it belongs to; folded, as Claude's desktop app folds it.
   const header = group.getByRole("button", { name: "运行了 2 条命令（1 个失败），修改了 cart.js", exact: true });
-  await expect(header).toHaveAttribute("aria-expanded", "true");
+  await expect(header).toHaveAttribute("aria-expanded", "false");
+  await expect(group).toHaveAttribute("data-problems", "1");
+  await header.click(); await expect(header).toHaveAttribute("aria-expanded", "true");
   const lines = group.locator(".action-row");
   await expect(lines).toHaveText(["运行失败 npm test 退出码 1", "修改了 cart.js +2 −2", "运行了 npm test"]);
   // The program's own name for an action is not in its line; it is a small line in what the line opens to.
@@ -301,11 +306,11 @@ test("a Turn that goes on shows its open run and the action in progress, folds t
   const session = conversation([run({ n: 1, harness: "codex", input: "修好测试", status: "running", model: "GPT-6.1", items: items("acting"), usage: { completeness: "unavailable" } })], {}, "run-1");
   const { gateway, page, log, errors } = await open(t, session);
   const turn = log.locator("article.assistant-message").nth(0);
-  // In progress: the run is open and its last line turns; nothing else says "working", because the actions already do.
+  // In progress: the run is open and its last line turns, and the live line at the tail says what the Turn is doing.
   const group = turn.locator(".action-group");
   await expect(group.getByRole("button", { name: "运行了 2 条命令", exact: true })).toHaveAttribute("aria-expanded", "true");
   await expect(group.locator(".action-row")).toHaveText(["运行了 git status --short", "正在运行 npm test"]);
-  await expect(turn.locator(".live-line")).toHaveCount(0);
+  await expect(turn.locator(".live-line .response-status")).toHaveText("正在运行 npm test");
   await expect(turn).toHaveAttribute("aria-busy", "true");
   await expect(turn.locator(".turn-footer")).toHaveText("Codex · GPT-6.1");
   await shoot(page, "going-on");
@@ -317,11 +322,13 @@ test("a Turn that goes on shows its open run and the action in progress, folds t
   gateway.session.lastSeq = 99; gateway.session.version = 98; gateway.publish();
   await expect(group.getByRole("button", { name: "运行了 2 条命令", exact: true })).toHaveAttribute("aria-expanded", "false");
   await expect(turn.locator(".markdown")).toContainText("测试跑完了");
+  await expect(turn.locator(".live-line .response-status")).toHaveText("正在回复");
   // Over: the footer carries its time and the Turn is no longer busy.
   change("done", "completed");
   (runs[0]!.protocol as Json).durationMs = 12_000; (runs[0]!.protocol as Json).stopReason = "end_turn"; (runs[0]!.timing as Json).endedAt = NOW; gateway.session.activeRunId = null;
   gateway.publish();
   await expect(turn).toHaveAttribute("aria-busy", "false");
+  await expect(turn.locator(".live-line")).toHaveCount(0);
   await expect(turn.locator(".turn-footer")).toHaveText("Codex · GPT-6.1 · 用时 12 秒");
   assert.deepEqual(errors, []);
 });
@@ -331,9 +338,10 @@ test("a Turn that has shown nothing yet says what it waits for, and an action ne
   const over = run({ n: 1, harness: "codex", input: "后来的", status: "completed", durationMs: 5000, stopReason: "end_turn", items: [user(1), cmd("make", {}, "running"), cmd("make test", {}, "pending"), reply(1)] });
   const starting = run({ n: 2, harness: "claude", input: "先排着", status: "preparing", items: [user(2)] });
   const { page, log, errors } = await open(t, conversation([over, starting], { 1: "好了" }, "run-2"));
-  // An action the Turn never reported ended is unknown once the Turn is over: neither done nor in progress, and its run is open for it.
-  const first = log.locator("article.assistant-message").nth(0);
-  await expect(first.getByRole("button", { name: "运行了 2 条命令（2 个结果未知）", exact: true })).toHaveAttribute("aria-expanded", "true");
+  // An action the Turn never reported ended is unknown once the Turn is over: neither done nor in progress, and its run's line counts it.
+  const first = log.locator("article.assistant-message").nth(0), header = first.getByRole("button", { name: "运行了 2 条命令（2 个结果未知）", exact: true });
+  await expect(header).toHaveAttribute("aria-expanded", "false");
+  await header.click();
   await expect(first.locator(".action-row")).toHaveText(["运行 make 结果未知", "运行 make test 结果未知"]);
   await expect(first.locator(".action-group")).toHaveAttribute("data-problems", "2");
   // Nothing in the other Turn shows work yet: a line says it is being started.
@@ -344,46 +352,30 @@ test("a Turn that has shown nothing yet says what it waits for, and an action ne
   assert.deepEqual(errors, []);
 });
 
-test("a Run whose protocol Turn the page cannot read is drawn as it was, from the facts it always had", async t => {
+test("a Run whose protocol Turn the page cannot read says so with the reason beside your message, and is drawn from nothing else", async t => {
   sequence = 0;
-  const plain = run({ n: 1, harness: "codex", input: "读不出来的", status: "completed", durationMs: 1000, items: [user(1), reply(1)] });
-  (plain.protocol as Json).version = "hh/9";
-  Object.assign(plain, { tools: [{ id: "tool-1", title: "ls", kind: "execute", status: "completed" }], thinking: "" });
-  const { log, errors } = await open(t, conversation([plain], { 1: "一个旧式的回复" }));
-  const turn = log.locator("article.assistant-message").nth(0);
-  await expect(turn.locator(".process-summary")).toBeVisible();
-  await expect(turn.locator(".turn-footer")).toHaveCount(0);
-  await expect(turn).toContainText("一个旧式的回复");
+  const newer = run({ n: 1, harness: "codex", input: "版本不认识的", status: "completed", durationMs: 1000, items: [user(1), reply(1)] });
+  (newer.protocol as Json).version = "hh/9";
+  // The facts a Run used to carry are still there, and are not read: nothing is drawn from them.
+  Object.assign(newer, { tools: [{ id: "tool-1", title: "ls", kind: "execute", status: "completed" }], thinking: "旧的思考" });
+  const none = run({ n: 2, harness: "codex", input: "没有协议的", status: "completed", durationMs: 1000, items: [user(2), reply(2)] });
+  delete none.protocol;
+  const broken = run({ n: 3, harness: "claude", input: "条目坏了的", status: "completed", durationMs: 1000, items: [user(3), reply(3)] });
+  (broken.protocol as Json).items = "nope";
+  const good = run({ n: 4, harness: "codex", input: "好好的一轮", status: "completed", durationMs: 2000, stopReason: "end_turn", items: [user(4), reply(4)] });
+  const { page, log, errors } = await open(t, conversation([newer, none, broken, good], { 1: "第一轮的话", 2: "第二轮的话", 3: "第三轮的话", 4: "第四轮的话" }));
+  const lines = log.locator(".unreadable-turn .quiet-line");
+  await expect(lines).toHaveText(["这一轮无法显示：协议版本 hh/9，这个页面只认 hh/1", "这一轮无法显示：服务没有给出这一轮的协议数据", "这一轮无法显示：这一轮的协议数据里，条目不是一个列表"]);
+  // Your message stays where it was, and so do the reply's own words, which are a message of the conversation; the rest of the Turn is not drawn.
+  await expect(log.locator(".user-message")).toHaveText(["你：版本不认识的", "你：没有协议的", "你：条目坏了的", "你：好好的一轮"]);
+  await expect(log).toContainText("第一轮的话"); await expect(log).toContainText("第三轮的话");
+  await expect(log.locator(".unreadable-turn .turn-footer, .unreadable-turn .process-summary, .unreadable-turn .action-row")).toHaveCount(0);
+  await expect(log.locator(".turn-footer")).toHaveCount(1);
+  // The Turn that can be read next to them is drawn as ever, and the line under the box belongs to it.
+  await expect(log.locator("article.assistant-message").last().locator(".turn-footer")).toHaveText("Codex · 用时 2.0 秒");
+  await expect(page.locator(".composer-status")).toContainText("第 4 轮");
+  await shoot(page, "unreadable");
   assert.deepEqual(errors, []);
-});
-
-test("a conversation whose Runs are drawn both ways draws each hand-over once, by the Run that follows it, and each message of yours once", async t => {
-  sequence = 0;
-  const switchTo = (run: Json, through: number) => ({ id: "switch-1", commandId: "cmd-switch-1", requested: control("codex"), requestedSeq: through + 1, target: control("codex"), status: "effective", throughSeq: through, sourceRunIds: [String(run.id)], error: null });
-  // A Run from before the protocol, then one that carries it: the line is the protocol's, and the older way draws none of its own.
-  const before = run({ n: 1, harness: "claude", input: "旧式的一轮", status: "completed", durationMs: 2000, items: [user(1), reply(1)] });
-  delete before.protocol;
-  const after = run({ n: 2, harness: "codex", input: "新式的一轮", status: "completed", durationMs: 3000, stopReason: "end_turn", items: [item("switch", { from: HARNESS.claude, to: HARNESS.codex, context: "none", session: "new" }), user(2), reply(2)] });
-  const forward = conversation([before, after], { 1: "旧式回复", 2: "新式回复" });
-  forward.switches = [switchTo(before, 3)];
-  const one = await open(t, forward);
-  await expect(one.log.getByRole("separator")).toHaveCount(1);
-  await expect(one.log.getByRole("separator", { name: "Claude Code → Codex · 只发了原话" })).toBeVisible();
-  await expect(one.log.locator(".user-message")).toHaveText(["你：旧式的一轮", "你：新式的一轮"]);
-  await expect(one.log.locator(".turn-footer")).toHaveCount(1);
-  assert.deepEqual(one.errors, []);
-  // A Run that carries the protocol, then one that does not: the older way draws the line, from the facts it always had.
-  const first = run({ n: 1, harness: "claude", input: "新式的一轮", status: "completed", durationMs: 3000, stopReason: "end_turn", items: [user(1), reply(1)] });
-  const later = run({ n: 2, harness: "codex", input: "旧式的一轮", status: "completed", durationMs: 2000, items: [user(2), reply(2)] });
-  delete later.protocol;
-  const backward = conversation([first, later], { 1: "新式回复", 2: "旧式回复" });
-  backward.switches = [switchTo(first, 3)];
-  const two = await open(t, backward);
-  await expect(two.log.getByRole("separator")).toHaveCount(1);
-  await expect(two.log.getByRole("separator", { name: /从这里起由 Codex 接手/u })).toBeVisible();
-  await expect(two.log.locator(".user-message")).toHaveText(["你：新式的一轮", "你：旧式的一轮"]);
-  await expect(two.log.locator(".turn-footer")).toHaveCount(1);
-  assert.deepEqual(two.errors, []);
 });
 
 test("on a phone the lines wrap inside the column and nothing makes the page wider", async t => {

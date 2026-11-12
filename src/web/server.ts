@@ -418,7 +418,10 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const nativeModels = new HarnessModels(app.factory, new NativeCatalogCache(realpathSync(options.root), { assertOwner: () => app.store.assertOwner(),
     report: problem => process.stderr.write("HarnessGateway: NATIVE_CATALOG_CACHE_UNAVAILABLE (" + problem + ")\n"), revision }));
   // Each Run's protocol Turn: Harnesses named as the relay names them, models as the catalogs read so far name them, tool details as the content store reads them back.
-  protocolView = new ProtocolView({ heads: new DetailHeads(app.content), harnessName: builtinHarnessName(), modelName: (harnessId, nativeModel) => nativeModels.modelName(harnessId, nativeModel) });
+  let scannedNames: ReadonlyMap<string, string> = new Map();
+  // A Harness is named as the Harness list names it (the catalog of the last scan), the built-in catalog's name when the scan has not seen it: the page shows one name for it everywhere.
+  const builtinName = builtinHarnessName();
+  protocolView = new ProtocolView({ heads: new DetailHeads(app.content), harnessName: harnessId => scannedNames.get(harnessId) ?? builtinName(harnessId), modelName: (harnessId, nativeModel) => nativeModels.modelName(harnessId, nativeModel) });
   // Directories the user took from the login shell's PATH (G(ii)) extend discovery and new conversations until removed.
   const loginShells = new LoginShellStore(realpathSync(options.root));
   // What each installed Harness reads besides its model (ADR-045 step 1), from the user's own files; read-only.
@@ -534,7 +537,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       });
       // A scan that began earlier never replaces one that began later, whichever ends first.
       if (scannedAt === "" || Date.parse(startedAt) >= Date.parse(scannedAt)) {
-        harnesses = views; scannedAt = startedAt;
+        harnesses = views; scannedAt = startedAt; scannedNames = new Map(views.map(view => [view.id, view.name]));
         installationChannels = new Map(observed.report.harnesses.flatMap(item => item.installation.candidates.flatMap(candidate => candidate.channel === null ? []
           : [[installationRef(candidate), { kind: candidate.channel.kind, name: candidate.channel.name, ...(candidate.channel.tap === undefined ? {} : { tap: candidate.channel.tap }) }] as const])));
       }
@@ -1083,10 +1086,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         queries(url, ["format"]); const format = url.searchParams.get("format") ?? "markdown";
         if (format !== "markdown" && format !== "json") throw new HttpError(400, "INVALID_INPUT", "export format must be markdown or json");
         // Names come from the catalog, the same in every scan: the last one is enough.
-        // The protocol view reads stored tool details (a command's text), which an export leaves out as it always has; the Runs go as they were.
+        // The JSON is the conversation as it is stored: the protocol Turn is derived from it (and reads a command's text from the stored details),
+        // so the Runs go as they were. The Markdown is worded from the protocol Turns, as the page words them.
         const current = sessionView(app.runtime.read(id)), now = new Date(), names = new Map(harnesses.map(harness => [harness.id, harness.name]));
         const exported = { ...current, runs: current.runs.map(({ protocol: _derived, ...run }) => run) };
-        const bytes = Buffer.from(format === "json" ? JSON.stringify({ application: "HarnessHub", exportedAt: now.toISOString(), session: exported }, null, 2) + "\n" : conversationMarkdown(exported, harnessId => names.get(harnessId) ?? harnessId, now));
+        const bytes = Buffer.from(format === "json" ? JSON.stringify({ application: "HarnessHub", exportedAt: now.toISOString(), session: exported }, null, 2) + "\n" : conversationMarkdown(current, harnessId => names.get(harnessId) ?? harnessId, now));
         if (bytes.length > MAX_RESPONSE_BYTES) throw new HttpError(413, "RESPONSE_LIMIT", "Conversation export exceeds its byte budget");
         if (response.destroyed || response.writableEnded) return;
         headers(response); response.statusCode = 200;

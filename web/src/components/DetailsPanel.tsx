@@ -1,20 +1,25 @@
 import { ChevronRight, Clock, File, FileText, ListChecks, X } from "lucide-react";
 import { Fragment, useEffect, useId, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { ITEM_STATUS_WORDS, TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
+import type { CommandItem, SubagentItem } from "../../../src/contracts/protocol.js";
 import type { PublicRun } from "../../../src/contracts/session.js";
 import type { HarnessView, NativeResumeView, SessionView } from "../../../src/contracts/web.js";
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import { errorMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
-import { duration, elapsed, folderName, homePath, workspacePath } from "../lib/format.js";
+import { duration, elapsed, folderName, homePath, spentText, workspacePath } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
-import { askingStep, cancelledWords, changeCount, editTools, finished, knownToolDetail, parseUnifiedDiff, readToolDetail, RUN_STATE, runDuration, spentText, toolSummary, type DiffFile } from "../lib/turn.js";
+import { changeCount, editsOf, latestPlan, over, ownWork, stateOf, statusText, usageFacts } from "../lib/protocol/runs.js";
+import { oneLine, summarizeGroup } from "../lib/protocol/work.js";
+import { finished, knownToolDetail, parseUnifiedDiff, readToolDetail, type DiffFile } from "../lib/turn.js";
 import { Collapsible } from "../ui/motion.js";
 import { EmptyState, Fact, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitives.js";
-import { ACTIVITY_KIND, ACTIVITY_STATUS, DiffLines, PlanView, ToolList, usageFacts, type ToolDetailLoader } from "./Activity.js";
+import { DiffLines, PlanView, type ToolDetailLoader } from "./Activity.js";
 import { dockedRequest } from "./Approval.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { NativeResume } from "./NativeResume.js";
+import { TurnSteps } from "./ProtocolTurn.js";
 import { RelayDetails } from "./RelayDetails.js";
 import type { RelayView } from "../relay.js";
 
@@ -47,14 +52,14 @@ export interface ConversationChanges {
  * the tab and the scopes show are changeCount()'s, which needs no read.
  */
 export function useConversationChanges(runs: readonly PublicRun[], load: ToolDetailLoader | undefined): ConversationChanges {
-  const edits = useMemo(() => runs.flatMap(run => editTools(run).map(tool => ({ run, tool }))).slice(-40), [runs]);
+  const edits = useMemo(() => runs.flatMap(run => run.protocol === undefined ? [] : editsOf(run.protocol).map(item => ({ run, item, harnessId: run.protocol!.executor.harnessId }))).slice(-40), [runs]);
   const [failures, setFailures] = useState<ReadonlyMap<string, string>>(new Map());
   const [version, setVersion] = useState(0);
   useEffect(() => {
     if (!load) return;
     let current = true;
-    for (const { tool } of edits) {
-      const content = tool.detail;
+    for (const { item } of edits) {
+      const content = item.detail;
       if (!content || knownToolDetail(content.id) !== undefined || failures.has(content.id)) continue;
       readToolDetail(content, load).then(() => { if (current) setVersion(value => value + 1); },
         (error: unknown) => { if (current) setFailures(previous => new Map(previous).set(content.id, errorMessage(error))); });
@@ -63,17 +68,17 @@ export function useConversationChanges(runs: readonly PublicRun[], load: ToolDet
   }, [edits, load, failures]);
   return useMemo(() => {
     const merged = new Map<string, { path: string; add: number; del: number; created: boolean; diffs: DiffFile[]; runIds: Set<string>; harnessIds: string[] }>();
-    for (const { run, tool } of edits) {
-      const detail = tool.detail ? knownToolDetail(tool.detail.id) : undefined;
+    for (const { run, item, harnessId } of edits) {
+      const detail = item.detail ? knownToolDetail(item.detail.id) : undefined;
       if (!detail?.diff) continue;
-      for (const file of parseUnifiedDiff(detail.diff, detail.locations?.[0] ?? tool.title)) {
+      for (const file of parseUnifiedDiff(detail.diff, detail.locations?.[0] ?? item.changes[0]?.path ?? "改动")) {
         const entry = merged.get(file.path) ?? { path: file.path, add: 0, del: 0, created: file.created, diffs: [], runIds: new Set<string>(), harnessIds: [] };
         entry.add += file.add; entry.del += file.del; entry.diffs.push(file); entry.runIds.add(run.id);
-        if (!entry.harnessIds.includes(run.selection.harnessId)) entry.harnessIds.push(run.selection.harnessId);
+        if (!entry.harnessIds.includes(harnessId)) entry.harnessIds.push(harnessId);
         merged.set(file.path, entry);
       }
     }
-    const loading = edits.some(({ tool }) => tool.detail !== undefined && knownToolDetail(tool.detail.id) === undefined && !failures.has(tool.detail.id));
+    const loading = edits.some(({ item }) => item.detail !== undefined && knownToolDetail(item.detail.id) === undefined && !failures.has(item.detail.id));
     return { files: [...merged.values()], edits: edits.length, loading, failures: [...failures.values()] };
     // `version` changes when a detail arrives in the shared store, which this reads.
   }, [edits, failures, version]);
@@ -109,7 +114,7 @@ function RunDiagnostics({ runId, load }: { readonly runId: string; readonly load
 interface PanelProps {
   readonly session: SessionView; readonly harnesses: readonly HarnessView[]; readonly providers: readonly ProviderView[];
   readonly tab: PanelTab; readonly onTab: (tab: PanelTab) => void; readonly runId: string | null; readonly onRun: (id: string) => void;
-  readonly describe: (run: PublicRun) => string; readonly loadToolDetail?: ToolDetailLoader | undefined;
+  readonly loadToolDetail?: ToolDetailLoader | undefined;
   readonly loadDiagnostics?: ((runId: string, includeContent: boolean) => Promise<string>) | undefined;
   readonly loadNativeResume?: ((signal: AbortSignal) => Promise<NativeResumeView | null>) | undefined;
   readonly onEndProcess?: (() => void) | undefined; readonly busy: boolean; readonly onClose?: (() => void) | undefined;
@@ -128,15 +133,13 @@ export function DetailsPanel(props: PanelProps) {
   const runs = session.runs;
   const selected = runs.find(run => run.id === props.runId) ?? runs.at(-1) ?? null;
   const changes = useConversationChanges(runs, props.loadToolDetail);
-  const planRun = [...runs].reverse().find(run => run.plan?.entries.length), plan = planRun?.plan;
+  const planned = latestPlan(runs);
   const kept = session.retention?.process ?? null;
-  const background = runs.flatMap(run => (run.activities ?? []).filter(activity => activity.kind === "task" || activity.kind === "subagent").map(activity => ({ run, activity })));
-  const running = background.filter(item => item.activity.status === "running").length + (kept ? 1 : 0);
+  const background = runs.flatMap(run => run.protocol === undefined ? [] : backgroundOf(run.protocol.items).map(item => ({ run, item })));
+  const running = background.filter(row => row.item.status === "running").length + (kept ? 1 : 0);
   const name = (id: string | undefined) => props.harnesses.find(row => row.id === id)?.name ?? id ?? "Harness";
   // The header button's number, from the same summaries: shown at once, never waiting for a diff to be read.
   const total = changeCount(runs);
-  // The step a Run's waiting approval asks for says what it wants to do here as in its Turn (ruling J).
-  const asking = (run: PublicRun) => waitingWords(session, run) === "等你批准" ? askingStep(run.tools ?? [])?.id : undefined;
   const tabs = [
     { id: "changes" as const, label: "改动", count: total || null },
     { id: "plan" as const, label: "计划" }, { id: "process" as const, label: "过程" },
@@ -150,13 +153,17 @@ export function DetailsPanel(props: PanelProps) {
     </div>
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${tab}`}>
       {tab === "changes" ? <Changes changes={changes} counts={{ turn: selected ? changeCount([selected]) : 0, all: total }} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}/>
-        : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} describe={props.describe} loadToolDetail={props.loadToolDetail} name={name} asking={asking} waiting={run => waitingWords(session, run)}/> : <Empty>这个对话还没有执行记录。</Empty>
-        : tab === "plan" ? plan ? <div className="px-4 pt-3 pb-4"><PlanView plan={plan} owner={name(planRun?.selection.harnessId)}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划">Harness 报告计划后会显示在这里。</EmptyState>
+        : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <Empty>这个对话还没有执行记录。</Empty>
+        : tab === "plan" ? planned ? <div className="px-4 pt-3 pb-4"><PlanView steps={planned.plan.steps} explanation={planned.plan.explanation} owner={planned.run.protocol.executor.harness}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划">Harness 报告计划后会显示在这里。</EmptyState>
         : tab === "background" ? <Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/>
         : tab === "relay" && props.relay ? <RelayDetails view={props.relay.view} name={id => name(id)} onViewPacket={props.relay.onViewPacket}/>
         : selected ? <RunFacts {...props} run={selected} runs={runs}/> : <Empty>发出第一条消息后，这里会显示执行者、阶段耗时与用量。</Empty>}
     </div>
   </div>;
+}
+/** The work a Turn left running or ran apart from its steps: tasks it delegated and commands it started in the background. */
+function backgroundOf(items: readonly { readonly type: string }[]): readonly (SubagentItem | CommandItem)[] {
+  return items.filter((item): item is SubagentItem | CommandItem => item.type === "subagent" || item.type === "command" && (item as CommandItem).background === true);
 }
 function Empty({ children }: { readonly children: ReactNode }) { return <p className="m-0 px-4 py-10 text-center text-ui-sm text-fg-3">{children}</p>; }
 /**
@@ -235,48 +242,49 @@ function Phases({ run }: { readonly run: PublicRun }) {
   </section>;
 }
 /**
- * One Turn in the list of every Turn's steps: who ran it and what it did, opened to its timeline and tools. A Turn in
- * progress carries the blue dot of work going on; while it waits for the user (`waiting`) nothing of it runs, and its dot is
- * the amber one of waiting, named as the header names it. A Turn waiting in the queue has not started: a still grey dot,
- * 排队中 (ruling N).
+ * One Turn in the list of every Turn's steps: who ran it and what it did, opened to its timeline and steps. A Turn in progress carries
+ * the blue dot of work going on; while it waits for the user (`waiting`) nothing of it runs, and its dot is the amber one of waiting, named
+ * as the header names it. A Turn waiting in the queue has not started: a still grey dot, 排队中 (ruling N).
  */
-function RunProcess({ run, index, open, onToggle, loadToolDetail, name, describe, now, asking, waiting }: { readonly run: PublicRun; readonly index: number; readonly open: boolean; readonly onToggle: () => void; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly describe: (run: PublicRun) => string; readonly now: number; readonly asking: string | undefined; readonly waiting: string | null }) {
-  const active = !finished(run.status), panel = useId(), at = (time: number | undefined) => time === undefined ? null : new Date(time).toLocaleTimeString("zh-CN", { hour12: false });
-  const summary = run.tools?.length ? toolSummary(run.tools, active).compact : "", total = runDuration(run);
-  const time = total !== null ? spentText(total) : active && run.timing ? "已用 " + elapsed(now - run.timing.acceptedAt) : "";
-  const steps: [string, number | undefined][] = [["收到消息", run.timing?.acceptedAt], ["开始启动原程序", run.timing?.preparingAt], ["原生会话就绪", run.timing?.readyAt], ["发给原程序", run.timing?.dispatchedAt], ["首个输出", run.timing?.firstOutputAt], [run.status === "cancelled" ? cancelledWords(run) : RUN_STATE[run.status], run.timing?.endedAt]];
-  const model = describe(run);
+function RunProcess({ run, open, onToggle, loadToolDetail, name, now, waiting }: { readonly run: PublicRun; readonly open: boolean; readonly onToggle: () => void; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly now: number; readonly waiting: string | null }) {
+  const turn = run.protocol, active = !finished(run.status), panel = useId(), at = (time: number | undefined) => time === undefined ? null : new Date(time).toLocaleTimeString("zh-CN", { hour12: false });
+  const harness = turn?.executor.harness ?? name(run.selection.harnessId), summary = turn === undefined ? "" : summarizeGroup(ownWork(turn)).text;
+  const time = turn === undefined ? "" : turn.durationMs !== undefined ? spentText(turn.durationMs) : active && turn.startedAt !== undefined ? "已用 " + elapsed(now - turn.startedAt) : "";
+  const status = TURN_STATUS_WORDS[stateOf(run)];
+  const steps: [string, number | undefined][] = [["收到消息", run.timing?.acceptedAt], ["开始启动原程序", run.timing?.preparingAt], ["原生会话就绪", run.timing?.readyAt], ["发给原程序", run.timing?.dispatchedAt], ["首个输出", run.timing?.firstOutputAt], [status, run.timing?.endedAt]];
+  const model = turn?.executor.model?.label;
   return <li className="flex min-w-0 flex-col">
     <button type="button" className="row flex min-h-9 w-full min-w-0 items-center gap-2 border-none bg-transparent px-1.5 py-1.5 text-left text-ui-sm text-fg-2 hover:bg-subtle" aria-expanded={open} aria-controls={panel} onClick={onToggle}>
-      <BrandIcon brand={run.selection.harnessId} name={name(run.selection.harnessId)} size={18}/>
+      <BrandIcon brand={turn?.executor.harnessId ?? run.selection.harnessId} name={harness} size={18}/>
       {/* What the Turn did and its time stay whole: in the narrow panel the line wraps between its parts, never in a number */}
-      <span className="min-w-0 flex-1 break-words"><span className="text-fg">{name(run.selection.harnessId)}</span>{[...(summary ? summary.split(" · ") : []), ...(time ? [time] : [])].map((part, index) => <Fragment key={index}> · <span className="whitespace-nowrap">{part}</span></Fragment>)}</span>
-      {active ? waiting ? <StatusDot tone="wait" label={waiting}/> : run.status === "queued" ? <StatusDot tone="idle" label={RUN_STATE.queued}/> : <StatusDot tone="run" label={RUN_STATE.running}/> : null}
-      <span className="flex-none text-caption text-fg-3">第 {index + 1} 轮</span>
+      <span className="min-w-0 flex-1 break-words"><span className="text-fg">{harness}</span>{[...(summary ? [summary] : []), ...(time ? [time] : [])].map((part, index) => <Fragment key={index}> · <span className="whitespace-nowrap">{part}</span></Fragment>)}</span>
+      {active ? waiting ? <StatusDot tone="wait" label={waiting}/> : stateOf(run) === "queued" ? <StatusDot tone="idle" label={TURN_STATUS_WORDS.queued}/> : <StatusDot tone="run" label={TURN_STATUS_WORDS.running}/> : null}
+      <span className="flex-none text-caption text-fg-3">第 {turn?.n ?? "?"} 轮</span>
       <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
     </button>
     <Collapsible open={open} id={panel}>
       <div className="mb-2 ml-[15px] flex min-w-0 flex-col gap-3 border-l border-line-strong py-1 pl-3.5">
         {model ? <p className="m-0 text-caption text-fg-3">{model}</p> : null}
         <ol className="m-0 flex list-none flex-col gap-1.5 p-0" aria-label="时间线">{steps.filter(([, time]) => time !== undefined).map(([label, time]) => <li key={label} className="grid grid-cols-[64px_minmax(0,1fr)] items-baseline gap-2.5 text-ui-sm"><span className="mono text-[11.5px] text-fg-3">{at(time)}</span><span>{label}</span></li>)}</ol>
-        {run.activities?.length ? <div className="flex flex-col gap-1.5"><span className="text-caption text-fg-3">原生活动</span>{run.activities.map(activity => <div key={activity.id} className="flex items-center gap-2 text-ui-sm"><span className="min-w-0 flex-1">{ACTIVITY_KIND[activity.kind]} · {activity.title}</span><span className="flex-none text-caption text-fg-3">{ACTIVITY_STATUS[activity.status]}</span></div>)}</div> : null}
-        {run.tools?.length ? <div className="-ml-1.5 flex min-w-0 flex-col"><ToolList tools={run.tools} active={active} loadDetail={loadToolDetail} asking={asking}/></div> : <p className="m-0 text-caption text-fg-3">这一轮没有调用工具。</p>}
+        {turn === undefined ? <p className="m-0 text-caption text-red">这一轮无法显示：{run.protocolProblem ?? "服务没有给出这一轮的协议数据"}</p>
+          : ownWork(turn).length || turn.items.some(item => item.type === "reasoning" || item.type === "context_event") ? <div className="-ml-1.5 flex min-w-0 flex-col"><TurnSteps run={run} turn={turn} loadDetail={loadToolDetail} asking={waiting === "等你批准"}/></div>
+          : <p className="m-0 text-caption text-fg-3">这一轮没有调用工具。</p>}
       </div>
     </Collapsible>
   </li>;
 }
-/** Every Turn's steps, oldest first, the chosen one open (Conversation board: "两个 Agent 的全部步骤，按时间排列"). */
-function Process({ run, runs, onRun, describe, loadToolDetail, name, asking, waiting }: { readonly run: PublicRun; readonly runs: readonly PublicRun[]; readonly onRun: (id: string) => void; readonly describe: (run: PublicRun) => string; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly asking: (run: PublicRun) => string | undefined; readonly waiting: (run: PublicRun) => string | null }) {
+/** Every Turn's steps, oldest first, the chosen one open (Conversation board: "两个 Harness 的全部步骤，按时间排列"). */
+function Process({ run, runs, onRun, loadToolDetail, name, waiting }: { readonly run: PublicRun; readonly runs: readonly PublicRun[]; readonly onRun: (id: string) => void; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly waiting: (run: PublicRun) => string | null }) {
   const [closed, setClosed] = useState<string | null>(null);
   const now = useNow(runs.some(item => !finished(item.status)));
-  const agents = new Set(runs.map(item => item.selection.harnessId)).size;
+  const harnesses = new Set(runs.map(item => item.protocol?.executor.harnessId ?? item.selection.harnessId)).size;
   return <div className="flex flex-col gap-1 px-2.5 pt-3 pb-4">
-    <p className="m-0 px-1.5 pb-1 text-caption text-fg-3">{agents > 1 ? (agents === 2 ? "两个" : agents + " 个") + " Harness 的全部步骤，按时间排列" : "这个对话的全部步骤，按时间排列"}</p>
-    <ol className="m-0 flex list-none flex-col gap-px p-0">{runs.map((item, index) => <RunProcess key={item.id} run={item} index={index} open={item.id === run.id && closed !== item.id} now={now} name={name} describe={describe} loadToolDetail={loadToolDetail} asking={asking(item)} waiting={waiting(item)}
+    <p className="m-0 px-1.5 pb-1 text-caption text-fg-3">{harnesses > 1 ? (harnesses === 2 ? "两个" : harnesses + " 个") + " Harness 的全部步骤，按时间排列" : "这个对话的全部步骤，按时间排列"}</p>
+    <ol className="m-0 flex list-none flex-col gap-px p-0">{runs.map(item => <RunProcess key={item.id} run={item} open={item.id === run.id && closed !== item.id} now={now} name={name} loadToolDetail={loadToolDetail} waiting={waiting(item)}
       onToggle={() => { if (item.id === run.id) setClosed(closed === item.id ? null : item.id); else { setClosed(null); onRun(item.id); } }}/>)}</ol>
   </div>;
 }
-function Background({ session, kept, items, busy, onEndProcess, name }: { readonly session: SessionView; readonly kept: NonNullable<SessionView["retention"]>["process"] | null; readonly items: readonly { readonly run: PublicRun; readonly activity: NonNullable<PublicRun["activities"]>[number] }[]; readonly busy: boolean; readonly onEndProcess?: (() => void) | undefined; readonly name: (id: string | undefined) => string }) {
+function Background({ session, kept, items, busy, onEndProcess, name }: { readonly session: SessionView; readonly kept: NonNullable<SessionView["retention"]>["process"] | null; readonly items: readonly { readonly run: PublicRun; readonly item: SubagentItem | CommandItem }[]; readonly busy: boolean; readonly onEndProcess?: (() => void) | undefined; readonly name: (id: string | undefined) => string }) {
   const now = useNow(kept !== null), keeper = kept ? name(kept.harnessId) : "原程序";
   const hint = session.retention?.enabled ? "已开启保持原生进程：下一轮结束后原程序会留在后台。" : "回合结束时原程序随之关闭。需要它在后台继续运行任务时，在 Harness 选择器（⌘J）底部打开“高级配置…”，开启“保持原生进程”。";
   return <div className="flex flex-col gap-3 px-4 pt-3 pb-4">
@@ -289,39 +297,43 @@ function Background({ session, kept, items, busy, onEndProcess, name }: { readon
     {session.retention?.upgraded ? <p className="kept-upgraded m-0 rounded-block bg-subtle px-3 py-2.5 text-ui-sm text-fg-2">升级 {name(session.retention.upgraded.harnessId)} 前，HarnessHub 关闭了这个对话保留的后台进程。下一条消息会用新版本重新启动原程序。</p> : null}
     {session.retention?.outside ? <p className="m-0 rounded-block bg-subtle px-3 py-2.5 text-ui-sm text-fg-2">原程序的后台任务可能仍在运行（{session.retention.outside.count} 个进程）：它们已离开原程序的进程组，HarnessHub 没有结束它们。</p> : null}
     {items.length ? <>
-      <span className="text-caption text-fg-3">后台任务与子 Agent</span>
-      <ul className="m-0 flex list-none flex-col gap-px p-0">{items.map(({ activity }) => <li key={activity.id} className="flex min-h-[30px] items-center gap-2.5 px-1 text-ui-sm">
-        <StatusDot tone={activity.status === "running" ? "run" : activity.status === "failed" ? "fail" : "idle"}/>
-        <span className="min-w-0 flex-1"><span className="text-fg-3">{ACTIVITY_KIND[activity.kind]} · </span>{activity.title}</span><span className={cn("flex-none text-caption", activity.status === "failed" ? "text-red" : "text-fg-3")}>{ACTIVITY_STATUS[activity.status]}</span></li>)}</ul>
-    </> : kept ? null : <EmptyState icon={<Clock size={22}/>} title="没有后台任务">Harness 在后台运行的命令和子 Agent 会出现在这里。</EmptyState>}
+      <span className="text-caption text-fg-3">后台任务与子任务</span>
+      <ul className="m-0 flex list-none flex-col gap-px p-0">{items.map(({ item }) => <li key={item.id} className="flex min-h-[30px] items-center gap-2.5 px-1 text-ui-sm">
+        <StatusDot tone={item.status === "running" ? "run" : item.status === "failed" ? "fail" : "idle"}/>
+        <span className="min-w-0 flex-1"><span className="text-fg-3">{item.type === "subagent" ? "子任务" : "后台命令"} · </span>{item.type === "subagent" ? item.title : oneLine(item.command)}</span>
+        <span className={cn("flex-none text-caption", item.status === "failed" ? "text-red" : "text-fg-3")}>{ITEM_STATUS_WORDS[item.status]}</span></li>)}</ul>
+    </> : kept ? null : <EmptyState icon={<Clock size={22}/>} title="没有后台任务">Harness 在后台运行的命令和子任务会出现在这里。</EmptyState>}
     {kept ? null : <p className="m-0 text-center text-caption text-fg-3">{hint}</p>}
   </div>;
 }
 function RunFacts(props: PanelProps & { readonly run: PublicRun; readonly runs: readonly PublicRun[] }) {
-  const { run, session } = props, status = run.status, terminal = finished(status);
-  const harness = props.harnesses.find(row => row.id === run.selection.harnessId), provider = props.providers.find(row => row.id === run.selection.provider?.providerId);
+  const { run, session } = props, turn = run.protocol, terminal = finished(run.status);
+  const harnessId = turn?.executor.harnessId ?? run.selection.harnessId;
+  const harness = props.harnesses.find(row => row.id === harnessId), provider = props.providers.find(row => row.id === run.selection.provider?.providerId);
   const version = harness?.management.programVersion ?? harness?.management.installedVersion, adapter = harness && harness.management.programVersion && harness.management.installedVersion && harness.management.programVersion !== harness.management.installedVersion ? harness.management.installedVersion : null;
   const nativeState = session.nativeStates?.find(state => state.harnessId === session.selection.harnessId && state.controlId === session.selection.controlId);
   const options = Object.entries(run.selection.nativeOptions ?? {});
+  const model = turn?.executor.model;
   return <div className="execution-details flex flex-col gap-4 px-4 pt-3.5 pb-4 text-ui-sm">
     <RunPicker runs={props.runs} run={run} onRun={props.onRun}/>
     <dl className="m-0 grid grid-cols-[96px_minmax(0,1fr)] gap-x-3 gap-y-2">
-      <Fact label="执行者"><span className="inline-flex items-center gap-1.5"><BrandIcon brand={run.selection.harnessId} name={harness?.name ?? run.selection.harnessId} size={16}/>{harness?.name ?? run.selection.harnessId}{version ? ` ${version}` : ""}{adapter ? ` · 接入口 ${adapter}` : ""}</span></Fact>
+      <Fact label="执行者"><span className="inline-flex items-center gap-1.5"><BrandIcon brand={harnessId} name={turn?.executor.harness ?? harness?.name ?? harnessId} size={16}/>{turn?.executor.harness ?? harness?.name ?? harnessId}{version ? ` ${version}` : ""}{adapter ? ` · 接入口 ${adapter}` : ""}</span></Fact>
       <Fact label="模型连接">{provider?.name ?? (run.selection.provider ? "Provider" : "Harness 原生连接")}</Fact>
-      {run.selection.provider ? <><Fact label="模型">{run.selection.provider.model}</Fact><Fact label="配置版本">{run.selection.provider.revision}</Fact></>
-        : <Fact label="模型">{run.selection.nativeModel ? <code className="text-code">{run.selection.nativeModel}</code> : "本机默认"}</Fact>}
+      <Fact label="模型">{model === undefined ? "本机默认" : <>{model.label}{model.id !== model.label ? <> · <code className="text-code">{model.id}</code></> : null}</>}</Fact>
+      {run.selection.provider ? <Fact label="配置版本">{run.selection.provider.revision}</Fact> : null}
       {options.length ? <Fact label="原生选项">{options.map(([id, value]) => `${id} ${value}`).join("、")}</Fact> : null}
       <Fact label="控制入口"><code className="text-code">{run.selection.controlId}</code></Fact>
       <Fact label="工作区"><span className="mono text-code" title={session.workspace}>{homePath(session.workspace) || folderName(session.workspace)}</span></Fact>
-      <Fact label="执行状态">{status === "cancelled" ? cancelledWords(run) : waitingWords(session, run) ?? RUN_STATE[status]}</Fact>
+      <Fact label="执行状态">{waitingWords(session, run) ?? (turn === undefined ? TURN_STATUS_WORDS[stateOf(run)] : statusText(turn))}</Fact>
       <Fact label="执行标识"><code className="text-code break-all">{run.id}</code></Fact>
+      {turn?.durationMs !== undefined ? <Fact label="用时">{spentText(turn.durationMs)}</Fact> : null}
       {run.timing?.readyAt !== undefined && run.timing.preparingAt !== undefined ? <Fact label="启动原程序">{duration(run.timing.readyAt - run.timing.preparingAt)}{run.reused ? "（复用保留的进程）" : ""}</Fact> : null}
       {run.timing?.firstOutputAt !== undefined && run.timing.dispatchedAt !== undefined ? <Fact label="发送后首个输出">{duration(run.timing.firstOutputAt - run.timing.dispatchedAt)}</Fact> : null}
-      {run.usage ? usageFacts(run.usage).map(([label, value]) => <Fact key={label} label={label}>{value}</Fact>) : null}
+      {turn === undefined ? <Fact label="协议数据">这一轮无法显示：{run.protocolProblem ?? "服务没有给出这一轮的协议数据"}</Fact> : usageFacts(turn).map(([label, value]) => <Fact key={label} label={label}>{value}</Fact>)}
       {run.error ? <Fact label="错误代码"><code className="text-code">{run.error.code}</code></Fact> : null}
     </dl>
     <Phases run={run}/>
-    {status === "unknown" ? <p className="m-0 rounded-block bg-amber-soft px-3 py-2.5 text-ui-sm text-amber-on-tint">请先核实执行结果。这个请求不会自动重新执行。</p> : status === "completed" ? <p className="m-0 text-caption text-fg-3">本轮执行已结束，结果仍需由你确认。</p> : null}
+    {turn?.status === "unknown" ? <p className="m-0 rounded-block bg-amber-soft px-3 py-2.5 text-ui-sm text-amber-on-tint">请先核实执行结果。这个请求不会自动重新执行。</p> : turn?.status === "completed" ? <p className="m-0 text-caption text-fg-3">本轮执行已结束，结果仍需由你确认。</p> : null}
     {props.loadDiagnostics && terminal ? <RunDiagnostics key={run.id} runId={run.id} load={props.loadDiagnostics}/> : null}
     {nativeState && run.id === props.runs.at(-1)?.id ? <section className="flex flex-col gap-2.5 hairline-t pt-3.5" aria-label="原生会话">
       <span className="text-caption font-medium text-fg-2">原生会话 · {nativeState.status === "ready" ? "继续已有会话" : nativeState.status === "forking" ? "正在建立分支副本" : "状态待确认"}</span>

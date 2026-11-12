@@ -1,30 +1,9 @@
-import { Info, Paperclip } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { deliveryWords, evidenceWords, packetFacts, syncWords } from "../lib/relay-state.js";
 import type { RelayApi, RelayPacket, RelayView } from "../relay.js";
 import { Dialog, DialogClose, useClosingValue } from "../ui/overlay.js";
 import { Badge, EmptyState, Spinner } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
-
-/**
- * The strip under a message that went out with a packet (relay-architecture §12.1 T3): "附交接单 #1", which opens the
- * packet's text exactly as it was sent. A packet of any kind (the first, an increment, a summary, a resend) reads alike.
- */
-export function RelayAttachment({ number, onOpen }: { readonly number: number | null; readonly onOpen: () => void }) {
-  return <button type="button" className="relay-attachment inline-flex h-8 max-w-full items-center gap-1.5 rounded-row border-none bg-subtle px-2.5 text-caption text-fg-2 transition-[color,background-color] duration-120 ease-standard hover:bg-hover hover:text-fg"
-    title="查看这条消息附带的交接单原文" onClick={onOpen}>
-    <Paperclip size={13} className="flex-none text-fg-3" aria-hidden="true"/><span className="min-w-0 truncate">附交接单{number === null ? "" : ` #${number}`}</span>
-  </button>;
-}
-
-/**
- * What the relay did with a message's history when that was more than handing it over as owed: it sent the packet again because the
- * last one was not confirmed, sent everything again, sent the words alone and why, or left things out of the packet. It is said under
- * the message, once and in plain words, and it never says the Harness took over.
- */
-export function RelayNote({ text }: { readonly text: string }) {
-  return <p className="relay-note m-0 flex max-w-[82%] items-start gap-1.5 text-caption text-fg-3"><Info size={12} className="mt-[3px] flex-none" aria-hidden="true"/><span className="min-w-0">{text}</span></p>;
-}
 
 /** A packet's text as it was stored when it was sent: nothing is processed again when it is read (relay-architecture §10.2). */
 type PacketText = { readonly packetId: string; readonly status: "loading" } | { readonly packetId: string; readonly status: "ready"; readonly text: string; readonly etag: string | null }

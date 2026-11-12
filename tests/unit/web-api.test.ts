@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ApiError, GatewayApi } from "../../web/src/api.js";
-import { toolParents } from "../../web/src/tool-tree.js";
 import { liveItems, mostUrgent, remaining } from "../../web/src/attention.js";
 import { hiddenHarnesses } from "../../web/src/lib/prefs.js";
-import { cancelledLabel, type AttentionItem } from "../../src/contracts/session.js";
+import type { AttentionItem } from "../../src/contracts/session.js";
 
 function api(t: test.TestContext, fetcher: typeof fetch): GatewayApi {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "window"), original = globalThis.fetch;
@@ -54,14 +53,6 @@ test("wrong-session and incomplete command receipts are not accepted as successf
 test("a successful SSE response without the required initial facts is a failed connection", async t => {
   const client = api(t, async () => new Response(": heartbeat\n\n", { headers: { "Content-Type": "text/event-stream" } }));
   await assert.rejects(client.streamSession("session-api", 0, new AbortController().signal, () => assert.fail("no facts exist")), code("STREAM_PROTOCOL"));
-});
-
-test("sub-agent tools are shown under their listed parent call; loops stay flat and deep chains are capped at three levels", () => {
-  const tool = (id: string, parentId?: string) => ({ id, ...(parentId === undefined ? {} : { parentId }) });
-  assert.deepEqual([...toolParents([tool("agent"), tool("bash", "agent"), tool("self", "self"), tool("orphan", "missing")])], [["bash", "agent"]]);
-  assert.deepEqual([...toolParents([tool("a", "b"), tool("b", "a"), tool("c", "a")])], [], "a parent loop is shown flat");
-  assert.deepEqual([...toolParents([tool("r"), tool("d1", "r"), tool("d2", "d1"), tool("d3", "d2"), tool("d4", "d3"), tool("d5", "d4")])],
-    [["d1", "r"], ["d2", "d1"], ["d3", "d2"], ["d4", "d2"], ["d5", "d2"]]);
 });
 
 test("a waiting request says whose deadline it is: the program's in seconds, the wait budget's in minutes until its last one", () => {
@@ -135,10 +126,3 @@ test("the frozen Harnesses are hidden from new work unless shown, and the open c
   assert.deepEqual([...hiddenHarnesses(harnesses, false, ["codex", "autohand"])].sort(), ["cursor", "gemini", "pi"], "keeping a listed Harness changes nothing");
 });
 
-test("a cancelled Turn says why: its execution budget, its wait for the user, a restart before it was sent, or the user's stop", () => {
-  assert.equal(cancelledLabel({ error: { code: "RUN_TIMEOUT" }, cancelRequested: false }), "已停止（执行预算用尽）");
-  assert.equal(cancelledLabel({ error: { code: "WAIT_EXPIRED" }, cancelRequested: true }), "已停止（等待你的决定超时）");
-  assert.equal(cancelledLabel({ error: { code: "OWNER_ENDED" } }), "已停止（服务重启，这条消息没有发出）");
-  assert.equal(cancelledLabel({ error: null, cancelRequested: true }), "已停止（用户停止）");
-  assert.equal(cancelledLabel({ error: null, cancelRequested: false }), "已停止");
-});

@@ -16,7 +16,8 @@ function snapshot(withAssistant = true): SessionView {
       ...(withAssistant ? [{ id: assistant, runId: id, role: "assistant" as const, text: "你好", seq: 5, status: "running" as const }] : [])],
     runs: [{ id, commandId: commandId("send-stream"), input: "问题", userMessageId: user, assistantMessageId: assistant,
       selection, epoch: 1, status: "running", cancelRequested: false, contextThroughSeq: 0, sourceRunIds: [], backend: null, cleanup: null, error: null,
-      stopRequested: false, awaitingSwitchId: null }], switches: [] };
+      stopRequested: false, awaitingSwitchId: null,
+      protocol: { version: "hh/1", runId: id, n: 1, status: "running", executor: { harnessId: "codex", harness: "Codex" }, usage: { completeness: "unavailable" }, items: [] } }], switches: [] };
 }
 function messageFrame(base = snapshot(), text = "你好，世界 🌏"): Extract<SessionStreamFrame, { type: "message" }> {
   const run = base.runs[0]!;

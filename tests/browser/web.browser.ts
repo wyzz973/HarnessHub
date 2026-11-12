@@ -557,7 +557,7 @@ test("live chat renders committed partial Markdown before completion, respects r
   assert.ok(String(partial.messages.at(-1)?.text).includes("第一段已经到达。"));
   await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
   // The user stopped it: the Turn and the header say 已停止 (ADR-054 decision H).
-  await expect(page.locator(".assistant-message").last()).toContainText("已停止");
+  await expect(page.locator(".assistant-message").last()).toContainText("你停止了这一轮");
   await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Codex 已停止");
   const stopped = await current(); assert.equal(stopped.runs.length, 2); assert.equal(stopped.runs[1]!.status, "cancelled");
   assert.ok(String(stopped.messages.at(-1)?.text).includes("第一段已经到达。"));
@@ -691,8 +691,10 @@ test("native settings switch without Apply and approvals survive refresh or canc
   await composer.press("Enter"); await expect.poll(async () => (await current()).runs[1]?.status).toBe("completed");
   const latest = await current(); assert.equal(latest.id, first.id); assert.equal(latest.runs[1].selection.nativeModel, "native-b");
   await composer.fill("FAIL_ONCE：检查重试按钮布局"); await expect(page.getByRole("button",{name:"发送消息",exact:true})).toBeEnabled(); await composer.press("Enter"); await expect.poll(async () => (await current()).runs[2]?.status).toBe("failed");
-  // A failed Turn's line says the state's word first, as the sidebar and the header do (ruling N).
-  await expect(page.locator(".assistant-message").last().locator(".process-summary")).toHaveText(/^失败 · 用时 [0-9.]+ 秒$/u);
+  // A failed Turn says what failed in its error card and ends with the same footer as any Turn; the header names the state in the table's word (ruling N).
+  await expect(page.locator(".assistant-message").last().locator(".run-error")).toBeVisible();
+  await expect(page.locator(".assistant-message").last().locator(".turn-footer")).toHaveText(/^Codex · Native B · 用时 [0-9.]+ 秒$/u);
+  await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Codex 失败");
   await page.locator(".assistant-message").last().hover();
   for (const width of [943, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });
@@ -746,18 +748,17 @@ test("unified chat shows native plan, notices, tool details with diffs and turn 
   await expect(panel.getByText("Codex 维护的计划 · 1 / 2 完成")).toBeVisible(); await expect(panel.getByText("修改文件")).toBeVisible();
   await expect(log.getByText("计划 · 1/2 完成")).toHaveCount(0);
   await expect(log.getByText("浏览器验收提示")).toBeVisible();
-  // The usage under the reply is the board's: input, output and cost; the context share is in the details (below).
-  await expect(log.locator(".native-usage")).toHaveText("输入 1.2k · 输出 300");
-  // The Run's own phases give the first-output time next to its usage, and the total time ends the process line.
-  await expect(log.locator(".run-timing").first()).toHaveText(/^首字 [0-9.]+ 秒$/u);
-  // The process is folded into one line once the Turn ended; opening it lists each tool.
-  const summary = log.locator(".process-summary");
-  await expect(summary).toHaveAttribute("aria-expanded", "false"); await expect(summary).toContainText("运行 1 条命令"); await expect(summary).toHaveText(/ · [0-9.]+ 秒$/u);
-  await summary.first().click();
-  const command = log.getByRole("button", { name: /ls -la/u });
+  // The footer under the Turn is the one every Turn has: who ran it, how long, what was read in and written out; the context share is in the details (below).
+  await expect(log.locator(".turn-footer")).toHaveText(/^Codex · .*用时 [0-9.]+ 秒 · 输入 1\.2k · 输出 300/u);
+  await expect(log).not.toContainText("首字");
+  // The actions are folded into one line once the Turn ended; opening it lists each action.
+  const group = log.locator(".action-group"), summary = group.getByRole("button", { name: "运行了 1 条命令，修改了 README.md", exact: true });
+  await expect(summary).toHaveAttribute("aria-expanded", "false");
+  await summary.click();
+  const command = group.locator(".action-row[data-type=command]").getByRole("button");
   await expect(command).toBeEnabled(); await command.click();
   await expect(log.getByText("README.md").first()).toBeVisible(); await expect(log.locator(".native-tool-detail pre").first()).toContainText("ls -la");
-  await log.getByRole("button", { name: /修改 README\.md/u }).click();
+  await group.locator(".action-row[data-type=file_change]").getByRole("button").click();
   await expect(log.locator(".native-diff .is-add")).toContainText("+新内容"); await expect(log.locator(".native-diff .is-remove")).toContainText("-旧内容");
   await page.locator(".assistant-message").last().hover(); await page.getByRole("button", { name: "执行详情", exact: true }).last().click();
   await expect(page.getByText("本轮用量")).toBeVisible(); await expect(panel).toContainText("1,500 / 10,000 tokens（15%）");
@@ -1054,13 +1055,11 @@ test("tools a sub-agent ran are shown under the sub-agent call", { timeout: 1200
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Agents", exact: true }).click();
   await composer.fill("让子代理运行 echo"); await composer.press("Enter");
   await expect(log.locator(".assistant-message").last()).toContainText("你好 fixture", { timeout: 15000 });
-  // The steps stay open while the Turn runs and fold 1.1 s after it ended (ADR-054 §3); opened again, they list the tools.
-  await expect(log.locator(".process-summary").last()).toHaveAttribute("aria-expanded", "false");
-  await log.locator(".process-summary").last().click();
-  const tools = log.getByRole("list", { name: "工具活动" }).last();
-  await expect(tools.locator(":scope > li")).toHaveCount(1);
-  await expect(tools).toContainText("Run echo SUB-OK"); await expect(tools).toContainText("子 Agent · 1 个工具");
-  const nested = tools.getByRole("list", { name: "子 Agent 的工具：Run echo SUB-OK" });
+  // The task is one line; what the sub-agent ran hangs under it and opens with it.
+  const task = log.locator(".action-row[data-type=subagent]").last();
+  await expect(task).toContainText("Run echo SUB-OK");
+  await task.getByRole("button").first().click();
+  const nested = task.getByRole("group", { name: /^子任务里的动作/u });
   await expect(nested).toContainText("echo SUB-OK");
   await nested.getByRole("button", { name: /echo SUB-OK/u }).click(); await expect(nested.locator(".native-tool-detail")).toContainText("输出"); await expect(nested.locator(".native-tool-detail")).toContainText("SUB-OK");
   await page.screenshot({ path: join(artifact, "native-subagent-tools.png"), animations: "disabled" });
@@ -1376,12 +1375,12 @@ test("a Turn the Runtime cancelled when its wait budget ran out says 已停止 w
   await expect(offer).toContainText("要在做完或需要你时用系统通知告诉你吗？");
   await offer.getByRole("button", { name: "开启通知", exact: true }).click(); await expect(offer).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => Notification.permission)).toBe("granted");
-  // The Turn keeps the contract's own cause after the state's word; the header says the word alone; nothing calls it the user's stop.
-  await expect(turn.locator(".process-summary")).toContainText("已停止（等待你的决定超时）"); await expect(turn.locator(".process-summary")).not.toContainText("用户停止");
+  // The Turn says the table's sentence for why it ended after the state's word; the header says the word alone; nothing calls it the user's stop.
+  await expect(turn).toContainText("已停止 · 超过了这一轮的时间上限"); await expect(turn).not.toContainText("你停止了这一轮");
   await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Shared Agent 已停止");
   await turn.hover(); await turn.getByRole("button", { name: "执行详情", exact: true }).click();
   const facts = page.getByRole("complementary", { name: "详情栏" }).locator(".execution-details");
-  await expect(facts.locator("dt", { hasText: "执行状态" }).locator("xpath=following-sibling::dd[1]")).toHaveText("已停止（等待你的决定超时）");
+  await expect(facts.locator("dt", { hasText: "执行状态" }).locator("xpath=following-sibling::dd[1]")).toHaveText("已停止 · 超过了这一轮的时间上限");
   await page.screenshot({ path: join(artifact, "runtime-cancelled.png"), animations: "disabled" });
   await page.keyboard.press("Escape"); await expect(page.getByRole("complementary", { name: "详情栏" })).toHaveCount(0);
   // Notifications on: a Turn the Runtime cancels out of sight is announced as a failure is, silently, titled with the Agent
@@ -1390,12 +1389,12 @@ test("a Turn the Runtime cancelled when its wait budget ran out says 已停止 w
   await expect(log.locator(".assistant-message").last()).toHaveAttribute("data-run-status", "cancelled", { timeout: 15000 });
   await expect.poll(async () => (await notices()).length, { timeout: 15000 }).toBe(1);
   const [cancelled] = await notices();
-  assert.equal(cancelled!.title, "Shared Agent 已停止（等待你的决定超时）"); assert.equal(cancelled!.silent, true); assert.match(cancelled!.body, /^用时 \d+ 秒$/u);
+  assert.equal(cancelled!.title, "Shared Agent 已停止 · 超过了这一轮的时间上限"); assert.equal(cancelled!.silent, true); assert.match(cancelled!.body, /^用时 [0-9.]+ 秒$/u);
   await hide(false);
   // The user's own stop, out of sight as well, is not announced.
   await ask(); await hide(true); await page.keyboard.press("ControlOrMeta+Period");
   const last = log.locator(".assistant-message").last();
-  await expect(last).toHaveAttribute("data-run-status", "cancelled", { timeout: 15000 }); await expect(last.locator(".process-summary")).toContainText("已停止");
+  await expect(last).toHaveAttribute("data-run-status", "cancelled", { timeout: 15000 }); await expect(last).toContainText("你停止了这一轮");
   const stopped = (await current()).runs.at(-1);
   assert.equal(stopped.cancelRequested, true); assert.ok(!["RUN_TIMEOUT", "WAIT_EXPIRED", "OWNER_ENDED"].includes(stopped.error?.code), "the user stopped it: " + stopped.error?.code);
   assert.equal((await notices()).length, 1, "the user's own stop is not announced");
@@ -1662,28 +1661,28 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await page.keyboard.press("ControlOrMeta+\\"); await expect(button).toHaveAttribute("aria-pressed", "true"); await expect(button).toHaveText("");
   await page.keyboard.press("ControlOrMeta+\\"); await expect(button).toHaveAttribute("aria-pressed", "false");
   await expect(button).toHaveText("1"); assert.equal(await pop(), "none", "closing the panel brings the number back without motion");
-  const summary = log.locator(".process-summary");
-  await expect(summary).toHaveText(/^改了 1 处，运行 1 条命令 · [0-9.]+ 秒$/u); await expect(summary).toHaveAttribute("aria-expanded", "false");
-  await expect(log.getByRole("list", { name: "工具活动" })).toHaveCount(0);
+  const summary = log.locator(".action-group").getByRole("button", { name: "运行了 1 条命令，修改了 README.md", exact: true });
+  await expect(summary).toHaveAttribute("aria-expanded", "false");
+  await expect(log.locator(".action-row").first()).not.toBeVisible();
   // The density is the "…" menu's checkable 显示每一步, checked for every step (ruling R1); the header has no 简洁 or 详细.
   const header = page.locator(".chat-page > header"), more = header.getByRole("button", { name: "更多操作", exact: true });
   const everyStep = page.getByRole("menuitemcheckbox", { name: "显示每一步", exact: true });
   await expect(header.getByRole("button", { name: /^(简洁|详细)$/u })).toHaveCount(0);
   await more.click(); await expect(everyStep).toHaveAttribute("aria-checked", "false"); await everyStep.click();
   await expect(everyStep).toHaveCount(0);
-  await expect(log.getByRole("list", { name: "工具活动" })).toBeVisible();
+  await expect(summary).toHaveAttribute("aria-expanded", "true"); await expect(log.locator(".action-row").first()).toBeVisible();
   await page.reload();
   await more.click(); await expect(everyStep).toHaveAttribute("aria-checked", "true");
-  await expect(log.getByRole("list", { name: "工具活动" })).toBeVisible();
+  await expect(summary).toHaveAttribute("aria-expanded", "true"); await expect(log.locator(".action-row").first()).toBeVisible();
   await everyStep.click();
-  await expect(log.getByRole("list", { name: "工具活动" })).toHaveCount(0);
+  await expect(summary).toHaveAttribute("aria-expanded", "false");
   // D04 (ADR-054 decision E): wide enough for the panel beside the conversation, it still stays closed, changes or not; its
   // button carries the number of changes, said in full to a screen reader. A page drawn again in the compact density reads
   // no tool detail while the panel is closed.
   const panel = page.getByRole("complementary", { name: "详情栏" });
   const origin = new URL(fixture.gateway.url).origin, id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session");
-  const details = ((await (await context.request.get(origin + "/api/v1/sessions/" + id)).json()).runs as { tools?: { detail?: { id: string } }[] }[]).flatMap(run => (run.tools ?? []).flatMap(tool => tool.detail ? [tool.detail.id] : []));
-  assert.ok(details.length > 0, "the fixture's tools carry stored detail");
+  const details = ((await (await context.request.get(origin + "/api/v1/sessions/" + id)).json()).runs as { protocol?: { items?: { detail?: { id: string } }[] } }[]).flatMap(run => (run.protocol?.items ?? []).flatMap(item => item.detail ? [item.detail.id] : []));
+  assert.ok(details.length > 0, "the fixture's actions carry stored detail");
   const reads: string[] = [];
   page.on("request", request => { if (details.some(content => request.url().includes("/api/v1/content/" + encodeURIComponent(content)))) reads.push(request.url()); });
   await page.reload(); await expect(log).toContainText("原生活动已完成。");
@@ -1705,7 +1704,7 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await expect(panel.locator(".native-diff .is-add")).toContainText("新内容"); await expect(panel.locator(".native-diff .is-remove")).toContainText("旧内容");
   await expect(panel.getByRole("button", { name: /撤销|还原|revert/iu })).toHaveCount(0);
   await panel.getByRole("tab", { name: /过程/u }).click();
-  await expect(panel).toContainText("收到消息"); await expect(panel.getByRole("list", { name: "工具活动" })).toContainText("ls -la");
+  await expect(panel).toContainText("收到消息"); await expect(panel.locator(".action-row").first()).toContainText("ls -la");
   await panel.getByRole("tab", { name: /计划/u }).click(); await expect(panel).toContainText("Codex 维护的计划 · 1 / 2 完成");
   await panel.getByRole("tab", { name: /执行/u }).click(); await expect(panel).toContainText("本轮用量"); await expect(panel.getByRole("button", { name: "复制诊断信息", exact: true })).toBeVisible();
   await page.screenshot({ path: join(artifact, "details-panel.png"), animations: "disabled" });
@@ -1729,7 +1728,7 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   assert.deepEqual(errors, []);
 });
 
-test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over is a hairline with a pill, and the process opens from one line to steps to raw output", { timeout: 120000 }, async t => {
+test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is a hairline with a pill, and the actions open from one line to each action to its raw output", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
@@ -1744,36 +1743,36 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
   const first = log.locator(".assistant-message").first();
-  // C03: every reply starts with who answered (the Agent's own mark, 24 px), its name, the model and the thinking level.
+  // C03: a reply has no header of its own; who answered, with which model and how long it took stand in the footer, led by the Harness's mark (16 px).
   await expect(first).toHaveAttribute("aria-label", "Codex 的回复");
-  const mark = await first.locator(".brand-tile").first().boundingBox(); assert.ok(mark && Math.round(mark.width) === 24 && Math.round(mark.height) === 24, "the Agent mark is 24 px");
-  await expect(first.getByText("Native B · 思考 高", { exact: true })).toBeVisible();
-  // C04: the process is one line once the Turn ended, counting each kind of step and the total time; failures would be counted in it.
-  const summary = first.locator(".process-summary");
-  await expect(summary).toHaveAttribute("aria-expanded", "false"); await expect(summary).toHaveText(/^改了 1 处，运行 1 条命令 · [0-9.]+ 秒$/u);
-  await expect(first.getByRole("list", { name: "工具活动" })).toHaveCount(0);
-  // It is one line where it fits, the chevron right after the words: the words never wrap at the width of those they replaced.
-  assert.deepEqual(await summary.evaluate(element => { const words = element.querySelector(".swap-text")!.getBoundingClientRect(), chevron = element.querySelector(":scope > svg")!.getBoundingClientRect();
-    return [element.getBoundingClientRect().height <= 28, chevron.left - words.right <= 8]; }), [true, true], "the folded line is one line with its chevron after the words");
-  // The line is the steps' button from the keyboard too: Enter and Space open and close them.
-  await expect(summary).toHaveAttribute("role", "button");
+  const footer = first.locator(".turn-footer");
+  await expect(footer).toHaveText(/^Codex · Native B · 用时 [0-9.]+ 秒/u);
+  const mark = await footer.locator(".brand-tile").boundingBox(); assert.ok(mark && Math.round(mark.width) === 16 && Math.round(mark.height) === 16, "the Harness mark is 16 px");
+  await expect(first.locator(".brand-tile")).toHaveCount(1);
+  // C04: the actions are one line once the Turn ended, counting each kind of action; failures would be counted in it.
+  const summary = first.locator(".action-group").getByRole("button", { name: "运行了 1 条命令，修改了 README.md", exact: true });
+  await expect(summary).toHaveAttribute("aria-expanded", "false");
+  await expect(first.locator(".action-row").first()).not.toBeVisible();
+  // It is one line where it fits, the chevron right after the words.
+  assert.deepEqual(await summary.evaluate(element => { const words = element.querySelector(":scope > span")!.getBoundingClientRect(), chevron = element.querySelector(":scope > svg")!.getBoundingClientRect();
+    return [element.getBoundingClientRect().height <= 36, chevron.left - words.right <= 16]; }), [true, true], "the folded line is one line with its chevron after the words");
+  // The line is a button, so Enter and Space open and close the actions from the keyboard too.
   await summary.focus(); await page.keyboard.press("Enter"); await expect(summary).toHaveAttribute("aria-expanded", "true");
   await page.keyboard.press(" "); await expect(summary).toHaveAttribute("aria-expanded", "false");
-  // C05: opened, each step says its verb and what it acted on; the edit counts its lines, the command gives its exit code.
+  // C05: opened, each action says what it did and to what; the edit counts its lines, a command that failed gives its exit code.
   await summary.click(); await expect(summary).toHaveAttribute("aria-expanded", "true");
-  const steps = first.getByRole("list", { name: "工具活动" });
-  await expect(steps.locator(":scope > li")).toHaveCount(2);
-  const command = steps.locator(":scope > li").filter({ hasText: "ls -la" }), edit = steps.locator(":scope > li").filter({ hasText: "README.md" });
-  await expect(command).toContainText("运行"); await expect(command).toContainText("退出码 0");
-  await expect(edit).toContainText("修改"); await expect(edit).toContainText("+1"); await expect(edit).toContainText("−1");
-  // Consecutive reads are grouped into one step (no fixture reads twice in a row; tests/unit/web-turn.test.ts proves the grouping).
-  // The third layer: a step opens to the raw input and output the program reported.
+  const steps = first.locator(".action-group .action-row");
+  await expect(steps).toHaveCount(2);
+  const command = steps.filter({ hasText: "ls -la" }), edit = steps.filter({ hasText: "README.md" });
+  await expect(command).toHaveText("运行了 ls -la"); await expect(command).not.toContainText("退出码");
+  await expect(edit).toHaveText("修改了 README.md +1 −1");
+  // The third layer: an action opens to the raw input and output the program reported.
   await command.getByRole("button", { name: /ls -la/u }).click();
   const raw = command.locator(".native-tool-detail");
   await expect(raw.locator("pre").first()).toHaveText("ls -la"); await expect(raw).toContainText("输出"); await expect(raw).toContainText("README.md");
   // A step that opens tints when pointed at (Motion board #30: its background, 120 ms on the standard curve) and untints when
   // left; from the keyboard its focus ring is the row's, 2 px inside its edge.
-  const editRow = edit.getByRole("button", { name: /修改 README\.md/u }), tint = () => editRow.evaluate(element => getComputedStyle(element).backgroundColor);
+  const editRow = edit.getByRole("button", { name: /修改了 README\.md/u }), tint = () => editRow.evaluate(element => getComputedStyle(element).backgroundColor);
   assert.equal(await tint(), "rgba(0, 0, 0, 0)");
   await editRow.hover(); await expect.poll(tint).toBe("rgb(244, 245, 247)");
   assert.deepEqual(await editRow.evaluate(element => { const style = getComputedStyle(element); return [style.transitionProperty, style.transitionDuration, style.transitionTimingFunction]; }),
@@ -1799,22 +1798,21 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   await expect(panel.getByRole("radio", { name: "整个对话 1", exact: true })).toHaveAttribute("aria-checked", "true");
   await expect(panel.getByRole("button", { name: /README\.md/u })).toHaveAttribute("aria-pressed", "true");
   await expect(panel.getByRole("region", { name: /^差异：/u })).toContainText("只读 · 来自 Codex");
-  // C08: switching the model takes effect between Turns and marks the place: a hairline with the pill in the middle.
+  // C08: switching the model takes effect between Turns; the place is marked by the Turn that carries it, with a hairline and the pill in the middle.
   await pick("选择模型", "Native A");
   await expect.poll(async () => { const value = await current(); return value.pendingSwitchId === null && value.selection.nativeModel === "native-a"; }).toBe(true);
-  // The same Agent with another model says "改用" and the new choice in the words of a Turn's identity line (the model alone:
-  // the change keeps no thinking level of its own); the pill shows the Agent's mark, without the arrow of a hand-over.
-  const handover = log.getByRole("separator", { name: "从这里起改用 Native A", exact: true });
-  await expect(handover).toBeVisible(); await expect(handover).toHaveText("从这里起改用 Native A");
+  await composer.fill("第二轮"); await composer.press("Enter");
+  await expect(log.locator(".assistant-message")).toHaveCount(2);
+  await expect(log.locator(".assistant-message").last()).toContainText("已由", { timeout: 15000 });
+  // The same Harness with another model says the two models, from → to; the pill shows the Harness's mark, without the arrow of a hand-over.
+  const handover = log.getByRole("separator", { name: "Native B → Native A", exact: true });
+  await expect(handover).toBeVisible(); await expect(handover).toHaveText("Native B → Native A");
   await expect(handover.locator(".brand-tile")).toHaveCount(1); await expect(handover.locator("path[pathLength]")).toHaveCount(0);
   const pill = await handover.evaluate(element => { const pill = element.querySelector(":scope > span:nth-child(2)") as HTMLElement, line = element.firstElementChild as HTMLElement;
     return { radius: getComputedStyle(pill).borderRadius, height: pill.getBoundingClientRect().height, line: line.getBoundingClientRect().height, shadow: getComputedStyle(pill).boxShadow }; });
   assert.ok(pill.radius.startsWith("3.35544e+07") || parseFloat(pill.radius) >= 15, "the pill is round: " + pill.radius);
   assert.equal(Math.round(pill.height), 30); assert.ok(pill.line <= 1, "the line is a hairline: " + pill.line); assert.match(pill.shadow, /0px 0px 0px 0\.5px/u);
-  await composer.fill("第二轮"); await composer.press("Enter");
-  await expect(log.locator(".assistant-message")).toHaveCount(2);
-  await expect(log.locator(".assistant-message").last()).toContainText("已由", { timeout: 15000 });
-  await expect(log.locator(".assistant-message").last().getByText(/^Native A/u)).toBeVisible();
+  await expect(log.locator(".assistant-message").last().locator(".turn-footer")).toContainText("Native A");
   // The conversation keeps its identity across the hand-over: one conversation, both Turns in it.
   const after = await current(); assert.equal(after.runs.length, 2); assert.equal(after.runs[0].selection.nativeModel, "native-b"); assert.equal(after.runs[1].selection.nativeModel, "native-a");
   assert.equal((await (await context.request.get(origin + "/api/v1/sessions")).json()).length, 1);
@@ -1824,7 +1822,7 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   await panel.getByRole("radio", { name: "整个对话 1", exact: true }).click(); await expect(panel.getByRole("button", { name: /README\.md/u })).toBeVisible();
   await panel.getByRole("tab", { name: /^过程/u }).click();
   await expect(panel).toContainText("这个对话的全部步骤，按时间排列");
-  await expect(panel.getByRole("button", { name: /第 1 轮/u })).toContainText("修改 1 · 运行 1"); await expect(panel.getByRole("button", { name: /第 2 轮/u })).toHaveAttribute("aria-expanded", "true");
+  await expect(panel.getByRole("button", { name: /第 1 轮/u })).toContainText("运行了 1 条命令，修改了 README.md"); await expect(panel.getByRole("button", { name: /第 2 轮/u })).toHaveAttribute("aria-expanded", "true");
   // A Turn's line opens its steps and, pointed at, tints like any row.
   await rowTint(page, panel.getByRole("button", { name: /第 1 轮/u }));
   await page.screenshot({ path: join(artifact, "dl4-handover-light-1440.png"), animations: "disabled" });
@@ -1840,7 +1838,7 @@ test("G054-DL4 each reply names its Agent, model and thinking level, a hand-over
   assert.deepEqual(errors, []);
 });
 
-test("G054-DL7 a running Turn shows the arc, the swept words and a timer every second, streamed text comes in at a steady pace, and the end hands over to 已完成; reduced motion keeps only short fades", { timeout: 120000 }, async t => {
+test("G054-DL7 a running Turn shows the arc, the swept words and a timer every second, streamed text comes in at a steady pace, and the end takes the line away for the footer; reduced motion keeps only short fades", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
@@ -1872,25 +1870,25 @@ test("G054-DL7 a running Turn shows the arc, the swept words and a timer every s
     return { samples, token };
   }, settle);
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
-  // The Turn is drawn once: its process line is held from the moment it appears, before the reply has any text. Until
+  // The Turn is drawn once: its live line is held from the moment it appears, before the reply has any text. Until
   // then the conversation the first message creates is never shown as empty and ready for one.
   await page.evaluate(() => {
     const probe: { line: Element | null; textless: boolean; ready: boolean } = { line: null, textless: false, ready: false };
     (window as unknown as { __turnLine: typeof probe }).__turnLine = probe;
     const observer = new MutationObserver(() => {
       probe.ready ||= [...document.querySelectorAll("[role=log] h2")].some(node => node.textContent === "对话准备好了");
-      const line = document.querySelector("[role=log] .assistant-message .turn-process");
+      const line = document.querySelector("[role=log] .assistant-message .live-line");
       if (line === null) return;
       probe.line = line; probe.textless = line.closest(".assistant-message")!.querySelector(".markdown") === null; observer.disconnect();
     });
     observer.observe(document.body, { subtree: true, childList: true });
   });
   await composer.fill("STREAM_RENDER：动效验收"); await composer.press("Enter");
-  const turn = log.locator(".assistant-message").last(), row = turn.locator(".process-summary"), reply = turn.locator(".markdown.text-reading");
+  const turn = log.locator(".assistant-message").last(), row = turn.locator(".live-line"), reply = turn.locator(".markdown.text-reading");
   await expect(turn).toContainText("第一段已经到达。");
   // When the reply's first text came (the Runtime creates its message then), the same line is still in the page: not drawn anew.
   assert.deepEqual(await page.evaluate(() => { const probe = (window as unknown as { __turnLine: { line: Element | null; textless: boolean } }).__turnLine;
-    return [probe.textless, probe.line?.isConnected ?? null, probe.line === [...document.querySelectorAll("[role=log] .assistant-message .turn-process")].at(-1)]; }),
+    return [probe.textless, probe.line?.isConnected ?? null, probe.line === [...document.querySelectorAll("[role=log] .assistant-message .live-line")].at(-1)]; }),
     [true, true, true], "the Turn keeps its element as its reply starts");
   assert.equal(await page.evaluate(() => (window as unknown as { __turnLine: { ready: boolean } }).__turnLine.ready), false, "the new conversation is not shown as empty while its first message is on its way");
   // #10: the first piece arrived as more than 120 characters at once, so it is shown at once, without fading pieces.
@@ -1921,39 +1919,34 @@ test("G054-DL7 a running Turn shows the arc, the swept words and a timer every s
   // #11: the 7 px dot at the end of the text breathes while it is written.
   await expect(reply).toHaveClass(/caret-host/u);
   assert.deepEqual(await reply.evaluate(element => { const style = getComputedStyle(element.querySelector(":scope > p:last-of-type")!, "::after"); return [style.width, style.animationName, style.animationDuration]; }), ["7px", "hh-end-dot", "1.25s"]);
-  // #12: at the end the arc and the words leave first, and "已完成" arrives 0.21 s later in the same place.
-  const handover = page.evaluate(() => new Promise<{ depart: boolean; together: boolean; delay: string | null; words: string[] }>(resolve => {
-    const target = [...document.querySelectorAll(".assistant-message")].at(-1)!.querySelector(".process-summary")!;
-    const seen = { depart: false, together: false, delay: null as string | null, words: [] as string[] };
+  // At the end the live line leaves and the footer, which was there all along, gains the time the Turn took.
+  const ending = page.evaluate(() => new Promise<{ timers: number[]; footer: string | null }>(resolve => {
+    const target = [...document.querySelectorAll(".assistant-message")].at(-1)!;
+    const seen = { timers: [] as number[], footer: null as string | null };
     const look = () => {
-      const depart = target.querySelector(".motion-depart"), arrive = target.querySelector(".motion-arrive");
-      if (depart) seen.depart = true;
-      if (depart && arrive) seen.together = true;
-      if (arrive && seen.delay === null) seen.delay = getComputedStyle(arrive).animationDelay;
-      const text = (target.textContent ?? "").trim(); if (text && seen.words.at(-1) !== text) seen.words.push(text);
+      const timer = /已用 (\d+) 秒/u.exec(target.querySelector(".live-line")?.textContent ?? ""); if (timer) seen.timers.push(Number(timer[1]));
+      seen.footer = target.querySelector(".turn-footer")?.textContent ?? null;
     };
     const observer = new MutationObserver(look); observer.observe(target, { subtree: true, childList: true, characterData: true, attributes: true });
     setTimeout(() => { observer.disconnect(); look(); resolve(seen); }, 3000);
   }));
   await step("finish");
-  const seen = await handover;
-  assert.ok(seen.depart && seen.together, "the running layer leaves while the finished one arrives in its place: " + JSON.stringify(seen));
-  assert.equal(seen.delay, "0.21s");
-  assert.match(seen.words.at(-1)!, /^已完成 · 用时 [0-9.]+ 秒$/u);
-  // The timer stops when the Run ends: while the last words are shown and the line hands over, it never passes the total.
-  const total = Number(/用时 ([0-9.]+) 秒$/u.exec(seen.words.at(-1)!)![1]);
-  assert.ok(seen.words.every(words => { const shown = /已用 (\d+) 秒/u.exec(words); return !shown || Number(shown[1]) <= total; }), "the timer never passes the total: " + JSON.stringify(seen.words));
+  const seen = await ending;
+  assert.match(seen.footer ?? "", /^Codex · .*用时 [0-9.]+ 秒/u);
+  // The timer stops when the Run ends: it never passes the total the footer then says.
+  const total = Number(/用时 ([0-9.]+) 秒/u.exec(seen.footer ?? "")![1]);
+  assert.ok(seen.timers.length > 0 && seen.timers.every(shown => shown <= total), "the timer never passes the total: " + JSON.stringify(seen));
   await expect(turn).toHaveAttribute("data-run-status", "completed");
-  await expect(row.locator(".spinner")).toHaveCount(0); await expect(row.locator(".motion-depart")).toHaveCount(0);
-  // The finished line is one line where it fits (its words keep their own width, not one rounded down from the box).
-  await expect.poll(() => row.evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(28);
+  await expect(turn.locator(".live-line")).toHaveCount(0); await expect(turn.locator(".spinner")).toHaveCount(0);
+  // The footer is one line where it fits.
+  await expect.poll(() => turn.locator(".turn-footer").evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(28);
   // The dot fades out once the text is written, and the fading pieces give way to plain text: the text itself never changed.
   await expect(reply).not.toHaveClass(/caret-host/u); await expect(reply.locator(".motion-token")).toHaveCount(0);
   const shownText = (await reply.textContent()) ?? "";
   assert.ok(shownText.indexOf("第一段已经到达。") < shownText.indexOf("第二段正在生成。") && shownText.indexOf("第二段正在生成。") < shownText.indexOf("第三段完成。"), "the committed order is kept");
   assert.equal(await reply.evaluate(element => element.dataset.shown === element.dataset.committed), true);
   const message = (await current()).messages.at(-1); assert.equal(Number(await reply.getAttribute("data-committed")), message.text.length, "every committed character is shown");
-  await row.scrollIntoViewIfNeeded();
+  await turn.locator(".turn-footer").scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(artifact, "dl7-done-light-1440.png"), animations: "disabled" });
   // #38: with reduced motion the arc is a still dot, the words do not sweep, and replies show as they arrive.
   await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "dark" });
@@ -1961,7 +1954,7 @@ test("G054-DL7 a running Turn shows the arc, the swept words and a timer every s
   await expect(log.locator(".assistant-message")).toHaveCount(2);
   const still = log.locator(".assistant-message").nth(1);
   await expect(still).toHaveAttribute("data-run-status", "running"); await expect(still).toContainText("第一段已经到达。");
-  assert.deepEqual(await still.locator(".process-summary").evaluate(target => {
+  assert.deepEqual(await still.locator(".live-line").evaluate(target => {
     const spinner = target.querySelector(".spinner")!, words = target.querySelector(".shimmer-text")!;
     return [getComputedStyle(spinner).animationName, getComputedStyle(spinner.querySelector(".spinner-arc")!).display, getComputedStyle(words).animationName, getComputedStyle(words).backgroundImage];
   }), ["none", "none", "none", "none"]);
@@ -1977,12 +1970,12 @@ test("G054-DL7 a running Turn shows the arc, the swept words and a timer every s
     return animated || moved ? [node.className + " " + style.animationName + " " + style.transitionProperty] : [];
   }));
   assert.deepEqual(moving, []);
-  await still.locator(".process-summary").scrollIntoViewIfNeeded();
+  await still.locator(".live-line").scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(artifact, "dl7-reduced-dark-1440.png"), animations: "disabled" });
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "a running Turn fits " + width + " px");
-    await still.locator(".process-summary").scrollIntoViewIfNeeded();
+    await still.locator(".live-line").scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(artifact, `dl7-running-dark-${width}.png`), animations: "disabled" });
   }
   await step("finish"); await expect(still).toHaveAttribute("data-run-status", "completed");
@@ -2295,9 +2288,9 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   // P04: the amber ring, and the Turn keeps a mark that points to it.
   await expect.poll(() => box.evaluate(element => getComputedStyle(element).boxShadow)).toContain("rgb(245, 158, 11) 0px 0px 0px 1.5px");
   await expect(log.getByRole("button", { name: "等你批准，请求停在下方输入框的位置", exact: true })).toBeVisible();
-  // Decision F: the Turn says the wait once. No step is in progress here, so its process line says 等你批准 in the process's
+  // Decision F: the Turn says the wait once. No action is in progress here, so its live line says 等你批准 in the process's
   // grey with the timer and without the arc; the one amber line is the mark under it.
-  const waiting = log.locator(".assistant-message").last(), line = waiting.locator(".process-summary"), marker = waiting.locator(".docked-approval");
+  const waiting = log.locator(".assistant-message").last(), line = waiting.locator(".live-line"), marker = waiting.locator(".docked-approval");
   await expect(line.locator(".response-status")).toHaveText("等你批准"); await expect(line).toContainText(/· 已用 \d+ 秒/u);
   await expect(line.locator(".spinner")).toHaveCount(0); await expect(line.locator(".shimmer-text")).toHaveCount(0);
   await expect(marker).toHaveCount(1); await expect(marker).toHaveText("等你批准，请求停在下方输入框的位置");
@@ -2377,7 +2370,7 @@ test("G054-DL5 an approval waits in the composer's place: ⏎ allows once and es
   // The same state says the same words everywhere (decision G): the card, the header and the Turn's line say 等你回答; no
   // marker points below, since nothing waits in the composer's place.
   await expect(question).toContainText("Codex Question 等你回答"); await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Codex Question 等你回答");
-  await expect(log.locator(".assistant-message").last().locator(".process-summary .response-status")).toHaveText("等你回答");
+  await expect(log.locator(".assistant-message").last().locator(".live-line .response-status")).toHaveText("等你回答");
   await expect(log.locator(".docked-approval")).toHaveCount(0);
   await question.getByRole("button", { name: "取消", exact: true }).click();
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
@@ -2398,15 +2391,15 @@ test("G054-DL5 while an approval waits, the Turn names the step it asks for in t
   // The fixture reads a file, then asks before it runs a command, which it reports as pending until it is allowed.
   await composer.fill("STEP_APPROVAL 清理构建目录"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(dock).toContainText("rm -rf build", { timeout: 15000 });
-  const turn = log.locator(".assistant-message").last(), line = turn.locator(".process-summary"), steps = turn.getByRole("list", { name: "工具活动", exact: true });
-  const asked = steps.locator(".native-tool").filter({ hasText: "rm -rf build" });
-  // The line names the step in the Interaction board's words, grey and still beside its timer: no arc, no sweep, no amber.
+  const turn = log.locator(".assistant-message").last(), line = turn.locator(".live-line"), steps = turn.locator(".action-row");
+  const asked = steps.filter({ hasText: "rm -rf build" });
+  // The line names the action in the Interaction board's words, grey and still beside its timer: no arc, no sweep, no amber.
   await expect(line.locator(".response-status")).toHaveText("想运行 rm -rf build"); await expect(line).toContainText(/· 已用 \d+ 秒/u);
   await expect(line.locator(".spinner")).toHaveCount(0); await expect(line.locator(".shimmer-text")).toHaveCount(0);
   await expect(line.locator(".status-dot")).toHaveAttribute("data-tone", "idle");
-  // Its step says the same words and does not spin either; the read before it is done. Nothing in the Turn turns.
-  await expect(steps.locator(".native-tool")).toHaveCount(2);
-  await expect(steps.locator(".native-tool").first()).toHaveText("读取 app.ts"); await expect(asked).toHaveText("想运行 rm -rf build");
+  // Its row says it waits for you, in the table's word, and does not spin either; the read before it is done. Nothing in the Turn turns.
+  await expect(steps).toHaveCount(2);
+  await expect(steps.first()).toHaveText("读取了 app.ts"); await expect(asked).toHaveText("运行 rm -rf build 等你处理");
   await expect(turn.locator(".spinner")).toHaveCount(0);
   // The mark under it stays the Turn's only amber line.
   const marker = turn.locator(".docked-approval");
@@ -2417,12 +2410,12 @@ test("G054-DL5 while an approval waits, the Turn names the step it asks for in t
   // The page announces the same state in the header's words (decision G), never that the reply runs.
   const announced = page.locator(".chat-page > .sr-only[role=status]");
   await expect(announced).toHaveText("等你批准");
-  // The details list the same step in the same words.
+  // The details list the same action in the same words.
   await page.keyboard.press("ControlOrMeta+Backslash");
   const details = page.getByRole("complementary", { name: "详情栏" });
   await details.getByRole("tab", { name: "过程", exact: true }).click();
-  const listed = details.getByRole("list", { name: "工具活动", exact: true }).locator(".native-tool").filter({ hasText: "rm -rf build" });
-  await expect(listed).toHaveText("想运行 rm -rf build"); await expect(listed.locator(".spinner")).toHaveCount(0);
+  const listed = details.locator(".action-row").filter({ hasText: "rm -rf build" });
+  await expect(listed).toHaveText("运行 rm -rf build 等你处理"); await expect(listed.locator(".spinner")).toHaveCount(0);
   // Nothing of the Turn runs in the details either: its row carries the amber dot of waiting, named 等你批准 as the header
   // and the sidebar name it, and its facts say 等你批准 rather than that it is executing.
   const turnRow = details.locator("ol > li > button").filter({ hasText: "第 1 轮" });
@@ -2433,7 +2426,7 @@ test("G054-DL5 while an approval waits, the Turn names the step it asks for in t
   await page.waitForTimeout(400);
   await page.screenshot({ path: join(artifact, "dl5-asking-step-light-1440.png"), animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, "dl5-asking-step-dark-1440.png"), animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
-  // Allowed, the step runs: the line and the step say 正在运行 with the arc, and the line sweeps again.
+  // Allowed, the action runs: the line and the row say 正在运行 with the arc, and the line sweeps again.
   await dock.getByRole("button", { name: "Allow once", exact: true }).click();
   await expect(line.locator(".response-status")).toHaveText("正在运行 rm -rf build", { timeout: 15000 });
   await expect(line.locator(".spinner")).toHaveCount(1); await expect(line.locator(".shimmer-text")).toHaveText("正在运行 rm -rf build");
@@ -2441,19 +2434,20 @@ test("G054-DL5 while an approval waits, the Turn names the step it asks for in t
   await expect(listed).toHaveText("正在运行 rm -rf build"); await expect(listed.locator(".spinner")).toHaveCount(1);
   await expect(announced).not.toHaveText("等你批准");
   await expect(turnRow.locator(".status-dot")).toHaveAttribute("data-tone", "run");
-  // Done, it reads as a step that ran, and the folded line counts it.
+  // Done, it reads as an action that ran, and the folded line counts it.
   await writeFile(join(fixture.root, "workspace", "step-continue"), "go");
   await expect(turn).toHaveAttribute("data-run-status", "completed", { timeout: 15000 });
-  await expect(listed).toHaveText("运行 rm -rf build");
-  await expect(line).toContainText("读了 1 个文件，运行 1 条命令");
-  // A Turn that fails after its step was refused says so in red, and its line is a row that tints when pointed at: its words
-  // read at 4.5:1 on that tint in both themes, as all small text must (ruling M).
+  await expect(listed).toHaveText("运行了 rm -rf build");
+  await expect(turn.locator(".action-group").getByRole("button").first()).toHaveText("运行了 1 条命令，读取了 app.ts");
+  // A Turn that fails after its action was refused says so: the action is told as refused, the error card says what went wrong, and a line
+  // that tints when pointed at reads at 4.5:1 on that tint in both themes, as all small text must (ruling M).
   await composer.fill("STEP_APPROVAL_FAILS 再清理一次"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(dock).toContainText("rm -rf build", { timeout: 15000 });
   await dock.getByRole("button", { name: "Deny", exact: true }).click();
-  const refused = log.locator(".assistant-message").last(), refusedLine = refused.locator(".process-summary");
+  const refused = log.locator(".assistant-message").last(), refusedLine = refused.locator(".action-group").getByRole("button").first();
   await expect(refused).toHaveAttribute("data-run-status", "failed", { timeout: 15000 });
-  await expect(refusedLine).toHaveText(/^失败 · 读了 1 个文件，运行 1 条命令，1 项失败 · 用时 [0-9.]+ 秒$/u); await expect(refusedLine).toHaveAttribute("role", "button");
+  await expect(refusedLine).toHaveText(/^运行了 1 条命令（1 个[^）]+），读取了 app\.ts$/u); await expect(refusedLine).toHaveAttribute("aria-expanded", "false");
+  await expect(refused.locator(".quiet-line[data-item=end]")).toHaveText("失败");
   await refusedLine.hover();
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme }); await page.waitForTimeout(300);
@@ -2753,11 +2747,11 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   await shoot("dl6-plan-open");
   await toggle.click(); await expect(toggle).toHaveAttribute("aria-expanded", "false");
   // P05: the round, its steps and its time, then exactly the usage the run reported: no cost, since the fixture reports none.
-  const run = (await current()).runs[0], line = page.locator(".composer-status");
+  const run = (await current()).runs[0], line = page.locator(".composer-status"), usage = run.protocol.usage;
   await expect(line).toContainText("第 1 轮"); await expect(line).toContainText("2 步"); await expect(line).toContainText(/用时 [\d.]+ 秒/u);
-  assert.equal(run.usage.turn.input, 1200); await expect(line).toContainText("输入 1.2k");
-  if (run.usage.context?.size) await expect(line).toContainText(`上下文 ${Math.round(run.usage.context.used / run.usage.context.size * 100)}%`);
-  assert.equal(run.usage.cost, undefined); await expect(line).not.toContainText("¥"); await expect(line).not.toContainText("会话累计"); await expect(line).not.toContainText("本轮 ");
+  assert.deepEqual([usage.completeness, usage.input], ["complete", 1200]); await expect(line).toContainText("输入 1.2k");
+  if (usage.context?.size) await expect(line).toContainText(`上下文 ${Math.round(usage.context.used / usage.context.size * 100)}%`);
+  assert.equal(usage.cost, undefined); await expect(line).not.toContainText("¥"); await expect(line).not.toContainText("会话累计"); await expect(line).not.toContainText("本轮 ");
   // While a reply runs, the time counts up; a run that reported no usage shows none.
   await composer.fill("STREAM_RENDER：计时"); await composer.press("Enter");
   await expect.poll(async () => (await current()).runs.at(-1).status, { timeout: 15000 }).toBe("running");
@@ -2892,12 +2886,12 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await expect.poll(async () => { const value = await current(); return value.runs.length === handed.runs.length + 1 && value.runs.at(-1).status; }, { timeout: 20000 }).toBe("completed");
   // C08: where it took over, a pill with the mark of the Agent before, an arrow and the new Agent's mark (Conversation board), with how and
   // which handoff packet (the Agent's prompt ended well, which proves its history holds the packet).
-  const handover = log.getByRole("separator", { name: "从这里起由 Shared Agent 接手 · 新会话 · 交接单（完整） · #1", exact: true });
+  const handover = log.getByRole("separator", { name: /^Codex → Shared Agent · 带上了之前/u });
   await expect(handover).toBeVisible();
   await expect(handover.locator(".brand-tile")).toHaveCount(2); await expect(handover.locator(".brand-tile").first()).toHaveAttribute("data-brand", "codex");
   // #19: made in view, it comes in: the pill fades in, the arrow draws in 160 ms, the new mark pops from .6, the lines grow.
   const handoverMotion = () => handover.evaluate(element => {
-    const pill = element.children[1]!, arrow = pill.querySelector("path[pathLength]")!, mark = pill.children[2]!;
+    const pill = element.children[1]!, arrow = pill.querySelector("path[pathLength]")!, mark = pill.querySelectorAll(".brand-tile")[1]!.parentElement!;
     const motion = (node: Element) => { const style = getComputedStyle(node); return [style.animationName, style.animationDuration, style.animationDelay].join(" / "); };
     return { pill: motion(pill), arrow: motion(arrow), mark: motion(mark) + " / " + getComputedStyle(mark).getPropertyValue("--motion-scale-from").trim(), lines: [motion(element.firstElementChild!), motion(element.lastElementChild!)] };
   });
@@ -3094,7 +3088,7 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
   await row("新对话").click(); await pick("Codex"); await hide(true); await send("后台完成的一轮");
   await expect.poll(async () => (await notices()).length, { timeout: 15000 }).toBe(1);
   const [done] = await notices();
-  assert.equal(done!.title, "Codex 做完了"); assert.equal(done!.silent, true); assert.match(done!.body, /^用时 \d+ 秒$/u);
+  assert.equal(done!.title, "Codex 做完了"); assert.equal(done!.silent, true); assert.match(done!.body, /^用时 [0-9.]+ 秒$/u);
   await hide(false);
   // Agent counts updates only once the Gateway reports one.
   update = true; await page.evaluate(() => { window.dispatchEvent(new Event("focus")); });
@@ -5842,9 +5836,9 @@ test("G054-DL10 the home on first use and on return, a finished Turn with its st
   await pick("Codex"); await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
   await expect.poll(async () => (await current()).runs[0]?.status, { timeout: 15000 }).toBe("completed");
-  const process = log.getByRole("button", { name: /运行 1 条命令/u });
+  const process = log.getByRole("button", { name: /运行了 1 条命令/u });
   await expect(process).toHaveAttribute("aria-expanded", "false"); await process.click(); await expect(process).toHaveAttribute("aria-expanded", "true");
-  await log.getByRole("list", { name: "工具活动" }).getByRole("button", { name: /修改 README\.md/u }).click();
+  await log.locator(".action-row[data-type=file_change]").getByRole("button").click();
   await expect(log.getByText("新内容", { exact: true }).first()).toBeVisible();
   // The details panel is not taken to be open or closed by default: its header button says which, and is pressed until it does.
   const details = page.getByRole("button", { name: "详情栏", exact: true }), panel = page.getByRole("complementary", { name: "详情栏" });
@@ -5988,8 +5982,8 @@ test("G054-DL10 with reduced motion a Turn, the palette, the details, an Agent's
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
   await expect.poll(async () => (await current()).runs[0]?.status, { timeout: 15000 }).toBe("completed");
-  await expect(log.getByRole("button", { name: /运行 1 条命令/u })).toHaveAttribute("aria-expanded", "false");
-  await dl10Still(page, "a Turn from its message to its folded process");
+  await expect(log.getByRole("button", { name: /运行了 1 条命令/u })).toHaveAttribute("aria-expanded", "false");
+  await dl10Still(page, "a Turn from its message to its folded actions");
   await paletteBoth("the conversation");
   // The details beside the conversation: from the pointer and from ⌘\, open and closed again.
   const details = page.getByRole("button", { name: "详情栏", exact: true }), panel = page.getByRole("complementary", { name: "详情栏" });

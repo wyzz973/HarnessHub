@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { chromium, expect, type Browser, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import { decodeSessionStreamFrame } from "../../web/src/api.js";
 import { createRelayApi, decodeRelayFrame, decodeRelayPrefs, decodeRelayView, decodeRunRelay, relayBody, RelayReadError, runRelayInfo, type RelayReply, type RelayTransport, type RelayView } from "../../web/src/relay.js";
-import { bannerOf, decisionNote, handoverOf, relayLine, relayRequestFor, runNotes, userSequences, type Handover, type NoteContext } from "../../web/src/lib/relay-state.js";
+import { bannerOf, relayLine, relayRequestFor } from "../../web/src/lib/relay-state.js";
 import { consumeSessionEventStream, SessionStreamError } from "../../web/src/session-stream.js";
 import type { PublicRun } from "../../src/contracts/session.js";
 import type { SessionView } from "../../src/contracts/web.js";
@@ -71,6 +71,28 @@ function messages(runs: readonly FakeRun[], replies: Readonly<Record<string, str
 /** A native session that holds everything it was ever given: the run it ran itself, no packet owed. */
 const own = (on: { harnessId: string; controlId: string }) => ({ packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: { ...on, nativeEpoch: 1 } });
 const packetRelay = (on: { harnessId: string; controlId: string }, extra: Record<string, unknown> = {}) => ({ packetId: PACKET, kind: "packet", continuity: { kind: "rehydrate", tier: "full", complete: true }, executedOn: { ...on, nativeEpoch: 1 }, ...extra });
+
+const NAMES: Readonly<Record<string, string>> = { claude: "Claude Code", codex: "Codex" };
+/**
+ * The protocol Turn the Gateway gives a Run, from the Run's own facts: your message, the hand-over line when the Harness differs from the
+ * Run before it (what it carried and how the delivery stands, from the Run's relay facts and the relay view's packet), and the reply.
+ */
+function turnOf(session: FakeSession, run: FakeRun, index: number, view: RelayWire | null): Record<string, unknown> {
+  const executor = (id: string) => ({ harnessId: id, harness: NAMES[id] ?? id }), previous = session.runs[index - 1];
+  const items: Record<string, unknown>[] = [], add = (type: string, more: Record<string, unknown>) => items.push({ id: "item-" + items.length, seq: items.length, status: "completed", type, ...more });
+  if (previous !== undefined && previous.selection.harnessId !== run.selection.harnessId) {
+    const relay = run.relay as { packetId?: string | null; continuity?: { kind?: string }; decision?: { kind?: string }; delivery?: { state?: string } } | undefined, packetId = relay?.packetId ?? null;
+    const state = (view?.packets.find(row => row.packetId === packetId)?.delivery as string | undefined) ?? relay?.delivery?.state;
+    const delivery = ({ in_flight: "sending", recorded: "confirmed", not_recorded: "not_sent", unknown: "unconfirmed" } as Record<string, string>)[state ?? ""];
+    const context = relay?.decision?.kind === "alone" ? "none" : relay?.continuity?.kind === "rehydrate" ? "full" : relay?.continuity?.kind === "native_resume_delta" ? "delta" : relay?.continuity?.kind === "native_resume" ? "native" : "unknown";
+    add("switch", { from: executor(previous.selection.harnessId), to: executor(run.selection.harnessId), context, session: relay?.continuity?.kind === "rehydrate" ? "new" : "resumed", ...(delivery === undefined ? {} : { delivery }), ...(packetId === null ? {} : { packetId }) });
+  }
+  add("user_message", { messageId: run.userMessageId });
+  if (session.messages.some(message => message.id === run.assistantMessageId)) add("assistant_message", { messageId: run.assistantMessageId, phase: "final" });
+  const over = ["completed", "failed", "cancelled", "unknown"].includes(run.status), timing = run.timing;
+  return { version: "hh/1", runId: run.id, n: index + 1, status: run.status === "settling" ? "running" : run.status, executor: executor(run.selection.harnessId), usage: { completeness: "unavailable" },
+    ...(timing?.acceptedAt === undefined ? {} : { startedAt: timing.acceptedAt }), ...(over && timing?.acceptedAt !== undefined && timing.endedAt !== undefined ? { durationMs: timing.endedAt - timing.acceptedAt } : {}), items };
+}
 
 /**
  * A conversation that began with Claude Code and went on with Codex after a change of Harness. `second` is what Codex's Turn is:
@@ -174,7 +196,9 @@ class FakeGateway {
     this.server.closeAllConnections();
     await new Promise<void>(done => this.server.close(() => done()));
   }
-  private frame(): string { return `event: session\nid: ${this.session.lastSeq}\ndata: ${JSON.stringify({ type: "snapshot", session: this.session })}\n\n`; }
+  /** The conversation as the Gateway's view gives it: each Run carries its protocol Turn, the hand-over line included. */
+  private shown(): unknown { return { ...this.session, runs: this.session.runs.map((run, index) => ({ ...run, protocol: turnOf(this.session, run, index, this.view) })) }; }
+  private frame(): string { return `event: session\nid: ${this.session.lastSeq}\ndata: ${JSON.stringify({ type: "snapshot", session: this.shown() })}\n\n`; }
   /** The conversation changed: every open stream gets the new view of it, one fact further on. */
   publish(): void {
     this.session.version += 1; this.session.lastSeq += 1;
@@ -236,7 +260,7 @@ class FakeGateway {
     const match = /^\/sessions\/([^/]+)(?:\/(.*))?$/u.exec(api);
     if (match === null || match[1] !== this.session.id) return this.missing(response);
     const action = match[2] ?? "";
-    if (action === "" && method === "GET") return this.json(response, 200, this.session);
+    if (action === "" && method === "GET") return this.json(response, 200, this.shown());
     if (action === "events/stream") {
       response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });
       this.clients.add(response); response.on("close", () => this.clients.delete(response)); response.write(this.frame()); return;
@@ -299,152 +323,21 @@ async function shoot(page: Page, name: string): Promise<void> {
 }
 /** The hand-over line of the conversation, by what it says. */
 const separator = (log: Locator, name: string | RegExp) => log.getByRole("separator", { name });
+/** Whether the page reads the relay: its details panel then has the 接续 tab, for a conversation the relay has something to tell of. */
+async function usesRelay(page: Page, wait = 1500): Promise<boolean> {
+  const panel = page.getByRole("complementary", { name: "详情栏" });
+  if (!await panel.isVisible()) await page.getByRole("button", { name: "详情栏", exact: true }).click();
+  await expect(panel.getByRole("tab", { name: /^执行/u })).toBeVisible();
+  return panel.getByRole("tab", { name: /接续/u }).waitFor({ timeout: wait }).then(() => true, () => false);
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The line where another Harness took over says so only on evidence
 // ---------------------------------------------------------------------------------------------------------------------
 
-test("the hand-over line says a Harness took over only after evidence, and says what is known until then", async t => {
-  // The Turn for Codex is being prepared: no packet yet, so nothing is drawn, and the Turn says it is being started.
-  const { gateway, page, errors, log } = await open(t, conversation("preparing"));
-  await expect(log.locator(".assistant-message").last()).toBeVisible();
-  await expect(log.getByRole("separator")).toHaveCount(0);
-
-  // The packet is built and the Turn is handed to Codex: a placeholder at the fixed place, no word of "taken over".
-  gateway.session.runs[1]!.relay = packetRelay(CODEX);
-  gateway.session.runs[1]!.status = "running"; gateway.session.runs[1]!.timing = { ...gateway.session.runs[1]!.timing!, readyAt: NOW - 17_000, dispatchedAt: NOW - 16_000 };
-  gateway.session.messages.forEach(message => { if (message.runId === "run-2") message.status = "running"; });
-  gateway.view = relayView({ packets: [packetRow("in_flight", null)] });
-  gateway.publish();
-  const pending = separator(log, "交给 Codex · 交接单 #1 · 送达中");
-  await expect(pending).toBeVisible();
-  await expect(log.getByRole("separator", { name: /接手/u })).toHaveCount(0);
-  await expect(pending.locator("..")).toHaveAttribute("data-handover", "pending");
-  await shoot(page, "divider-pending");
-
-  // Codex starts to answer, but nothing confirms that it received the packet: said so, not taken over.
-  gateway.session.runs[1]!.timing = { ...gateway.session.runs[1]!.timing!, firstOutputAt: NOW - 14_000 };
-  gateway.publish();
-  await expect(separator(log, "交给 Codex · 交接单 #1 · 已开始回复，送达待确认")).toBeVisible();
-  await expect(log.getByRole("separator", { name: /接手/u })).toHaveCount(0);
-
-  // The evidence arrives (the Gateway announces it): now, and only now, the Harness took over, with how and the way to read the packet.
-  gateway.view = relayView({ handedOver: ["codex"], packets: [packetRow("recorded", "E1")], bindings: [CLAUDE_BOUND,
-    { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "synced", throughRun: 0, evidence: "E1", cleared: 0 }] });
-  gateway.announce("relay.input_recorded", { runId: "run-2", packetId: PACKET });
-  const taken = separator(log, "从这里起由 Codex 接手 · 新会话 · 交接单（完整） · #1");
-  await expect(taken).toBeVisible();
-  await expect(taken.locator("..")).toHaveAttribute("data-handover", "taken"); await expect(taken.locator("..")).toHaveAttribute("data-evidence", "E1");
-  await expect(log.getByRole("separator", { name: /送达/u })).toHaveCount(0);
-  // The first Harness's mark, an arrow and the new Harness's mark, as the page always drew a hand-over.
-  await expect(taken.locator(".brand-tile")).toHaveCount(2);
-  await expect(taken.locator("xpath=..").getByRole("button", { name: "查看交接单", exact: true })).toBeVisible();
-  await expect(taken.locator("xpath=..").getByRole("button", { name: "改回", exact: true })).toBeVisible();
-  await shoot(page, "divider-taken");
-  // The two proofs read the same, and each says which it was: seen live (E1), or reasoned from how the Turn ended (E3).
-  for (const [evidence, words] of [["E3", "按结果推断"], ["E1", "实时确认"]] as const) {
-    gateway.view = relayView({ packets: [packetRow("recorded", evidence)] });
-    gateway.announce();
-    await expect(taken.locator("..")).toHaveAttribute("data-evidence", evidence);
-    await expect(taken.locator("xpath=./span[2]")).toHaveAttribute("title", "送达证据：" + words);
-    await expect(taken).toBeVisible();
-  }
-  // A proof the relay does not have (the old after-the-fact check) is a word nobody knows: it is taken over, with no proof named.
-  gateway.view = relayView({ packets: [packetRow("recorded", "E2")] });
-  gateway.announce();
-  await expect(taken.locator("..")).not.toHaveAttribute("data-evidence", /./u);
-  await expect(taken.locator("xpath=./span[2]")).not.toHaveAttribute("title", /./u);
-  assert.deepEqual(errors, []);
-});
-
-test("a packet that is not confirmed or did not arrive is said so, and what happens next; the line never says taken over", async t => {
-  // The Turn is over and the Gateway could not confirm the packet: the Harness answered, but nothing proves it received it.
-  const { gateway, page, errors, log } = await open(t, conversation("completed", packetRelay(CODEX)));
-  gateway.view = relayView({ packets: [packetRow("unknown", null)] });
-  gateway.announce();
-  const unknown = separator(log, "Codex 已回复，但没有确认收到交接单；下一条消息会再附上一次");
-  await expect(unknown).toBeVisible();
-  await expect(log.getByRole("separator", { name: /接手/u })).toHaveCount(0);
-  await expect(unknown.locator("..")).toHaveAttribute("data-handover", "unknown");
-  await shoot(page, "divider-unknown");
-
-  // The Gateway knows it did not arrive: the Harness refused the message before receiving it.
-  gateway.view = relayView({ packets: [packetRow("not_recorded", null)] });
-  gateway.announce();
-  const refused = separator(log, "交接单没有送达 Codex（它在收到前拒绝了这条消息），下一条消息会补上");
-  await expect(refused).toBeVisible();
-  await expect(log.getByRole("separator", { name: /接手/u })).toHaveCount(0);
-  await expect(refused.locator("..")).toHaveAttribute("data-handover", "not_recorded");
-  await shoot(page, "divider-not-recorded");
-
-  // A word the page does not know is never taken for delivery.
-  gateway.view = relayView({ packets: [packetRow("delivered-ish", "E9")] });
-  gateway.announce();
-  await expect(separator(log, "Codex 已回复，但没有确认收到交接单；下一条消息会再附上一次")).toBeVisible();
-  await expect(log.getByRole("separator", { name: /接手/u })).toHaveCount(0);
-  assert.deepEqual(errors, []);
-});
-
-test("a hand-over line comes in only when it is news: one found in the history stays still, even when its facts arrive late", async t => {
-  const motion = (opened: Opened, name: string | RegExp) => separator(opened.log, name).locator("xpath=./span[2]").evaluate(element => getComputedStyle(element).animationName);
-  // A Turn from long ago: the line is drawn once the relay state is read, which is later than the history around it, and it does not animate.
-  const old = await open(t, conversation("completed", packetRelay(CODEX)), { view: relayView({ packets: [packetRow("recorded", "E1")] }) });
-  await expect(separator(old.log, /^从这里起由 Codex 接手/u)).toBeVisible();
-  assert.equal(await motion(old, /^从这里起由 Codex 接手/u), "none");
-  // A Turn accepted a moment ago: the hand-over is news, and the line fades in as the page's hand-overs do.
-  const recent = conversation("running", packetRelay(CODEX));
-  recent.runs[1]!.timing = { ...recent.runs[1]!.timing!, acceptedAt: Date.now() - 300 };
-  const fresh = await open(t, recent, { view: relayView({ packets: [packetRow("in_flight", null)] }) });
-  await expect(separator(fresh.log, "交给 Codex · 交接单 #1 · 送达中")).toBeVisible();
-  assert.equal(await motion(fresh, "交给 Codex · 交接单 #1 · 送达中"), "hh-fade-in");
-  assert.deepEqual([old.errors, fresh.errors], [[], []]);
-});
-
 // ---------------------------------------------------------------------------------------------------------------------
 // The strip under a message that went out with a packet, and the packet's text
 // ---------------------------------------------------------------------------------------------------------------------
-
-test("a message that went out with a packet carries a strip that opens the packet's text exactly as it was sent", async t => {
-  const { gateway, context, page, errors, log } = await open(t, conversation("completed", packetRelay(CODEX)));
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(gateway.url).origin });
-  gateway.view = relayView({ packets: [packetRow("recorded", "E1")] });
-  gateway.announce();
-  // Only the message that carried the packet has the strip: the first Turn ran in its own session and owed nothing.
-  const strip = log.getByRole("button", { name: "附交接单 #1", exact: true });
-  await expect(strip).toBeVisible();
-  await expect(log.getByRole("button", { name: /附交接单/u })).toHaveCount(1);
-  await expect(log.locator(".user-message").first().getByRole("button", { name: /附交接单/u })).toHaveCount(0);
-  await shoot(page, "attachment-strip");
-
-  await strip.click();
-  const dialog = page.getByRole("dialog", { name: "交接单 #1" });
-  await expect(dialog).toBeVisible();
-  const text = dialog.locator(".relay-packet-text");
-  await expect(text).toBeVisible();
-  // Every character of the stored text, as text: its markup, quotes and backslashes are not interpreted, nothing is added or cut.
-  assert.equal(await text.evaluate(element => element.textContent), PACKET_TEXT);
-  await expect(dialog).toContainText("发给 Codex · 第 2 轮 · 完整 · 约 1.7k tokens · 省略 3 项 · 隐去 1 处");
-  await expect(dialog).toContainText("这是发出时的原文，逐字保存；查看时不会重新处理。");
-  await expect(dialog).toContainText("sha256 a1b2c3d4a1b2…");
-  await shoot(page, "packet-dialog");
-  await dialog.getByRole("button", { name: "复制原文", exact: true }).click();
-  await expect(dialog.getByRole("button", { name: "已复制", exact: true })).toBeVisible();
-  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), PACKET_TEXT);
-  // Closing gives the focus back to the strip that opened it.
-  await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
-  await expect(strip).toBeFocused();
-  assert.equal(gateway.reads.text, 1, "the text is read once, when it is opened");
-
-  // A packet the Gateway no longer has is said so, not shown empty.
-  gateway.texts.delete(PACKET);
-  await strip.click();
-  const failed = page.getByRole("dialog", { name: "交接单 #1" });
-  await expect(failed.getByRole("alert")).toHaveText("这份交接单已不存在，或不属于这个对话。");
-  await expect(failed.getByRole("button", { name: "复制原文" })).toHaveCount(0);
-  await page.keyboard.press("Escape");
-  assert.deepEqual(errors.filter(message => !/404/u.test(message)), []);
-});
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The line above the box
@@ -701,13 +594,9 @@ test("a Gateway without the relay setting shows none, and a value the page canno
 
 test("a Gateway without the relay API leaves the page as it was, and a message says nothing of the relay", async t => {
   const { gateway, page, errors, log, composer } = await open(t, conversation("completed", packetRelay(CODEX)), { relayRoutes: false }, [/\/relay/u]);
-  // The hand-over line is the one the page always drew: the Gateway has no evidence to give, and the line claims no more than it did.
-  const legacy = separator(log, "从这里起由 Codex 接手");
-  await expect(legacy).toBeVisible();
-  await expect(page.locator(".relay-divider")).toHaveCount(0);
-  await expect(legacy.locator("..").getByRole("button", { name: "改回", exact: true })).toBeVisible();
+  // The hand-over line is the Turn's own (the Gateway's protocol says what was handed over); the relay's cards and tab are not drawn.
+  await expect(separator(log, /^Claude Code → Codex/u)).toBeVisible();
   await expect(page.locator(".relay-card")).toHaveCount(0);
-  await expect(log.getByRole("button", { name: /附交接单/u })).toHaveCount(0);
   await page.getByRole("button", { name: "详情栏", exact: true }).click();
   await expect(page.getByRole("tab", { name: /^执行/u })).toBeVisible();
   await expect(page.getByRole("tab", { name: /接续/u })).toHaveCount(0);
@@ -729,9 +618,8 @@ test("a Gateway that does not say it has the relay API sees no relay request, no
   // The endpoints exist, but nothing says so: no sign, so no question. (A Gateway without them would answer 404, and a page that
   // asked would log an error for it: no console error is expected here.)
   const { gateway, page, errors, log } = await open(t, conversation("completed", packetRelay(CODEX)), { advertise: false });
-  await expect(separator(log, "从这里起由 Codex 接手")).toBeVisible();
-  await expect(page.locator(".relay-divider")).toHaveCount(0); await expect(page.locator(".relay-card")).toHaveCount(0);
-  await expect(log.getByRole("button", { name: /附交接单/u })).toHaveCount(0);
+  await expect(separator(log, /^Claude Code → Codex/u)).toBeVisible();
+  await expect(page.locator(".relay-card")).toHaveCount(0);
   await page.waitForTimeout(500);
   await page.getByRole("button", { name: "详情栏", exact: true }).click();
   await expect(page.getByRole("tab", { name: /^执行/u })).toBeVisible(); await expect(page.getByRole("tab", { name: /接续/u })).toHaveCount(0);
@@ -748,31 +636,31 @@ test("a Gateway that does not say it has the relay API sees no relay request, no
 test("each sign that the Gateway has the relay API makes the page use it, and the page remembers it for that Gateway", async t => {
   const packetsView = relayView({ packets: [packetRow("recorded", "E1")] });
   const remembered = (page: Page) => page.evaluate(() => localStorage.getItem("harnesshub:relay-api"));
-  const flagged = "从这里起由 Codex 接手 · 新会话 · 交接单（完整） · #1";
 
   // Its state says so.
   const stated = await open(t, conversation("completed", packetRelay(CODEX)), { view: packetsView });
-  await expect(separator(stated.log, flagged)).toBeVisible();
+  assert.equal(await usesRelay(stated.page), true);
   assert.equal(await remembered(stated.page), "1");
   assert.deepEqual(stated.errors, []);
 
   // A Turn carries its delivery.
   const delivered = await open(t, conversation("completed", packetRelay(CODEX, { delivery: { state: "recorded", evidence: "E1" } })), { advertise: false, view: packetsView });
-  await expect(separator(delivered.log, flagged)).toBeVisible();
+  assert.equal(await usesRelay(delivered.page), true);
   assert.equal(await remembered(delivered.page), "1");
 
   // It pushes a relay event: until then nothing was asked.
   const pushed = await open(t, conversation("completed", packetRelay(CODEX)), { advertise: false, view: packetsView });
-  await expect(separator(pushed.log, "从这里起由 Codex 接手")).toBeVisible();
+  await expect(separator(pushed.log, /^Claude Code → Codex/u)).toBeVisible();
   await pushed.page.waitForTimeout(400);
   assert.equal(pushed.gateway.reads.view, 0);
+  assert.equal(await usesRelay(pushed.page), false);
   pushed.gateway.announce("relay.input_recorded", { runId: "run-2", packetId: PACKET });
-  await expect(separator(pushed.log, flagged)).toBeVisible();
+  await expect(pushed.page.getByRole("complementary", { name: "详情栏" }).getByRole("tab", { name: /接续/u })).toBeVisible();
   assert.equal(await remembered(pushed.page), "1");
 
   // This browser remembered it from an earlier visit: no other sign is needed.
   const stored = await open(t, conversation("completed", packetRelay(CODEX)), { advertise: false, view: packetsView, storage: { "harnesshub:relay-api": "1" } });
-  await expect(separator(stored.log, flagged)).toBeVisible();
+  assert.equal(await usesRelay(stored.page), true);
   assert.deepEqual([pushed.errors, stored.errors, delivered.errors], [[], [], []]);
 });
 
@@ -855,69 +743,11 @@ test("the banner of an unknown cause, or of a Harness nothing can confirm a deli
   // A Harness nothing can confirm a delivery to stays unconfirmed whatever is done: said once at the hand-over, not on every message.
   gateway.view = asking(ONCE, { canConfirm: false }, [packetRow("unknown", null)]); gateway.announce();
   await expect(banner).toHaveCount(0);
-  await expect(separator(log, "已发给 Codex，这个 Harness 无法确认是否收到交接单")).toBeVisible();
-  await expect(log.getByRole("separator", { name: /接手/u })).toHaveCount(0);
+  await expect(separator(log, /^Claude Code → Codex/u)).toBeVisible();
   await shoot(page, "divider-cannot-confirm");
   assert.deepEqual(errors, []);
 });
 
-/** A third Turn on Codex after `session`'s second, carrying `relay`, with its words and reply. */
-function third(session: FakeSession, relay: Record<string, unknown>): FakeSession {
-  const next = run(3, CODEX, "再补一条", "completed", { relay, epoch: 2, timing: { acceptedAt: NOW - 5_000, preparingAt: NOW - 4_900, readyAt: NOW - 4_800, dispatchedAt: NOW - 4_700, firstOutputAt: NOW - 4_000, endedAt: NOW - 3_000 } });
-  const seq = session.lastSeq;
-  session.runs.push(next);
-  session.messages.push({ id: next.userMessageId, runId: next.id, role: "user", text: next.input, seq: seq + 1, status: "completed" }, { id: next.assistantMessageId, runId: next.id, role: "assistant", text: "好的。", seq: seq + 2, status: "completed" });
-  session.lastSeq = seq + 2; session.version = session.lastSeq - 1;
-  return session;
-}
-
-test("what the relay decided for a Turn's history is said under its message in plain words, and a Turn sent alone never reads as a Harness taking over", async t => {
-  // The first Turn on Codex went alone (not even the least packet fits its channel): the line where the conversation changed hands says so.
-  const first = await open(t, conversation("completed", { ...own(CODEX), decision: { kind: "alone", by: "policy", cause: "input_limit", reason: "input_limit" } }));
-  const line = separator(first.log, "交给 Codex · Codex 一次放不下这条消息和交接单 · 这条只发了原话");
-  await expect(line).toBeVisible(); await expect(line.locator("..")).toHaveAttribute("data-handover", "alone");
-  await expect(first.log.getByRole("separator", { name: /接手/u })).toHaveCount(0);
-  // The message does not say it again; and what the user chose is the user's: not "taken over" either.
-  await expect(first.log.locator(".relay-note")).toHaveCount(0);
-  await shoot(first.page, "divider-alone");
-  assert.deepEqual(first.errors, []);
-
-  const clearedFirst = conversation("completed", own(CODEX)); clearedFirst.runs[1]!.backend = { status: "completed", reason: "cleared" };
-  const clearedOpen = await open(t, clearedFirst);
-  // The first message after the change was the Hub's clear: nothing went to the Harness, and the line says neither that its session goes on nor that it took over.
-  const clearedLine = separator(clearedOpen.log, "交给 Codex · 上下文已清空 · 之前的对话没有交给它");
-  await expect(clearedLine).toBeVisible(); await expect(clearedLine.locator("..")).toHaveAttribute("data-handover", "alone");
-  await expect(clearedOpen.log.getByRole("separator", { name: /接手|继续原会话/u })).toHaveCount(0);
-  assert.deepEqual(clearedOpen.errors, []);
-
-  // The packet went and nothing confirmed it; the next messages: sent again once, then alone. Each says what it was.
-  const unconfirmed = third(conversation("completed", packetRelay(CODEX)), packetRelay(CODEX, { packetId: SECOND_PACKET, continuity: { kind: "rehydrate", tier: "full", runs: 2 }, decision: { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" } }));
-  const resent = await open(t, unconfirmed, { view: relayView({ packets: [packetRow("unknown", null), packetRow("unknown", null, { packetId: SECOND_PACKET, number: 2, runId: "run-3", runIndex: 2 })] }) });
-  await expect(resent.log.locator(".relay-note")).toHaveText("上一份交接单没有确认送达，这条消息已再附一次（交接单 #2 · 补交 2 轮）");
-  await expect(resent.log.getByRole("button", { name: "附交接单 #2", exact: true })).toBeVisible();
-  await shoot(resent.page, "note-resent");
-  const aloneTwice = third(conversation("completed", packetRelay(CODEX)), { ...own(CODEX), decision: { kind: "alone", by: "policy", cause: "delivery_unconfirmed" } });
-  const alone = await open(t, aloneTwice, { view: relayView({ packets: [packetRow("unknown", null)] }) });
-  await expect(alone.log.locator(".relay-note")).toHaveText("交接单 #1 发了两次仍未确认送达 · 这条只发了原话");
-  await expect(alone.log.locator(".relay-note")).toHaveCount(1);
-  await shoot(alone.page, "note-alone");
-  // New facts came while the packet was unconfirmed: one packet carries them with what it carried before.
-  const grown = third(conversation("completed", packetRelay(CODEX)), packetRelay(CODEX, { packetId: SECOND_PACKET, continuity: { kind: "rehydrate", tier: "full", runs: 3 }, decision: { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" } }));
-  const bigger = await open(t, grown, { view: relayView({ packets: [packetRow("unknown", null), packetRow("recorded", "E3", { packetId: SECOND_PACKET, number: 2, runId: "run-3", runIndex: 2 })] }) });
-  await expect(bigger.log.locator(".relay-note")).toHaveText("这条消息补交了 3 轮，含上次没有确认送达的内容（交接单 #2）");
-  // Everything again, because the native session may have been rolled back or changed.
-  const whole = third(conversation("completed", packetRelay(CODEX)), packetRelay(CODEX, { packetId: SECOND_PACKET, decision: { kind: "carry", by: "policy", cause: "history_changed", resend: "all" } }));
-  const again = await open(t, whole, { view: relayView({ packets: [packetRow("recorded", "E1"), packetRow("recorded", "E3", { packetId: SECOND_PACKET, number: 2, runId: "run-3", runIndex: 2 })] }) });
-  await expect(again.log.locator(".relay-note")).toHaveText("Codex 的会话可能回退过，已整份重发（可能与已有内容重复）");
-  await shoot(again.page, "note-resent-all");
-  // A packet that left whole items out says so; an ordinary hand-over, or a Turn with no relay facts, says nothing.
-  const cut = third(conversation("completed", packetRelay(CODEX)), packetRelay(CODEX, { packetId: SECOND_PACKET, continuity: { kind: "rehydrate", tier: "brief", complete: false }, decision: { kind: "carry", by: "need" } }));
-  const small = await open(t, cut, { view: relayView({ packets: [packetRow("recorded", "E1"), packetRow("recorded", "E1", { packetId: SECOND_PACKET, number: 2, runId: "run-3", runIndex: 2, tier: "brief", omissions: 4 })] }) });
-  await expect(small.log.locator(".relay-note")).toHaveText("交接单放不下全部记录，已精简：4 项没有放进去，交接单末尾逐项列明");
-  const plain = await open(t, third(conversation("completed", packetRelay(CODEX)), own(CODEX)), { view: relayView({ packets: [packetRow("recorded", "E1")] }) });
-  await expect(plain.log.locator(".user-message").nth(2)).toBeVisible(); await expect(plain.log.locator(".relay-note")).toHaveCount(0);
-  assert.deepEqual([resent.errors, alone.errors, bigger.errors, again.errors, small.errors, plain.errors], [[], [], [], [], [], []]);
-});
 
 test("what the installation cannot do for the relay stands above the conversation with its reason and how to mend it, is not closed by the user, and nothing waits for it", async t => {
   const reason = "长度是 0 字节，应为 32 字节";
@@ -953,15 +783,15 @@ test("what the installation cannot do for the relay stands above the conversatio
 test("every relay line wraps on a narrow screen and nothing runs off it", async t => {
   for (const width of [390, 320]) {
     const { gateway, page, errors, log } = await open(t, conversation("completed", packetRelay(CODEX)), { viewport: { width, height: 844 } });
-    gateway.view = relayView({ packets: [packetRow("unknown", null)] }); gateway.announce();
-    await expect(separator(log, "Codex 已回复，但没有确认收到交接单；下一条消息会再附上一次")).toBeVisible();
+    gateway.view = relayView({ packets: [packetRow("unknown", null)] }); gateway.announce(); gateway.publish();
+    await expect(separator(log, /^Claude Code → Codex.*未确认收到/u)).toBeVisible();
     const fits = async (what: string) => assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${what} fits ${width} px`);
-    await fits("the unknown hand-over");
-    gateway.view = relayView({ packets: [packetRow("recorded", "E1")] }); gateway.announce();
-    await expect(separator(log, /^从这里起由 Codex 接手/u)).toBeVisible();
-    await fits("the taken hand-over");
+    await fits("the unconfirmed hand-over");
+    gateway.view = relayView({ packets: [packetRow("recorded", "E1")] }); gateway.announce(); gateway.publish();
+    await expect(separator(log, /^Claude Code → Codex · 带上了之前的全部对话$/u)).toBeVisible();
+    await fits("the confirmed hand-over");
     await shoot(page, `narrow-${width}-taken`);
-    await page.locator(".relay-divider").getByRole("button", { name: "查看交接单", exact: true }).click();
+    await log.getByRole("button", { name: "查看交接单", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "交接单 #1" })).toBeVisible();
     await fits("the packet dialog");
     const dialog = await page.getByRole("dialog", { name: "交接单 #1" }).boundingBox();
@@ -980,16 +810,8 @@ test("every relay line wraps on a narrow screen and nothing runs off it", async 
 // The page's reading of the relay, without a page
 // ---------------------------------------------------------------------------------------------------------------------
 
-const harnessNames = (id: string): string => ({ codex: "Codex", claude: "Claude Code" })[id] ?? id;
 const typed = (session: FakeSession): SessionView => session as unknown as SessionView;
-const runsOf = (session: FakeSession): readonly PublicRun[] => typed(session).runs;
 const viewOf = (wire: RelayWire | null): RelayView | null => wire === null ? null : decodeRelayView(wire);
-/** What the line where the conversation went from Claude Code to Codex says, for `session` and the relay state `wire`. */
-function handover(session: FakeSession, wire: RelayWire | null, extra: { readonly from?: string; readonly to?: string; readonly now?: number } = {}): Handover {
-  const view = typed(session);
-  return handoverOf({ runs: view.runs, userSeq: userSequences(view.messages), throughSeq: (session.switches[0] as { throughSeq: number }).throughSeq, from: extra.from ?? "claude", to: extra.to ?? "codex", view: viewOf(wire), name: harnessNames, now: extra.now ?? NOW });
-}
-const kinds = (state: Handover): string => state.kind + ("number" in state && state.number !== null ? "#" + state.number : "");
 
 test("the reading of the relay never takes an unknown word for a good one, and drops what it cannot read", () => {
   assert.equal(decodeRelayView(null), null); assert.equal(decodeRelayView({}), null); assert.equal(decodeRelayView({ bindings: "x", packets: [] }), null);
@@ -1088,64 +910,6 @@ test("the relay's data layer answers 'no relay information' for a Gateway withou
   await assert.rejects(createRelayApi(make(() => reply(502))).setPref("attach", "off"), (error: unknown) => error instanceof RelayReadError && error.message === "这项设置没有保存（网关返回 502）。");
 });
 
-test("the hand-over line follows the evidence: every state, and what each says before it may say taken over", () => {
-  const wire = (...packets: Record<string, unknown>[]) => relayView({ packets });
-  // Nothing was sent to the new Harness yet: with relay information nothing is drawn; without it, the line as it always was.
-  assert.equal(handover(conversation("none"), relayView()).kind, "none");
-  assert.equal(handover(conversation("none"), null).kind, "legacy");
-  // A Turn accepted but not prepared: nothing yet. Prepared and handed over: on its way, with its number when the Gateway gives one.
-  assert.equal(handover(conversation("preparing"), relayView()).kind, "none");
-  const running = conversation("running", packetRelay(CODEX));
-  assert.equal(kinds(handover(running, wire(packetRow("in_flight", null)))), "pending#1");
-  assert.equal(kinds(handover(running, relayView())), "pending", "a packet the view does not list yet is on its way, without a number");
-  running.runs[1]!.timing = { ...running.runs[1]!.timing!, firstOutputAt: NOW - 1000 };
-  assert.equal(kinds(handover(running, wire(packetRow("in_flight", null)))), "started#1");
-  // Evidence: taken over, with how and the proof; the view is read before the Turn's own word, which may be older.
-  const over = conversation("completed", packetRelay(CODEX));
-  const taken = handover(over, wire(packetRow("recorded", "E3")));
-  assert.deepEqual(taken, { kind: "taken", runId: "run-2", how: "新会话 · 交接单（完整） · #1", number: 1, packetId: PACKET, evidence: "E3", fresh: false });
-  const fromTurn = conversation("completed", packetRelay(CODEX, { delivery: { state: "unknown", evidence: null } }));
-  assert.equal(handover(fromTurn, null).kind, "unknown", "a Turn that carries its delivery makes the Gateway a relay Gateway without a view");
-  assert.equal(kinds(handover(fromTurn, wire(packetRow("recorded", "E1")))), "taken#1", "a delivery decided later wins over the Turn's older word");
-  // Not confirmed, not arrived, and a word the page does not know: never taken over, said as what is known.
-  assert.deepEqual(handover(over, wire(packetRow("unknown", null))), { kind: "unknown", runId: "run-2", replied: true, cannotConfirm: false, number: 1, packetId: PACKET, fresh: false });
-  assert.equal(kinds(handover(over, wire(packetRow("not_recorded", null)))), "not_recorded#1");
-  assert.equal(handover(over, wire(packetRow("delivered-ish", "E1"))).kind, "unknown");
-  assert.equal(handover(over, relayView()).kind, "unknown", "over, and the Gateway lists no delivery: not confirmed");
-  const silent = conversation("failed", packetRelay(CODEX)); delete silent.runs[1]!.timing!.firstOutputAt;
-  assert.deepEqual(handover(silent, wire(packetRow("unknown", null))), { kind: "unknown", runId: "run-2", replied: false, cannotConfirm: false, number: 1, packetId: PACKET, fresh: false });
-  // A Harness whose Driver has no way to learn that a handoff arrived: said as what it is, once.
-  const unable = relayView({ packets: [packetRow("unknown", null)], bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "pending", throughRun: null, evidence: null, cleared: 0, canConfirm: false }] });
-  assert.deepEqual(handover(over, unable), { kind: "unknown", runId: "run-2", replied: true, cannotConfirm: true, number: 1, packetId: PACKET, fresh: false });
-  // The Turn's own continuation, with no packet owed: the original session goes on, and it took over once the Turn was handed to it.
-  const resume = conversation("completed", own(CODEX));
-  assert.deepEqual(handover(resume, relayView()), { kind: "taken", runId: "run-2", how: "继续原会话", number: null, packetId: null, evidence: null, fresh: false });
-  // Words sent alone, by the relay's policy or the user's choice, did not hand the conversation over: never "taken", and the line says why.
-  const aloneBy = (decision: Record<string, unknown>) => handover(conversation("completed", { ...own(CODEX), decision }), relayView());
-  assert.deepEqual(aloneBy({ kind: "alone", by: "policy", cause: "input_limit", reason: "input_limit" }), { kind: "alone", runId: "run-2", note: "Codex 一次放不下这条消息和交接单 · 这条只发了原话", number: null, packetId: null, fresh: false });
-  assert.equal((aloneBy({ kind: "alone", by: "user" }) as { note: string }).note, "这条消息按你的选择只发了原话");
-  assert.equal((aloneBy({ kind: "alone", by: "policy", cause: "recovery_failed" }) as { note: string }).note, "服务重启后没能恢复这个对话的交接记录 · 这条只发了原话");
-  assert.equal(aloneBy({ kind: "plain", by: "need" }).kind, "taken", "a Turn that owed nothing any more went as typed, and the Harness took the conversation over");
-  // The Hub's clear as the first message after the change: nothing was sent to the Harness and its session was given up, so the line says
-  // that, and not that the original session goes on or that the Harness took the conversation over.
-  const clearedFirst = conversation("completed", own(CODEX)); clearedFirst.runs[1]!.backend = { status: "completed", reason: "cleared" };
-  assert.deepEqual(handover(clearedFirst, relayView()), { kind: "alone", runId: "run-2", note: "上下文已清空 · 之前的对话没有交给它", number: null, packetId: null, fresh: false });
-  assert.equal(handover(conversation("running", { ...own(CODEX), decision: { kind: "alone", by: "policy", cause: "input_limit" } }), relayView()).kind, "alone", "handed to the Harness, and said so at once");
-  assert.equal(handover(conversation("preparing", { ...own(CODEX), decision: { kind: "alone", by: "policy", cause: "input_limit" } }), relayView()).kind, "none");
-  const early = conversation("preparing", own(CODEX)); assert.equal(handover(early, relayView()).kind, "none");
-  assert.equal(handover(conversation("failed", { ...own(CODEX), continuity: { kind: "blocked", code: "RELAY_PREPARE_FAILED" } }), relayView()).kind, "none");
-  const delta = conversation("completed", { packetId: PACKET, kind: "delta", continuity: { kind: "native_resume_delta", tier: "brief", runs: 2 }, executedOn: { ...CODEX, nativeEpoch: 1 } });
-  assert.equal((handover(delta, wire(packetRow("recorded", "E3"))) as { how: string }).how, "继续原会话 · 补交 2 轮 · 交接单 #1");
-  // A Turn with no relay facts (from before the relay): the Harness answered, so the line is as it always was; before that, nothing.
-  assert.equal(handover(conversation("completed"), relayView()).kind, "legacy");
-  assert.equal(handover(conversation("running"), relayView()).kind, "none");
-  // Within one Harness there is nothing handed over.
-  assert.equal(handover(over, wire(packetRow("recorded", "E1")), { from: "codex", to: "codex" }).kind, "legacy");
-  // News is what was accepted moments ago.
-  assert.equal((handover(over, wire(packetRow("recorded", "E1")), { now: NOW - 20_000 + 2000 }) as { fresh: boolean }).fresh, true);
-  assert.equal((handover(over, wire(packetRow("recorded", "E1")), { now: NOW }) as { fresh: boolean }).fresh, false);
-});
-
 test("what is owed to the Harness the conversation is on: counted once per Harness, said as the first hand-over only until the Gateway has handed one over, and off when the setting is", () => {
   const line = (session: FakeSession, wire: RelayWire | null, prefs: { attach: "auto" | "off" } | null = null) => relayLine(typed(session), viewOf(wire), prefs);
   // Claude Code's Turn is owed to Codex, which has no session here yet: its Turns are counted by the page, and no conversation was ever handed to it.
@@ -1200,42 +964,6 @@ test("a banner says what a binding asks once, the one way to settle it is a fiel
   assert.equal(bannerOf(binding({ cause: "delivery_unconfirmed", options: ["attach_full"], counts: { runs: 1, packets: 1 }, key: "d" }, { canConfirm: false }), "Codex", never), null);
   assert.notEqual(bannerOf(binding({ cause: "attach_available", options: ["attach_full"], counts: { runs: 1, packets: 0 }, key: "a" }, { canConfirm: false }), "Codex", never), null, "only a delivery nothing can confirm is left unsaid");
   assert.equal(bannerOf(undefined, "Codex", never), null); assert.equal(bannerOf({ ...binding({ cause: "attach_available", options: [], counts: { runs: 0, packets: 0 }, key: "v" })!, attention: null }, "Codex", never), null);
-});
-
-test("what the relay decided for a Turn's history is said in the words of the decision, and never as a Harness taking over", () => {
-  const info = (decision: Record<string, unknown> | null, relay: Record<string, unknown> = {}) => runRelayInfo({ relay: decodeRunRelay({ packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: { ...CODEX, nativeEpoch: 1 }, ...(decision === null ? {} : { decision }), ...relay })! })!;
-  const ctx: NoteContext = { target: "Codex", number: 3, sourceRuns: 2, pending: 2, omissions: 0, cannotConfirm: false };
-  const say = (decision: Record<string, unknown> | null, relay: Record<string, unknown> = {}, context = ctx) => decisionNote(info(decision, relay), context);
-  // The history went as it was owed: nothing to say. Or it went alone, and the words say why.
-  assert.equal(say(null), null); assert.equal(say({ kind: "carry", by: "need" }, { packetId: PACKET }), null); assert.equal(say({ kind: "plain", by: "need" }), null);
-  assert.equal(say({ kind: "plain", by: "user" }), "没有可附的交接内容，这条消息按原样发出");
-  assert.equal(say({ kind: "alone", by: "user" }), "这条消息按你的选择只发了原话");
-  assert.equal(say({ kind: "alone", by: "policy", cause: "delivery_unconfirmed" }), "交接单 #2 发了两次仍未确认送达 · 这条只发了原话");
-  assert.equal(say({ kind: "alone", by: "policy", cause: "delivery_unconfirmed" }, {}, { ...ctx, cannotConfirm: true }), "交接单 #2 已发出，Codex 无法确认是否收到 · 这条只发了原话");
-  assert.equal(say({ kind: "alone", by: "policy", cause: "delivery_unconfirmed" }, {}, { ...ctx, pending: null }), "上一份交接单发了两次仍未确认送达 · 这条只发了原话");
-  assert.equal(say({ kind: "alone", by: "policy", cause: "input_limit", reason: "input_limit" }), "Codex 一次放不下这条消息和交接单 · 这条只发了原话");
-  assert.equal(say({ kind: "alone", by: "policy", cause: "recovery_failed" }), "服务重启后没能恢复这个对话的交接记录 · 这条只发了原话");
-  assert.equal(say({ kind: "alone", by: "policy", cause: "prepare_failed", reason: "storage_quota" }), "这次没能准备交接单（存储空间不足） · 这条只发了原话，下一条会再试");
-  assert.equal(say({ kind: "alone", by: "policy", cause: "prepare_failed", reason: "unheard-of" }), "这次没能准备交接单 · 这条只发了原话，下一条会再试");
-  // The packet went again, or went whole again, or left whole items out.
-  const carried = { packetId: PACKET, kind: "packet", continuity: { kind: "rehydrate", tier: "full", runs: 2 } };
-  assert.equal(say({ kind: "carry", by: "policy", cause: "delivery_unconfirmed" }, carried), "上一份交接单没有确认送达，这条消息已再附一次（交接单 #3 · 补交 2 轮）");
-  // The two kinds of automatic resend are told apart: the same facts again, and a packet for newer facts that also holds the unconfirmed one's.
-  assert.equal(say({ kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" }, carried), "上一份交接单没有确认送达，这条消息已再附一次（交接单 #3 · 补交 2 轮）");
-  assert.equal(say({ kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" }, carried), "这条消息补交了 2 轮，含上次没有确认送达的内容（交接单 #3）");
-  assert.equal(say({ kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" }, { ...carried, continuity: { kind: "rehydrate", tier: "full" } }, { ...ctx, sourceRuns: 5 }),
-    "这条消息补交了 5 轮，含上次没有确认送达的内容（交接单 #3）", "a whole packet names its Turns by the Runs it carries");
-  assert.equal(say({ kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" }, carried, { ...ctx, number: null }), "这条消息补交了 2 轮，含上次没有确认送达的内容");
-  assert.equal(say({ kind: "carry", by: "policy", cause: "history_changed", resend: "all" }, carried), "Codex 的会话可能回退过，已整份重发（可能与已有内容重复）");
-  assert.equal(say({ kind: "carry", by: "user" }, carried), null, "the user's own attach needs no note");
-  assert.equal(say({ kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "teleport" }, carried), "上一份交接单没有确认送达，这条消息已再附一次（交接单 #3 · 补交 2 轮）", "a kind this page does not know reads as the plain resend");
-  assert.equal(say({ kind: "carry", by: "need" }, { ...carried, continuity: { kind: "rehydrate", tier: "brief" } }), "交接单放不下全部记录，已精简，没放进去的在交接单末尾逐项列明");
-  assert.equal(say({ kind: "carry", by: "need" }, { ...carried, continuity: { kind: "rehydrate", tier: "brief" } }, { ...ctx, omissions: 6 }), "交接单放不下全部记录，已精简：6 项没有放进去，交接单末尾逐项列明");
-  assert.equal(say(null, { ...carried, continuity: { kind: "rehydrate", tier: "brief" } }), "交接单放不下全部记录，已精简，没放进去的在交接单末尾逐项列明");
-  // Notes by Turn: from the Turns' own words and the packets the view lists.
-  const session = conversation("completed", packetRelay(CODEX, { decision: { kind: "carry", by: "policy", cause: "delivery_unconfirmed" } }));
-  const notes = runNotes({ runs: runsOf(session), view: viewOf(relayView({ packets: [packetRow("unknown", null)] })), name: harnessNames });
-  assert.deepEqual([...notes], [["run-2", "上一份交接单没有确认送达，这条消息已再附一次（交接单 #1）"]]);
 });
 
 test("the conversation stream carries a relay notice as a frame under the watermark of the facts it follows, and an event of its own name without moving the cursor", async () => {

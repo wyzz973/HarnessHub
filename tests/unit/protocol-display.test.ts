@@ -5,7 +5,7 @@ import type { ReadItem, ReadTurn } from "../../src/contracts/protocol-read.js";
 import { ITEM_STATUS_WORDS, RUN_STATUS_WORDS, STOP_REASON_WORDS, TURN_STATUS_WORDS } from "../../src/contracts/protocol-words.js";
 import { decodeProtocolTurn } from "../../web/src/lib/protocol/decode.js";
 import { endLine, moneyText, quietLine, switchLine, turnFooter } from "../../web/src/lib/protocol/lines.js";
-import { arrange, lay, opensByDefault, reasoningLabel, showsProgress, summarizeGroup, thoughtTime, workLabel, type Block, type WorkBlock } from "../../web/src/lib/protocol/work.js";
+import { arrange, lay, opensByDefault, reasoningLabel, summarizeGroup, thoughtTime, workLabel, type Block, type WorkBlock } from "../../web/src/lib/protocol/work.js";
 
 /*
  * What the page says of a Turn's items: each action in its three voices, a run of actions in one line, the footer, the line where
@@ -176,7 +176,7 @@ test("what happens inside a delegated task hangs under the task, and an action n
   assert.equal(over.over, true);
 });
 
-test("a run of actions is open while it goes on, when something in it failed or waits, and in the detailed density; otherwise it is folded", () => {
+test("a run of actions is open while it goes on or waits for you and in the detailed density; one with a failure is folded like any other", () => {
   const block = (...items: WorkItem[]) => lay(items)[0] as WorkBlock;
   // Text came after it, so no more actions can join: it is a run of its own and stays folded while the Turn goes on.
   const closed = lay([command("a"), command("b"), { ...at(), type: "assistant_message", messageId: "message-x" as never, phase: "commentary" }])[0] as WorkBlock, done = block(command("a"), command("b"));
@@ -185,8 +185,10 @@ test("a run of actions is open while it goes on, when something in it failed or 
   assert.equal(opensByDefault(done, false, false), false, "folded once the Turn is done");
   assert.equal(opensByDefault(done, true, false), true, "the last run of a Turn that goes on may still grow");
   assert.equal(opensByDefault(closed, false, true), true, "the detailed density opens every run");
-  for (const status of ["running", "pending", "waiting", "failed", "unknown"] as const) assert.equal(opensByDefault(block(command("a"), command("b", status)), false, false), true, status);
-  for (const status of ["declined", "cancelled", "completed"] as const) assert.equal(opensByDefault(block(command("a"), command("b", status)), false, false), false, status);
+  for (const status of ["running", "pending", "waiting"] as const) assert.equal(opensByDefault(block(command("a"), command("b", status)), false, false), true, status);
+  // A failure does not open a run: its summary says how many failed ("1 个失败"), as Claude's desktop app folds a failed run.
+  for (const status of ["failed", "unknown", "declined", "cancelled", "completed"] as const) assert.equal(opensByDefault(block(command("a"), command("b", status)), false, false), false, status);
+  assert.equal(summarizeGroup([command("a"), command("b", "failed")]).text, "运行了 2 条命令（1 个失败）");
 });
 
 test("a thought reads as its time when it is known, and as the thought itself when it is not", () => {
@@ -292,18 +294,6 @@ test("an event is one quiet line of its own facts, and a state that is not done 
   assert.equal(line({ type: "command", command: "ls" }), null, "an action has its own line elsewhere");
 });
 
-test("the Turn shows work when an action or a thought is in progress, or a reply has text; otherwise the page says what it waits for", () => {
-  const reply = (status: ItemStatus): ReadItem => ({ ...at(status), type: "assistant_message", messageId: "message-x" as never, phase: "final" });
-  const yes = () => true, no = () => false;
-  assert.equal(showsProgress([], yes), false);
-  assert.equal(showsProgress([command("a")], yes), false, "everything done");
-  for (const status of ["running", "pending", "waiting"] as const) assert.equal(showsProgress([command("a"), command("b", status)], no), true, status);
-  assert.equal(showsProgress([{ ...at("running"), type: "reasoning", text: "" }], no), true);
-  assert.equal(showsProgress([reply("running")], yes), true, "a reply that has text");
-  assert.equal(showsProgress([reply("running")], no), false, "a reply that has none yet shows nothing");
-  assert.equal(showsProgress([reply("completed")], yes), false);
-});
-
 test("the words for a state are one table: the eight of an item, the eight of a Turn, and a stored Run's in the Turn's", () => {
   assert.deepEqual(Object.values(ITEM_STATUS_WORDS), ["等待开始", "进行中", "等你处理", "已完成", "失败", "已拒绝", "已停止", "结果未知"]);
   assert.deepEqual(Object.values(TURN_STATUS_WORDS), ["排队中", "准备中", "进行中", "等你处理", "已完成", "失败", "已停止", "结果未知"]);
@@ -321,15 +311,19 @@ const wire = (items: readonly unknown[], more: Record<string, unknown> = {}): Re
   usage: { completeness: "complete", input: 10, output: 5 }, startedAt: 1000, durationMs: 31_000, items, ...more,
 });
 const entry = (type: string, more: Record<string, unknown> = {}) => ({ id: "i-" + type, seq: 1, type, status: "completed", ...more });
+/** The Turn a read gave; the test fails with the reason if it gave none. */
+function turnOf(value: unknown): ReadTurn { const read = decodeProtocolTurn(value); assert.ok("turn" in read, "problem" in read ? read.problem : "no Turn"); return read.turn; }
+/** Why a read gave no Turn; the test fails if it gave one. */
+function problemOf(value: unknown): string { const read = decodeProtocolTurn(value); assert.ok("problem" in read, "a Turn was read where none was to be"); return read.problem; }
 
 test("a Turn is read field by field, and what it holds keeps its type", () => {
-  const turn = decodeProtocolTurn(wire([
+  const turn = turnOf(wire([
     entry("user_message", { messageId: "message-u1" }), entry("reasoning", { text: "hmm", durationMs: 3000 }),
     entry("command", { command: "npm test", exitCode: 1, cwd: "/w", background: true, startedAt: 5, endedAt: 9, detail: { id: "content-abc", name: "d", mediaType: "application/json", kind: "file", bytes: 4, sha256: "a".repeat(64) } }),
     entry("file_change", { changes: [{ path: "a.js", op: "modify", added: 2, removed: 1 }] }),
     entry("switch", { from: { harnessId: "claude", harness: "Claude Code" }, to: { harnessId: "codex", harness: "Codex", effort: "high" }, context: "delta", turns: 2, session: "resumed", delivery: "confirmed", packetId: "relay-1" }),
     entry("assistant_message", { messageId: "message-a1", phase: "final" }),
-  ], { stopReason: "end_turn", usage: { completeness: "complete", input: 10, output: 5, cost: { amount: 0.5, currency: "USD", scope: "conversation" }, context: { used: 100, size: 1000 } } }))!;
+  ], { stopReason: "end_turn", usage: { completeness: "complete", input: 10, output: 5, cost: { amount: 0.5, currency: "USD", scope: "conversation" }, context: { used: 100, size: 1000 } } }));
   assert.deepEqual([turn.runId, turn.n, turn.status, turn.stopReason, turn.executor.model?.label, turn.durationMs, turn.items.length], ["run-1", 3, "completed", "end_turn", "GPT", 31_000, 6]);
   assert.deepEqual(turn.usage.cost, { amount: 0.5, currency: "USD", scope: "conversation" });
   const [, reasoning, run, files, switched] = turn.items;
@@ -339,10 +333,10 @@ test("a Turn is read field by field, and what it holds keeps its type", () => {
 });
 
 test("an item of a type the page does not know, or one it cannot read whole, is kept as a line that says so, never dropped", () => {
-  const turn = decodeProtocolTurn(wire([
+  const turn = turnOf(wire([
     entry("command", { command: "ls" }), entry("hologram", { whatever: 1, nativeName: "Hologram" }), entry("command", { command: 5 }), { not: "an item" }, null, "text",
     entry("file_read", { path: "a.js", status: "someday" }),
-  ]))!;
+  ]));
   assert.equal(turn.items.length, 7, "every item is kept");
   assert.deepEqual(turn.items.map(item => item.type), ["command", "unrecognized", "unrecognized", "unrecognized", "unrecognized", "unrecognized", "unrecognized"]);
   const [, unknownType, badFields, , , , badStatus] = turn.items;
@@ -355,25 +349,24 @@ test("an item of a type the page does not know, or one it cannot read whole, is 
 });
 
 test("a field that is absent is absent, an id that repeats is told apart, and an unreadable count of usage is no count", () => {
-  const turn = decodeProtocolTurn(wire([entry("command", { id: "same", command: "a" }), entry("command", { id: "same", command: "b" }), entry("command", { id: "same", command: "c" })], { usage: "nonsense", stopReason: "from-the-future" }))!;
+  const turn = turnOf(wire([entry("command", { id: "same", command: "a" }), entry("command", { id: "same", command: "b" }), entry("command", { id: "same", command: "c" })], { usage: "nonsense", stopReason: "from-the-future" }));
   assert.deepEqual(turn.items.map(item => item.id), ["same", "same~2", "same~3"]);
   assert.deepEqual(turn.usage, { completeness: "unavailable" });
   assert.equal(turn.stopReason, "unknown", "a reason this page does not know is unknown");
-  const plain = decodeProtocolTurn({ ...wire([]), durationMs: undefined, startedAt: undefined })!;
+  const plain = turnOf({ ...wire([]), durationMs: undefined, startedAt: undefined });
   assert.deepEqual([plain.durationMs, plain.startedAt, "stopReason" in plain], [undefined, undefined, false]);
-  assert.equal(decodeProtocolTurn(wire([entry("command", { command: "a" }), entry("command", { command: "b", exitCode: 1.5 })]))!.items[1]?.type, "unrecognized", "an exit code is a whole number");
+  assert.equal(turnOf(wire([entry("command", { command: "a" }), entry("command", { command: "b", exitCode: 1.5 })])).items[1]?.type, "unrecognized", "an exit code is a whole number");
   // A field that may be absent is as absent when it is null.
-  const nulled = decodeProtocolTurn(wire([entry("command", { command: "a", exitCode: null, cwd: null, raw: null, detail: null })], { executor: { harnessId: "codex", harness: "Codex", model: null, effort: null }, stopReason: null, durationMs: null }))!;
+  const nulled = turnOf(wire([entry("command", { command: "a", exitCode: null, cwd: null, raw: null, detail: null })], { executor: { harnessId: "codex", harness: "Codex", model: null, effort: null }, stopReason: null, durationMs: null }));
   assert.deepEqual([nulled.executor.model, nulled.executor.effort, nulled.stopReason, nulled.durationMs, nulled.items[0]?.type], [undefined, undefined, undefined, undefined, "command"]);
 });
 
-test("what is not a Turn of this protocol is no Turn, and nothing that can arrive makes the decoder throw", () => {
-  assert.equal(decodeProtocolTurn(wire([], { version: "hh/2" })), undefined);
-  assert.equal(decodeProtocolTurn(wire([], { items: "no" })), undefined);
-  assert.equal(decodeProtocolTurn(wire([], { executor: null })), undefined);
-  assert.equal(decodeProtocolTurn(wire([], { status: "nearly" })), undefined);
-  assert.equal(decodeProtocolTurn(wire([], { runId: "x" })), undefined);
+test("what is not a Turn of this protocol is no Turn and says why, nothing that can arrive makes the decoder throw, and a Turn has no size it cannot be", () => {
+  assert.match(problemOf(wire([], { version: "hh/2" })), /hh\/2.*hh\/1/u, "the version it was told and the one it reads");
+  assert.match(problemOf(wire([], { items: "no" })), /不是一个列表/u);
+  for (const broken of [wire([], { executor: null }), wire([], { status: "nearly" }), wire([], { runId: "x" })]) assert.match(problemOf(broken), /缺少必需的内容/u);
+  assert.match(problemOf(undefined), /没有给出/u, "a Run the server gave no Turn for says so");
   for (const junk of [undefined, null, 0, "", "turn", [], [1, 2], {}, { version: "hh/1" }, () => 1, Symbol("x"), 1n]) assert.doesNotThrow(() => decodeProtocolTurn(junk), String(typeof junk));
-  const big = decodeProtocolTurn(wire(Array.from({ length: 5000 }, () => entry("command", { command: "x" }))));
-  assert.equal(big, undefined, "more items than a Turn can have is not a Turn");
+  // No count of items is too many: a long Turn is read whole.
+  assert.equal(turnOf(wire(Array.from({ length: 5000 }, (_, at) => entry("command", { id: "c" + at, command: "x" })))).items.length, 5000);
 });

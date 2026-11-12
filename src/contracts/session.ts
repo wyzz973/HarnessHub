@@ -3,7 +3,6 @@ import type { BackendResult, CleanupEvidence, ControlEvent, HarnessControl, Nati
 import type { ContentPort, ContentRef } from "./content.js";
 import type { BindingRelayState, RelayRows, RunRelay, RunRelayRequest, SwitchMode, SwitchTiming } from "./relay.js";
 import type { ReadTurn } from "./protocol-read.js";
-import { TURN_STATUS_WORDS } from "./protocol-words.js";
 
 declare const sessionBrand: unique symbol;
 declare const runBrand: unique symbol;
@@ -143,6 +142,8 @@ export interface PublicRun {
    * its Run frames when read; never part of what is stored. A client without it draws the Run from the facts above.
    */
   readonly protocol?: ReadTurn;
+  /** Set by a client's decoder when the Run's `protocol` could not be read: why, in words a reader can be told. The Run is then shown as one that cannot be shown, with this. */
+  readonly protocolProblem?: string;
   readonly stopRequested: boolean;
   readonly awaitingSwitchId: SwitchId | null;
 }
@@ -440,20 +441,6 @@ export function resolveTurnBudgets(input: { readonly executionSeconds?: string |
   };
   return { executionBudgetMs: whole(input.executionSeconds, 1000, DEFAULT_EXECUTION_BUDGET_MS, MIN_EXECUTION_BUDGET_MS, MAX_EXECUTION_BUDGET_MS, "execution budget (seconds)"),
     waitBudgetMs: whole(input.waitMinutes, 60_000, DEFAULT_WAIT_BUDGET_MS, MIN_WAIT_BUDGET_MS, MAX_WAIT_BUDGET_MS, "wait budget (minutes)") };
-}
-/**
- * Why a cancelled Turn ended, in the user's words, so the Runtime's own stops are never shown or exported as the user's
- * (ADR-036): its execution budget, its wait for the user, a restart before it was sent, or the user's stop. The state is said
- * in the word of the one table (a stopped Turn is 已停止, protocol-words.ts), the cause after it.
- */
-export function cancelledLabel(run: { readonly error?: { readonly code: string } | null; readonly cancelRequested?: boolean }): string {
-  const stopped = TURN_STATUS_WORDS.cancelled;
-  switch (run.error?.code) {
-    case "RUN_TIMEOUT": return stopped + "（执行预算用尽）";
-    case "WAIT_EXPIRED": return stopped + "（等待你的决定超时）";
-    case "OWNER_ENDED": return stopped + "（服务重启，这条消息没有发出）";
-  }
-  return run.cancelRequested === true ? stopped + "（用户停止）" : stopped;
 }
 export interface SessionRuntimeOptions {
   readonly id: () => string;

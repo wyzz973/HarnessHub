@@ -1,7 +1,6 @@
 import { ITEM_STATUS_WORDS, STOP_REASON_WORDS, TURN_STATUS_WORDS } from "../../../../src/contracts/protocol-words.js";
 import type { ApprovalItem, Executor, ItemStatus, SwitchItem } from "../../../../src/contracts/protocol.js";
 import type { ReadItem, ReadTurn } from "../../../../src/contracts/protocol-read.js";
-import { compact, spentText } from "../format.js";
 import { turnOver } from "./work.js";
 
 /*
@@ -10,32 +9,7 @@ import { turnOver } from "./work.js";
  * protocol's facts: they take nothing from which Harness ran the Turn.
  */
 
-/** An amount in its own currency as it is read in a line: "US$0.87", "¥0.21", "EUR 3.06". Two decimals, more only for a small amount. */
-export function moneyText(cost: { readonly amount: number; readonly currency: string }): string {
-  const symbol = cost.currency === "USD" ? "US$" : cost.currency === "CNY" ? "¥" : cost.currency + " ";
-  if (cost.amount >= 0.01 || cost.amount === 0) return symbol + cost.amount.toFixed(2);
-  const fine = cost.amount.toFixed(4).replace(/0+$/u, "");
-  return symbol + ((fine.split(".")[1] ?? "").length < 2 ? cost.amount.toFixed(2) : fine);
-}
-
-/**
- * The footer under a Turn, one way for every Harness: who ran it, with which model, how long it took, what it read in and wrote
- * out: "DeepSeek Harness · DeepSeek Flash · 用时 16 秒 · 输入 20.8k · 输出 684". What is not known is left out, never written as
- * zero: no model when the Harness chose its own and did not say which; no tokens unless the Hub counted the whole Turn; the cost
- * only when it is the conversation's so far ("对话累计 US$0.87"), last.
- */
-export function turnFooter(turn: Pick<ReadTurn, "executor" | "usage" | "durationMs">): string {
-  const { executor, usage } = turn, parts: (string | undefined)[] = [executor.harness, executor.model?.label];
-  if (turn.durationMs !== undefined) parts.push("用时 " + spentText(turn.durationMs));
-  if (usage.completeness === "complete") {
-    if (usage.input !== undefined) parts.push("输入 " + compact(usage.input));
-    if (usage.output !== undefined) parts.push("输出 " + compact(usage.output));
-  }
-  if (usage.cost?.scope === "conversation") parts.push("对话累计 " + moneyText(usage.cost));
-  // The running total of the native session the Turn ran in, which is what most Harnesses report.
-  else if (usage.cost?.scope === "session") parts.push("会话累计 " + moneyText(usage.cost));
-  return parts.filter(Boolean).join(" · ");
-}
+export { costWords, moneyText, turnFacts, turnFooter } from "../../../../src/contracts/protocol-lines.js";
 
 export interface SwitchLine {
   /** The whole line as plain text: "Codex → Claude Code · 带上了之前 2 轮 · 未确认收到". */

@@ -5,16 +5,18 @@ import type { ContentRef } from "../../../src/contracts/content.js";
 import type { NativeExtensions, NativeModelCatalog } from "../../../src/contracts/control.js";
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
-import type { AttentionItem, HarnessSelection, PublicPlan, PublicRun, SelectionRequest } from "../../../src/contracts/session.js";
+import type { AttentionItem, HarnessSelection, PublicRun, SelectionRequest } from "../../../src/contracts/session.js";
 import type { HarnessReadinessView, HarnessView, NativeResumeView, NativeSessionListView, SessionView } from "../../../src/contracts/web.js";
-import { failureMessage, runStatusLabel } from "../api.js";
+import { failureMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
-import { clock, compact, duration, elapsed, folderName, shortTitle } from "../lib/format.js";
+import { clock, folderName, shortTitle } from "../lib/format.js";
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
-import { bannerOf, handoverOf, installationNotices, relayHasStory, relayLine, runNotes, userSequences } from "../lib/relay-state.js";
+import { bannerOf, installationNotices, relayHasStory, relayLine } from "../lib/relay-state.js";
 import { useClosedNotices } from "../lib/use-relay.js";
-import { runRelayInfo, type RelayApi, type RelayPrefs, type RelayRequest, type RelayView } from "../relay.js";
-import { cancelledWords, changeCount, finished, toolTree, type QueueNotice } from "../lib/turn.js";
+import type { RelayApi, RelayPrefs, RelayRequest, RelayView } from "../relay.js";
+import type { QueueNotice } from "../lib/protocol/live.js";
+import { changeCount, latestPlan, over, statusParts, stateOf } from "../lib/protocol/runs.js";
+import { finished } from "../lib/turn.js";
 import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
 import { Dialog, Menu, useToast } from "../ui/overlay.js";
 import { EmptyState, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
@@ -22,13 +24,11 @@ import type { ToolDetailLoader } from "./Activity.js";
 import { DecisionLine, decisionRole, DockedMarker, dockedRequest, PermissionCard, type Decision, type PermissionRequestView } from "./Approval.js";
 import type { AttachmentDraft } from "./Attachments.js";
 import { BranchOrigin } from "./BranchOrigin.js";
-import { Composer, OPTION_NAMES, THINKING_NAMES, type DockedApproval } from "./Composer.js";
+import { Composer, type DockedApproval } from "./Composer.js";
 import { DetailsPanel, type PanelTab } from "./DetailsPanel.js";
 import { RelayPacketDialog, type PacketTarget } from "./RelayDetails.js";
 import { RelayCard, RelayInstallation, SEND_ALONE, type RelayNext } from "./RelayCard.js";
-import { RelayDivider } from "./RelayDivider.js";
-import { hasProtocol, ProtocolTurn, type ProtocolRun } from "./ProtocolTurn.js";
-import { AssistantTurn, SwitchDivider, UserMessage } from "./Turn.js";
+import { ProtocolTurn } from "./ProtocolTurn.js";
 import { Welcome } from "./Welcome.js";
 
 export interface SelectionDraft { harnessId: string; controlId: string; providerId: string; providerRevision: number | null; model: string; nativeOptions: Readonly<Record<string, string>> }
@@ -161,8 +161,6 @@ export interface ChatProps {
   contextUsage?: number | null; onShowResume?: (() => void) | undefined; onSendDraft?: (text: string) => Promise<void>;
 }
 
-/** A hand-over drawn in the transcript: the effective change and the selection that answered before it. */
-interface Divider { readonly change: NonNullable<SessionView["switches"]>[number]; readonly from: HarnessSelection }
 /** The latest values the page's shortcuts act on, read when a key is pressed rather than bound into the listener. */
 interface ShortcutState { readonly stop: (() => void) | null; readonly togglePanel: (() => void) | null; readonly openPicker: (() => void) | null }
 /** A local decision on an approval, kept until the page leaves the conversation, to write its result back into the Turn. */
@@ -214,20 +212,6 @@ export function ChatPage(props: ChatProps) {
     }
     return hints;
   }, [session?.runs, props.readiness]);
-  // Names a selection's model and thinking level with the catalog's own names when the composer has that Harness's catalog
-  // loaded: a Turn's identity line ("Native B · 思考 高"), and the same words on the pill of a hand-over to it.
-  const describeSelection = useCallback((selection: HarnessSelection): string => {
-    const catalog = selection.harnessId === draft.harnessId && !selection.provider ? props.nativeModels : null;
-    const model = selection.provider?.model ?? (selection.nativeModel ? catalog?.models.find(row => row.id === selection.nativeModel)?.name ?? selection.nativeModel : null);
-    const known = [...(catalog?.options ?? []), ...(catalog?.models.find(row => row.id === (selection.nativeModel ?? catalog.defaultModel))?.options ?? [])];
-    const options = Object.entries(selection.nativeOptions ?? {}).map(([id, value]) => {
-      const option = known.find(row => row.id === id), name = option?.values.find(row => row.value === value)?.name ?? value;
-      if (option?.category === "thought_level" || id === "thought_level" || /thought|effort|reasoning/u.test(id)) return "思考 " + (THINKING_NAMES[value] ?? name);
-      return (option?.category === "mode" ? "模式" : OPTION_NAMES[id] ?? option?.name ?? id) + " " + name;
-    });
-    return [model, ...options].filter(Boolean).join(" · ");
-  }, [draft.harnessId, props.nativeModels]);
-  const describe = useCallback((run: PublicRun): string => describeSelection(run.selection), [describeSelection]);
   // The queued Turn names the conversation whose work holds the workspace (ADR-036); whether that one waits for the user
   // follows the pushed list of waiting requests, and the view's own answer until the first list arrives.
   const [cancellingQueue, setCancellingQueue] = useState<string | null>(null);
@@ -317,22 +301,9 @@ export function ChatPage(props: ChatProps) {
     catch (failure: unknown) { if (first && mounted.current) setFirstSend(null); throw failure; }
     if (mounted.current) { props.onMessageDraft(value => value === text ? "" : value); resumeFollowing(); }
   };
-  // The relay: the packet each Turn went out with, for the strip under its message, and what the line above the box says.
+  // The relay: what the line above the box says, and the banner a binding asks the user to look at.
   const relay = props.relay;
   const closed = useClosedNotices();
-  const userSeq = useMemo(() => userSequences(session?.messages ?? []), [session?.messages]);
-  const packetOfRun = useMemo(() => {
-    const result = new Map<string, { readonly packetId: string; readonly number: number | null }>();
-    const view = relay?.view;
-    if (!view) return result;
-    for (const run of session?.runs ?? []) {
-      const packetId = runRelayInfo(run)?.packetId;
-      if (packetId) result.set(run.id, { packetId, number: view.packets.find(item => item.packetId === packetId)?.number ?? null });
-    }
-    return result;
-  }, [session?.runs, relay?.view]);
-  // What the relay did with a Turn's history when that is worth saying (a resend, everything again, words sent alone and why), under its message.
-  const notes = useMemo(() => relay?.view ? runNotes({ runs: session?.runs ?? [], view: relay.view, name: harnessName }) : new Map<string, string>(), [session?.runs, relay?.view, harnesses]);
   const viewPacket = useCallback((packetId: string) => setViewing(packetId), []);
   // The messages by identity, for the Turns the protocol draws: each reply and your message is found by the id its item names.
   const messagesById = useMemo(() => new Map((session?.messages ?? []).map(message => [message.id as string, message])), [session?.messages]);
@@ -367,7 +338,7 @@ export function ChatPage(props: ChatProps) {
   const shownChanges = useRef<{ id: string | null; count: number }>({ id: null, count: 0 });
   const changesArrived = session !== null && shownChanges.current.id === session.id && changes > shownChanges.current.count;
   useLayoutEffect(() => { shownChanges.current = { id: session?.id ?? null, count: changes }; });
-  const panelTab: PanelTab = tab ?? (changes ? "changes" : session?.runs.some(run => run.plan?.entries.length) ? "plan" : "run");
+  const panelTab: PanelTab = tab ?? (changes ? "changes" : latestPlan(session?.runs ?? []) !== undefined ? "plan" : "run");
   // Opened from the keyboard (⌘\), the panel's content does not slide in (#37). Decided once per opening: an animation
   // that followed the live input mode would start over whenever the next input came from the pointer.
   const [panelFromKeyboard, setPanelFromKeyboard] = useState(false);
@@ -378,30 +349,6 @@ export function ChatPage(props: ChatProps) {
   };
   const showResume = () => { setPanelRun(session?.runs.at(-1)?.id ?? null); setTab("run"); setPanel(true); };
   const detailed = preferences.density === "detailed";
-  // Effective changes of Harness or model, placed after the history they carried (ADR-042), each with `from`, the selection
-  // before it, which the pill draws with an arrow to the new one (C08). Changes with no message between them are one
-  // hand-over, from the first one's `from` to the last one's target; none is left when they come back to where they began.
-  const dividers = useMemo(() => {
-    const result = new Map<number, Divider>();
-    const differs = (a: HarnessSelection, b: HarnessSelection) => a.harnessId !== b.harnessId || a.nativeModel !== b.nativeModel || a.provider?.model !== b.provider?.model;
-    let previous: HarnessSelection | null = session?.runs[0]?.selection ?? null;
-    for (const change of session?.switches ?? []) {
-      if (change.status !== "effective" || change.target === null) continue;
-      const from = result.get(change.throughSeq)?.from ?? previous;
-      if (from !== null && differs(from, change.target) && session!.messages.some(message => message.seq <= change.throughSeq)) result.set(change.throughSeq, { change, from });
-      else result.delete(change.throughSeq);
-      previous = change.target;
-    }
-    return result;
-  }, [session?.switches, session?.runs, session?.messages]);
-  const dividerAfter = useMemo(() => {
-    const result = new Map<string, Divider>(), messages = session?.messages ?? [];
-    for (const [through, divider] of dividers) { const last = messages.filter(message => message.seq <= through).at(-1); if (last) result.set(last.id, divider); }
-    return result;
-  }, [dividers, session?.messages]);
-  const lastDivider = [...dividers.values()].at(-1);
-  const revertTo = lastDivider ? [...(session?.runs ?? [])].reverse().find(run => run.selection.harnessId !== lastDivider.change.target?.harnessId || run.selection.nativeModel !== lastDivider.change.target?.nativeModel)?.selection : undefined;
-
   // Approvals wait in the composer's place, oldest first (ADR-054 §5); questions and forms stay in their Turn.
   const requestHarness = (request: PermissionRequestView) => harnessName(runs.get(request.runId as never)?.selection.harnessId ?? session?.selection.harnessId ?? "");
   const waitingApprovals = useMemo(() => (session?.permissions ?? []).filter(request => !request.decided && dockedRequest(request)).sort((a, b) => a.requestedAt - b.requestedAt), [session?.permissions]);
@@ -444,73 +391,19 @@ export function ChatPage(props: ChatProps) {
   const orphanCards = (session?.permissions ?? []).filter(request => !runs.has(request.runId as never) && !dockedRequest(request))
     .map(request => <PermissionCard key={request.id} request={request} harness={requestHarness(request)} busy={mutation !== null} onDecision={(option, input) => decide(request, option, input)}/>);
   /**
-   * Where another Harness took over. Within one Harness, or when the Gateway has no relay information, it is the line the page
-   * always drew; otherwise it says only what is known (relay-architecture §12.1 T5): that the conversation was handed over,
-   * and "taken over" once the packet is in the original program's history. Nothing is drawn before anything was sent to it.
+   * The transcript, one flat list of keyed parts: each Run's Turn, drawn once and keyed by its Run. A Turn draws its own hand-over
+   * line, your message and everything the Harness did from its protocol items, in the order they came, so that the Turn never remounts as
+   * its reply starts: its status, timer and arc carry on. The Runtime creates the reply's message when its first text is committed;
+   * the Turn finds it by the Run's `assistantMessageId`.
    */
-  const covered = useRef(new Set<string>()).current;
-  const handover = (current: SessionView, divider: Divider): ReactNode => {
-    const target = divider.change.target;
-    if (target === null) return null;
-    const revert = divider === lastDivider && revertTo && current.status === "open" ? { onRevert: () => props.onDraft(selectionDraft(revertTo)), revertDisabled: mutation !== null || pending || active !== null } : {};
-    const state = handoverOf({ runs: current.runs, userSeq, throughSeq: divider.change.throughSeq, from: divider.from.harnessId, to: target.harnessId, view: relay?.view ?? null, name: harnessName });
-    if (state.kind === "none") return null;
-    // The line already says what the relay did with this Turn's history: its message does not say it again.
-    if (state.kind === "alone") covered.add(state.runId);
-    if (state.kind === "legacy") return <SwitchDivider key={"switch:" + divider.change.id} change={divider.change} from={divider.from} detail={describeSelection(target)} harnesses={harnesses} {...revert}/>;
-    return <RelayDivider key={"switch:" + divider.change.id} state={state} from={divider.from.harnessId} to={target.harnessId} name={harnessName} onView={relay ? viewPacket : undefined} {...revert}/>;
-  };
-  /**
-   * The transcript, one flat list of keyed parts: each message of yours, then its Turn, drawn once and keyed by its Run. The
-   * Runtime creates the reply's message when its first text is committed; that message joins the Turn already drawn instead
-   * of having it drawn anew in another place, so the Turn never remounts as its reply starts: its status, timer and arc carry
-   * on. A reply without a message of yours in this history stands where it is; a hand-over follows the last message before it.
-   */
-  const transcriptItems = (current: SessionView): ReactNode[] => {
-    const replies = new Map(current.messages.filter(message => message.role === "assistant").map(message => [message.runId, message] as const));
-    const drawn = new Set<string>(), items: ReactNode[] = [];
-    covered.clear();
-    const turn = (runId: PublicRun["id"]) => {
-      const run = runs.get(runId), open = (current.permissions ?? []).filter(request => request.runId === runId && !request.decided);
-      return <AssistantTurn key={"turn:" + runId} message={replies.get(runId)} run={run} harnesses={harnesses} providers={providers} describe={describe} detailed={detailed}
-        onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
-        onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? current.runs.at(-1)?.id) === runId} startupHint={startupHints.get(runId)}
-        queue={queue?.runId === runId ? queueNotice : undefined} busyHolder={busyHolder(runId)}
-        waiting={run && open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{run ? turnRequests(runId) : null}</AssistantTurn>;
-    };
-    /** A Run that carries protocol items: its hand-over line, your message and its items are all drawn by its one component. */
-    const protocolTurn = (run: ProtocolRun) => {
-      const open = (current.permissions ?? []).filter(request => request.runId === run.id && !request.decided);
-      return <ProtocolTurn key={"turn:" + run.id} run={run} message={messageOf} arrived={arrived} detailed={detailed} onEdit={fillDraft}
-        onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
-        onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? current.runs.at(-1)?.id) === run.id} onViewPacket={relay ? viewPacket : undefined}
-        startupHint={startupHints.get(run.id)} queue={queue?.runId === run.id ? queueNotice : undefined} busyHolder={busyHolder(run.id)}
-        waiting={open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{turnRequests(run.id)}</ProtocolTurn>;
-    };
-    /** Whether the Turn that follows a legacy hand-over line is drawn from protocol items, which draw their own hand-over line. */
-    const protocolFollows = (divider: Divider) => hasProtocol(current.runs.find(item => (userSeq.get(item.id) ?? -1) > divider.change.throughSeq));
-    for (const message of current.messages) {
-      const run = runs.get(message.runId);
-      // THE FORK between the two ways a Turn is drawn. A Run that carries protocol items draws all of itself in one component
-      // (ProtocolTurn), from its items in order; any other Run is drawn from the facts it always had, below. The second way, with
-      // `covered`, `notes` and the hand-over lines of `handover`, goes when every Run carries protocol items.
-      if (hasProtocol(run)) {
-        if (!drawn.has(run.id)) { drawn.add(run.id); items.push(protocolTurn(run)); }
-        const divider = dividerAfter.get(message.id);
-        if (divider && !protocolFollows(divider)) items.push(handover(current, divider));
-        continue;
-      }
-      if (message.role === "user") {
-        const note = covered.has(message.runId) ? undefined : notes.get(message.runId);
-        items.push(known.current.messages.has(message.id) ? <UserMessage key={message.id} message={message} run={run} onEdit={fillDraft} packet={packetOfRun.get(message.runId)} onViewPacket={viewPacket} note={note}/>
-          : <div key={message.id} className="motion-message-in"><UserMessage message={message} run={run} onEdit={fillDraft} packet={packetOfRun.get(message.runId)} onViewPacket={viewPacket} note={note}/></div>);
-      }
-      if (!drawn.has(message.runId) && (run !== undefined || message.role === "assistant")) { drawn.add(message.runId); items.push(turn(message.runId)); }
-      const divider = dividerAfter.get(message.id);
-      if (divider && !protocolFollows(divider)) items.push(handover(current, divider));
-    }
-    return items;
-  };
+  const transcriptItems = (current: SessionView): ReactNode[] => current.runs.map(run => {
+    const open = (current.permissions ?? []).filter(request => request.runId === run.id && !request.decided);
+    return <ProtocolTurn key={"turn:" + run.id} run={run} message={messageOf} arrived={arrived} detailed={detailed} onEdit={fillDraft}
+      onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
+      onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? current.runs.at(-1)?.id) === run.id} onViewPacket={relay ? viewPacket : undefined}
+      startupHint={startupHints.get(run.id)} queue={queue?.runId === run.id ? queueNotice : undefined} busyHolder={busyHolder(run.id)}
+      waiting={open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{turnRequests(run.id)}</ProtocolTurn>;
+  });
 
   // ↑ in an empty composer: the held message comes back first, otherwise the last message sent becomes the draft.
   const editLast = session ? () => {
@@ -564,7 +457,7 @@ export function ChatPage(props: ChatProps) {
         {props.queued.attachments.length ? <span className="flex-none text-caption text-fg-3">附件 {props.queued.attachments.length}</span> : null}
         <button type="button" className="btn btn-ghost btn-sm" onClick={props.onEditQueued}>编辑</button><button type="button" className="btn btn-ghost btn-sm" onClick={props.onWithdrawQueued}>撤回</button>
       </div> : null}
-      <PlanBar session={session} active={active} harnessName={harnessName}/>
+      <PlanBar session={session} active={active}/>
     </> : null}
     below={session ? <StatusLine session={session} active={active}/> : null}/>;
   // What the page announces of the Turn in progress, or of one waiting in the queue (never the active Run), in the header's
@@ -572,10 +465,10 @@ export function ChatPage(props: ChatProps) {
   const latestRun = session?.runs.at(-1), current = active ?? (latestRun?.status === "queued" ? latestRun : null);
   const currentWaits = current ? (session?.permissions ?? []).filter(request => request.runId === current.id && !request.decided) : [];
   const currentState = current === null ? null : current.cancelRequested ? "正在停止回复" : currentWaits.length ? currentWaits.some(dockedRequest) ? "等你批准" : "等你回答"
-    : runStatusLabel(current.status);
+    : TURN_STATUS_WORDS[stateOf(current)];
   const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史"
     : currentState ?? (pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话");
-  const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} tab={panelTab} onTab={setTab} runId={panelRun} onRun={setPanelRun} describe={describe}
+  const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} tab={panelTab} onTab={setTab} runId={panelRun} onRun={setPanelRun}
     loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} loadNativeResume={props.onLoadNativeResume} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)}
     relay={relay?.view && relayHasStory(relay.view) ? { view: relay.view, onViewPacket: viewPacket } : undefined}/> : null;
   // #23: the panel opens by widening (300 ms) and pushes the conversation aside; its content follows 60 ms later from 24 px to
@@ -699,35 +592,34 @@ function ChangeBadge({ count, news }: { readonly count: number; readonly news: b
 
 /**
  * The conversation's state in the header (Conversation and Interaction boards): who works and what it does now, in the
- * words the sidebar and the Turn use. Running work is blue with a breathing dot and a clock; waiting for the user is
- * amber; a failure is red; a Turn that ended quietly is grey: "已停止", whoever stopped it (the Turn's own line says whose). A Turn
+ * words the sidebar and the Turn use, from the Turn's own state. Running work is blue with a breathing dot and a clock; waiting for the user
+ * is amber; a failure is red; a Turn that ended quietly is grey: "已停止", whoever stopped it (the Turn's own line says whose). A Turn
  * waiting in the queue is not the active Run (only a started one is), and is named 排队中 as the Turn names it (ruling N).
  */
 function HeaderState({ session, active, harnessName }: { readonly session: SessionView; readonly active: PublicRun | null; readonly harnessName: (id: string) => string }) {
   const now = useNow(active !== null);
   const latest = active ?? session.runs.at(-1) ?? null;
-  const name = harnessName((latest ?? session).selection.harnessId);
-  const since = active?.timing ? clock(now - active.timing.acceptedAt) : null;
+  // Who works is the Turn's executor; a Run whose Turn could not be read is named by the selection it was sent with.
+  const name = latest?.protocol?.executor.harness ?? harnessName((latest ?? session).selection.harnessId);
+  const started = active?.protocol?.startedAt ?? active?.timing?.acceptedAt, since = started === undefined ? null : clock(now - started);
   const state: { readonly text: string; readonly tone: "neutral" | "accent" | "amber" | "red"; readonly live?: boolean } = (() => {
     if (active) {
       const open = session.permissions?.filter(request => request.runId === active.id && !request.decided) ?? [];
       if (active.cancelRequested) return { text: "正在停止", tone: "neutral" };
       if (open.length) return { text: open.some(dockedRequest) ? "等你批准" : "等你回答", tone: "amber" };
       const clockText = since ? " · " + since : "";
-      switch (active.status) {
+      switch (stateOf(active)) {
         case "queued": return { text: TURN_STATUS_WORDS.queued, tone: "neutral" };
         case "preparing": return { text: TURN_STATUS_WORDS.preparing + clockText, tone: "accent", live: true };
-        // A Run being closed is still the Turn running; what it does (a tool, the reply, thinking) is said by the Turn's own line.
-        case "settling": return { text: TURN_STATUS_WORDS.running, tone: "accent", live: true };
         default: return { text: TURN_STATUS_WORDS.running + clockText, tone: "accent", live: true };
       }
     }
     if (!latest) return { text: "", tone: "neutral" };
-    switch (latest.status) {
+    const status = stateOf(latest);
+    switch (status) {
       case "queued": return { text: latest.cancelRequested ? "正在停止" : TURN_STATUS_WORDS.queued, tone: "neutral" };
-      case "completed": return { text: TURN_STATUS_WORDS.completed, tone: "neutral" };
+      case "completed": case "cancelled": return { text: TURN_STATUS_WORDS[status], tone: "neutral" };
       case "failed": return { text: TURN_STATUS_WORDS.failed, tone: "red" };
-      case "cancelled": return { text: cancelledWords(latest, true), tone: "neutral" };
       case "unknown": return { text: TURN_STATUS_WORDS.unknown, tone: "amber" };
       default: return { text: "", tone: "neutral" };
     }
@@ -738,18 +630,18 @@ function HeaderState({ session, active, harnessName }: { readonly session: Sessi
 }
 
 /**
- * The plan bar above the composer (P01, Motion board #22): how far the plan is and what it works on now; pressing it opens
- * every step, the arrow turning 180°. Shown while a Turn with a plan runs, and while the latest plan has steps left.
+ * The plan bar above the composer (P01, Motion board #22): how far the task list is and what it works on now; pressing it opens
+ * every step, the arrow turning 180°. Shown while a Turn with a task list runs, and while the latest list has steps left.
  */
-function PlanBar({ session, active, harnessName }: { readonly session: SessionView; readonly active: PublicRun | null; readonly harnessName: (id: string) => string }) {
+function PlanBar({ session, active }: { readonly session: SessionView; readonly active: PublicRun | null }) {
   const [open, setOpen] = useState(false);
   const id = useId();
-  const owner = active?.plan?.entries.length ? active : [...session.runs].reverse().find(run => run.plan?.entries.length) ?? null;
-  const plan: PublicPlan | undefined = owner?.plan;
-  if (!owner || !plan || !plan.entries.length || active === null && plan.entries.every(entry => entry.status === "completed")) return null;
-  const done = plan.entries.filter(entry => entry.status === "completed").length, total = plan.entries.length;
-  const current = plan.entries.find(entry => entry.status === "in_progress") ?? plan.entries.find(entry => entry.status === "pending");
-  const where = current ? `${current.status === "in_progress" ? "正在" : "下一步"}：${current.content}` : "已完成";
+  const found = latestPlan(session.runs);
+  if (found === undefined || active === null && found.plan.steps.every(step => step.status === "completed")) return null;
+  const { run, plan } = found, steps = plan.steps;
+  const done = steps.filter(step => step.status === "completed").length, total = steps.length;
+  const current = steps.find(step => step.status === "in_progress") ?? steps.find(step => step.status === "pending");
+  const where = current ? `${current.status === "in_progress" ? "正在" : "下一步"}：${current.text}` : "已完成";
   // The 8 px between the bar and its steps belongs to the steps, so a closed plan leaves no gap above the composer.
   return <div className="plan-bar flex flex-col">
     <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}
@@ -762,48 +654,34 @@ function PlanBar({ session, active, harnessName }: { readonly session: SessionVi
       <ChevronUp size={12} strokeWidth={2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-180")} aria-hidden="true"/>
     </button>
     <Collapsible open={open} id={id}>
-      <div className="pt-2"><ul className="card m-0 grid max-h-[min(40vh,320px)] list-none grid-cols-1 gap-x-4 gap-y-2 overflow-y-auto px-4 py-3 text-ui-sm sm:grid-cols-2" aria-label={`${harnessName(owner.selection.harnessId)} 维护的计划`}>
-        {plan.entries.map((entry, index) => <li key={index} className="flex min-w-0 items-start gap-2">
-          {entry.status === "completed" ? <Check size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="已完成" role="img"/>
-            : <Circle size={15} strokeWidth={1.9} className={cn("mt-0.5 flex-none", entry.status === "in_progress" ? "text-run" : "text-fg-3")} aria-label={entry.status === "in_progress" ? "进行中" : "待办"} role="img"/>}
-          <span className={cn("min-w-0 break-words", entry.status === "completed" ? "text-fg-3 line-through decoration-line-strong" : entry.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{entry.content}</span>
+      <div className="pt-2"><ul className="card m-0 grid max-h-[min(40vh,320px)] list-none grid-cols-1 gap-x-4 gap-y-2 overflow-y-auto px-4 py-3 text-ui-sm sm:grid-cols-2" aria-label={`${run.protocol.executor.harness} 维护的计划`}>
+        {steps.map((step, index) => <li key={index} className="flex min-w-0 items-start gap-2">
+          {step.status === "completed" ? <Check size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="已完成" role="img"/>
+            : <Circle size={15} strokeWidth={1.9} className={cn("mt-0.5 flex-none", step.status === "in_progress" ? "text-run" : "text-fg-3")} aria-label={step.status === "in_progress" ? "进行中" : "待办"} role="img"/>}
+          <span className={cn("min-w-0 break-words", step.status === "completed" ? "text-fg-3 line-through decoration-line-strong" : step.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{step.text}</span>
         </li>)}
       </ul></div>
     </Collapsible>
   </div>;
 }
 
-/** An amount in its own currency, as the program reported it. */
-function money(cost: { readonly amount: number; readonly currency: string }): string {
-  try { return new Intl.NumberFormat("zh-CN", { style: "currency", currency: cost.currency, maximumFractionDigits: 2 }).format(cost.amount); }
-  catch { return cost.amount.toFixed(2) + " " + cost.currency; }
-}
 /**
- * The line under the composer (P05): the round, its steps and its time, and only the usage the Gateway reported for it —
- * input tokens, the context share when the program gave its size, the cost in its own currency and scope. Nothing is
- * estimated; a fact the program did not report is left out.
+ * The line under the composer (P05): the round, its steps and its time, and only the usage the Turn reported, in the words of the Turn's
+ * footer (statusParts) — input tokens when the Hub counted the whole Turn, the context share when the Harness gave its size, the cost under its
+ * scope when something was spent. Nothing is estimated; a fact the Turn did not report is left out.
  */
 function StatusLine({ session, active }: { readonly session: SessionView; readonly active: PublicRun | null }) {
-  const run = active ?? session.runs.at(-1) ?? null;
-  const running = run !== null && !finished(run.status);
+  const run = active ?? session.runs.at(-1) ?? null, turn = run?.protocol;
   // A Turn waiting in the queue has not started: as its own line says 排队中 without a timer (ruling N), this line counts no
   // time for it either, until a stop is asked for, when the Turn's line counts again (liveStatus).
-  const counting = running && (run.status !== "queued" || run.cancelRequested);
+  const counting = run !== null && turn !== undefined && !over(turn) && (turn.status !== "queued" || run.cancelRequested);
   const now = useNow(counting);
-  if (!run) return null;
-  const round = session.runs.indexOf(run) + 1, steps = toolTree(run.tools ?? []).roots.length, timing = run.timing;
-  const spent = timing ? (counting ? now : running ? null : timing.endedAt ?? null) : null;
-  const usage = run.usage, context = usage?.context;
-  const share = context?.size ? Math.min(100, Math.round(context.used / context.size * 100)) : null;
-  // A running time counts whole seconds (#03); an ended one is said as the Turn says it, with tenths under ten seconds.
-  const parts: ReactNode[] = [`第 ${round} 轮`, ...(steps ? [`${steps} 步`] : []), ...(timing && spent !== null ? [running ? "已用 " + elapsed(spent - timing.acceptedAt) : "用时 " + duration(spent - timing.acceptedAt)] : [])];
-  if (usage?.turn?.input !== undefined) parts.push(`输入 ${compact(usage.turn.input)}`);
-  if (context && share !== null) parts.push(<span key="context" className="inline-flex items-center gap-[5px]" title={`上下文已用 ${share}%（由原程序报告）`}>
-    <svg width="13" height="13" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--bg-hover)" strokeWidth="3"/>
-      <circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--text-3)" strokeWidth="3" strokeDasharray={`${(share / 100 * 47.1).toFixed(1)} 47.1`} strokeLinecap="round" transform="rotate(-90 10 10)"/></svg>上下文 {share}%</span>);
-  else if (context) parts.push(`上下文 ${compact(context.used)}`);
-  if (usage?.cost) parts.push(`${usage.cost.scope === "session" ? "会话累计" : "本轮"} ${money(usage.cost)}`);
+  if (turn === undefined) return null;
+  const parts = statusParts(turn, counting ? now : undefined);
   return <p className="composer-status m-0 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 px-1 text-caption text-fg-3" aria-label="本轮状态">
-    {parts.map((part, index) => <Fragment key={index}>{index ? <span aria-hidden="true">·</span> : null}{typeof part === "string" ? <span>{part}</span> : part}</Fragment>)}
+    {parts.map((part, index) => <Fragment key={index}>{index ? <span aria-hidden="true">·</span> : null}{part.share === undefined ? <span>{part.text}</span>
+      : <span className="inline-flex items-center gap-[5px]" title={`上下文已用 ${part.share}%（由原程序报告）`}>
+        <svg width="13" height="13" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--bg-hover)" strokeWidth="3"/>
+          <circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--text-3)" strokeWidth="3" strokeDasharray={`${(part.share / 100 * 47.1).toFixed(1)} 47.1`} strokeLinecap="round" transform="rotate(-90 10 10)"/></svg>{part.text}</span>}</Fragment>)}
   </p>;
 }

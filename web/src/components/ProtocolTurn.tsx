@@ -9,10 +9,11 @@ import { cn } from "../lib/cn.js";
 import { elapsed } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
 import { endLine, quietLine, switchLine, turnFooter } from "../lib/protocol/lines.js";
-import { arrange, lay, opensByDefault, reasoningLabel, showsProgress, summarizeGroup, workLabel, type Block, type WorkBlock } from "../lib/protocol/work.js";
-import { liveStatus, rememberShown, shownSteps, type QueueNotice } from "../lib/turn.js";
+import { liveStatus, type QueueNotice } from "../lib/protocol/live.js";
+import { arrange, lay, opensByDefault, reasoningLabel, summarizeGroup, withReply, workLabel, type Block, type WorkBlock } from "../lib/protocol/work.js";
+import { rememberShown, shownSteps } from "../lib/turn.js";
 import { Collapsible, motionStyle, SwapText } from "../ui/motion.js";
-import { Spinner, StatusDot } from "../ui/primitives.js";
+import { Spinner } from "../ui/primitives.js";
 import { NoticeList, OutputList, StoredDetail, type ToolDetailLoader } from "./Activity.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { StreamingMarkdown } from "./StreamingMarkdown.js";
@@ -22,8 +23,8 @@ import { ActionButton, LiveIcon, QueuedTurn, UserMessage, useEntrance } from "./
  * A Turn drawn from the protocol's items (docs/proposals/protocol/hub-protocol.html §13), the same for every Harness: each item in
  * the order it came, consecutive actions folded into one summary line that opens to their lines, a thought as one line, the
  * Harness's hand-over as one line, and one footer. Nothing here asks which Harness ran the Turn or what it called a tool; the
- * only thing taken from a Harness's identity is its icon. A Run without a protocol Turn is drawn by Turn.tsx (the other path, which
- * goes when every Run carries one); ChatPage chooses between them in one place.
+ * only thing taken from a Harness's identity is its icon. There is no other way a Turn is drawn: a Run whose Turn could not be read
+ * says so, with the reason, and is not drawn from anything else.
  */
 
 interface TurnContext {
@@ -64,7 +65,6 @@ function actionIcon(item: WorkItem, size = 15): ReactNode {
 function ActionMark({ item }: { readonly item: WorkItem }) {
   switch (item.status) {
     case "running": return <Spinner size={14} tone="run" label=""/>;
-    case "waiting": return <StatusDot tone="wait"/>;
     case "pending": return <CircleDashed size={15} className="text-fg-3" aria-hidden="true"/>;
     default: return <span className={cn("flex", item.status === "failed" || item.status === "unknown" ? "text-red" : "text-fg-3")}>{actionIcon(item)}</span>;
   }
@@ -93,12 +93,12 @@ function ActionRow({ item }: { readonly item: WorkItem }) {
   const facts = label.added !== undefined || label.removed !== undefined || label.exit !== undefined || label.status !== null
     ? <span className="flex flex-none items-center gap-2 whitespace-nowrap text-caption text-fg-3">
       {label.added !== undefined || label.removed !== undefined ? <span className="mono flex gap-1.5 text-[11px]">{label.added !== undefined ? <span className="text-add-on-tint">+{label.added}</span> : null}{" "}{label.removed !== undefined ? <span className="text-del-on-tint">−{label.removed}</span> : null}</span> : null}
-      {" "}{label.exit !== undefined ? <span className="text-red">退出码 {label.exit}</span> : null}
-      {" "}{label.status !== null ? <span className={cn(item.status === "waiting" ? "text-amber" : item.status === "unknown" ? "text-red" : undefined)}>{label.status}</span> : null}
+      {" "}{label.exit !== undefined ? <span className="text-red-on-tint">退出码 {label.exit}</span> : null}
+      {" "}{label.status !== null ? <span className={item.status === "unknown" ? "text-red-on-tint" : undefined}>{label.status}</span> : null}
     </span> : null;
   const content = <>
     <span className="flex size-[15px] flex-none items-center justify-center"><ActionMark item={item}/></span>
-    <span className={cn("flex-none", bad ? "text-red" : "text-fg-2")}>{label.verb}</span>{label.object !== null && !label.object.startsWith("“") ? " " : ""}
+    <span className={cn("flex-none", bad ? "text-red-on-tint" : "text-fg-2")}>{label.verb}</span>{label.object !== null && !label.object.startsWith("“") ? " " : ""}
     {label.object !== null ? <span className={cn("min-w-0 trunc", label.mono ? "font-mono text-code text-fg" : "text-fg")} title={label.title}>{label.object}</span> : null}{" "}
     <span className="min-w-2 flex-1"/>{" "}{facts}
     {expandable ? <Chevron open={open}/> : null}
@@ -134,11 +134,11 @@ function ReasoningRow({ item }: { readonly item: ReasoningItem }) {
 function ActionGroup({ block }: { readonly block: WorkBlock }) {
   const ctx = useTurn(), summary = useMemo(() => summarizeGroup(block.work), [block.work]), panel = useId();
   const [choice, setChoice] = useState<boolean | null>(null);
-  const open = choice ?? opensByDefault(block, !ctx.over, ctx.detailed), live = block.work.some(item => item.status === "running" || item.status === "pending" || item.status === "waiting");
+  const open = choice ?? opensByDefault(block, !ctx.over, ctx.detailed), live = block.work.some(item => item.status === "running");
   return <div className="action-group min-w-0" data-open={open ? "true" : "false"} data-problems={summary.problems || undefined}>
     <button type="button" className={cn(ROW, "row group/step border-none bg-transparent text-fg hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => setChoice(!open)}>
       {live ? <span className="flex size-[15px] flex-none items-center justify-center"><Spinner size={14} tone="run" label=""/></span> : null}
-      <span className="min-w-0 flex-1 font-medium text-fg">{summary.parts.map((part, index) => <span key={index} className={part.failed ? "text-red" : undefined}>{index ? "，" : ""}{part.text}</span>)}</span>
+      <span className="min-w-0 flex-1 font-medium text-fg">{summary.parts.map((part, index) => <span key={index} className={part.failed ? "text-red-on-tint" : undefined}>{index ? "，" : ""}{part.text}</span>)}</span>
       <ChevronRight size={12} strokeWidth={2.2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
     </button>
     <Collapsible open={open} id={panel}>
@@ -211,13 +211,17 @@ function SwitchView({ item, fresh }: { readonly item: SwitchItem; readonly fresh
   const ctx = useTurn(), line = switchLine(item), entering = useEntrance(fresh), packetId = line.packetId, view = packetId !== null && ctx.onViewPacket !== undefined ? () => ctx.onViewPacket?.(packetId) : null;
   const between = item.from.harnessId !== item.to.harnessId;
   const edge = (side: "left" | "right") => <span className={cn("h-[.5px] min-w-3 flex-1 bg-line-strong", side === "left" ? "origin-right" : "origin-left", entering && "motion-line-grow")} style={entering ? motionStyle({ delay: 120 }) : undefined}/>;
-  const icon = (id: string, name: string) => <span className="flex flex-none"><BrandIcon brand={id} name={name} size={16}/></span>;
+  const icon = (id: string, name: string) => <BrandIcon brand={id} name={name} size={18}/>;
   return <div className="switch-divider switch-line flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 sm:flex-nowrap" data-delivery={item.delivery ?? "none"} {...(line.attention ? { "data-attention": "" } : {})}>
     {view ? <span aria-hidden="true" className="invisible flex-none text-caption font-medium max-sm:hidden">查看</span> : null}
     <div role="separator" aria-label={line.text} className="flex min-w-0 flex-1 items-center gap-3 text-caption text-fg-3 max-sm:basis-full">
       {edge("left")}
       <span className={cn("flex min-h-[30px] min-w-0 items-center gap-[7px] rounded-[15px] bg-surface py-[3px] pr-3 pl-[7px] shadow-hairline", entering && "motion-fade-in")} title={line.details}>
-        {between ? <>{icon(item.from.harnessId, item.from.harness)}<span aria-hidden="true">{line.from}</span><span aria-hidden="true">→</span>{icon(item.to.harnessId, item.to.harness)}<span aria-hidden="true" className="font-medium text-fg">{line.to}</span></>
+        {between ? <>{icon(item.from.harnessId, item.from.harness)}<span aria-hidden="true">{line.from}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none" aria-hidden="true">
+            <path pathLength={1} className={entering ? "motion-draw" : undefined} style={entering ? motionStyle({ duration: 160, delay: 100 }) : undefined} d="M5 12h14M12 5l7 7-7 7"/></svg>
+          <span className={cn("flex flex-none", entering && "motion-pop-in")} style={entering ? motionStyle({ delay: 220, scaleFrom: .6 }) : undefined}>{icon(item.to.harnessId, item.to.harness)}</span>
+          <span aria-hidden="true" className={cn("font-medium text-fg", entering && "motion-fade-in")} style={entering ? motionStyle({ delay: 300 }) : undefined}>{line.to}</span></>
           : <>{icon(item.to.harnessId, item.to.harness)}<span aria-hidden="true" className="font-medium text-fg">{line.changed ? line.from + " → " + line.to : item.to.harness + " 的设置已更换"}</span></>}
         {line.context ? <span aria-hidden="true">· {line.context}</span> : null}
         {line.flag ? <span aria-hidden="true" className={cn("flex-none", line.attention ? "text-amber-on-tint" : undefined)}>· {line.flag}</span> : null}
@@ -236,12 +240,15 @@ function EndView({ turn }: { readonly turn: ReadTurn }) {
   return <QuietLine item="end" icon={icon} tone={end.tone}>{end.text}</QuietLine>;
 }
 
-/** What a Turn is waiting for while nothing it shows says so: its place in the queue, its start, the model's first words. */
-function LiveLine({ queue, startupHint, waiting, text }: { readonly queue: QueueNotice | undefined; readonly startupHint: { readonly seconds: number; readonly usual: boolean } | undefined; readonly waiting: "approval" | "question" | undefined; readonly text: string }) {
+/**
+ * What a Turn that goes on is doing now, at its tail: its place in the queue, its start, the action in progress, the reply it writes, what it
+ * waits for from you. The arc turns and the words sweep while it works, the time counts every second, and the line leaves when the Turn is over
+ * and the footer takes its place.
+ */
+function LiveLine({ queue, startupHint, waiting, replying }: { readonly queue: QueueNotice | undefined; readonly startupHint: { readonly seconds: number; readonly usual: boolean } | undefined; readonly waiting: "approval" | "question" | undefined; readonly replying: boolean }) {
   const { run, turn } = useTurn(), now = useNow(true);
-  // The line is about what the Turn waits for, not about an action: the actions say themselves what they do.
-  const state = liveStatus({ ...run, tools: [] }, run.status, turn.executor.harness, now, startupHint, queue, waiting, text);
-  const since = run.timing ? elapsed(now - run.timing.acceptedAt) : null;
+  const state = liveStatus({ turn, run, now, startupHint, queue, waiting, replying });
+  const since = turn.startedAt === undefined ? null : elapsed(now - turn.startedAt);
   return <div className="live-line flex min-w-0 items-start gap-[7px] px-1.5 text-ui-sm text-fg-3" data-state={state.tone}>
     <LiveIcon tone={state.tone} className="mt-[2.5px]"/>
     <span className={cn("response-status min-w-0", state.thinking && "motion-breathe")} role="status">{state.wrap ? state.text : <SwapText text={state.text} shimmer={state.tone === "run"} className="max-w-full"/>}</span>
@@ -292,13 +299,10 @@ function segments(blocks: readonly Block[]): readonly Segment[] {
   return result;
 }
 
-/** A Run the Gateway gave protocol items for, which this file draws; any other Run is drawn from the facts it always had. */
-export type ProtocolRun = PublicRun & { readonly protocol: ReadTurn };
-export function hasProtocol(run: PublicRun | undefined): run is ProtocolRun { return run?.protocol !== undefined; }
 const turnIsOver = (run: PublicRun): boolean => run.status === "completed" || run.status === "failed" || run.status === "cancelled" || run.status === "unknown";
 
 export interface ProtocolTurnProps {
-  readonly run: ProtocolRun;
+  readonly run: PublicRun;
   /** A message of the conversation by its identity: where the text of each reply and of your message comes from. */
   readonly message: (id: string) => PublicMessage | undefined;
   /** Whether a message of yours arrived after the conversation opened, so that it rises into place. */
@@ -322,13 +326,36 @@ export interface ProtocolTurnProps {
 }
 
 /**
+ * A Run whose Turn the page could not read: your message where it stands, and one line that says so with the reason (the protocol's
+ * version, a Turn without what it must have). Nothing else of the Turn is drawn from anything but the protocol, so that the fault is seen
+ * and not covered; only the reply's own words, which are a message of the conversation, are kept.
+ */
+function UnreadableTurn({ run, message, arrived, onEdit }: Pick<ProtocolTurnProps, "run" | "message" | "arrived" | "onEdit">) {
+  const sent = message(run.userMessageId), answer = message(run.assistantMessageId), bubble = sent === undefined ? null : <UserMessage message={sent} run={run} onEdit={onEdit}/>;
+  return <>
+    {sent === undefined ? null : arrived(sent.id) ? <div className="motion-message-in">{bubble}</div> : <div>{bubble}</div>}
+    <article className="message assistant-message unreadable-turn flex min-w-0 flex-col gap-2.5" data-run-status={run.status} aria-label="这一轮无法显示">
+      <QuietLine item="unreadable" icon={<CircleHelp size={14}/>} tone="failed">这一轮无法显示：{run.protocolProblem ?? "服务没有给出这一轮的协议数据"}</QuietLine>
+      {/* The reply is a message of the conversation, not part of the Turn: its words are not lost with the Turn that could not be read. */}
+      {answer?.text ? <StreamingMarkdown text={answer.text} isStreaming={false} className="text-reading"/> : null}
+    </article>
+  </>;
+}
+
+/**
  * One Turn from the protocol: the hand-over line and your message where they stand, then the Harness's items in order. While the
  * Turn goes on a line says what it waits for when nothing else shows that it works; once it is over, a line says why it ended
  * as it did when that is not the ordinary end, and one footer, "Harness · 模型 · 用时 · 输入 · 输出", ends it. A reply's actions
  * (copy, branch, details, try again) show when it is pointed at, and a way forward from a failure stays in sight.
  */
-export const ProtocolTurn = memo(function ProtocolTurn({ run, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onDetails, detailsOpen, onViewPacket, startupHint, queue, busyHolder, waiting, children }: ProtocolTurnProps) {
-  const turn = run.protocol, arrangement = useMemo(() => arrange(turn), [turn]), over = arrangement.over, cancelling = run.cancelRequested;
+export const ProtocolTurn = memo(function ProtocolTurn(props: ProtocolTurnProps) {
+  return props.run.protocol === undefined ? <UnreadableTurn run={props.run} message={props.message} arrived={props.arrived} onEdit={props.onEdit}/> : <TurnView {...props} turn={props.run.protocol}/>;
+});
+
+function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onDetails, detailsOpen, onViewPacket, startupHint, queue, busyHolder, waiting, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
+  // The reply is a message of the conversation, which arrives on the stream apart from the Turn's other items: its words are shown at once.
+  const replyMessage = message(run.assistantMessageId), turn = useMemo(() => withReply(given, replyMessage), [given, replyMessage]);
+  const arrangement = useMemo(() => arrange(turn, { asking: waiting === "approval" }), [turn, waiting]), over = arrangement.over, cancelling = run.cancelRequested;
   // A hand-over line comes in only when the Turn that carries it was accepted moments ago; one drawn with the page's history stays still.
   const [recent] = useState(() => run.timing !== undefined && Date.now() - run.timing.acceptedAt < 5000 && !turnIsOver(run));
   // The items the reader has seen: a Turn found as it is has none that come in; one watched running has each as it arrives.
@@ -341,7 +368,6 @@ export const ProtocolTurn = memo(function ProtocolTurn({ run, message, arrived, 
   // The reply shown last, for copying and for the line that says the Turn is replying.
   const replies = turn.items.flatMap(item => item.type === "assistant_message" ? [message(item.messageId)?.text ?? ""] : []);
   const reply = replies.filter(Boolean).at(-1) ?? "";
-  const progress = showsProgress(turn.items, item => item.type === "assistant_message" && (message(item.messageId)?.text ?? "") !== "");
   const copy = useCopy(reply);
   const retry = onRetry !== undefined && (turn.status === "failed" || turn.status === "cancelled");
   const quiet = !(copy.state !== "idle" || detailsOpen === true || retry);
@@ -358,7 +384,7 @@ export const ProtocolTurn = memo(function ProtocolTurn({ run, message, arrived, 
     return <article key={"turn:" + run.id + ":" + index} className={cn("message assistant-message protocol-turn group flex min-w-0 flex-col gap-2.5", !over && "is-active")} data-run-status={run.status} aria-busy={!over} aria-label={harness + " 的回复" + (over ? "" : "（进行中）")}>
       <Blocks blocks={piece.blocks}/>
       {last ? <>
-        {!over && (cancelling || !progress) ? <LiveLine queue={queue} startupHint={startupHint} waiting={waiting} text={reply}/> : null}
+        {!over ? <LiveLine queue={queue} startupHint={startupHint} waiting={waiting} replying={reply !== ""}/> : null}
         {queue !== undefined && run.status === "queued" && !cancelling ? <QueuedLine queue={queue}/> : null}
         {children}
         {over ? <EndView turn={turn}/> : null}
@@ -375,4 +401,19 @@ export const ProtocolTurn = memo(function ProtocolTurn({ run, message, arrived, 
       </> : null}
     </article>;
   })}</Context.Provider>;
-});
+}
+
+/**
+ * The steps of a Turn for the details panel: its actions, thoughts and compactions as the transcript draws them, each run of them open, and
+ * not its reply, its notices or the rest. Nothing in it comes in: the panel shows what has happened.
+ */
+export function TurnSteps({ run, turn, loadDetail, asking }: { readonly run: PublicRun; readonly turn: ReadTurn; readonly loadDetail: ToolDetailLoader | undefined; readonly asking: boolean }) {
+  const arrangement = useMemo(() => arrange(turn, { asking }), [turn, asking]);
+  const [seen] = useState<Set<string>>(() => new Set(turn.items.map(item => item.id)));
+  useLayoutEffect(() => { for (const item of turn.items) seen.add(item.id); }, [turn.items, seen]);
+  const blocks = useMemo(() => arrangement.blocks.filter(block => block.kind === "work" || block.item.type === "reasoning" || block.item.type === "context_event"), [arrangement.blocks]);
+  const context = useMemo<TurnContext>(() => ({ turn, run, over: arrangement.over, cancelling: false, detailed: true, children: arrangement.children, message: () => undefined, loadDetail, seen, onViewPacket: undefined, busyHolder: undefined }),
+    [turn, run, arrangement, loadDetail, seen]);
+  if (blocks.length === 0) return null;
+  return <Context.Provider value={context}><div className="turn-steps flex min-w-0 flex-col gap-px" role="group" aria-label="这一轮的步骤"><Blocks blocks={blocks}/></div></Context.Provider>;
+}

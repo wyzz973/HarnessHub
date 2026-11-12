@@ -21,7 +21,7 @@ const int = (value: unknown): number => typeof value === "number" && Number.isSa
 /** A time or an amount: finite and never negative. */
 const amount = (value: unknown): number => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fail();
 function pick<const T extends readonly string[]>(value: unknown, choices: T): T[number] { return typeof value === "string" && (choices as readonly string[]).includes(value) ? value as T[number] : fail(); }
-function many<T>(value: unknown, read: (row: unknown) => T, limit: number): readonly T[] { return Array.isArray(value) && value.length <= limit ? value.map(read) : fail(); }
+function many<T>(value: unknown, read: (row: unknown) => T): readonly T[] { return Array.isArray(value) ? value.map(row => read(row)) : fail(); }
 /** Reads a field that may be absent: absent (or null, as a Gateway may write "none") is `undefined`; a field that is there must be read whole. */
 function maybe<T>(value: unknown, read: (value: unknown) => T): T | undefined { return value === undefined || value === null ? undefined : read(value); }
 const flag = (value: unknown): true => value === true ? true : fail();
@@ -49,7 +49,7 @@ function base(row: Record<string, unknown>, id: string, seq: number): ItemBase {
   return { id, seq, status: pick(row.status, ITEM_STATUSES), ...(startedAt === undefined ? {} : { startedAt }), ...(endedAt === undefined ? {} : { endedAt }),
     ...(parentId === undefined ? {} : { parentId }), ...(nativeName === undefined ? {} : { nativeName }), ...(detail === undefined ? {} : { detail }) };
 }
-const words = (value: unknown): readonly string[] => many(value, str, 8);
+const words = (value: unknown): readonly string[] => many(value, str);
 
 /** One known type's own fields, read from the fields that type has and no others. */
 function typed(row: Record<string, unknown>, b: ItemBase): ProtocolItem {
@@ -68,7 +68,7 @@ function typed(row: Record<string, unknown>, b: ItemBase): ProtocolItem {
     case "file_change": return { ...b, type: "file_change", changes: many(row.changes, value => {
       const change = obj(value), oldPath = maybe(change.oldPath, str), added = maybe(change.added, int), removed = maybe(change.removed, int);
       return { path: str(change.path), op: pick(change.op, FILE_OPS), ...(oldPath === undefined ? {} : { oldPath }), ...(added === undefined ? {} : { added }), ...(removed === undefined ? {} : { removed }) };
-    }, 1024) };
+    }) };
     case "search": {
       const path = maybe(row.path, str), matches = maybe(row.matches, int);
       return { ...b, type: "search", scope: pick(row.scope, ["files", "content", "unknown"] as const), query: row.query === null ? null : str(row.query), ...(path === undefined ? {} : { path }), ...(matches === undefined ? {} : { matches }) };
@@ -82,13 +82,13 @@ function typed(row: Record<string, unknown>, b: ItemBase): ProtocolItem {
     case "subagent": return { ...b, type: "subagent", title: str(row.title) };
     case "plan": {
       const explanation = maybe(row.explanation, str);
-      return { ...b, type: "plan", steps: many(row.steps, value => { const step = obj(value); return { text: str(step.text), status: pick(step.status, ["pending", "in_progress", "completed"] as const) }; }, 128), ...(explanation === undefined ? {} : { explanation }) };
+      return { ...b, type: "plan", steps: many(row.steps, value => { const step = obj(value); return { text: str(step.text), status: pick(step.status, ["pending", "in_progress", "completed"] as const) }; }), ...(explanation === undefined ? {} : { explanation }) };
     }
     case "plan_proposal": return { ...b, type: "plan_proposal", markdown: str(row.markdown) };
     case "recap": { const ask = maybe(row.ask, str), actions = maybe(row.actions, words); return { ...b, type: "recap", summary: str(row.summary), ...(ask === undefined ? {} : { ask }), ...(actions === undefined ? {} : { actions }) }; }
     case "approval": {
       const decision = maybe(row.decision, value => { const made = obj(value); return { role: pick(made.role, APPROVAL_ROLES), by: pick(made.by, ["user", "policy", "timeout", "harness"] as const), at: amount(made.at) }; });
-      return { ...b, type: "approval", subject: pick(row.subject, APPROVAL_SUBJECTS), title: str(row.title), options: many(row.options, value => { const option = obj(value); return { id: str(option.id), role: pick(option.role, APPROVAL_ROLES), label: str(option.label) }; }, 16), ...(decision === undefined ? {} : { decision }) };
+      return { ...b, type: "approval", subject: pick(row.subject, APPROVAL_SUBJECTS), title: str(row.title), options: many(row.options, value => { const option = obj(value); return { id: str(option.id), role: pick(option.role, APPROVAL_ROLES), label: str(option.label) }; }), ...(decision === undefined ? {} : { decision }) };
     }
     case "question": { const answer = maybe(row.answer, str); return { ...b, type: "question", title: str(row.title), ...(answer === undefined ? {} : { answer }) }; }
     case "notice": { const code = maybe(row.code, str), more = maybe(row.more, str); return { ...b, type: "notice", severity: pick(row.severity, ["info", "warning"] as const), text: str(row.text), ...(code === undefined ? {} : { code }), ...(more === undefined ? {} : { more }) }; }
@@ -128,11 +128,17 @@ function item(value: unknown, index: number): ReadItem {
   }
 }
 
-/** A Turn as the Gateway sent it, or undefined when it is not a Turn of this protocol (the Run is then drawn without it). */
-export function decodeProtocolTurn(value: unknown): ReadTurn | undefined {
+/** What reading a Run's `protocol` gave: the Turn, or why it cannot be read, which the page says in place of the Turn and never hides. */
+export type ProtocolRead = { readonly turn: ReadTurn } | { readonly problem: string };
+
+/** A Turn as the Gateway sent it, or the reason it cannot be read (not this protocol's version, no items, no executor). */
+export function decodeProtocolTurn(value: unknown): ProtocolRead {
+  if (value === undefined || value === null) return { problem: "服务没有给出这一轮的协议数据" };
+  let row: Record<string, unknown>;
+  try { row = obj(value); } catch { return { problem: "这一轮的协议数据不是一个对象" }; }
+  if (row.version !== PROTOCOL_VERSION) return { problem: `协议版本 ${typeof row.version === "string" ? row.version : "未知"}，这个页面只认 ${PROTOCOL_VERSION}` };
+  if (!Array.isArray(row.items)) return { problem: "这一轮的协议数据里，条目不是一个列表" };
   try {
-    const row = obj(value);
-    if (row.version !== PROTOCOL_VERSION || !Array.isArray(row.items) || row.items.length > 4096) return undefined;
     const stopReason = maybe(row.stopReason, value => typeof value === "string" && (STOP_REASONS as readonly string[]).includes(value) ? value as typeof STOP_REASONS[number] : "unknown" as const);
     const startedAt = maybe(row.startedAt, amount), durationMs = maybe(row.durationMs, amount);
     let reading: ReturnType<typeof usage>;
@@ -144,7 +150,7 @@ export function decodeProtocolTurn(value: unknown): ReadTurn | undefined {
       seen.set(read.id, again);
       return again === 1 ? read : { ...read, id: read.id + "~" + again };
     });
-    return { version: PROTOCOL_VERSION, runId: runId(row.runId), n: int(row.n), status: pick(row.status, TURN_STATUSES), ...(stopReason === undefined ? {} : { stopReason }),
-      executor: executor(row.executor), usage: reading, ...(startedAt === undefined ? {} : { startedAt }), ...(durationMs === undefined ? {} : { durationMs }), items };
-  } catch { return undefined; }
+    return { turn: { version: PROTOCOL_VERSION, runId: runId(row.runId), n: int(row.n), status: pick(row.status, TURN_STATUSES), ...(stopReason === undefined ? {} : { stopReason }),
+      executor: executor(row.executor), usage: reading, ...(startedAt === undefined ? {} : { startedAt }), ...(durationMs === undefined ? {} : { durationMs }), items } };
+  } catch { return { problem: "这一轮的协议数据缺少必需的内容（运行编号、轮次、状态或执行者）" }; }
 }

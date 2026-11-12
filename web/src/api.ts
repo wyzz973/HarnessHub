@@ -355,27 +355,6 @@ function nativeInputs(value: unknown): NativeInputs { const row = record(value);
 /** Marks a request body that is sent as raw bytes with its own media type instead of JSON. */
 class RawBody { constructor(readonly blob: Blob) {} }
 function optionalNumber(value: unknown): number | undefined { return value === undefined ? undefined : number(value); }
-function decodeUsage(value: unknown): NativeUsage {
-  const row = record(value), turn = row.turn === undefined ? undefined : record(row.turn), context = row.context === undefined ? undefined : record(row.context), cost = row.cost === undefined ? undefined : record(row.cost);
-  const tokens = (key: string) => { const amount = turn === undefined ? undefined : optionalNumber(turn[key]); return amount === undefined ? {} : { [key]: amount }; };
-  return { ...(turn === undefined ? {} : { turn: { ...tokens("input"), ...tokens("output"), ...tokens("cachedInput"), ...tokens("cacheWrite"), ...tokens("reasoning"), ...tokens("total") } }),
-    ...(context === undefined ? {} : { context: { used: number(context.used), ...(context.size === undefined ? {} : { size: number(context.size) }) } }),
-    ...(cost === undefined ? {} : { cost: { amount: typeof cost.amount === "number" && Number.isFinite(cost.amount) && cost.amount >= 0 ? cost.amount : invalid(), currency: text(cost.currency), scope: choice(cost.scope, ["turn", "session"]) } }) };
-}
-function decodeActivityFields(row: Record<string, unknown>): Pick<PublicRun, "plan" | "usage" | "notices" | "activities" | "outputs"> {
-  return { ...(row.plan === undefined ? {} : { plan: (() => { const plan = record(row.plan); return { entries: list(plan.entries, value => { const entry = record(value); return { content: text(entry.content), status: choice(entry.status, ["pending", "in_progress", "completed"]), ...(entry.priority === undefined ? {} : { priority: choice(entry.priority, ["high", "medium", "low"]) }) }; }, 64), ...(plan.explanation === undefined ? {} : { explanation: text(plan.explanation) }) }; })() }),
-    ...(row.usage === undefined ? {} : { usage: decodeUsage(row.usage) }),
-    ...(row.notices === undefined ? {} : { notices: list(row.notices, value => { const notice = record(value); return { severity: choice(notice.severity, ["info", "warning", "error"]), title: text(notice.title), ...(notice.detail === undefined ? {} : { detail: text(notice.detail) }) }; }, 32) }),
-    ...(row.activities === undefined ? {} : { activities: list(row.activities, value => { const activity = record(value); return { id: text(activity.id), kind: choice(activity.kind, ["subagent", "task", "compaction", "retry", "review"]), title: text(activity.title), status: choice(activity.status, ["running", "completed", "failed", "cancelled"]), ...(activity.detail === undefined ? {} : { detail: text(activity.detail) }) }; }, 64) }),
-    ...(row.outputs === undefined ? {} : { outputs: list(row.outputs, value => { const output = record(value);
-      return output.kind === "content" ? { kind: "content" as const, content: contentRef(output.content) }
-        : output.kind === "link" ? { kind: "link" as const, uri: text(output.uri), name: text(output.name), ...(output.title === undefined ? {} : { title: text(output.title) }), ...(output.mediaType === undefined ? {} : { mediaType: text(output.mediaType) }) } : invalid(); }, 32) }) };
-}
-function decodeTool(value: unknown): NonNullable<PublicRun["tools"]>[number] {
-  const tool = record(value);
-  return { id: text(tool.id), title: text(tool.title), status: text(tool.status), ...(tool.kind === undefined ? {} : { kind: text(tool.kind) }), ...(tool.name === undefined ? {} : { name: text(tool.name) }),
-    ...(tool.parentId === undefined ? {} : { parentId: text(tool.parentId) }), ...(tool.exitCode === undefined ? {} : { exitCode: number(tool.exitCode) }), ...(tool.detail === undefined ? {} : { detail: contentRef(tool.detail) }) };
-}
 /** When the Run reached its phases; each present phase is a finite number, as the Gateway recorded it. */
 function decodeTiming(value: unknown): NonNullable<PublicRun["timing"]> {
   const row = record(value), at = (raw: unknown) => { const time = number(raw); return time; };
@@ -392,19 +371,10 @@ function decodeRun(value: unknown): PublicRun {
     sourceRunIds: list(row.sourceRunIds, runId, 256), backend: backend === null ? null : { status: choice(backend.status, ["completed", "cancelled", "failed"]), reason: text(backend.reason),
       ...(backend.error === undefined ? {} : { error: publicError(backend.error) ?? invalid() }) },
     cleanup: cleanup === null ? null : { closed: true, exitCode: nullableNumber(cleanup.exitCode), signal: nullableText(cleanup.signal), protocolFailure: publicError(cleanup.protocolFailure) },
-    error: publicError(row.error), ...(row.thinking === undefined ? {} : { thinking: text(row.thinking) }), ...(row.tools === undefined ? {} : { tools: list(row.tools, decodeTool, 128) }), ...decodeActivityFields(row),
+    error: publicError(row.error),
     ...(row.attachments === undefined ? {} : { attachments: list(row.attachments, contentRef, 8) }), ...(row.timing === undefined ? {} : { timing: decodeTiming(row.timing) }),
     ...(row.retained === undefined ? {} : { retained: row.retained === true ? true as const : invalid() }), ...(row.reused === undefined ? {} : { reused: row.reused === true ? true as const : invalid() }),
     ...relayField(row.relay), ...protocolField(row.protocol), stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
-}
-/**
- * The Run as the protocol (hh/1) tells it, when the Gateway says so. Read leniently, like the relay facts: a Gateway without it, or
- * one whose Turn this page cannot read, gives a Run without it, and the Run is drawn from the facts it always had; an item of a type
- * this page does not know is kept as one line saying so (decodeProtocolTurn), never an invalid response.
- */
-function protocolField(value: unknown): Pick<PublicRun, "protocol"> {
-  const protocol = value === undefined ? undefined : decodeProtocolTurn(value);
-  return protocol === undefined ? {} : { protocol };
 }
 /**
  * The relay facts a Turn carries (which packet, how its context continued, where it ran, and the delivery a newer Gateway
@@ -414,6 +384,15 @@ function protocolField(value: unknown): Pick<PublicRun, "protocol"> {
 function relayField(value: unknown): Pick<PublicRun, "relay"> {
   const relay = value === undefined ? null : decodeRunRelay(value);
   return relay === null ? {} : { relay };
+}
+/**
+ * The Run as the protocol (hh/1) tells it: the one record the page draws a Run from. A Gateway that gives none, or one whose Turn this
+ * page cannot read (decodeProtocolTurn), gives a Run with the reason instead, which the page says where the Turn would be; an item
+ * of a type the page does not know is kept as one line saying so, never an invalid response.
+ */
+function protocolField(value: unknown): Pick<PublicRun, "protocol" | "protocolProblem"> {
+  const read = decodeProtocolTurn(value);
+  return "turn" in read ? { protocol: read.turn } : { protocolProblem: read.problem };
 }
 function decodeSwitch(value: unknown): PublicSwitch {
   const row = record(value);

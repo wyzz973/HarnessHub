@@ -1,35 +1,16 @@
-import { Bot, Brain, Check, ChevronRight, Circle, Download, FilePen, FilePlus, FileText, Globe, Image, Info, Layers, Link, Plug, RotateCcw, ScanSearch, Search, SquareTerminal, TriangleAlert, Wrench } from "lucide-react";
-import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Check, Circle, Download, Info, Link, TriangleAlert } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { ContentRef } from "../../../src/contracts/content.js";
-import type { NativeUsage } from "../../../src/contracts/control.js";
-import { ITEM_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
-import type { PublicActivity, PublicNotice, PublicOutput, PublicPlan } from "../../../src/contracts/session.js";
+import type { PlanStep } from "../../../src/contracts/protocol.js";
+import type { PublicOutput } from "../../../src/contracts/session.js";
 import { contentUrl, errorMessage, type ToolDetailView } from "../api.js";
 import { cn } from "../lib/cn.js";
-import { bytes, compact } from "../lib/format.js";
-import { diffTotals, groupSteps, knownToolDetail, parseUnifiedDiff, readsLabel, readToolDetail, stepLabel, TOOL_PENDING, TOOL_STATUS, toolCategory, toolFailed, toolTree, toolUnfinished, wantedVerb, type DiffFile, type Step, type Tool } from "../lib/turn.js";
-import { Collapsible, DrawnCheck, motionStyle, useReducedMotion } from "../ui/motion.js";
+import { bytes } from "../lib/format.js";
+import { knownToolDetail, parseUnifiedDiff, readToolDetail, type DiffFile } from "../lib/turn.js";
 import { Spinner } from "../ui/primitives.js";
 
 export type ToolDetailLoader = (content: ContentRef) => Promise<ToolDetailView>;
-
-/** The icon of a kind of step (Icons board: 读取 file-text, 修改 file-pen, 新建 file-plus, 运行 square-terminal). */
-export function toolIcon(kind: string | undefined, size = 15): ReactNode {
-  switch (kind) {
-    case "execute": return <SquareTerminal size={size} aria-hidden="true"/>;
-    case "edit": case "delete": case "move": return <FilePen size={size} aria-hidden="true"/>;
-    case "create": return <FilePlus size={size} aria-hidden="true"/>;
-    case "read": return <FileText size={size} aria-hidden="true"/>;
-    case "search": return <Search size={size} aria-hidden="true"/>;
-    case "fetch": return <Globe size={size} aria-hidden="true"/>;
-    case "mcp": return <Plug size={size} aria-hidden="true"/>;
-    case "subagent": return <Bot size={size} aria-hidden="true"/>;
-    case "think": return <Brain size={size} aria-hidden="true"/>;
-    case "image": return <Image size={size} aria-hidden="true"/>;
-    default: return <Wrench size={size} aria-hidden="true"/>;
-  }
-}
 
 /**
  * A stored tool detail, read when `enabled` (a step opened, or an edit whose line counts are shown) and shared with every
@@ -92,168 +73,33 @@ export function StoredDetail({ content, fallback, load, native }: { readonly con
     </> : null}
   </div>;
 }
-function ToolDetail({ tool, load }: { readonly tool: Tool; readonly load: ToolDetailLoader | undefined }) {
-  return <StoredDetail content={tool.detail} fallback={tool.title} load={load}/>;
-}
-
 /**
- * Whether a step just finished in front of the reader: its spinner turns into a check drawn in 240 ms (Motion board #06),
- * which stays 1.2 s before the step shows the icon of its kind again, as the Conversation board draws finished steps.
- * Reduced motion shows the icon at once. Steps found finished, or that failed, never draw a check.
+ * The task list a Harness reported (Conversation board): finished steps checked and struck through, the one in progress in blue, the rest
+ * open. `owner` names whose list it is.
  */
-function useJustDone(pending: boolean, done: boolean, reduced: boolean): { readonly check: boolean; readonly after: boolean } {
-  const [was, setWas] = useState(pending);
-  const [check, setCheck] = useState(false);
-  const [after, setAfter] = useState(false);
-  if (was !== pending) { setWas(pending); if (was && !pending && done && !reduced) setCheck(true); }
-  useEffect(() => {
-    if (!check) return;
-    const timer = setTimeout(() => { setCheck(false); setAfter(true); }, 1200);
-    return () => clearTimeout(timer);
-  }, [check]);
-  return { check, after };
-}
-
-/**
- * The steps a reader has already seen, owned by the view that shows a Turn: a list adds every step it shows, and only steps
- * not in it come in (Motion board #05). A list without one counts what it shows first as history.
- */
-export type SeenSteps = Set<string>;
-
-interface StepProps {
-  readonly step: Step; readonly active: boolean; readonly loadDetail: ToolDetailLoader | undefined; readonly children: ReadonlyMap<string, readonly Tool[]>; readonly fresh: boolean; readonly reduced: boolean; readonly seen: SeenSteps | undefined;
-  /** An approval waiting in the composer's place asks for this step (ADR-054 ruling J). */
-  readonly asking?: boolean;
-}
-/**
- * One step of the process (Conversation board): the icon of its kind (a spinner while it runs), the verb in its tense, what
- * it acted on, and what came of it: lines added and removed by an edit, the exit code of a command, a failure in red. A
- * step with stored detail opens its raw input and output; consecutive reads open the reads they group. While an approval
- * asks for it, the step does not run: it keeps the icon of its kind, still, and says what it wants to do in the words of
- * the process line ("想运行"); once decided it runs ("正在运行") or ends as it ends (ruling J).
- */
-const StepItem = memo(function StepItem({ step, active, loadDetail, children, fresh, reduced, seen, asking = false }: StepProps) {
-  const [open, setOpen] = useState(false);
-  const [entering] = useState(fresh);
-  const panel = useId();
-  const tools = step.kind === "reads" ? step.tools : [step.tool], first = tools[0]!;
-  const nested = step.kind === "tool" ? children.get(first.id) ?? [] : [];
-  const unended = active && tools.some(tool => TOOL_PENDING.has(tool.status)), wants = asking && unended, pending = unended && !wants;
-  const failed = tools.some(toolFailed), unfinished = tools.some(tool => toolUnfinished(tool, active));
-  const done = !unended && !failed && !unfinished && tools.every(tool => !TOOL_PENDING.has(tool.status));
-  // A step that waited for its approval and then ended in front of the reader still draws its check.
-  const { check, after } = useJustDone(unended, done, reduced);
-  const category = toolCategory(first, nested.length > 0), edit = step.kind === "tool" && category === "edit";
-  // An edit's diff gives its line counts and whether it created the file: read as soon as the step is shown.
-  const { detail } = useToolDetail(edit ? first.detail : undefined, loadDetail, edit);
-  const diff = useMemo(() => detail?.diff ? diffTotals(parseUnifiedDiff(detail.diff, first.title)) : null, [detail, first.title]);
-  const label = step.kind === "reads" ? readsLabel(step.tools) : stepLabel(first, nested.length > 0);
-  const verb = wants ? wantedVerb(label) : pending ? label.running : diff?.created && label.verb === "修改" ? "新建" : label.verb;
-  const expandable = step.kind === "reads" || first.detail !== undefined && loadDetail !== undefined;
-  const iconKind = nested.length ? "subagent" : diff?.created ? "create" : first.kind;
-  const icon = pending ? <Spinner size={14} tone="run" label=""/> : check ? <DrawnCheck size={15} className="text-fg-3"/>
-    : <span className={cn("flex", after && "motion-fade-in", failed || unfinished ? "text-red" : category === "edit" ? "text-fg-2" : "text-fg-3")} style={after ? motionStyle({ duration: 120 }) : undefined}>{toolIcon(iconKind, 15)}</span>;
-  const note = nested.length ? <span>子 Agent · {nested.length} 个工具</span>
-    : step.kind === "tool" && first.exitCode !== undefined ? <span className={first.exitCode === 0 ? undefined : "text-red"}>退出码 {first.exitCode}</span> : null;
-  const status = unfinished ? <span className="text-red" title="回合结束时原程序没有报告这个工具已结束；它可能执行过，也可能没有">未完成</span>
-    : failed ? <span className="text-red">{TOOL_STATUS[tools.find(toolFailed)!.status] ?? "失败"}</span>
-    : wants ? null : pending && !label.verb ? <span className="text-accent-text">进行中</span>
-    : !pending && !done && step.kind === "tool" && first.status !== "completed" ? <span>{TOOL_STATUS[first.status] ?? first.status}</span> : null;
-  const facts = diff && (diff.add || diff.del) ? <span className="mono flex gap-1.5 text-[11px]">{diff.add ? <span className="text-add-on-tint">+{diff.add}</span> : null}{diff.del ? <span className="text-del-on-tint">−{diff.del}</span> : null}</span> : null;
-  const right = facts || note || status ? <span className={cn("flex flex-none items-center gap-2 whitespace-nowrap text-caption text-fg-3", check && "motion-fade-in")}>{facts}{note}{status}</span> : null;
-  const content = <>
-    <span className="flex size-[15px] flex-none items-center justify-center">{icon}</span>
-    {verb ? <><span className="flex-none text-fg-2">{verb}</span>{" "}</> : null}
-    <span className={cn("min-w-0 trunc", label.verb && step.kind === "tool" && category !== "other" ? "font-mono text-code text-fg" : step.kind === "reads" ? "font-mono text-code text-fg" : "text-fg")} title={step.kind === "reads" ? step.tools.map(tool => tool.title).join("\n") : first.title}>{label.target}</span>
-    <span className="min-w-2 flex-1"/>
-    {right}
-    {expandable ? <ChevronRight size={12} strokeWidth={2.2} className={cn("flex-none text-fg-3 opacity-0 transition-[rotate,opacity] duration-200 ease-expo group-hover/step:opacity-100 group-focus-visible/step:opacity-100 keyboard:transition-none", open && "rotate-90 opacity-100")} aria-hidden="true"/> : null}
-  </>;
-  const row = "group/step flex min-h-[30px] w-full min-w-0 items-center gap-[9px] rounded-row px-1.5 py-[5px] text-left text-ui-sm leading-[18px]";
-  // A step that opens tints when pointed at (Motion board #30: its background, 120 ms on the standard curve, from .row). The
-  // button's bg-transparent utility would outrank .row:hover, so the tint is a utility of its own; the focus ring is .row's.
-  return <li className={cn("native-tool min-w-0", failed && "is-failed", open && "is-open", entering && "motion-row-in")}>
-    {expandable ? <button type="button" className={cn(row, "row border-none bg-transparent text-fg hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => setOpen(value => !value)}
-      title={step.kind === "reads" ? "查看每一次读取" : "查看工具输入与输出"}>{content}</button>
-      : <div className={row}>{content}</div>}
-    {expandable ? <Collapsible open={open} id={panel}>
-      {step.kind === "reads" ? <ol className="m-0 mb-1 ml-[30px] flex list-none flex-col gap-px p-0" aria-label={"读取的文件：" + step.tools.length + " 个"}>
-        {step.tools.map(tool => <StepItem key={tool.id} step={{ kind: "tool", key: tool.id, tool }} active={active} loadDetail={loadDetail} children={children} fresh={false} reduced={reduced} seen={seen}/>)}</ol>
-        : <ToolDetail tool={first} load={loadDetail}/>}
-    </Collapsible> : null}
-    {nested.length ? <StepList tools={nested} all={children} active={active} loadDetail={loadDetail} seen={seen} label={"子 Agent 的工具：" + first.title} className="mb-1 ml-[13px] border-l border-line-strong pl-2"/> : null}
-  </li>;
-});
-
-function StepList({ tools, all, active, loadDetail, seen: known, label, className, asking }: { readonly tools: readonly Tool[]; readonly all: ReadonlyMap<string, readonly Tool[]>; readonly active: boolean; readonly loadDetail: ToolDetailLoader | undefined; readonly seen: SeenSteps | undefined; readonly label: string; readonly className?: string; readonly asking?: string | undefined }) {
-  const reduced = useReducedMotion();
-  // Steps the reader has seen are history; the others come in (Motion board #05). Without a record from the Turn, the steps
-  // present when this list is first shown are history.
-  const seen = useRef<SeenSteps | null>(null);
-  seen.current ??= known ?? new Set(tools.map(tool => tool.id));
-  useLayoutEffect(() => { for (const tool of tools) seen.current!.add(tool.id); }, [tools]);
-  const steps = useMemo(() => groupSteps(tools, all, asking), [tools, all, asking]);
-  return <ul className={cn("native-tools m-0 flex list-none flex-col gap-px p-0", className)} aria-label={label}>
-    {steps.map(step => <StepItem key={step.key} step={step} active={active} loadDetail={loadDetail} children={all} fresh={!seen.current!.has(step.key)} reduced={reduced} seen={known} asking={step.kind === "tool" && step.tool.id === asking}/>)}
-  </ul>;
-}
-/**
- * A Turn's tools as steps, in call order (ADR-054 §5): consecutive reads are one group, and a tool whose parent call is
- * listed is shown under it, as the sub-agent work of that call. `seen` is the Turn's record of the steps its reader saw;
- * `asking` names the step a waiting approval asks for (askingStep), which says what it wants to do instead of running.
- */
-export function ToolList({ tools, active, loadDetail, seen, asking }: { tools: readonly Tool[]; active: boolean; loadDetail: ToolDetailLoader | undefined; seen?: SeenSteps | undefined; asking?: string | undefined }) {
-  const { roots, children } = useMemo(() => toolTree(tools), [tools]);
-  return <StepList tools={roots} all={children} active={active} loadDetail={loadDetail} seen={seen} label="工具活动" asking={asking}/>;
-}
-
-/**
- * The plan a program reported (Conversation board): finished steps checked and struck through, the one in progress in
- * blue, the rest open. `owner` names whose plan it is.
- */
-export function PlanView({ plan, owner, compact: small = false }: { plan: PublicPlan; owner?: string; compact?: boolean }) {
-  const done = plan.entries.filter(entry => entry.status === "completed").length;
+export function PlanView({ steps, explanation, owner, compact: small = false }: { readonly steps: readonly PlanStep[]; readonly explanation?: string | undefined; readonly owner?: string; readonly compact?: boolean }) {
+  const done = steps.filter(step => step.status === "completed").length;
   return <section className={cn("native-plan flex flex-col", small ? "gap-2" : "gap-2.5")} aria-label="计划">
-    <p className="m-0 text-caption text-fg-3">{owner ? owner + " 维护的计划" : "计划"} · {done} / {plan.entries.length} 完成</p>
-    {plan.explanation ? <p className="m-0 text-ui-sm text-fg-2">{plan.explanation}</p> : null}
-    <ol className={cn("m-0 flex list-none flex-col p-0", small ? "gap-2" : "gap-2.5")}>{plan.entries.map((entry, index) => <li key={index} className="flex items-start gap-2 text-ui-sm">
-      <span role="img" aria-label={entry.status === "completed" ? "已完成" : entry.status === "in_progress" ? "进行中" : "待办"} className={cn("mt-[2.5px] flex flex-none", entry.status === "completed" ? "text-fg-3" : entry.status === "in_progress" ? "text-run" : "text-placeholder")}>
-        {entry.status === "completed" ? <Check size={15} strokeWidth={1.9} aria-hidden="true"/> : <Circle size={15} strokeWidth={1.9} aria-hidden="true"/>}
+    <p className="m-0 text-caption text-fg-3">{owner ? owner + " 维护的计划" : "计划"} · {done} / {steps.length} 完成</p>
+    {explanation ? <p className="m-0 text-ui-sm text-fg-2">{explanation}</p> : null}
+    <ol className={cn("m-0 flex list-none flex-col p-0", small ? "gap-2" : "gap-2.5")}>{steps.map((step, index) => <li key={index} className="flex items-start gap-2 text-ui-sm">
+      <span role="img" aria-label={step.status === "completed" ? "已完成" : step.status === "in_progress" ? "进行中" : "待办"} className={cn("mt-[2.5px] flex flex-none", step.status === "completed" ? "text-fg-3" : step.status === "in_progress" ? "text-run" : "text-placeholder")}>
+        {step.status === "completed" ? <Check size={15} strokeWidth={1.9} aria-hidden="true"/> : <Circle size={15} strokeWidth={1.9} aria-hidden="true"/>}
       </span>
-      <span className={cn("min-w-0 flex-1", entry.status === "completed" ? "text-fg-3 line-through decoration-line-strong" : entry.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{entry.content}</span>
-      {entry.priority === "high" ? <small className="badge flex-none">高优先</small> : null}
+      <span className={cn("min-w-0 flex-1", step.status === "completed" ? "text-fg-3 line-through decoration-line-strong" : step.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{step.text}</span>
     </li>)}</ol>
   </section>;
 }
 /**
  * What the program announced during the Turn. Its warnings stay neutral (amber means only "waiting for you"); errors are red.
  */
-export function NoticeList({ notices }: { notices: readonly PublicNotice[] }) {
+export interface Announcement { readonly severity: "info" | "warning" | "error"; readonly title: string; readonly detail?: string }
+export function NoticeList({ notices }: { notices: readonly Announcement[] }) {
   return <div className="flex flex-col gap-1.5">{notices.map((notice, index) => <div key={index} role={notice.severity === "error" ? "alert" : "status"}
     className={cn("native-notice flex items-start gap-2.5 rounded-block px-3 py-2.5 text-ui-sm", notice.severity === "error" ? "bg-red-soft" : "bg-surface shadow-hairline")}>
     {notice.severity === "info" ? <Info size={16} className="mt-0.5 flex-none text-fg-3" aria-hidden="true"/> : <TriangleAlert size={16} className={cn("mt-0.5 flex-none", notice.severity === "error" ? "text-red" : "text-fg-2")} aria-hidden="true"/>}
     <div className="min-w-0"><strong className={cn("font-semibold", notice.severity === "error" && "text-red-on-tint")}>{notice.title}</strong>{notice.detail ? <p className="m-0 mt-0.5 break-words text-fg-2">{notice.detail}</p> : null}</div>
   </div>)}</div>;
-}
-export const ACTIVITY_KIND: Readonly<Record<PublicActivity["kind"], string>> = { subagent: "子 Agent", task: "后台任务", compaction: "上下文压缩", retry: "自动重试", review: "代码审查" };
-export const ACTIVITY_STATUS: Readonly<Record<PublicActivity["status"], string>> = { running: ITEM_STATUS_WORDS.running, completed: ITEM_STATUS_WORDS.completed, failed: ITEM_STATUS_WORDS.failed, cancelled: ITEM_STATUS_WORDS.cancelled };
-function activityIcon(kind: PublicActivity["kind"]): ReactNode {
-  switch (kind) {
-    case "compaction": return <Layers size={15} aria-hidden="true"/>;
-    case "retry": return <RotateCcw size={15} aria-hidden="true"/>;
-    case "review": return <ScanSearch size={15} aria-hidden="true"/>;
-    default: return <Bot size={15} aria-hidden="true"/>;
-  }
-}
-/** The program's own activities (sub-agents, background tasks, context compaction), as steps of the process. */
-export function ActivityList({ activities }: { activities: readonly PublicActivity[] }) {
-  return <ul className="m-0 flex list-none flex-col gap-px p-0" aria-label="原生活动">{activities.map(activity => <li key={activity.id} className="flex min-h-[30px] min-w-0 items-center gap-[9px] px-1.5 py-[5px] text-ui-sm leading-[18px]">
-    <span className={cn("flex size-[15px] flex-none items-center justify-center", activity.status === "failed" ? "text-red" : "text-fg-3")}>{activity.status === "running" ? <Spinner size={14} tone="run" label=""/> : activityIcon(activity.kind)}</span>
-    <span className="flex-none text-fg-2">{ACTIVITY_KIND[activity.kind]}</span>{" "}
-    <span className="min-w-0 trunc text-fg">{activity.title}{activity.detail ? <span className="text-fg-3"> · {activity.detail}</span> : null}</span>
-    <span className="min-w-2 flex-1"/>
-    <span className={cn("flex-none whitespace-nowrap text-caption", activity.status === "failed" ? "text-red" : activity.status === "running" ? "text-accent-text" : "text-fg-3")}>{ACTIVITY_STATUS[activity.status]}</span>
-  </li>)}</ul>;
 }
 /** Files, images and links the program produced; an image is shown, files are downloaded, links open elsewhere. */
 export function OutputList({ outputs }: { outputs: readonly PublicOutput[] }) {
@@ -263,34 +109,4 @@ export function OutputList({ outputs }: { outputs: readonly PublicOutput[] }) {
     : output.content.kind === "image"
       ? <a key={index} className="block overflow-hidden rounded-block shadow-hairline" href={contentUrl(output.content)} target="_blank" rel="noopener noreferrer" title={output.content.name}><img className="block max-h-64 max-w-full" src={contentUrl(output.content)} alt={output.content.name} loading="lazy"/></a>
       : <a key={index} className={chip} href={contentUrl(output.content, true)} download={output.content.name}><Download size={14} className="text-fg-3" aria-hidden="true"/><span className="trunc">{output.content.name}</span><small className="text-caption text-fg-3">{bytes(output.content.bytes)}</small></a>)}</div>;
-}
-/**
- * The usage facts under a finished reply (Conversation board: "输入 18.2k · 输出 0.6k · ¥0.21"), each only when the program
- * reported it; scopes stay explicit. The context share belongs to the composer's status bar and the details, not here,
- * unless `context` asks for it.
- */
-export function usageParts(usage: NativeUsage, context = false): readonly string[] {
-  const parts: string[] = [];
-  if (usage.turn?.input !== undefined) parts.push("输入 " + compact(usage.turn.input));
-  if (usage.turn?.output !== undefined) parts.push("输出 " + compact(usage.turn.output));
-  if (context && usage.context) parts.push("上下文 " + (usage.context.size ? Math.round(usage.context.used / usage.context.size * 100) + "%" : compact(usage.context.used)));
-  if (usage.cost) parts.push((usage.cost.currency === "USD" ? "$" : usage.cost.currency === "CNY" ? "¥" : usage.cost.currency + " ") + money(usage.cost.amount) + (usage.cost.scope === "session" ? "（会话累计）" : ""));
-  return parts;
-}
-/** An amount with two decimals, or up to four for small amounts, without trailing zeros: 0.21, 0.0012, 3.06. */
-function money(amount: number): string {
-  if (amount >= 1) return amount.toFixed(2);
-  const fine = amount.toFixed(4).replace(/0+$/u, "");
-  return (fine.split(".")[1] ?? "").length < 2 ? amount.toFixed(2) : fine;
-}
-export function UsageLine({ usage }: { usage: NativeUsage }) {
-  const parts = usageParts(usage);
-  return parts.length ? <span className="native-usage">{parts.join(" · ")}</span> : null;
-}
-export function usageFacts(usage: NativeUsage): readonly (readonly [string, string])[] {
-  const turn = usage.turn, facts: (readonly [string, string])[] = [];
-  if (turn) facts.push(["本轮用量", [["输入", turn.input], ["输出", turn.output], ["缓存读取", turn.cachedInput], ["缓存写入", turn.cacheWrite], ["推理", turn.reasoning], ["合计", turn.total]].filter(([, value]) => value !== undefined).map(([label, value]) => label + " " + Number(value).toLocaleString()).join(" · ")]);
-  if (usage.context) facts.push(["上下文", usage.context.used.toLocaleString() + (usage.context.size ? " / " + usage.context.size.toLocaleString() + " tokens（" + Math.round(usage.context.used / usage.context.size * 100) + "%）" : " tokens")]);
-  if (usage.cost) facts.push(["费用", usage.cost.amount.toFixed(4) + " " + usage.cost.currency + " · " + (usage.cost.scope === "session" ? "原生会话累计" : "本轮")]);
-  return facts;
 }

@@ -1,6 +1,7 @@
 import { ITEM_STATUS_WORDS } from "../../../../src/contracts/protocol-words.js";
 import { WORK_TYPES, type FileOp, type ItemStatus, type ReasoningItem, type WorkItem } from "../../../../src/contracts/protocol.js";
 import type { ReadItem, ReadTurn } from "../../../../src/contracts/protocol-read.js";
+import type { PublicMessage } from "../../../../src/contracts/session.js";
 
 /*
  * What the page says of the actions of a Turn, from the protocol's items alone (docs/proposals/protocol/hub-protocol.html §13): one
@@ -289,35 +290,70 @@ export function lay(items: readonly ReadItem[]): readonly Block[] {
 }
 
 /**
- * A Turn's items laid out (`lay`), with what happened inside a delegated task hung under that task instead of beside it, and an action
- * still open when the Turn is over taken as unknown (`settled`).
+ * A Turn's items laid out (`lay`), with what happened inside a delegated task hung under that task instead of beside it, an action still
+ * open when the Turn is over taken as unknown (`settled`), and, while the Turn waits for an approval (`asking`), the step it asks for
+ * marked as waiting: the latest of the Turn's own actions that has not ended (a delegated task, when the approval is for one of its
+ * tools: which of them it is, is not guessed at). Its line then says what it wants to do, with the state's word, "等你处理".
  */
-export function arrange(turn: Pick<ReadTurn, "status" | "items">): Arrangement {
+export function arrange(turn: Pick<ReadTurn, "status" | "items">, options: { readonly asking?: boolean } = {}): Arrangement {
   const over = turnOver(turn), items = turn.items.map(item => settled(item, over));
   const tasks = new Set(items.filter(item => item.type === "subagent").map(item => item.id));
+  // The task an item happened inside, when that task is one of the Turn's own. A chain of tasks that leads back to itself is shown flat, so that every item is shown once.
+  const parents = new Map(items.map(item => [item.id, item.parentId !== undefined && tasks.has(item.parentId) && item.parentId !== item.id ? item.parentId : undefined]));
+  const looped = (item: ReadItem): boolean => {
+    const seen = new Set([item.id]);
+    for (let id = parents.get(item.id); id !== undefined; id = parents.get(id)) { if (seen.has(id)) return true; seen.add(id); }
+    return false;
+  };
   const children = new Map<string, ReadItem[]>(), top: ReadItem[] = [];
   for (const item of items) {
-    if (item.parentId !== undefined && tasks.has(item.parentId) && item.parentId !== item.id) children.set(item.parentId, [...(children.get(item.parentId) ?? []), item]);
+    const parent = parents.get(item.id);
+    if (parent !== undefined && !looped(item)) children.set(parent, [...(children.get(parent) ?? []), item]);
     else top.push(item);
   }
-  return { blocks: lay(top), children, over };
-}
-
-/** Whether a run of actions is open when the page opens it: while it goes on, when something in it failed, is unknown or waits for you, or in the detailed density. */
-export function opensByDefault(block: WorkBlock, active: boolean, detailed: boolean): boolean {
-  if (detailed) return true;
-  const state = (status: ItemStatus) => status === "pending" || status === "running" || status === "waiting" || status === "failed" || status === "unknown";
-  return block.work.some(item => state(item.status)) || active && block.tail;
+  const asked = options.asking === true && !over ? askingFor(items) : undefined;
+  return { blocks: lay(asked === undefined ? top : top.map(item => item === asked ? { ...item, status: "waiting" } as ReadItem : item)), children, over };
 }
 
 /**
- * Whether the items already show that the Turn is working: an action, a thought or an approval in progress, or a reply that has
- * text. While nothing does (the Turn is being queued or started, or the model has not answered yet), the page draws a line of its
- * own to say what the Turn is waiting for. `hasText` says whether a reply item has text to show yet.
+ * The action an approval that waits is about, as far as the Turn's facts tell: the latest of the Turn's own actions (not the inner ones of
+ * a delegated task, whose tool the approval is for is not guessed at) that has not ended, pending or in progress. The Harnesses report the
+ * call they ask about as pending until it is allowed, or as in progress; the interface says it waits for you.
  */
-export function showsProgress(items: readonly ReadItem[], hasText: (item: ReadItem) => boolean): boolean {
-  return items.some(item => {
-    if (item.type === "assistant_message") return item.status === "running" && hasText(item);
-    return (isWork(item) || item.type === "reasoning") && UNENDED.has(item.status);
-  });
+export function askingFor(items: readonly ReadItem[]): WorkItem | undefined {
+  const tasks = new Set(items.filter(item => item.type === "subagent").map(item => item.id));
+  const inside = (item: ReadItem) => item.parentId !== undefined && tasks.has(item.parentId) && item.parentId !== item.id;
+  return items.findLast((item): item is WorkItem => isWork(item) && (item.status === "pending" || item.status === "running") && !inside(item));
+}
+
+/**
+ * Whether a run of actions is open when the page opens it: the run that goes on (an action in progress or waiting for you, or the last
+ * run of a Turn that is still going, which more actions may join), and every run in the detailed density. A run with a failure is folded
+ * like any other: its summary line says how many failed ("3 个失败"), and that is where a failed test run, which is common, belongs.
+ */
+export function opensByDefault(block: WorkBlock, active: boolean, detailed: boolean): boolean {
+  if (detailed) return true;
+  return block.work.some(item => item.status === "pending" || item.status === "running" || item.status === "waiting") || active && block.tail;
+}
+
+/** An item's state from a Run's: its reply is running while the Run is, and over when it is. */
+function replyStatus(status: PublicMessage["status"]): ItemStatus {
+  switch (status) {
+    case "queued": return "pending";
+    case "preparing": case "running": case "settling": return "running";
+    default: return status;
+  }
+}
+/**
+ * The Turn with its reply among its items. The reply is a message of the conversation, which arrives on the stream apart from the Turn's
+ * other items, and the Turn does not list it until the Run's next frame: the words the Harness is writing now are shown from the message,
+ * where the reply's item would stand (after the notices, before an error, the artifacts and the context events). A Turn that lists its
+ * reply is returned as it is.
+ */
+export function withReply(turn: ReadTurn, message: PublicMessage | undefined): ReadTurn {
+  if (message === undefined || message.role !== "assistant" || message.text === "") return turn;
+  if (turn.items.some(item => item.type === "assistant_message" && item.messageId === message.id)) return turn;
+  const reply: ReadItem = { id: "hh:reply", seq: turn.items.length, status: replyStatus(message.status), type: "assistant_message", messageId: message.id, phase: "final" };
+  const after = turn.items.findIndex(item => item.type === "error" || item.type === "artifact" || item.type === "context_event"), at = after < 0 ? turn.items.length : after;
+  return { ...turn, items: [...turn.items.slice(0, at), reply, ...turn.items.slice(at)] };
 }

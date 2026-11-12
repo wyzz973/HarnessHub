@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { cancelledLabel, type PublicRun, type RunStatus } from "../../../src/contracts/session.js";
+import type { TurnStatus } from "../../../src/contracts/protocol.js";
+import type { ReadTurn } from "../../../src/contracts/protocol-read.js";
+import type { PublicRun } from "../../../src/contracts/session.js";
 import { chooseNotifications, notificationsChosen, notificationsSupported } from "../attention.js";
-import { elapsed } from "./format.js";
-import { stoppedByUser, toolSummary } from "./turn.js";
+import { spentText } from "./format.js";
+import { ownWork, statusText } from "./protocol/runs.js";
+import { summarizeGroup } from "./protocol/work.js";
 
 /*
  * System notifications beyond the waiting requests that attention.ts announces (ADR-035, ADR-054 X04). Needing the user
@@ -66,16 +69,15 @@ export function notificationsOfferable(): boolean {
 }
 
 /**
- * How a Turn ended, as the notification's title says it after the Agent's name. One the Runtime cancelled (its execution
- * budget used up, its wait deadline passed, the service restarted) says the contract's own words, "已停止（执行预算用尽）"
- * (ADR-054 ruling K); one the user stopped is not announced at all.
+ * How a Turn ended, as the notification's title says it after the Harness's name. One the Hub stopped (its time limit used up, a restart)
+ * says the table's words for it, "已停止 · 超过了这一轮的时间上限" (ADR-054 ruling K); one the user stopped is not announced at all.
  */
-function outcome(run: Pick<PublicRun, "status" | "error" | "cancelRequested">): string | null {
-  switch (run.status) {
+function outcome(turn: Pick<ReadTurn, "status" | "stopReason">): string | null {
+  switch (turn.status) {
     case "completed": return "做完了";
     case "failed": return "这一轮失败了";
     case "unknown": return "这一轮结果未知";
-    case "cancelled": return stoppedByUser(run) ? null : cancelledLabel(run);
+    case "cancelled": return turn.stopReason === "user_stopped" ? null : statusText(turn);
     default: return null;
   }
 }
@@ -83,22 +85,23 @@ function outcome(run: Pick<PublicRun, "status" | "error" | "cancelRequested">): 
  * How a Turn that ended out of sight ended, as the offer of notifications says it when the page is back: a failure or a
  * cancellation is never "done". A Turn the user stopped is never offered for.
  */
-export function backgroundOutcome(status: RunStatus): string {
+export function backgroundOutcome(status: TurnStatus): string {
   return status === "failed" ? "这一轮在后台失败了" : status === "unknown" ? "这一轮在后台结束，结果未知" : status === "cancelled" ? "这一轮在后台被停止了" : "回复在后台做完了";
 }
 /**
  * Notifies that the open conversation's Turn ended while the page was hidden, when the user chose notifications here and
- * the browser allows them: completed, failed and cancelled by the Runtime are silent, an unknown result needs the user and
- * keeps the sound. A Turn the user stopped is not announced. Clicking it brings the page forward and runs `open`.
- * Unsupported or refused: silent.
+ * the browser allows them: completed, failed and cancelled by the Hub are silent, an unknown result needs the user and
+ * keeps the sound. A Turn the user stopped is not announced. What it says is the Turn's own: its Harness, what it did and how
+ * long it took, in the words of its footer. Clicking it brings the page forward and runs `open`. Unsupported or refused: silent.
  */
-export function notifyTurnEnded(run: PublicRun, agent: string, open: () => void): void {
-  const said = outcome(run);
+export function notifyTurnEnded(run: PublicRun, open: () => void): void {
+  const turn = run.protocol;
+  if (turn === undefined) return;
+  const said = outcome(turn);
   if (said === null || !notificationsSupported() || !notificationsChosen() || Notification.permission !== "granted" || document.visibilityState !== "hidden") return;
-  const steps = toolSummary(run.tools ?? [], false).text, ended = run.timing?.endedAt;
-  const body = [steps, ended === undefined ? "" : "用时 " + elapsed(ended - run.timing!.acceptedAt)].filter(Boolean).join(" · ");
+  const body = [summarizeGroup(ownWork(turn)).text, turn.durationMs === undefined ? "" : "用时 " + spentText(turn.durationMs)].filter(Boolean).join(" · ");
   try {
-    const notice = new Notification(`${agent} ${said}`, { body, tag: "turn:" + run.id, silent: run.status !== "unknown" });
+    const notice = new Notification(`${turn.executor.harness} ${said}`, { body, tag: "turn:" + run.id, silent: turn.status !== "unknown" });
     notice.onclick = () => { window.focus(); open(); notice.close(); };
   } catch { /* a browser that refuses to construct one stays silent */ }
 }
