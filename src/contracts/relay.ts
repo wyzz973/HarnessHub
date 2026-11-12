@@ -320,14 +320,21 @@ export interface SwitchTiming { readonly requestedAt: number; readonly validated
  */
 export interface HandoffRecord { readonly logSeq: number; readonly harnessId: string; readonly firstAt: number }
 
-/** The one installation preference: whether a switch to another Harness attaches the earlier conversation by itself (`auto`, the default) or not (`off`; the user may still attach it per message). */
-export const RELAY_PREF_KEYS = ["relay.attach"] as const;
+/**
+ * The installation's preferences: whether a switch to another Harness attaches the earlier conversation by itself (`relay.attach`
+ * `auto`, the default) or not (`off`; the user may still attach it per message); and whether a session that has the Hub's tools
+ * is told, in its system prompt where its Harness takes an addition (HUB_PROGRESS_INSTRUCTIONS), to use the task list and the
+ * wrap-up (`hub.progress` `on`, the default) or not (`off`: the tools' own descriptions only).
+ */
+export const RELAY_PREF_KEYS = ["relay.attach", "hub.progress"] as const;
 export type RelayPrefKey = typeof RELAY_PREF_KEYS[number];
 export const RELAY_PREF_VALUES: Readonly<Record<RelayPrefKey, readonly string[]>> = {
   "relay.attach": ["auto", "off"],
+  "hub.progress": ["on", "off"],
 };
 export const RELAY_PREF_DEFAULTS: Readonly<Record<RelayPrefKey, string>> = {
   "relay.attach": "auto",
+  "hub.progress": "on",
 };
 
 // ---------------------------------------------------------------------------------------------------------------------

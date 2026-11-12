@@ -38,10 +38,13 @@ export class RedactedHarnessControl implements HarnessControl {
   readonly relayCapabilities?: RelayCapabilities;
   /** Whether the inner Driver hands the Hub's tools to its sessions itself. */
   get sessionTools(): boolean { return this.inner.sessionTools === true; }
+  /** The inner Driver's session-level system prompt addition, present only when it has one. */
+  readonly setSessionInstructions?: (text: string | null) => void;
   constructor(private readonly inner: HarnessControl, private readonly redact: (text: string) => string, private readonly stream: () => ProviderTextRedactor) {
     // A title carries no secret the Driver was given; failures are withheld as any other.
     if (inner.relayCapabilities !== undefined) this.relayCapabilities = inner.relayCapabilities;
     if (inner.setTitle) this.setTitle = (id, title) => this.safe(() => inner.setTitle!(id, title));
+    if (inner.setSessionInstructions) this.setSessionInstructions = text => inner.setSessionInstructions!(text);
   }
 
   async initialize(): Promise<ProtocolObservation> {

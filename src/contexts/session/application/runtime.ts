@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { parseProviderTarget } from "../../../contracts/provider.js";
+import { HUB_PROGRESS_INSTRUCTIONS } from "../../../contracts/table.js";
 import { listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeUsage } from "../../../contracts/control.js";
 import { type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import { CONVERSATION_FORMAT, type Conversation, type ConversationCommit, type ConversationMutation, type ConversationRun, type ConversationStore, type HeldItem } from "../../../contracts/conversation.js";
@@ -565,6 +566,13 @@ export class SessionRuntime {
   }
   /** The relay's setting now: the stored preference with its default. */
   private settings(): RelaySettings { return relaySettings(this.relayPrefs()); }
+  /**
+   * What the binding's Driver adds to the system prompt of the native session it opens (HarnessControl.setSessionInstructions): how to
+   * use the task list and the wrap-up, when its process has the Hub's tools and the user leaves `hub.progress` on; nothing otherwise.
+   */
+  private sessionInstructions(binding: PreparedSessionBinding | null): string | null {
+    return binding?.hubTools === true && this.settings().progress === "on" ? HUB_PROGRESS_INSTRUCTIONS : null;
+  }
 
   switch(id: SessionId, selection: SelectionRequest, key: string): SwitchReceipt {
     return this.requestSwitch(id, selection, key, false, false);
@@ -1756,7 +1764,10 @@ export class SessionRuntime {
         // A binding whose native session the Driver gave up on a clear (opensNew, R4) opens a new one: its checkpoint names the
         // abandoned session, never resumed.
         const resumeFrom = previousNative?.opensNew === true ? undefined : previousNative?.checkpoint;
-        const open = (on: HarnessControl, from: string | undefined) => on.open(execution.binding!.workspace, carriedConfiguration?.model ?? run.selection.nativeModel, nativeOptions, from);
+        const open = (on: HarnessControl, from: string | undefined) => {
+          on.setSessionInstructions?.(this.sessionInstructions(execution.binding));
+          return on.open(execution.binding!.workspace, carriedConfiguration?.model ?? run.selection.nativeModel, nativeOptions, from);
+        };
         try { native = await open(control, resumeFrom); }
         catch (error) {
           // C5 (ADR-055 §7.5; G068 fix batch 2, I-1b): a native session that holds nothing the relay counts on (one opened

@@ -16,6 +16,7 @@ import { gatewayRefusalMessage, type GatewayPreflight, type HermesGatewayPreflig
 import { classifyRemoteFailure, ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { bindNativeDependencies } from "../../src/adapters/control/native-dependencies.js";
 import { contentId } from "../../src/contracts/content.js";
+import { HUB_PROGRESS_INSTRUCTIONS } from "../../src/contracts/table.js";
 
 const options: ControlOptions = { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: 1500,
   maxFrameBytes: 65536, maxDiagnosticBytes: 1024, closeGraceMs: 150 };
@@ -875,6 +876,29 @@ test("Claude's session requests turn its prompt suggestions off, and its /remote
   const plain = control("claude", { FIXTURE_TRACE: trace });
   try { await ready(plain); assert.deepEqual((await plain.models()).commands?.map(command => command.name), ["compact", "remote-control"]); } finally { await plain.close(); }
   assert.equal((await sent()).filter(row => row.method === "session/new").at(-1)?.params?._meta, undefined);
+});
+
+test("Claude's session requests add the Hub's instructions to Claude Code's own system prompt when given, and nothing once cleared", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "claude-session-instructions-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const launch = { protocol: "acp-v1" as const, executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "claude"], env: { FIXTURE_TRACE: trace } };
+  const sent = async () => (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: { _meta?: unknown; prompt?: unknown } });
+  const told = new ClaudeControl(launch, options);
+  let checkpoint: string | null = null;
+  try {
+    await told.initialize(); told.setSessionInstructions(HUB_PROGRESS_INSTRUCTIONS);
+    const id = await told.open(process.cwd());
+    assert.equal((await (await told.startText(id, "hello", () => {})).result).status, "completed");
+    checkpoint = await told.checkpoint();
+  } finally { await told.close(); }
+  assert.ok(checkpoint);
+  const resumed = new ClaudeControl(launch, options);
+  try { await resumed.initialize(); resumed.setSessionInstructions(HUB_PROGRESS_INSTRUCTIONS); await resumed.open(process.cwd(), undefined, undefined, checkpoint); } finally { await resumed.close(); }
+  const cleared = new ClaudeControl(launch, options);
+  try { await cleared.initialize(); cleared.setSessionInstructions(HUB_PROGRESS_INSTRUCTIONS); cleared.setSessionInstructions(null); await cleared.open(process.cwd()); } finally { await cleared.close(); }
+  const requests = await sent(), own = { claudeCode: { options: { promptSuggestions: false } } };
+  assert.deepEqual(requests.filter(row => row.method === "session/new" || row.method === "session/resume" || row.method === "session/load").map(row => [row.method, row.params?._meta]),
+    [["session/new", { ...own, systemPrompt: { append: HUB_PROGRESS_INSTRUCTIONS } }], [requests.find(row => row.method === "session/resume" || row.method === "session/load")?.method, { ...own, systemPrompt: { append: HUB_PROGRESS_INSTRUCTIONS } }], ["session/new", own]]);
+  assert.deepEqual(requests.filter(row => row.method === "session/prompt").map(row => row.params?.prompt), [[{ type: "text", text: "hello" }]], "the user's words are sent as they are");
 });
 
 test("OpenClaw lists its workspace skills and plugin tool groups from the Gateway's own read-only reports", async t => {

@@ -1,6 +1,7 @@
 import { Monitor, Moon, RefreshCw, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { HUB_PROGRESS_INSTRUCTIONS } from "../../../src/contracts/table.js";
 import type { LoginShellView } from "../../../src/contracts/web.js";
 import { errorMessage, GatewayApi } from "../api.js";
 import { cn } from "../lib/cn.js";
@@ -45,6 +46,8 @@ function LoginShellPanel({ api, onChanged }: { readonly api: GatewayApi; readonl
 const THEMES: readonly { readonly value: Preferences["theme"]; readonly label: string; readonly icon: typeof Sun }[] = [{ value: "system", label: "跟随系统", icon: Monitor }, { value: "light", label: "浅色", icon: Sun }, { value: "dark", label: "深色", icon: Moon }];
 /** The frozen Harnesses' switch (ADR-050), named by this label as well. */
 const FROZEN_LABEL = "显示冻结的 Harness（Cursor、Gemini CLI、Pi）";
+/** The switch of what a session with the Hub's tools is told about the task list and the wrap-up (`hub.progress`). */
+const PROGRESS_LABEL = "让 Harness 显示任务清单和下一步";
 /**
  * Settings (ADR-042 §5, ADR-054): appearance and process display of this browser, notifications, discovery on this
  * computer, every shortcut, and where data lives. Theme and display choices apply at once and stay after a reload.
@@ -71,6 +74,10 @@ export function SettingsPage({ api, relay, preferences, onPreference, onRescan, 
           options={[{ value: "auto", label: "开（默认）", disabled: relay.saving }, { value: "off", label: "关", disabled: relay.saving }]}/>}>
           开：对话换到另一个 Harness 后的第一条消息，自动附上它没看过的部分；第一次交给某个 Harness 时，会在输入框上方说明一句。关：消息只发原话，需要时可以在输入框上方逐条选择附上。这项设置属于本机网关，对所有浏览器生效。
           {relay.problem ? <span className="mt-1 block text-red" role="status">{relay.problem}</span> : null}</Row>}
+        {relay.prefs === null ? null : <Row title={PROGRESS_LABEL} control={<Switch checked={relay.prefs.progress === "on"} onChange={value => relay.change("progress", value ? "on" : "off")} disabled={relay.saving} label={PROGRESS_LABEL}/>}>
+          开（默认）：带 HarnessHub 工具的会话打开时，在 Harness 的系统提示末尾加上下面这段话，让它把任务清单和这一轮的小结、要你拿主意的问题显示在输入框上方；不改你发的消息。现在 Claude Code 和 Codex 有这个入口，其他 Harness 只靠工具自带的说明。改动对之后新开或恢复的原生会话生效。
+          <details className="progress-instructions mt-1.5"><summary className="cursor-pointer text-fg-3">追加的内容</summary>
+            <pre className="m-0 mt-1 rounded-row bg-inset px-3 py-2 text-code whitespace-pre-wrap">{HUB_PROGRESS_INSTRUCTIONS}</pre></details></Row>}
       </Card>
     </Section>
     <Section title="通知">

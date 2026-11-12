@@ -63,13 +63,15 @@ export function relayDeclaration(capabilities: RelayCapabilities | null | undefi
 // ---------------------------------------------------------------------------------------------------------------------
 
 /**
- * The relay's one setting with its default applied: `attach` "auto" hands the earlier conversation to a Harness that was not
- * in it by itself; "off" does not (the user may still attach it to a message by choosing so).
+ * The installation's settings with their defaults applied: `attach` "auto" hands the earlier conversation to a Harness that was not
+ * in it by itself; "off" does not (the user may still attach it to a message by choosing so). `progress` "on" adds
+ * HUB_PROGRESS_INSTRUCTIONS to the system prompt of a session that has the Hub's tools, where its Harness takes one; "off" does not.
  */
-export interface RelaySettings { readonly attach: "auto" | "off" }
+export interface RelaySettings { readonly attach: "auto" | "off"; readonly progress: "on" | "off" }
 /** The settings of a Store's stored preferences (RelayLogPort.relayPrefs): a missing or unreadable value is the default. */
 export function relaySettings(prefs: Readonly<Partial<Record<RelayPrefKey, string>>>): RelaySettings {
-  return { attach: (prefs["relay.attach"] ?? RELAY_PREF_DEFAULTS["relay.attach"]) === "off" ? "off" : "auto" };
+  return { attach: (prefs["relay.attach"] ?? RELAY_PREF_DEFAULTS["relay.attach"]) === "off" ? "off" : "auto",
+    progress: (prefs["hub.progress"] ?? RELAY_PREF_DEFAULTS["hub.progress"]) === "off" ? "off" : "on" };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

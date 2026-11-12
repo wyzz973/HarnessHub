@@ -292,6 +292,12 @@ export interface HarnessControl {
    */
   readonly sessionTools?: boolean;
   /**
+   * Text the Driver adds to the system prompt of the native sessions it opens or restores from now on (null: nothing), through
+   * its Harness's own session-level entry (Claude Code: `_meta.systemPrompt.append`; Codex: `developerInstructions`, after the
+   * user's own). Never part of a message. Absent: this Harness has no such entry.
+   */
+  setSessionInstructions?(text: string | null): void;
+  /**
    * The Driver's static relay declaration (ADR-055 §3.2, §8.1): the same module-level object its factory returns for the
    * harness without an instance (relayCapabilities in adapters/control/factory.ts), never changed by the connection.
    * Absent for a Driver that declares none, which the relay treats as the most conservative declaration (INV-16).

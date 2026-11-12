@@ -224,7 +224,9 @@ lines.on("line", line => {
     return;
   }
   if (message.method === "initialized") { initialized = true; return; }
-  if (message.method === "config/read") { answer(message.id, { config: { model: "native-model-a", privateCredential: "synthetic-never-public", ...(["permissions-settings", "ignore-permissions"].includes(scenario) ? { approval_policy: "never", sandbox_mode: "danger-full-access" } : {}) } }); return; }
+  if (message.method === "config/read") { answer(message.id, { config: { model: "native-model-a", privateCredential: "synthetic-never-public", ...(["permissions-settings", "ignore-permissions"].includes(scenario) ? { approval_policy: "never", sandbox_mode: "danger-full-access" } : {}),
+    // FIXTURE_DEVELOPER_INSTRUCTIONS: the user's own developer_instructions in the effective configuration.
+    ...(process.env.FIXTURE_DEVELOPER_INSTRUCTIONS === undefined ? {} : { developer_instructions: process.env.FIXTURE_DEVELOPER_INSTRUCTIONS }) } }); return; }
   if (message.method === "collaborationMode/list") {
     // A Codex without collaboration modes, whatever version it states.
     if (scenario === "collab-missing") { emit({ id: message.id, error: { code: -32601, message: "Method not found" } }); return; }

@@ -16,7 +16,7 @@ import { bannerOf, installationNotices, relayHasStory, relayLine } from "../lib/
 import { useClosedNotices } from "../lib/use-relay.js";
 import type { RelayApi, RelayPrefs, RelayRequest, RelayView } from "../relay.js";
 import type { QueueNotice } from "../lib/protocol/live.js";
-import { changeCount, latestPlan, over, statusParts, stateOf } from "../lib/protocol/runs.js";
+import { changeCount, latestPlan, over, planRows, shownPlan, statusParts, stateOf } from "../lib/protocol/runs.js";
 import { finished } from "../lib/turn.js";
 import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
 import { Dialog, Menu, useToast } from "../ui/overlay.js";
@@ -175,7 +175,7 @@ export interface ChatProps {
 }
 
 /** The latest values the page's shortcuts act on, read when a key is pressed rather than bound into the listener. */
-interface ShortcutState { readonly stop: (() => void) | null; readonly togglePanel: (() => void) | null; readonly openPicker: (() => void) | null }
+interface ShortcutState { readonly stop: (() => void) | null; readonly togglePanel: (() => void) | null; readonly openPicker: (() => void) | null; readonly answer: (() => void) | null }
 /** A local decision on an approval, kept until the page leaves the conversation, to write its result back into the Turn. */
 type DecisionRecord = Decision & { readonly runId: string };
 
@@ -450,24 +450,37 @@ export function ChatPage(props: ChatProps) {
   const known = useRef<{ id: string | null; messages: ReadonlySet<string> }>({ id: null, messages: new Set() });
   if (session && known.current.id !== session.id) known.current = { id: session.id, messages: new Set(session.messages.map(message => message.id)) };
 
-  // ⌘J opens the Agent list, ⌘. stops the reply, ⌘\ opens or closes the details (ADR-054 §5). The page's own listener runs
-  // first and keeps these keys, so none of them reaches another binding while the conversation is shown.
-  const shortcuts = useRef<ShortcutState>({ stop: null, togglePanel: null, openPicker: null });
+  // The wrap-up the latest Turn gave (`hub_wrap_up`), while nothing came after it: once you send a message, or press one of its answers, it goes. A Turn that gave none shows none.
+  const latest = session?.runs.at(-1), nextStep = session?.recap !== undefined && latest !== undefined && latest.id === session.recap.runId && active === null && session.status === "open"
+    && latest.protocol !== undefined && over(latest.protocol) ? session.recap : null;
+  // Why its answers cannot be sent now (they are a message like any other): the Harness's own problem first, then what the conversation is in the middle of.
+  const answerBlocked = canRetry ? null : problem ?? (pending ? "Harness 正在切换，切换完成后再选。" : dirty ? "Harness 的选择改了还没应用：先应用，或直接在输入框里回复。"
+    : mutation !== null ? "正在处理上一个操作，完成后再选。" : "现在不能发送消息。");
+  const answer = (text: string) => { void send(text).catch(() => {}); };
+
+  // ⌘J opens the Agent list, ⌘. stops the reply, ⌘\ opens or closes the details (ADR-054 §5); ⌘⏎ with an empty message box presses the
+  // next-step box's first answer. The page's own listener runs first and keeps these keys, so none of them reaches another binding while the conversation is shown.
+  const shortcuts = useRef<ShortcutState>({ stop: null, togglePanel: null, openPicker: null, answer: null });
+  const firstAnswer = nextStep?.actions?.[0];
   shortcuts.current = {
     stop: active && !active.cancelRequested && mutation === null ? props.onCancel : null,
     togglePanel: session ? () => setPanel(!panelOpen) : null,
     openPicker: docked === null && !props.loading && props.sessionError === null && session?.status !== "closed" && (mutation === null || mutation === "switching") ? () => setAgentPicker(true) : null,
+    answer: firstAnswer !== undefined && answerBlocked === null && props.messageDraft.trim() === "" ? () => answer(firstAnswer) : null,
   };
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) return;
-      const key = event.code === "Period" || event.key === "." ? "stop" : event.code === "Backslash" || event.key === "\\" ? "panel" : event.code === "KeyJ" || event.key.toLowerCase() === "j" ? "picker" : null;
+      const key = event.code === "Period" || event.key === "." ? "stop" : event.code === "Backslash" || event.key === "\\" ? "panel" : event.code === "KeyJ" || event.key.toLowerCase() === "j" ? "picker"
+        : event.key === "Enter" ? "answer" : null;
       if (key === null) return;
       // A dialog (a confirmation, the palette) keeps its own keys; toasts are dialogs that never take them.
       if (event.target instanceof Element && event.target.closest("[role='dialog']:not(.toast)")) return;
-      event.preventDefault(); event.stopPropagation();
       const current = shortcuts.current;
-      if (key === "stop") current.stop?.(); else if (key === "panel") current.togglePanel?.(); else current.openPicker?.();
+      // ⌘⏎ with nothing to answer, or with words in the box, is the box's own (it sends them).
+      if (key === "answer" && current.answer === null) return;
+      event.preventDefault(); event.stopPropagation();
+      if (key === "stop") current.stop?.(); else if (key === "panel") current.togglePanel?.(); else if (key === "answer") current.answer?.(); else current.openPicker?.();
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
@@ -479,9 +492,6 @@ export function ChatPage(props: ChatProps) {
     const checked = relay.next?.option === SEND_ALONE.option && relay.next.for === SEND_ALONE.for;
     return { checked, onToggle: () => relay.onNext(checked ? null : SEND_ALONE) };
   })() : undefined;
-  // The wrap-up the latest Turn gave (`hub_wrap_up`), while nothing came after it: once you send a message, or press one of its answers, it goes. A Turn that gave none shows none.
-  const latest = session?.runs.at(-1), nextStep = session?.recap !== undefined && latest !== undefined && latest.id === session.recap.runId && active === null && session.status === "open"
-    && latest.protocol !== undefined && over(latest.protocol) ? session.recap : null;
   const composer = <Composer {...props} sendAlone={sendAlone} onSendDraft={text => send(text)} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}
     onShowResume={session ? showResume : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} onEditLast={editLast} onReplaceDraft={fillDraft}
     above={session ? <>
@@ -493,7 +503,7 @@ export function ChatPage(props: ChatProps) {
         {props.queued.attachments.length ? <span className="flex-none text-caption text-fg-3">附件 {props.queued.attachments.length}</span> : null}
         <button type="button" className="btn btn-ghost btn-sm" onClick={props.onEditQueued}>编辑</button><button type="button" className="btn btn-ghost btn-sm" onClick={props.onWithdrawQueued}>撤回</button>
       </div> : null}
-      {nextStep ? <NextStep recap={nextStep} harness={harnessName(nextStep.harnessId)} disabled={!canRetry} onAnswer={text => { void send(text).catch(() => {}); }}/> : <PlanBar session={session} active={active} harness={harnessName}/>}
+      {nextStep ? <NextStep recap={nextStep} harness={harnessName(nextStep.harnessId)} blocked={answerBlocked} onAnswer={answer}/> : <PlanBar session={session} active={active} harness={harnessName}/>}
     </> : null}
     below={session ? <StatusLine session={session} active={active}/> : null}/>;
   // What the page announces of the Turn in progress, or of one waiting in the queue (never the active Run), in the header's
@@ -672,10 +682,9 @@ function HeaderState({ session, active, harnessName }: { readonly session: Conve
  * the finished ones are struck through. Not shown when every step is done, or when no Turn has a list.
  */
 function PlanBar({ session, harness }: { readonly session: ConversationView; readonly active: PublicRun | null; readonly harness: (id: string) => string }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(false), [unfolded, setUnfolded] = useState(false);
   const id = useId();
-  const held = latestPlan(session.runs);
-  const found = session.plan !== undefined ? { harnessId: session.plan.harnessId, steps: session.plan.steps } : held === undefined ? undefined : { harnessId: held.run.protocol.executor.harnessId, steps: held.plan.steps };
+  const found = shownPlan(session.runs, session.plan);
   if (found === undefined || found.steps.length === 0 || found.steps.every(step => step.status === "completed")) return null;
   const steps = found.steps, done = steps.filter(step => step.status === "completed").length, total = steps.length;
   const current = steps.find(step => step.status === "in_progress") ?? steps.find(step => step.status === "pending");
@@ -693,12 +702,14 @@ function PlanBar({ session, harness }: { readonly session: ConversationView; rea
     </button>
     <Collapsible open={open} id={id}>
       <div className="pt-2"><ul className="card m-0 flex max-h-[min(40vh,320px)] list-none flex-col gap-2 overflow-y-auto p-4 text-ui-sm" aria-label={`${harness(found.harnessId)} 的任务清单`}>
-        {steps.map((step, index) => <li key={index} className="flex min-w-0 items-start gap-2">
+        {(unfolded ? steps.map((_, index) => ({ kind: "step" as const, index })) : planRows(steps)).map((row, position) => row.kind === "fold"
+          ? <li key={"fold-" + position} className="flex min-w-0"><button type="button" className="plan-fold btn btn-ghost btn-sm -ml-1.5 text-fg-3" onClick={() => setUnfolded(true)}>还有 {row.count} 步，展开</button></li>
+          : (step => <li key={row.index} className="flex min-w-0 items-start gap-2">
           {step.status === "completed" ? <Check size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="已完成" role="img"/>
             : step.status === "in_progress" ? <Spinner size={15} tone="run" label="进行中"/>
             : <Circle size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="待办" role="img"/>}
           <span className={cn("min-w-0 break-words", step.status === "completed" ? "text-fg-3 line-through decoration-line-strong" : step.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{step.text}</span>
-        </li>)}
+        </li>)(steps[row.index]!))}
       </ul></div>
     </Collapsible>
   </div>;
@@ -708,13 +719,18 @@ function PlanBar({ session, harness }: { readonly session: ConversationView; rea
  * The next-step box above the composer: the wrap-up the latest Turn's Harness gave (`hub_wrap_up`) — a short recap, and when the next move is yours, its question and one or
  * two answers as buttons, the first the Harness's recommendation. An answer is sent as your next message. The page never makes one up: a Turn that gave none shows none.
  */
-function NextStep({ recap, harness, disabled, onAnswer }: { readonly recap: NonNullable<ConversationView["recap"]>; readonly harness: string; readonly disabled: boolean; readonly onAnswer: (text: string) => void }) {
+function NextStep({ recap, harness, blocked, onAnswer }: { readonly recap: NonNullable<ConversationView["recap"]>; readonly harness: string; readonly blocked: string | null; readonly onAnswer: (text: string) => void }) {
+  const why = useId();
   return <section className="next-step card motion-fade-in flex flex-col gap-2 p-4 text-ui-sm" data-turn-next="" aria-label={harness + " 的小结"}>
     <p className="m-0 whitespace-pre-wrap break-words text-fg-2">{recap.summary}</p>
     {recap.ask ? <p className="m-0 break-words font-medium text-fg">{recap.ask}</p> : null}
-    {recap.actions?.length ? <div className="flex flex-wrap gap-2" role="group" aria-label="回答">
-      {recap.actions.map((label, index) => <button key={index} type="button" className={cn("btn btn-sm next-step-answer", index === 0 ? "btn-primary" : "btn-ghost")} disabled={disabled} onClick={() => onAnswer(label)}>{label}</button>)}
+    {recap.actions?.length ? <div className="flex flex-wrap items-center gap-2" role="group" aria-label="回答">
+      {recap.actions.map((label, index) => <button key={index} type="button" className={cn("btn btn-sm next-step-answer", index === 0 ? "btn-primary" : "btn-ghost")} disabled={blocked !== null}
+        aria-describedby={blocked === null ? undefined : why} {...(index === 0 ? { "aria-keyshortcuts": "Meta+Enter", title: blocked ?? "⌘⏎（输入框为空时）" } : blocked === null ? {} : { title: blocked })}
+        onClick={() => onAnswer(label)}>{label}</button>)}
+      {blocked === null ? <span className="text-caption text-fg-3 max-sm:hidden" aria-hidden="true">⌘⏎</span> : null}
     </div> : null}
+    {recap.actions?.length && blocked !== null ? <p id={why} className="next-step-blocked m-0 text-caption text-fg-3">{blocked}</p> : null}
   </section>;
 }
 

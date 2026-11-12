@@ -18,9 +18,11 @@ export const STAMP = new Date("2026-11-13T00:00:00.000Z");
 
 /** What a Harness does with an input: the events it makes (and, when they are all there is, the words of a reply after them); with `hold`, the Turn does not end until the promise does. */
 export type Script = (turn: number, text: string) => readonly ControlEvent[] | { readonly events: readonly ControlEvent[]; readonly reply: false; readonly hold?: Promise<void> };
+/** The Harness's process as a test wants it: whether it has the Hub's tools, and what its Driver is told to add to its session's system prompt (a Driver with that entry). */
+export interface ScriptedProcess { readonly hubTools?: boolean; readonly told?: (text: string | null) => void }
 class ScriptedHarness implements SessionBindingFactory {
   private turns = 0;
-  constructor(private readonly script: Script) {}
+  constructor(private readonly script: Script, private readonly process: ScriptedProcess = {}) {}
   async validate(request: SelectionRequest): Promise<HarnessSelection> {
     if (request.harnessId !== "alpha" && request.harnessId !== "bravo") throw new SessionError("HARNESS_UNAVAILABLE", "fixture target is unavailable");
     return { harnessId: request.harnessId, controlId: request.harnessId + "-acp" };
@@ -45,8 +47,9 @@ class ScriptedHarness implements SessionBindingFactory {
         return { result: hold === undefined ? Promise.resolve<BackendResult>(done()) : hold.then(done), requestStop: async () => ({ requested: true }) };
       },
       close: async () => ({ closed: true, exitCode: 0, signal: null, protocolFailure: null } satisfies CleanupEvidence),
+      ...(this.process.told === undefined ? {} : { setSessionInstructions: this.process.told }),
     };
-    return { control, workspace: configuration.workspace, assertOwned: () => {}, close: () => control.close() };
+    return { control, workspace: configuration.workspace, assertOwned: () => {}, close: () => control.close(), ...(this.process.hubTools === undefined ? {} : { hubTools: this.process.hubTools }) };
   }
 }
 export interface ScriptedWorld {
@@ -66,6 +69,8 @@ export async function scriptedWorld(t: TestContext, script: Script, options: {
   readonly before?: (data: string) => void;
   /** More of what the store is opened with. */
   readonly store?: FileConversationStoreOptions;
+  /** The Harness's process: its tools and its Driver's system prompt entry. */
+  readonly process?: ScriptedProcess;
 } = {}): Promise<ScriptedWorld> {
   const open: { app?: SessionRuntime; store?: FileConversationStore } = {};
   t.after(async () => { await open.app?.close(); open.store?.close(); });
@@ -75,7 +80,7 @@ export async function scriptedWorld(t: TestContext, script: Script, options: {
   const store = appStore(data, { now: () => STAMP, ...options.store }), content = new LocalContentStore(data, () => store.assertOwner());
   open.store = store;
   let next = 0;
-  const app = new SessionRuntime(options.wrap === undefined ? store : options.wrap(store), new ScriptedHarness(script), { id: () => String(++next), now: () => STAMP, publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"), content, ...options.runtime });
+  const app = new SessionRuntime(options.wrap === undefined ? store : options.wrap(store), new ScriptedHarness(script, options.process), { id: () => String(++next), now: () => STAMP, publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"), content, ...options.runtime });
   open.app = app;
   const configuration: SessionConfiguration = { workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true };
   const session = await app.create(configuration, { harnessId: "alpha" }, "create");

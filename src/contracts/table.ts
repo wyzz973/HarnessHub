@@ -16,6 +16,16 @@ export const TABLE_TOOLS = ["hub_turns", "hub_read_turn", "hub_search", "hub_upd
 /** The Hub's tools that write: they tell the Hub how the Turn in progress goes (its task list, its wrap-up); the page shows these, and not the calls. */
 export const TABLE_PROGRESS_TOOLS = ["hub_update_plan", "hub_wrap_up"] as const;
 export type TableTool = typeof TABLE_TOOLS[number];
+/**
+ * What a Driver that can add to its session's system prompt adds there (HarnessControl.setSessionInstructions) when that session has the
+ * Hub's tools and the preference `hub.progress` is on: how to use the two progress tools. It never goes into the user's message; the
+ * settings page shows it word for word.
+ */
+export const HUB_PROGRESS_INSTRUCTIONS = "你在 HarnessHub 里工作，这个会话带有 harnesshub 的工具：\n"
+  + "1. 任务要做好几步时，开始就调用 hub_update_plan 列出全部步骤（正在做的那一步标 in_progress），之后每开始或做完一步再调用一次更新。\n"
+  + "2. 每一轮结束前调用一次 hub_wrap_up，用两三句话写清现在做完了什么、还有什么没做或没验证。\n"
+  + "3. 需要用户拿主意时，把一个问题放进 hub_wrap_up 的 ask、一到两个回答放进 actions（推荐的放第一个），不要只在正文里问。\n"
+  + "这是这个界面显示进度和下一步的唯一途径；它们不代替你的正文回复。";
 
 /** What the tool process answers when it was not started inside a Hub session. */
 export const TABLE_NOT_IN_SESSION = "Not inside a HarnessHub conversation: there is nothing to read here.";

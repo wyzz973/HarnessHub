@@ -70,7 +70,7 @@ export interface RelayLine { readonly kind: "owed"; readonly runs: number; reado
  * Harness here (absent means nothing: its floors and its clears are the Gateway's to know), and the page's own count of the Turns the
  * Harness is not known to hold when it keeps none (the first hand-over to a Harness that never ran in this conversation).
  */
-export function relayLine(session: ConversationView, view: RelayView | null, prefs: RelayPrefs | null = null): RelayLine | null {
+export function relayLine(session: ConversationView, view: RelayView | null, prefs: Pick<RelayPrefs, "attach"> | null = null): RelayLine | null {
   if (view === null || session.status !== "open" || session.activeRunId !== null || session.pendingSwitchId !== null || session.runCount === 0) return null;
   if (!session.facts.settled) return null;
   const target = { harnessId: session.selection.harnessId, controlId: session.selection.controlId };

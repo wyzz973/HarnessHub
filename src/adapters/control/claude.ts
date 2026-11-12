@@ -153,7 +153,16 @@ export class ClaudeControl extends AcpControl {
   }
   // With an image or a file every input is content (startText sends it to Claude Code as it is), whatever the catalog lists.
   override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return claudeNativeClassify(text, catalog, attachments); }
-  protected override get sessionMeta(): Readonly<Record<string, unknown>> { return SESSION_META; }
+  private instructions: string | null = null;
+  /**
+   * HarnessControl.setSessionInstructions: claude-agent-acp's `_meta.systemPrompt` (0.99.1, acp-agent.js createSession, which
+   * session/new, session/load, session/resume and session/fork all reach): an object keeps Claude Code's own preset and adds its
+   * `append`. Not ACP's `systemPrompt` field, which this adapter takes only to override (SYSTEM_PROMPT_CAPABILITY).
+   */
+  setSessionInstructions(text: string | null): void { this.instructions = text; }
+  protected override get sessionMeta(): Readonly<Record<string, unknown>> {
+    return this.instructions === null ? SESSION_META : { ...SESSION_META, systemPrompt: { append: this.instructions } };
+  }
   protected override extensionNotification(method: string, params: Readonly<Record<string, unknown>>): boolean {
     if (method !== AUTH_STATUS) return false;
     const status = params.authStatus, kind = typeof status === "object" && status !== null && "kind" in status ? status.kind : undefined;

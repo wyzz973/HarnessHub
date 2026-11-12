@@ -40,6 +40,10 @@ export type RelayOption = typeof RELAY_OPTIONS[number];
 export const RELAY_ATTACH = ["auto", "off"] as const;
 export type RelayAttach = typeof RELAY_ATTACH[number];
 export const RELAY_PREF_ATTACH = "relay.attach";
+/** Whether a session with the Hub's tools is told, in its system prompt, to show its task list and wrap-up (`on`, the default) or not (`off`). */
+export const HUB_PROGRESS = ["on", "off"] as const;
+export type HubProgress = typeof HUB_PROGRESS[number];
+export const RELAY_PREF_PROGRESS = "hub.progress";
 /** Why a binding asks the user to look at it (`attention.cause`), and what the relay decided for a Turn (`decision`): the words of the wire. */
 export const RELAY_ATTENTION_CAUSES = ["delivery_unconfirmed", "attach_available"] as const;
 export type RelayAttentionCause = typeof RELAY_ATTENTION_CAUSES[number];
@@ -145,8 +149,8 @@ export interface RelayDecisionInfo {
 /** A Turn's relay member with the delivery and the decision a Gateway attaches to it (the contract's RunRelay does not have them). */
 export type ClientRunRelay = RunRelay & { readonly delivery?: { readonly state?: unknown; readonly evidence?: unknown }; readonly decision?: { readonly kind?: unknown; readonly by?: unknown; readonly cause?: unknown; readonly reason?: unknown; readonly resend?: unknown } };
 
-/** The installation's relay preference the page lets the user change. */
-export interface RelayPrefs { readonly attach: RelayAttach }
+/** The installation's preferences the page lets the user change. */
+export interface RelayPrefs { readonly attach: RelayAttach; readonly progress: HubProgress }
 /** The stored text of one packet, as it was sent. */
 export interface RelayPacketText {
   readonly text: string;
@@ -266,7 +270,8 @@ export function decodeRelayPrefs(value: unknown): RelayPrefs | null {
   if (rows === null) return null;
   // A value this page cannot read is not shown as another: the whole answer is then no answer.
   const attach = rows[RELAY_PREF_ATTACH] ?? rows.attach, chosen = attach === undefined ? "auto" : oneOf(attach, RELAY_ATTACH);
-  return chosen === null ? null : { attach: chosen };
+  const shown = rows[RELAY_PREF_PROGRESS] ?? rows.progress, progress = shown === undefined ? "on" : oneOf(shown, HUB_PROGRESS);
+  return chosen === null || progress === null ? null : { attach: chosen, progress };
 }
 /** One event the Gateway pushes about the relay. The page needs to know only that the relay state changed, and of what. */
 export interface RelayEvent { readonly type: string; readonly sessionId: string | null; readonly runId: string | null; readonly packetId: string | null }
@@ -315,7 +320,7 @@ export interface RelayApi {
   /** Sets one preference; rejects with a `RelayReadError` when the Gateway refuses it. */
   setPref<K extends keyof RelayPrefs>(name: K, value: RelayPrefs[K]): Promise<void>;
 }
-const PREF_KEYS: Readonly<Record<keyof RelayPrefs, string>> = { attach: RELAY_PREF_ATTACH };
+const PREF_KEYS: Readonly<Record<keyof RelayPrefs, string>> = { attach: RELAY_PREF_ATTACH, progress: RELAY_PREF_PROGRESS };
 export function createRelayApi(transport: RelayTransport): RelayApi {
   const id = encodeURIComponent;
   return {

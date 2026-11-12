@@ -67,10 +67,12 @@ function conversation(runs: readonly Json[], replies: Readonly<Record<number, st
   return { id: SESSION, version: lastSeq - 1, lastSeq, epoch: 1, status: "open", workspace: "/tmp/protocol-ui-workspace", selection: control("codex"), activeRunId: active, pendingSwitchId: null, permissions: [], nativeStates: [], messages, runs: [...runs], switches: [] };
 }
 
+/** A control entry the next fake Gateway reports as unavailable (its Harness then cannot take a message). */
+let unavailableControl: string | null = null;
 function harnessView(id: string, name: string): Json {
   return { id, name, tier: "focus", installed: true, defaultControlId: id + "-native", providerProtocols: [], install: null, installations: [], unofficial: null,
     management: { harnessId: id, recipe: null, source: "system", installedVersion: "1.0.0", programVersion: "1.0.0", latestVersion: null, updateStatus: "current", checkedAt: null, activeJobId: null, installationId: null, defaultRevision: 1, error: null },
-    controls: [{ id: id + "-native", protocol: "acp-v1", available: true, reason: null, entry: { source: "path" } }] };
+    controls: [{ id: id + "-native", protocol: "acp-v1", available: unavailableControl !== id + "-native", reason: unavailableControl === id + "-native" ? "找不到程序" : null, entry: { source: "path" } }] };
 }
 const PACKET_TEXT = "〔HarnessHub 交接单 " + PACKET + "〕\n下面是 Claude Code 交给你的对话要点。\n〔交接单结束〕\n";
 const CONTENT: Readonly<Record<string, Json>> = {
@@ -423,6 +425,50 @@ test("the other items each have a line of their own: a clear, a decision, an ans
   await expect(turn.locator(".quiet-line[data-item=end]")).toHaveCount(0);
   await expect(turn.locator(".turn-footer")).toHaveText("Claude Code · 用时 9.0 秒");
   await shoot(page, "other-items");
+  assert.deepEqual(errors, []);
+});
+
+test("the next-step box: its first answer goes with ⌘⏎ when the message box is empty, and with the Harness unavailable its answers say why they wait", async t => {
+  sequence = 0;
+  const done = run({ n: 1, harness: "codex", input: "修一下 total", status: "completed", durationMs: 2_000, items: [user(1), item("recap", { summary: "改了 total，还没有提交。", ask: "接着修剩下的吗？", actions: ["接着修", "先不用"] }), reply(1)] });
+  const withRecap = () => ({ ...conversation([done], { 1: "改好了。" }), recap: { runId: "run-1", ordinal: 0, harnessId: "codex", summary: "改了 total，还没有提交。", ask: "接着修剩下的吗？", actions: ["接着修", "先不用"] } }) as unknown as FakeSession;
+  const { page, errors } = await open(t, withRecap());
+  const box = page.locator(".next-step"), composer = page.getByRole("textbox", { name: "发送消息", exact: true });
+  await expect(box).toContainText("接着修剩下的吗？");
+  await expect(box.getByRole("button", { name: "接着修" })).toBeEnabled(); await expect(box.locator(".next-step-blocked")).toHaveCount(0);
+  const sent: string[] = [];
+  page.on("request", request => { if (request.method() === "POST" && /\/messages$/u.test(request.url())) sent.push(String(JSON.parse(request.postData() ?? "{}").text)); });
+  // Words in the box: ⌘⏎ is the box's own, and sends them.
+  await composer.fill("我自己写"); await composer.press("Meta+Enter");
+  await expect.poll(() => sent).toEqual(["我自己写"]);
+  // Once that send is over (refused here), the answers can be sent again.
+  await expect(box.getByRole("button", { name: "接着修" })).toBeEnabled();
+  await composer.fill(""); await composer.press("Meta+Enter");
+  await expect.poll(() => sent).toEqual(["我自己写", "接着修"]);
+  // The fake Gateway refuses the messages; that is all the errors there are.
+  assert.ok(errors.every(error => /404|Not found/iu.test(error)), errors.join("\n"));
+  unavailableControl = "codex-native";
+  try {
+    const blocked = await open(t, withRecap()), waiting = blocked.page.locator(".next-step");
+    await expect(waiting.getByRole("button", { name: "接着修" })).toBeDisabled(); await expect(waiting.getByRole("button", { name: "先不用" })).toBeDisabled();
+    await expect(waiting.locator(".next-step-blocked")).toHaveText("这个控制入口目前不可用，请在 Harness 页中检查。");
+    await expect(waiting.getByRole("button", { name: "接着修" })).toHaveAccessibleDescription("这个控制入口目前不可用，请在 Harness 页中检查。");
+    await shoot(blocked.page, "next-step-blocked");
+  } finally { unavailableControl = null; }
+});
+
+test("a task list of more than twelve steps folds its middle and opens it all on request", async t => {
+  sequence = 0;
+  const steps = Array.from({ length: 16 }, (_, index) => ({ text: "步骤 " + (index + 1), status: index < 8 ? "completed" : index === 8 ? "in_progress" : "pending" }));
+  const working = run({ n: 1, harness: "claude", input: "做一件大事", status: "running", items: [user(1), item("plan", { steps })] });
+  const { page, errors } = await open(t, conversation([working], {}, "run-1"));
+  const bar = page.locator(".plan-bar"), toggle = bar.getByRole("button").first();
+  await expect(toggle).toContainText("8/16 · 正在：步骤 9");
+  await toggle.click();
+  const list = bar.getByRole("list", { name: "Claude Code 的任务清单" });
+  await expect(list.getByRole("listitem")).toHaveText(["步骤 1", "步骤 2", "还有 4 步，展开", "步骤 7", "步骤 8", "步骤 9", "步骤 10", "步骤 11", "还有 3 步，展开", "步骤 15", "步骤 16"]);
+  await list.getByRole("button", { name: "还有 4 步，展开" }).click();
+  await expect(list.getByRole("listitem")).toHaveCount(16);
   assert.deepEqual(errors, []);
 });
 

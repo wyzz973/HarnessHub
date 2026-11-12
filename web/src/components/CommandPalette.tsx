@@ -104,7 +104,7 @@ export const SHORTCUT_GROUPS: readonly { readonly title: string; readonly rows: 
   ] },
   { title: "对话", rows: [
     { label: "发送；回复进行中时先暂存下一条", keys: ["⏎"] }, { label: "换行", keys: ["⇧", "⏎"] }, { label: "换 Harness", keys: ["⌘", "J"] }, { label: "停止当前回复", keys: ["⌘", "."], or: ["esc"] },
-    { label: "打开或收起详情面板", keys: ["⌘", "\\"] }, { label: "编辑上一条（输入框为空时）", keys: ["↑"] }, { label: "原生命令 · 引用文件", keys: ["/", "@"] },
+    { label: "打开或收起详情面板", keys: ["⌘", "\\"] }, { label: "选下一步框里的第一个回答（输入框为空时）", keys: ["⌘", "⏎"] }, { label: "编辑上一条（输入框为空时）", keys: ["↑"] }, { label: "原生命令 · 引用文件", keys: ["/", "@"] },
   ] },
   { title: "审批停在输入框时", rows: [
     { label: "允许一次", keys: ["⏎"] }, { label: "拒绝这次请求", keys: ["esc"] }, { label: "选择一次性选项", keys: ["1", "9"], range: true },

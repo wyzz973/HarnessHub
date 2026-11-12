@@ -7,6 +7,7 @@ import test from "node:test";
 import type { ControlEvent, ControlOptions } from "../../src/contracts/control.js";
 import { CodexControl } from "../../src/adapters/control/codex.js";
 import { contentId } from "../../src/contracts/content.js";
+import { HUB_PROGRESS_INSTRUCTIONS } from "../../src/contracts/table.js";
 import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 
 const options: ControlOptions = { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: 1500,
@@ -379,6 +380,27 @@ test("Codex /export copies the thread's own rollout record as an output and fail
     const result = await (await ephemeral.startText(id, "/export", () => {})).result;
     assert.equal(result.status, "failed"); assert.equal(result.error?.code, "NATIVE_EXPORT_UNAVAILABLE");
   } finally { await ephemeral.close(); }
+});
+
+test("Codex threads carry the Hub's instructions after the user's own developer instructions when given, and nothing added otherwise", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-codex-instructions-")); t.after(() => rm(directory, { recursive: true, force: true }));
+  const opened = async (trace: string) => (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: { developerInstructions?: unknown; input?: unknown } })
+    .filter(row => row.method === "thread/start" || row.method === "thread/resume").map(row => [row.method, row.params?.developerInstructions]);
+  const own = join(directory, "own"), driver = control("basic", { FIXTURE_TRACE: own, FIXTURE_DEVELOPER_INSTRUCTIONS: "  Always answer in English.\n" });
+  try {
+    await driver.initialize(); driver.setSessionInstructions(HUB_PROGRESS_INSTRUCTIONS);
+    const id = await driver.open(process.cwd());
+    assert.equal((await (await driver.startText(id, "hello", () => {})).result).status, "completed");
+  } finally { await driver.close(); }
+  assert.deepEqual(await opened(own), [["thread/start", "Always answer in English.\n\n" + HUB_PROGRESS_INSTRUCTIONS]], "the user's own come first and stay");
+  const turn = (await readFile(own, "utf8")).trim().split("\n").map(line => JSON.parse(line)).find(row => row.method === "turn/start");
+  assert.deepEqual(turn.params.input, [{ type: "text", text: "hello", text_elements: [] }], "the user's words are sent as they are");
+  const bare = join(directory, "bare"), resumed = control("basic", { FIXTURE_TRACE: bare });
+  try { await resumed.initialize(); resumed.setSessionInstructions(HUB_PROGRESS_INSTRUCTIONS); await resumed.open(process.cwd(), undefined, undefined, "thread-fixture"); } finally { await resumed.close(); }
+  assert.deepEqual(await opened(bare), [["thread/resume", HUB_PROGRESS_INSTRUCTIONS]]);
+  const off = join(directory, "off"), plain = control("basic", { FIXTURE_TRACE: off, FIXTURE_DEVELOPER_INSTRUCTIONS: "mine" });
+  try { await plain.initialize(); plain.setSessionInstructions(HUB_PROGRESS_INSTRUCTIONS); plain.setSessionInstructions(null); await plain.open(process.cwd()); } finally { await plain.close(); }
+  assert.deepEqual(await opened(off), [["thread/start", undefined]], "cleared: nothing is sent, and Codex reads the user's own from its configuration");
 });
 
 test("Codex forks a stored thread on its own connection and reports refusals as unavailable", async () => {

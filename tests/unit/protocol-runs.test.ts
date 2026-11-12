@@ -6,7 +6,7 @@ import type { CommandItem, FileChangeItem, ItemStatus, PlanItem, SubagentItem, T
 import type { ReadItem, ReadTurn } from "../../src/contracts/protocol-read.js";
 import type { PublicMessage, PublicRun } from "../../src/contracts/session.js";
 import { liveStatus, type QueueNotice } from "../../web/src/lib/protocol/live.js";
-import { changeCount, editsOf, endedAt, latestPlan, ownWork, stateOf, statusParts, stepCount, usageFacts, userStopped } from "../../web/src/lib/protocol/runs.js";
+import { changeCount, editsOf, endedAt, latestPlan, ownWork, planRows, shownPlan, stateOf, statusParts, stepCount, usageFacts, userStopped } from "../../web/src/lib/protocol/runs.js";
 import { arrange, askingFor, withReply } from "../../web/src/lib/protocol/work.js";
 
 /*
@@ -33,6 +33,14 @@ test("the task list is the latest one with steps, and the actions a Turn took ar
   assert.equal(found?.plan.steps[0]?.text, "改它");
   assert.equal(found?.run.id, "run-3");
   assert.equal(latestPlan([run(empty), run(undefined)]), undefined, "a list without steps is none");
+  // The bar's list is the newer of the head's and the loaded Turns': a running Turn's own plan (TodoWrite, update_plan or hub_update_plan) before the store has it.
+  const head = { runId: "run-1", harnessId: "claude", steps: [{ text: "旧的", status: "in_progress" as const }] };
+  const loaded = [run(first, { id: "run-1" as never }), run(last, { id: "run-3" as never })];
+  assert.equal(shownPlan(loaded, head)?.steps[0]?.text, "改它", "the running Turn's list is newer than the head's");
+  assert.equal(shownPlan(loaded, { ...head, runId: "run-3" })?.steps[0]?.text, "改它", "the same Turn: the loaded one, which goes on");
+  assert.equal(shownPlan([run(first, { id: "run-1" as never }), run(turn([]), { id: "run-2" as never })], { ...head, runId: "run-2" })?.steps[0]?.text, "旧的", "a head newer than the loaded plan stands");
+  assert.equal(shownPlan([run(undefined)], head)?.harnessId, "claude", "a head Turn outside the loaded ones still shows");
+  assert.equal(shownPlan([], undefined), undefined);
   const delegated = task("查一查", "completed", "task-1"), items = [command("a"), delegated, inside(command("b"), "task-1"), inside(command("c"), "task-1"), edit("x.ts")];
   assert.equal(stepCount(turn(items)), 3, "the command, the task and the edit; not the two commands inside the task");
   assert.deepEqual(ownWork(turn(items)).map(item => item.type), ["command", "subagent", "file_change"]);
@@ -163,4 +171,15 @@ test("what a Turn says while it goes on and shows nothing else: why it waits, wh
   assert.equal(live({ run: { status: "settling", cancelRequested: false, awaitingSwitchId: null } as PublicRun }).text, "正在结束执行");
   assert.equal(live({ run: { status: "running", cancelRequested: true, awaitingSwitchId: null } as PublicRun, items: [command("x", "running")] }).text, "正在停止并清理资源");
   assert.equal(live({ status: "queued", run: { status: "queued", cancelRequested: false, awaitingSwitchId: "switch-1" } as PublicRun }).text, "排队中：等待选择切换生效");
+});
+
+test("a task list of more than twelve steps folds its middle, and keeps the first two, the last two and the steps around the current one", () => {
+  const steps = (n: number, current: number) => Array.from({ length: n }, (_, index) => ({ text: "步骤 " + (index + 1), status: index < current ? "completed" as const : index === current ? "in_progress" as const : "pending" as const }));
+  assert.deepEqual(planRows(steps(12, 5)).map(row => row.kind), Array(12).fill("step"), "twelve are all shown");
+  const rows = planRows(steps(20, 10));
+  assert.deepEqual(rows.map(row => row.kind === "step" ? row.index : "+" + row.count), [0, 1, "+6", 8, 9, 10, 11, 12, "+5", 18, 19]);
+  assert.deepEqual(planRows(steps(20, 0)).map(row => row.kind === "step" ? row.index : "+" + row.count), [0, 1, 2, "+15", 18, 19], "at the start");
+  const done = steps(15, 15);
+  assert.deepEqual(planRows(done).map(row => row.kind === "step" ? row.index : "+" + row.count), [0, 1, "+11", 13, 14], "all done: the ends only");
+  assert.equal(planRows(done).reduce((sum, row) => sum + (row.kind === "step" ? 1 : row.count), 0), 15, "every step is counted once");
 });

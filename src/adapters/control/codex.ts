@@ -248,6 +248,8 @@ export class CodexControl implements HarnessControl {
   private forkConnection = false;
   /** Codex's own rollout file for the opened thread, as the thread reports it; null for an ephemeral thread. */
   private threadPath: string | null = null;
+  /** What setSessionInstructions gave: added to the developer instructions of the threads this connection opens; null adds nothing. */
+  private instructions: string | null = null;
   private interactivePermissions = false;
   private readonly permissions = new Map<string, { options: readonly string[]; resolve: (value: unknown) => void; reply: (option: string, input?: string) => unknown }>();
   private active: ActiveTurn | null = null;
@@ -378,6 +380,18 @@ export class CodexControl implements HarnessControl {
    * so a resumed thread whose mode is not known reports nothing and the mode reported earlier stands (ADR-034 §5); null as
    * well when nothing is known.
    */
+  /** HarnessControl.setSessionInstructions: Codex's `developerInstructions` on thread/start and thread/resume (app-server 0.166.0). */
+  setSessionInstructions(text: string | null): void { this.instructions = text; }
+  /**
+   * The thread's `developerInstructions` when there is something to add: the user's own (`developer_instructions` of the effective
+   * configuration, which the parameter would otherwise replace) and then ours, so nothing the user wrote is dropped. Nothing otherwise.
+   */
+  private async developerInstructions(cwd: string): Promise<{ readonly developerInstructions?: string }> {
+    if (this.instructions === null) return {};
+    const configured = object(object(await this.rpc.request("config/read", { includeLayers: false, cwd }), "native configuration").config, "effective native configuration");
+    const own = typeof configured.developer_instructions === "string" ? configured.developer_instructions.trim() : "";
+    return { developerInstructions: own ? own + "\n\n" + this.instructions : this.instructions };
+  }
   async nativeConfig(): Promise<{ readonly model: string | null; readonly options: NativeOptions } | null> {
     const mode = this.confirmedMode ?? (this.collaboration === null ? this.threadMode : null);
     if (mode === null && this.resumed) return null;
@@ -428,10 +442,11 @@ export class CodexControl implements HarnessControl {
         if (chosen === undefined) throw new ControlError("MODEL_UNAVAILABLE", "no model is configured for the collaboration mode");
         this.collaboration = { mode, model: chosen, effort: this.effort ?? presetEffort ?? selected?.options?.find(option => option.id === "reasoning_effort")?.currentValue ?? null };
       }
+      const instructions = await this.developerInstructions(cwd);
       if (checkpoint !== undefined) this.conversation = nativeConversationId(checkpoint);
       // A cold start or a long thread resume loads native state before answering; bounded by the run budget.
       const response = object(await this.rpc.request(checkpoint === undefined ? "thread/start" : "thread/resume", {
-        cwd, ...(checkpoint === undefined ? { ephemeral: false } : { threadId: nativeConversationId(checkpoint), excludeTurns: true }), ...(model === undefined ? {} : { model }), ...overrides,
+        cwd, ...(checkpoint === undefined ? { ephemeral: false } : { threadId: nativeConversationId(checkpoint), excludeTurns: true }), ...(model === undefined ? {} : { model }), ...overrides, ...instructions,
       }, this.setupMs(), "abort", "NATIVE_SESSION_TIMEOUT"), "native thread setup result");
       // The thread reports the policy it actually runs with; an override it did not apply is a failure, not a silent default.
       if (overrides.approvalPolicy !== undefined && response.approvalPolicy !== overrides.approvalPolicy) throw new ControlError("NATIVE_OPTION_MISMATCH", "Codex did not apply the requested approval policy");

@@ -1,4 +1,4 @@
-import type { FileChangeItem, PlanItem, SubagentItem, WorkItem } from "../../../../src/contracts/protocol.js";
+import type { FileChangeItem, PlanItem, PlanStep, SubagentItem, WorkItem } from "../../../../src/contracts/protocol.js";
 import type { ReadItem, ReadTurn } from "../../../../src/contracts/protocol-read.js";
 import { costWords, statusText } from "../../../../src/contracts/protocol-lines.js";
 import { TURN_STATUS_WORDS } from "../../../../src/contracts/protocol-words.js";
@@ -27,6 +27,39 @@ export function latestPlan(runs: readonly PublicRun[]): { readonly run: TurnRun;
     if (plan !== undefined) return { run, plan };
   }
   return undefined;
+}
+/**
+ * The task list pinned above the message box: the newer of the conversation's head (`head`, which reaches past the loaded Turns) and the latest
+ * one among the loaded Turns (which a running Turn updates as it goes, before the store has it), whoever set it — the Harness's own plan tool
+ * (Claude Code's TodoWrite, Codex's update_plan) or the Hub's hub_update_plan. A tie, the same Turn, is the loaded one's.
+ */
+export function shownPlan(runs: readonly PublicRun[], head: { readonly runId: string; readonly harnessId: string; readonly steps: readonly PlanStep[] } | undefined):
+  { readonly harnessId: string; readonly steps: readonly PlanStep[] } | undefined {
+  const held = latestPlan(runs), loaded = held === undefined ? undefined : { harnessId: held.run.protocol.executor.harnessId, steps: held.plan.steps };
+  if (head === undefined || held === undefined) return loaded ?? (head === undefined ? undefined : { harnessId: head.harnessId, steps: head.steps });
+  // A head Turn outside the loaded ones is older than all of them.
+  const index = (id: string) => runs.findIndex(run => run.id === id);
+  return index(held.run.id) >= index(head.runId) ? loaded : { harnessId: head.harnessId, steps: head.steps };
+}
+/** One row of a long task list as the bar shows it: a step (with its place in the list), or the steps folded away between two shown ones. */
+export type PlanRow = { readonly kind: "step"; readonly index: number } | { readonly kind: "fold"; readonly count: number };
+/** Above this many steps, the list folds its middle. */
+export const PLAN_FOLD_OVER = 12;
+/**
+ * The rows of a task list: every step when it has PLAN_FOLD_OVER or fewer; otherwise the first two, the last two and the two either side of
+ * the step in progress (else the next pending one), with each run of the others folded into one row.
+ */
+export function planRows(steps: readonly PlanStep[]): readonly PlanRow[] {
+  if (steps.length <= PLAN_FOLD_OVER) return steps.map((_, index) => ({ kind: "step", index }));
+  const current = steps.findIndex(step => step.status === "in_progress"), next = current >= 0 ? current : steps.findIndex(step => step.status === "pending");
+  const shown = (index: number) => index < 2 || index >= steps.length - 2 || next >= 0 && Math.abs(index - next) <= 2;
+  const rows: PlanRow[] = [];
+  for (let index = 0; index < steps.length; index++) {
+    if (shown(index)) { rows.push({ kind: "step", index }); continue; }
+    const last = rows.at(-1);
+    if (last?.kind === "fold") rows[rows.length - 1] = { kind: "fold", count: last.count + 1 }; else rows.push({ kind: "fold", count: 1 });
+  }
+  return rows;
 }
 /** The task list of one Turn, when it has one. */
 export function planOf(turn: ReadTurn): PlanItem | undefined { return turn.items.findLast((item): item is PlanItem => item.type === "plan" && item.steps.length > 0); }
