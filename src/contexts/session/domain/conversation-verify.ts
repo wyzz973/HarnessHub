@@ -215,7 +215,8 @@ export const verify: VerifyConversation = (conversation: Conversation, reader: C
       if (ids.has(item.itemId)) say("item-ids-unique", place, "the id is used by an earlier item of the Run"); else ids.add(item.itemId);
       if (runEnded(run.status) && OPEN_ITEM.has(item.status)) say("finished-run-no-open-item", place, "the Run is " + run.status + " and the item is " + item.status);
       if (item.text.some(hasLoneSurrogate)) say("item-chunks-well-formed", place, "a chunk of its text holds half of a surrogate pair");
-      if (!held && (item.textChunks !== item.text.length || item.textBytes !== item.text.reduce((total, chunk) => total + encoder.encode(chunk).byteLength, 0))) say("item-text-counts", place, "its counters say " + item.textChunks + " chunks and " + item.textBytes + " bytes and its chunks are not those");
+      // A text the reader left out for its size (`textOmitted`: it is read by range) has nothing here to count against.
+      if (!held && item.textOmitted !== true && (item.textChunks !== item.text.length || item.textBytes !== item.text.reduce((total, chunk) => total + encoder.encode(chunk).byteLength, 0))) say("item-text-counts", place, "its counters say " + item.textChunks + " chunks and " + item.textBytes + " bytes and its chunks are not those");
       if ((item.type === "user_message" || item.type === "assistant_message") && item.createdSeq !== null) top = Math.max(top, item.createdSeq);
     });
     lastMessage[position] = top;

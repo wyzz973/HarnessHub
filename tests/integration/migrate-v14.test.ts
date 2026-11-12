@@ -11,6 +11,7 @@ import test, { type TestContext } from "node:test";
 import { RelayLedger } from "../../src/contexts/session/application/relay-coordinator.js";
 import { renderRelay } from "../../src/contexts/session/domain/relay/packet.js";
 import { parseSession as liveParse } from "../../src/contexts/session/domain/state.js";
+import { verify } from "../../src/contexts/session/domain/conversation-verify.js";
 import { storageConversion } from "../../src/contexts/session/domain/store-conversion.js";
 import type { ConvertedRun, StorageConversion } from "../../src/contracts/conversation.js";
 import type { RelayIndexRow } from "../../src/contracts/relay.js";
@@ -130,7 +131,8 @@ for (const name of V13_FIXTURES) {
     const originals = snapshotsOf(db), before = dumpOf(db);
     assert.deepEqual(migrationState(db), { kind: "not-started", version: 13 });
     const started = performance.now();
-    const report = migrateToV14(db, { root });
+    // With the whole-conversation checker (T8): every conversation of every fixture, as converted, breaks none of its rules.
+    const report = migrateToV14(db, { root, verify });
     timings.push({ name, bytes: [...originals.values()].reduce((sum, text) => sum + Buffer.byteLength(text, "utf8"), 0), ms: performance.now() - started });
     assert.equal(report.stopped, null);
     assert.equal(report.from, 13);
