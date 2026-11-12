@@ -2,13 +2,17 @@ import type { ContextEffect } from "./control.js";
 import type { ItemStatus, ItemType, ProtocolItem } from "./protocol.js";
 import type { ExecutedOn, RelayRows } from "./relay.js";
 import type {
-  CommandId, CommandRecord, EventDraft, ForkedMessage, HarnessSelection, NativeSessionBinding, PublicRun, PublicSwitch, RetainedProcess, RunId, RunStatus,
-  SessionConfiguration, SessionEvent, SessionId, SessionSnapshot, SwitchId,
+  CommandId, CommandRecord, EventDraft, ForkedMessage, HarnessSelection, PublicMessage, NativeSessionBinding, PublicRun, PublicSwitch, RetainedProcess, RunId,
+  RunStatus, SessionConfiguration, SessionEvent, SessionId, SessionSnapshot, SwitchId,
 } from "./session.js";
 
 /*
  * A conversation kept as tables (ADR-057, store v14): the shapes between the lines of work. Types and constants only; nothing here is read by
- * a running path until the cut (docs/proposals/protocol/step2-plan.md). One rule runs through all of it:
+ * a running path until the cut (docs/proposals/protocol/step2-plan.md). Two rules run through all of it.
+ *
+ *   NOTHING THE SOURCE SAID IS LOST. An item keeps what the Harness reported of it (`NativeFacts`: title, kind, name, status word, the
+ *   whole of an activity, a notice, a plan step), and its normalized type, command and path are values worked out from that and can be
+ *   worked out again. `toItems` and `fromItems` are inverses: the old shape of a Run is what the rows give back, to the byte.
  *
  *   FOREIGN DATA IS NEVER FATAL. What a Harness tells the Hub (a title, an id, a number, an exit code, a text) is normalized by the writer
  *   before a Mutation is built: NUL removed, a lone surrogate replaced, an empty label given its placeholder, an out-of-range number left
@@ -39,7 +43,7 @@ export const PAGE = {
   deferredAfter: 150,
   /** The conversations of one list page. */
   sessions: 100,
-  /** An item whose body is longer than this is sent with `bodyOmitted`, the body fetched whole or by byte range. */
+  /** An item whose text or body is longer than this is sent with `bodyOmitted` and `textBytes`; its text is fetched by byte range. */
   itemInlineBytes: 64 * 1024,
 } as const;
 
@@ -48,25 +52,29 @@ export const PAGE = {
 // ---------------------------------------------------------------------------------------------------------------------
 
 /**
- * An item's id, unique within its Run (`items(run_id, item_id)`): a tool call by the id its Harness gave it, an activity or permission by
- * the Hub's, the segments of text and reasoning and the notices and outputs by their count in the Run from 1. The same id reported again
- * is the same item (an upsert; nothing changes, nothing is committed). `seq`, the item's place in the Turn, is fixed when it is first seen.
+ * An item's id, unique within its Run (`items(run_id, item_id)`): a tool call by the id its Harness gave it, an activity or a permission
+ * by its own, the segments of text and reasoning, the notices and the outputs by their count in the Run from 1. The same id reported
+ * again is the same item (an upsert; nothing changed, nothing committed). `seq`, the item's place in the Turn, is fixed when the item is
+ * first seen. The Turn's `switch`, `error`, `interrupt` and `clear` lines are not items: they are read from the Run's own facts and the
+ * relay's rows when a Turn is drawn (their state changes after the Turn, and a copy would go stale).
  */
 export type ItemId =
-  | "user" | "switch" | "plan" | "error" | "clear"
-  | `tool:${string}` | `activity:${string}` | `permission:${string}` | `context:${string}`
+  | "user" | "plan"
+  | `tool:${string}` | `activity:${string}` | `permission:${string}`
   | `text:${number}` | `think:${number}` | `notice:${number}` | `output:${number}`;
 
 /**
  * What the Harness reported of a call, an activity or a notice, verbatim, kept beside the item the Hub made of it. The readers that put a
- * call in its own words (the relay's brief, the context table) read these, and so do the accessors that give the old flat shapes back
+ * call in its own words (the relay's brief, the context table) read these through `fromItems`, which gives back the old flat shapes
  * (`PublicTool`, `PublicNotice`, `PublicActivity`, `PublicOutput`): an item loses nothing its source carried.
  */
 export interface NativeFacts {
+  /** A tool's title; a notice's or activity's title (a notice of severity error keeps its title and detail apart here). */
   readonly title?: string;
+  /** A tool's kind word, or an activity's kind. */
   readonly kind?: string;
   readonly name?: string;
-  /** The status word as reported (a free string for a tool); the item's own `status` is the protocol's. */
+  /** The status word as reported (a free string for a tool; the activity's own for an activity); the item's `status` is the protocol's. */
   readonly status?: string;
   readonly exitCode?: number;
   /** A longer text: an activity's or a notice's detail. */
@@ -81,14 +89,16 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export type ItemColumnKeys = "id" | "seq" | "status" | "startedAt" | "endedAt" | "parentId";
 /**
  * An item's `item_json`: its own type's fields (`type` stays, so the JSON says what it is) and the native facts it came from. Not its
- * text (`item_text`), and not what only a transfer says (`text`, `textBytes`, `bodyOmitted`).
+ * text (`item_text`), and not what only a transfer says (`text`, `textBytes`, `bodyOmitted`). `phase` is stored only when the Harness
+ * said it; otherwise it is worked out when the Turn is read (only a completed Turn has a `final`, and it is the last assistant segment
+ * with the notices, plan, artifacts and context events set aside).
  */
-export type ItemFields = DistributiveOmit<ProtocolItem, ItemColumnKeys | "text" | "textBytes" | "bodyOmitted"> & { readonly native?: NativeFacts };
+export type ItemFields = DistributiveOmit<ProtocolItem, ItemColumnKeys | "text" | "textBytes" | "bodyOmitted" | "phase"> & { readonly phase?: "commentary" | "final"; readonly native?: NativeFacts };
 
 /** One row of `items`. */
 export interface ItemRow {
   readonly runId: RunId;
-  /** From 1, fixed when the item is first seen, never reused. */
+  /** From 1, fixed when the item is first seen, never reused. (0 is the place of the Turn's `switch` line, which is not stored.) */
   readonly seq: number;
   readonly itemId: string;
   readonly type: ItemType;
@@ -97,15 +107,22 @@ export interface ItemRow {
   readonly endedAt: number | null;
   /** The id of the subagent item this one happened inside. */
   readonly parentId: string | null;
-  /** The seq of the event of the commit that made the item; null for an item converted from a Run that kept no order. */
+  /**
+   * The seq of the event of the commit that made the item (written by the store: see `ItemWrite.createdByEvent`). A converted message has
+   * its message's seq; any other converted item has none, because nothing says when it happened.
+   */
   readonly createdSeq: number | null;
-  /** The bytes of its text so far, and how many chunks hold them (the next chunk's number). */
+  /** The bytes of its text so far, and how many chunks hold them (the next chunk's number). Kept by the store; a writer leaves them out. */
   readonly textBytes: number;
   readonly textChunks: number;
   readonly fields: ItemFields;
 }
-/** One row of `item_text`: a chunk of an item's text, appended once and never changed (a user message, an assistant segment, a reasoning segment). */
-export interface TextChunkRow { readonly runId: RunId; readonly itemSeq: number; readonly chunk: number; readonly text: string; readonly bytes: number }
+/**
+ * One row of `item_text`: a chunk of an item's text, appended once and never changed (a user message, an assistant segment, a reasoning
+ * segment). A chunk ends on a code point (a high surrogate left at the end of a window goes to the start of the next), and starts at
+ * `byteOffset`, so that a byte range is read without adding up what comes before it.
+ */
+export interface TextChunkRow { readonly runId: RunId; readonly itemSeq: number; readonly chunk: number; readonly byteOffset: number; readonly text: string; readonly bytes: number }
 /** An item as a conversation holds it: its row and its text as the chunks that were committed (text = chunks joined; none for an item without text). */
 export interface HeldItem extends ItemRow { readonly text: readonly string[] }
 
@@ -113,14 +130,14 @@ export interface HeldItem extends ItemRow { readonly text: readonly string[] }
 // Runs
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** What a Run keeps in `run_json`: the facts of the old `PublicRun` that are neither a column nor an item. */
+/** What a Run keeps in `run_json`: the facts of the old `PublicRun` that are neither a column nor an item. `usage` is the native value as it was reported. */
 export type RunFacts = Pick<PublicRun, "userMessageId" | "assistantMessageId" | "selection" | "contextThroughSeq" | "sourceRunIds" | "backend" | "cleanup" | "error"
   | "usage" | "attachments" | "timing" | "retained" | "reused" | "relay" | "relayRequest" | "awaitingSwitchId">;
 
 /** One row of `runs`; one property per column of schema-v14.ts, and `facts` is `run_json`. */
 export interface RunRow {
   readonly sessionId: SessionId;
-  /** From 1 in the order the Runs were accepted; the Turn's number, the page key, never reused. */
+  /** From 0 in the order the Runs were accepted: the index the Run had in the old `runs` array, the page key, never reused. The Turn's number is `ordinal + 1`. */
   readonly ordinal: number;
   readonly runId: RunId;
   readonly commandId: CommandId;
@@ -134,15 +151,25 @@ export interface RunRow {
   readonly reused: boolean;
   /** The seq of the event that accepted the input (the user message's place among the events). */
   readonly userSeq: number;
-  /** The seq of the event that ended the Run (`run.ended`, or the `session.recovered` that ended it); null until it ended, and for a converted Run whose events do not place it. */
+  /**
+   * The seq of the event that ended the Run (`run.ended`, or the `session.recovered` that ended it, the first time); null until it ended
+   * and for a converted Run whose events do not place it. A reader takes null as ABOVE the relay's mark, never as 0 and never as absent:
+   * the relay may send such a Run again, and never loses it.
+   */
   readonly endedSeq: number | null;
   readonly dispatched: boolean;
   /** Where it ran: `facts.relay.executedOn` as columns, so that "the Runs a binding does not hold" is an index query. */
   readonly executedOn: ExecutedOn | null;
-  /** The Run was a native command; `commandEffect` the effect it was read with, `settledEffect` the one its end settled (what the relay ledger read from `run.native_command` and `run.ended`). */
+  /**
+   * The Run was a native command (`isCommand`: not the same as having an effect), `commandEffect` the effect it was read with and
+   * `settledEffect` the one its end settled. A command whose effect cannot be read is `isCommand` with null effects: it is no fact for
+   * the relay, and no ordinary Run either.
+   */
   readonly isCommand: boolean;
   readonly commandEffect: ContextEffect | null;
   readonly settledEffect: ContextEffect | null;
+  /** For an `unknown` Run: the switch that acknowledged keeping it as it is (what let an open conversation have it); null until then. */
+  readonly acknowledgedBy: SwitchId | null;
   readonly cancelRequested: boolean;
   readonly stopRequested: boolean;
   /** Its items are in the fixed order of a Turn that kept none (ProtocolTurn.legacyOrder). */
@@ -151,8 +178,10 @@ export interface RunRow {
 }
 
 /**
- * A Run as the conversation holds it (stage 1, in memory): the old `PublicRun` without its display fields (the items are them, and `input`
- * is the text of the `user` item), with the facts the old model read out of the events, and its items.
+ * A Run as the conversation holds it in memory (stage 1): the old `PublicRun` without its display fields (the items are them, and `input`
+ * is the text of the `user` item), with the facts the old model read out of the events. `items` are held only while the Run is not
+ * finished (the Turn in progress, a queued input); a finished Run's items and text stay in the tables and are read by Turn when a reader
+ * needs them (`ConversationReader.turnAt`).
  */
 export interface ConversationRun extends Omit<PublicRun, "thinking" | "tools" | "plan" | "notices" | "activities" | "outputs" | "protocol" | "input"> {
   readonly ordinal: number;
@@ -161,9 +190,31 @@ export interface ConversationRun extends Omit<PublicRun, "thinking" | "tools" | 
   readonly isCommand: boolean;
   readonly commandEffect?: ContextEffect;
   readonly settledEffect?: ContextEffect;
+  readonly acknowledgedBy?: SwitchId;
   readonly legacyOrder?: true;
-  readonly items: readonly HeldItem[];
+  readonly items?: readonly HeldItem[];
 }
+
+/** What a Run and its messages become, and what they are made of again (the same pair for every Run, the old and the new alike). */
+export interface ConvertedRun { readonly row: RunRow; readonly items: readonly HeldItem[]; readonly contentRefs: readonly ContentRefRow[] }
+/**
+ * The storage conversion of ADR-057 3.6: not the display projection (which cuts, drops and rewrites for the screen), but a lossless
+ * pair. `toItems` is total, deterministic and pure (it reads no clock and no store); `fromItems(toItems(run, messages, at))` deep-equals
+ * `{ run, messages }`; both go Run by Run. `fromItems` is also what gives the readers that have not moved to items their old shapes.
+ */
+export interface StorageConversion {
+  toItems(run: PublicRun, messages: { readonly user: PublicMessage; readonly assistant?: PublicMessage }, at: { readonly sessionId: SessionId; readonly ordinal: number; readonly endedSeq?: number;
+    readonly isCommand?: boolean; readonly commandEffect?: ContextEffect; readonly settledEffect?: ContextEffect; readonly acknowledgedBy?: SwitchId }): ConvertedRun;
+  fromItems(converted: ConvertedRun): { readonly run: PublicRun; readonly messages: readonly PublicMessage[] };
+}
+/** One thing `verify` found wrong: the rule (a name from the invariant table of ADR-057 3.3), where, and what. */
+export interface Violation { readonly rule: string; readonly where: string; readonly detail: string }
+/**
+ * The whole-conversation check: the relations the old `parseSession` checked, now over the rows with maps instead of searches. It runs
+ * after every commit in the tests, after each converted conversation in the migration, and in a maintenance command; never in the
+ * production commit path.
+ */
+export type VerifyConversation = (conversation: Conversation, reader: ConversationReader) => readonly Violation[];
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The head, the bindings, the commands, the switches
@@ -171,8 +222,8 @@ export interface ConversationRun extends Omit<PublicRun, "thinking" | "tools" | 
 
 /**
  * Where a conversation's quoted history comes from. A branch made from v14 on holds a reference (the Turns up to `throughOrdinal` are read
- * from the source); a branch converted from v13 holds the history it quoted (`quoted`, rows of `origin_history`), as it always has; an
- * import holds the native messages it read (rows of `origin_history`) and tells what it did not.
+ * from the source); a branch converted from v13 holds the history it quoted (`quoted`, rows of `origin_history` marked `fork`), as it
+ * always has; an import holds the native messages it read (rows marked `import`) and tells what it did not.
  */
 export type StoredOrigin =
   | { readonly kind: "fork"; readonly sessionId: SessionId; readonly throughRunId: RunId; readonly throughOrdinal: number; readonly quoted: boolean }
@@ -198,16 +249,18 @@ export interface HeadRow {
   readonly epoch: number;
   readonly activeRunId: RunId | null;
   readonly pendingSwitchId: SwitchId | null;
+  /** The head records a kept native process (`head.retained`): the index that finds the processes an ended owner left. */
+  readonly kept: boolean;
   readonly title: string;
   readonly runCount: number;
   readonly updatedAt: number;
-  /** Set when the conversation is deleted: it is then hidden and its rows kept while another conversation quotes it. */
+  /** Set when the conversation is deleted: it is then hidden and its live native bindings archived, and its rows are kept while another conversation quotes it. */
   readonly deletedAt: number | null;
-  /** Why a conversion of this conversation failed; its v13 snapshot is then still in `head`. */
+  /** Why a conversion of this conversation stopped the start; its v13 snapshot is then still in `head`. */
   readonly lastError: string | null;
   readonly head: HeadJson;
 }
-export interface OriginHistoryRow { readonly sessionId: SessionId; readonly idx: number; readonly message: ForkedMessage }
+export interface OriginHistoryRow { readonly sessionId: SessionId; readonly idx: number; readonly kind: "fork" | "import"; readonly message: ForkedMessage }
 
 /** One row of `bindings`; the columns are copies of what `binding` says, for the indexes and the monotonic checks. */
 export interface BindingRow {
@@ -226,11 +279,16 @@ export interface BindingRow {
 }
 export interface CommandRow { readonly sessionId: SessionId; readonly ordinal: number; readonly command: CommandRecord }
 /**
- * One row of `switches`. `sourceThroughOrdinal` says "every Run up to this ordinal that is finished (or is the active one)" for the
- * switches whose sources are that; any other set stays in `switch.sourceRunIds`, so nothing is lost and nothing grows with the history.
+ * One row of `switches`. `sourceThroughOrdinal` says "every Run up to this ordinal that is finished (or is the active one)" when that is
+ * what the switch's sources are, and is for showing only: it is not a claim on anything. Any other set stays in `switch.sourceRunIds`
+ * (a Run that queued while the switch was asked for is skipped), and whether an `unknown` Run was acknowledged is `RunRow.acknowledgedBy`.
  */
 export interface SwitchRow { readonly sessionId: SessionId; readonly ordinal: number; readonly sourceThroughOrdinal: number | null; readonly switch: PublicSwitch }
-/** One reference of a conversation to an object of the content store (`content_refs`): what the collector keeps and what a purge lets go. */
+/**
+ * One reference of a conversation to an object of the content store (`content_refs`): what the collector keeps and what a purge lets go.
+ * A reference without a Run is the conversation's (the attachments of a quoted history). The collector's set is these and the references
+ * of every conversation not yet converted, and it collects nothing while a conversation is not converted.
+ */
 export interface ContentRefRow {
   readonly contentId: string;
   readonly sessionId: SessionId;
@@ -244,9 +302,10 @@ export interface ContentRefRow {
 // ---------------------------------------------------------------------------------------------------------------------
 
 /**
- * The object the Runtime reduces in stage 1, in place of the `SessionSnapshot` with its display fields: the same shape with the Runs'
- * items for their `thinking`, `tools`, `plan`, `notices`, `activities` and `outputs`, and without `messages` (a message is an item).
- * The whole conversation is held in memory (that ends in stage 2) but written as rows: a commit writes the rows that changed.
+ * The object the Runtime reduces in stage 1, in place of the `SessionSnapshot` with its display fields: the head, every Run as a light
+ * row (the old `PublicRun` without its display fields), and the items of the Runs not finished. No `messages` (a message is an item) and
+ * no finished Run's items or text, which are read by Turn. Memory grows by a small row per Turn, not by what the Turns held; a commit
+ * writes the rows that changed (the store finds them by comparing object identity, and only an unfinished Run's items can have changed).
  */
 export interface Conversation extends Omit<SessionSnapshot, "schemaVersion" | "runs" | "messages" | "origin"> {
   readonly format: typeof CONVERSATION_FORMAT;
@@ -255,19 +314,21 @@ export interface Conversation extends Omit<SessionSnapshot, "schemaVersion" | "r
 }
 
 export interface HeadWrite { readonly row: HeadRow }
-export interface RunWrite { readonly op: "insert" | "update"; readonly row: RunRow }
-export interface ItemWrite { readonly op: "insert" | "update"; readonly row: ItemRow }
+/** `userSeqByEvent` and `endedByEvent` name an entry of the Mutation's `events`: the store writes the seq that event gets. */
+export interface RunWrite { readonly op: "insert" | "update"; readonly row: RunRow; readonly userSeqByEvent?: number; readonly endedByEvent?: number }
+/** `createdByEvent` names an entry of the Mutation's `events`. A writer leaves `textBytes` and `textChunks` at 0: the store counts the chunks it appends. */
+export interface ItemWrite { readonly op: "insert" | "update"; readonly row: ItemRow; readonly createdByEvent?: number }
 export interface TextAppend { readonly runId: RunId; readonly itemSeq: number; readonly chunk: number; readonly text: string }
 export interface BindingWrite { readonly op: "insert" | "update"; readonly row: BindingRow }
 export interface SwitchWrite { readonly op: "insert" | "update"; readonly row: SwitchRow }
 /**
  * What one commit writes: the rows that changed, and the events. FINAL in stage 1: in stage 1 the store makes it by comparing the
- * conversation before and after (by object identity, and by the chunks an item's text has gained); in stage 2 the reducers build it.
- * The Commit it comes back in is what the frames of the stream are made from.
+ * conversation before and after; in stage 2 the reducers build it. The Commit it comes back in is what the stream's frame is made from.
  *
- * Applied in this order, in one transaction: head (the version's compare-and-swap), Run inserts, bindings (updates, then inserts: a
- * binding is archived before the one that replaces it), items, text, Run updates (a Run's terminal change comes after its last item),
- * commands, switches, content references, origin history, events, relay rows.
+ * Applied in this order, in one transaction: commands (a Run's and a switch's command comes before it), Run inserts, items, text, Run
+ * updates (a Run's terminal change comes after its last item), bindings (updates, then inserts: a binding is archived before the one that
+ * replaces it, and points at a Run already finished), switches (updates, then inserts), content references, origin history, notice
+ * prints, events, relay rows, and the head last (so that its checks see the commit's rows and a failed one rolls the rest back).
  */
 export interface Mutation {
   readonly head?: HeadWrite;
@@ -279,6 +340,8 @@ export interface Mutation {
   readonly switches?: readonly SwitchWrite[];
   readonly contentRefs?: readonly ContentRefRow[];
   readonly originHistory?: readonly OriginHistoryRow[];
+  /** The fingerprints of the Harness notices shown in this conversation (a notice already shown is not shown again). */
+  readonly noticePrints?: readonly string[];
   readonly events: readonly EventDraft[];
   readonly relay?: RelayRows;
 }
@@ -308,21 +371,28 @@ export interface StartupSample { readonly harnessId: string; readonly controlId:
 
 /**
  * The store of stage 1: `SessionStore` over the new shapes. The same transaction contract (synchronous, compare-and-swap on `version`,
- * events in the same commit, published after), with the list and the readers the old store answered by reading every snapshot now
- * answering from columns and indexes. Implemented by line A (the tables) and wired at the cut (docs/proposals/protocol/step2-plan.md).
+ * events in the same commit, published after, one frame per commit), with the list and the readers the old store answered by reading
+ * every snapshot now answering from columns and indexes. Implemented by the tables' line and wired at the cut.
  */
 export interface ConversationStore extends ConversationReader {
   readonly ownerGeneration: number;
   assertOwner(): void;
   create(conversation: Conversation, events: readonly EventDraft[]): ConversationCommit;
-  /** The whole conversation (stage 1 only; stage 2 reads through `ConversationTx`). */
+  /** The conversation as the Runtime reduces it (stage 1 only; stage 2 reads through `ConversationTx`). */
   get(id: SessionId): Conversation;
+  /**
+   * The conversation in the old shape, made by `fromItems` from the rows: a finished Run once (it never changes) and kept, the Runs not
+   * finished from memory. For the readers that have not moved to items; gone when the last one has (line D).
+   */
+  snapshot(id: SessionId): SessionSnapshot;
   findByCreateKey(key: CommandId): Conversation | null;
   list(query?: SessionListQuery): SessionListPage;
-  /** The conversations whose head records a kept native process, whatever their age. */
+  /** The conversations whose head records a kept native process, whatever their age (`sessions.kept`). */
   listKept(): readonly SessionId[];
+  /** The conversations with a Run not finished or a switch pending: what recovery visits (the partial indexes). */
+  unfinished(): readonly SessionId[];
   nativeOwners(harnessId: string, controlId: string): ReadonlyMap<string, SessionId>;
-  /** Every content id any conversation references (`content_refs`), for the collector. */
+  /** Every content id any conversation references (`content_refs`, and the references of the conversations not yet converted), for the collector. */
   contentReferences(): ReadonlySet<string>;
   /** The latest `perEntry` startups of every Harness entry. */
   startupSamples(perEntry: number): readonly StartupSample[];
@@ -345,13 +415,13 @@ export interface TurnItems { readonly run: RunRow; readonly items: readonly Held
 /** The newest Turns up to a size, or the page of Turns before a cursor. `older` is null when the first Turn is in it. */
 export interface TurnWindow { readonly turns: readonly TurnItems[]; readonly older: TurnCursor | null; readonly bytes: number; readonly lastSeq: number }
 export interface ItemPage { readonly items: readonly HeldItem[]; /** The `after` of the next page; null when this is the last. */ readonly next: number | null }
-/** A byte range of an item's text: `from` and `to` are byte offsets (UTF-8 boundaries), `total` its size. */
+/** A byte range of an item's text: `from` and `to` are byte offsets (on code point boundaries), `total` its size. */
 export interface TextRange { readonly text: string; readonly from: number; readonly to: number; readonly total: number }
 export interface SearchHit { readonly sessionId: SessionId; readonly runId: RunId; readonly ordinal: number; readonly itemSeq: number; readonly type: ItemType }
 
 /**
- * Every read the wire, the readers and the tools make of a conversation, by index and by page (line A implements it on the tables; lines
- * C and D call it). None of it reads a whole conversation.
+ * Every read the wire, the readers and the tools make of a conversation, by index and by page (the tables' line implements it; the
+ * stream's and the readers' lines call it). None of it reads a whole conversation.
  */
 export interface ConversationReader {
   head(id: SessionId): HeadRow;
@@ -362,12 +432,15 @@ export interface ConversationReader {
   turnAt(id: SessionId, ordinal: number): TurnItems | null;
   items(runId: RunId, afterSeq: number, limit: number): ItemPage;
   text(runId: RunId, itemSeq: number, range?: { readonly from: number; readonly to?: number }): TextRange;
-  /** Full-text search over finished messages and segments (terms of three characters or more; a shorter one is scanned). */
+  /**
+   * Full-text search over finished messages and segments: a term of three characters or more is the trigram index's; one or two Chinese
+   * characters are the per-character index's; one or two Latin characters scan the joined text of the segments.
+   */
   search(query: string, scope: { readonly sessionId?: SessionId; readonly after?: number; readonly limit: number }): readonly SearchHit[];
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Stage 2: the port that holds only the head and the Turn in progress (line E)
+// Stage 2: the port that holds only the head and the Turn in progress
 // ---------------------------------------------------------------------------------------------------------------------
 
 /**
@@ -383,13 +456,15 @@ export interface ConversationTx {
   /** The Runs that are not finished (the partial index). */
   openRuns(): readonly RunRow[];
   before(ordinal: number, limit: number): readonly RunRow[];
-  /** The finished, dispatched Runs that did not run on this binding's native session in its current epoch, oldest first from `afterEndedSeq`. */
+  /** The finished, dispatched Runs that did not run on this binding's native session in its current epoch, oldest first from `afterEndedSeq` (a null `endedSeq` counts as above it). */
   owed(binding: ExecutedOn, afterEndedSeq: number, limit: number): readonly RunRow[];
   /** The last Run dispatched to a Harness control: what `carriedNativeConfiguration` and the relay's mark read. */
   lastDispatched(harnessId: string, controlId: string): RunRow | null;
   items(runId: RunId, afterSeq: number, limit: number): readonly ItemRow[];
   item(runId: RunId, itemId: string): ItemRow | null;
   text(runId: RunId, itemSeq: number, range?: { readonly from: number; readonly to?: number }): TextRange;
+  /** Whether a Harness notice with this fingerprint was already shown in this conversation. */
+  noticeShown(print: string): boolean;
   command(id: CommandId): CommandRow | null;
   switchOf(id: SwitchId): SwitchRow | null;
   bindings(): readonly BindingRow[];
