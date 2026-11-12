@@ -13,7 +13,7 @@ try {
   const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(url.hash.slice(1)).get("token") }) });
   const csrf = (await boot.json()).csrfToken, cookie = boot.headers.get("set-cookie").split(";", 1)[0];
   const call = async (path, body) => { const r = await fetch(origin + "/api/v1" + path, { method: body === undefined ? "GET" : "POST", headers: { Cookie: cookie, Origin: origin, ...(body === undefined ? {} : { "Content-Type": "application/json", "X-CSRF-Token": csrf }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); return { status: r.status, value: await r.json() }; };
-  const view = async () => { const v = (await call("/capabilities/hub-tools")).value; console.log("tool:", JSON.stringify(v.tool)); for (const h of v.harnesses ?? []) console.log(" ", h.harnessId, h.state, h.writable ? "writable" : "-"); };
+  const view = async () => { const v = (await call("/capabilities/hub-tools")).value; console.log("tool:", JSON.stringify(v.tool)); for (const h of v.harnesses ?? []) console.log(" ", h.harnessId, h.state, h.writable ? "writable" : "-", h.reason ?? ""); };
   await view();
   if (action === "install" || action === "uninstall") {
     for (const harnessId of ids) { const r = await call("/capabilities/hub-tools/" + action, { harnessId }); console.log(action, harnessId, r.status, r.value.status ?? r.value.code, r.value.state ?? "", JSON.stringify((r.value.changes ?? []).map(c => c.kind)), r.value.message ?? ""); }

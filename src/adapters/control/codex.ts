@@ -8,7 +8,7 @@ import type { NativeToolDetail, NativeUsage } from "../../contracts/control.js";
 import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { MAX_CONTENT_BYTES, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
-import { MAX_NATIVE_EXTENSIONS, MAX_NATIVE_SESSIONS, type NativeExtensions, type NativeSessionImport, type NativeSessionPage } from "../../contracts/control.js";
+import { type NativeExtensions, type NativeSessionImport, type NativeSessionPage } from "../../contracts/control.js";
 import { checkInputs, fileMentions } from "../../infrastructure/control/attachments.js";
 import { randomUUID } from "node:crypto";
 import type { RelayCapabilities, RelayPacketId } from "../../contracts/relay.js";
@@ -105,8 +105,8 @@ type PermissionSetting = keyof typeof PERMISSION_SETTINGS;
 /** app-server has no slash commands; native thread operations the Hub exposes under command names. */
 /** Thread sources a user continues; sub-agent threads belong to their parent thread. */
 const LISTED_SOURCES = ["cli", "vscode", "exec", "appServer"] as const;
-/** Reading budget for a continued thread's history: enough turns for the Hub's quoted window, newest first. */
-const IMPORT_TURN_PAGES = 8, IMPORT_TURNS_PER_PAGE = 50, IMPORT_MESSAGES = 400;
+/** A continued thread's history is read whole, page by page newest first (no count bound, 2026-11-12); this is one page. */
+const IMPORT_TURNS_PER_PAGE = 50;
 function threadTitle(thread: Record<string, unknown>): string | null {
   const value = [thread.name, thread.preview].find(item => typeof item === "string" && item.trim()) as string | undefined;
   return value === undefined ? null : value.replace(/\s+/gu, " ").trim().slice(0, 200);
@@ -305,7 +305,7 @@ export class CodexControl implements HarnessControl {
     const account = object(await this.rpc.request("account/read", { refreshToken: false }), "native account status");
     const skills = await this.readSkills();
     // A skill's input enters the thread like a message (keep).
-    const commands = [...THREAD_COMMANDS, ...skills.filter(skill => skill.enabled).slice(0, MAX_NATIVE_EXTENSIONS).map(skill => ({ name: "skill:" + skill.name, description: ("Skill · " + skill.description).slice(0, 1024), contextEffect: "keep" as const }))];
+    const commands = [...THREAD_COMMANDS, ...skills.filter(skill => skill.enabled).map(skill => ({ name: "skill:" + skill.name, description: ("Skill · " + skill.description).slice(0, 1024), contextEffect: "keep" as const }))];
     return { models, defaultModel, canSelect: models.length > 0, ...(options.length ? { options } : {}), commands, authentication: account.requiresOpenaiAuth === false || account.account != null ? "ready" : account.requiresOpenaiAuth === true ? "missing" : "unknown" };
   }
   /**
@@ -420,7 +420,7 @@ export class CodexControl implements HarnessControl {
         try { listed = await this.rpc.request("collaborationMode/list", {}); }
         catch (error) { throw error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null ? collaborationUnavailable(error) : error; }
         const presets = object(listed, "collaboration modes");
-        if (!Array.isArray(presets.data) || presets.data.length > 64) throw new ControlError("INVALID_PROTOCOL", "invalid collaboration modes");
+        if (!Array.isArray(presets.data)) throw new ControlError("INVALID_PROTOCOL", "invalid collaboration modes");
         const preset = presets.data.map(value => object(value, "collaboration mode")).find(row => row.mode === mode);
         const presetModel = typeof preset?.model === "string" && preset.model ? preset.model : undefined, presetEffort = typeof preset?.reasoning_effort === "string" ? preset.reasoning_effort : undefined;
         const chosen = model ?? presetModel ?? selected?.id;
@@ -462,7 +462,7 @@ export class CodexControl implements HarnessControl {
       const updated = typeof thread.updatedAt === "number" && Number.isSafeInteger(thread.updatedAt) && thread.updatedAt > 0 ? thread.updatedAt * 1000 : null, source = threadSource(thread.source);
       return { id: string(thread.id, "Codex thread identity", 1024), title: threadTitle(thread), updatedAt: updated, ...(source ? { source } : {}) };
     });
-    return { sessions: sessions.slice(0, MAX_NATIVE_SESSIONS), nextCursor: response.nextCursor == null ? null : string(response.nextCursor, "Codex thread cursor", 1024) };
+    return { sessions, nextCursor: response.nextCursor == null ? null : string(response.nextCursor, "Codex thread cursor", 1024) };
   }
   /**
    * Reads a thread of this workspace for continuing it: thread/read confirms its workspace, thread/turns/list returns its
@@ -476,7 +476,9 @@ export class CodexControl implements HarnessControl {
     if (thread.ephemeral === true) throw new ControlError("NATIVE_SESSION_UNAVAILABLE", "an ephemeral thread cannot be continued");
     const turns: { user: string; assistant: string }[] = [];
     let cursor: string | undefined, complete = false;
-    for (let page = 0; page < IMPORT_TURN_PAGES && turns.length * 2 < IMPORT_MESSAGES; page++) {
+    // Every page is read; a cursor the peer repeats would never end the walk, so it is refused as a protocol fault.
+    const seen = new Set<string>();
+    for (;;) {
       const response = object(await this.rpc.request("thread/turns/list", { threadId: id, limit: IMPORT_TURNS_PER_PAGE, sortDirection: "desc", itemsView: "full", ...(cursor === undefined ? {} : { cursor }) }), "Codex turns");
       if (!Array.isArray(response.data) || response.data.length > IMPORT_TURNS_PER_PAGE) throw new ControlError("INVALID_PROTOCOL", "invalid Codex turn page");
       for (const value of response.data) {
@@ -490,6 +492,8 @@ export class CodexControl implements HarnessControl {
       }
       if (response.nextCursor == null) { complete = true; break; }
       cursor = string(response.nextCursor, "Codex turn cursor", 1024);
+      if (seen.has(cursor)) throw new ControlError("INVALID_PROTOCOL", "Codex repeated a turn cursor");
+      seen.add(cursor);
     }
     const history = turns.reverse().flatMap(turn => [...(turn.user ? [{ role: "user" as const, text: turn.user }] : []), ...(turn.assistant ? [{ role: "assistant" as const, text: turn.assistant }] : [])]);
     return { checkpoint: id, title: threadTitle(thread), history, omitted: 0, complete, historyRead: true };
@@ -505,7 +509,7 @@ export class CodexControl implements HarnessControl {
     }
     const result = object(response, "native skills");
     if (!Array.isArray(result.data)) throw new ControlError("INVALID_PROTOCOL", "invalid native skill list");
-    const skills = result.data.flatMap(entry => { const rows = object(entry, "native skill root").skills; return Array.isArray(rows) ? rows : []; }).slice(0, 4096).flatMap(value => {
+    const skills = result.data.flatMap(entry => { const rows = object(entry, "native skill root").skills; return Array.isArray(rows) ? rows : []; }).flatMap(value => {
       const row = object(value, "native skill"), name = typeof row.name === "string" ? line(row.name, 256) : "", path = typeof row.path === "string" ? row.path : "";
       if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(name) || !isAbsolute(path)) return [];
       return [{ name, description: typeof row.description === "string" ? line(row.description, 1024) : "", ...(typeof row.scope === "string" ? { scope: line(row.scope, 64) } : {}), enabled: row.enabled === true, path }];
@@ -517,16 +521,19 @@ export class CodexControl implements HarnessControl {
   async extensions(): Promise<NativeExtensions> {
     this.assertInitialized();
     const skills = await this.readSkills(), mcpServers: NativeExtensions["mcpServers"][number][] = [];
-    let cursor: string | undefined, truncated = skills.length > MAX_NATIVE_EXTENSIONS;
-    for (let page = 0; page < 16; page++) {
+    // Every page is read (no count bound, 2026-11-12); a cursor Codex repeats would never end the walk.
+    let cursor: string | undefined;
+    const seen = new Set<string>();
+    for (;;) {
       const result = object(await this.rpc.request("mcpServerStatus/list", { detail: "toolsAndAuthOnly", limit: 100, ...(cursor === undefined ? {} : { cursor }) }), "native MCP status");
       if (!Array.isArray(result.data)) throw new ControlError("INVALID_PROTOCOL", "invalid native MCP status");
       for (const value of result.data) {
         const row = object(value, "native MCP server"), tools = row.tools !== null && typeof row.tools === "object" ? Object.keys(row.tools).length : 0;
         mcpServers.push({ name: string(row.name, "MCP server name", 256), status: typeof row.runtimeStatus === "string" ? row.runtimeStatus : "notStarted", ...(typeof row.authStatus === "string" ? { auth: row.authStatus } : {}), tools, failed: row.toolsError !== null && row.toolsError !== undefined });
       }
-      if (typeof result.nextCursor !== "string" || mcpServers.length >= MAX_NATIVE_EXTENSIONS) { truncated ||= typeof result.nextCursor === "string"; break; }
-      cursor = result.nextCursor;
+      if (typeof result.nextCursor !== "string") break;
+      if (seen.has(result.nextCursor)) throw new ControlError("INVALID_PROTOCOL", "Codex repeated an MCP status cursor");
+      cursor = result.nextCursor; seen.add(cursor);
     }
     const installed = object(await this.rpc.request("plugin/installed", { cwds: [this.options.cwd] }), "native plugins");
     const plugins = (Array.isArray(installed.marketplaces) ? installed.marketplaces : []).flatMap(value => {
@@ -538,9 +545,7 @@ export class CodexControl implements HarnessControl {
         return [{ name: line(plugin.name, 256), enabled: plugin.enabled === true, ...(version ? { version: line(version, 64) } : {}), ...(source ? { source } : {}) }];
       });
     });
-    truncated ||= plugins.length > MAX_NATIVE_EXTENSIONS;
-    return { skills: skills.slice(0, MAX_NATIVE_EXTENSIONS).map(({ path: _path, ...skill }) => ({ ...skill, ...(skill.enabled ? { command: "skill:" + skill.name } : {}) })),
-      mcpServers: mcpServers.slice(0, MAX_NATIVE_EXTENSIONS), plugins: plugins.slice(0, MAX_NATIVE_EXTENSIONS), ...(truncated ? { truncated } : {}) };
+    return { skills: skills.map(({ path: _path, ...skill }) => ({ ...skill, ...(skill.enabled ? { command: "skill:" + skill.name } : {}) })), mcpServers, plugins };
   }
   /** `thread/fork` of a stored thread on a connection that opened none; the source thread is not loaded into a turn. */
   async fork(checkpoint: string, cwd: string): Promise<string> {
@@ -668,7 +673,7 @@ export class CodexControl implements HarnessControl {
     try {
       if (this.threadPath === null) throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "this Codex thread has no rollout record");
       const info = await stat(this.threadPath);
-      if (!info.isFile() || info.size < 1 || info.size > MAX_CONTENT_BYTES) throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "the Codex rollout record is missing or exceeds 20 MiB");
+      if (!info.isFile() || info.size < 1 || info.size > MAX_CONTENT_BYTES) throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "the Codex rollout record is missing or exceeds 1 GiB");
       const data = await readFile(this.threadPath);
       if (this.active === active && !active.settled) active.event({ type: "output", output: { kind: "content", name: "codex-" + id.replace(/[^A-Za-z0-9-]/gu, "") + ".jsonl", mediaType: "application/x-ndjson", data } });
       result = { status: "completed", reason: "exported", ...NOT_RECORDED };
@@ -976,7 +981,7 @@ export class CodexControl implements HarnessControl {
       // The user decides with what the item already reported: the files and diff of a change, or the command, its cwd and reason.
       const files = request.method.includes("fileChange") ? (item?.locations ?? []).map(path => basename(path)).slice(0, 3).join(", ") : "";
       const title = (params.threadId !== this.conversation ? "子 Agent · " : "") + (typeof params.command === "string" ? line(params.command) : request.method.includes("fileChange") ? "Codex 请求修改文件" + (files ? "：" + files : "") : "Codex 请求执行命令");
-      const detail = [typeof params.reason === "string" ? line(params.reason) : "", typeof params.cwd === "string" ? "目录：" + params.cwd : "", request.method.includes("fileChange") && item?.diff ? item.diff : ""].filter(Boolean).join("\n").slice(0, 4096);
+      const detail = [typeof params.reason === "string" ? line(params.reason) : "", typeof params.cwd === "string" ? "目录：" + params.cwd : "", request.method.includes("fileChange") && item?.diff ? item.diff : ""].filter(Boolean).join("\n");
       return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve, reply: decision => ({ decision }) });
       // The request names the item it is about (the id Codex gave the item in `item/started`): a refusal is recorded on that call.
       active.event({ type: "permission_requested", id, forCall: String(params.itemId), title, ...(detail ? { detail } : {}), options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })), ...requestExpiry(null) }); });
@@ -992,7 +997,7 @@ export class CodexControl implements HarnessControl {
     const questions = params.questions.map((value, index) => {
       const row = object(value, "native question"), id = string(row.id, "native question id", 128), title = string(row.question, "native question", 4096);
       const choices = row.options == null ? [] : row.options;
-      if (!Array.isArray(choices) || choices.length > 128 || row.isOther !== undefined && typeof row.isOther !== "boolean" || row.isSecret !== undefined && typeof row.isSecret !== "boolean") throw new ControlError("INVALID_PROTOCOL", "invalid native question options");
+      if (!Array.isArray(choices) || row.isOther !== undefined && typeof row.isOther !== "boolean" || row.isSecret !== undefined && typeof row.isSecret !== "boolean") throw new ControlError("INVALID_PROTOCOL", "invalid native question options");
       return { id, title, requestId: String(request.id) + ":" + index, secret: row.isSecret === true, freeform: row.isOther === true || choices.length === 0,
         choices: choices.map(value => { const option = object(value, "native question choice"); return string(option.label, "native question choice", 1024); }) };
     });

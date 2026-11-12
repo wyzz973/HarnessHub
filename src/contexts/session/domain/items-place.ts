@@ -29,7 +29,8 @@ import { derive, sound } from "./store-conversion.js";
  * ORDER AND IDENTITY. An item takes its `seq` when it is first seen, and keeps it. The same id reported again is the same item: it is
  * updated when something changed and not touched when nothing did (the Turn is the same object then). `user` is the Turn's first item
  * (the Runtime puts it there when the input is accepted); the rest are `think:<n>` and `text:<n>` (the segments), `tool:<id>`,
- * `activity:<id>`, `permission:<id>`, `plan`, `notice:<n>` and `output:<n>`: the ids the Harness gave are kept, the others count from 1.
+ * `activity:<id>`, `permission:<id>`, `plan`, `notice:<n>`, `output:<n>` and `interrupt` (the user's stop, the last item of a Turn the user stopped): the ids the
+ * Harness gave are kept, the others count from 1.
  *
  * SEGMENTS AND WINDOWS (3.2). Text and reasoning come as windows (a flush every 100 ms or 16 KiB, ADR-047); a window is one chunk and
  * never crosses an item. A segment opens at the first window with something but whitespace in it; the windows of the same kind that
@@ -175,7 +176,8 @@ export type PlaceInput =
   | { readonly kind: "decided"; readonly id: string; readonly option: string; readonly input?: string; readonly by?: "user" | "policy"; readonly at: number }
   | { readonly kind: "expired"; readonly at: number }
   | { readonly kind: "notice"; readonly severity: "info" | "warning"; readonly title: string; readonly detail?: string; readonly code?: string; readonly at: number }
-  | { readonly kind: "settled"; readonly status: TerminalStatus; readonly at: number };
+  /** `stoppedBy`: who stopped a Turn that ended cancelled, when the Runtime knows; the user's stop is then the Turn's last item (`interrupt`). */
+  | { readonly kind: "settled"; readonly status: TerminalStatus; readonly at: number; readonly stoppedBy?: "user" };
 export interface PlaceEnv {
   /** Whether a Harness notice with this fingerprint was already shown in the conversation (`notice_prints`); one that was is not shown again. */
   readonly noticeShown?: (print: string) => boolean;
@@ -676,7 +678,7 @@ export function finalItemSeq(items: readonly { readonly seq: number; readonly ty
   }
   return null;
 }
-function settle(s: Draft, w: Writes, status: TerminalStatus, at: number): void {
+function settle(s: Draft, w: Writes, status: TerminalStatus, at: number, stoppedBy?: "user"): void {
   flushWindow(s, w, true);
   closeSegment(s, w, at, runItemStatus(status));
   writeHold(s, w, at, runItemStatus(status));
@@ -687,6 +689,8 @@ function settle(s: Draft, w: Writes, status: TerminalStatus, at: number): void {
     if (next !== entry.item.status) change(s, w, position, { ...entry.item, status: next, endedAt: entry.item.endedAt ?? at }, rest);
     else if (dirty === true || entry.request !== undefined) s.entries = vecSet(s.entries, position, { ...rest, item: entry.item });
   });
+  // The user's stop, after everything the Turn did: the page shows it in place of the end line that would say the same (lines.ts endLine).
+  if (status === "cancelled" && stoppedBy === "user" && find(s, "interrupt") === undefined) insert(s, w, { itemId: "interrupt", fields: { type: "interrupt", by: "user" }, status: "completed", at, endedAt: at });
   s.settled = status;
 }
 
@@ -727,7 +731,7 @@ export function place(turn: ActiveTurn, input: PlaceInput, env: PlaceEnv = {}): 
       case "decided": flushWindow(s, w, false); decide(s, w, input.id, input.option, input.input, input.by ?? "user", input.at); break;
       case "expired": flushWindow(s, w, false); expire(s, w, input.at); break;
       case "notice": flushWindow(s, w, false); placeNotice(s, w, input, input.at, env, false); break;
-      case "settled": settle(s, w, input.status, input.at); break;
+      case "settled": settle(s, w, input.status, input.at, input.stoppedBy); break;
     }
   }
   const changed = (Object.keys(s) as (keyof ActiveTurn)[]).some(key => s[key] !== turn[key]);

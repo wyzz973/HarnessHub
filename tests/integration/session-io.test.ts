@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { Writable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { boundedWrite, MAX_CLI_INPUT_BYTES, MAX_CLI_OUTPUT_BYTES } from "../../src/cli/bounded-streams.js";
+import { boundedWrite, MAX_CLI_OUTPUT_BYTES } from "../../src/cli/bounded-streams.js";
 import { commandId, messageId, runId, sessionId, type SessionId, type SessionSnapshot } from "../../src/contracts/session.js";
 import { FileSessionReader } from "../../src/infrastructure/session/file-reader.js";
 import { appStore } from "../fixtures/runtime-store.js";
@@ -97,17 +97,6 @@ test("formal human chat also rejects repeated history when stdout is not consume
   const ended = await invoked.result;
   assert.notEqual(ended.code, 0); assert.equal(ended.signal, null);
   assert.deepEqual(read(f.data, f.state.id), f.state); assert.equal(existsSync(f.sentinel), false);
-});
-
-test("formal chat rejects raw input above 2MiB before newline or EOF without admitting a Run", async t => {
-  const f = await fixture(t, false), invoked = start(f);
-  let output = ""; invoked.child.stdout.setEncoding("utf8"); invoked.child.stdout.on("data", (chunk: string) => { output += chunk; assert.ok(Buffer.byteLength(output) < 64 * 1024); });
-  // stdin remains open: newline/EOF must not be needed to enforce the raw byte budget.
-  invoked.child.stdin.write(Buffer.alloc(MAX_CLI_INPUT_BYTES + 65536, "x"));
-  const ended = await invoked.result;
-  assert.notEqual(ended.code, 0); assert.equal(ended.signal, null, "raw input rejection did not exit: " + output + " " + ended.stderr); assert.match(output, /"code":"INPUT_LIMIT"/u);
-  assert.deepEqual(read(f.data, f.state.id), f.state); assert.equal(existsSync(f.sentinel), false);
-  const nextOwner = appStore(f.data); nextOwner.assertOwner(); nextOwner.close();
 });
 
 test("bounded writer counts real Writable pending bytes and rejects an oversized individual record", () => {

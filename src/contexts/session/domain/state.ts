@@ -14,8 +14,11 @@ import { dispatched } from "./relay/advance.js";
  * migration and the read-only tools read.
  */
 
-/** The longest input a user sends in one message. (Kept in this step: its removal waits for the request body that carries it, ADR-057 3.7.) */
-export const MAX_INPUT_BYTES = 64 * 1024;
+/**
+ * The longest input a user sends in one message: only a guard against a mistaken paste of a whole dump, not a limit on what a message may say (2026-11-12: 64 KiB
+ * refused real messages). The message route's request body is sized for it (web/server.ts MAX_MESSAGE_BODY_BYTES).
+ */
+export const MAX_INPUT_BYTES = 32 * 1024 * 1024;
 const terminalStatuses: readonly RunStatus[] = ["completed", "cancelled", "failed", "unknown"];
 export function terminal(status: RunStatus): boolean { return terminalStatuses.includes(status); }
 export function utf8Bytes(value: string): number { return new TextEncoder().encode(value).byteLength; }
@@ -93,7 +96,7 @@ export function carriedNativeConfiguration(state: { readonly nativeBindings?: re
   return { ...(model === undefined ? {} : { model }), ...(Object.keys(options).length ? { options } : {}) };
 }
 export function assertInput(value: string): void {
-  if (typeof value !== "string" || !value.trim() || value.includes("\0") || utf8Bytes(value) > MAX_INPUT_BYTES) throw new SessionError("INVALID_INPUT", "message must contain text within 64 KiB");
+  if (typeof value !== "string" || !value.trim() || value.includes("\0") || utf8Bytes(value) > MAX_INPUT_BYTES) throw new SessionError("INVALID_INPUT", "message must contain text within 32 MiB");
 }
 export function replayCommand(state: { readonly commands: readonly CommandRecord[] }, id: CommandRecord["id"], kind: CommandRecord["kind"], fingerprint: string): CommandRecord | null {
   const prior = state.commands.find(command => command.id === id);

@@ -81,7 +81,11 @@ export interface NativeToolDetail {
 export interface NativePlanEntry { readonly content: string; readonly status: "pending" | "in_progress" | "completed"; readonly priority?: "high" | "medium" | "low" }
 /** Latest native accounting. Turn tokens belong to this Run; context and cost carry their own scope. */
 export interface NativeUsage {
-  readonly turn?: { readonly input?: number; readonly output?: number; readonly cachedInput?: number; readonly cacheWrite?: number; readonly reasoning?: number; readonly total?: number };
+  /**
+   * `own`: the Driver turned the native session's running totals into this Turn's own numbers (Hermes, 2026-11-12). A Harness that reports
+   * session totals is read by them only when it is set: the same Harness's earlier records hold the totals and are not a Turn's.
+   */
+  readonly turn?: { readonly input?: number; readonly output?: number; readonly cachedInput?: number; readonly cacheWrite?: number; readonly reasoning?: number; readonly total?: number; readonly own?: true };
   readonly context?: { readonly used: number; readonly size?: number };
   readonly cost?: { readonly amount: number; readonly currency: string; readonly scope: "turn" | "session" };
   /**
@@ -176,10 +180,9 @@ export interface NativeExtensions {
   readonly skills: readonly { readonly name: string; readonly description: string; readonly scope?: string; readonly enabled: boolean; readonly command?: string }[];
   readonly mcpServers: readonly { readonly name: string; readonly status: string; readonly auth?: string; readonly tools: number; readonly failed: boolean }[];
   readonly plugins: readonly { readonly name: string; readonly enabled: boolean; readonly version?: string; readonly source?: string }[];
-  /** Lists cut at their bounds; the Harness has more than shown. */
+  /** Lists cut at their bounds; the Harness has more than shown. No Driver cuts them since 2026-11-12; kept for a reader of an older answer. */
   readonly truncated?: boolean;
 }
-export const MAX_NATIVE_EXTENSIONS = 512;
 /** One native session of a workspace as the installed Harness lists it; `id` is the Harness's own session identity. */
 export interface NativeSessionSummary {
   readonly id: string;
@@ -195,14 +198,13 @@ export interface NativeSessionImport {
   readonly checkpoint: string;
   readonly title: string | null;
   readonly history: readonly { readonly role: "user" | "assistant"; readonly text: string }[];
-  /** Older messages read but not returned within the reading budget. */
+  /** Older messages read but not returned; drivers read the whole history (2026-11-12), so this is 0 unless a Harness itself withholds some. */
   readonly omitted: number;
   /** True when the returned and omitted messages cover the whole native history. */
   readonly complete: boolean;
   /** False when the interface can continue the session but cannot read its history. */
   readonly historyRead: boolean;
 }
-export const MAX_NATIVE_SESSIONS = 200;
 /**
  * What running a native command does to the native context (ADR-055 R0d): it enters the history like a message (keep),
  * leaves the history alone (none), compacts, clears or rewinds it, or the driver cannot tell (unknown).

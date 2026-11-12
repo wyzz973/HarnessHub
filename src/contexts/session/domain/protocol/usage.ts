@@ -12,7 +12,7 @@ import type { RunStatus } from "../../../../contracts/session.js";
  */
 
 /** `inside`: the number already contains that part (Codex's `input` contains `cachedInput`); `beside`: it is reported in addition and is added. */
-interface Meaning { readonly cache: "inside" | "beside"; readonly reasoning: "inside" | "beside" }
+interface Meaning { readonly cache: "inside" | "beside"; readonly reasoning: "inside" | "beside"; readonly ownOnly?: true }
 
 const MEANING: ReadonlyMap<string, Meaning> = new Map(Object.entries({
   // Codex (codex.ts:924-938): the thread's token totals minus the Turn's baseline. Its `inputTokens` contain `cachedInputTokens` (a
@@ -29,12 +29,15 @@ const MEANING: ReadonlyMap<string, Meaning> = new Map(Object.entries({
   // `cacheRead` and `cacheWrite`, and the output contains its reasoning. Inferred from that format; no trial conversation had an OpenClaw Turn.
   openclaw: { cache: "beside", reasoning: "inside" },
   pi: { cache: "beside", reasoning: "inside" },
+  // Hermes (hermes.ts turnFromCounters): its session counters minus the Turn's baseline. Its ACP `inputTokens` is `prompt_tokens`, which
+  // agent/usage_pricing.py defines as input + cache read + cache write, and `total_tokens` is prompt + output: the cache is inside the input
+  // and the output is the completion, reasoning included. Read from the installed hermes-agent; no real Turn has checked the numbers yet.
+  // Only a report the Driver marked as the Turn's own (`own`) is read: the Driver passed the session totals on before, and those records are not a Turn's.
+  // The trial conversation's Hermes Turn, its session's first, agrees (n=5: 21,409 + 278 = 21,687, its `total`, with no cache reported beside it).
+  hermes: { cache: "inside", reasoning: "inside", ownOnly: true },
 } satisfies Record<string, Meaning>));
 // Not here, on purpose: DeepSeek Harness reports only its context window (acp.ts:847-858; its prompt result carries no usage, docs/verification/
-// native-capability-matrix.md:340), and Hermes reports its agent's counters for the whole native session, not the Turn (the result of
-// `run_conversation` carries the `session_*` counters, hermes-agent `agent/turn_finalizer.py:708` and `acp_adapter/server.py:997`; `agent/turn_usage.py:181`
-// adds to them for every request). The Hermes Driver passes them on without a baseline, so a native session's second Turn would show
-// the first one's tokens again: the Hub withholds them until the Driver subtracts what the session had before the Turn, as Codex's does.
+// native-capability-matrix.md:340).
 
 /**
  * `complete` needs both `input` and `output`, and a Turn that ended `completed`: the numbers of a Turn that was stopped, failed or is
@@ -45,7 +48,7 @@ export function turnUsage(harnessId: string, native: NativeUsage | undefined, ru
   const context = native?.context === undefined ? {} : { context: { used: native.context.used, ...(native.context.size === undefined ? {} : { size: native.context.size }) } };
   const cost = native?.cost === undefined ? {} : { cost: { amount: native.cost.amount, currency: native.cost.currency, scope: native.cost.scope } };
   const turn = native?.turn, meaning = MEANING.get(harnessId);
-  if (turn === undefined || meaning === undefined) return { completeness: "unavailable", ...context, ...cost };
+  if (turn === undefined || meaning === undefined || meaning.ownOnly === true && turn.own !== true) return { completeness: "unavailable", ...context, ...cost };
   const input = turn.input === undefined ? undefined : meaning.cache === "inside" ? turn.input : turn.input + (turn.cachedInput ?? 0) + (turn.cacheWrite ?? 0);
   const output = turn.output === undefined ? undefined : meaning.reasoning === "inside" ? turn.output : turn.output + (turn.reasoning ?? 0);
   if (input === undefined && output === undefined) return { completeness: "unavailable", ...context, ...cost };

@@ -1,6 +1,5 @@
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { dataRoot } from "./session-application.js";
 import { SessionError, resolveTurnBudgets } from "../contracts/session.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
@@ -9,6 +8,7 @@ import { MANIFEST_IGNORED } from "../infrastructure/catalog/inventory-compositio
 import { startWebServer, type WebServer } from "../web/server.js";
 import { defaultRelayKeyPath } from "../infrastructure/session/relay-keys.js";
 import { reasonOf } from "./startup-failure.js";
+import { isMainModule } from "./main-module.js";
 
 /**
  * Whether this Gateway offers reading the login shell's PATH on the user's request (ADR-040), decided once at the entry:
@@ -61,4 +61,4 @@ export async function main(args: readonly string[]): Promise<number> {
     process.stderr.write("HarnessGateway: " + (error instanceof SessionError ? error.code : "WEB_FAILED") + " — local web application could not run" + (reason === null ? "" : ": " + reason) + "\n"); return 1;
   }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) process.exitCode = await main(process.argv.slice(2));
+if (isMainModule(import.meta.url)) process.exitCode = await main(process.argv.slice(2));

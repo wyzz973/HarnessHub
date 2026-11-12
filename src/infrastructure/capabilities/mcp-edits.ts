@@ -3,7 +3,7 @@ import { isMap, isScalar, isSeq, parseDocument, stringify } from "yaml";
 import { opencodeMcpServers } from "../../adapters/capability-reads.js";
 import { parsed, setJson, UnsafeEdit } from "./edits.js";
 import type { ConfigFormat } from "./formats.js";
-import { at, record } from "./formats.js";
+import { at, parseConfig, record } from "./formats.js";
 import { MCP_OWNED, ownedOf, type McpStyle } from "./mcp-definitions.js";
 
 /**
@@ -21,6 +21,7 @@ export function mcpLocation(style: McpStyle): { readonly path: readonly string[]
     case "hermes": return { path: ["mcp_servers"], format: "yaml" };
     case "codex": return { path: ["mcp_servers"], format: "toml" };
     case "dsh": return { path: [], format: "yaml" };
+    case "openclaw": return { path: ["mcp", "servers"], format: "json5" };
   }
 }
 /** The style an OpenCode file's servers are read with: `opencode-v2` when they sit under `mcp.servers`, else OpenCode 1's `mcp.<name>`. */
@@ -50,12 +51,15 @@ export function mcpEntry(value: unknown, style: McpStyle, name: string): unknown
 export function editMcp(text: string, style: McpStyle, name: string, owned: Readonly<Record<string, unknown>> | undefined): string {
   const { path, format } = mcpLocation(style), before = parsed(text, format), current = mcpEntry(before, style, name);
   let after: string;
+  // openclaw.json is JSON5; it is edited in place only when it is also plain JSON (or JSONC), as OpenClaw writes it itself. A file that uses JSON5's own
+  // syntax (unquoted keys, single quotes) is not rewritten; `openclaw mcp set` writes it then.
+  if (style === "openclaw" && !parseConfig(text.trim() === "" ? "{}" : text, "jsonc").ok) throw new UnsafeEdit("openclaw.json 用了 JSON5 独有的写法，HarnessHub 不改写它；可以用 openclaw mcp set 写入");
   if (style === "dsh") after = setDshPatch(text, name, owned);
-  else if (format === "jsonc") {
+  else if (format === "jsonc" || style === "openclaw") {
     if (owned === undefined || current === undefined) {
       after = setJson(text, [...path, name], owned === undefined ? undefined : { ...owned });
       // OpenCode 2 keeps its servers two levels down: an `mcp` left with nothing once the last server goes (its emptied `servers` map went with setJson) goes too, so the file returns byte for byte.
-      if (style === "opencode-v2" && owned === undefined) { const left = at(parsed(after, format), ["mcp"]); if (left !== null && typeof left === "object" && !Array.isArray(left) && Object.keys(left).length === 0) after = setJson(after, ["mcp"], undefined); }
+      if ((style === "opencode-v2" || style === "openclaw") && owned === undefined) { const left = at(parsed(after, format), ["mcp"]); if (left !== null && typeof left === "object" && !Array.isArray(left) && Object.keys(left).length === 0) after = setJson(after, ["mcp"], undefined); }
     } else {
       after = text;
       const entry = record(current);

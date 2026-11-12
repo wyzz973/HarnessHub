@@ -1,7 +1,6 @@
 import type { Writable } from "node:stream";
 import { SessionError } from "../contracts/session.js";
 
-export const MAX_CLI_INPUT_BYTES = 2 * 1024 * 1024;
 export const MAX_CLI_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 /** Synchronous publication may queue only a bounded amount; a slow receiver never creates an unlimited queue. */

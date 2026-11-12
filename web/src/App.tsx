@@ -31,7 +31,7 @@ import { SettingsPage } from "./components/SettingsPage.js";
 import { CapabilitiesPage } from "./components/CapabilitiesPage.js";
 import { CommandPalette, ShortcutsDialog, type PaletteCommand } from "./components/CommandPalette.js";
 import { BrandIcon } from "./components/BrandIcon.js";
-import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
+import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
 import type { RelayNext } from "./components/RelayCard.js";
 import { relayBody, runRelayInfo, type RelayRequest } from "./relay.js";
 import { useRelayPrefs, useRelayPresence, useRelayView } from "./lib/use-relay.js";
@@ -85,7 +85,7 @@ function draftAttachments(refs: readonly ContentRef[] | undefined): readonly Att
 function savedChatDraft(workspace: string, id: string): ChatDraft | null {
   try {
     const raw = sessionStorage.getItem(draftStorageKey(workspace, id));
-    if (raw === null || new TextEncoder().encode(raw).byteLength > 256 * 1024) return null;
+    if (raw === null) return null;
     const value: unknown = JSON.parse(raw);
     if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
     const row = value as Record<string, unknown>, selected = row.selection;
@@ -102,45 +102,42 @@ function savedChatDraft(workspace: string, id: string): ChatDraft | null {
       const item = input as Record<string, unknown>;
       if (Object.keys(item).some(key => !["text", "attachments", "createKey", "sessionId", "sendKey", "committed", "relay"].includes(key)) || typeof item.text !== "string" || typeof item.committed !== "boolean" ||
           !(item.relay === undefined || typeof item.relay === "string" && item.relay.length <= 1024) ||
-          !(item.attachments === undefined || Array.isArray(item.attachments) && item.attachments.length <= 8 && item.attachments.every(value => typeof value === "string" && /^content-[a-zA-Z0-9-]{1,96}$/u.test(value))) ||
+          !(item.attachments === undefined || Array.isArray(item.attachments) && item.attachments.every(value => typeof value === "string" && /^content-[a-zA-Z0-9-]{1,96}$/u.test(value))) ||
           ![item.createKey, item.sendKey].every(key => typeof key === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(key)) ||
           !(item.sessionId === null || typeof item.sessionId === "string" && item.sessionId === id)) throw new Error("invalid stored message intent");
       return { text: item.text, attachments: (item.attachments ?? []) as string[], createKey: String(item.createKey), sessionId: item.sessionId, sendKey: String(item.sendKey), committed: false, ...(typeof item.relay === "string" ? { relay: item.relay } : {}) };
     };
-    // A saved receipt is never authoritative; canonical Session facts confirm it after reload.
-    let selectionIntent: PendingSelection | null = null;
-    if (row.selectionIntent !== null) {
-      if (row.selectionIntent === undefined || typeof row.selectionIntent !== "object" || Array.isArray(row.selectionIntent)) return null;
-      const item = row.selectionIntent as Record<string, unknown>, input = item.selection;
-      if (Object.keys(item).some(key => !["sessionId", "selection", "key", "recovery", "acknowledgeUnknown"].includes(key)) || item.sessionId !== id || typeof item.key !== "string" ||
-          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(item.key) || typeof item.recovery !== "boolean" || typeof item.acknowledgeUnknown !== "boolean" ||
-          input === null || typeof input !== "object" || Array.isArray(input)) return null;
-      const target = input as Record<string, unknown>;
-      if (Object.keys(target).some(key => !["harnessId", "controlId", "provider", "nativeModel", "nativeOptions"].includes(key)) || typeof target.harnessId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(target.harnessId) ||
-          typeof target.controlId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(target.controlId)) return null;
-      selectionIntent = { sessionId: id, selection: { harnessId: target.harnessId, controlId: target.controlId,
-        ...(target.provider === undefined ? {} : { provider: target.provider === null ? null : parseProviderTarget(target.provider) }),
-        ...(target.nativeModel === undefined ? {} : { nativeModel: typeof target.nativeModel === "string" && target.nativeModel.length <= 1024 ? target.nativeModel : (() => { throw new Error("invalid native model"); })() }) , ...(target.nativeOptions === undefined ? {} : { nativeOptions: parseNativeOptions(target.nativeOptions) }) }, key: item.key, recovery: item.recovery, acknowledgeUnknown: item.acknowledgeUnknown };
-    }
+    // A switch request a page sent and did not see confirmed is not sent again after a reload (drafts saved before 2026-11-12 may still hold one; it is ignored):
+    // opening a conversation writes nothing, and the choice saved with the draft is only shown as the next message's.
     // Drafts saved before attachments existed have none; a damaged list drops the whole draft like any other field.
-    const attachments = row.attachments === undefined ? [] : Array.isArray(row.attachments) && row.attachments.length <= 8 ? row.attachments.map(parseContentRef) : (() => { throw new Error("invalid stored attachments"); })();
+    const attachments = row.attachments === undefined ? [] : Array.isArray(row.attachments) ? row.attachments.map(parseContentRef) : (() => { throw new Error("invalid stored attachments"); })();
     // A message held until a Turn ended goes back into the composer after a reload: it is never sent without the user.
     let queued: QueuedMessage | null = null;
     if (row.queued !== undefined && row.queued !== null) {
       if (typeof row.queued !== "object" || Array.isArray(row.queued)) return null;
       const item = row.queued as Record<string, unknown>;
-      if (Object.keys(item).some(key => !["text", "attachments", "afterRunId", "selection"].includes(key)) || typeof item.text !== "string" || typeof item.afterRunId !== "string" || typeof item.selection !== "string" || !Array.isArray(item.attachments) || item.attachments.length > 8) return null;
+      if (Object.keys(item).some(key => !["text", "attachments", "afterRunId", "selection"].includes(key)) || typeof item.text !== "string" || typeof item.afterRunId !== "string" || typeof item.selection !== "string" || !Array.isArray(item.attachments)) return null;
       queued = { text: item.text, attachments: item.attachments.map(parseContentRef), afterRunId: item.afterRunId, selection: item.selection };
     }
     const restored = restoreQueued({ message: row.message, attachments }, queued);
     return { message: restored.message, attachments: restored.attachments, selection: { harnessId: String(selection.harnessId), controlId: String(selection.controlId), providerId: String(selection.providerId),
-      providerRevision: selection.providerRevision, model: String(selection.model), nativeOptions: parseNativeOptions(selection.nativeOptions ?? {}) }, epoch: row.epoch, messageIntent: parseMessage(row.messageIntent), selectionIntent, queued: null };
+      providerRevision: selection.providerRevision, model: String(selection.model), nativeOptions: parseNativeOptions(selection.nativeOptions ?? {}) }, epoch: row.epoch, messageIntent: parseMessage(row.messageIntent), selectionIntent: null, queued: null };
   } catch { return null; }
 }
-/** Puts a held message back in front of whatever the composer holds; attachments stay within the per-message limit. */
+/**
+ * The held words put back in front of what the composer holds, said once: when the composer already holds them (the same words, or
+ * words that begin or end with them, as after a reload that restored both), it is left as it is.
+ */
+function mergeHeld(held: string, current: string): string {
+  const words = held.trim(), present = current.trim();
+  if (!present) return held;
+  if (!words || present === words || present.startsWith(words) || present.endsWith(words)) return current;
+  return held + "\n\n" + current;
+}
+/** Puts a held message back in front of whatever the composer holds, with its attachments and the composer's (any number of them). */
 function restoreQueued(draft: { readonly message: string; readonly attachments: readonly ContentRef[] }, queued: QueuedMessage | null | undefined): { readonly message: string; readonly attachments: readonly ContentRef[] } {
   if (!queued) return draft;
-  return { message: queued.text + (draft.message.trim() ? "\n\n" + draft.message : ""), attachments: [...queued.attachments, ...draft.attachments.filter(ref => !queued.attachments.some(item => item.id === ref.id))].slice(0, MAX_ATTACHMENTS) };
+  return { message: mergeHeld(queued.text, draft.message), attachments: [...queued.attachments, ...draft.attachments.filter(ref => !queued.attachments.some(item => item.id === ref.id))] };
 }
 interface PendingProviderWrite { input: ProviderWriteInput; key: string; current: ProviderView | undefined }
 /**
@@ -307,6 +304,11 @@ export function App() {
   const pendingSwitchWrite = useRef<PendingSelection | null>(null);
   const chatDrafts = useRef(new Map<string, ChatDraft>());
   const selectionWish = useRef<{ id: string; draft: SelectionDraft } | null>(null);
+  /**
+   * The conversation whose choice the user changed in the composer's lists in this page, since it was opened: only then does a choice that differs from the
+   * conversation's own switch it at once. Opened, a conversation shows the choice saved with its draft as the next message's, and the switch waits for a send.
+   */
+  const switchArmed = useRef<string | null>(null);
   const lastAutoSelection = useRef<string | null>(null);
   const pendingProviderWrite = useRef<PendingProviderWrite | null>(null);
   const observedSelection = useRef("");
@@ -363,7 +365,7 @@ export function App() {
         if (!ignored) {
           setState(snapshot); setWorkspace(snapshot.workspace);
           const key = sessionIdRef.current ?? "new", saved = savedChatDraft(snapshot.workspace, key);
-          if (saved && !chatDrafts.current.has(key)) { chatDrafts.current.set(key, saved); setMessageDraft(saved.message); setAttachments(draftAttachments(saved.attachments)); setDraft(saved.selection); pendingMessage.current = saved.messageIntent; pendingSwitchWrite.current = saved.selectionIntent; }
+          if (saved && !chatDrafts.current.has(key)) { chatDrafts.current.set(key, saved); setMessageDraft(saved.message); setAttachments(draftAttachments(saved.attachments)); setDraft(saved.selection); pendingMessage.current = saved.messageIntent; pendingSwitchWrite.current = null; switchArmed.current = null; }
           void scanIfStale(snapshot, controller.signal).catch((failure: unknown) => { if (!ignored) setManagementConnectionError(errorMessage(failure)); });
         }
       } catch (failure: unknown) {
@@ -634,15 +636,15 @@ export function App() {
     chatDrafts.current.set(sessionIdRef.current ?? "new", { message: messageDraft, attachments: readyAttachments(attachments), selection: draft,
       epoch: session?.epoch ?? null, messageIntent: pendingMessage.current, selectionIntent: pendingSwitchWrite.current, queued });
     try {
+      // The browser's own storage quota is the only bound; an unconfirmed switch request is kept in this page only, never across a reload.
       const saved = chatDrafts.current.get(sessionIdRef.current ?? "new")!;
-      const serialized = JSON.stringify(saved);
-      if (new TextEncoder().encode(serialized).byteLength > 256 * 1024) throw new Error("draft byte budget exceeded");
+      const serialized = JSON.stringify({ ...saved, selectionIntent: null });
       sessionStorage.setItem(draftStorageKey(state?.workspace ?? workspace, sessionIdRef.current ?? "new"), serialized); setDraftStorageError(null);
     } catch { setDraftStorageError("浏览器暂时无法保存草稿。内容仍在当前页面，请暂时保留此页面。"); }
   };
   useEffect(() => { if (state && !sessionLoading && !sessionError) saveChatDraft(); }, [messageDraft, attachments, draft, session?.epoch, mutation, state !== null, sessionLoading, sessionError, queued]);
   const newChat = () => leave(() => {
-    selectionWish.current = null; lastAutoSelection.current = null;
+    selectionWish.current = null; lastAutoSelection.current = null; switchArmed.current = null;
     saveChatDraft(); const saved = chatDrafts.current.get("new"); pendingSwitchWrite.current = saved?.selectionIntent ?? null;
     sessionIdRef.current = null; liveWindow.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(false);
     pendingMessage.current = saved?.messageIntent ?? null; setQueued(null); setQueueNotice(null);
@@ -661,7 +663,7 @@ export function App() {
       const restored = stored?.queued ? restoreQueued(stored, stored.queued) : null, saved = stored && restored ? { ...stored, ...restored, queued: null } : stored;
       if (saved) chatDrafts.current.set(id, saved);
       setQueued(null); setQueueNotice(restored ? "离开对话时暂存的消息已放回输入框，没有发出。" : null);
-      selectionWish.current = saved ? { id, draft: saved.selection } : null; lastAutoSelection.current = null;
+      selectionWish.current = saved ? { id, draft: saved.selection } : null; lastAutoSelection.current = null; switchArmed.current = null;
       sessionIdRef.current = id; liveWindow.current = null; observedSelection.current = "";
       pendingMessage.current = saved?.messageIntent ?? null; pendingSwitchWrite.current = saved?.selectionIntent ?? null;
       writeSessionRoute(id); setSessionId(id); setHeld(null); setSessionLoading(true); setSessionError(null);
@@ -671,7 +673,7 @@ export function App() {
   });
   openFromNotice.current = selectSession;
   const chooseHarness = (harness: HarnessView) => leave(() => {
-    selectionWish.current = null; lastAutoSelection.current = null;
+    selectionWish.current = null; lastAutoSelection.current = null; switchArmed.current = null;
     const control = harness.controls.find(row => row.id === harness.defaultControlId && row.available) ?? harness.controls.find(row => row.available); if (!control) return;
     saveChatDraft(); pendingSwitchWrite.current = null; setQueued(null); setQueueNotice(null);
     sessionIdRef.current = null; liveWindow.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(false);
@@ -751,8 +753,12 @@ export function App() {
     const sent = retryAttachments ?? readyAttachments(attachments), ids = sent.map(item => item.id);
     try {
       if (retryAttachments === undefined && attachments.some(item => item.status !== "ready")) throw new ApiError("ATTACHMENT_PENDING", "附件还在上传或上传失败，处理后再发送。");
-      if (session && (session.pendingSwitchId !== null || JSON.stringify(draft) !== JSON.stringify(selectionDraft(session.selection))))
-        throw new ApiError("SELECTION_PENDING", "正在切换到所选 Harness 或模型，请稍候；草稿已保留。");
+      // The composer's choice is the next message's: one that differs from the conversation's is asked for with this message, just before it (the
+      // Turn waits for that switch, and fails unsent if it fails). Only a switch to another choice that is still pending makes the message wait.
+      const differs = session !== null && JSON.stringify(draft) !== JSON.stringify(selectionDraft(session.selection));
+      const pendingOther = session !== null && session.pendingSwitchId !== null && !(session.lastSwitch?.id === session.pendingSwitchId && JSON.stringify(session.lastSwitch.requested) === JSON.stringify(selectionRequest(draft)));
+      if (session && differs && pendingOther) throw new ApiError("SELECTION_PENDING", "正在切换到所选 Harness 或模型，请稍候；草稿已保留。");
+      const switchFirst = session !== null && differs && session.pendingSwitchId === null;
       const isEffective = session !== null && JSON.stringify(draft) === JSON.stringify(selectionDraft(session.selection));
       const problem = (isEffective && session ? effectiveProviderProblem(session.selection, state.providers) : null) ?? selectionProblem(draft, state.harnesses, state.providers); if (problem) throw new ApiError("INVALID_SELECTION", problem);
       // What the user chose about the history for this message: a way forward from a refusal, else the one-message choice of the line above the box.
@@ -773,6 +779,7 @@ export function App() {
       }
       // Recorded before the first message, so the first Turn's process is already kept.
       if (request.retain && !request.retain.applied) { acceptSession(await api.setRetention(id, true, request.retain.key)); request.retain.applied = true; setKeepNew(false); }
+      if (switchFirst && !request.committed) { await writeSelection(id); lastAutoSelection.current = JSON.stringify({ id, selection: selectionRequest(draft) }); }
       if (!request.committed) { await api.send(id, value, request.sendKey, request.attachments, relayRequest); request.committed = true; rememberChoice(draft, nativeCatalog); }
       pendingMessage.current = null;
       // The message went out: a refusal it answered and a choice it used are spent.
@@ -807,8 +814,8 @@ export function App() {
   };
   const returnQueued = (item: QueuedMessage, notice: string | null) => {
     setQueued(null); setQueueNotice(notice);
-    setMessageDraft(current => item.text + (current.trim() ? "\n\n" + current : ""));
-    setAttachments(current => [...draftAttachments(item.attachments), ...current.filter(row => !item.attachments.some(ref => ref.id === row.ref?.id))].slice(0, MAX_ATTACHMENTS));
+    setMessageDraft(current => mergeHeld(item.text, current));
+    setAttachments(current => [...draftAttachments(item.attachments), ...current.filter(row => !item.attachments.some(ref => ref.id === row.ref?.id))]);
   };
   const withdrawQueued = () => {
     const item = queued; if (!item) return;
@@ -831,15 +838,14 @@ export function App() {
   }, [queued, session?.version, session?.activeRunId, mutation]);
   /** Uploads run per chat; a finished upload for a chat no longer on screen goes into that chat's saved draft. */
   const attachFiles = (files: readonly File[]) => {
-    const owner = sessionIdRef.current ?? "new", room = MAX_ATTACHMENTS - attachments.length;
+    const owner = sessionIdRef.current ?? "new";
     let total = attachments.reduce((sum, item) => sum + item.bytes, 0);
-    const added: AttachmentDraft[] = files.slice(0, Math.max(0, room)).map(file => {
+    const added: AttachmentDraft[] = files.map(file => {
       const item: AttachmentDraft = { local: requestKey(), name: file.name || "附件", bytes: file.size, kind: attachmentKind(file.type), status: "uploading" };
       total += file.size;
-      const problem = file.size < 1 ? "文件为空" : file.size > MAX_ATTACHMENT_BYTES ? "单个附件不能超过 20 MB" : total > MAX_MESSAGE_ATTACHMENT_BYTES ? "一条消息的附件合计不能超过 32 MB" : null;
+      const problem = file.size < 1 ? "文件为空" : file.size > MAX_ATTACHMENT_BYTES ? "单个附件不能超过 1 GB" : total > MAX_MESSAGE_ATTACHMENT_BYTES ? "一条消息的附件合计不能超过 4 GB" : null;
       return problem ? { ...item, status: "failed", error: problem } : item;
     });
-    if (files.length > room) setError(`一条消息最多 ${MAX_ATTACHMENTS} 个附件，多出的文件没有添加。`);
     setAttachments(current => [...current, ...added]);
     for (const [index, item] of added.entries()) {
       if (item.status !== "uploading") continue;
@@ -847,7 +853,7 @@ export function App() {
       void api.uploadAttachment(file, item.name, requestKey()).then(ref => {
         if ((sessionIdRef.current ?? "new") === owner) { if (mounted.current) setAttachments(current => current.map(row => row.local === item.local ? { ...row, status: "ready", ref, kind: ref.kind, bytes: ref.bytes } : row)); return; }
         const saved = chatDrafts.current.get(owner);
-        if (saved && saved.attachments.length < MAX_ATTACHMENTS) chatDrafts.current.set(owner, { ...saved, attachments: [...saved.attachments, ref] });
+        if (saved) chatDrafts.current.set(owner, { ...saved, attachments: [...saved.attachments, ref] });
         else void api.discardAttachment(ref.id).catch(() => {});
       }, (failure: unknown) => {
         const message = failure instanceof ApiError && failure.code === "INVALID_INPUT" ? "文件内容与类型不符或名称无效" : failure instanceof ApiError && failure.code === "ATTACHMENT_LIMIT" ? "附件超过大小上限" : errorMessage(failure);
@@ -876,38 +882,44 @@ export function App() {
     // Navigation waits for the operation to end; leaving a chat is refused while an operation is in flight.
     void api.forkSession(sessionId, requestKey(), runId).then(async created => { await refreshState().catch(() => {}); endOperation(); openFromPage(created.head.id); }, failure => { setError(errorMessage(failure)); endOperation(); });
   };
-  const applySelection = async () => {
-    if (!sessionId || !startOperation("switching")) return;
+  /**
+   * Asks the Gateway for the composer's choice (a switch, or a blocked conversation's recovery). Only after a user's action: a send, a pick in the lists, the
+   * apply button. A request whose answer this page did not see is sent again with its own key only for the same choice, and only from this page (never after a reload).
+   */
+  const writeSelection = async (id: string): Promise<void> => {
     let submittedKey: string | null = null;
     try {
       const target = selectionRequest(draft), previous = pendingSwitchWrite.current;
       const recovery = session?.status === "blocked", acknowledgeUnknown = recovery && session.facts.unknown.count > 0;
-      const request = previous?.sessionId === sessionId ? previous : { sessionId, selection: target, key: requestKey(), recovery, acknowledgeUnknown };
+      const request = previous?.sessionId === id && JSON.stringify(previous.selection) === JSON.stringify(target) ? previous : { sessionId: id, selection: target, key: requestKey(), recovery, acknowledgeUnknown };
       pendingSwitchWrite.current = request; submittedKey = request.key;
-      lastAutoSelection.current = JSON.stringify({ id: sessionId, selection: request.selection });
+      lastAutoSelection.current = JSON.stringify({ id, selection: request.selection });
       saveChatDraft();
-      if (request.recovery) await api.resumeSelection(sessionId, request.selection, request.key, request.acknowledgeUnknown);
-      else await api.switchSelection(sessionId, request.selection, request.key);
+      if (request.recovery) await api.resumeSelection(id, request.selection, request.key, request.acknowledgeUnknown);
+      else await api.switchSelection(id, request.selection, request.key);
       pendingSwitchWrite.current = null;
-      acceptSession(await api.session(sessionId, AbortSignal.timeout(15_000)));
     }
     catch (failure: unknown) {
-      if (failure instanceof ApiError && ["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT"].includes(failure.code) && liveWindow.current?.head.id === sessionId &&
-          liveWindow.current.head.lastSwitch?.commandId === submittedKey) {
-        pendingSwitchWrite.current = null; setError(null); return;
-      }
+      if (failure instanceof ApiError && ["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT"].includes(failure.code) && liveWindow.current?.head.id === id &&
+          liveWindow.current.head.lastSwitch?.commandId === submittedKey) { pendingSwitchWrite.current = null; return; }
       if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT", "UNCONFIRMED_REQUEST"].includes(failure.code)) pendingSwitchWrite.current = null;
-      setError(errorMessage(failure));
+      throw failure;
     }
+  };
+  const applySelection = async () => {
+    if (!sessionId || !startOperation("switching")) return;
+    try { await writeSelection(sessionId); setError(null); acceptSession(await api.session(sessionId, AbortSignal.timeout(15_000))); }
+    catch (failure: unknown) { setError(errorMessage(failure)); }
     finally { endOperation(); }
   };
   const changeSelection = (value: SelectionDraft) => {
     lastAutoSelection.current = null;
-    if (sessionIdRef.current !== null) selectionWish.current = { id: sessionIdRef.current, draft: value };
+    if (sessionIdRef.current !== null) { selectionWish.current = { id: sessionIdRef.current, draft: value }; switchArmed.current = sessionIdRef.current; }
     setDraft(value);
   };
   useEffect(() => {
-    if (!state || !session || session.status !== "open" || session.pendingSwitchId !== null || mutation !== null || operation.current ||
+    // Only a choice the user just made in this page switches at once; opening a conversation never does.
+    if (!state || !session || switchArmed.current !== session.id || session.status !== "open" || session.pendingSwitchId !== null || mutation !== null || operation.current ||
         JSON.stringify(draft) === JSON.stringify(selectionDraft(session.selection)) || selectionProblem(draft, state.harnesses, state.providers)) return;
     const key = JSON.stringify({ id: session.id, selection: selectionRequest(draft) });
     if (lastAutoSelection.current === key) return;

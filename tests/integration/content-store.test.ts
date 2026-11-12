@@ -76,7 +76,6 @@ test("uploads are staged once per command, typed by their bytes, admitted per wo
   assert.deepEqual(store.resolve([image.id, notes.id], "/w"), [image, notes]);
   assert.throws(() => store.resolve([image.id], "/other"), code("ATTACHMENT_UNAVAILABLE"));
   assert.throws(() => store.resolve([image.id, image.id], "/w"), code("INVALID_INPUT"));
-  assert.throws(() => store.resolve(Array.from({ length: 9 }, (_, index) => "content-" + index), "/w"), code("INVALID_INPUT"));
   const output = await store.storeOutput({ workspace: "/w", name: "out.txt", mediaType: "text/plain", data: Buffer.from("x") });
   assert.throws(() => store.resolve([output.id], "/w"), code("ATTACHMENT_UNAVAILABLE"), "native outputs are not user attachments");
   // A stable private copy: the same path every Turn, read-only, and repaired if something changed it.
@@ -101,7 +100,7 @@ test("uploads are staged once per command, typed by their bytes, admitted per wo
 test("what a Harness made is kept whole, of any size, written as it comes; an upload still has its bounds", async t => {
   const data = await root(t), store = new LocalContentStore(data, () => {});
   const piece = Buffer.alloc(9 * 1024 * 1024, "a");
-  // Three pieces of 9 MiB: more than the 20 MiB an upload may hold, never joined into one buffer by the store's caller.
+  // Three pieces of 9 MiB, never joined into one buffer by the store's caller.
   const ref = await store.storeOutput({ workspace: "/w", name: "big.json", mediaType: "application/json", data: [piece, Buffer.alloc(9 * 1024 * 1024, "b"), Buffer.alloc(9 * 1024 * 1024, "c")] });
   assert.equal(ref.bytes, 27 * 1024 * 1024);
   assert.equal(createHash("sha256").update(piece).update(Buffer.alloc(9 * 1024 * 1024, "b")).update(Buffer.alloc(9 * 1024 * 1024, "c")).digest("hex"), ref.sha256);
@@ -122,7 +121,7 @@ test("what a Harness made is kept whole, of any size, written as it comes; an up
   assert.equal(store.collect(new Set([ref.id, second.id])).records, 0, "nothing else was recorded");
   // An upload is refused above what an upload may hold, as it always was.
   async function* body(size: number) { yield Buffer.alloc(size, "u"); }
-  await assert.rejects(store.stage({ workspace: "/w", name: "up.bin", mediaType: "application/octet-stream", commandId: "up-big", declaredBytes: 20 * 1024 * 1024 + 1, source: body(1) }), code("ATTACHMENT_LIMIT"));
+  await assert.rejects(store.stage({ workspace: "/w", name: "up.bin", mediaType: "application/octet-stream", commandId: "up-big", declaredBytes: 1024 * 1024 * 1024 + 1, source: body(1) }), code("ATTACHMENT_LIMIT"));
 });
 
 test("the store holds no total of its own: more records than it once allowed do not stop an output from being kept", async t => {

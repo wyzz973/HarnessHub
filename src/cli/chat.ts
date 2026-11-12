@@ -1,6 +1,5 @@
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 import type { Conversation } from "../contracts/conversation.js";
 import { SessionError, sessionId, type HarnessSelection, type SessionConfiguration, type SessionId } from "../contracts/session.js";
@@ -10,7 +9,8 @@ import { defaultRelayKeyPath } from "../infrastructure/session/relay-keys.js";
 import { application, dataRoot, errorRecord, hash, newCommand, selection } from "./session-application.js";
 import { parseConfiguration } from "../contexts/session/domain/state.js";
 import { turnRecord, turnSource } from "../contexts/session/domain/turn-source.js";
-import { boundedWrite, MAX_CLI_INPUT_BYTES } from "./bounded-streams.js";
+import { boundedWrite } from "./bounded-streams.js";
+import { isMainModule } from "./main-module.js";
 
 /** The conversation as the NDJSON documents tell it: its head and the facts of each Turn's Run, without the words (a `turn` document brings those). */
 function headDocument(state: Conversation): Record<string, unknown> {
@@ -33,7 +33,6 @@ export async function main(args: readonly string[]): Promise<number> {
   let shutdown: Promise<void> | undefined;
   let exitCode = 0;
   let json = false;
-  let rawInputBytes = 0;
   const writeOutput = (text: string) => {
     try { boundedWrite(process.stdout, text); }
     catch (error) { publicationBroken = true; beginShutdown(); throw error; }
@@ -55,10 +54,6 @@ export async function main(args: readonly string[]): Promise<number> {
   };
   const onSignal = () => { interrupted = true; beginShutdown(); };
   const onOutputError = () => { publicationBroken = true; beginShutdown(); };
-  const onInputData = (chunk: Buffer | string) => {
-    rawInputBytes += typeof chunk === "string" ? Buffer.byteLength(chunk, "utf8") : chunk.length;
-    if (rawInputBytes > MAX_CLI_INPUT_BYTES && !quitting) { report(new SessionError("INPUT_LIMIT", "chat raw input byte budget exhausted")); beginShutdown(); }
-  };
   try {
     const { values } = parseArgs({ args: [...args], options: {
       harness: { type: "string" }, control: { type: "string" }, session: { type: "string" },
@@ -115,7 +110,6 @@ export async function main(args: readonly string[]): Promise<number> {
       await app.runtime.wait(current.id);
     } else {
       // Install the raw guard before readline can buffer an unterminated line.
-      process.stdin.on("data", onInputData);
       lines = createInterface({ input: process.stdin, crlfDelay: Infinity, terminal: false });
       for await (const line of lines) {
         if (quitting) break;
@@ -163,10 +157,10 @@ export async function main(args: readonly string[]): Promise<number> {
       try { app.store.close(); }
       catch (error) { report(error); }
     }
-    process.stdin.off("data", onInputData); process.stdin.pause(); process.stdin.destroy();
+    process.stdin.pause(); process.stdin.destroy();
     process.off("SIGINT", onSignal); process.off("SIGTERM", onSignal); process.stdout.off("error", onOutputError);
     if (interrupted && exitCode === 0) exitCode = 1;
   }
   return exitCode;
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) process.exitCode = await main(process.argv.slice(2));
+if (isMainModule(import.meta.url)) process.exitCode = await main(process.argv.slice(2));

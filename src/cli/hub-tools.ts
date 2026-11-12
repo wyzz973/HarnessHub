@@ -1,14 +1,12 @@
 import { request as httpRequest } from "node:http";
 import { createInterface } from "node:readline";
 import { once } from "node:events";
-import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import {
   TABLE_ENV, TABLE_LIMITS, TABLE_MCP_NAME, TABLE_NOT_IN_SESSION, TABLE_PARTS, TABLE_SEARCH_SCOPES, TABLE_TOOLS,
   type TableSearchHit, type TableSearchView, type TableTool, type TableTurnRead, type TableTurnsView,
 } from "../contracts/table.js";
+import { isMainModule } from "./main-module.js";
 
 /**
  * The Hub's tools for a Harness running inside a conversation the Hub started (docs/decisions/LOG.md, 2026-11-11): it reads back
@@ -21,7 +19,7 @@ import {
  * Both read HARNESSHUB_URL and HARNESSHUB_SESSION (src/contracts/table.ts) and ask the Hub's /api/table routes with the second as a
  * bearer token. Without them this is no Hub conversation and there is nothing to read: the MCP server still answers initialize and
  * tools/list, and every call, like every command, answers TABLE_NOT_IN_SESSION. When the Hub cannot be reached it says so in a
- * sentence. This file imports nothing of the Gateway but the contract, to start fast and to stay a program of its own.
+ * sentence. This file imports nothing of the Gateway but the contract and the main-module check, to start fast and to stay a program of its own.
  */
 
 const SERVER_VERSION = "1";
@@ -370,14 +368,8 @@ export async function main(args: readonly string[], io: ToolIo = { env: process.
   (result.isError ? io.stderr : io.stdout).write(result.text + "\n");
   return result.isError ? 1 : 0;
 }
-/** Whether this file is the program being run, also when it was started through a link: a Harness may be given the path of one. */
-function started(): boolean {
-  const entry = process.argv[1];
-  if (!entry) return false;
-  if (import.meta.url === pathToFileURL(resolve(entry)).href) return true;
-  try { return realpathSync(entry) === fileURLToPath(import.meta.url); } catch { return false; }
-}
-if (started()) {
+// This file is the program being run also when it was started through a link: a Harness may be given the path of one.
+if (isMainModule(import.meta.url)) {
   // A reader that goes away (the Harness closing its pipe) is the end of the conversation, not a crash.
   process.stdout.on("error", () => {});
   process.exitCode = await main(process.argv.slice(2));

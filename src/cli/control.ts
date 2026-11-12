@@ -5,7 +5,6 @@ export { chooseControl } from "../contexts/catalog/application/select-control.js
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir, totalmem } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import type { ControlEvent, ControlLaunch, ControlRun, HarnessControl } from "../contracts/control.js";
 import { resolveHostBudgets } from "../contracts/native-host.js";
@@ -30,6 +29,7 @@ function describe(event: ControlEvent): string {
 }
 import { inventory } from "../infrastructure/catalog/inventory-composition.js";
 import { NativeInstallationLocks, type NativeUsageLease } from "../infrastructure/management/native-lock.js";
+import { isMainModule } from "./main-module.js";
 
 function timeout(value: string | undefined): number {
   if (value === undefined) return 30000;
@@ -180,4 +180,4 @@ export async function main(args: readonly string[]): Promise<number> {
   }
   return exitCode;
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) process.exitCode = await main(process.argv.slice(2));
+if (isMainModule(import.meta.url)) process.exitCode = await main(process.argv.slice(2));

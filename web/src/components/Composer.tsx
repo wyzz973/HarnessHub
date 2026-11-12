@@ -55,6 +55,8 @@ interface ComposerProps extends ChatProps {
   readonly sendAlone?: { readonly checked: boolean; readonly onToggle: () => void } | undefined;
 }
 
+/** The Gateway's guard on one message (src/contexts/session/domain/state.ts MAX_INPUT_BYTES): only against a mistaken paste of a whole dump. */
+const MAX_MESSAGE_BYTES = 32 * 1024 * 1024;
 /** Products whose own documentation names the command that sets up a missing sign-in or provider. */
 const SETUP_COMMANDS: Readonly<Record<string, string>> = { hermes: "hermes model" };
 /**
@@ -151,12 +153,13 @@ export function Composer(props: ComposerProps) {
   const inputs = draft.providerId ? undefined : props.nativeModels?.models.find(model => model.id === (draft.model || props.nativeModels?.defaultModel))?.inputs ?? props.nativeModels?.inputs;
   const uploading = props.attachments.some(item => item.status === "uploading");
   const attachmentBlocked = props.attachments.some(item => item.status !== "ready" || attachmentProblem(item, inputs) !== null);
-  const sendBlocked = disabled || props.mutation !== null || pending || blocked || dirty || problem !== null || !draft.providerId && props.nativeModels?.authentication === "missing" || bytes > 64 * 1024 || !props.messageDraft.trim() || attachmentBlocked;
+  // A choice that differs from the conversation's is the next message's: sending asks for the switch first (App's send), so it does not block the send.
+  const sendBlocked = disabled || props.mutation !== null || pending || blocked || problem !== null || !draft.providerId && props.nativeModels?.authentication === "missing" || bytes > MAX_MESSAGE_BYTES || !props.messageDraft.trim() || attachmentBlocked;
   const disableSend = sendBlocked || active !== null;
   // While a reply runs, the next message can be written and held by this page until the Turn ends (ADR-042).
-  const canQueue = active !== null && !active.cancelRequested && props.queued === null && props.onQueue !== undefined && !readonly && !blocked && props.messageDraft.trim() !== "" && bytes <= 64 * 1024 && !attachmentBlocked;
+  const canQueue = active !== null && !active.cancelRequested && props.queued === null && props.onQueue !== undefined && !readonly && !blocked && props.messageDraft.trim() !== "" && bytes <= MAX_MESSAGE_BYTES && !attachmentBlocked;
   const attach = (files: FileList | readonly File[] | null) => { if (files && files.length) props.onAttach([...files]); };
-  const canAttach = !readonly && props.attachments.length < 8;
+  const canAttach = !readonly;
   // The Turns whose result is unknown are counted by the Gateway for the whole conversation, whichever Turns this page holds.
   const unknown = session?.facts.unknown ?? { count: 0, unclosed: false };
   const lastSwitch = session?.lastSwitch;
@@ -298,12 +301,12 @@ export function Composer(props: ComposerProps) {
   const authText = !authMissing ? null : SETUP_COMMANDS[draft.harnessId]
     ? `它还没有可用的模型提供方。请在终端运行 ${SETUP_COMMANDS[draft.harnessId]} 完成配置，然后刷新本机模型；也可以换一个 Harness。`
     : "请在它自己的程序中完成登录或 Gateway 连接配置，然后刷新本机模型；也可以换一个 Harness。";
-  const noteDanger = bytes > 64 * 1024 || problem !== null && !onboarding;
-  const note = bytes > 64 * 1024 ? "单条消息不能超过 64 KiB，请缩短内容。"
+  const noteDanger = bytes > MAX_MESSAGE_BYTES || problem !== null && !onboarding;
+  const note = bytes > MAX_MESSAGE_BYTES ? "单条消息不能超过 32 MiB，请缩短内容。"
     : active?.cancelRequested ? "停止已受理，正在等待执行结束和资源清理。"
     : blocked && !readonly ? resourcesUnconfirmed ? "资源停止还未确认。你可以编辑草稿、查看历史；核实后再恢复执行。" : "选择可用的 Harness 后，检查连接并继续这次对话。"
     : pending ? active ? "当前回复结束后应用新选择，草稿已保留。" : "正在保存下一条消息的选择。"
-    : dirty ? problem ?? (selectionFailed ? "所选连接未生效，可以重试切换或换一个 Harness。" : "正在切换所选 Harness 或模型，草稿已保留。")
+    : dirty ? problem ?? (selectionFailed ? "所选连接未生效，可以重试切换或换一个 Harness。" : props.mutation === "switching" ? "正在切换所选 Harness 或模型，草稿已保留。" : "发送时改用所选 Harness 或模型。")
     : authText !== null ? authText
     : uploading ? "附件上传中，完成后即可发送。"
     : attachmentBlocked ? "有附件无法随这条消息发送，请移除标记的附件或切换到支持它的 Harness 或模型。"
@@ -422,7 +425,8 @@ export function Composer(props: ComposerProps) {
       {selectionFailed && !pending ? <><span className="text-ui-sm text-red">{problem ?? "所选连接尚未生效"}</span><button type="button" className="btn btn-sm" onClick={props.onApply} disabled={props.mutation !== null || problem !== null}>重试切换</button></>
         : problem !== null ? <ComposerNotice>{problem}</ComposerNotice>
         : active ? <span className="inline-flex h-[30px] items-center gap-2 rounded-control bg-accent-soft px-2.5 text-caption text-accent-text"><ArrowLeftRight size={14} aria-hidden="true"/><span id={stripNotice ? "composer-notice" : undefined}>本轮结束后{takeOver}</span></span>
-        : <span className="inline-flex h-[30px] items-center gap-2 px-1 text-caption text-fg-2"><Spinner size={13} label=""/><span id={stripNotice ? "composer-notice" : undefined}>正在保存选择</span></span>}
+        : pending || props.mutation === "switching" ? <span className="inline-flex h-[30px] items-center gap-2 px-1 text-caption text-fg-2"><Spinner size={13} label=""/><span id={stripNotice ? "composer-notice" : undefined}>正在保存选择</span></span>
+        : <span className="inline-flex h-[30px] items-center gap-2 px-1 text-caption text-fg-2"><ArrowLeftRight size={14} aria-hidden="true"/><span id={stripNotice ? "composer-notice" : undefined}>下一条消息{takeOver}</span></span>}
     </div> : null}
     {carried && !readonly && !docked ? <div className="composer-change native-carried motion-fade-in flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-caption text-fg-2" role="status"><span>原生命令已改为 {carried}；下一回合沿用，不改回所选。</span><button type="button" className="link-btn" onClick={props.onApply} disabled={disabled || props.mutation !== null}>改用所选设置</button></div> : null}
     {blocked && !readonly ? <ComposerNotice id="composer-notice" title="执行已暂停，对话历史和草稿仍保留。" action={<button type="button" className="btn btn-sm" onClick={props.onApply} disabled={disabled || pending || props.mutation !== null || problem !== null || resourcesUnconfirmed}><RefreshCw size={12}/>{unknown.count ? "确认保留未知结果并继续" : "检查连接并恢复对话"}</button>}>
@@ -513,7 +517,7 @@ export function Composer(props: ComposerProps) {
                 ...(commands.length ? [{ label: "原生命令", icon: <SquareSlash size={15}/>, hint: "/", disabled: disabled, onSelect: () => { setSlashClosedAt(null); (props.onReplaceDraft ?? props.onMessageDraft)("/"); setTimeout(() => inputRef.current?.focus(), 0); } }] : []),
                 ...(sessionsOffered ? [{ label: "继续原程序的会话…", icon: <History size={15}/>, disabled: disabled || props.mutation !== null, onSelect: () => openPanel("sessions") }] : []),
                 ...(props.sendAlone ? [{ separator: true as const }, { label: "只发这条消息", icon: <ArrowLeftRight size={15}/>, description: "不附之前的对话，只发你写的这一条", checked: props.sendAlone.checked, disabled: disabled, onSelect: props.sendAlone.onToggle }] : []),
-              ]} footer={props.attachments.length >= 8 ? "每条消息最多 8 个附件" : undefined}/>
+              ]}/>
               {permission ? <SearchPicker side={popSide} {...listOpen("permission")} label={OPTION_NAMES[permission.id] ?? permission.name} value={draft.nativeOptions[permission.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(permission, true)}
                 disabled={disabled || props.nativeModelsLoading} onChange={value => changeOption(permission.id, value)} {...afterChoice} chevron className="gap-[5px] text-fg-2"
                 trigger={selected => <><ShieldCheck size={15} className="flex-none" aria-hidden="true"/><span className="hidden max-w-[140px] truncate sm:inline">{selected?.short ?? selected?.label ?? valueName(permission, permission.currentValue)}</span></>}/> : null}

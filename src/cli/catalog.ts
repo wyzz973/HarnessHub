@@ -1,9 +1,8 @@
 import { catalogTarget } from "../infrastructure/catalog/platform.js";
 export { catalogTarget } from "../infrastructure/catalog/platform.js";
 import { parseArgs } from "node:util";
-import { pathToFileURL } from "node:url";
-import { resolve } from "node:path";
 import { loadBuiltinCatalog } from "../adapters/catalog.js";
+import { isMainModule } from "./main-module.js";
 
 /** Display the fixed offline catalog; this command does not inspect installations. */
 export async function main(args: readonly string[]): Promise<number> {
@@ -21,4 +20,4 @@ export async function main(args: readonly string[]): Promise<number> {
     process.stderr.write("HarnessGateway: " + (error instanceof Error ? error.message : "catalog failed") + "\n"); return 2;
   }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) process.exitCode = await main(process.argv.slice(2));
+if (isMainModule(import.meta.url)) process.exitCode = await main(process.argv.slice(2));

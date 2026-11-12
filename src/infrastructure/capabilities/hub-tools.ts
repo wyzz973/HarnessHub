@@ -19,19 +19,34 @@ import type { InstalledHarness } from "./scan.js";
 function builtTool(): string { return fileURLToPath(new URL("../../cli/hub-tools.js", import.meta.url)); }
 
 /**
- * Why the Hub's tools are not written into a Harness yet, or null when they are. Claude Code and Codex are the two with a way
- * to carry the Session's identity into the tool process that was followed through: their native process serves one Session and
- * passes its environment on (Claude Code's MCP servers inherit it unless CLAUDE_CODE_MCP_ALLOWLIST_ENV is set, which the named
- * variables survive; Codex forwards what `env_vars` names). The others are listed with what is known of them.
+ * Why the Hub's tools are not written into a Harness, or null when they are. Each one's user-level MCP configuration is written by
+ * the MCP list's own rules (mcp-definitions.ts, mcp-edits.ts), the way that Harness documents it:
+ * - Claude Code `~/.claude.json` `mcpServers` (its own `claude mcp add-json`), Codex `~/.codex/config.toml` `[mcp_servers.<name>]` with `env_vars`;
+ * - OpenCode its config file's `mcp.<name>` (1) or `mcp.servers.<name>` (2), `type: "local"`, a command array and `{env:NAME}` (opencode.ai/v2/docs/mcp-servers);
+ * - DeepSeek Harness a `@deepseek-ai/dsh-mcp-client` row of `~/.dsh/cordis.patch.yml` with `!!js process.env.NAME` (its docs/user/guide/mcp-memory.md);
+ * - Hermes `config.yaml` `mcp_servers.<name>` with `command`, `args`, `env` (website/docs/reference/mcp-config-reference.md, `hermes mcp add`);
+ * - OpenClaw `openclaw.json` `mcp.servers.<name>` with `command`, `args`, `env` (OpenClaw 2026.10.9 docs/tools/mcp.md, `openclaw mcp set`).
+ * A Harness with no user-level MCP entry at all is not one of them (the default).
  */
 function unavailable(harnessId: string): string | null {
   switch (harnessId) {
-    case "claude": case "codex": return null;
-    case "opencode": return "OpenCode 的本地 MCP 服务器会继承它的环境，按文档应该可用；还没有接入，也没有真机验证。";
-    case "dsh": return "DeepSeek Harness 启动 MCP 服务器时只去掉名字里带 KEY、PASSWORD、SECRET、TOKEN 的环境变量，这两个变量会留下，按源码应该可用；还没有接入，也没有真机验证。";
-    case "hermes": return "Hermes 的会话和工具跑在用户自己的网关里，Hub 起的进程的环境变量传不进去；要在每个会话开始时经 ACP 的 mcpServers 传入，还没有做。";
-    case "openclaw": return "OpenClaw 的会话跑在它的 Gateway 里：它的 ACP 桥拒绝按会话传入 MCP 服务器，写进 Gateway 的 MCP 配置则没有会话标识，还会让 Gateway 重启。目前做不到。";
+    case "claude": case "codex": case "opencode": case "dsh": case "hermes": case "openclaw": return null;
     default: return "Hub 的工具还没有接入这个 Harness。";
+  }
+}
+/**
+ * Why a Harness whose configuration holds the tools still cannot tell them which Hub conversation they serve, or null when it can. The identity
+ * travels in the environment of the native process the Hub starts (TableMount): Claude Code's MCP servers inherit it (the named variables survive
+ * CLAUDE_CODE_MCP_ALLOWLIST_ENV), Codex forwards what `env_vars` names, OpenCode passes `{env:NAME}`, DeepSeek Harness's entry reads
+ * `process.env.NAME` (its bridge only drops names with KEY, PASSWORD, SECRET or TOKEN, which these are not). Hermes and OpenClaw run their
+ * sessions and their MCP servers in the user's own gateway, which the Hub does not start: the servers see the gateway's environment, so the
+ * tools answer that they are in no Hub conversation. Such a Harness is never told it has the tools (isInstalled).
+ */
+function sessionGap(harnessId: string): string | null {
+  switch (harnessId) {
+    case "hermes": return "Hermes 的会话和 MCP 服务器跑在用户自己的网关里，Hub 起的进程的环境变量传不到它：写进配置后工具能列出来，但认不出是哪个 Hub 对话，调用会回答不在 Hub 对话里。要按会话经 ACP 的 mcpServers 传入才行，还没有做。";
+    case "openclaw": return "OpenClaw 的 MCP 服务器在它的 Gateway 进程里运行，用的是 Gateway 的环境：写进配置后工具能列出来，但认不出是哪个 Hub 对话，调用会回答不在 Hub 对话里。它的 ACP 桥不接受按会话传入的 MCP 服务器。";
+    default: return null;
   }
 }
 
@@ -71,7 +86,8 @@ export class HubTools {
     const reason = unavailable(harness.harnessId);
     if (reason !== null) return { harnessId: harness.harnessId, name: harness.name, state: "unsupported", writable: false, reason, file: null };
     if (target === undefined) return { harnessId: harness.harnessId, name: harness.name, state: "unsupported", writable: false, reason: "读不到这个 Harness 的 MCP 配置", file: null };
-    return { harnessId: harness.harnessId, name: harness.name, state: target.state, writable: target.state !== "unsupported", reason: target.reason, file: target.file };
+    const gap = target.state === "unsupported" ? null : sessionGap(harness.harnessId);
+    return { harnessId: harness.harnessId, name: harness.name, state: target.state, writable: target.state !== "unsupported", reason: [target.reason, gap].filter(Boolean).join(" ") || null, file: target.file };
   }
   /** Where `definition` stands in one Harness's file by the MCP list's own rules, whether or not the tools are written into that Harness. */
   private async stateOf(definition: McpDefinition, harnessId: string, installed: readonly InstalledHarness[]): Promise<McpTargetView> {
@@ -93,7 +109,7 @@ export class HubTools {
    */
   async isInstalled(harnessId: string, installed: readonly InstalledHarness[]): Promise<boolean> {
     const mine = installed.filter(item => item.harnessId === harnessId);
-    if (mine.length === 0 || unavailable(harnessId) !== null || !this.program().present) return false;
+    if (mine.length === 0 || unavailable(harnessId) !== null || sessionGap(harnessId) !== null || !this.program().present) return false;
     const state = (await this.stateOf(this.wanted(), harnessId, mine)).state;
     return state === "synced" || state === "claimable";
   }
@@ -127,12 +143,12 @@ export class HubTools {
     // The same entry is there but nobody recorded it as HarnessHub's: it becomes so, and no file changes.
     if (before.state === "claimable") {
       const changes = await this.host.mcp.claim(TABLE_MCP_NAME, [harnessId], installed);
-      return { harnessId, action: "install", status: "done", state: (await this.stateOf(wanted, harnessId, installed)).state, changes, notes: ["配置里已经有一模一样的一项，记为 HarnessHub 管理的；文件没有改动。"] };
+      return { harnessId, action: "install", status: "done", state: (await this.stateOf(wanted, harnessId, installed)).state, changes, notes: ["配置里已经有一模一样的一项，记为 HarnessHub 管理的；文件没有改动。", ...[sessionGap(harnessId)].filter((note): note is string => note !== null)] };
     }
     const check = await this.host.mcp.checkSync(TABLE_MCP_NAME, harnessId, before.state === "changed" || before.state === "removed", installed);
     if (check.blocked !== null) throw new CapabilityError("CAPABILITY_TARGET_REFUSED", check.blocked);
-    const change = await this.host.apply(check.fingerprint, this.host.command());
-    return { harnessId, action: "install", status: change.status === "applied" ? "done" : "failed", state: (await this.stateOf(wanted, harnessId, installed)).state, changes: [change], notes: check.notes };
+    const change = await this.host.apply(check.fingerprint, this.host.command()), gap = sessionGap(harnessId);
+    return { harnessId, action: "install", status: change.status === "applied" ? "done" : "failed", state: (await this.stateOf(wanted, harnessId, installed)).state, changes: [change], notes: gap === null ? check.notes : [...check.notes, gap] };
   }
 
   /**

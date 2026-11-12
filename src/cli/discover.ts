@@ -3,7 +3,6 @@ export { inventory } from "../infrastructure/catalog/inventory-composition.js";
 export type { InventoryInput } from "../infrastructure/catalog/inventory-composition.js";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { builtinRecipes } from "../adapters/recipes.js";
 import { DiscoverHarnesses } from "../contexts/catalog/application/discover.js";
@@ -15,6 +14,7 @@ import {
 } from "../contexts/catalog/domain/discovery.js";
 import { LocalExecutableLocator, searchDirectories } from "../infrastructure/discovery/local.js";
 import { resolveInstallationPolicy } from "../contexts/catalog/domain/catalog.js";
+import { isMainModule } from "./main-module.js";
 
 /** Read one explicit regular manifest with a byte cap before and during reading. */
 export async function readManifest(path: string): Promise<DiscoveryManifest> {
@@ -116,6 +116,6 @@ export async function main(args: readonly string[]): Promise<number> {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isMainModule(import.meta.url)) {
   process.exitCode = await main(process.argv.slice(2));
 }

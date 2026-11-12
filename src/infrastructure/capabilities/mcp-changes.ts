@@ -5,6 +5,7 @@ import { opencodeWriteDialect, type HarnessReadTable, type ReadEnvironment } fro
 import { CapabilityError, type CapabilityChangeCheck, type CapabilityChangeView, type McpCandidateView, type McpDefinitionView, type McpInventoryView, type McpServerView, type McpTargetView } from "../../contracts/capabilities.js";
 import { TABLE_ENV } from "../../contracts/table.js";
 import { parsed, UnsafeEdit } from "./edits.js";
+import { record } from "./formats.js";
 import { readTarget, type TargetRead } from "./files.js";
 import { canonical, commandLine, definitionProblem, MCP_NAME, mcpNameProblem, mcpVariables, ownedOf, readMcp, renderMcp, sameMcp, type McpDefinition, type McpRender, type McpStyle } from "./mcp-definitions.js";
 import { dshRows, editMcp, mcpEntry, mcpGuard, mcpLocation, opencodeMcpStyle } from "./mcp-edits.js";
@@ -26,9 +27,8 @@ export interface McpHost {
   /** Offers an edit through the usual check and confirmation (backup, atomic write, read back, ledger). */
   offerEdit(change: "mcp-sync" | "mcp-remove", harnessId: string, subject: string, enabled: boolean, file: string, read: TargetRead, plan: SwitchPlan | null, blocked: string | null, notes: readonly string[]): Promise<CapabilityChangeCheck>;
 }
-const WRITABLE: readonly McpStyle[] = ["claude", "codex", "cursor", "opencode", "gemini", "hermes", "dsh"];
+const WRITABLE: readonly McpStyle[] = ["claude", "codex", "cursor", "opencode", "gemini", "hermes", "dsh", "openclaw"];
 const NOT_YET: Readonly<Record<string, string>> = {
-  openclaw: "这个版本的 OpenClaw 改 MCP 会重启 Gateway、只支持 stdio，要等升级后再接入；现在只读。",
   pi: "Pi 0.99 之前没有内置 MCP。",
 };
 const AFTER: Readonly<Record<string, string>> = {
@@ -38,6 +38,7 @@ const AFTER: Readonly<Record<string, string>> = {
   gemini: "改完后在 Gemini 里用 /mcp refresh 或重开会话才生效。",
   hermes: "长驻的 Hermes 进程要 /reload-mcp 或重启后生效；正在运行的 Hermes 网关不会被 HarnessHub 重启。",
   opencode: "OpenCode 要重开会话才读到改动。",
+  openclaw: "写在 openclaw.json 的 mcp.servers；开着热加载的 OpenClaw Gateway 在下一回合用上新定义（OpenClaw 2026.10 文档），关掉热加载的要 openclaw gateway restart。服务器在 Gateway 进程里运行，用的是 Gateway 的环境变量。",
   dsh: "写在 ~/.dsh/cordis.patch.yml（每个 profile 都会读，包括 HarnessHub 用的 acp）；新开的会话才读到改动。DeepSeek Harness 启动服务器时会去掉名字像凭据的环境变量，所以变量都显式写在 env 里。",
 };
 function hash(value: unknown): string { return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex"); }
@@ -45,7 +46,7 @@ function hash(value: unknown): string { return createHash("sha256").update(JSON.
 function userVariables(definition: McpDefinition): readonly string[] { return mcpVariables(definition).filter(variable => !(Object.values(TABLE_ENV) as readonly string[]).includes(variable)); }
 /** The ledger key recording that HarnessHub created a Harness's file (DeepSeek Harness's patch layer), so that it can delete it again once emptied. */
 export const CREATED_KEY = "file/created";
-function isStyle(harnessId: string): harnessId is McpStyle { return ["claude", "codex", "cursor", "opencode", "gemini", "hermes", "dsh"].includes(harnessId); }
+function isStyle(harnessId: string): harnessId is McpStyle { return ["claude", "codex", "cursor", "opencode", "gemini", "hermes", "dsh", "openclaw"].includes(harnessId); }
 /** A listed server as one Harness would hold it, its name included in what that Harness must accept. */
 function rendering(name: string, definition: McpDefinition, style: McpStyle): McpRender {
   const problem = mcpNameProblem(name, style);
@@ -95,7 +96,9 @@ export class McpInventory {
       return { file, style: decided.dialect === "v2" ? "opencode-v2" : "opencode", note: "写法：" + decided.basis + "。" };
     }
     if (source.style === "dsh") return { file: source.file, style: "dsh" };
-    if (source.style === "unsupported" || source.style === "openclaw") return { reason: NOT_YET[harnessId] ?? "HarnessHub 不写这个 Harness 的 MCP 配置" };
+    if (source.style === "unsupported") return { reason: NOT_YET[harnessId] ?? "HarnessHub 不写这个 Harness 的 MCP 配置" };
+    // OpenClaw: a file that includes others may hold the server in one of them, which is not read here; it is not written then.
+    if (source.style === "openclaw") return Object.hasOwn(record(this.entries(source.file, "openclaw")?.value), "$include") ? { reason: "openclaw.json 用了 $include，被包含的文件 HarnessHub 不读，也就不写" } : { file: source.file, style: "openclaw" };
     return { file: source.file, style: harnessId };
   }
   /** A file's server entries, parsed; null when the file cannot be read or parsed. */
@@ -148,7 +151,7 @@ export class McpInventory {
       if (table === undefined || !isStyle(harness.harnessId)) continue;
       const source = table.mcp;
       const files = source.style === "opencode" ? source.files : source.style === "dsh" ? [...(() => { try { return readdirSync(source.profiles, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => join(source.profiles, entry.name, "cordis.patch.yml")).sort(); } catch { return []; } })(), source.file]
-        : source.style === "unsupported" || source.style === "openclaw" ? [] : [source.file];
+        : source.style === "unsupported" ? [] : [source.file];
       for (const file of files) {
         const entries = this.entries(file, harness.harnessId);
         if (entries === null) continue;

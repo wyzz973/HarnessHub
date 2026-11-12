@@ -131,14 +131,13 @@ test("an entry of the same name that someone else wrote is never overwritten or 
   }
   assert.equal(await readFile(f.claudeFile, "utf8"), claudeBytes); assert.equal(await readFile(f.codexFile, "utf8"), mine); assert.equal(f.runs.length, runs, "Claude's command never ran");
   assert.deepEqual(await f.listed(), [], "a refusal leaves nothing in the list");
-  // The others: listed with why not, and refused.
+  // The other four can be written too; the two whose gateway runs the tools say that they cannot tell the conversation.
   const view = await f.changes.hubTools(INSTALLED);
-  assert.deepEqual(view.harnesses.map(row => [row.harnessId, row.state, row.writable]), [["claude", "different", true], ["codex", "different", true], ["opencode", "unsupported", false], ["dsh", "unsupported", false], ["hermes", "unsupported", false], ["openclaw", "unsupported", false]]);
+  assert.deepEqual(view.harnesses.map(row => [row.harnessId, row.state, row.writable]), [["claude", "different", true], ["codex", "different", true], ["opencode", "absent", true], ["dsh", "absent", true], ["hermes", "absent", true], ["openclaw", "absent", true]]);
   const reason = (id: string) => view.harnesses.find(row => row.harnessId === id)?.reason ?? "";
   assert.match(reason("hermes"), /网关/u); assert.match(reason("hermes"), /mcpServers/u);
-  assert.match(reason("openclaw"), /Gateway/u); assert.match(reason("openclaw"), /重启/u);
-  assert.match(reason("opencode"), /继承/u); assert.match(reason("dsh"), /TOKEN/u);
-  for (const id of ["opencode", "dsh", "hermes", "openclaw"]) await assert.rejects(f.changes.installHubTools(id, INSTALLED), refused("CAPABILITY_UNSUPPORTED"));
+  assert.match(reason("openclaw"), /Gateway/u);
+  assert.equal(reason("opencode"), ""); assert.equal(reason("dsh"), "");
   await assert.rejects(f.changes.installHubTools("codex", INSTALLED.filter(row => row.harnessId !== "codex")), refused("CAPABILITY_NOT_FOUND"));
   // The tool program is not there: nothing is written.
   await rm(f.tool);
@@ -176,4 +175,49 @@ test("without a program given, the entry runs this build's cli/hub-tools.js on t
   const sibling = fileURLToPath(new URL("../../src/cli/hub-tools.js", import.meta.url)), view = await changes.hubTools(INSTALLED);
   assert.equal(view.tool.command, process.execPath + " " + sibling + " mcp");
   assert.equal(view.tool.present, existsSync(sibling));
+});
+
+test("OpenCode, DeepSeek Harness, Hermes and OpenClaw: the tools go into each one's user-level file as it writes a server, and out again byte for byte", async t => {
+  const f = await setup(t);
+  const opencodeFile = join(f.home, ".config", "opencode", "opencode.json"), dshFile = join(f.home, ".dsh", "cordis.patch.yml");
+  const hermesFile = join(f.home, ".hermes", "config.yaml"), openclawFile = join(f.home, ".openclaw", "openclaw.json");
+  for (const file of [opencodeFile, dshFile, hermesFile, openclawFile]) await mkdir(join(file, ".."), { recursive: true });
+  // Each file already holds the user's own settings, which stay.
+  const before = {
+    opencode: JSON.stringify({ $schema: "https://opencode.ai/config.json", mcp: { servers: { docs: { type: "local", command: ["uvx", "docs-mcp"] } } } }, null, 2) + "\n",
+    dsh: "- insert:\n    - name: '@deepseek-ai/dsh-mcp-client'\n      id: mine\n      config:\n        serverName: docs\n        transport: stdio\n        command: uvx\n        args: [docs-mcp]\n",
+    hermes: "model:\n  default: fixture-model\nmcp_servers:\n  docs:\n    command: uvx\n    args: [docs-mcp]\n",
+    openclaw: JSON.stringify({ gateway: { port: 18789 }, mcp: { servers: { docs: { command: "uvx", args: ["docs-mcp"] } } } }, null, 2) + "\n",
+  };
+  await writeFile(opencodeFile, before.opencode); await writeFile(dshFile, before.dsh); await writeFile(hermesFile, before.hermes); await writeFile(openclawFile, before.openclaw);
+  const env = (style: "opencode" | "dollar" | "js") => Object.fromEntries([TABLE_ENV.session, TABLE_ENV.url].map(name => [name, style === "opencode" ? "{env:" + name + "}" : style === "dollar" ? "${" + name + "}" : "process.env." + name]));
+  const readJson = async (file: string) => JSON.parse(await readFile(file, "utf8")) as Record<string, any>;
+  const { parse: parseYaml, parseDocument } = await import("yaml");
+  for (const id of ["opencode", "dsh", "hermes", "openclaw"]) {
+    const installed = await f.changes.installHubTools(id, INSTALLED);
+    assert.deepEqual([installed.status, installed.state], ["done", "synced"], id + ": " + JSON.stringify(installed.notes));
+    assert.equal(await f.state(id), "synced");
+  }
+  assert.deepEqual((await readJson(opencodeFile)).mcp.servers, { docs: { type: "local", command: ["uvx", "docs-mcp"] }, [TABLE_MCP_NAME]: { type: "local", command: [NODE, f.tool, "mcp"], environment: env("opencode") } });
+  assert.deepEqual((parseYaml(await readFile(hermesFile, "utf8")) as Record<string, any>).mcp_servers[TABLE_MCP_NAME], { command: NODE, args: [f.tool, "mcp"], env: env("dollar") });
+  assert.deepEqual((await readJson(openclawFile)).mcp.servers, { docs: { command: "uvx", args: ["docs-mcp"] }, [TABLE_MCP_NAME]: { command: NODE, args: [f.tool, "mcp"], env: env("dollar") } });
+  assert.equal((await readJson(openclawFile)).gateway.port, 18789);
+  // DeepSeek Harness: a client row of its own beside the user's, every variable read explicitly (its bridge drops names that look like credentials).
+  const rows = (parseDocument(await readFile(dshFile, "utf8"), { customTags: [{ tag: "!!js", resolve: (text: string) => text }] }).toJS() as { insert: { id: string; config: Record<string, unknown> }[] }[]).flatMap(patch => patch.insert);
+  assert.deepEqual(rows.map(row => row.config.serverName), ["docs", TABLE_MCP_NAME]);
+  assert.deepEqual(rows[1]!.config, { serverName: TABLE_MCP_NAME, transport: "stdio", command: NODE, args: [f.tool, "mcp"], env: env("js") });
+  assert.match(await readFile(dshFile, "utf8"), /HARNESSHUB_SESSION: !!js "process\.env\.HARNESSHUB_SESSION"/u, "a JavaScript expression, never a value");
+  // The two whose gateway runs the tools are written but never said to have them; the two whose process the Hub starts are.
+  assert.deepEqual(await Promise.all(["opencode", "dsh", "hermes", "openclaw"].map(id => f.changes.hubToolsInstalled(id, INSTALLED))), [true, true, false, false]);
+  const notes = (await f.changes.installHubTools("hermes", INSTALLED)).notes;
+  assert.ok(notes.some(note => /已经装好/u.test(note)));
+  for (const id of ["opencode", "dsh", "hermes", "openclaw"]) {
+    const out = await f.changes.uninstallHubTools(id, INSTALLED);
+    assert.deepEqual([out.status, out.state], ["done", "absent"], id);
+  }
+  assert.deepEqual([await readFile(opencodeFile, "utf8"), await readFile(dshFile, "utf8"), await readFile(hermesFile, "utf8"), await readFile(openclawFile, "utf8")], [before.opencode, before.dsh, before.hermes, before.openclaw], "each file is as it was");
+  // An openclaw.json in JSON5's own syntax is not rewritten.
+  await writeFile(openclawFile, "{ gateway: { port: 18789 } }\n");
+  await assert.rejects(f.changes.installHubTools("openclaw", INSTALLED), (error: unknown) => error instanceof CapabilityError && /JSON5/u.test(error.message));
+  assert.equal(await readFile(openclawFile, "utf8"), "{ gateway: { port: 18789 } }\n");
 });

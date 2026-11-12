@@ -46,7 +46,7 @@ export type McpSource =
   | { readonly style: "claude"; readonly file: string }
   | { readonly style: "codex" | "cursor" | "gemini" | "hermes"; readonly file: string }
   | { readonly style: "opencode"; readonly files: readonly string[] }
-  | { readonly style: "openclaw" }
+  | { readonly style: "openclaw"; readonly file: string }
   /** DeepSeek Harness: its user patch layers, the one for every profile (`file`) and each profile's own under `profiles`. */
   | { readonly style: "dsh"; readonly file: string; readonly profiles: string }
   | { readonly style: "unsupported"; readonly reason: string };
@@ -339,13 +339,13 @@ export function capabilityReadTables(environment: ReadEnvironment, resolved: { r
         { role: "workspace", path: join(workspace, ".agents", "skills"), precedence: 5, containment: true, depth: 1 }, { role: "workspace", path: join(workspace, "skills"), precedence: 6, containment: true, depth: 1 }],
         duplicates: "precedence", requiresDescription: true, nameMustMatchDirectory: false, switch: { kind: "openclaw-entries" },
         externalDirs: { file: dirs.openclawConfig, format: "json5", path: ["skills", "load", "extraDirs"], precedence: 1, containment: true, depth: 1 } },
-      mcp: { style: "openclaw" },
+      mcp: { style: "openclaw", file: dirs.openclawConfig },
       instructions: { kind: "files", candidates: [{ path: join(workspace, "AGENTS.md"), role: "own" }], rule: "first-existing" },
       subagents: null, commands: null,
       hooks: [{ file: join(dirs.openclaw, "hooks"), style: "openclaw-dirs", role: "own" }],
       plugins: { kind: "openclaw", dir: join(dirs.openclaw, "extensions") },
       pluginSwitch: { kind: "read-only", reason: "本机版改 plugins.* 会让 Gateway 自动重启（ADR-045 裁决第 9 条），只读。" },
-      notes: ["本机版改 MCP 或插件会让 Gateway 自动重启，HarnessHub 暂不写入（ADR-045 第 9 条）。", "另有随程序附带的内置技能，这里不列出。"],
+      notes: ["本机版改插件会让 Gateway 自动重启，HarnessHub 暂不写入（ADR-045 第 9 条）；MCP 服务器写在 openclaw.json 的 mcp.servers，2026.10 起由 Gateway 热加载。", "另有随程序附带的内置技能，这里不列出。"],
     },
     {
       harnessId: "pi", checkedOn: "0.85.1",

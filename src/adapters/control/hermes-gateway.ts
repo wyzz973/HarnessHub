@@ -31,7 +31,11 @@ export const GATEWAY_FILES = ["gateway.sock", "gateway.sock.path", "gateway_stat
 export const CHECKOUT_FILES = ["install-stamp.json", "acp_adapter/gateway_server.py", ".hermes-update-in-progress"] as const;
 /** A recorded start time (centiseconds on macOS, gateway/status.py:472-503) and the live one may differ by the clock step `ps` and psutil round differently. */
 const START_TIME_TOLERANCE_MS = 5000;
-const RECORD_BYTES = 64 * 1024, POINTER_BYTES = 4096;
+/**
+ * A record larger than this is read as no record, which judges the gateway as not running and refuses the connection: only a guard against a
+ * runaway file (2026-11-12: 64 KiB could refuse a gateway whose state lists many platforms), far above any state file Hermes writes.
+ */
+const RECORD_BYTES = 16 * 1024 * 1024, POINTER_BYTES = 4096;
 const PROFILE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
 const COMMIT = /^[0-9a-f]{7,64}$/u;
 /**

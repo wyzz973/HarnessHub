@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import JSON5 from "json5";
-import { MAX_NATIVE_EXTENSIONS, type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type CommandClass, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeInputs, type NativeModelCatalog, type NativeOption, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
+import { type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type CommandClass, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeInputs, type NativeModelCatalog, type NativeOption, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
 import type { RelayCapabilities } from "../../contracts/relay.js";
 import { AcpControl } from "./acp.js";
 import { hubClearReading, openClawClassify, openClawCommandEffect, openClawNativeClassify, relayDeclaration } from "./relay-classify.js";
@@ -357,12 +357,12 @@ export class OpenClawControl extends AcpControl {
     const [status, catalog] = await Promise.all([this.call("skills.status", {}), this.call("tools.catalog", { includePlugins: true })]);
     const skills = object(status, "OpenClaw skill status").skills, groups = object(catalog, "OpenClaw tool catalog").groups;
     if (!Array.isArray(skills) || !Array.isArray(groups)) throw new ControlError("INVALID_NATIVE_METADATA", "invalid OpenClaw extension report");
-    const listed = skills.slice(0, MAX_NATIVE_EXTENSIONS).map(value => { const row = object(value, "OpenClaw skill");
+    const listed = skills.map(value => { const row = object(value, "OpenClaw skill");
       return { name: string(row.name, "skill name", 256), description: typeof row.description === "string" ? row.description.slice(0, 1024) : "", ...(typeof row.source === "string" ? { scope: row.source.slice(0, 64) } : {}),
         enabled: row.eligible === true && row.disabled !== true && row.blockedByAllowlist !== true }; });
-    const plugins = groups.map(value => object(value, "OpenClaw tool group")).filter(group => group.source === "plugin").slice(0, MAX_NATIVE_EXTENSIONS).map(group => ({
+    const plugins = groups.map(value => object(value, "OpenClaw tool group")).filter(group => group.source === "plugin").map(group => ({
       name: typeof group.label === "string" ? group.label.slice(0, 256) : string(group.id, "plugin group", 256), enabled: true, source: (Array.isArray(group.tools) ? group.tools.length : 0) + " 个工具" }));
-    return { skills: listed, mcpServers: [], plugins, ...(skills.length > MAX_NATIVE_EXTENSIONS ? { truncated: true } : {}) };
+    return { skills: listed, mcpServers: [], plugins };
   }
   /**
    * Images above 5,000,000 bytes are refused up front, which keeps them within what every Gateway takes: 2026.3.23-2 took

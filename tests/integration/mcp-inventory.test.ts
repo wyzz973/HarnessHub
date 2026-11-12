@@ -70,9 +70,9 @@ test("G064-M2 through the formal Gateway, a server the Harnesses have is listed 
   assert.match(candidate("@scope/odd")?.problem ?? "", /服务器名只能用字母/u, "a name HarnessHub cannot write is listed with why");
   assert.ok(view.candidates.filter(item => item.name === "remote").every(item => /查询串/u.test(item.problem ?? "")));
   const writable = Object.fromEntries(view.harnesses.map(item => [item.harnessId, item.writable]));
-  assert.deepEqual(["claude", "codex", "cursor", "gemini", "hermes", "opencode", "dsh", "openclaw"].map(id => writable[id]), [true, true, true, true, true, true, true, false]);
+  assert.deepEqual(["claude", "codex", "cursor", "gemini", "hermes", "opencode", "dsh", "openclaw"].map(id => writable[id]), [true, true, true, true, true, true, true, true]);
   assert.deepEqual([candidate("dsh-mem")?.foundIn, candidate("dsh-mem")?.definition?.command, candidate("dsh-mem")?.definition?.cwd], [[{ harnessId: "dsh", file: "~/.dsh/profiles/web/cordis.patch.yml" }], "memorix", null]);
-  assert.match(view.harnesses.find(item => item.harnessId === "openclaw")?.reason ?? "", /重启 Gateway/u);
+  // OpenClaw's mcp.servers is written too since 2026.10 (its Gateway reloads it); a file in JSON5's own syntax, as this home's, is refused at the check.
   // Listing fs and claiming Hermes's identical entry changes no file.
   const hermesFile = join(f.home, ".hermes", "config.yaml"), hermesBefore = await readFile(hermesFile, "utf8");
   const imported = await f.call<CapabilityChangeView[]>("/capabilities/mcp/import", { candidate: candidate("fs")!.id, claim: ["hermes"] });
@@ -80,7 +80,7 @@ test("G064-M2 through the formal Gateway, a server the Harnesses have is listed 
   assert.deepEqual(imported.value.map(change => [change.kind, change.harnessId, change.subject, change.diff]), [["mcp-claim", "hermes", "fs", null]]);
   assert.equal(await readFile(hermesFile, "utf8"), hermesBefore, "claiming writes nothing");
   view = await f.inventory();
-  assert.deepEqual([state(view, "fs", "hermes"), state(view, "fs", "codex"), state(view, "fs", "claude"), state(view, "fs", "openclaw")], ["synced", "absent", "absent", "unsupported"]);
+  assert.deepEqual([state(view, "fs", "hermes"), state(view, "fs", "codex"), state(view, "fs", "claude"), state(view, "fs", "openclaw")], ["synced", "absent", "absent", "absent"]);
   // Claude's own command predicts the write on a copy: the fixture's program fails, so nothing is prepared and nothing ran outside the sandbox.
   const claudeFile = join(f.home, ".claude.json"), claudeBefore = await readFile(claudeFile, "utf8");
   const toClaude = await f.sync("fs", "claude");

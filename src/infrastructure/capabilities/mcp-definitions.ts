@@ -26,7 +26,7 @@ export interface McpDefinition {
  * `opencode` is OpenCode 1's dialect (`mcp.<name>`), `opencode-v2` OpenCode 2's (`mcp.servers.<name>`); a server is
  * written the same way in both (https://opencode.ai/v2/docs/mcp-servers/, read 2026-11-01), only its place differs.
  */
-export type McpStyle = "claude" | "codex" | "cursor" | "opencode" | "opencode-v2" | "gemini" | "hermes" | "dsh";
+export type McpStyle = "claude" | "codex" | "cursor" | "opencode" | "opencode-v2" | "gemini" | "hermes" | "dsh" | "openclaw";
 /**
  * A JavaScript expression in DeepSeek Harness's YAML (`!!js …`), as the reader returns it; never evaluated. HarnessHub
  * writes only `process.env.NAME` and `'<prefix>' + process.env.NAME` with a checked name and prefix.
@@ -174,6 +174,7 @@ export const MCP_OWNED: Readonly<Record<McpStyle, readonly string[]>> = {
   "opencode-v2": ["type", "command", "environment", "url", "headers"],
   codex: ["command", "args", "env", "env_vars", "cwd", "url", "bearer_token_env_var", "env_http_headers", "http_headers"],
   dsh: ["serverName", "transport", "command", "args", "env", "cwd", "url", "headers"],
+  openclaw: ["command", "args", "env", "cwd", "url", "transport", "headers"],
 };
 /** The owned part of a server entry as written in a file, canonical; undefined when there is no such entry. */
 export function ownedOf(raw: unknown, style: McpStyle): unknown {
@@ -232,6 +233,11 @@ export function renderMcp(definition: McpDefinition, style: McpStyle): McpRender
       return definition.transport === "stdio" ? done({ transport: "stdio", command: definition.command, args: [...definition.args], env: dshEnv, ...optional("cwd", definition.cwd) })
         : done({ transport: "streamable-http", url: definition.url, ...optional("headers", dshHeaders) });
     }
+    case "openclaw":
+      // openclaw.json `mcp.servers.<name>` (OpenClaw 2026.10.9 docs/tools/mcp.md, `openclaw mcp set --help`): command, args, env and cwd for stdio, else
+      // url with transport "streamable-http" or "sse"; `${VAR}` is substituted from the Gateway's environment (docs/gateway/configuration/environment-variables.md).
+      return definition.transport === "stdio" ? done({ command: definition.command, ...optional("args", definition.args), ...optional("env", env), ...optional("cwd", definition.cwd) })
+        : done({ url: definition.url, transport: definition.transport === "sse" ? "sse" : "streamable-http", ...optional("headers", headers) });
     case "claude": case "cursor":
       // Claude names the transport; Cursor's own entries carry none (it tells HTTP from SSE by itself).
       return definition.transport === "stdio" ? done({ ...(style === "claude" ? { type: "stdio" } : {}), command: definition.command, ...optional("args", definition.args), ...optional("env", env), ...optional("cwd", definition.cwd) })

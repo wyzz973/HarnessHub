@@ -5,7 +5,7 @@ import { listedCommand, nativeConversationId, requestExpiry, type BackendResult,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
 import { unifiedDiff } from "../../infrastructure/control/unified-diff.js";
-import { MAX_NATIVE_SESSIONS, type NativeOutput, type NativeSessionImport, type NativeSessionPage, type NativeToolDetail, type NativeUsage } from "../../contracts/control.js";
+import { type NativeOutput, type NativeSessionImport, type NativeSessionPage, type NativeToolDetail, type NativeUsage } from "../../contracts/control.js";
 import { MAX_CONTENT_BYTES, textual, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
 import type { RelayCapabilities } from "../../contracts/relay.js";
@@ -46,10 +46,6 @@ const EMBED_TEXT_BYTES = 256 * 1024;
 const REPLAY_SETTLE_MS = 3000;
 /** The longest wait for an agent's updates that trail its prompt response. */
 const TRAILING_SETTLE_MS = 2000;
-/** Replayed history kept when a session is read for continuing it; older text beyond this is counted, not kept. */
-const IMPORT_REPLAY_BYTES = 4 * 1024 * 1024, IMPORT_REPLAY_MESSAGES = 2000;
-/** Pages of session/list searched to confirm that a session belongs to the workspace. */
-const IMPORT_LIST_PAGES = 20;
 /**
  * Session setup starts the agent's own runtime (plugins, MCP, model catalog); a cold start can exceed a plain request by minutes
  * (many plugins and MCP servers, a first run installing its dependencies). A start that is merely slow is not a failure, so this is
@@ -93,12 +89,12 @@ function toolDetail(update: Record<string, unknown>): NativeToolDetail | undefin
     ...(input ? { input } : {}), ...(output ? { output } : {}), ...(diffs.length ? { diff: diffs.join("") } : {}), ...(locations.length ? { locations } : {}) };
   return Object.keys(detail).length ? detail : undefined;
 }
-/** What an approval would allow, as the request describes it: the proposed diff, else the command or input, and where. */
+/** What an approval would allow, as the request describes it: the proposed diff, else the command or input, and where; whole, as the user decides on it. */
 function permissionDetail(tool: Record<string, unknown>): string {
   const described = toolDetail(tool), command = field(tool.rawInput, "command");
   const action = described?.diff ?? (typeof command === "string" ? "命令：" + command : described?.input ?? "");
   const where = !described?.diff && described?.locations?.length ? "位置：" + described.locations.join("、") : "";
-  return [action, where].filter(Boolean).join("\n").slice(0, 4096);
+  return [action, where].filter(Boolean).join("\n");
 }
 function decoded(data: string): Uint8Array | null {
   if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(data) || data.length > Math.ceil(MAX_CONTENT_BYTES / 3) * 4) return null;
@@ -162,7 +158,6 @@ export class AcpControl implements HarnessControl {
   private conversation: NativeConversationId | null = null;
   private opening = false;
   private replaying = false;
-  private replayBytes = 0;
   private lastReplay = 0;
   private active: ActivePrompt | null = null;
   private failure: Error | null = null;
@@ -223,7 +218,7 @@ export class AcpControl implements HarnessControl {
       this.capabilities = capabilities;
       // ACP's schema defaults authMethods to an empty list; Hermes 0.12 leaves it out when it has no provider credentials.
       const advertised = response.authMethods === undefined ? [] : response.authMethods;
-      if (!Array.isArray(advertised) || advertised.length > 64) throw new ControlError("INVALID_PROTOCOL", "authMethods must be a bounded array");
+      if (!Array.isArray(advertised)) throw new ControlError("INVALID_PROTOCOL", "authMethods must be a bounded array");
       // A method without a type is an agent method (ACP AuthMethod).
       const methods = advertised.map(method => { const row = object(method, "auth method"); return { id: string(row.id, "auth method id"), type: row.type === undefined ? "agent" : string(row.type, "auth method type", 64) }; });
       const info = response.agentInfo == null ? null : object(response.agentInfo, "agentInfo");
@@ -240,7 +235,7 @@ export class AcpControl implements HarnessControl {
   }
   private readSettings(response: Record<string, unknown>): void {
     if (response.configOptions !== undefined) {
-      if (!Array.isArray(response.configOptions) || response.configOptions.length > 128) throw new ControlError("INVALID_PROTOCOL", "invalid native settings");
+      if (!Array.isArray(response.configOptions)) throw new ControlError("INVALID_PROTOCOL", "invalid native settings");
       const settings: NativeOption[] = [];
       for (const value of response.configOptions) {
         const row = object(value, "native setting"); if (row.type !== "select" || row.category === "model") continue;
@@ -255,7 +250,7 @@ export class AcpControl implements HarnessControl {
       this.catalog = { ...this.catalog, options: [...settings, ...(!settings.some(option=>option.category==="mode") ? (this.catalog.options??[]).filter(option=>option.id==="__mode") : [])] };
     }
     if (response.modes !== undefined && !this.catalog.options?.some(option => option.category === "mode")) {
-      const modes = object(response.modes, "native modes"); if (!Array.isArray(modes.availableModes) || modes.availableModes.length > 128) throw new ControlError("INVALID_PROTOCOL", "invalid native modes");
+      const modes = object(response.modes, "native modes"); if (!Array.isArray(modes.availableModes)) throw new ControlError("INVALID_PROTOCOL", "invalid native modes");
       const values = modes.availableModes.map(value => { const row = object(value, "native mode"); return { value: string(row.id, "mode id", 128), name: string(row.name, "mode name", 1024) }; });
       const currentValue = string(modes.currentModeId, "current mode", 128);
       if (!values.some(row => row.value === currentValue) || new Set(values.map(row => row.value)).size !== values.length) throw new ControlError("INVALID_PROTOCOL", "invalid current native mode");
@@ -265,7 +260,7 @@ export class AcpControl implements HarnessControl {
   private readModels(response: Record<string, unknown>): void {
     this.readSettings(response);
     if (response.configOptions !== undefined) {
-      if (!Array.isArray(response.configOptions) || response.configOptions.length > 128) throw new ControlError("INVALID_PROTOCOL", "invalid ACP configuration options");
+      if (!Array.isArray(response.configOptions)) throw new ControlError("INVALID_PROTOCOL", "invalid ACP configuration options");
       for (const value of response.configOptions) {
         const option = object(value, "ACP config option");
         if (option.category !== "model" || option.type !== "select") continue;
@@ -313,7 +308,7 @@ export class AcpControl implements HarnessControl {
     this.assertInitialized(); if (this.conversation === null && this.lastAbandoned === null) throw new ControlError("INVALID_STATE", "native configuration requires a session");
     return { model: this.catalog.canSelect ? this.catalog.defaultModel : null, options: Object.fromEntries((this.catalog.options ?? []).map(option => [option.id, option.currentValue])) };
   }
-  /** Consecutive replayed chunks of one role form one message; the oldest messages give way to the budget. */
+  /** Consecutive replayed chunks of one role form one message; the whole replay is kept (no count or size bound, 2026-11-12). */
   private collect(role: "user" | "assistant", content: unknown): void {
     const collected = this.collected!, item = content !== null && typeof content === "object" ? content as Record<string, unknown> : {};
     const value = item.type === "text" && typeof item.text === "string" ? item.text : item.type === "image" ? "[图片]" : item.type === "resource_link" && typeof item.name === "string" ? "[文件 " + item.name + "]" : "";
@@ -321,9 +316,6 @@ export class AcpControl implements HarnessControl {
     const last = collected.messages.at(-1);
     if (last?.role === role) last.text += value; else collected.messages.push({ role, text: value });
     collected.bytes += Buffer.byteLength(value);
-    while (collected.messages.length > 1 && (collected.bytes > IMPORT_REPLAY_BYTES || collected.messages.length > IMPORT_REPLAY_MESSAGES)) {
-      const oldest = collected.messages.shift()!; collected.bytes -= Buffer.byteLength(oldest.text); collected.dropped++;
-    }
   }
   /** session/list for this workspace when the agent declares it; an agent that refuses it cannot list sessions. */
   async nativeSessions(cwd: string, cursor?: string): Promise<NativeSessionPage> {
@@ -337,12 +329,12 @@ export class AcpControl implements HarnessControl {
       if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) throw new ControlError("NATIVE_SESSION_LIST_UNAVAILABLE", "the agent refused session/list");
       throw this.nativeFailure(error);
     }
-    if (!Array.isArray(response.sessions) || response.sessions.length > 1000) throw new ControlError("INVALID_PROTOCOL", "invalid native session list");
+    if (!Array.isArray(response.sessions)) throw new ControlError("INVALID_PROTOCOL", "invalid native session list");
     const rows = response.sessions.map(value => object(value, "native session")).filter(row => row.cwd === cwd).map(row => {
       const updated = typeof row.updatedAt === "string" ? Date.parse(row.updatedAt) : NaN;
       return { id: string(row.sessionId, "native session identity", 1024), title: typeof row.title === "string" && row.title.trim() ? row.title.replace(/\s+/gu, " ").trim().slice(0, 200) : null, updatedAt: Number.isFinite(updated) ? updated : null };
     });
-    return { sessions: rows.slice(0, MAX_NATIVE_SESSIONS), nextCursor: response.nextCursor == null ? null : string(response.nextCursor, "native session cursor", 1024) };
+    return { sessions: rows, nextCursor: response.nextCursor == null ? null : string(response.nextCursor, "native session cursor", 1024) };
   }
   /**
    * Reads a session of this workspace for continuing it: the listing confirms its workspace and title, session/load
@@ -351,10 +343,13 @@ export class AcpControl implements HarnessControl {
   async importSession(id: string, cwd: string): Promise<NativeSessionImport> {
     this.assertInitialized();
     if (this.conversation !== null || this.opening || this.forking) throw new ControlError("INVALID_STATE", "reading a session needs its own connection");
+    // Every page of session/list is searched (no page bound, 2026-11-12); a cursor the agent repeats would never end the walk.
     let title: string | null = null, found = false, cursor: string | undefined;
-    for (let page = 0; page < IMPORT_LIST_PAGES && !found; page++) {
+    const seen = new Set<string>();
+    while (!found) {
       const listed = await this.nativeSessions(cwd, cursor), row = listed.sessions.find(item => item.id === id);
       if (row) { found = true; title = row.title; } else if (listed.nextCursor === null) break; else cursor = listed.nextCursor;
+      if (!found && cursor !== undefined) { if (seen.has(cursor)) throw new ControlError("INVALID_PROTOCOL", "the agent repeated a session/list cursor"); seen.add(cursor); }
     }
     if (!found) throw new ControlError("NATIVE_SESSION_NOT_FOUND", "the agent does not list this session for the workspace");
     const sessions = this.capabilities.sessionCapabilities == null ? {} : object(this.capabilities.sessionCapabilities, "native session capabilities");
@@ -809,7 +804,8 @@ export class AcpControl implements HarnessControl {
   }
   private notification(method: string, raw: unknown): void {
     // A fork connection opens no conversation; the agent's replay of the copied history is counted, never attributed.
-    if (this.forking) { this.replayBytes += Buffer.byteLength(JSON.stringify(raw ?? null)); if (this.replayBytes > 64 * 1024 * 1024) throw new ControlError("REPLAY_LIMIT", "native fork replay exceeded its budget"); this.unattributed++; return; }
+    // The replay has no size bound (2026-11-12): a long session's history is replayed whole, and what is not kept is dropped as it comes.
+    if (this.forking) { this.unattributed++; return; }
     if (method !== "session/update") {
       const params = raw === undefined ? {} : object(raw, "ACP notification params");
       // A session this connection gave up still talks: counted and dropped, never attributed or failed on.
@@ -831,8 +827,6 @@ export class AcpControl implements HarnessControl {
     this.scope(params);
     if (this.replaying) {
       this.lastReplay = Date.now();
-      this.replayBytes += Buffer.byteLength(JSON.stringify(params));
-      if (this.replayBytes > 64 * 1024 * 1024) throw new ControlError("REPLAY_LIMIT", "native history replay exceeded its budget");
       if (this.collected && (kind === "user_message_chunk" || kind === "agent_message_chunk")) { this.collect(kind === "user_message_chunk" ? "user" : "assistant", update.content); return; }
       if (!metadataUpdates.has(kind)) return;
     }
@@ -847,7 +841,7 @@ export class AcpControl implements HarnessControl {
     if (kind === "usage_update" || kind === "plan") {
       if (!active || active.settled) return;
       if (kind === "plan") {
-        if (!Array.isArray(update.entries) || update.entries.length > 256) throw new ControlError("INVALID_PROTOCOL", "invalid native plan");
+        if (!Array.isArray(update.entries)) throw new ControlError("INVALID_PROTOCOL", "invalid native plan");
         active.event({ type: "plan", entries: update.entries.map(value => { const entry = object(value, "plan entry"); const status = entry.status === "in_progress" || entry.status === "completed" ? entry.status : "pending";
           return { content: typeof entry.content === "string" ? entry.content : "", status, ...(entry.priority === "high" || entry.priority === "medium" || entry.priority === "low" ? { priority: entry.priority } : {}) }; }) });
       } else {
@@ -931,21 +925,22 @@ export class AcpControl implements HarnessControl {
     const active = this.active;
     if (!active || active.settled || active.stopping || !this.interactivePermissions || (params.mode !== undefined && params.mode !== "form")) { if (active && !active.settled) active.event({ type: "permission", id: String(request.id), decision: "denied" }); return { action: "decline" }; }
     const schema = object(params.requestedSchema, "elicitation schema"), properties = object(schema.properties, "elicitation fields"), keys = Object.keys(properties);
-    if (!keys.length || keys.length > 64) throw new ControlError("INVALID_PROTOCOL", "invalid elicitation fields");
-    const message = typeof params.message === "string" ? params.message.slice(0, 4096) : "";
+    // A question is shown whole (2026-11-12): its fields, its choices and their words have no count or length bound here.
+    if (!keys.length) throw new ControlError("INVALID_PROTOCOL", "invalid elicitation fields");
+    const message = typeof params.message === "string" ? params.message : "";
     const companions = new Set(keys.filter(key => key.endsWith("_custom") && keys.includes(key.slice(0, -7)) && object(properties[key], "elicitation field").type === "string"));
     type Field = { key: string; title: string; kind: "choice" | "multi" | "text" | "boolean"; choices: { value: unknown; label: string; description?: string }[]; custom: string | null };
     const fields: Field[] = []; let unsupported = false;
     const choicesOf = (value: unknown): Field["choices"] | null => {
       const field = value !== null && typeof value === "object" ? value as Record<string, unknown> : {}, listed = Array.isArray(field.oneOf) ? field.oneOf : Array.isArray(field.anyOf) ? field.anyOf : null;
-      if (listed) return listed.slice(0, 128).flatMap(item => { const row = object(item, "elicitation choice"); return typeof row.const === "string" ? [{ value: row.const, label: typeof row.title === "string" ? row.title.slice(0, 1024) : row.const, ...(typeof row.description === "string" ? { description: row.description.slice(0, 1024) } : {}) }] : []; });
-      if (Array.isArray(field.enum)) { const names = Array.isArray(field.enumNames) ? field.enumNames : []; return field.enum.slice(0, 128).flatMap((item, index) => typeof item === "string" ? [{ value: item, label: typeof names[index] === "string" ? names[index] as string : item }] : []); }
+      if (listed) return listed.flatMap(item => { const row = object(item, "elicitation choice"); return typeof row.const === "string" ? [{ value: row.const, label: typeof row.title === "string" ? row.title : row.const, ...(typeof row.description === "string" ? { description: row.description } : {}) }] : []; });
+      if (Array.isArray(field.enum)) { const names = Array.isArray(field.enumNames) ? field.enumNames : []; return field.enum.flatMap((item, index) => typeof item === "string" ? [{ value: item, label: typeof names[index] === "string" ? names[index] as string : item }] : []); }
       return null;
     };
     for (const key of keys) {
       if (companions.has(key)) continue;
       const field = object(properties[key], "elicitation field"), custom = companions.has(key + "_custom") ? key + "_custom" : null;
-      const title = (keys.length - companions.size === 1 && message ? message : typeof field.description === "string" ? field.description : typeof field.title === "string" ? field.title : message || key).slice(0, 4096);
+      const title = (keys.length - companions.size === 1 && message ? message : typeof field.description === "string" ? field.description : typeof field.title === "string" ? field.title : message || key);
       if (field.type === "string") { const choices = choicesOf(field); fields.push({ key, title, kind: choices?.length ? "choice" : "text", choices: choices ?? [], custom }); }
       else if (field.type === "boolean") fields.push({ key, title, kind: "boolean", choices: [{ value: true, label: "是" }, { value: false, label: "否" }], custom: null });
       else if (field.type === "array") { const choices = choicesOf(field.items); if (choices?.length) fields.push({ key, title, kind: "multi", choices, custom }); else unsupported = true; }
@@ -957,7 +952,7 @@ export class AcpControl implements HarnessControl {
       if (this.active !== active || active.settled || active.stopping) return { action: "cancel" };
       const id = String(request.id) + ":" + index, text = field.kind === "text" || field.custom !== null;
       const options = [...field.choices.map((choice, position) => ({ id: "answer-" + position, name: choice.label })), ...(text ? [{ id: "submit", name: "提交回答" }] : []), { id: "skip", name: "跳过" }, { id: "cancel", name: "取消" }];
-      const detail = field.choices.filter(choice => choice.description).map(choice => choice.label + "：" + choice.description).join("\n").slice(0, 4096);
+      const detail = field.choices.filter(choice => choice.description).map(choice => choice.label + "：" + choice.description).join("\n");
       type Answer = { readonly kind: "value"; readonly value: unknown; readonly typed: boolean } | { readonly kind: "skip" } | { readonly kind: "cancel" };
       const answer = await new Promise<unknown>(resolve => {
         this.permissions.set(id, { request: String(request.id), options: options.map(option => option.id), resolve, reply: (option, input) => {

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { parseProviderTarget } from "../../../contracts/provider.js";
 import { listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeUsage } from "../../../contracts/control.js";
-import { MAX_RUN_ATTACHMENTS, type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
+import { type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import { CONVERSATION_FORMAT, type Conversation, type ConversationCommit, type ConversationMutation, type ConversationRun, type ConversationStore, type HeldItem } from "../../../contracts/conversation.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, STOP_GRACE_MS, STREAM_WINDOW_BYTES, STREAM_WINDOW_MS,
@@ -442,7 +442,7 @@ export class SessionRuntime {
    */
   send(id: SessionId, text: string, key: string, attachmentIds: readonly string[] = [], relay?: RelayChoice): SendReceipt {
     this.admit(); assertInput(text);
-    if (!Array.isArray(attachmentIds) || attachmentIds.length > MAX_RUN_ATTACHMENTS || attachmentIds.some(value => typeof value !== "string")) throw new SessionError("INVALID_INPUT", "attachments must be at most 8 content identities");
+    if (!Array.isArray(attachmentIds) || attachmentIds.some(value => typeof value !== "string")) throw new SessionError("INVALID_INPUT", "attachments must be content identities");
     const choices = parseRelayChoices(relay);
     // Without attachments or relay choices the fingerprint keeps its earlier shape, so replayed commands from before still match.
     const command = commandId(key), fingerprint = this.fingerprint({ ...(attachmentIds.length ? { kind: "send", text, attachments: attachmentIds } : { kind: "send", text }), ...(choices === undefined ? {} : { relay: choices }) }), state = this.load(id);
@@ -1988,7 +1988,7 @@ export class SessionRuntime {
         // The Turn's items are closed with its end, before the Run is: what was open is told as what it was left as (items-place.ts), and a Turn that asked to keep
         // its process and could not says so among its items. All of it is one commit with the Run's end, so the two never disagree.
         const settling = this.turnOf(execution), noted = keep.skipped === undefined ? settling : place(settling, hubNotice(keptSkippedNotice(this.options.keptLimit ?? this.kept.size), endedAt)).turn;
-        const closing = place(noted, { kind: "settled", status, at: endedAt });
+        const closing = place(noted, { kind: "settled", status, at: endedAt, ...(status === "cancelled" && run.cancelRequested && !stopped ? { stoppedBy: "user" as const } : {}) });
         const ended = (withRelay: boolean) => (current: Conversation): ConversationMutation => {
           let next: Conversation = { ...updatedRun(current, target, { status, backend, cleanup: closed,
             error: failure, ...phase(current, target, "endedAt", endedAt), ...(keep.keep ? { retained: true as const } : {}), ...(effect === null ? {} : { settledEffect: effect }), items: itemsOf(closing.turn) }), activeRunId: null, status: unsafe ? "blocked" : current.status,

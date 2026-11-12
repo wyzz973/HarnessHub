@@ -252,7 +252,7 @@ test("web input rejects malformed JSON, UTF-8, unknown fields, over-limit bodies
   const answer = (bytes: number) => fetch(f.origin + "/api/v1/sessions/session-absent/permissions/permission-absent", { method: "POST", headers: { Cookie: f.cookie, Origin: f.origin, "X-CSRF-Token": f.csrf, "Content-Type": "application/json" },
     body: JSON.stringify({ optionId: "submit", commandId: "answer", input: "x".repeat(bytes) }) });
   const big = await answer(3 * 1024 * 1024); assert.notEqual(big.status, 413, "a 3 MiB answer is not refused for its size"); assert.equal((row(await big.json())).code, "SESSION_NOT_FOUND");
-  const huge = await answer(17 * 1024 * 1024); assert.equal(huge.status, 413, "the route still has a bound against a runaway body"); await huge.text();
+  const huge = await answer(64 * 1024 * 1024 + 1); assert.equal(huge.status, 413, "the route still has a bound against a runaway body"); await huge.text();
   assert.equal((await call(f, "/api/v1/sessions", "POST", { selection: { harnessId: "web-a" }, commandId: "unknown", configHome: f.root })).status, 400);
   // A page size is a size and not a bound (the list has no ceiling of 100 any more): 101 is read. What is refused is a value that is no whole number from 1, a cursor that is none, a query repeated or unknown.
   assert.equal((await call(f, "/api/v1/sessions?limit=101")).status, 200);

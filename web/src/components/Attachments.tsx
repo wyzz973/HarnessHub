@@ -16,9 +16,9 @@ export interface AttachmentDraft {
   readonly ref?: ContentRef;
   readonly error?: string;
 }
-export const MAX_ATTACHMENTS = 8;
-export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
-export const MAX_MESSAGE_ATTACHMENT_BYTES = 32 * 1024 * 1024;
+/** The Gateway's guards against a mistaken drop (src/contracts/content.ts): one file, and one message's files together. Their number has no bound. */
+export const MAX_ATTACHMENT_BYTES = 1024 * 1024 * 1024;
+export const MAX_MESSAGE_ATTACHMENT_BYTES = 4 * 1024 * 1024 * 1024;
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const AUDIO_TYPES = new Set(["audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/aac", "audio/ogg", "audio/webm", "audio/flac"]);
 const KIND_LABEL: Readonly<Record<ContentRef["kind"], string>> = { image: "图片", audio: "音频", file: "文件" };

@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, sep } from "node:path";
-import { MAX_NATIVE_EXTENSIONS, nativeConversationId, requestExpiry, type NativeExtensions, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl, type NativeConversationId, type NativeOptions, type NativeOption, type NativeModelCatalog, type NativeToolDetail, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
+import { nativeConversationId, requestExpiry, type NativeExtensions, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl, type NativeConversationId, type NativeOptions, type NativeOption, type NativeModelCatalog, type NativeToolDetail, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { classifyRemoteFailure, ControlError, errorFrom, JsonRpcProcess, object, string, type RpcWireCodec } from "../../infrastructure/control/json-rpc-process.js";
 import { MAX_CONTENT_BYTES, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
@@ -145,7 +145,7 @@ export class PiControl implements HarnessControl {
     try {
       await this.readState();
       const commandResult = object(await this.rpc.request("get_commands", {}), "Pi native commands");
-      if (!Array.isArray(commandResult.commands) || commandResult.commands.length > 256) throw new ControlError("INVALID_PROTOCOL", "invalid Pi command catalog");
+      if (!Array.isArray(commandResult.commands)) throw new ControlError("INVALID_PROTOCOL", "invalid Pi command catalog");
       const commands = commandResult.commands.map(value => { const command = object(value, "Pi command"); return { name: string(command.name, "Pi command name", 128), description: typeof command.description === "string" ? command.description.slice(0,4096) : "" }; });
       // Kept for the extension listing: which commands are skills and which extension file each extension command comes from.
       this.commandSources = commandResult.commands.map(value => { const command = object(value, "Pi command"), info = command.sourceInfo !== null && typeof command.sourceInfo === "object" ? command.sourceInfo as Record<string, unknown> : {};
@@ -210,7 +210,7 @@ export class PiControl implements HarnessControl {
     const files = new Map<string, { scope: string | undefined; origin: string | undefined }>();
     for (const command of this.commandSources) if (command.source === "extension" && command.path && !files.has(command.path)) files.set(command.path, { scope: command.scope, origin: command.origin });
     const plugins = [...files.entries()].map(([path, info]) => ({ name: path.split(/[\\/]/u).filter(Boolean).slice(-2).join("/") || path, enabled: true, ...(info.origin ?? info.scope ? { source: [info.origin, info.scope].filter(Boolean).join(" · ") } : {}) }));
-    return { skills: skills.slice(0, MAX_NATIVE_EXTENSIONS), mcpServers: [], plugins: plugins.slice(0, MAX_NATIVE_EXTENSIONS), ...(skills.length > MAX_NATIVE_EXTENSIONS || plugins.length > MAX_NATIVE_EXTENSIONS ? { truncated: true } : {}) };
+    return { skills, mcpServers: [], plugins };
   }
   /** Restores the source session file, then `clone` copies its current branch into a new session file Pi switches to. */
   async fork(checkpoint: string, cwd: string): Promise<string> {
@@ -375,7 +375,7 @@ export class PiControl implements HarnessControl {
       const reply = object(await this.rpc.request("export_html", { outputPath: join(directory, "pi-session.html") }), "Pi export result"), path = string(reply.path, "Pi export path", 4096);
       if (!path.startsWith(directory + sep)) throw new ControlError("INVALID_PROTOCOL", "Pi exported outside the requested path");
       const info = await stat(path);
-      if (!info.isFile() || info.size < 1 || info.size > MAX_CONTENT_BYTES) throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "Pi export is missing or exceeds 20 MiB");
+      if (!info.isFile() || info.size < 1 || info.size > MAX_CONTENT_BYTES) throw new ControlError("NATIVE_EXPORT_UNAVAILABLE", "Pi export is missing or exceeds 1 GiB");
       const data = await readFile(path);
       if (this.active === prompt) prompt.event({ type: "output", output: { kind: "content", name: "pi-session.html", mediaType: "text/html", data } });
       prompt.final = { status: "completed", reason: "exported" };

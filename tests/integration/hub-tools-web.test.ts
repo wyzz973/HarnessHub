@@ -56,7 +56,7 @@ test("the Hub's tools are read, installed into Claude Code and Codex, refused wh
   let state = await view();
   assert.deepEqual([state.name, state.tool], [TABLE_MCP_NAME, { command: NODE + " ~/Hub/dist/hub-tools.js mcp", present: true }]);
   assert.deepEqual(["claude", "codex"].map(id => [row(state, id).state, row(state, id).writable]), [["absent", true], ["absent", true]]);
-  assert.deepEqual(["opencode", "dsh", "hermes", "openclaw"].map(id => [row(state, id).state, row(state, id).writable]), [["unsupported", false], ["unsupported", false], ["unsupported", false], ["unsupported", false]]);
+  assert.deepEqual(["opencode", "dsh", "hermes", "openclaw"].map(id => [row(state, id).state, row(state, id).writable]), [["absent", true], ["absent", true], ["absent", true], ["absent", true]]);
   assert.match(row(state, "openclaw").reason ?? "", /Gateway/u);
 
   // Into Codex: one request, a table of its own beside everything else, the variables forwarded by name.
@@ -86,9 +86,10 @@ test("the Hub's tools are read, installed into Claude Code and Codex, refused wh
   // Where they cannot go: refused with the reason, nothing written; a bad request is a bad request.
   const files = async () => [await readFile(claudeFile, "utf8"), await readFile(codexFile, "utf8")];
   const written = await files();
-  for (const [id, status, code] of [["openclaw", 409, "CAPABILITY_UNSUPPORTED"], ["hermes", 409, "CAPABILITY_UNSUPPORTED"], ["nonesuch", 404, "CAPABILITY_NOT_FOUND"]] as const) {
+  // This home's openclaw.json is written in JSON5's own syntax, which HarnessHub does not rewrite.
+  for (const [id, status, code] of [["openclaw", 409, "CAPABILITY_TARGET_REFUSED"], ["nonesuch", 404, "CAPABILITY_NOT_FOUND"]] as const) {
     const refused = await call<{ code: string; message: string }>("/capabilities/hub-tools/install", { harnessId: id });
-    assert.deepEqual([refused.status, refused.value.code], [status, code], id);
+    assert.deepEqual([refused.status, refused.value.code], [status, code], id + " " + refused.value.message);
   }
   assert.equal((await call("/capabilities/hub-tools/install", { harnessId: "codex", extra: 1 })).status, 400);
   assert.equal((await call("/capabilities/hub-tools/install", { })).status, 400);

@@ -1,6 +1,6 @@
-import type { BackendResult, CleanupEvidence, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog, NativeToolDetail } from "../../contracts/control.js";
+import type { BackendResult, CleanupEvidence, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog, NativeOptions, NativeToolDetail, NativeUsage } from "../../contracts/control.js";
 import type { RelayCapabilities } from "../../contracts/relay.js";
-import { ControlError, classifyRemoteFailure } from "../../infrastructure/control/json-rpc-process.js";
+import { ControlError, NATIVE_FRAME_BYTES, classifyRemoteFailure } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import type { ContentKind, ControlAttachment } from "../../contracts/content.js";
 import { AcpControl } from "./acp.js";
@@ -34,8 +34,11 @@ const EXPORT = { name: "export", description: "导出原生会话记录（Hermes
  * owner's report (agent/manual_compression_feedback.py), or its fixed fallback.
  */
 const COMPRESS_NOOP = /^(?:No changes from compression[.:]|Compression refused \(summary would grow the conversation\):|Compression aborted:)/u;
-/** One session's export is small and quick; one that is larger or slower fails rather than being cut short (E). */
-const EXPORT_BYTES = 8 * 1024 * 1024, EXPORT_DEADLINE_MS = 5000;
+/**
+ * A session's export is read whole, never cut short (E): its size is bounded only by the runaway guard of one native frame
+ * (2026-11-12: 8 MiB failed the export of a long session), and its deadline only ends an export that hangs.
+ */
+const EXPORT_BYTES = NATIVE_FRAME_BYTES, EXPORT_DEADLINE_MS = 120_000;
 /** The viewer's reply to `/title <name>`, answered locally without a gateway turn (gateway_commands.py `_title` → `_rename`). */
 const TITLE_SET = /^Session title set: /u;
 /** Without --session-id Hermes exports every session it holds, its messaging gateway's too: the identifier must be a plain one. */
@@ -127,8 +130,31 @@ const OPTION_NOTES: Readonly<Record<string, (name: string) => string>> = {
  * it); a prompt refused before admission (an unavailable gateway, an unknown session, a refused submit, a lost turn still
  * pending) never reached it (not recorded); one whose outcome the gateway lost may have run (unknown, and never sent again here).
  */
+type TurnCounters = Omit<NonNullable<NativeUsage["turn"]>, "own">;
+const COUNTERS = ["input", "output", "cachedInput", "cacheWrite", "reasoning", "total"] as const;
+/**
+ * A Turn's usage from Hermes's counters: its prompt result carries the agent's totals for the whole native session (acp_adapter/server.py
+ * builds `usage` from `run_conversation`'s `session_*` counters, agent/turn_finalizer.py `_SESSION_TOKEN_KEYS`, which agent/turn_usage.py
+ * adds every request to), so the Turn's own is the totals minus the session's before it, as Codex's are. Null when the counters before
+ * the Turn are unknown (a session this connection restored, not opened) or went down (a gateway that restarted the session's agent):
+ * the Turn's numbers are then withheld rather than shown as a total.
+ */
+export function turnFromCounters(total: TurnCounters, before: TurnCounters | null): TurnCounters | null {
+  if (before === null) return null;
+  const turn: Record<string, number> = {};
+  for (const key of COUNTERS) {
+    const now = total[key], then = before[key] ?? 0;
+    if (now === undefined) continue;
+    if (now < then) return null;
+    turn[key] = now - then;
+  }
+  return turn;
+}
+
 export class HermesControl extends AcpControl {
   override readonly relayCapabilities: RelayCapabilities = hermesRelayCapabilities;
+  /** Each native session's counters after its last Turn on this connection (turnFromCounters); null while they are unknown. */
+  private readonly counters = new Map<NativeConversationId, TurnCounters | null>();
   private hubExport = false;
   private readonly exports = new AbortController();
   protected override get product(): string { return "Hermes"; }
@@ -182,6 +208,21 @@ export class HermesControl extends AcpControl {
     if (judged.kind === "refuse") throw new ControlError("NATIVE_GATEWAY_UNAVAILABLE", gatewayRefusalMessage(judged));
   }
   protected override get restoreByLoad(): boolean { return true; }
+  /** A session opened here starts from nothing; one restored from a checkpoint has counters this connection never saw. */
+  override async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
+    const id = await super.open(cwd, model, options, checkpoint);
+    this.counters.set(id, checkpoint === undefined ? {} : null);
+    return id;
+  }
+  /** A usage report's session totals become the Turn's own; what goes on is the rest of the report and the Turn's difference, when it is known. */
+  private turnUsage(id: NativeConversationId, event: ControlEvent): ControlEvent | null {
+    if (event.type !== "usage" || event.usage.turn === undefined) return event;
+    const { own: _own, ...total } = event.usage.turn, turn = turnFromCounters(total, this.counters.get(id) ?? null);
+    this.counters.set(id, total);
+    const { turn: _session, ...rest } = event.usage;
+    if (turn !== null) return { type: "usage", usage: { ...rest, turn: { ...turn, own: true } } };
+    return Object.keys(rest).length ? { type: "usage", usage: rest } : null;
+  }
   protected override get fileBlocks(): boolean { return false; }
   // ADR-053's registered exception: 0.12's bridge announces a fixed 60-second wait; later versions make it configurable and
   // do not report it, so nothing is claimed for them. Removed when the Hermes gateway view lands.
@@ -258,7 +299,7 @@ export class HermesControl extends AcpControl {
     // Only Hermes's own command is read for a model switch; a model reply quoting the same words in another turn is never parsed.
     const switching = command === "model" && named?.args !== "", compressing = command === "compress", mark = this.stderrMark;
     let reply = "", answered = false;
-    const run = await super.startText(id, turn, event => { if (event.type === "text") { answered = true; if (reply.length < 4096) reply += event.text; } onEvent(event); }, attachments);
+    const run = await super.startText(id, turn, raw => { const event = this.turnUsage(id, raw); if (event === null) return; if (event.type === "text") { answered = true; if (reply.length < 4096) reply += event.text; } onEvent(event); }, attachments);
     return { ...run, result: run.result.then((result): BackendResult => {
       const switched = switching ? MODEL_SWITCHED.exec(reply) : null;
       // Hermes lists models as `<provider>:<model>` with the provider lower-cased (server.py `_encode_model_choice`).
@@ -302,8 +343,8 @@ export class HermesControl extends AcpControl {
       return { status: "completed", reason: "exported", input: "not_recorded" };
     } catch (error) {
       const message = error instanceof ControlError && error.code === "NATIVE_EXPORT_UNAVAILABLE" ? error.message
-        : error instanceof ControlError && error.code === "OUTPUT_LIMIT" ? "the Hermes export exceeds 8 MiB"
-        : error instanceof ControlError && error.code === "REQUEST_TIMEOUT" ? "the Hermes export took longer than 5 seconds" : "Hermes could not export this session";
+        : error instanceof ControlError && error.code === "OUTPUT_LIMIT" ? "the Hermes export exceeds 256 MiB"
+        : error instanceof ControlError && error.code === "REQUEST_TIMEOUT" ? "the Hermes export took longer than 2 minutes" : "Hermes could not export this session";
       return { status: "failed", reason: "export_failed", error: { code: "NATIVE_EXPORT_UNAVAILABLE", message }, input: "not_recorded" };
     }
   }

@@ -364,8 +364,8 @@ test("real browser validates Provider management, public chat switching, cancell
   await page.getByRole("button", { name: "发送消息", exact: true }).click();
   await expect(page.getByRole("button", { name: "停止当前回复", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
-  // A Turn the user stopped says so in the Interaction board's words (ADR-054 decision H).
-  await expect(page.getByRole("log").locator("[data-run-status=cancelled]")).toContainText("已停止");
+  // A Turn the user stopped says so in the Interaction board's words (ADR-054 decision H): its last item is the user's stop, which takes the end line's place.
+  await expect(page.getByRole("log").locator("[data-run-status=cancelled]")).toContainText("你停止了这一轮");
   await expect(page.getByRole("log").locator("[data-run-status=cancelled]")).not.toContainText("已取消");
   current = await snapshot(); assert.equal(current.runs.at(-1)?.status, "cancelled");
   await page.getByRole("button", { name: "模型连接", exact: true }).click();

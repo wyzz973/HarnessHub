@@ -10,7 +10,7 @@ import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
 import type { ConversationCommit, StartupSample } from "../contracts/conversation.js";
 import { SessionError, parseNativeOptions, runId, sessionId, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type TurnLimits } from "../contracts/session.js";
-import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
+import { MAX_CONTENT_BYTES } from "../contracts/content.js";
 import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, MaintenanceView, NativeSessionListView, UninstallCheckView, InstallCheckView, WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
@@ -49,8 +49,11 @@ import type { HubToolsOptions } from "../infrastructure/capabilities/hub-tools.j
 import type { ClaudeRunner } from "../infrastructure/capabilities/claude-mcp.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
-/** What the answer to a question a Harness asked may take (a pasted file can be one): the request body bound of that route alone. */
-const MAX_ANSWER_BODY_BYTES = 16 * 1024 * 1024;
+/**
+ * The request body of a message and of the answer to a question a Harness asked (a pasted file can be one): room for the longest input
+ * (MAX_INPUT_BYTES, 32 MiB) with its JSON escaping. A guard against a runaway client, not a limit on what a message may say.
+ */
+const MAX_MESSAGE_BODY_BYTES = 64 * 1024 * 1024, MAX_ANSWER_BODY_BYTES = MAX_MESSAGE_BODY_BYTES;
 const MAX_ASSET_BYTES = 4 * 1024 * 1024;
 /**
  * Requests in progress at once, and connections open at once (streams included): guards against a client that opens them without end,
@@ -831,8 +834,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       queries(url, ["name", "commandId"]);
       if (request.headers["content-encoding"] !== undefined) throw new HttpError(415, "INVALID_CONTENT_ENCODING", "Encoded uploads are unsupported");
       const length = request.headers["content-length"];
-      if (length === undefined || !/^[0-9]{1,9}$/u.test(length)) throw new HttpError(411, "LENGTH_REQUIRED", "Attachment uploads need Content-Length");
-      if (Number(length) < 1 || Number(length) > MAX_CONTENT_BYTES) throw new HttpError(413, "ATTACHMENT_LIMIT", "Attachments must contain 1 byte to 20 MiB");
+      if (length === undefined || !/^[0-9]{1,15}$/u.test(length)) throw new HttpError(411, "LENGTH_REQUIRED", "Attachment uploads need Content-Length");
+      if (Number(length) < 1 || Number(length) > MAX_CONTENT_BYTES) throw new HttpError(413, "ATTACHMENT_LIMIT", "Attachments must contain 1 byte to 1 GiB");
       const ref = await app.content.stage({ workspace: options.configuration.workspace, name: url.searchParams.get("name") ?? "", mediaType: request.headers["content-type"] ?? "application/octet-stream",
         commandId: command(url.searchParams.get("commandId")), declaredBytes: Number(length), source: request });
       json(response, 201, ref); return;
@@ -1160,8 +1163,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (method === "POST") {
         queries(url, []);
         if (action === "messages") {
-          const input = record(await body(request), ["text", "commandId", "attachments", "relay"], ["text", "commandId"]); if (typeof input.text !== "string") throw new HttpError(400, "INVALID_INPUT", "Message text required");
-          if (input.attachments !== undefined && (!Array.isArray(input.attachments) || input.attachments.length > MAX_RUN_ATTACHMENTS || input.attachments.some(value => typeof value !== "string"))) throw new HttpError(400, "INVALID_INPUT", "Invalid attachments");
+          const input = record(await body(request, MAX_MESSAGE_BODY_BYTES), ["text", "commandId", "attachments", "relay"], ["text", "commandId"]); if (typeof input.text !== "string") throw new HttpError(400, "INVALID_INPUT", "Message text required");
+          if (input.attachments !== undefined && (!Array.isArray(input.attachments) || input.attachments.some(value => typeof value !== "string"))) throw new HttpError(400, "INVALID_INPUT", "Invalid attachments");
           // The user's relay choice (ADR-055 §12.4), checked before the Runtime sees it: it goes with the input, and so into the
           // command's fingerprint. The relay never refuses an input.
           const relay = parseSendRelay(input.relay);

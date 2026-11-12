@@ -5,13 +5,13 @@ export type ContentId = string & { readonly [contentBrand]: true };
 export type ContentKind = "image" | "audio" | "file";
 export type ContentOrigin = "upload" | "output";
 /**
- * What one UPLOAD (an attachment) may hold, checked when it is staged and refused then, so that nothing the user sent is lost after it was accepted; native transport limits are
- * checked again by each Driver. The content a Harness made (a tool call's detail, an artifact) has no such bound: it is kept whole, whatever its size.
+ * What one UPLOAD (an attachment) may hold, checked when it is staged and refused then, so that nothing the user sent is lost after it was accepted. Only a guard against a
+ * mistaken drop (a disk image, a video library), not a product limit (2026-11-12: 20 MiB was one): each Harness reports its own limits for what it can take. The content a
+ * Harness made (a tool call's detail, an artifact) has no such bound: it is kept whole, whatever its size.
  */
-export const MAX_CONTENT_BYTES = 20 * 1024 * 1024;
-/** User attachments admitted with one input. */
-export const MAX_RUN_ATTACHMENTS = 8;
-export const MAX_RUN_ATTACHMENT_BYTES = 32 * 1024 * 1024;
+export const MAX_CONTENT_BYTES = 1024 * 1024 * 1024;
+/** One input's attachments together, the same kind of guard (2026-11-12: 32 MiB was a limit); their number has no bound. */
+export const MAX_RUN_ATTACHMENT_BYTES = 4 * 1024 * 1024 * 1024;
 export const MAX_CONTENT_NAME_BYTES = 255;
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const AUDIO_TYPES = new Set(["audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/aac", "audio/ogg", "audio/webm", "audio/flac"]);
@@ -81,9 +81,9 @@ export function parseContentRef(value: unknown): ContentRef {
     return { id: contentId(item.id), name, mediaType: type, kind, bytes: item.bytes, sha256: item.sha256 };
   } catch (error) { throw error instanceof SessionError && error.code === "INVALID_DATA" ? error : new SessionError("INVALID_DATA", "invalid content reference"); }
 }
-/** Validated public attachment list: unique identities within the per-input count and byte budgets. */
+/** Validated public attachment list: unique identities within the per-input byte guard; any number of them. */
 export function parseAttachmentRefs(value: unknown): readonly ContentRef[] {
-  if (!Array.isArray(value) || value.length > MAX_RUN_ATTACHMENTS) throw new SessionError("INVALID_DATA", "attachments exceed their budget");
+  if (!Array.isArray(value)) throw new SessionError("INVALID_DATA", "attachments must be a list");
   const refs = value.map(parseContentRef);
   if (new Set(refs.map(ref => ref.id)).size !== refs.length || refs.reduce((total, ref) => total + ref.bytes, 0) > MAX_RUN_ATTACHMENT_BYTES) throw new SessionError("INVALID_DATA", "attachments exceed their budget");
   return refs;

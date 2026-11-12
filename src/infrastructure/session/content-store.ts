@@ -3,7 +3,7 @@ import { constants, closeSync, existsSync, fstatSync, fsyncSync, linkSync, lstat
 import { chmod, copyFile, mkdir, open, rename, unlink } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS, MAX_RUN_ATTACHMENT_BYTES, contentId, contentKind, contentName, mediaType, type ContentBytes, type ContentOrigin, type ContentPort, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
+import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENT_BYTES, contentId, contentKind, contentName, mediaType, type ContentBytes, type ContentOrigin, type ContentPort, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { SessionError, commandId } from "../../contracts/session.js";
 
 const MARKER = '{"application":"harness-gateway-content","schemaVersion":1}';
@@ -104,7 +104,7 @@ export class LocalContentStore implements ContentPort {
     this.owner();
     const key = commandId(input.commandId), name = contentName(input.name), type = mediaType(input.mediaType);
     if (!isAbsolute(input.workspace)) throw new SessionError("INVALID_INPUT", "attachment workspace must be absolute");
-    if (!Number.isSafeInteger(input.declaredBytes) || input.declaredBytes < 1 || input.declaredBytes > MAX_CONTENT_BYTES) throw new SessionError("ATTACHMENT_LIMIT", "attachments must contain 1 byte to 20 MiB");
+    if (!Number.isSafeInteger(input.declaredBytes) || input.declaredBytes < 1 || input.declaredBytes > MAX_CONTENT_BYTES) throw new SessionError("ATTACHMENT_LIMIT", "attachments must contain 1 byte to 1 GiB");
     const written = await this.write(input.source, input.declaredBytes);
     try {
       const kind = contentKind(type, written.head);
@@ -121,7 +121,7 @@ export class LocalContentStore implements ContentPort {
   }
   /** Admission: each identity must be a staged, not withdrawn upload of this workspace whose bytes are still present. */
   resolve(ids: readonly string[], workspace: string): readonly ContentRef[] {
-    if (!Array.isArray(ids) || ids.length > MAX_RUN_ATTACHMENTS || new Set(ids).size !== ids.length) throw new SessionError("INVALID_INPUT", "attachments must be at most 8 unique content identities");
+    if (!Array.isArray(ids) || new Set(ids).size !== ids.length) throw new SessionError("INVALID_INPUT", "attachments must be unique content identities");
     const refs = this.use(db => ids.map(value => {
       const stored = db.prepare("SELECT * FROM content WHERE id=?").get(contentId(value));
       if (stored === undefined) throw new SessionError("ATTACHMENT_UNAVAILABLE", "an attachment is no longer available; remove it and attach the file again");
@@ -130,7 +130,7 @@ export class LocalContentStore implements ContentPort {
       this.blob(item.sha256, item.bytes);
       return reference(item);
     }));
-    if (refs.reduce((total, ref) => total + ref.bytes, 0) > MAX_RUN_ATTACHMENT_BYTES) throw new SessionError("ATTACHMENT_LIMIT", "attachments of one message exceed 32 MiB");
+    if (refs.reduce((total, ref) => total + ref.bytes, 0) > MAX_RUN_ATTACHMENT_BYTES) throw new SessionError("ATTACHMENT_LIMIT", "attachments of one message exceed 4 GiB");
     return refs;
   }
   /** Withdraws a staged upload from future admission. Content already admitted by a Run stays referenced and kept. */
@@ -314,7 +314,7 @@ export class LocalContentStore implements ContentPort {
       try {
         for await (const value of source) {
           if (!(value instanceof Uint8Array)) throw new SessionError("INVALID_INPUT", "content body must be bytes");
-          if (declared !== null && (bytes + value.byteLength > declared || bytes + value.byteLength > MAX_CONTENT_BYTES)) throw new SessionError("CONTENT_LIMIT", "content exceeds its declared size or 20 MiB");
+          if (declared !== null && (bytes + value.byteLength > declared || bytes + value.byteLength > MAX_CONTENT_BYTES)) throw new SessionError("CONTENT_LIMIT", "content exceeds its declared size or 1 GiB");
           if (bytes < head.length) Buffer.from(value.buffer, value.byteOffset, Math.min(value.byteLength, head.length - bytes)).copy(head, bytes);
           hash.update(value); await handle.write(value); bytes += value.byteLength;
         }
