@@ -52,7 +52,7 @@ test("G064-A1 names, descriptions and prompts every Harness could misread are re
   }
   for (const [definition, reason] of [
     [{ description: " ", prompt: "p" }, /要写说明/u], [{ description: "two\nlines", prompt: "p" }, /一行/u], [{ description: "x".repeat(1025), prompt: "p" }, /1024/u],
-    [{ description: "d", prompt: "  \n" }, /要写正文/u], [{ description: "d", prompt: "x".repeat(32 * 1024 + 1) }, /32 KiB/u], [{ description: "d", prompt: "bell\u0007" }, /控制字符/u],
+    [{ description: "d", prompt: "  \n" }, /要写正文/u], [{ description: "d", prompt: "x".repeat(8 * 1024 * 1024 + 1) }, /8 MiB/u], [{ description: "d", prompt: "bell\u0007" }, /控制字符/u],
     [{ description: "d", prompt: "Look in /Users/someone/notes." }, /写成 ~/u], [{ description: "half \uD83D", prompt: "p" }, /代理项/u],
     [{ description: "d", prompt: "---\nname: other\n---\nbody" }, /--- 行开头/u],
   ] as const) assert.match(subagentProblem("ok-name", definition, homes, reserved) ?? "", reason, JSON.stringify(definition).slice(0, 60));

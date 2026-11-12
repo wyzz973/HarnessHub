@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ContentRef } from "../../../contracts/content.js";
 import type { ContentRefRow, HeldItem, ItemFields, ItemRow, ItemWrite, Mutation, NativeFacts, RunRow, TextAppend } from "../../../contracts/conversation.js";
 import type { ControlEvent, NativeToolDetail } from "../../../contracts/control.js";
-import type { ApprovalItem, ApprovalRole, ItemStatus, ItemType, PlanStep } from "../../../contracts/protocol.js";
+import type { ApprovalItem, ApprovalRole, FileChange, ItemStatus, ItemType, PlanStep } from "../../../contracts/protocol.js";
 import { STREAM_WINDOW_BYTES, type PublicTool, type RunStatus } from "../../../contracts/session.js";
 import { classifyTool, detailHead, itemStatus, runItemStatus } from "./protocol/index.js";
 import { derive, sound } from "./store-conversion.js";
@@ -176,6 +176,8 @@ export type PlaceInput =
   | { readonly kind: "decided"; readonly id: string; readonly option: string; readonly input?: string; readonly by?: "user" | "policy"; readonly at: number }
   | { readonly kind: "expired"; readonly at: number }
   | { readonly kind: "notice"; readonly severity: "info" | "warning"; readonly title: string; readonly detail?: string; readonly code?: string; readonly at: number }
+  /** The Hub's record of what the Turn changed in its workspace (WorkspaceRecord), with its stored diff: one `workspace` item, placed before the Turn settles. */
+  | { readonly kind: "workspace"; readonly changes: readonly FileChange[]; readonly shared: boolean; readonly detail?: ContentRef; readonly at: number }
   /** `stoppedBy`: who stopped a Turn that ended cancelled, when the Runtime knows; the user's stop is then the Turn's last item (`interrupt`). */
   | { readonly kind: "settled"; readonly status: TerminalStatus; readonly at: number; readonly stoppedBy?: "user" };
 export interface PlaceEnv {
@@ -678,6 +680,15 @@ export function finalItemSeq(items: readonly { readonly seq: number; readonly ty
   }
   return null;
 }
+/** The Hub's record of the workspace's changes: one item, `workspace`, after what the Turn did; a second record of the same Turn replaces the first. */
+function placeWorkspace(s: Draft, w: Writes, input: Extract<PlaceInput, { kind: "workspace" }>): void {
+  if (input.changes.length === 0) return;
+  const fields: ItemFields = { type: "file_change", changes: input.changes.map(change => ({ ...change })), by: "hub", ...(input.shared ? { shared: true as const } : {}), ...(input.detail === undefined ? {} : { detail: input.detail }) };
+  const position = find(s, "workspace");
+  if (position === undefined) { takePlace(s, w, input.at); insert(s, w, { itemId: "workspace", fields, status: "completed", at: input.at, endedAt: input.at }); return; }
+  const entry = vecAt(s.entries, position)!;
+  change(s, w, position, { ...entry.item, fields }, entry);
+}
 function settle(s: Draft, w: Writes, status: TerminalStatus, at: number, stoppedBy?: "user"): void {
   flushWindow(s, w, true);
   closeSegment(s, w, at, runItemStatus(status));
@@ -731,6 +742,7 @@ export function place(turn: ActiveTurn, input: PlaceInput, env: PlaceEnv = {}): 
       case "decided": flushWindow(s, w, false); decide(s, w, input.id, input.option, input.input, input.by ?? "user", input.at); break;
       case "expired": flushWindow(s, w, false); expire(s, w, input.at); break;
       case "notice": flushWindow(s, w, false); placeNotice(s, w, input, input.at, env, false); break;
+      case "workspace": flushWindow(s, w, false); placeWorkspace(s, w, input); break;
       case "settled": settle(s, w, input.status, input.at, input.stoppedBy); break;
     }
   }

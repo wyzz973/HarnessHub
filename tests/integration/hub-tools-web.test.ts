@@ -86,8 +86,7 @@ test("the Hub's tools are read, installed into Claude Code and Codex, refused wh
   // Where they cannot go: refused with the reason, nothing written; a bad request is a bad request.
   const files = async () => [await readFile(claudeFile, "utf8"), await readFile(codexFile, "utf8")];
   const written = await files();
-  // This home's openclaw.json is written in JSON5's own syntax, which HarnessHub does not rewrite.
-  for (const [id, status, code] of [["openclaw", 409, "CAPABILITY_TARGET_REFUSED"], ["nonesuch", 404, "CAPABILITY_NOT_FOUND"]] as const) {
+  for (const [id, status, code] of [["nonesuch", 404, "CAPABILITY_NOT_FOUND"]] as const) {
     const refused = await call<{ code: string; message: string }>("/capabilities/hub-tools/install", { harnessId: id });
     assert.deepEqual([refused.status, refused.value.code], [status, code], id + " " + refused.value.message);
   }

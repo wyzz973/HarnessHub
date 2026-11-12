@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import JSON5 from "json5";
 import { parse as parseToml } from "smol-toml";
 import { CapabilityError } from "../../src/contracts/capabilities.js";
 import { TABLE_ENV, TABLE_MCP_NAME } from "../../src/contracts/table.js";
@@ -39,13 +40,23 @@ async function setup(t: test.TestContext) {
     await writeFile(target, JSON.stringify(value, null, 2));
   };
   const program = { node: NODE, tool };
-  const changes = new CapabilityChanges({ root: join(root, "data"), generation: 1, assertOwner: () => {}, environment: { home, values: { HOME: home } }, homes: [home], processes: async () => "", claude, hubTools: program });
+  // OpenClaw as `openclaw mcp set <name> <json>` and `openclaw mcp unset <name>` behave: the whole file rewritten as JSON, on the copy the prediction names or on its own file.
+  const openclawRuns: (readonly string[])[] = [];
+  const openclaw = async (args: readonly string[], options: { readonly env: Readonly<Record<string, string>> }) => {
+    openclawRuns.push(args);
+    const target = options.env.OPENCLAW_CONFIG_PATH ?? join(home, ".openclaw", "openclaw.json");
+    const value = JSON5.parse(await readFile(target, "utf8")) as { mcp?: { servers?: Record<string, unknown> } };
+    value.mcp ??= {}; value.mcp.servers ??= {};
+    if (args[1] === "set") value.mcp.servers[args[2]!] = JSON.parse(args[3]!); else delete value.mcp.servers[args[2]!];
+    await writeFile(target, JSON.stringify(value, null, 2) + "\n");
+  };
+  const changes = new CapabilityChanges({ root: join(root, "data"), generation: 1, assertOwner: () => {}, environment: { home, values: { HOME: home } }, homes: [home], processes: async () => "", claude, openclaw, hubTools: program });
   t.after(() => changes.close());
   const claudeJson = async () => JSON.parse(await readFile(claudeFile, "utf8")) as typeof CLAUDE_BEFORE & { mcpServers: Record<string, unknown> };
   const codexToml = async () => JSON.parse(JSON.stringify(parseToml(await readFile(codexFile, "utf8")))) as { mcp_servers: Record<string, Record<string, unknown>> };
   const state = async (harnessId: string) => (await changes.hubTools(INSTALLED)).harnesses.find(row => row.harnessId === harnessId)!.state;
   const listed = async () => (await changes.mcpInventory(INSTALLED)).servers.map(server => server.name);
-  return { root, home, claudeFile, codexFile, tool, program, runs, changes, claudeJson, codexToml, state, listed };
+  return { root, home, claudeFile, codexFile, tool, program, runs, openclawRuns, changes, claudeJson, codexToml, state, listed };
 }
 const refused = (code: string) => (error: unknown) => error instanceof CapabilityError && error.code === code;
 
@@ -135,9 +146,11 @@ test("an entry of the same name that someone else wrote is never overwritten or 
   const view = await f.changes.hubTools(INSTALLED);
   assert.deepEqual(view.harnesses.map(row => [row.harnessId, row.state, row.writable]), [["claude", "different", true], ["codex", "different", true], ["opencode", "absent", true], ["dsh", "absent", true], ["hermes", "absent", true], ["openclaw", "absent", true]]);
   const reason = (id: string) => view.harnesses.find(row => row.harnessId === id)?.reason ?? "";
-  assert.match(reason("hermes"), /网关/u); assert.match(reason("hermes"), /mcpServers/u);
+  assert.match(reason("hermes"), /网关/u); assert.match(reason("hermes"), /每个会话开始时/u);
   assert.match(reason("openclaw"), /Gateway/u);
-  assert.equal(reason("opencode"), ""); assert.equal(reason("dsh"), "");
+  // Claude Code, OpenCode and Hermes are handed the tools by session; the entry is optional for them.
+  assert.deepEqual(view.harnesses.filter(row => row.bySession === true).map(row => row.harnessId), ["claude", "opencode", "hermes"]);
+  assert.match(reason("opencode"), /不用写进配置/u); assert.equal(reason("dsh"), "");
   await assert.rejects(f.changes.installHubTools("codex", INSTALLED.filter(row => row.harnessId !== "codex")), refused("CAPABILITY_NOT_FOUND"));
   // The tool program is not there: nothing is written.
   await rm(f.tool);
@@ -216,8 +229,19 @@ test("OpenCode, DeepSeek Harness, Hermes and OpenClaw: the tools go into each on
     assert.deepEqual([out.status, out.state], ["done", "absent"], id);
   }
   assert.deepEqual([await readFile(opencodeFile, "utf8"), await readFile(dshFile, "utf8"), await readFile(hermesFile, "utf8"), await readFile(openclawFile, "utf8")], [before.opencode, before.dsh, before.hermes, before.openclaw], "each file is as it was");
-  // An openclaw.json in JSON5's own syntax is not rewritten.
-  await writeFile(openclawFile, "{ gateway: { port: 18789 } }\n");
-  await assert.rejects(f.changes.installHubTools("openclaw", INSTALLED), (error: unknown) => error instanceof CapabilityError && /JSON5/u.test(error.message));
-  assert.equal(await readFile(openclawFile, "utf8"), "{ gateway: { port: 18789 } }\n");
+  // An openclaw.json in JSON5's own syntax goes through OpenClaw's own commands: predicted on a copy, then run on the file, and taken out the same way.
+  await writeFile(openclawFile, "{ gateway: { port: 18789 }, // the user's comment\n}\n");
+  const viaCommand = await f.changes.installHubTools("openclaw", INSTALLED);
+  assert.deepEqual([viaCommand.status, viaCommand.state], ["done", "synced"], JSON.stringify(viaCommand));
+  assert.deepEqual(f.openclawRuns.map(args => args.slice(0, 3)), [["mcp", "set", TABLE_MCP_NAME], ["mcp", "set", TABLE_MCP_NAME]], "once on the copy, once on the file");
+  assert.deepEqual((await readJson(openclawFile)).mcp.servers[TABLE_MCP_NAME], { command: NODE, args: [f.tool, "mcp"], env: env("dollar") });
+  assert.equal((await readJson(openclawFile)).gateway.port, 18789);
+  // OpenClaw rewrote it as plain JSON: the removal is an edit of the file like any other.
+  assert.deepEqual([(await f.changes.uninstallHubTools("openclaw", INSTALLED)).status, f.openclawRuns.length], ["done", 2]);
+  assert.equal((await readJson(openclawFile)).mcp?.servers?.[TABLE_MCP_NAME], undefined);
+  // Still JSON5: the removal is OpenClaw's own unset.
+  await writeFile(openclawFile, "{ gateway: { port: 18789 }, mcp: { servers: { " + TABLE_MCP_NAME + ": { command: '" + NODE + "', args: ['" + f.tool + "', 'mcp'], env: { " + TABLE_ENV.session + ": '${" + TABLE_ENV.session + "}', " + TABLE_ENV.url + ": '${" + TABLE_ENV.url + "}' } } } } }\n");
+  assert.equal(await f.state("openclaw"), "claimable", "the same entry, not recorded as HarnessHub's since it was taken out");
+  assert.deepEqual([(await f.changes.uninstallHubTools("openclaw", INSTALLED)).status, f.openclawRuns.at(-1)], ["done", ["mcp", "unset", TABLE_MCP_NAME]]);
+  assert.equal((await readJson(openclawFile)).mcp.servers[TABLE_MCP_NAME], undefined);
 });

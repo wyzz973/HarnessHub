@@ -441,7 +441,9 @@ export class CapabilityChanges {
   }
   /** An edit or command plan offered for confirmation, with the guard every edit passes and OpenClaw's prediction. */
   private async offerEdit(change: EditChange, harnessId: string, subject: string, enabled: boolean, file: string, read: TargetRead, plan: SwitchPlan | null, blocked: string | null,
-    extraNotes: readonly string[], target: readonly string[] | null): Promise<CapabilityChangeCheck> {
+    extraNotes: readonly string[], given: readonly string[] | null): Promise<CapabilityChangeCheck> {
+    // An OpenClaw command plan names the subtree it changes itself (an MCP server's), when the caller names none.
+    const target = given ?? (plan?.kind === "command" && plan.runner === undefined ? plan.subtree ?? null : null);
     const before = read.state === "ok" ? read.bytes : null, beforeText = before?.toString("utf8") ?? "";
     const notes = [...(plan !== null && plan.kind !== "none" ? plan.notes : []), ...extraNotes];
     if (plan?.kind === "edit" && read.state === "missing") notes.push("会新建这个文件。");

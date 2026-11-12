@@ -116,10 +116,10 @@ export interface CapabilitiesView {
   readonly entries: readonly CapabilityEntry[];
   /** Files a Harness reads that could not be parsed or read; nothing is guessed from them. `harnessId` is null for a manager's file, such as a skills lock. */
   readonly unreadable: readonly { readonly harnessId: string | null; readonly file: string; readonly reason: string }[];
-  /** Entries left out at the bound; the machine has more than shown. */
+  /** Entries left out at the bound; the machine has more than shown. No bound cuts the list since 2026-11-12 (kept for an older reader). */
   readonly truncated: boolean;
 }
-export const MAX_CAPABILITY_ENTRIES = 4096;
+export const MAX_CAPABILITY_ENTRIES = Number.MAX_SAFE_INTEGER;
 
 /** Why a capability change was refused before anything was written, or why a stored change is unusable. */
 export type CapabilityErrorCode = "INVALID_INPUT" | "CAPABILITY_UNSUPPORTED" | "CAPABILITY_NOT_FOUND" | "CAPABILITY_CHECK_EXPIRED" | "CAPABILITY_TARGET_CHANGED"
@@ -377,6 +377,8 @@ export interface HubToolsTargetView {
   readonly reason: string | null;
   /** The file the entry lives in, with ~. */
   readonly file: string | null;
+  /** The Hub hands the tools to each of this Harness's sessions itself (HarnessControl.sessionTools): writing them into its configuration is optional. */
+  readonly bySession?: true;
 }
 export interface HubToolsView {
   /** The name of the entry in a Harness's MCP configuration. */

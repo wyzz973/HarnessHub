@@ -12,6 +12,7 @@ import {
 import { buildPublicContext, type PublicContext, type PublicContextOptions } from "../domain/context.js";
 import { assertConversationTransition, inputOf, runIn, settledItems, updatedRun, userItemOf, withItems } from "../domain/conversation-state.js";
 import { detailJson } from "../domain/detail-json.js";
+import { workspacePlacement } from "./workspace-record.js";
 import { itemsOf, openTurn, place, takeDetails, type ActiveTurn, type PlaceInput, type Placed, type StoreRequest, type TerminalStatus } from "../domain/items-place.js";
 import { runRowOf } from "../domain/run-row.js";
 import { originFromRows, originToRows } from "../domain/store-conversion.js";
@@ -1660,6 +1661,8 @@ export class SessionRuntime {
       relay: { declaration: relayDeclaration(null), turn: { kind: "none" }, recorded: false, e1Refused: false } };
     if (this.actives.has(id)) throw new SessionError("OWNERSHIP_LOST", "another Turn of this conversation is active");
     this.actives.set(id, execution);
+    // The Hub's own record of the workspace's changes, begun with the Turn and made at its end (workspace-record.ts).
+    const watch = this.options.workspace?.begin(state.configuration.workspace) ?? null;
     // The Turn's clock runs from here: starting the program, its model, tools and result. An operator's execution budget, when there is
     // one, and the hints that a Turn goes on are both counted from it (ADR-036, superseded 2026-11-12: no budget unless set).
     this.armBudget(execution); this.armHint(execution);
@@ -1994,6 +1997,7 @@ export class SessionRuntime {
       // What the program logged during this Turn, kept privately in memory for the user's diagnostics (redacted on the way out).
       if (execution.binding && execution.diagnosticMark !== null) this.keepDiagnostics(id, target, execution.binding.control.diagnosticsSince?.(execution.diagnosticMark) ?? "");
       let handed = false;
+      const recorded = watch === null ? null : await workspacePlacement(watch, execution.dispatched, this.options.content, state.configuration.workspace, () => this.options.now().getTime());
       const endedAt = this.options.now().getTime(), idleMs = this.options.keptIdleMs ?? KEPT_IDLE_MS;
       // The group's identity lets a later owner recognize and end it if this owner ends without closing it.
       let identity = reusing?.identity;
@@ -2038,7 +2042,8 @@ export class SessionRuntime {
         const tried = { relayed: false, replaced: false };
         // The Turn's items are closed with its end, before the Run is: what was open is told as what it was left as (items-place.ts), and a Turn that asked to keep
         // its process and could not says so among its items. All of it is one commit with the Run's end, so the two never disagree.
-        const settling = this.turnOf(execution), noted = keep.skipped === undefined ? settling : place(settling, hubNotice(keptSkippedNotice(this.options.keptLimit ?? this.kept.size), endedAt)).turn;
+        const recording = recorded === null ? this.turnOf(execution) : place(this.turnOf(execution), recorded).turn;
+        const settling = recording, noted = keep.skipped === undefined ? settling : place(settling, hubNotice(keptSkippedNotice(this.options.keptLimit ?? this.kept.size), endedAt)).turn;
         const closing = place(noted, { kind: "settled", status, at: endedAt, ...(status === "cancelled" && run.cancelRequested && !stopped ? { stoppedBy: "user" as const } : {}) });
         const ended = (withRelay: boolean) => (current: Conversation): ConversationMutation => {
           let next: Conversation = { ...updatedRun(current, target, { status, backend, cleanup: closed,

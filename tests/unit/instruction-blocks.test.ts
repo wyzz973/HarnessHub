@@ -65,7 +65,7 @@ test("G064-I1 markers HarnessHub cannot use stop it from writing, and the texts 
   const homes = ["/Users/someone", "/private/var/someone"];
   assert.equal(instructionTextProblem("Reply in Chinese. See ~/notes/rules.md.", homes), null);
   assert.equal(instructionTextProblem("x".repeat(16 * 1024), homes), null);
-  assert.match(instructionTextProblem("中".repeat(5462), homes) ?? "", /16 KiB/u, "the limit counts UTF-8 bytes");
+  assert.match(instructionTextProblem("中".repeat(2796203), homes) ?? "", /8 MiB/u, "the guard counts UTF-8 bytes");
   assert.match(instructionTextProblem("a\0b", homes) ?? "", /NUL/u);
   for (const text of ["a\rb", "bell\u0007", "esc\u001b[0m", "next\u0085line", "del\u007f"]) assert.match(instructionTextProblem(text, homes) ?? "", /控制字符/u, JSON.stringify(text));
   assert.equal(instructionTextProblem("tab\tand\nnewline, 中文与 emoji 😀", homes), null, "tabs, line breaks and whole characters are fine");

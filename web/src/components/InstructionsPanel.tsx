@@ -37,7 +37,7 @@ export function InstructionsPanel({ api, harness, reload, onChange, onNotice }: 
   const rows = useMemo(() => view?.targets.filter(target => harness === null || target.harnessId === harness) ?? [], [view, harness]);
   const saved = view === null ? null : savedAdditions(view);
   const dirty = view !== null && saved !== null && (shared !== view.shared.text || [...new Set([...Object.keys(additions), ...Object.keys(saved)])].some(id => (additions[id] ?? "").trim() !== (saved[id] ?? "").trim()));
-  const limit = view?.limitBytes ?? 16 * 1024, over = utf8(shared) > limit || Object.values(additions).some(text => utf8(text) > limit);
+  const limit = view?.limitBytes ?? 8 * 1024 * 1024, over = utf8(shared) > limit || Object.values(additions).some(text => utf8(text) > limit);
   const written = Object.values(additions).filter(text => text.trim()).length;
   const save = () => {
     setBusy(true);

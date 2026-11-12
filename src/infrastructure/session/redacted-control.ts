@@ -36,6 +36,8 @@ export class RedactedHarnessControl implements HarnessControl {
   readonly setTitle?: (id: NativeConversationId, title: string) => Promise<void>;
   /** The inner Driver's static relay declaration, the same object (ADR-055 §3.2). */
   readonly relayCapabilities?: RelayCapabilities;
+  /** Whether the inner Driver hands the Hub's tools to its sessions itself. */
+  get sessionTools(): boolean { return this.inner.sessionTools === true; }
   constructor(private readonly inner: HarnessControl, private readonly redact: (text: string) => string, private readonly stream: () => ProviderTextRedactor) {
     // A title carries no secret the Driver was given; failures are withheld as any other.
     if (inner.relayCapabilities !== undefined) this.relayCapabilities = inner.relayCapabilities;

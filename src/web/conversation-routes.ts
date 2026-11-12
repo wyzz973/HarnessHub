@@ -119,6 +119,7 @@ export class ConversationRoutes {
   private readonly origins = new Map<SessionId, SessionOrigin | null>();
   private readonly summaries = new Map<SessionId, Kept<RunSummaryPort>>();
   private readonly editLists = new Map<SessionId, Kept<EditPlace[]>>();
+  private readonly hubEditLists = new Map<SessionId, Kept<{ readonly places: readonly EditPlace[]; readonly files: number }>>();
   /** The Runs whose dispatch a commit was already asked about (see `needsSnapshot`). */
   private readonly dispatched = new Set<RunId>();
   constructor(private readonly options: ConversationRoutesOptions) {}
@@ -189,18 +190,37 @@ export class ConversationRoutes {
     remember(this.summaries, id, { version, value });
     return value;
   }
-  private editsOf(id: SessionId, version: number): readonly EditPlace[] {
+  private rawEditsOf(id: SessionId, version: number): readonly EditPlace[] {
     const kept = this.editLists.get(id);
     if (kept !== undefined && kept.version === version) return kept.value;
     const value = [...this.options.facts.edits(id)];
     remember(this.editLists, id, { version, value });
     return value;
   }
+  /**
+   * The conversation's changes as the page lists and counts them (docs/decisions/LOG.md, 2026-11-12): a Turn the Hub recorded itself is its one
+   * record (the `workspace` item, what the workspace really changed), and the Harness's own edits of that Turn stay in its items only; a Turn
+   * without a record is its Harness's edits. `files`: the files changed, as the page's "本对话改动 N 处" says them (one for an edit of the Harness).
+   */
+  private editsOf(id: SessionId, version: number): readonly EditPlace[] { return this.hubEdits(id, version).places; }
+  private hubEdits(id: SessionId, version: number): { readonly places: readonly EditPlace[]; readonly files: number } {
+    const kept = this.hubEditLists.get(id);
+    if (kept !== undefined && kept.version === version) return kept.value;
+    const raw = this.rawEditsOf(id, version), records = new Map<RunId, { place: EditPlace; files: number }>();
+    for (const place of raw) {
+      const row = this.options.facts.item(place.runId, place.seq);
+      if (row?.itemId === "workspace") records.set(place.runId, { place, files: (row.fields as { readonly changes?: readonly unknown[] }).changes?.length ?? 1 });
+    }
+    const places = raw.filter(place => { const record = records.get(place.runId); return record === undefined || record.place === place; });
+    const value = { places, files: places.reduce((sum, place) => sum + (records.get(place.runId)?.place === place ? records.get(place.runId)!.files : 1), 0) };
+    remember(this.hubEditLists, id, { version, value });
+    return value;
+  }
   /** What the page used to learn from every Turn, for the head of version `version` (see `SessionFacts`). */
   private factsOf(id: SessionId, version: number): SessionFacts {
     const summary = this.summaryOf(id, version);
     return { unknown: { count: summary.unknown, unclosed: summary.unclosed }, settled: summary.open === 0, branchable: summary.branchable === null ? null : { runId: summary.branchable.runId, ordinal: summary.branchable.ordinal },
-      ran: summary.ran.map(entry => ({ harnessId: entry.harnessId, controlId: entry.controlId, turns: entry.turns })), changes: this.editsOf(id, version).length };
+      ran: summary.ran.map(entry => ({ harnessId: entry.harnessId, controlId: entry.controlId, turns: entry.turns })), changes: this.hubEdits(id, version).files };
   }
 
   /** The history a conversation started from, read once (it can be a branch's hundreds of quoted messages) and kept for the heads that follow. */

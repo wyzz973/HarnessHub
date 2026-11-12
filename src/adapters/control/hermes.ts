@@ -208,6 +208,7 @@ export class HermesControl extends AcpControl {
     if (judged.kind === "refuse") throw new ControlError("NATIVE_GATEWAY_UNAVAILABLE", gatewayRefusalMessage(judged));
   }
   protected override get restoreByLoad(): boolean { return true; }
+  protected override get takesSessionTools(): boolean { return true; }
   /** A session opened here starts from nothing; one restored from a checkpoint has counters this connection never saw. */
   override async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
     const id = await super.open(cwd, model, options, checkpoint);

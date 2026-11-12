@@ -4,6 +4,8 @@ import type { ContentPort, ContentRef } from "./content.js";
 import type { BindingRelayState, RelayRows, RunRelay, RunRelayRequest, SwitchMode, SwitchTiming } from "./relay.js";
 import type { ReadTurn } from "./protocol-read.js";
 import type { ConversationCommit } from "./conversation.js";
+import type { WorkspaceChanges } from "./workspace.js";
+import type { FileChange } from "./protocol.js";
 
 declare const sessionBrand: unique symbol;
 declare const runBrand: unique symbol;
@@ -115,6 +117,8 @@ export interface PublicRun {
   readonly error: { readonly code: string; readonly message: string } | null;
   readonly thinking?: string;
   readonly tools?: readonly PublicTool[];
+  /** The Hub's own record of what the Turn changed in its workspace (its `workspace` item); `shared`: another conversation's Turn ran there meanwhile. */
+  readonly workspace?: { readonly changes: readonly FileChange[]; readonly shared: boolean };
   readonly plan?: PublicPlan;
   readonly usage?: NativeUsage;
   readonly notices?: readonly PublicNotice[];
@@ -458,6 +462,8 @@ export interface SessionRuntimeOptions {
   readonly fingerprint: (value: string) => string;
   /** Stores native outputs and tool details; without it those facts stay summaries/diagnostics. */
   readonly content?: ContentPort;
+  /** The Hub's own record of what each Turn changed in its workspace (contracts/workspace.ts); without it only what the Harness reported is kept. */
+  readonly workspace?: WorkspaceChanges;
   /** How long a kept native process may stay without a Turn before it is closed (ADR-030); 30 minutes unless shortened. */
   readonly keptIdleMs?: number;
   /**

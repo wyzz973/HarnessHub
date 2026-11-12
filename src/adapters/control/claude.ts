@@ -112,6 +112,7 @@ export class ClaudeControl extends AcpControl {
   private hubExport = false;
   protected override get product(): string { return "Claude Code"; }
   constructor(private readonly claudeLaunch: ControlLaunch, private readonly claudeOptions: ControlOptions) { super(claudeLaunch, claudeOptions); }
+  protected override get takesSessionTools(): boolean { return true; }
   /**
    * A session claude-agent-acp does not have, refused when the open resumes or loads it (0.99.1 `sessionNotFound`, ACP's
    * resource-not-found -32002, acp-agent.js:2491-2499; a session never prompted cannot be resumed by another process), is

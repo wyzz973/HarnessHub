@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
  */
 const BEGIN = /^<!-- harnesshub:begin id=instructions sha=([0-9a-f]{12}) -->$/u, END = "<!-- harnesshub:end id=instructions -->", MARKER = "<!-- harnesshub:";
 /** The most each text (the shared one, or one Harness's addition) may hold, in UTF-8 bytes. */
-export const INSTRUCTION_TEXT_BYTES = 16 * 1024;
+export const INSTRUCTION_TEXT_BYTES = 8 * 1024 * 1024;
 
 /** A file's text as HarnessHub reads it for its block: none, one (`intact` when its text still matches the begin line's sha), or markers it cannot use. */
 export type InstructionBlock =
@@ -39,7 +39,7 @@ export function userTextProblem(text: string, homes: readonly string[]): string 
 }
 /** Why a text cannot be saved as the shared text or an addition, or null: too long, HarnessHub's own marker, or what `userTextProblem` refuses. */
 export function instructionTextProblem(text: string, homes: readonly string[]): string | null {
-  if (Buffer.byteLength(text, "utf8") > INSTRUCTION_TEXT_BYTES) return "最多 16 KiB";
+  if (Buffer.byteLength(text, "utf8") > INSTRUCTION_TEXT_BYTES) return "最多 8 MiB";
   if (text.includes(MARKER)) return "不能含 HarnessHub 的区块标记 " + MARKER;
   return userTextProblem(text, homes);
 }

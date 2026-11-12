@@ -10,6 +10,7 @@ import { elapsed } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
 import { endLine, quietLine, switchLine, turnFooter } from "../lib/protocol/lines.js";
 import { liveStatus, type QueueNotice } from "../lib/protocol/live.js";
+import { hubRecordOf } from "../lib/protocol/runs.js";
 import { arrange, gapOf, isGap, lay, opensByDefault, reasoningLabel, summarizeGroup, withReply, workLabel, type Block, type GapRow, type WorkBlock } from "../lib/protocol/work.js";
 import { utf8Length } from "../lib/protocol/window.js";
 import { rememberShown, shownSteps } from "../lib/turn.js";
@@ -267,6 +268,19 @@ function SwitchView({ item, fresh }: { readonly item: SwitchItem; readonly fresh
   </div>;
 }
 
+/**
+ * What the Turn changed in its workspace as the Hub saw it, compared at its start and its end: "这一轮改了 3 个文件 +12 −4"; one that shared the
+ * workspace with another conversation's Turn says the changes may include that one's. The diff is in the details panel's 改动 tab.
+ */
+function WorkspaceLine({ turn }: { readonly turn: ReadTurn }) {
+  const record = hubRecordOf(turn);
+  if (record === undefined || record.changes.length === 0) return null;
+  const added = record.changes.reduce((sum, change) => sum + (change.added ?? 0), 0), removed = record.changes.reduce((sum, change) => sum + (change.removed ?? 0), 0);
+  const counted = added || removed ? " +" + added + " −" + removed : "";
+  const files = record.changes.length === 1 ? record.changes[0]!.path : record.changes.length + " 个文件";
+  return <QuietLine item="workspace" icon={<FilePen size={14}/>}><span title={record.changes.map(change => change.path).join("\n")}>{record.shared ? "这段时间工作区里的改动（可能含别的对话的）：" + files + counted : "这一轮改了 " + files + counted}</span></QuietLine>;
+}
+
 /** How a Turn that is over ended, when that needs saying: "失败 · 模型拒绝了这个请求", "已停止 · 你停止了这一轮". */
 function EndView({ turn }: { readonly turn: ReadTurn }) {
   const end = endLine(turn);
@@ -432,6 +446,7 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
         {!over ? <LiveLine queue={queue} startupHint={startupHint} waiting={waiting} replying={reply !== ""}/> : null}
         {queue !== undefined && run.status === "queued" && !cancelling ? <QueuedLine queue={queue}/> : null}
         {children}
+        {over ? <WorkspaceLine turn={turn}/> : null}
         {over ? <EndView turn={turn}/> : null}
         <div className="turn-meta -mt-1 flex min-h-7 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-caption text-fg-3">
           <span className="turn-footer flex min-w-0 items-center gap-1.5"><BrandIcon brand={turn.executor.harnessId} name={harness} size={16}/><span className="min-w-0 break-words">{turnFooter(turn)}</span></span>

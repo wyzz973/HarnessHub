@@ -54,6 +54,8 @@ const MAX_BODY_BYTES = 128 * 1024;
  * (MAX_INPUT_BYTES, 32 MiB) with its JSON escaping. A guard against a runaway client, not a limit on what a message may say.
  */
 const MAX_MESSAGE_BODY_BYTES = 64 * 1024 * 1024, MAX_ANSWER_BODY_BYTES = MAX_MESSAGE_BODY_BYTES;
+/** The texts of the capability editors (a skill, the instructions, a subagent): up to 8 MiB each (only a guard against a mistaken paste), with room for JSON. */
+const CAPABILITY_TEXT_BYTES = 8 * 1024 * 1024, CAPABILITY_BODY_BYTES = 4 * CAPABILITY_TEXT_BYTES;
 const MAX_ASSET_BYTES = 4 * 1024 * 1024;
 /**
  * Requests in progress at once, and connections open at once (streams included): guards against a client that opens them without end,
@@ -139,7 +141,7 @@ function mcpDefinition(value: unknown): McpDefinitionView {
 }
 /** An instructions text in a request body: a string within the body's bounds; what it may hold is checked by the instructions (ADR-045 §6). */
 function instructionText(value: unknown): string {
-  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > 64 * 1024) throw new HttpError(400, "INVALID_INPUT", "Expected an instructions text");
+  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > CAPABILITY_TEXT_BYTES) throw new HttpError(400, "INVALID_INPUT", "Expected an instructions text");
   return value;
 }
 /** Each Harness's addition to the instructions, by its identity: at most 16. */
@@ -152,7 +154,7 @@ function instructionAdditions(value: unknown): Readonly<Record<string, string>> 
 /** A subagent definition in a request body, shaped only; what it may hold is checked by the list (ADR-045 §7). */
 function subagentDefinition(value: unknown): { readonly description: string; readonly prompt: string } {
   const input = record(value, ["description", "prompt"], ["description", "prompt"]);
-  if (typeof input.description !== "string" || typeof input.prompt !== "string" || Buffer.byteLength(input.description, "utf8") > 8192 || Buffer.byteLength(input.prompt, "utf8") > 64 * 1024)
+  if (typeof input.description !== "string" || typeof input.prompt !== "string" || Buffer.byteLength(input.description, "utf8") > 8192 || Buffer.byteLength(input.prompt, "utf8") > CAPABILITY_TEXT_BYTES)
     throw new HttpError(400, "INVALID_INPUT", "Expected a subagent definition");
   return { description: input.description, prompt: input.prompt };
 }
@@ -680,8 +682,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     // Writing a skill from the user's texts (ADR-045 step 5: commands become shared skills), and changing one HarnessHub
     // wrote: the check is a POST because the texts are long; nothing is written until /changes.
     if ((path === "/api/v1/capabilities/skill-create" || path === "/api/v1/capabilities/skill-edit") && method === "POST") {
-      queries(url, []); const input = record(await body(request), ["name", "description", "body", "overwrite"], ["name", "description", "body"]);
-      if (typeof input.description !== "string" || typeof input.body !== "string" || Buffer.byteLength(input.description, "utf8") > 8192 || Buffer.byteLength(input.body, "utf8") > 64 * 1024)
+      queries(url, []); const input = record(await body(request, CAPABILITY_BODY_BYTES), ["name", "description", "body", "overwrite"], ["name", "description", "body"]);
+      if (typeof input.description !== "string" || typeof input.body !== "string" || Buffer.byteLength(input.description, "utf8") > 8192 || Buffer.byteLength(input.body, "utf8") > CAPABILITY_TEXT_BYTES)
         throw new HttpError(400, "INVALID_INPUT", "Expected a skill's description and body");
       if (input.overwrite !== undefined && typeof input.overwrite !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Expected overwrite to be a boolean");
       const name = text(input.name, "skill name", 64), texts = { description: input.description, body: input.body };
@@ -731,7 +733,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     // goes through a check shown first and /changes.
     if (path === "/api/v1/capabilities/instructions" && method === "GET") { queries(url, []); privateJson(response, await capabilityChanges.instructionsView(await installedHarnesses())); return; }
     if (path === "/api/v1/capabilities/instructions" && method === "POST") {
-      queries(url, []); const input = record(await body(request), ["shared", "additions"], ["shared"]);
+      queries(url, []); const input = record(await body(request, CAPABILITY_BODY_BYTES), ["shared", "additions"], ["shared"]);
       privateJson(response, await capabilityChanges.saveInstructions(instructionText(input.shared), instructionAdditions(input.additions), await installedHarnesses())); return;
     }
     if (path === "/api/v1/capabilities/instructions/claim" && method === "POST") {
@@ -747,7 +749,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     // subagent into a Harness goes through a check shown first and /changes.
     if (path === "/api/v1/capabilities/subagents" && method === "GET") { queries(url, []); privateJson(response, await capabilityChanges.subagentInventory(await installedHarnesses())); return; }
     if (path === "/api/v1/capabilities/subagents/save" && method === "POST") {
-      queries(url, []); const input = record(await body(request), ["name", "definition", "replace"], ["name", "definition"]);
+      queries(url, []); const input = record(await body(request, CAPABILITY_BODY_BYTES), ["name", "definition", "replace"], ["name", "definition"]);
       if (input.replace !== undefined && typeof input.replace !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Expected replace to be a boolean");
       privateJson(response, await capabilityChanges.saveSubagent(text(input.name, "subagent name", 64), subagentDefinition(input.definition), input.replace === true)); return;
     }

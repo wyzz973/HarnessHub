@@ -71,7 +71,11 @@ export interface FileReadItem extends ItemBase { readonly type: "file_read"; rea
 export const FILE_OPS = ["create", "modify", "delete", "rename"] as const;
 export type FileOp = typeof FILE_OPS[number];
 export interface FileChange { readonly path: string; readonly op: FileOp; readonly oldPath?: string; readonly added?: number; readonly removed?: number }
-export interface FileChangeItem extends ItemBase { readonly type: "file_change"; readonly changes: readonly FileChange[] }
+/**
+ * `by: "hub"`: the Hub's own record of what the Turn changed in its workspace, compared at its start and its end (the Harness's own edits stay
+ * in their items); `shared`: another conversation's Turn ran in the same workspace meanwhile, so the record may include its changes.
+ */
+export interface FileChangeItem extends ItemBase { readonly type: "file_change"; readonly changes: readonly FileChange[]; readonly by?: "hub"; readonly shared?: true }
 /** `files`: by name (glob, ls); `content`: inside files (grep). */
 export interface SearchItem extends ItemBase { readonly type: "search"; readonly scope: "files" | "content" | "unknown"; readonly query: string | null; readonly path?: string; readonly matches?: number }
 export interface WebItem extends ItemBase { readonly type: "web"; readonly action: "search" | "fetch"; readonly query?: string; readonly url?: string; readonly title?: string }

@@ -286,7 +286,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       // Whether this process has the Hub's tools, as a fact of how it is started (the packet may repeat it to the model): it carries the table's
       // environment, it reads the configuration the Hub's tool entry is written in (the user's own, not a generated or an isolated home), and
       // that Harness's configuration holds the entry. A kept process keeps this answer; a probe that cannot tell says no.
-      const hubTools = attached !== null && this.table !== null && selection.provider === undefined && configuration.configHome === null && await this.table.hasTools(selection.harnessId);
+      const configured = attached !== null && this.table !== null && selection.provider === undefined && configuration.configHome === null && await this.table.hasTools(selection.harnessId);
       const launch: ControlLaunch = { ...observed.selected.command, env: environment, protocol };
       // A Turn has no time wall (2026-11-12): the driver sets no deadline for it, and the Runtime stops it only for an operator's budget or
       // the user. The close grace is the host budgets' (ADR-056 §4.11); a Turn's close never waits for what left the program's group.
@@ -296,6 +296,8 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       this.assertOwner(); lease.assertOwned();
       control = await createNativeControl(selection.harnessId, launch, options);
       if (selection.provider !== undefined && this.providers) control = new RedactedHarnessControl(control, text => this.providers!.redact(text), () => this.providers!.createTextRedactor());
+      // A Driver that hands the tools to its session itself has them whatever the user's configuration holds (docs/decisions/LOG.md, 2026-11-12).
+      const hubTools = configured || attached !== null && control.sessionTools === true;
       // What the relay must never send on (ADR-055 §10.2 (a)–(c)): credential-named values this program was given or this
       // Gateway's environment holds, and whatever its configuration references by name.
       const base = nativeBaseValues(this.nativeEnvironment, home, selection.harnessId);

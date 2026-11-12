@@ -77,6 +77,8 @@ export interface RelayUnit {
   readonly user: TurnWords | null;
   readonly attachments: readonly { readonly name: string; readonly mediaType: string; readonly bytes: number }[];
   readonly tools: readonly PublicTool[];
+  /** The Hub's own record of the Turn's workspace changes: told in place of the files the Harness's tools say they changed. */
+  readonly workspace?: PublicRun["workspace"];
   /** The reply, inline `<think>` blocks and all, read when a piece needs it; `visible`: something is left of it once they are taken out. */
   readonly reply: TurnOutline["reply"];
   readonly details: ReadonlyMap<string, RelayToolDetail>;
@@ -141,7 +143,7 @@ export function relayUnits(state: RelayHistory, sources: readonly (PublicRun | R
     units.push({ key: run.id, turn: position + 1, origin: false, harnessId: run.selection.harnessId, model: runModel(state, run, latest), status: run.status,
       error: run.error, cancelRequested: run.cancelRequested, get user() { return read()?.user ?? plainWords((run as Partial<PublicRun>).input ?? ""); },
       attachments: (run.attachments ?? []).map(item => ({ name: item.name, mediaType: item.mediaType, bytes: item.bytes })), get tools() { return read()?.run.tools ?? (run as Partial<PublicRun>).tools ?? []; },
-      get reply() { return read()?.reply ?? plainReply(""); }, details: own, ...(counts === undefined ? {} : { counts }), read: () => outline !== undefined });
+      get reply() { return read()?.reply ?? plainReply(""); }, details: own, ...(counts === undefined ? {} : { counts }), ...(run.workspace === undefined ? {} : { workspace: run.workspace }), read: () => outline !== undefined });
   }
   return units;
 }
@@ -446,6 +448,8 @@ export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): reado
     const changes = family === "change" ? changesOf(unit, tool) ?? (via === "name" ? namedChanges(tool, detail) : null) : null;
     const named = via === "name" && (family === "execute" || family === "read" || family === "search" || family === "fetch") ? namedObject(tool, detail, family) : undefined;
     const kind: ToolKind = named === null || (via === "name" && family === "change" && changes === null) ? "other" : family;
+    // The Hub's record says what the workspace really changed (below): the Harness's own change calls are not told beside it.
+    if (kind === "change" && unit.workspace !== undefined) continue;
     if (kind === "change") {
       const files = changes, op: FileChange["op"] = tool.kind === "delete" ? "delete" : tool.kind === "move" ? "move" : "edit";
       if (files === null) add("changes", "ops", RANK.change, tool.title.length, counted => { const code = n.code(unwrapped(tool.title), counted); return code === null ? null : line(op, code, words.unread + status(tool)); });
@@ -467,6 +471,10 @@ export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): reado
         : kind === "search" && typeof detail?.input === "string" && detail.input.trim() !== "" && !detail.input.includes("\n") ? detail.input : unwrapped(tool.title));
       add("calls", "ops", RANK.call, raw.length, counted => { const code = n.code(raw, counted); return code === null ? null : line(kind, code, status(tool)); });
     }
+  }
+  for (const file of unit.workspace?.changes ?? []) {
+    const op: FileChange["op"] = file.op === "create" ? "create" : file.op === "delete" ? "delete" : file.op === "rename" ? "move" : "edit";
+    add("changes", "ops", RANK.change, file.path.length, counted => { const code = n.code(file.path, counted); return code === null ? null : line(op, code, words.counts(file.added ?? null, file.removed ?? null)); });
   }
   if (unit.status === "failed" && unit.error !== null && unit.error.message.trim() !== "") {
     const error = unit.error;

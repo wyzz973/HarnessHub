@@ -26,6 +26,7 @@ import { catalogTarget } from "../infrastructure/catalog/platform.js";
 import { MemoryTableGrants } from "../infrastructure/session/table-grants.js";
 import type { TableGrants } from "../contracts/table.js";
 import { reasonOf, storageCause } from "./startup-failure.js";
+import { WorkspaceRecorder } from "../infrastructure/workspace/recorder.js";
 
 /**
  * A Harness's display name by its id: its name in the built-in catalog ("Claude Code", "DeepSeek Harness", "Hermes Agent"), read once at the
@@ -164,7 +165,7 @@ export function application(root: string, publish: (commit: ConversationCommit) 
     const harnessName = builtinHarnessName();
     // The relay's installation key (ADR-055 §10.2, INV-36).
     const relayKeys = options.relayKeyFile === undefined ? null : openRelayKeys(options.relayKeyFile, root);
-    const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, ...(options.budgets ?? {}),
+    const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, workspace: new WorkspaceRecorder(), ...(options.budgets ?? {}),
       ...(relayKeys === null ? {} : { relayKeys }),
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
     // Upgrades see and close this runtime's conversations' processes (ADR-043).

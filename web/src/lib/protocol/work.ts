@@ -304,7 +304,8 @@ export function lay(items: readonly ReadItem[]): readonly Block[] {
  * tools: which of them it is, is not guessed at). Its line then says what it wants to do, with the state's word, "等你处理".
  */
 export function arrange(turn: Pick<ReadTurn, "status" | "items">, options: { readonly asking?: boolean } = {}): Arrangement {
-  const over = turnOver(turn), items = turn.items.map(item => settled(item, over));
+  // The Hub's record of the workspace is said once at the Turn's end (ProtocolTurn's WorkspaceLine), not among the Harness's own actions.
+  const over = turnOver(turn), items = turn.items.filter(item => !(item.type === "file_change" && item.by === "hub")).map(item => settled(item, over));
   const tasks = new Set(items.filter(item => item.type === "subagent").map(item => item.id));
   // The task an item happened inside, when that task is one of the Turn's own. A chain of tasks that leads back to itself is shown flat, so that every item is shown once.
   const parents = new Map(items.map(item => [item.id, item.parentId !== undefined && tasks.has(item.parentId) && item.parentId !== item.id ? item.parentId : undefined]));

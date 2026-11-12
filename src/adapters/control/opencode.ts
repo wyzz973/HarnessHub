@@ -100,6 +100,7 @@ export class OpenCodeControl extends AcpControl {
   private openedModel: string | undefined;
   private readonly abort = new AbortController();
   constructor(private readonly nativeLaunch: ControlLaunch, private readonly nativeOptions: ControlOptions) { super(nativeLaunch, nativeOptions); }
+  protected override get takesSessionTools(): boolean { return true; }
   protected override get product(): string { return "OpenCode"; }
   protected override promptRecorded(reason: string): boolean { return RECORDED_STOPS.has(reason); }
   protected override refusedPrompt(error: ControlError): "recorded" | "not_recorded" | null {

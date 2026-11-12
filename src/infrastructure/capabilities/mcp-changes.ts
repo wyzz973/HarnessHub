@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { opencodeWriteDialect, type HarnessReadTable, type ReadEnvironment } from "../../adapters/capability-reads.js";
 import { CapabilityError, type CapabilityChangeCheck, type CapabilityChangeView, type McpCandidateView, type McpDefinitionView, type McpInventoryView, type McpServerView, type McpTargetView } from "../../contracts/capabilities.js";
 import { TABLE_ENV } from "../../contracts/table.js";
 import { parsed, UnsafeEdit } from "./edits.js";
-import { record } from "./formats.js";
+import { parseConfig, record } from "./formats.js";
 import { readTarget, type TargetRead } from "./files.js";
-import { canonical, commandLine, definitionProblem, MCP_NAME, mcpNameProblem, mcpVariables, ownedOf, readMcp, renderMcp, sameMcp, type McpDefinition, type McpRender, type McpStyle } from "./mcp-definitions.js";
+import { canonical, commandLine, definitionProblem, MCP_NAME, MCP_OWNED, mcpNameProblem, mcpVariables, ownedOf, readMcp, renderMcp, sameMcp, type McpDefinition, type McpRender, type McpStyle } from "./mcp-definitions.js";
 import { dshRows, editMcp, mcpEntry, mcpGuard, mcpLocation, opencodeMcpStyle } from "./mcp-edits.js";
 import type { InstalledHarness } from "./scan.js";
 import type { CapabilityStore } from "./store.js";
@@ -306,6 +307,15 @@ export class McpInventory {
       plan = { kind: "command", runner: "claude", file: located.file, args: steps[0]!, steps, subtree: ["mcpServers", name], comments: false, key, written,
         previous: entry === undefined ? null : JSON.stringify(ownedOf(entry, "claude")), current: entry === undefined ? "none" : ledger !== null && ledger.valueHash === hash(ownedOf(entry, "claude")) ? "harnesshub" : current === "harnesshub" ? "harnesshub" : "other",
         notes: [], ledger: owned === undefined ? "drop" : "set", check: after => JSON.stringify(ownedOf(mcpEntry(after, "claude", name), "claude") ?? null) === JSON.stringify(written ?? null) };
+    } else if (reason === null && owned !== null && located.style === "openclaw" && read.state === "ok" && !parseConfig(read.bytes.toString("utf8").trim() || "{}", "jsonc").ok) {
+      // openclaw.json in JSON5's own syntax: written by OpenClaw's own `openclaw mcp set <name> <json>` / `openclaw mcp unset <name>` (2026.10.9 `--help`),
+      // which rewrites the whole file; the confirmation shows what the same command wrote on a copy. The keys the user added to the entry go with it.
+      const key = "mcp/" + name, entry = mcpEntry(value, "openclaw", name), ledger = this.host.store.ledger(harnessId, located.file, key);
+      const written = owned === undefined ? undefined : ownedOf(owned, "openclaw"), kept = Object.fromEntries(Object.entries(record(entry)).filter(([field]) => !MCP_OWNED.openclaw.includes(field)));
+      plan = { kind: "command", file: located.file, args: owned === undefined ? ["mcp", "unset", name] : ["mcp", "set", name, JSON.stringify({ ...kept, ...owned })], subtree: ["mcp", "servers", name], comments: true, key, written,
+        previous: entry === undefined ? null : JSON.stringify(ownedOf(entry, "openclaw")), current: entry === undefined ? "none" : ledger !== null && ledger.valueHash === hash(ownedOf(entry, "openclaw")) ? "harnesshub" : current === "harnesshub" ? "harnesshub" : "other",
+        notes: ["openclaw.json 用了 JSON5 的写法：由 OpenClaw 自己的命令写入，它会把文件整份重写（注释和 JSON5 写法会丢失）；下面的改动是先在副本上运行同一条命令得到的。"], ledger: owned === undefined ? "drop" : "set",
+        check: after => isDeepStrictEqual(ownedOf(mcpEntry(after, "openclaw", name), "openclaw") ?? null, written ?? null) };
     } else if (reason === null && owned !== null) {
       const before = read.state === "ok" ? read.bytes.toString("utf8") : "", key = "mcp/" + name, entry = mcpEntry(value, located.style, name), ledger = this.host.store.ledger(harnessId, located.file, key);
       try {

@@ -1,5 +1,7 @@
+import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { TABLE_ENV, TABLE_MCP_NAME } from "../../contracts/table.js";
 import { listedCommand, nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
@@ -424,7 +426,22 @@ export class AcpControl implements HarnessControl {
    * to send none. It holds only options the agent documents for its own sessions; read once per request.
    */
   protected get sessionMeta(): Readonly<Record<string, unknown>> | null { return null; }
-  protected async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> { const meta = this.sessionMeta; return { cwd, mcpServers: [], ...(meta === null ? {} : { _meta: meta }) }; }
+  protected async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> { const meta = this.sessionMeta; return { cwd, mcpServers: this.hubToolServers(), ...(meta === null ? {} : { _meta: meta }) }; }
+  /**
+   * Whether this agent takes the Hub's tools per session (ACP `mcpServers` on session/new, session/load and session/resume) and uses them:
+   * Claude Code (claude-agent-acp hands them to its SDK), OpenCode, Hermes (its gateway viewer passes them to the gateway's session as the
+   * editor's servers, acp_adapter/gateway_server.py). Not OpenClaw, whose bridge refuses them, nor DeepSeek Harness, which ignores them.
+   */
+  protected get takesSessionTools(): boolean { return false; }
+  /** HarnessControl.sessionTools: this agent takes them and the process was started with the table's address and token. */
+  get sessionTools(): boolean { return this.hubToolServers().length > 0; }
+  /** The Hub's tool program on the Node that runs the Hub, with this process's table variables; none when the agent does not take them or the table is not mounted. */
+  private hubToolServers(): readonly Record<string, unknown>[] {
+    if (!this.takesSessionTools) return [];
+    const url = this.options.env[TABLE_ENV.url], token = this.options.env[TABLE_ENV.session], tool = fileURLToPath(new URL("../../cli/hub-tools.js", import.meta.url));
+    if (!url || !token || !existsSync(tool)) return [];
+    return [{ name: TABLE_MCP_NAME, command: process.execPath, args: [tool, "mcp"], env: [{ name: TABLE_ENV.url, value: url }, { name: TABLE_ENV.session, value: token }] }];
+  }
   /**
    * Runs once, before the agent's program is started (initialize is the first request, and the process is spawned for it).
    * A driver whose program would act on the user's machine merely by starting (Hermes's `hermes acp` starts, stops or

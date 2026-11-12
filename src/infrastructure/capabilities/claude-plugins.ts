@@ -15,7 +15,6 @@ export const PLUGIN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*
 export const CLAUDE_UNINSTALLED_SOURCES: readonly string[] = ["inline", "skills-dir", "builtin", "synced"];
 const SYNCED_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const MAX_MANIFEST_BYTES = 32 * 1024 * 1024;
-const MAX_DESCRIPTION = 400;
 
 type ClaudeSource = Extract<PluginSource, { kind: "claude" }>;
 /** A JSON file as the model reads it: missing, unreadable (why), or parsed. */
@@ -62,7 +61,8 @@ export type ManagedPluginSetting = { readonly state: "none" } | { readonly state
 
 function own(value: Readonly<Record<string, unknown>>, key: string): unknown { return Object.hasOwn(value, key) ? value[key] : undefined; }
 function list(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : []; }
-function clip(value: string | null): string | null { return value === null ? null : value.length > MAX_DESCRIPTION ? value.slice(0, MAX_DESCRIPTION - 1) + "…" : value; }
+/** A description as written, whole (2026-11-12: it was cut at 400 characters). */
+function clip(value: string | null): string | null { return value; }
 function code(error: unknown): string { return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "未知错误"; }
 /** The parts of `name@marketplace`, split at the last `@`. */
 export function pluginParts(id: string): { readonly name: string; readonly marketplace: string } {

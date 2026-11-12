@@ -8,7 +8,7 @@ import { userTextProblem } from "./instruction-blocks.js";
 export interface SkillText { readonly description: string; readonly body: string }
 /** The agentskills name rule, which is also the folder's name. */
 export const SKILL_TEXT_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
-export const SKILL_TEXT_BYTES = 32 * 1024;
+export const SKILL_TEXT_BYTES = 8 * 1024 * 1024;
 
 /** The texts as stored and written: trimmed, line breaks LF. */
 export function canonicalSkillText(input: SkillText): SkillText { return { description: input.description.trim(), body: input.body.replace(/\r\n/gu, "\n").trim() }; }
@@ -25,7 +25,7 @@ export function skillTextProblem(name: string, input: SkillText, homes: readonly
   const descriptionProblem = userTextProblem(description, homes);
   if (descriptionProblem !== null) return "说明" + descriptionProblem;
   if (body === "") return "要写正文";
-  if (Buffer.byteLength(body, "utf8") > SKILL_TEXT_BYTES) return "正文最多 32 KiB";
+  if (Buffer.byteLength(body, "utf8") > SKILL_TEXT_BYTES) return "正文最多 8 MiB";
   if (body.includes("!`") || /^```!/mu.test(body)) return "正文不能含 !`…` 或 ```! 代码块：OpenCode 把技能当命令用时会不经确认直接执行它们";
   const bodyProblem = userTextProblem(body, homes);
   return bodyProblem === null ? null : "正文" + bodyProblem;

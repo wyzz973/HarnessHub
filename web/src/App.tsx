@@ -43,6 +43,7 @@ import { cn } from "./lib/cn.js";
 import { backgroundOutcome, enableNotifications, markNotificationAsked, notificationsOfferable, notifyTurnEnded } from "./lib/notify.js";
 import { useToast } from "./ui/overlay.js";
 import { LogoMark, Notice, Spinner, TipProvider } from "./ui/primitives.js";
+import { DraftStore } from "./lib/draft-store.js";
 
 interface PendingMessage { text: string; attachments: readonly string[]; createKey: string; sessionId: string | null; sendKey: string; committed: boolean;
   /** What the user chose about the history for this message (its relay body, as JSON): a send with another choice is another request. */
@@ -82,9 +83,20 @@ function rememberChoice(draft: SelectionDraft, catalog: NativeModelCatalog | nul
 }
 function readyAttachments(items: readonly AttachmentDraft[]): readonly ContentRef[] { return items.flatMap(item => item.status === "ready" && item.ref ? [item.ref] : []); }
 function draftAttachments(refs: readonly ContentRef[] | undefined): readonly AttachmentDraft[] { return (refs ?? []).map(ref => ({ local: ref.id, name: ref.name, bytes: ref.bytes, kind: ref.kind, status: "ready", ref })); }
+/**
+ * The page's draft store (lib/draft-store.ts), opened once for the page: IndexedDB, or sessionStorage without it. What a failed or a
+ * recovered write says goes to the App on screen (`draftNotice`).
+ */
+let draftNotice: { readonly failed: () => void; readonly saved: () => void } | null = null;
+let draftStoreLoading: Promise<DraftStore> | null = null;
+let draftStore: DraftStore | null = null;
+function openDraftStore(): Promise<DraftStore> {
+  draftStoreLoading ??= DraftStore.load(() => draftNotice?.failed(), () => draftNotice?.saved()).then(store => { draftStore = store; return store; });
+  return draftStoreLoading;
+}
 function savedChatDraft(workspace: string, id: string): ChatDraft | null {
   try {
-    const raw = sessionStorage.getItem(draftStorageKey(workspace, id));
+    const raw = draftStore?.read(draftStorageKey(workspace, id)) ?? null;
     if (raw === null) return null;
     const value: unknown = JSON.parse(raw);
     if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
@@ -274,6 +286,7 @@ export function App() {
   const [nativeError, setNativeError] = useState<string | null>(null);
   const [modelAttempt, setModelAttempt] = useState(0);
   const [draftStorageError, setDraftStorageError] = useState<string | null>(null);
+  draftNotice = { failed: () => setDraftStorageError("浏览器存不下这份草稿。内容仍在输入框里，刷新或关闭页面前请先发出或复制。"), saved: () => setDraftStorageError(null) };
   const [editor, setEditor] = useState<ProviderView | "new" | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
   const [leaveAction, setLeaveAction] = useState<(() => void) | null>(null);
@@ -362,6 +375,7 @@ export function App() {
         await api.authenticate();
         if (ignored) return;
         const snapshot = await api.state(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]));
+        await openDraftStore();
         if (!ignored) {
           setState(snapshot); setWorkspace(snapshot.workspace);
           const key = sessionIdRef.current ?? "new", saved = savedChatDraft(snapshot.workspace, key);
@@ -635,12 +649,10 @@ export function App() {
   const saveChatDraft = () => {
     chatDrafts.current.set(sessionIdRef.current ?? "new", { message: messageDraft, attachments: readyAttachments(attachments), selection: draft,
       epoch: session?.epoch ?? null, messageIntent: pendingMessage.current, selectionIntent: pendingSwitchWrite.current, queued });
-    try {
-      // The browser's own storage quota is the only bound; an unconfirmed switch request is kept in this page only, never across a reload.
-      const saved = chatDrafts.current.get(sessionIdRef.current ?? "new")!;
-      const serialized = JSON.stringify({ ...saved, selectionIntent: null });
-      sessionStorage.setItem(draftStorageKey(state?.workspace ?? workspace, sessionIdRef.current ?? "new"), serialized); setDraftStorageError(null);
-    } catch { setDraftStorageError("浏览器暂时无法保存草稿。内容仍在当前页面，请暂时保留此页面。"); }
+    // Kept in IndexedDB (sessionStorage without it) once typing pauses; a write that fails says so once and the draft stays in the page.
+    // An unconfirmed switch request is kept in this page only, never across a reload.
+    const saved = chatDrafts.current.get(sessionIdRef.current ?? "new")!;
+    draftStore?.write(draftStorageKey(state?.workspace ?? workspace, sessionIdRef.current ?? "new"), JSON.stringify({ ...saved, selectionIntent: null }));
   };
   useEffect(() => { if (state && !sessionLoading && !sessionError) saveChatDraft(); }, [messageDraft, attachments, draft, session?.epoch, mutation, state !== null, sessionLoading, sessionError, queued]);
   const newChat = () => leave(() => {
@@ -774,7 +786,7 @@ export function App() {
       if (id === null) {
         const created = await api.createSession(workspace, selectionRequest(draft), request.createKey);
         id = created.head.id; request.sessionId = id; chatDrafts.current.delete("new");
-        try { sessionStorage.removeItem(draftStorageKey(state.workspace, "new")); } catch { /* The owned in-memory draft remains available. */ }
+        draftStore?.write(draftStorageKey(state.workspace, "new"), null);
         sessionIdRef.current = id; writeSessionRoute(id); setSessionId(id); acceptSession(created);
       }
       // Recorded before the first message, so the first Turn's process is already kept.

@@ -101,7 +101,7 @@ function typed(row: Record<string, unknown>, b: ItemBase): ProtocolItem {
     case "file_change": return { ...b, type: "file_change", changes: many(row.changes, item => {
       const change = rec(item, "a change"), oldPath = maybe(change.oldPath, number => str(number, "oldPath")), added = maybe(change.added, number => int(number, "added")), removed = maybe(change.removed, number => int(number, "removed"));
       return { path: str(change.path, "a path"), op: pick(change.op, FILE_OPS, "an operation"), ...(oldPath === undefined ? {} : { oldPath }), ...(added === undefined ? {} : { added }), ...(removed === undefined ? {} : { removed }) };
-    }, "changes") };
+    }, "changes"), ...(row.by === "hub" ? { by: "hub" as const } : {}), ...(row.shared === true ? { shared: true as const } : {}) };
     case "search": {
       const path = maybe(row.path, item => str(item, "a path")), matches = maybe(row.matches, item => int(item, "matches"));
       return { ...b, type: "search", scope: pick(row.scope, ["files", "content", "unknown"] as const, "a scope"), query: nullable(row.query, item => str(item, "a query")), ...(path === undefined ? {} : { path }), ...(matches === undefined ? {} : { matches }) };

@@ -13,7 +13,7 @@ export interface SubagentDefinition { readonly description: string; readonly pro
 export type SubagentStyle = "claude" | "codex" | "gemini" | "opencode";
 export const SUBAGENT_NAME = /^[a-z][a-z0-9-]{0,63}$/u;
 /** The most a prompt may hold, in UTF-8 bytes. */
-export const SUBAGENT_PROMPT_BYTES = 32 * 1024;
+export const SUBAGENT_PROMPT_BYTES = 8 * 1024 * 1024;
 /** Gemini fills `${…}` in a subagent's prompt and fails on a name it does not know. */
 const GEMINI_TEMPLATE = /\$\{/u;
 
@@ -33,7 +33,7 @@ export function subagentProblem(name: string, definition: SubagentDefinition, ho
   const descriptionProblem = userTextProblem(description, homes);
   if (descriptionProblem !== null) return "说明" + descriptionProblem;
   if (prompt === "") return "要写正文：这是子 Agent 的系统提示";
-  if (Buffer.byteLength(prompt, "utf8") > SUBAGENT_PROMPT_BYTES) return "正文最多 32 KiB";
+  if (Buffer.byteLength(prompt, "utf8") > SUBAGENT_PROMPT_BYTES) return "正文最多 8 MiB";
   if (/^---[ \t]*(?:\n|$)/u.test(prompt)) return "正文不能以 --- 行开头，否则会被当成第二段 frontmatter";
   const promptProblem = userTextProblem(prompt, homes);
   return promptProblem === null ? null : "正文" + promptProblem;

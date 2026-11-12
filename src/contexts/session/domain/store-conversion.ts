@@ -246,12 +246,13 @@ export function toItems(run: PublicRun, messages: { readonly user: PublicMessage
 export function fromItems(converted: ConvertedRun): { readonly run: PublicRun; readonly messages: readonly PublicMessage[] } {
   const { row } = converted, facts = row.facts, items = [...converted.items].sort((left, right) => left.seq - right.seq);
   const tools: PublicTool[] = [], activities: PublicActivity[] = [], notices: PublicNotice[] = [], outputs: PublicOutput[] = [];
-  let input = "", thinking: string | undefined, plan: PublicPlan | undefined, reply: { text: string; seq: number } | undefined;
+  let input = "", thinking: string | undefined, plan: PublicPlan | undefined, reply: { text: string; seq: number } | undefined, workspace: PublicRun["workspace"];
   for (const item of items) {
     const id = item.itemId, fields = item.fields, native = fields.native;
     if (id === "user") input += restored(item);
     else if (id.startsWith("think:")) thinking = (thinking ?? "") + restored(item);
     else if (id.startsWith("text:")) { const text = restored(item); if (reply === undefined) reply = { text, seq: item.createdSeq ?? row.userSeq }; else reply.text += text; }
+    else if (id === "workspace" && fields.type === "file_change") workspace = { changes: fields.changes, shared: fields.shared === true };
     else if (id.startsWith("tool:")) {
       tools.push({ id: native?.id ?? id.slice(5), title: native?.title ?? "", status: native?.status ?? item.status, ...(native?.kind === undefined ? {} : { kind: native.kind }),
         ...(native?.name === undefined ? {} : { name: native.name }), ...(item.parentId === null ? {} : { parentId: native?.parent ?? (item.parentId.startsWith("tool:") ? item.parentId.slice(5) : item.parentId) }),
@@ -274,7 +275,7 @@ export function fromItems(converted: ConvertedRun): { readonly run: PublicRun; r
   const run: PublicRun = {
     id: row.runId, commandId: row.commandId, input, userMessageId: facts.userMessageId, assistantMessageId: facts.assistantMessageId, selection: facts.selection, epoch: row.epoch, status: row.status,
     cancelRequested: row.cancelRequested, contextThroughSeq: facts.contextThroughSeq, sourceRunIds: facts.sourceRunIds, backend: facts.backend, cleanup: facts.cleanup, error: facts.error,
-    ...(thinking === undefined ? {} : { thinking }), ...(calls === undefined ? {} : { tools: calls }), ...(plan === undefined ? {} : { plan }), ...(facts.usage === undefined ? {} : { usage: facts.usage }),
+    ...(thinking === undefined ? {} : { thinking }), ...(calls === undefined ? {} : { tools: calls }), ...(workspace === undefined ? {} : { workspace }), ...(plan === undefined ? {} : { plan }), ...(facts.usage === undefined ? {} : { usage: facts.usage }),
     ...(noted === undefined ? {} : { notices: noted }), ...(active === undefined ? {} : { activities: active }), ...(made === undefined ? {} : { outputs: made }),
     ...(facts.attachments === undefined ? {} : { attachments: facts.attachments }), ...(facts.timing === undefined ? {} : { timing: facts.timing }), ...(facts.retained === undefined ? {} : { retained: facts.retained }),
     ...(facts.reused === true || row.reused ? { reused: true as const } : {}), ...(facts.relay === undefined ? {} : { relay: facts.relay }), ...(facts.relayRequest === undefined ? {} : { relayRequest: facts.relayRequest }),

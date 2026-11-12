@@ -287,6 +287,11 @@ export interface ControlRun {
  */
 export interface HarnessControl {
   /**
+   * The Driver hands the Hub's own tools (the context table, TABLE_MCP_NAME) to every native session it opens or restores, with this
+   * process's address and token (ACP `mcpServers`), so they work without anything written into the user's configuration. Absent: false.
+   */
+  readonly sessionTools?: boolean;
+  /**
    * The Driver's static relay declaration (ADR-055 §3.2, §8.1): the same module-level object its factory returns for the
    * harness without an instance (relayCapabilities in adapters/control/factory.ts), never changed by the connection.
    * Absent for a Driver that declares none, which the relay treats as the most conservative declaration (INV-16).

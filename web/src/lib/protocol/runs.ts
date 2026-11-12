@@ -45,7 +45,14 @@ export function stepCount(turn: ReadTurn): number { return ownWork(turn).length;
 /** When a Turn that is over ended, from when it began and how long it took; unknown when either is. */
 export function endedAt(turn: Pick<ReadTurn, "startedAt" | "durationMs">): number | undefined { return turn.startedAt === undefined || turn.durationMs === undefined ? undefined : turn.startedAt + turn.durationMs; }
 /** The edits of a Turn that carry a stored detail, which is where their diff is: the places the conversation's changes are counted by. */
-export function editsOf(turn: ReadTurn): readonly FileChangeItem[] { return turn.items.filter((item): item is FileChangeItem => item.type === "file_change" && item.detail !== undefined); }
+/** The Hub's own record of what a Turn changed in its workspace (the `workspace` item), when it made one. */
+export function hubRecordOf(turn: Pick<ReadTurn, "items">): FileChangeItem | undefined { return turn.items.find((item): item is FileChangeItem => item.type === "file_change" && item.by === "hub"); }
+/** A Turn's changes with a stored detail: the Hub's record when there is one (what the workspace really changed), else the Harness's own edits. */
+export function editsOf(turn: ReadTurn): readonly FileChangeItem[] {
+  const record = hubRecordOf(turn);
+  if (record !== undefined) return record.detail === undefined ? [] : [record];
+  return turn.items.filter((item): item is FileChangeItem => item.type === "file_change" && item.detail !== undefined);
+}
 /** How many changes some Turns made, counted as places, known without reading any detail. */
 export function changeCount(runs: readonly PublicRun[]): number { return runs.reduce((count, run) => count + (run.protocol === undefined ? 0 : editsOf(run.protocol).length), 0); }
 /** Work the Turn handed to others: its delegated tasks. */
