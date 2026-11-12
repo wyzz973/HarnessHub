@@ -475,6 +475,9 @@ export function ChatPage(props: ChatProps) {
     const checked = relay.next?.option === SEND_ALONE.option && relay.next.for === SEND_ALONE.for;
     return { checked, onToggle: () => relay.onNext(checked ? null : SEND_ALONE) };
   })() : undefined;
+  // The wrap-up the latest Turn gave (`hub_wrap_up`), while nothing came after it: once you send a message, or press one of its answers, it goes. A Turn that gave none shows none.
+  const latest = session?.runs.at(-1), nextStep = session?.recap !== undefined && latest !== undefined && latest.id === session.recap.runId && active === null && session.status === "open"
+    && latest.protocol !== undefined && over(latest.protocol) ? session.recap : null;
   const composer = <Composer {...props} sendAlone={sendAlone} onSendDraft={text => send(text)} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}
     onShowResume={session ? showResume : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} onEditLast={editLast} onReplaceDraft={fillDraft}
     above={session ? <>
@@ -486,7 +489,7 @@ export function ChatPage(props: ChatProps) {
         {props.queued.attachments.length ? <span className="flex-none text-caption text-fg-3">附件 {props.queued.attachments.length}</span> : null}
         <button type="button" className="btn btn-ghost btn-sm" onClick={props.onEditQueued}>编辑</button><button type="button" className="btn btn-ghost btn-sm" onClick={props.onWithdrawQueued}>撤回</button>
       </div> : null}
-      <PlanBar session={session} active={active}/>
+      {nextStep ? <NextStep recap={nextStep} harness={harnessName(nextStep.harnessId)} disabled={!canRetry} onAnswer={text => { void send(text).catch(() => {}); }}/> : <PlanBar session={session} active={active} harness={harnessName}/>}
     </> : null}
     below={session ? <StatusLine session={session} active={active}/> : null}/>;
   // What the page announces of the Turn in progress, or of one waiting in the queue (never the active Run), in the header's
@@ -660,39 +663,55 @@ function HeaderState({ session, active, harnessName }: { readonly session: Conve
 }
 
 /**
- * The plan bar above the composer (P01, Motion board #22): how far the task list is and what it works on now; pressing it opens
- * every step, the arrow turning 180°. Shown while a Turn with a task list runs, and while the latest list has steps left.
+ * The plan bar above the composer (P01, Motion board #22): the conversation's latest task list — a Harness's own, or the one it gave with the Hub's `hub_update_plan` — as
+ * the head tells it (the Turns the page holds may not reach it). One line, "3/7 · 正在：…", that opens every step, the arrow turning 180°; the step in progress stands out and
+ * the finished ones are struck through. Not shown when every step is done, or when no Turn has a list.
  */
-function PlanBar({ session, active }: { readonly session: ConversationView; readonly active: PublicRun | null }) {
+function PlanBar({ session, harness }: { readonly session: ConversationView; readonly active: PublicRun | null; readonly harness: (id: string) => string }) {
   const [open, setOpen] = useState(false);
   const id = useId();
-  const found = latestPlan(session.runs);
-  if (found === undefined || active === null && found.plan.steps.every(step => step.status === "completed")) return null;
-  const { run, plan } = found, steps = plan.steps;
-  const done = steps.filter(step => step.status === "completed").length, total = steps.length;
+  const held = latestPlan(session.runs);
+  const found = session.plan !== undefined ? { harnessId: session.plan.harnessId, steps: session.plan.steps } : held === undefined ? undefined : { harnessId: held.run.protocol.executor.harnessId, steps: held.plan.steps };
+  if (found === undefined || found.steps.length === 0 || found.steps.every(step => step.status === "completed")) return null;
+  const steps = found.steps, done = steps.filter(step => step.status === "completed").length, total = steps.length;
   const current = steps.find(step => step.status === "in_progress") ?? steps.find(step => step.status === "pending");
   const where = current ? `${current.status === "in_progress" ? "正在" : "下一步"}：${current.text}` : "已完成";
   // The 8 px between the bar and its steps belongs to the steps, so a closed plan leaves no gap above the composer.
   return <div className="plan-bar flex flex-col">
     <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}
-      className="card card-interactive flex h-10 w-full items-center gap-[9px] border-none px-3.5 text-left text-ui-sm outline-offset-2">
+      className="card card-interactive flex h-10 w-full items-center gap-[9px] border-none px-4 text-left text-ui-sm outline-offset-2">
       <ListChecks size={15} className="flex-none text-fg-2" aria-hidden="true"/>
-      <span className="flex-none font-medium">计划</span>
-      <span className="min-w-0 flex-1 truncate text-fg-3">{done} / {total} · {where}</span>
+      <span className="flex-none font-medium">任务清单</span>
+      <span className="min-w-0 flex-1 truncate text-fg-3">{done}/{total} · {where}</span>
       <span className="relative h-1 w-[72px] flex-none overflow-hidden rounded-[2px] bg-hover max-sm:hidden" aria-hidden="true">
         <span className="absolute inset-0 origin-left rounded-[2px] bg-run transition-transform duration-200 ease-standard" style={{ transform: `scaleX(${total ? done / total : 0})` }}/></span>
       <ChevronUp size={12} strokeWidth={2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-180")} aria-hidden="true"/>
     </button>
     <Collapsible open={open} id={id}>
-      <div className="pt-2"><ul className="card m-0 grid max-h-[min(40vh,320px)] list-none grid-cols-1 gap-x-4 gap-y-2 overflow-y-auto px-4 py-3 text-ui-sm sm:grid-cols-2" aria-label={`${run.protocol.executor.harness} 维护的计划`}>
+      <div className="pt-2"><ul className="card m-0 flex max-h-[min(40vh,320px)] list-none flex-col gap-2 overflow-y-auto p-4 text-ui-sm" aria-label={`${harness(found.harnessId)} 的任务清单`}>
         {steps.map((step, index) => <li key={index} className="flex min-w-0 items-start gap-2">
           {step.status === "completed" ? <Check size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="已完成" role="img"/>
-            : <Circle size={15} strokeWidth={1.9} className={cn("mt-0.5 flex-none", step.status === "in_progress" ? "text-run" : "text-fg-3")} aria-label={step.status === "in_progress" ? "进行中" : "待办"} role="img"/>}
+            : step.status === "in_progress" ? <Spinner size={15} tone="run" label="进行中"/>
+            : <Circle size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="待办" role="img"/>}
           <span className={cn("min-w-0 break-words", step.status === "completed" ? "text-fg-3 line-through decoration-line-strong" : step.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{step.text}</span>
         </li>)}
       </ul></div>
     </Collapsible>
   </div>;
+}
+
+/**
+ * The next-step box above the composer: the wrap-up the latest Turn's Harness gave (`hub_wrap_up`) — a short recap, and when the next move is yours, its question and one or
+ * two answers as buttons, the first the Harness's recommendation. An answer is sent as your next message. The page never makes one up: a Turn that gave none shows none.
+ */
+function NextStep({ recap, harness, disabled, onAnswer }: { readonly recap: NonNullable<ConversationView["recap"]>; readonly harness: string; readonly disabled: boolean; readonly onAnswer: (text: string) => void }) {
+  return <section className="next-step card motion-fade-in flex flex-col gap-2 p-4 text-ui-sm" data-turn-next="" aria-label={harness + " 的小结"}>
+    <p className="m-0 whitespace-pre-wrap break-words text-fg-2">{recap.summary}</p>
+    {recap.ask ? <p className="m-0 break-words font-medium text-fg">{recap.ask}</p> : null}
+    {recap.actions?.length ? <div className="flex flex-wrap gap-2" role="group" aria-label="回答">
+      {recap.actions.map((label, index) => <button key={index} type="button" className={cn("btn btn-sm next-step-answer", index === 0 ? "btn-primary" : "btn-ghost")} disabled={disabled} onClick={() => onAnswer(label)}>{label}</button>)}
+    </div> : null}
+  </section>;
 }
 
 /**

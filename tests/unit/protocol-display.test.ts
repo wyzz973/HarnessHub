@@ -158,7 +158,8 @@ test("a Turn's items are laid out in order: consecutive actions are one run, tex
   // Only what follows nothing but thoughts is the tail, which more actions may still join.
   assert.deepEqual(lay([a, say(), c, think()]).map(block => block.kind === "work" && block.tail), [false, false, true, false]);
   // The task list is drawn above the message box, not in the transcript.
-  assert.deepEqual(lay([{ ...at(), type: "plan", steps: [{ text: "x", status: "pending" }] }, a]).map(block => block.kind), ["work"]);
+  // The task list is one line of the Turn (and shown whole above the message box).
+  assert.deepEqual(lay([{ ...at(), type: "plan", steps: [{ text: "x", status: "pending" }] }, a]).map(block => block.kind), ["item", "work"]);
 });
 
 test("what happens inside a delegated task hangs under the task, and an action never ended in a Turn that is over is unknown", () => {

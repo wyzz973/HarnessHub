@@ -4,6 +4,7 @@ import {
 import type { HarnessSelection, NativeConfiguration, NativeSessionBinding, PublicSwitch, RunId, SessionId, SessionOrigin } from "../contracts/session.js";
 import { SessionError, sessionId } from "../contracts/session.js";
 import type { NativeOptions } from "../contracts/control.js";
+import type { PlanStep } from "../contracts/protocol.js";
 import type {
   ConversationChangesView, ConversationEdit, ItemTextView, ItemView, KeptProcessView, NativeStateView, RunItemsPageView, SessionFacts, SessionHeadView, SessionListView, SessionView, SessionViewV14, TurnPageView, TurnWindowView,
 } from "../contracts/web.js";
@@ -57,6 +58,8 @@ export interface ViewFacts extends ConversationFactsPort {
   dispatchedBefore(id: SessionId, harnessId: string, controlId: string, ordinal: number): boolean;
   edits(id: SessionId): readonly EditPlace[];
   latestPlan(id: SessionId): { readonly ordinal: number; readonly runId: RunId; readonly harnessId: string; readonly row: ItemRow } | null;
+  /** The wrap-up of the latest finished Turn, when it gave one; optional. */
+  latestRecap?(id: SessionId): { readonly ordinal: number; readonly runId: RunId; readonly harnessId: string; readonly row: ItemRow } | null;
 }
 export interface ConversationSource extends ConversationReader { list(query?: SessionListQuery): SessionListPage }
 export interface ConversationRoutesOptions {
@@ -266,7 +269,17 @@ export class ConversationRoutes {
       pendingSwitchId: row.pendingSwitchId, permissions: live.permissions ?? [], nativeStates, ...(origin === null ? {} : { origin }), ...(live.queue === undefined ? {} : { queue: live.queue }),
       retention: { enabled: json.retainNative === true, process: kept?.process ?? null, ...(kept?.lost === undefined ? {} : { lost: kept.lost }), ...(kept?.outside === undefined ? {} : { outside: kept.outside }),
         ...(kept?.upgraded === undefined ? {} : { upgraded: kept.upgraded }) },
-      title: row.title, runCount: row.runCount, ...(last === null ? {} : { lastSwitch: last }), facts: this.factsOf(id, row.version) };
+      title: row.title, runCount: row.runCount, ...(last === null ? {} : { lastSwitch: last }), facts: this.factsOf(id, row.version), ...this.progressOf(id) };
+  }
+  /** The latest task list and the latest Turn's wrap-up, from what each Turn's end recorded (only the Turns that hold them are read). */
+  private progressOf(id: SessionId): Pick<SessionHeadView, "plan" | "recap"> {
+    const { facts } = this.options, plan = facts.latestPlan(id), recap = facts.latestRecap?.(id) ?? null;
+    const planFields = plan === null ? null : plan.row.fields as { readonly type: string; readonly steps?: readonly PlanStep[]; readonly explanation?: string };
+    const recapFields = recap === null ? null : recap.row.fields as { readonly type: string; readonly summary?: string; readonly ask?: string; readonly actions?: readonly string[] };
+    return { ...(plan === null || planFields?.type !== "plan" || !Array.isArray(planFields.steps) ? {} : { plan: { runId: plan.runId, ordinal: plan.ordinal, harnessId: plan.harnessId,
+        steps: planFields.steps.map(step => ({ text: step.text, status: step.status })), ...(planFields.explanation === undefined ? {} : { explanation: planFields.explanation }) } }),
+      ...(recap === null || recapFields?.type !== "recap" || typeof recapFields.summary !== "string" ? {} : { recap: { runId: recap.runId, ordinal: recap.ordinal, harnessId: recap.harnessId,
+        summary: recapFields.summary, ...(recapFields.ask === undefined ? {} : { ask: recapFields.ask }), ...(recapFields.actions === undefined ? {} : { actions: recapFields.actions }) } }) };
   }
   head(id: string): SessionHeadView { return this.headView(this.headRow(id)); }
   /** The Turns of a conversation as the wire tells them, for a reader that goes through them one at a time (the export). A conversation that is not there, or was deleted, is not found. */

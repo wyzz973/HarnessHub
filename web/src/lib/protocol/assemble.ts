@@ -19,7 +19,7 @@ import { GAP_ID, GAP_TYPE } from "./work.js";
  *   - a Turn that goes on and has an approval or a question that waits is `waiting` (its header comes with the Run's row, which does not change when an approval is asked).
  */
 
-const BESIDE_THE_ANSWER: ReadonlySet<ItemType> = new Set<ItemType>(["notice", "error", "plan", "artifact", "context_event"]);
+const BESIDE_THE_ANSWER: ReadonlySet<ItemType> = new Set<ItemType>(["notice", "error", "plan", "recap", "artifact", "context_event"]);
 
 /** The window's Runs, in order, as the renderer draws them, and the lookup of the words of a message. */
 export interface Assembled {

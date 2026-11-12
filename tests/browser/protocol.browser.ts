@@ -414,7 +414,8 @@ test("the other items each have a line of their own: a clear, a decision, an ans
   await expect(turn.locator(".quiet-line[data-item=approval]")).toHaveText("已允许：运行 npm test");
   await expect(turn.locator(".quiet-line[data-item=question]")).toHaveText("已回答：用哪个库？（dayjs）");
   await expect(turn.locator(".plan-proposal")).toContainText("先改 total，再补测试。");
-  await expect(turn.locator(".recap")).toHaveText("改了 total，还没有提交。接着修剩下的吗？");
+  // The wrap-up is one line of its Turn (the question and the answers are the next-step box's, above the message box).
+  await expect(turn.locator(".recap-line")).toHaveText("小结：改了 total，还没有提交。");
   await expect(turn.locator(".quiet-line[data-item=delegation]")).toHaveText("已交给 Codex：补测试");
   await expect(turn.getByRole("link", { name: "测试报告" })).toHaveAttribute("href", "https://example.com/report");
   // The stop is said once, by its own item; the line that ends a Turn does not say it again.

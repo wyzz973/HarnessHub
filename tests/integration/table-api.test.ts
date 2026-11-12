@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import test, { after, before } from "node:test";
 import { application } from "../../src/cli/session-application.js";
 import { sessionId } from "../../src/contracts/session.js";
-import { TABLE_ENV, TABLE_NOT_IN_SESSION, TABLE_TOOLS } from "../../src/contracts/table.js";
+import { TABLE_PROGRESS_TOOLS, TABLE_ENV, TABLE_NOT_IN_SESSION, TABLE_TOOLS } from "../../src/contracts/table.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { MemoryTableGrants } from "../../src/infrastructure/session/table-grants.js";
 import { readWhole, type ReadConversation } from "../fixtures/http-conversation.js";
@@ -282,7 +282,7 @@ test("MCP: initialize, tools/list and tools/call for the three tools, from a rea
   assert.deepEqual(listed.map(item => item.name), [...TABLE_TOOLS]);
   for (const item of listed) {
     assert.ok(String(item.description).length > 200 && /^[A-Z]/u.test(String(item.description)), item.name + " says in English what it is for and when to use it");
-    assert.equal(row(item.inputSchema).type, "object"); assert.equal(row(item.inputSchema).additionalProperties, false); assert.equal(row(item.annotations).readOnlyHint, true);
+    assert.equal(row(item.inputSchema).type, "object"); assert.equal(row(item.inputSchema).additionalProperties, false); assert.equal(row(item.annotations).readOnlyHint, !(TABLE_PROGRESS_TOOLS as readonly string[]).includes(String(item.name)));
   }
   assert.deepEqual(row(listed[1]!.inputSchema).required, ["n"]); assert.deepEqual(row(listed[2]!.inputSchema).required, ["query"]);
 

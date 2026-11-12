@@ -1,6 +1,6 @@
 import type { CommandItem, FileChange as ProtocolFileChange, FileChangeItem, FileReadItem, ItemBase, ItemStatus, McpToolItem, PlanStep, SearchItem, SubagentItem, ToolItem, WebItem, WorkItem } from "../../../../contracts/protocol.js";
 import type { PublicTool } from "../../../../contracts/session.js";
-import { TABLE_MCP_NAME, TABLE_TOOLS } from "../../../../contracts/table.js";
+import { TABLE_MCP_NAME, TABLE_PROGRESS_TOOLS, TABLE_TOOLS } from "../../../../contracts/table.js";
 import { changesFrom, diffFiles, locationOf, type ToolDetailInput } from "./changes.js";
 import { unwrapShell } from "./shell.js";
 import { itemStatus } from "./status.js";
@@ -85,6 +85,11 @@ function mcpShaped(named: Named): boolean {
   return parts !== null && (named.source === "name" || parts[1] === TABLE_MCP_NAME);
 }
 
+/** Whether a call is one of the Hub's two tools that tell how the Turn goes (`hub_update_plan`, `hub_wrap_up`): what it said is the Turn's task list or wrap-up, not an action. */
+export function isHubProgressCall(tool: Pick<PublicTool, "title" | "name">): boolean {
+  const named = namedBy(tool), parts = mcpParts(named?.raw ?? tool.title);
+  return parts !== null && parts.server === TABLE_MCP_NAME && (TABLE_PROGRESS_TOOLS as readonly string[]).includes(parts.tool);
+}
 /** Which family a call is of; see the order above. */
 export function classifyTool(tool: ToolFacts): ToolClass { return classified(tool, namedBy(tool)); }
 function classified(tool: ToolFacts, named: Named | null): ToolClass {

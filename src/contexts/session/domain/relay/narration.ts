@@ -7,6 +7,7 @@ import { estimateTokens } from "./budget.js";
 import { characters, codeUnitsOf, fence, headUnits, neutralize, normalize, visible, type RelayLanguage } from "./escape.js";
 import { marksIn, namesCredentialFile, relayRedactor, restoreLabels, type RelayRedactor } from "./redaction.js";
 import { changesFrom, classifyTool, commandTextOf, diffFiles, locationOf, normalizeTool, toolOutcome, type FileChange, type ToolFamily } from "../protocol/index.js";
+import { isHubProgressCall } from "../protocol/tools.js";
 import type { DetailPolicy, DetailRead } from "../detail-read.js";
 
 /**
@@ -441,7 +442,8 @@ export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): reado
     });
   }
   for (const tool of unit.tools) {
-    if (tool.parentId !== undefined) continue;
+    // The Hub's own progress calls are carried as the record's progress section (packet.ts), not as actions.
+    if (tool.parentId !== undefined || isHubProgressCall(tool)) continue;
     const { family, via } = classifyTool(tool), detail = unit.details.get(tool.id);
     if (family === "think") continue;
     // A tool only the name table could tell is worded by what its stored detail says, and by what it was before the name table when it has none.

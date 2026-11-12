@@ -292,10 +292,24 @@ export function decodeHead(value: unknown): SessionHeadView {
     return { enabled: bool(kept.enabled, "enabled"), process, ...(lost === undefined ? {} : { lost }), ...(outside === undefined ? {} : { outside }), ...(upgraded === undefined ? {} : { upgraded }) };
   });
   const last = maybe(row.lastSwitch, lastSwitch);
+  // The latest task list and the latest Turn's wrap-up: a reading that is not one is left out (the head stays).
+  let plan: SessionHeadView["plan"], recap: SessionHeadView["recap"];
+  try {
+    plan = maybe(row.plan, item => { const made = rec(item, "a task list"), explanation = maybe(made.explanation, word => str(word, "an explanation"));
+      return { runId: str(made.runId, "a Run"), ordinal: nat(made.ordinal, "ordinal"), harnessId: str(made.harnessId, "a Harness"),
+        steps: many(made.steps, step => { const entry = rec(step, "a step"); return { text: str(entry.text, "a step"), status: pick(entry.status, ["pending", "in_progress", "completed"] as const, "a step's state") }; }, "steps"),
+        ...(explanation === undefined ? {} : { explanation }) }; });
+  } catch { plan = undefined; }
+  try {
+    recap = maybe(row.recap, item => { const made = rec(item, "a wrap-up"), ask = maybe(made.ask, word => str(word, "a question")), actions = maybe(made.actions, list => words(list, "an answer"));
+      return { runId: str(made.runId, "a Run"), ordinal: nat(made.ordinal, "ordinal"), harnessId: str(made.harnessId, "a Harness"), summary: str(made.summary, "a recap"),
+        ...(ask === undefined ? {} : { ask }), ...(actions === undefined ? {} : { actions }) }; });
+  } catch { recap = undefined; }
   return { id: str(row.id, "a conversation id"), version: nat(row.version, "version"), lastSeq: nat(row.lastSeq, "lastSeq"), epoch: nat(row.epoch, "epoch"), status: pick(row.status, ["open", "closed", "blocked"] as const, "a conversation's state"),
     workspace: str(row.workspace, "a workspace"), selection: selection(row.selection), activeRunId: nullable(row.activeRunId, item => str(item, "a Run")), pendingSwitchId: nullable(row.pendingSwitchId, item => str(item, "a switch")),
     ...(permissions === undefined ? {} : { permissions }), ...(states === undefined ? {} : { nativeStates: states }), ...(quoted === undefined ? {} : { origin: quoted }), ...(queue === undefined ? {} : { queue }), ...(retention === undefined ? {} : { retention }),
-    title: str(row.title, "a title"), runCount: nat(row.runCount, "runCount"), ...(last === undefined ? {} : { lastSwitch: last }), facts: sessionFacts(row.facts) };
+    title: str(row.title, "a title"), runCount: nat(row.runCount, "runCount"), ...(last === undefined ? {} : { lastSwitch: last }), facts: sessionFacts(row.facts),
+    ...(plan === undefined ? {} : { plan }), ...(recap === undefined ? {} : { recap }) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

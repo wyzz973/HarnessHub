@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { RelayPacketKind } from "../../../../contracts/relay.js";
 import type { NativeSessionBinding, PublicRun, RunId } from "../../../../contracts/session.js";
-import type { RelayHistory, RelayRun } from "./history.js";
+import type { RelayHistory, RelayProgress, RelayRun } from "./history.js";
 import { RELAY_POLICY_VERSION, estimateTokens, resolveRelayBudget, type RelayBudget } from "./budget.js";
 import { dataRegion, firstLine, type RelayLanguage } from "./escape.js";
 import { ITEM_KINDS, LEAST, Narrator, OUTPUT_LINES, candidatesOf, kindOf, opsLabel, relayUnits, unreadOf, type Candidate, type ItemKind, type RelayToolDetail, type RelayUnit } from "./narration.js";
@@ -299,6 +299,20 @@ function unitOrder(count: number): readonly number[] {
   if (count === 0) return [];
   return [count - 1, ...(count > 1 ? [0] : []), ...Array.from({ length: Math.max(0, count - 2) }, (_, step) => count - 2 - step)];
 }
+/** The record's first section: the latest task list with each step's state, and the wrap-up of the Turn before; null when there is neither. Quoted texts go through the narrator. */
+function progressSection(n: Narrator, progress: RelayProgress): { readonly text: string; readonly hits: number } | null {
+  const counted = { hits: 0 }, lines: string[] = [];
+  const plan = progress.plan, recap = progress.recap;
+  if (plan !== undefined) {
+    const steps = plan.steps.flatMap(step => { const text = n.inline(step.text, counted); return text === null ? [] : ["- " + (step.status === "completed" ? "[x] " : step.status === "in_progress" ? "[>] " : "[ ] ") + text]; });
+    if (steps.length > 0) lines.push(n.zh ? "任务清单（第 " + plan.turn + " 轮 · " + n.name(plan.harnessId) + "；[x] 已完成，[>] 进行中，[ ] 未开始）：" : "Task list (turn " + plan.turn + " · " + n.name(plan.harnessId) + "; [x] done, [>] in progress, [ ] not started):", ...steps);
+  }
+  if (recap !== undefined) {
+    const said = n.block(recap.summary + (recap.ask === undefined ? "" : "\n" + recap.ask), "text", counted);
+    if (said !== null) lines.push(n.zh ? "上一轮的小结（第 " + recap.turn + " 轮 · " + n.name(recap.harnessId) + "）：" : "Wrap-up of the last turn (turn " + recap.turn + " · " + n.name(recap.harnessId) + "):", said);
+  }
+  return lines.length === 0 ? null : { text: [n.zh ? "### 当前进展" : "### Where the work stands", ...lines].join("\n"), hits: counted.hits };
+}
 /** What the ledger is first assumed to take while the history is chosen; a longer one takes the room of the history in the next pass. */
 const LEDGER_RESERVE = 260;
 /** A text more than this many times longer, in tokens, than the room left cannot be made to fit by redaction: it is not even rendered. */
@@ -344,6 +358,8 @@ function compose(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, 
   const headings = units.map(unit => { const counted = { hits: 0 }, text = n.heading(unit, counted); return { text, tokens: estimateTokens(text) + 2, hits: counted.hits }; });
   const labels = units.map(unit => estimateTokens(opsLabel(n, unit)) + 1);
   const order = unitOrder(count);
+  // How the work stands (the latest task list, the last Turn's wrap-up): a few lines, first in the record, so the target knows where the work is; it is always carried.
+  const progress = progressSection(n, input.state.progress?.() ?? {});
   const who = count === 0 ? "" : didBy(n, units), turns = count === 0 ? "" : turnList(n, units);
   // The tools hold the Session's own turns, not the history it started from: with none of the former there is nothing to read back.
   const pull = n.tools && units.some(unit => !unit.origin), source = units.some(unit => unit.origin);
@@ -449,12 +465,14 @@ function compose(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, 
     if (unread) ledger.push(frame.ledger.unread(unread));
     if (importParts.length) ledger.push(frame.ledger.origin(importParts));
     ledger.push(frame.ledger.format);
-    const body = [front(tier, sections.length > 0), ...(sections.length ? ["", dataRegion(sections.join("\n\n"))] : []), "", ...ledger, end[0]].join("\n");
+    const region = progress === null ? sections : [progress.text, ...sections];
+    if (progress !== null) hits += progress.hits;
+    const body = [front(tier, sections.length > 0), ...(region.length ? ["", dataRegion(region.join("\n\n"))] : []), "", ...ledger, end[0]].join("\n");
     return { head, body, tail: end[1], tokens: estimateTokens(head + PLACEHOLDER + body + PLACEHOLDER + end[1]), pull, tier, items, turns: { total: count, shown: count - absent.length, absent: absent.length }, hits };
   };
 
   // What no choice changes: the head, the two IDs, the sentences (the longer of the two tiers'), the region's lines and the end line.
-  const fixed = estimateTokens(head + PLACEHOLDER + PLACEHOLDER + end[0] + end[1] + dataRegion("")) + Math.max(estimateTokens(front("full", true)), estimateTokens(front("brief", true)), estimateTokens(front("brief", false))) + 16;
+  const fixed = estimateTokens(head + PLACEHOLDER + PLACEHOLDER + end[0] + end[1] + dataRegion("")) + (progress === null ? 0 : estimateTokens(progress.text) + 2) + Math.max(estimateTokens(front("full", true)), estimateTokens(front("brief", true)), estimateTokens(front("brief", false))) + 16;
   let reserve = LEDGER_RESERVE;
   for (let pass = 0; pass < 6; pass++) {
     const chosen = select(Math.max(0, budget.cap - fixed - reserve)), draft = build(chosen);

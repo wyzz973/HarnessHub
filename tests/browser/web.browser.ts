@@ -2716,13 +2716,13 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   await expect(log.locator(".motion-message-in")).toHaveCount(1); await expect(log.locator(".motion-message-in .user-message")).toHaveText(/NATIVE_ACTIVITY/u);
   // P01: the plan with a step left stays above the composer; it opens every step and its arrow turns.
   const bar = page.locator(".plan-bar"), toggle = bar.getByRole("button").first();
-  await expect(toggle).toContainText("计划"); await expect(toggle).toContainText("1 / 2 · 正在：修改文件"); await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toContainText("任务清单"); await expect(toggle).toContainText("1/2 · 正在：修改文件"); await expect(toggle).toHaveAttribute("aria-expanded", "false");
   const below = await page.locator(".composer-box").boundingBox(), above = await toggle.boundingBox();
   assert.ok(below && above && above.y + above.height <= below.y, "the plan bar sits above the composer");
   assert.ok(Math.abs(below.y - above.y - above.height - 8) <= 1, `closed, it keeps the composer's 8 px gap and no more (${below.y - above.y - above.height})`);
   await shoot("dl6-plan");
   await toggle.click(); await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  await expect(bar.getByRole("list", { name: "Codex 维护的计划" }).getByRole("listitem")).toHaveText(["读取工作区", "修改文件"]);
+  await expect(bar.getByRole("list", { name: "Codex 的任务清单" }).getByRole("listitem")).toHaveText(["读取工作区", "修改文件"]);
   await expect(toggle.locator("svg").last()).toHaveClass(/rotate-180/u);
   // #22: the steps open by their height (0fr → 1fr) and the arrow turns, both in 200 ms.
   await expect.poll(motion).toEqual(expect.arrayContaining(["grid-template-rows:0.2s", "rotate:0.2s"]));

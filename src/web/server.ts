@@ -434,7 +434,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // The context table's API (docs/decisions/LOG.md, 2026-11-11): what a Harness running a Turn of a conversation may read back of it, by the token its process was given.
   const tableApi = new TableApi({ grants: app.grants, reader: app.store, content: app.content,
     secrets: (configuration, harnessIds) => { const factory: SessionBindingFactory = app.factory; return factory.relaySecrets === undefined ? Promise.resolve([]) : factory.relaySecrets(configuration, harnessIds); },
-    http: { json, queries } });
+    http: { json, queries, body: request => body(request) },
+    // `hub_update_plan` and `hub_wrap_up`: the Turn in progress of the token's conversation takes them, from the Harness the token was minted for.
+    progress: (grant, made) => { app.runtime.hubProgress(grant.sessionId, { harnessId: grant.harnessId, controlId: grant.controlId }, made); } });
   // This build: every compiled Gateway file by name and content (ADR-033), also named in a Turn's diagnostics (ADR-037).
   const revision = buildRevision(fileURLToPath(new URL("..", import.meta.url)));
   // Derived observations only; a file this version cannot adopt is reported and left as it is. Catalogs are reused only by

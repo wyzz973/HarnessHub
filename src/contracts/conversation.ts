@@ -61,7 +61,7 @@ export const PAGE = {
  * relay's rows when a Turn is drawn (their state changes after the Turn, and a copy would go stale).
  */
 export type ItemId =
-  | "user" | "plan"
+  | "user" | "plan" | "recap"
   | `tool:${string}` | `activity:${string}` | `permission:${string}`
   | `text:${number}` | `think:${number}` | `notice:${number}` | `output:${number}`;
 

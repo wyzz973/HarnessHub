@@ -519,6 +519,32 @@ export class SessionRuntime {
     if (this.kept.has(id)) void this.requestRelease(id, "native_reset");
     return this.load(id);
   }
+  /**
+   * What the Harness of the Turn in progress says of it through the Hub's tools (hub-tools.ts): its task list, replacing the one the Turn had (the Turn's `plan` item, the same
+   * item a Harness's own task list is), or its wrap-up (the Turn's `recap`: a short recap, maybe a question and the answers to offer). Only the Harness the Turn runs on, and only
+   * while the Turn runs; written and published as any report of the Turn is.
+   */
+  hubProgress(id: SessionId, from: { readonly harnessId: string; readonly controlId: string }, made:
+    | { readonly kind: "plan"; readonly items: readonly { readonly content: string; readonly status: "pending" | "in_progress" | "completed" }[]; readonly explanation?: string }
+    | { readonly kind: "recap"; readonly summary: string; readonly ask?: string; readonly actions?: readonly string[] }): void {
+    this.admit();
+    const execution = this.actives.get(id);
+    if (execution === undefined) throw new SessionError("NO_TURN_IN_PROGRESS", "这个对话现在没有进行中的回合");
+    const state = this.owned(execution), run = runIn(state, execution.runId);
+    if (run === undefined || run.status !== "running") throw new SessionError("NO_TURN_IN_PROGRESS", "这个对话现在没有进行中的回合");
+    if (run.selection.harnessId !== from.harnessId || run.selection.controlId !== from.controlId) throw new SessionError("NOT_THIS_TURN", "进行中的回合不是这个 Harness 在跑");
+    execution.clock.lastEventAt = performance.now();
+    this.flushStream(execution);
+    const at = this.options.now().getTime();
+    if (made.kind === "plan") {
+      const value: ControlEvent = { type: "plan", entries: made.items.map(item => ({ content: item.content, status: item.status })), ...(made.explanation === undefined ? {} : { explanation: made.explanation }) };
+      this.firstOutput(state, run);
+      this.placed(execution, { kind: "event", event: value, at }, [event("run.output", { runId: run.id, event: logged(value), by: "hub_tool" })], { always: true });
+      return;
+    }
+    this.placed(execution, { kind: "recap", summary: made.summary, ...(made.ask === undefined ? {} : { ask: made.ask }), ...(made.actions === undefined ? {} : { actions: made.actions }), at },
+      [event("run.recap", { runId: run.id, summary: made.summary, ...(made.ask === undefined ? {} : { ask: made.ask }), ...(made.actions === undefined ? {} : { actions: made.actions }) })], { always: true });
+  }
   /** A branch is taken only while nothing goes on: no Turn open or queued, no switch waiting. */
   private idleForBranch(state: Conversation): void {
     if (state.activeRunId !== null || state.pendingSwitchId !== null || state.runs.some(run => !terminal(run.status)) || this.workers.has(state.id))

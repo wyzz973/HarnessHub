@@ -54,7 +54,7 @@ import { initializeFile, initializeRoot, pathIdentity, processMayBeAlive, sameFi
  */
 
 const activeRoots = new Set<string>();
-const BESIDE = new Set<ItemType>(["notice", "error", "plan", "artifact", "context_event"]);
+const BESIDE = new Set<ItemType>(["notice", "error", "plan", "recap", "artifact", "context_event"]);
 const WORK = new Set<string>(WORK_TYPES);
 const ROW_BYTES = 64;
 const SEARCHED = new Set(["user_message", "assistant_message"]);
@@ -1199,6 +1199,23 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
       // Only the Turn that has it is read.
       const item = this.allItems(held, run).find(entry => entry.seq === seq);
       if (item !== undefined) return { ordinal, runId: run.id, harnessId: run.selection.harnessId, row: itemRowOf(item) };
+    }
+    return null;
+  }
+
+  /**
+   * The wrap-up of the conversation's latest finished Turn (its `recap`, from the Hub's tool `hub_wrap_up`), with that Turn; null when that Turn has none. Only that Turn is read.
+   * An older Turn's wrap-up is not the conversation's latest: a Turn that ended without one has none.
+   */
+  latestRecap(id: SessionId): { readonly ordinal: number; readonly runId: RunId; readonly harnessId: string; readonly row: ItemRow } | null {
+    this.assertOwner(); sessionId(id);
+    const held = this.entry(id), runs = held.conversation.runs;
+    for (let ordinal = runs.length - 1; ordinal >= 0; ordinal--) {
+      const run = runs[ordinal]!;
+      if (!runFinished(run.status)) continue;
+      const seq = this.factsOf(held, run).recap;
+      const item = seq === undefined || seq === null ? undefined : this.allItems(held, run).find(entry => entry.seq === seq);
+      return item === undefined ? null : { ordinal, runId: run.id, harnessId: run.selection.harnessId, row: itemRowOf(item) };
     }
     return null;
   }

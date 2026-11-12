@@ -27,7 +27,11 @@ const SERVER_VERSION = "1";
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 const REQUEST_MS = 30_000, MAX_REPLY_BYTES = 8 * 1024 * 1024;
 const INSTRUCTIONS = "HarnessHub keeps the whole history of this conversation. A handoff note you were given is a summary: when it says something was left out, "
-  + "or when you need what the user or an earlier Harness said or did, read it back with hub_turns, hub_read_turn and hub_search.";
+  + "or when you need what the user or an earlier Harness said or did, read it back with hub_turns, hub_read_turn and hub_search. "
+  + "HarnessHub also shows the user how your work goes, above the message box: when a task takes several steps, call hub_update_plan with the whole task list "
+  + "when you start and again each time a step starts or finishes (one step in_progress at a time); and at the end of every turn call hub_wrap_up once with two or three sentences "
+  + "of what is now done and what is not, adding one question and one or two short answers as buttons only when the next move is the user's decision. "
+  + "These are for the user to see; they do not replace your reply.";
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The tools
@@ -36,8 +40,10 @@ const INSTRUCTIONS = "HarnessHub keeps the whole history of this conversation. A
 interface ToolDefinition {
   readonly name: TableTool; readonly title: string; readonly description: string;
   readonly inputSchema: { readonly type: "object"; readonly properties: Readonly<Record<string, unknown>>; readonly required?: readonly string[]; readonly additionalProperties: false };
-  readonly annotations: { readonly title: string; readonly readOnlyHint: true; readonly destructiveHint: false; readonly idempotentHint: true; readonly openWorldHint: false };
+  readonly annotations: { readonly title: string; readonly readOnlyHint: boolean; readonly destructiveHint: false; readonly idempotentHint: true; readonly openWorldHint: false };
 }
+/** The two tools that tell the Hub how the turn goes: they change only what the user is shown, and calling one again with the same input changes nothing. */
+const PROGRESS = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const whole = (description: string, minimum: number, maximum?: number) => ({ type: "integer", minimum, ...(maximum === undefined ? {} : { maximum }), description });
 const TOOLS: readonly ToolDefinition[] = [
@@ -71,6 +77,28 @@ const TOOLS: readonly ToolDefinition[] = [
       after: { type: "string", pattern: "^(w[0-9]{1,15}\\.[0-9]{1,9}(user|reply)|[0-9]{1,9}\\.[0-9]{1,9})$", description: "Where to go on from: the `after` value the previous result gave for its next page." },
       in: { type: "string", enum: [...TABLE_SEARCH_SCOPES], description: "What to search: all (the default) is everything, read turn by turn; words is only the user's words and the replies, which is quick however long the conversation is." } }, required: ["query"], additionalProperties: false },
     annotations: { title: "Search this conversation", ...READ_ONLY } },
+  { name: "hub_update_plan", title: "Update the task list",
+    description: "Show the user your task list for this task, pinned above their message box in HarnessHub. Give the whole list every time; it replaces the one shown before. "
+      + "Use it when the work takes several steps (three or more, or the user gave you a list): call it once at the start with every step pending except the one you begin (in_progress), "
+      + "then again each time a step starts or finishes. Keep exactly one step in_progress while you work, mark finished steps completed, and add or reword steps when the plan changes. "
+      + "Steps are short imperative phrases (\"Read the config loader\", \"Add the retry\", \"Run the tests\"). Skip it for a quick question or a one-step change.",
+    inputSchema: { type: "object", properties: {
+      items: { type: "array", minItems: 1, description: "The whole task list, in order.", items: { type: "object", properties: {
+        content: { type: "string", minLength: 1, description: "The step, as a short imperative phrase." },
+        status: { type: "string", enum: ["pending", "in_progress", "completed"], description: "pending, in_progress (one step at a time) or completed." } }, required: ["content", "status"], additionalProperties: false } },
+      explanation: { type: "string", description: "Optional: one sentence on why the plan changed." } }, required: ["items"], additionalProperties: false },
+    annotations: { title: "Update the task list", ...PROGRESS } },
+  { name: "hub_wrap_up", title: "Wrap up this turn",
+    description: "Show the user a short wrap-up of this turn above their message box in HarnessHub: call it once, last, when your work for this message is done (not for every message of a chat). "
+      + "`recap`: two or three short sentences, addressed to the user, of what is now true or changed and what is not done or not verified. "
+      + "When the next move is the user's decision (a choice of approach, a go-ahead), add `ask`: one short question, and `actions`: one or two answers as buttons, your recommendation first, "
+      + "each label one to four words as the user would say it (\"Yes, go ahead\", \"Not now\"); a button sends its label as the user's next message. Leave both out when nothing waits on the user.",
+    inputSchema: { type: "object", properties: {
+      recap: { type: "string", minLength: 1, description: "Two or three short sentences: what is done, what is not." },
+      ask: { type: "string", description: "Optional: the one question the user is to answer, in one short sentence." },
+      actions: { type: "array", minItems: 1, maxItems: 2, description: "Optional, with ask: one or two answers, recommendation first.", items: { type: "object", properties: {
+        label: { type: "string", minLength: 1, description: "The answer as the user would say it, one to four words." } }, required: ["label"], additionalProperties: false } } }, required: ["recap"], additionalProperties: false },
+    annotations: { title: "Wrap up this turn", ...PROGRESS } },
 ];
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -110,6 +138,28 @@ function get(connection: { readonly origin: string; readonly token: string }, pa
     call.on("error", fail);
     call.end();
   });
+}
+/** Tells the Hub how the turn goes (the task list, the wrap-up): a POST of JSON to one of its two writing routes. */
+function post(connection: { readonly origin: string; readonly token: string }, path: string, value: unknown): Promise<{ readonly status: number; readonly body: unknown }> {
+  return new Promise((done, fail) => {
+    const payload = Buffer.from(JSON.stringify(value), "utf8");
+    const call = httpRequest(new URL(path, connection.origin), { method: "POST", agent: false, headers: { Authorization: "Bearer " + connection.token, Accept: "application/json", "Content-Type": "application/json", "Content-Length": String(payload.length) } }, response => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => { chunks.push(chunk); });
+      response.on("end", () => { let body: unknown = null; try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { /* the status says what it was */ } done({ status: response.statusCode ?? 0, body }); });
+      response.on("error", fail);
+    });
+    call.setTimeout(REQUEST_MS, () => call.destroy(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" })));
+    call.on("error", fail);
+    call.end(payload);
+  });
+}
+async function tell(connection: { readonly origin: string; readonly token: string }, path: string, value: unknown): Promise<void> {
+  let reply: Awaited<ReturnType<typeof post>>;
+  try { reply = await post(connection, path, value); } catch (error) { throw unreachable(connection.origin, error); }
+  const body = record(reply.body);
+  if (reply.status === 401) throw new ToolError("HarnessHub does not accept this conversation's token (the Hub may have been restarted since this program started, or the turn has ended).");
+  if (reply.status !== 200) throw new ToolError(typeof body?.message === "string" ? body.message : "HarnessHub answered with status " + reply.status + ".");
 }
 function unreachable(origin: string, error: unknown): ToolError {
   const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
@@ -247,6 +297,18 @@ export async function callTool(name: string, args: Readonly<Record<string, unkno
         const view = await ask(connection, "/api/table/search", { q: query, limit: wholeArgument(args, "limit", 1, TABLE_LIMITS.searchMax), after, in: scope });
         return { text: renderSearch(view as unknown as TableSearchView, surface, { after: after !== undefined }), isError: false };
       }
+      case "hub_update_plan": {
+        const items = Array.isArray(args.items) ? args.items : null;
+        if (items === null || items.length === 0) throw new ToolError("items must be the whole task list: [{ content, status }], status one of pending, in_progress, completed.");
+        await tell(connection, "/api/table/plan", { items, ...(typeof args.explanation === "string" ? { explanation: args.explanation } : {}) });
+        const steps = items as { readonly status?: unknown }[], done = steps.filter(step => step.status === "completed").length;
+        return { text: "Task list shown to the user (" + done + " of " + steps.length + " done).", isError: false };
+      }
+      case "hub_wrap_up": {
+        if (typeof args.recap !== "string" || args.recap.trim() === "") throw new ToolError("recap is required: two or three short sentences of what is done and what is not.");
+        await tell(connection, "/api/table/wrap-up", { recap: args.recap, ...(typeof args.ask === "string" ? { ask: args.ask } : {}), ...(Array.isArray(args.actions) ? { actions: args.actions } : {}) });
+        return { text: "Wrap-up shown to the user.", isError: false };
+      }
       default: return { text: "Unknown tool: " + name + ".", isError: true };
     }
   } catch (error) {
@@ -334,7 +396,7 @@ const USAGE = [
   "                                                   (input, output and diff need --tool K, a tool call's number in the turn)",
   "  hub-tools search <words> [--limit N] [--after C] [--in all|words]",
   "                                                   find words in the whole conversation, a page at a time (C: the cursor the page before gave); --in words searches only the user's words and the replies, quickly",
-  "  hub-tools mcp                                    serve these three tools as an MCP server on stdio",
+  "  hub-tools mcp                                    serve these tools as an MCP server on stdio (with hub_update_plan and hub_wrap_up, which only the server has)",
   "",
   "It reads " + TABLE_ENV.url + " and " + TABLE_ENV.session + " from the environment; HarnessHub sets them for the programs it starts.",
 ].join("\n");

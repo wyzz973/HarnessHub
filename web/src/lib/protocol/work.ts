@@ -2,6 +2,7 @@ import { ITEM_STATUS_WORDS } from "../../../../src/contracts/protocol-words.js";
 import { WORK_TYPES, type FileOp, type ItemStatus, type ReasoningItem, type WorkItem } from "../../../../src/contracts/protocol.js";
 import type { ReadItem, ReadTurn } from "../../../../src/contracts/protocol-read.js";
 import type { PublicMessage } from "../../../../src/contracts/session.js";
+import { TABLE_MCP_NAME, TABLE_PROGRESS_TOOLS } from "../../../../src/contracts/table.js";
 
 /*
  * What the page says of the actions of a Turn, from the protocol's items alone (docs/proposals/protocol/hub-protocol.html §13): one
@@ -269,8 +270,12 @@ export interface Arrangement {
   readonly children: ReadonlyMap<string, readonly ReadItem[]>;
   readonly over: boolean;
 }
-/** Items the timeline does not draw: the task list stands above the message box, not in the transcript. */
-const ELSEWHERE: ReadonlySet<string> = new Set(["plan"]);
+/**
+ * Calls the timeline does not draw: the Hub's two tools that tell how the Turn goes (`hub_update_plan`, `hub_wrap_up`). What they said is the Turn's task list and wrap-up,
+ * each one line in the transcript and shown whole above the message box; the call itself would only say it again.
+ */
+const PROGRESS: ReadonlySet<string> = new Set(TABLE_PROGRESS_TOOLS);
+const elsewhere = (item: ReadItem): boolean => item.type === "mcp_tool" && item.server === TABLE_MCP_NAME && PROGRESS.has(item.tool);
 
 /**
  * Lays items out in the order they come in: an action that comes after another with nothing but thoughts between them joins its
@@ -279,7 +284,7 @@ const ELSEWHERE: ReadonlySet<string> = new Set(["plan"]);
  * with them.
  */
 export function lay(items: readonly ReadItem[]): readonly Block[] {
-  const top = items.filter(item => !ELSEWHERE.has(item.type)), blocks: Block[] = [], stands = (item: ReadItem) => isWork(item) || item.type === "reasoning" || isGap(item);
+  const top = items.filter(item => !elsewhere(item)), blocks: Block[] = [], stands = (item: ReadItem) => isWork(item) || item.type === "reasoning" || isGap(item);
   for (let at = 0; at < top.length;) {
     if (!stands(top[at]!)) { blocks.push({ kind: "item", item: top[at]! }); at++; continue; }
     let end = at;

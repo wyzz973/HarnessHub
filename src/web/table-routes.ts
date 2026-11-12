@@ -27,6 +27,8 @@ import {
 export interface TableHttp {
   json(response: ServerResponse, status: number, value: unknown): void;
   queries(url: URL, allowed: readonly string[]): void;
+  /** The JSON body of a request (the two writing routes). */
+  body?(request: IncomingMessage): Promise<unknown>;
 }
 export interface TableApiOptions {
   readonly grants: TableGrants;
@@ -38,6 +40,34 @@ export interface TableApiOptions {
   readonly secrets?: (configuration: SessionConfiguration, harnessIds: readonly string[]) => Promise<readonly string[]>;
   readonly http: TableHttp;
   readonly now?: () => number;
+  /** What the Harness of the conversation's Turn in progress says of it (`hub_update_plan`, `hub_wrap_up`): the Runtime places it in the Turn; absent, the two routes refuse. */
+  readonly progress?: (grant: TableGrant, made: TableProgress) => void;
+}
+/** What the two writing tools bring: the whole task list, or the Turn's wrap-up. */
+export type TableProgress =
+  | { readonly kind: "plan"; readonly items: readonly { readonly content: string; readonly status: "pending" | "in_progress" | "completed" }[]; readonly explanation?: string }
+  | { readonly kind: "recap"; readonly summary: string; readonly ask?: string; readonly actions?: readonly string[] };
+const STEP_STATES = ["pending", "in_progress", "completed"] as const;
+/** The progress a request's body says, checked for its shape (never for its size: a task list or a recap is as long as the Harness makes it). */
+function progressOf(path: string, value: unknown): TableProgress {
+  const body = value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : invalid("the body must be a JSON object");
+  const text = (field: unknown, name: string): string => typeof field === "string" && field.trim() !== "" ? field : invalid(name + " must be a text");
+  if (path === "/api/table/plan") {
+    if (!Array.isArray(body.items)) invalid("items must be the whole task list: [{ content, status }]");
+    const items = (body.items as unknown[]).map((entry, index) => {
+      const row = entry !== null && typeof entry === "object" ? entry as Record<string, unknown> : invalid("items[" + index + "] must be { content, status }");
+      if (!(STEP_STATES as readonly unknown[]).includes(row.status)) invalid("items[" + index + "].status must be one of " + STEP_STATES.join(", "));
+      return { content: text(row.content, "items[" + index + "].content"), status: row.status as typeof STEP_STATES[number] };
+    });
+    return { kind: "plan", items, ...(typeof body.explanation === "string" && body.explanation.trim() !== "" ? { explanation: body.explanation } : {}) };
+  }
+  const actions = body.actions === undefined || body.actions === null ? [] : Array.isArray(body.actions) ? (body.actions as unknown[]).map((entry, index) => {
+    if (typeof entry === "string") return text(entry, "actions[" + index + "]");
+    const row = entry !== null && typeof entry === "object" ? entry as Record<string, unknown> : invalid("actions[" + index + "] must be { label }");
+    return text(row.label, "actions[" + index + "].label");
+  }) : invalid("actions must be a list of { label }");
+  const ask = typeof body.ask === "string" && body.ask.trim() !== "" ? body.ask : undefined;
+  return { kind: "recap", summary: text(body.recap, "recap"), ...(ask === undefined ? {} : { ask }), ...(actions.length === 0 ? {} : { actions }) };
 }
 
 /** The known secrets are asked for again after this long; a failed ask is not repeated for the shorter time. */
@@ -72,7 +102,8 @@ export class TableApi {
   async handle(request: IncomingMessage, response: ServerResponse, url: URL, method: string): Promise<boolean> {
     const { http } = this.options, path = url.pathname;
     const turn = /^\/api\/table\/turns\/([0-9]{1,6})$/u.exec(path), turns = path === "/api/table/turns", search = path === "/api/table/search";
-    if (!turn && !turns && !search) return false;
+    const writes = path === "/api/table/plan" || path === "/api/table/wrap-up";
+    if (!turn && !turns && !search && !writes) return false;
     // In this order: only this computer; then the token (whatever else is wrong with a request, a token that is not valid is a 401); then what may be asked.
     if (!loopback(request.socket.remoteAddress)) { http.json(response, 403, { code: "TABLE_LOCAL_ONLY", message: "The table is for programs on this computer" }); return true; }
     const grant = this.authenticate(request);
@@ -80,8 +111,15 @@ export class TableApi {
       response.setHeader("WWW-Authenticate", 'Bearer realm="harnesshub"');
       http.json(response, 401, { code: "TABLE_TOKEN_INVALID", message: "This conversation's token is missing, unknown or no longer valid" }); return true;
     }
-    if (method !== "GET") { response.setHeader("Allow", "GET"); http.json(response, 405, { code: "METHOD_NOT_ALLOWED", message: "The table is read with GET" }); return true; }
     if (request.headers.origin !== undefined) { http.json(response, 403, { code: "TABLE_LOCAL_ONLY", message: "The table is for programs on this computer, not for pages" }); return true; }
+    if (writes) {
+      if (method !== "POST") { response.setHeader("Allow", "POST"); http.json(response, 405, { code: "METHOD_NOT_ALLOWED", message: "The Turn's progress is told with POST" }); return true; }
+      http.queries(url, []);
+      if (this.options.progress === undefined || http.body === undefined) { http.json(response, 501, { code: "PROGRESS_UNAVAILABLE", message: "This HarnessHub does not take a Turn's progress" }); return true; }
+      this.options.progress(grant, progressOf(path, await http.body(request)));
+      http.json(response, 200, { ok: true }); return true;
+    }
+    if (method !== "GET") { response.setHeader("Allow", "GET"); http.json(response, 405, { code: "METHOD_NOT_ALLOWED", message: "The table is read with GET" }); return true; }
     const state = this.conversation(grant.sessionId), hiding = await this.redaction(state, grant);
     const notes = hiding.known ? [] : [UNHIDDEN];
     if (turns) {

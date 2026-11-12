@@ -1,6 +1,6 @@
 import type { ProviderView } from "./provider.js";
 import type { DeferredWork, TextRange } from "./conversation.js";
-import type { ProtocolItem, ProtocolTurn } from "./protocol.js";
+import type { PlanStep, ProtocolItem, ProtocolTurn } from "./protocol.js";
 import type { HarnessManagementView, InstallationJobView, InstallationLog } from "./management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunId, SelectionRequest, SessionEvent, SessionOrigin, SessionSnapshot } from "./session.js";
 import type { DeliveryEvidence, DeliveryStatus, EvidenceClass, RelayAttention, RelayDecision, RelayInstallationNotice, RelayPacketId, RelayPacketKind, RelayPrefKey, RunRelay, Tier } from "./relay.js";
@@ -486,7 +486,13 @@ export interface SessionHeadView extends Omit<SessionView, "messages" | "runs" |
    */
   readonly lastSwitch?: PublicSwitch;
   readonly facts: SessionFacts;
+  /** The conversation's latest task list (a Harness's own, or the one it gave with `hub_update_plan`), and the Turn it belongs to; absent when no Turn has one. */
+  readonly plan?: SessionPlanView;
+  /** The wrap-up of the latest finished Turn (`hub_wrap_up`): what the box above the message box shows; absent when that Turn gave none. */
+  readonly recap?: SessionRecapView;
 }
+export interface SessionPlanView { readonly runId: string; readonly ordinal: number; readonly harnessId: string; readonly steps: readonly PlanStep[]; readonly explanation?: string }
+export interface SessionRecapView { readonly runId: string; readonly ordinal: number; readonly harnessId: string; readonly summary: string; readonly ask?: string; readonly actions?: readonly string[] }
 /** One change of the conversation that has a stored detail, with the Turn it was made in. */
 export interface ConversationEdit { readonly runId: string; readonly ordinal: number; readonly harnessId: string; readonly item: WireItem }
 /**

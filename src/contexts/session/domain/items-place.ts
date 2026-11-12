@@ -178,6 +178,11 @@ export type PlaceInput =
   | { readonly kind: "notice"; readonly severity: "info" | "warning"; readonly title: string; readonly detail?: string; readonly code?: string; readonly at: number }
   /** The Hub's record of what the Turn changed in its workspace (WorkspaceRecord), with its stored diff: one `workspace` item, placed before the Turn settles. */
   | { readonly kind: "workspace"; readonly changes: readonly FileChange[]; readonly shared: boolean; readonly detail?: ContentRef; readonly at: number }
+  /**
+   * The wrap-up of the Turn its Harness gave through the Hub's tool `hub_wrap_up`: a short recap, and maybe one question with the answers to offer as buttons. One per Turn
+   * (`recap`): a second call replaces it.
+   */
+  | { readonly kind: "recap"; readonly summary: string; readonly ask?: string; readonly actions?: readonly string[]; readonly at: number }
   /** `stoppedBy`: who stopped a Turn that ended cancelled, when the Runtime knows; the user's stop is then the Turn's last item (`interrupt`). */
   | { readonly kind: "settled"; readonly status: TerminalStatus; readonly at: number; readonly stoppedBy?: "user" };
 export interface PlaceEnv {
@@ -483,6 +488,14 @@ function placePlan(s: Draft, w: Writes, event: Extract<ControlEvent, { type: "pl
   if (position === undefined || entry === undefined) { insert(s, w, { itemId: "plan", fields, status: "running", at }); return; }
   if (!sameJson(entry.item.fields, fields)) change(s, w, position, { ...entry.item, fields }, entry);
 }
+function placeRecap(s: Draft, w: Writes, input: Extract<PlaceInput, { kind: "recap" }>, at: number): void {
+  const clipped: string[] = [], summary = scrub(str(input.summary), "summary", clipped), ask = input.ask === undefined ? "" : scrub(str(input.ask), "ask", clipped).trim();
+  const actions = (Array.isArray(input.actions) ? input.actions : []).map(action => scrub(str(action), "actions", clipped).trim()).filter(action => action !== "");
+  const fields = { type: "recap" as const, summary, ...(ask === "" ? {} : { ask }), ...(actions.length === 0 ? {} : { actions }), ...(clipped.length === 0 ? {} : { native: { clipped } }) } as ItemFields;
+  const position = find(s, "recap"), entry = position === undefined ? undefined : vecAt(s.entries, position);
+  if (position === undefined || entry === undefined) { insert(s, w, { itemId: "recap", fields, status: "completed", at, endedAt: at }); return; }
+  if (!sameJson(entry.item.fields, fields)) change(s, w, position, { ...entry.item, fields }, entry);
+}
 const noticeSeverity = (value: string): "error" | "warning" | "info" => value === "error" ? "error" : value === "warning" ? "warning" : "info";
 const printOf = (severity: string, title: string, more: string | undefined): string => createHash("sha256").update(JSON.stringify([severity, title, more ?? null])).digest("hex");
 /**
@@ -665,7 +678,7 @@ export function takeDetails(turn: ActiveTurn): { readonly turn: ActiveTurn; read
   });
   return store.length === 0 ? { turn, store } : { turn: { ...turn, entries }, store };
 }
-const BESIDE_THE_ANSWER: ReadonlySet<ItemType> = new Set<ItemType>(["notice", "error", "plan", "artifact", "context_event"]);
+const BESIDE_THE_ANSWER: ReadonlySet<ItemType> = new Set<ItemType>(["notice", "error", "plan", "recap", "artifact", "context_event"]);
 /**
  * The seq of the item that is the Turn's answer (`phase: "final"`), for a reader to put in: only a completed Turn has one, and it is the last
  * reply segment of the Turn, found past the notices, the plan, the artifacts and the context events. A Turn that ended on an action, or
@@ -743,6 +756,7 @@ export function place(turn: ActiveTurn, input: PlaceInput, env: PlaceEnv = {}): 
       case "expired": flushWindow(s, w, false); expire(s, w, input.at); break;
       case "notice": flushWindow(s, w, false); placeNotice(s, w, input, input.at, env, false); break;
       case "workspace": flushWindow(s, w, false); placeWorkspace(s, w, input); break;
+      case "recap": flushWindow(s, w, false); placeRecap(s, w, input, input.at); break;
       case "settled": settle(s, w, input.status, input.at, input.stoppedBy); break;
     }
   }

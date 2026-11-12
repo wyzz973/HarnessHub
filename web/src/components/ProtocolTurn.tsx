@@ -1,4 +1,4 @@
-import { Bot, Brain, Check, ChevronRight, CircleAlert, CircleDashed, CircleHelp, CircleStop, Copy, FilePen, FilePlus, FileText, GitBranch, Globe, Info, Plug, RotateCcw, Search, SquareTerminal, Wrench } from "lucide-react";
+import { Bot, Brain, Check, ChevronRight, CircleAlert, CircleDashed, CircleHelp, CircleStop, Copy, FilePen, FilePlus, FileText, GitBranch, Globe, Info, ListChecks, MessageSquareText, Plug, RotateCcw, Search, SquareTerminal, Wrench } from "lucide-react";
 import { createContext, memo, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { ReadItem, ReadTurn } from "../../../src/contracts/protocol-read.js";
@@ -214,7 +214,13 @@ function ItemView({ item }: { readonly item: ReadItem }) {
         {rest > 0 ? <MoreText runId={ctx.run.id} seq={item.seq} rest={rest} label={text ? "显示更多" : "显示这段回复"}/> : null}</> : null;
     }
     case "plan_proposal": return <div className="plan-proposal flex min-w-0 flex-col gap-1"><span className="px-1.5 text-caption text-fg-3">方案</span><StreamingMarkdown text={item.markdown} isStreaming={false} className="text-reading"/></div>;
-    case "recap": return <div className="recap flex min-w-0 flex-col gap-1 px-1.5 text-ui-sm text-fg-2"><span>{item.summary}</span>{item.ask ? <strong className="font-semibold text-fg">{item.ask}</strong> : null}</div>;
+    // The task list and the wrap-up are one line each here; they are shown whole above the message box (the plan bar, the next-step box).
+    case "plan": {
+      if (item.steps.length === 0) return null;
+      const done = item.steps.filter(step => step.status === "completed").length, now = item.steps.find(step => step.status === "in_progress");
+      return <QuietLine item="plan" icon={<ListChecks size={14}/>}><span className="task-list-line">任务清单 · {done}/{item.steps.length}{now ? " · 正在：" + now.text : done === item.steps.length ? " · 全部完成" : ""}</span></QuietLine>;
+    }
+    case "recap": return <QuietLine item="recap" icon={<MessageSquareText size={14}/>}><span className="recap-line line-clamp-1" title={item.summary + (item.ask ? "\n" + item.ask : "")}>小结：{item.summary}</span></QuietLine>;
     case "notice": return <NoticeList notices={[{ severity: item.severity, title: item.text, ...(item.more ? { detail: item.more } : {}) }]}/>;
     case "error": {
       return <div className="run-error flex items-start gap-2 rounded-block bg-surface px-3 py-2.5 text-ui-sm text-fg shadow-hairline" role="status" data-class={item.class}>
@@ -226,7 +232,7 @@ function ItemView({ item }: { readonly item: ReadItem }) {
     case "interrupt": return <QuietLine item="interrupt" icon={<CircleStop size={14}/>}>{quietLine(item)}</QuietLine>;
     case "context_event": case "delegation": case "approval": case "question": { const line = quietLine(item); return line === null ? null : <QuietLine item={item.type} icon={<Info size={14}/>}>{line}</QuietLine>; }
     case "unrecognized": return <QuietLine item="unrecognized" icon={<CircleHelp size={14}/>}>{quietLine(item)}</QuietLine>;
-    // Actions are blocks of their own; messages, switches and the task list are drawn elsewhere (Segments, the plan bar).
+    // Actions are blocks of their own; messages and switches are drawn elsewhere (Segments).
     default: return null;
   }
 }
