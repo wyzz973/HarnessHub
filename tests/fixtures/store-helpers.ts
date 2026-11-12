@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
@@ -24,6 +25,20 @@ export function temporary(t: TestContext, prefix = "harness-conversation-store-"
   const root = mkdtempSync(join(tmpdir(), prefix));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
+}
+/**
+ * Every file and directory under `directory`: its path, its size, its modification time and the digest of its bytes, as lines — so that two states of a data root are equal or not
+ * byte for byte, file list and times included. `except` leaves out names (the files of a write-ahead log, which a process that holds a database may change).
+ */
+export function treeDigest(directory: string, except: readonly string[] = [], prefix = ""): string[] {
+  const lines: string[] = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name < right.name ? -1 : 1)) {
+    if (except.includes(entry.name)) continue;
+    const path = join(directory, entry.name), info = lstatSync(path);
+    if (entry.isDirectory()) { lines.push(prefix + entry.name + "/ " + info.mtimeMs); lines.push(...treeDigest(path, except, prefix + entry.name + "/")); }
+    else lines.push(prefix + entry.name + " " + info.size + " " + info.mtimeMs + " " + createHash("sha256").update(readFileSync(path)).digest("hex"));
+  }
+  return lines;
 }
 /** A store on a new data root in a temporary directory; closed after the test (a test that disabled it has asserted why). */
 export function openStore(t: TestContext, options: SqliteConversationStoreOptions = {}): Opened {

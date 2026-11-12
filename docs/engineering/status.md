@@ -188,6 +188,7 @@ pnpm sessions show --session session-ID --data-dir data --json
 pnpm sessions events --session session-ID --data-dir data --after-seq 0 --limit 50 --json
 pnpm sessions close --session session-ID --data-dir data
 pnpm sessions resume --session session-ID --data-dir data --harness codex
+pnpm sessions check-upgrade --data-dir data [--json]   # 升级前的只读预检：两段各走一遍，说出哪些对话会停；不写文件、不取所有权，服务运行时也能跑；退出码 0 通过、1 有对话/存储不通过、2 没能检查
 ~~~
 
 将示例路径/Session ID替换为自己的值。新会话输出公共Session ID；续接使用相同数据根。默认原生模式沿用本机已有模型/登录；显式--config-home的Codex配置在该根codex目录。真实本机登录、云模型和私有合成模型验收分别记录，不能互相替代。

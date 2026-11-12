@@ -50,7 +50,8 @@ import { dispatched } from "./relay/advance.js";
  *   (`output:<n>`) — and `legacyOrder` is set on the row: the order is a fixed arrangement, not what happened first. `seq` runs from 1 over the
  *   items there are. A call that happened inside another (`parentId`) names the item of that call: `tool:` and the parent's id as the Harness gave it.
  *   A message's seq is the item's `createdSeq` (the user message's also the row's `userSeq`); no other item has one: nothing says when it happened. An id a Harness gave twice in one Run (the Runtime never made two; the old validation does not forbid them) takes the
- *   next free `#n` for the item and keeps the given one in `native.id`.
+ *   next free `#n` for the item and keeps the given one in `native.id`. An id with half of a surrogate pair in it (a call's, an activity's, or the parent a call names) is the id
+ *   as a TEXT column holds it (U+FFFD for each half), and the one the Harness gave is kept in `native.id` (`native.parent` for a parent).
  *
  * WHAT THE CALLER SUPPLIES (`at`) — the facts of the Run that are not in its snapshot, read by the migration (T4) from the event log and the
  *   relay's rows, never worked out here:
@@ -154,11 +155,16 @@ export function toItems(run: PublicRun, messages: { readonly user: PublicMessage
     const key = role + "\n" + itemSeq + "\n" + content.id;
     if (!refs.has(key)) refs.set(key, { contentId: content.id, sessionId: at.sessionId, runId: run.id, itemSeq, role });
   };
-  /** The id of an item whose id the Harness gave: `<prefix><given>`, or the next free `#n` when an earlier item of the Run took it (then `given` is set). */
+  /**
+   * The id of an item whose id the Harness gave: `<prefix><given>`, or the next free `#n` when an earlier item of the Run took it (then `given` is set). A given id with half
+   * of a surrogate pair in it is held by a TEXT column as U+FFFD, so the item's id is the id as the column gives it back (and that may take a `#n`, several ids looking alike
+   * once their halves are replaced), and `given` is set to say what the Harness gave.
+   */
   const free = (prefix: "tool:" | "activity:", given: string): { readonly itemId: string; readonly given?: string } => {
-    if (!taken.has(prefix + given)) return { itemId: prefix + given };
-    let n = 2; while (taken.has(prefix + given + "#" + n)) n++;
-    return { itemId: prefix + given + "#" + n, given };
+    const shown = sound(given).text;
+    if (!taken.has(prefix + shown)) return shown === given ? { itemId: prefix + shown } : { itemId: prefix + shown, given };
+    let n = 2; while (taken.has(prefix + shown + "#" + n)) n++;
+    return { itemId: prefix + shown + "#" + n, given };
   };
   const add = (itemId: string, status: ItemStatus, fields: ItemFields, extra: { readonly text?: string; readonly parentId?: string; readonly createdSeq?: number } = {}): number => {
     const seq = items.length + 1;
@@ -177,9 +183,11 @@ export function toItems(run: PublicRun, messages: { readonly user: PublicMessage
   if (run.thinking !== undefined) spoken("think:1", standing, { type: "reasoning" }, run.thinking);
   for (const tool of run.tools ?? []) {
     const { itemId, given } = free("tool:", tool.id), derived = derive(tool, turn);
+    // The call this one happened inside is named by its item id as a column holds it; what the Harness gave is kept where the column cannot hold it.
+    const parent = tool.parentId === undefined ? undefined : sound(tool.parentId).text;
     const native: NativeFacts = { title: tool.title, status: tool.status, ...(tool.kind === undefined ? {} : { kind: tool.kind }), ...(tool.name === undefined ? {} : { name: tool.name }),
-      ...(tool.exitCode === undefined ? {} : { exitCode: tool.exitCode }), ...(given === undefined ? {} : { id: given }) };
-    const seq = add(itemId, derived.status, { ...derived.fields, ...(tool.detail === undefined ? {} : { detail: tool.detail }), native } as ItemFields, tool.parentId === undefined ? {} : { parentId: "tool:" + tool.parentId });
+      ...(tool.exitCode === undefined ? {} : { exitCode: tool.exitCode }), ...(given === undefined ? {} : { id: given }), ...(parent === undefined || parent === tool.parentId ? {} : { parent: tool.parentId! }) };
+    const seq = add(itemId, derived.status, { ...derived.fields, ...(tool.detail === undefined ? {} : { detail: tool.detail }), native } as ItemFields, parent === undefined ? {} : { parentId: "tool:" + parent });
     if (tool.detail !== undefined) reference(tool.detail, "tool_detail", seq);
   }
   for (const activity of run.activities ?? []) {
@@ -246,7 +254,7 @@ export function fromItems(converted: ConvertedRun): { readonly run: PublicRun; r
     else if (id.startsWith("text:")) { const text = restored(item); if (reply === undefined) reply = { text, seq: item.createdSeq ?? row.userSeq }; else reply.text += text; }
     else if (id.startsWith("tool:")) {
       tools.push({ id: native?.id ?? id.slice(5), title: native?.title ?? "", status: native?.status ?? item.status, ...(native?.kind === undefined ? {} : { kind: native.kind }),
-        ...(native?.name === undefined ? {} : { name: native.name }), ...(item.parentId === null ? {} : { parentId: item.parentId.startsWith("tool:") ? item.parentId.slice(5) : item.parentId }),
+        ...(native?.name === undefined ? {} : { name: native.name }), ...(item.parentId === null ? {} : { parentId: native?.parent ?? (item.parentId.startsWith("tool:") ? item.parentId.slice(5) : item.parentId) }),
         ...(native?.exitCode === undefined ? {} : { exitCode: native.exitCode }),
         ...(fields.detail === undefined ? {} : { detail: fields.detail }) });
     } else if (id.startsWith("activity:")) {

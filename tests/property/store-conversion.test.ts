@@ -63,23 +63,25 @@ function viaJson(converted: ConvertedRun): ConvertedRun {
 // A real database: what a conversion's rows go through (JSON columns, a TEXT column for the chunks)
 // ---------------------------------------------------------------------------------------------------------------------------------
 const database = new DatabaseSync(":memory:");
+// As the real tables have it: the item's id and its parent are TEXT columns (a column holds half of a surrogate pair as U+FFFD), and the rest of the item is JSON.
 database.exec(`CREATE TABLE runs(run_id TEXT PRIMARY KEY, row_json TEXT NOT NULL CHECK(json_valid(row_json))) STRICT;
-CREATE TABLE items(run_id TEXT NOT NULL, seq INTEGER NOT NULL, item_json TEXT NOT NULL CHECK(json_valid(item_json)), PRIMARY KEY(run_id, seq)) STRICT;
+CREATE TABLE items(run_id TEXT NOT NULL, seq INTEGER NOT NULL, item_id TEXT NOT NULL, parent_id TEXT, item_json TEXT NOT NULL CHECK(json_valid(item_json)), PRIMARY KEY(run_id, seq)) STRICT;
 CREATE TABLE item_text(run_id TEXT NOT NULL, item_seq INTEGER NOT NULL, chunk INTEGER NOT NULL, text TEXT NOT NULL, bytes INTEGER NOT NULL CHECK(bytes=length(CAST(text AS BLOB))), PRIMARY KEY(run_id, item_seq, chunk)) STRICT, WITHOUT ROWID;`);
-const putRun = database.prepare("INSERT INTO runs(run_id,row_json) VALUES(?,?)"), putItem = database.prepare("INSERT INTO items(run_id,seq,item_json) VALUES(?,?,?)");
+const putRun = database.prepare("INSERT INTO runs(run_id,row_json) VALUES(?,?)"), putItem = database.prepare("INSERT INTO items(run_id,seq,item_id,parent_id,item_json) VALUES(?,?,?,?,?)");
 const putText = database.prepare("INSERT INTO item_text(run_id,item_seq,chunk,text,bytes) VALUES(?,?,?,?,?)");
-const getRun = database.prepare("SELECT row_json FROM runs WHERE run_id=?"), getItems = database.prepare("SELECT seq,item_json FROM items WHERE run_id=? ORDER BY seq");
+const getRun = database.prepare("SELECT row_json FROM runs WHERE run_id=?"), getItems = database.prepare("SELECT seq,item_id,parent_id,item_json FROM items WHERE run_id=? ORDER BY seq");
 const getText = database.prepare("SELECT text FROM item_text WHERE run_id=? AND item_seq=? ORDER BY chunk");
 function throughDatabase(converted: ConvertedRun): ConvertedRun {
   const id = converted.row.runId;
   putRun.run(id, JSON.stringify(converted.row));
   for (const item of converted.items) {
-    const { text, ...rest } = item;
-    putItem.run(id, item.seq, JSON.stringify(rest));
+    const { text, itemId, parentId, ...rest } = item;
+    putItem.run(id, item.seq, itemId, parentId, JSON.stringify(rest));
     text.forEach((chunk, at) => putText.run(id, item.seq, at, chunk, Buffer.byteLength(chunk, "utf8")));
   }
   const row = JSON.parse(String(getRun.get(id)!.row_json)) as RunRow;
-  const items = getItems.all(id).map((found): HeldItem => ({ ...(JSON.parse(String(found.item_json)) as Omit<HeldItem, "text">), text: getText.all(id, Number(found.seq)).map(chunk => String(chunk.text)) }));
+  const items = getItems.all(id).map((found): HeldItem => ({ ...(JSON.parse(String(found.item_json)) as Omit<HeldItem, "text" | "itemId" | "parentId">), itemId: String(found.item_id), parentId: found.parent_id === null ? null : String(found.parent_id),
+    text: getText.all(id, Number(found.seq)).map(chunk => String(chunk.text)) }));
   for (const table of ["item_text WHERE run_id", "items WHERE run_id", "runs WHERE run_id"]) database.prepare("DELETE FROM " + table + "=?").run(id);
   return { row, items, contentRefs: converted.contentRefs };
 }
@@ -330,14 +332,14 @@ function reference(s: Source, tag: string, kind: ContentRef["kind"] = "file"): C
 function mutate(s: Source, template: Turn, hostile: boolean, size: number, tag: string): { readonly run: PublicRun; readonly user: PublicMessage; readonly assistant?: PublicMessage } {
   const count = (limit: number): number => hostile ? s.int(size + 1) : s.int(Math.min(limit, size) + 1);
   const base = template.run;
-  const ids = hostile ? ["a", "b", "__proto__", "tool:x", "tool:x#2", "", "a#2"] : [];
+  const ids = hostile ? ["a", "b", "__proto__", "tool:x", "tool:x#2", "", "a#2", "c\ud83d", "\ude00d", "c\ufffd", "\ud83d", "\ude00", "c\ud83d#2"] : [];
   const id = (prefix: string, at: number): string => hostile && s.chance(0.3) ? s.pick(ids) : prefix + at + (s.chance(0.2) ? " " + words(s, false) : "");
   const unique = (list: { readonly id: string }[]): { readonly id: string }[] => hostile ? list : list.filter((item, at) => list.findIndex(other => other.id === item.id) === at);
   const tools = unique(Array.from({ length: count(128) }, (_, at) => {
     const tool: { id: string; title: string; status: string; kind?: string; name?: string; parentId?: string; exitCode?: number; detail?: ContentRef } = { id: id("t", at), title: words(s, hostile), status: s.chance(0.7) ? s.pick(STATUS_WORDS) : words(s, hostile) };
     if (s.chance(0.7)) tool.kind = s.chance(0.8) ? s.pick(KINDS) : words(s, hostile);
     if (s.chance(0.7)) tool.name = s.chance(0.8) ? s.pick(NAMES) : words(s, hostile);
-    if (at > 0 && s.chance(0.2)) tool.parentId = "t" + s.int(at);
+    if (at > 0 && s.chance(0.2)) tool.parentId = hostile && s.chance(0.3) ? s.pick(ids) : "t" + s.int(at);
     if (s.chance(0.3)) tool.exitCode = s.pick([0, 1, 2, 127, -1, 255]);
     if (s.chance(0.5)) tool.detail = reference(s, tag + "-d" + at);
     return tool;
@@ -404,6 +406,24 @@ test("the shapes at the edges: no calls at all, an empty thinking and an empty r
   assert.deepEqual(repeated.map(item => item.itemId), ["tool:tool:same", "tool:same", "tool:same#2", "tool:same#3"], "an id the Run already has takes the next free one: #2 was taken by a call that really was `same#2`");
   assert.deepEqual(repeated.map(item => item.fields.native!.id), [undefined, undefined, undefined, "same"], "the id the Harness gave is kept where the item's differs");
   assert.equal(convert(cases[0]!).items.length, 2, "a Run with no work is its user message and its reply");
+});
+
+test("the id of a call or an activity, and the id of the call a call happened inside, may hold half a surrogate pair: the item's id and parent are what a TEXT column holds of them, and the ids come back as the Harness gave them", () => {
+  const template = templates.find(turn => turn.run.status === "completed" && turn.assistant !== undefined)!;
+  const { tools: _tools, notices: _notices, activities: _activities, outputs: _outputs, plan: _plan, thinking: _thinking, usage: _usage, attachments: _attachments, ...bare } = template.run;
+  const halves = ["x\ud83d", "\ude00y", "x\ud83dy", "\ud83d", "p\ud83d\ud83dq", "ok😀", "x\ufffd"];
+  const turn: Turn = { ...template, where: "halves", run: { ...bare,
+    tools: [...halves.map((id, at) => ({ id, title: "call " + at, status: "completed", ...(at > 0 ? { parentId: halves[at - 1]! } : {}) })), { id: "x\ud83d", title: "again", status: "completed", parentId: "x\ude00" }],
+    activities: halves.map((id, at) => ({ id, kind: "task" as const, title: "activity " + at, status: "completed" as const })) } };
+  const converted = convert(turn);
+  for (const item of converted.items) {
+    assert.ok(survivesUtf8(item.itemId), "the item id is storable as it is: " + JSON.stringify(item.itemId));
+    if (item.parentId !== null) assert.ok(survivesUtf8(item.parentId), "so is its parent: " + JSON.stringify(item.parentId));
+  }
+  assert.equal(new Set(converted.items.map(item => item.itemId)).size, converted.items.length, "an item id is unique in its Run, though several given ids look alike once the halves are replaced");
+  roundTrips(turn, "in memory", converted); roundTrips(turn, "JSON and UTF-8", viaJson(converted)); roundTrips(turn, "SQLite", throughDatabase(converted));
+  const plain = convert({ ...turn, run: { ...bare, tools: [{ id: "plain", title: "t", status: "completed" }, { id: "child", title: "t", status: "completed", parentId: "plain" }] } });
+  assert.deepEqual(plain.items.filter(item => item.itemId.startsWith("tool:")).map(item => item.fields.native), [{ title: "t", status: "completed" }, { title: "t", status: "completed" }], "an id a column holds as it is adds nothing to the item");
 });
 
 test("the storage conversion object is the pair the seam names", () => {

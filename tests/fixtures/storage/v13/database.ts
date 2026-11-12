@@ -147,3 +147,8 @@ export function renamed(fixture: V13Fixture, suffix: string): V13Fixture {
     createKeys: fixture.createKeys.map(row => ({ commandId: keys.get(row.commandId)!, sessionId: ids.get(row.sessionId)!, fingerprint: row.fingerprint })),
     relay: { ...fixture.relay, bodies: rows(fixture.relay.bodies), packets: rows(fixture.relay.packets), deliveries: rows(fixture.relay.deliveries), index: rows(fixture.relay.index) } };
 }
+/** A copy of `fixture` whose every event is `days` later: the clock a conversation's use of a native session is read by (the snapshots' own timings are not touched). */
+export function later(fixture: V13Fixture, days: number): V13Fixture {
+  const shift = (stamp: string): string => new Date(Date.parse(stamp) + days * 86_400_000).toISOString();
+  return { ...fixture, sessions: fixture.sessions.map(row => ({ ...row, events: row.events.map(event => ({ ...event, timestamp: shift(event.timestamp) })) })) };
+}

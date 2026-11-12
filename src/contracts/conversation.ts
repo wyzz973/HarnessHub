@@ -91,9 +91,15 @@ export interface NativeFacts {
   /**
    * The id the Harness gave a call or an activity, kept only when the item's id is not simply `tool:` or `activity:` followed by it: a second
    * call or activity of one Run with the id of an earlier one (the Runtime never made two, but what it validated does not forbid them), whose
-   * item then takes the next free id (`tool:abc#2`). Added by the storage conversion (ADR-057 3.6).
+   * item then takes the next free id (`tool:abc#2`); or an id with half of a surrogate pair in it, which a TEXT column stores as U+FFFD, so that
+   * the item's id is the id as the column holds it. Added by the storage conversion (ADR-057 3.6).
    */
   readonly id?: string;
+  /**
+   * The id of the call this call happened inside (`parentId` of the call), as the Harness gave it, kept only when it has half of a surrogate pair in it:
+   * the item's `parentId` column then holds it as a TEXT column does (U+FFFD for the half). Added by the storage conversion (ADR-057 3.6).
+   */
+  readonly parent?: string;
   /**
    * The lone surrogates of the item's text (a UTF-16 index of the joined text, and the code unit that stood there): a UTF-8 column cannot hold a
    * half of a pair and SQLite stores it as U+FFFD, so the chunks carry U+FFFD in its place and this says what to put back. Kept by the storage

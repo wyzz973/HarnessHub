@@ -74,3 +74,14 @@ export function renamed(fixture: V12Fixture, suffix: string): V12Fixture {
     }),
     createKeys: fixture.createKeys.map(row => ({ commandId: keys.get(row.commandId)!, sessionId: ids.get(row.sessionId)!, fingerprint: row.fingerprint })) };
 }
+/**
+ * `renamed`, and the Run ids and the native sessions renamed too, so that copies of different fixtures can share one database that is going to be upgraded: a Run id and a native
+ * session have one holder in the new tables, and every fixture counts its Runs from the start and names its native sessions the same way.
+ */
+export function separate(fixture: V12Fixture, suffix: string): V12Fixture {
+  const base = renamed(fixture, suffix);
+  const natives = new Set(base.sessions.flatMap(row => ((row.snapshot.nativeBindings ?? []) as readonly { readonly checkpoint: string }[]).map(binding => binding.checkpoint)));
+  const swap = (value: unknown): unknown => typeof value === "string" ? (natives.has(value) || /^run-[A-Za-z0-9-]+$/u.test(value) ? value + "-" + suffix : value)
+    : Array.isArray(value) ? value.map(swap) : value !== null && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, swap(item)])) : value;
+  return { ...base, sessions: base.sessions.map(row => ({ ...row, snapshot: swap(row.snapshot) as Record<string, unknown>, events: row.events.map(event => swap(event) as V12Event) })) };
+}

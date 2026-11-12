@@ -21,7 +21,7 @@ import { diffConversation, settleConversation } from "./diff.js";
 import { RELAY_DDL_V13 } from "./legacy/ladder.js";
 import { WHOLE, loadConversation, readItems } from "./load.js";
 import {
-  acknowledgeFirstStart, collectionGate, migrateToV14, type CollectionGate, type MigrationOptions, type MigrationReport,
+  acknowledgeFirstStart, collectionGate, migrateToV14, upgradeUnderWay, type CollectionGate, type MigrationOptions, type MigrationReport,
 } from "./migrate-v14.js";
 import { ConversationTables } from "./read.js";
 import { readDeliveriesV14, checkPacketReferencesV14, writeRelayRowsV14 } from "./relay-rows-v14.js";
@@ -87,6 +87,8 @@ export interface SqliteConversationStoreOptions extends ConversationStoreOptions
   readonly freeBytes?: () => number;
   /** Called at each point of the migration (see MigrationOptions.step); tests stop a start at a chosen point. */
   readonly migrationStep?: MigrationOptions["step"];
+  /** Called at four points inside the first transaction of the migration (see MigrationOptions.inside); tests stop a start inside it. */
+  readonly migrationInside?: MigrationOptions["inside"];
   readonly log?: (line: string) => void;
 }
 
@@ -246,8 +248,9 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
     else if (version < CURRENT_VERSION) report = this.upgrade();
     else {
       this.reclaim();
-      // An upgrade that was stopped (or killed) leaves conversations that are not converted: the start goes on with them, and does not go on without them.
-      if (one(db, "SELECT 1 AS found FROM sessions WHERE format<14 LIMIT 1") !== undefined) report = this.upgrade();
+      // An upgrade that was stopped (or killed) leaves conversations that are not converted, or all converted and the references not yet compared: the start goes on with
+      // what is left, and does not go on without it.
+      if (upgradeUnderWay(db)) report = this.upgrade();
     }
     this.recoverUnfinished();
     return report;
@@ -320,6 +323,7 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
       verify: this.options.verify ?? verifyConversation,
       ...(this.options.freeBytes === undefined ? {} : { freeBytes: this.options.freeBytes }),
       ...(this.options.migrationStep === undefined ? {} : { step: this.options.migrationStep }),
+      ...(this.options.migrationInside === undefined ? {} : { inside: this.options.migrationInside }),
       ...(this.options.log === undefined ? {} : { log: this.options.log }),
     };
     const report = migrateToV14(this.database, options);

@@ -135,6 +135,7 @@ Open the one-time link it prints. The token is exchanged for a local cookie and 
 pnpm discover                                    # official installs found here, with channels and versions
 pnpm chat --harness codex --data-dir data --cwd /path/to/project
 pnpm sessions list --data-dir data --json        # public conversations
+pnpm sessions check-upgrade --data-dir data      # before an upgrade: what it would do, read-only, nothing written
 ```
 
 In `pnpm chat`, `:harness opencode` switches harness, `:cancel` stops the current turn and `:history` prints the public history. See [engineering status](docs/engineering/status.md) for every command and flag.

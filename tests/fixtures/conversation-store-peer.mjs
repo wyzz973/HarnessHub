@@ -7,16 +7,17 @@ import { commandId, switchId } from "../../dist/src/contracts/session.js";
 //
 //   node conversation-store-peer.mjs <root> hold         open, say `ready`, hold the lock until SIGTERM
 //   node conversation-store-peer.mjs <root> unfinished   open, leave a conversation with an active Turn (with items), a queued input and a pending switch, say `ready`
-//   node conversation-store-peer.mjs <root> open [--pause <ms>] [--kill-at <step>]
+//   node conversation-store-peer.mjs <root> open [--pause <ms>] [--kill-at <step>] [--kill-inside <point>]
 //                                                        open (upgrading what is there), print one line of JSON {generation, seconds, maxRssKb} and close; with --pause every
-//                                                        step of the migration waits that long, with --kill-at the process kills itself at that step
+//                                                        step of the migration waits that long, with --kill-at the process kills itself at that step, with --kill-inside at the
+//                                                        n-th of the four points inside the first transaction (1: owner confirmed, 2: ladder climbed, 3: tables made, 4: generation claimed)
 //
 // A message `{ type: "ready", generation }` or `{ type: "rejected", code }` goes to the parent over the IPC channel.
 const [root, mode = "hold", ...rest] = process.argv.slice(2);
 const option = name => { const at = rest.indexOf(name); return at < 0 ? undefined : Number(rest[at + 1]); };
-const pause = option("--pause"), killAt = option("--kill-at");
+const pause = option("--pause"), killAt = option("--kill-at"), killInside = option("--kill-inside");
 const sleep = new Int32Array(new SharedArrayBuffer(4));
-let steps = 0;
+let steps = 0, points = 0;
 let store;
 try {
   const started = process.hrtime.bigint();
@@ -24,6 +25,9 @@ try {
     steps++;
     if (pause !== undefined && pause > 0) Atomics.wait(sleep, 0, 0, pause);
     if (killAt !== undefined && steps === killAt) process.kill(process.pid, "SIGKILL");
+  }, migrationInside: () => {
+    points++;
+    if (killInside !== undefined && points === killInside) process.kill(process.pid, "SIGKILL");
   } } : {});
   if (mode === "open") {
     const seconds = Number(process.hrtime.bigint() - started) / 1e9;

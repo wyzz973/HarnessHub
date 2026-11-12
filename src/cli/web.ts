@@ -17,6 +17,8 @@ import { defaultRelayKeyPath } from "../infrastructure/session/relay-keys.js";
 export function loginShellSetting(input: { readonly off: boolean; readonly env: Readonly<Record<string, string | undefined>>; readonly platform: string }): false | { readonly shell: string | null; readonly shells: string } {
   return input.off || input.env.CI !== undefined || input.platform === "win32" ? false : { shell: input.env.SHELL ?? null, shells: "/etc/shells" };
 }
+/** The codes of a start that could not get through the upgrade of the conversation library (conversation-store.ts, migrate-v14.ts, backup.ts, session-application.ts afterUpgrade). */
+const UPGRADE_CODES: ReadonlySet<string> = new Set(["MIGRATION_REFUSED", "MIGRATION_STOPPED", "START_FAILED_AFTER_UPGRADE", "INSUFFICIENT_SPACE", "STORAGE_BACKUP_FAILED"]);
 /** Owns one local web application until SIGINT/SIGTERM; startup URL carries a one-use fragment token. */
 export async function main(args: readonly string[]): Promise<number> {
   let gateway: WebServer | undefined;
@@ -55,7 +57,10 @@ export async function main(args: readonly string[]): Promise<number> {
     await gateway.close(); return 0;
   } catch (error) {
     if (gateway) try { await gateway.close(); } catch { process.stderr.write("HarnessGateway: shutdown cleanup failed\n"); }
-    process.stderr.write("HarnessGateway: " + (error instanceof SessionError ? error.code : "WEB_FAILED") + " — local web application could not run\n"); return 1;
+    // What the upgrade of the conversation library says when it could not begin, stopped, or left a start that did not finish is made of ids, rules and a path inside the data directory, and is
+    // what a person needs to know what to do: it is told. Any other failure is told by its code alone.
+    const told = error instanceof SessionError && UPGRADE_CODES.has(error.code);
+    process.stderr.write("HarnessGateway: " + (error instanceof SessionError ? error.code : "WEB_FAILED") + " — " + (told ? error.message : "local web application could not run") + "\n"); return 1;
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) process.exitCode = await main(process.argv.slice(2));

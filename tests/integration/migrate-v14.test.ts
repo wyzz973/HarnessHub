@@ -22,7 +22,7 @@ import { climbToV13 } from "../../src/infrastructure/session/legacy/ladder.js";
 import { LegacyRelayLedger } from "../../src/infrastructure/session/legacy/ledger.js";
 import { parseSession as liveParse } from "../../src/infrastructure/session/legacy/state.js";
 import {
-  acknowledgeFirstStart, collectionGate, compareReferences, migrateToV14, migrationState, relayFactsFromRows, upgradeSchema,
+  acknowledgeFirstStart, collectionGate, compareReferences, convertConversation, migrateToV14, migrationState, relayFactsFromRows, upgradeSchema,
 } from "../../src/infrastructure/session/migrate-v14.js";
 import { loadConversation } from "../../src/infrastructure/session/load.js";
 import { ConversationTables } from "../../src/infrastructure/session/read.js";
@@ -34,7 +34,7 @@ import { appStore } from "../fixtures/runtime-store.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { V12_FIXTURES, loadV12Fixture, writeV12Root } from "../fixtures/relay/v12/database.js";
 import { GENERATIONS, loadGeneration, writeGenerationRoot } from "../fixtures/storage/generations/database.js";
-import { V13_FIXTURES, loadV13Fixture, writeV13Root, type V13Fixture, type V13FixtureName } from "../fixtures/storage/v13/database.js";
+import { V13_FIXTURES, later, loadV13Fixture, writeV13Root, type V13Fixture, type V13FixtureName } from "../fixtures/storage/v13/database.js";
 import { syntheticFixture } from "../fixtures/synthetic-v13.js";
 
 // The migration engine of ADR-057 3.6 (src/infrastructure/session/migrate-v14.ts): every frozen fixture of every generation converts to v14 and checks; what the checks
@@ -240,7 +240,8 @@ for (const [version, victim] of [[8, 1], [11, 2]] as const) {
     // A status no version has ever had: the frozen parse refuses it, when the ladder gets to it.
     db.prepare("UPDATE sessions SET snapshot=json_set(snapshot,'$.status','weird') WHERE id=?").run(ids[victim]!);
     const before = dumpOf(db);
-    assert.throws(() => migrateToV14(db, { root }), codeOf("INVALID_DATA"));
+    // The error says which conversation the ladder cannot read and the rule, and nothing else of it.
+    assert.throws(() => migrateToV14(db, { root }), error => codeOf("MIGRATION_REFUSED")(error) && (error as SessionError).message.includes(ids[victim]!) && /unknown Session status/u.test((error as SessionError).message) && !(error as SessionError).message.includes("weird"));
     assert.deepEqual(dumpOf(db), before, "nothing of the climb stayed");
     assert.equal(userVersion(db), version);
     assert.equal(count(db, "SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE 'relay_%' OR name LIKE 'migration_v14%'"), 0, "no table of a later version was left");
@@ -294,9 +295,9 @@ test("the Runtime's ledger reads the Runs' rows and gives the facts the frozen l
 // ---------------------------------------------------------------------------------------------------------------------------------
 // What the Runs get from the events and the index (review I1, I2)
 // ---------------------------------------------------------------------------------------------------------------------------------
-interface RunColumns { readonly run_id: string; readonly ended_seq: number | null; readonly is_command: number; readonly command_effect: string | null; readonly settled_effect: string | null; readonly acknowledged_by: string | null; readonly executed_harness_id: string | null; readonly executed_control_id: string | null; readonly executed_epoch: number | null; readonly dispatched: number }
+interface RunColumns { readonly run_id: string; readonly status: string; readonly user_seq: number; readonly ended_seq: number | null; readonly is_command: number; readonly command_effect: string | null; readonly settled_effect: string | null; readonly acknowledged_by: string | null; readonly executed_harness_id: string | null; readonly executed_control_id: string | null; readonly executed_epoch: number | null; readonly dispatched: number }
 function runColumns(db: DatabaseSync, session: string): Map<string, RunColumns> {
-  return new Map(db.prepare("SELECT run_id, ended_seq, is_command, command_effect, settled_effect, acknowledged_by, executed_harness_id, executed_control_id, executed_epoch, dispatched FROM runs WHERE session_id=? ORDER BY ordinal").all(session)
+  return new Map(db.prepare("SELECT run_id, status, user_seq, ended_seq, is_command, command_effect, settled_effect, acknowledged_by, executed_harness_id, executed_control_id, executed_epoch, dispatched FROM runs WHERE session_id=? ORDER BY ordinal").all(session)
     .map(row => [String(row.run_id), row as unknown as RunColumns]));
 }
 test("command Runs are told from ordinary ones, with the effect they were read with and the one their end settled", t => {
@@ -332,7 +333,7 @@ test("a command whose effect cannot be read is still a command, with neither eff
   assert.ok(!ids.includes("run-cm-5") && ids.includes("run-cm-2"));
 });
 
-test("a Run whose end the events placed has that seq; one a recovery ended has the recovery's; one nothing placed has the index row's, else none", t => {
+test("a Run whose end the events placed has that seq; one a recovery ended has the recovery's; one nothing placed has the index row's, else the conversation's last event of the migration", t => {
   // The first of the `run.ended` and the `session.recovered` that names it.
   const recovered = loadV13Fixture("recovered-after-crash"), { root, db } = v13Root(t, [recovered]);
   assert.equal(migrateToV14(db, { root }).stopped, null);
@@ -348,7 +349,10 @@ test("a Run whose end the events placed has that seq; one a recovery ended has t
   assert.ok(named > 0, "the fixture has a Run that only a recovery ended");
 
   // A database from before v13: the events are the same as the index rows' seqs; with the events' types changed (so that they place nothing) the Runs get the index rows' seqs, and
-  // with the index rows gone too they get none: NULL, which the relay reads as above any mark (the fact is sent again, never lost), not 0 and not skipped.
+  // with the index rows gone too a finished, dispatched Run gets the conversation's last seq of the moment of the migration: at or above where it really ended, so it is owed to
+  // every binding the mark of which is below that, and not owed to one that has everything through the last event (right after a clear, or after its own Turn). The value is
+  // fixed: it does not follow the conversation as it grows (which would put the fact above every later mark and carry it again each Turn, across every clear line).
+  // A Run that is not finished and dispatched, or whose input is the last event, has none: NULL, which the relay reads as above any mark (never 0, never skipped).
   const d1 = loadV12Fixture("d1"), directory = temporary(t), plain = join(directory, "plain"), degraded = join(directory, "degraded"), bare = join(directory, "bare");
   for (const root of [plain, degraded, bare]) writeV12Root(root, [d1]);
   const ends = new Map<string, number>(), indexSeq = new Map<string, number>();
@@ -368,13 +372,22 @@ test("a Run whose end the events placed has that seq; one a recovery ended has t
     const report = migrateToV14(db2, { root });
     assert.equal(report.stopped, null, "the old ledger and the new reading agree whichever way the end is placed");
     const lastSeq = Number(db2.prepare("SELECT last_seq FROM sessions").get()!.last_seq);
+    let placedAtLast = 0;
     for (const [run, found] of runColumns(db2, "session-1")) {
-      assert.equal(found.ended_seq, withIndex ? indexSeq.get(run) : null, run);
+      const finished = found.dispatched === 1 && ["completed", "cancelled", "failed", "unknown"].includes(found.status);
+      assert.equal(found.ended_seq, withIndex ? indexSeq.get(run) : finished && lastSeq > found.user_seq ? lastSeq : null, run);
       if (!withIndex) {
-        assert.ok(found.ended_seq === null || found.ended_seq > 0);
+        if (found.ended_seq === lastSeq) placedAtLast++;
         const fact = relayFactsFromRows(db2, sessionId("session-1"), lastSeq, { harnessId: "elsewhere", controlId: "elsewhere", nativeEpoch: 1 }).find(item => item.runId === run);
-        if (fact !== undefined) assert.equal(fact.seq, lastSeq, "a Run nothing placed is above every mark");
+        if (fact !== undefined) assert.equal(fact.seq, lastSeq, "a Run nothing placed is placed at the last event of the moment");
       }
+    }
+    if (!withIndex) {
+      assert.ok(placedAtLast > 0, "the fixture has finished, dispatched Runs that nothing placed");
+      // The value is fixed: the facts the Runtime's ledger gives from the rows, after the conversation has gone on by 50 events, are still where the migration put them.
+      const loaded = loadConversation(db2, sessionId("session-1")), facts = new RelayLedger().facts({ runs: loaded.runs, lastSeq: loaded.lastSeq + 50 }, { harnessId: "elsewhere", controlId: "elsewhere", nativeEpoch: 1 });
+      assert.ok(facts.length > 0);
+      for (const fact of facts) assert.ok(fact.seq <= loaded.lastSeq, "a placed fact does not follow the conversation as it grows");
     }
   }
 });
@@ -476,6 +489,25 @@ test("a branch whose source was deleted is converted as well: its quoted history
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Text that SQLite would change
 // ---------------------------------------------------------------------------------------------------------------------------------
+test("ids with half a surrogate pair (a call's, an activity's, the call a call happened inside, a native session's reference) convert and read back exactly, though the columns can only hold them as U+FFFD", t => {
+  const fixture = structuredClone(loadV13Fixture("tools")) as unknown as { sessions: { id: string; snapshot: { runs: { id: string; tools?: { id: string; parentId?: string }[]; activities?: unknown[] }[]; nativeBindings: { checkpoint: string; harnessId: string }[] } }[] };
+  const snapshot = fixture.sessions[0]!.snapshot, run = snapshot.runs.find(item => (item.tools?.length ?? 0) >= 2)!;
+  run.tools![0]!.id = "call-\ud83d"; run.tools![1]!.parentId = "call-\ud83d";
+  run.activities = [...(run.activities ?? []), { id: "act-\ude00", kind: "task", title: "an activity", status: "completed" }];
+  snapshot.nativeBindings[0]!.checkpoint = snapshot.nativeBindings[0]!.checkpoint + "\ud83d";
+  const { root, db } = v13Root(t, [fixture as unknown as V13Fixture]);
+  const original = snapshotsOf(db);
+  const report = migrateToV14(db, { root, verify });
+  assert.equal(report.stopped, null, report.stopped?.reason);
+  for (const [id, text] of original) assertReadsBack(db, id, text, id);
+  // What the columns hold is whole code points, and the facts say what the Harness gave.
+  assert.equal(count(db, "SELECT COUNT(*) AS n FROM items WHERE item_id = 'tool:call-' || char(65533)"), 1);
+  assert.equal(count(db, "SELECT COUNT(*) AS n FROM items WHERE item_id = 'activity:act-' || char(65533)"), 1);
+  assert.equal(count(db, "SELECT COUNT(*) AS n FROM items WHERE parent_id = 'tool:call-' || char(65533)"), 1);
+  assert.equal(count(db, "SELECT COUNT(*) AS n FROM bindings WHERE checkpoint LIKE '%' || char(65533)"), 1);
+  for (const column of ["item_id", "parent_id"]) for (const found of db.prepare("SELECT " + column + " AS text FROM items WHERE " + column + " IS NOT NULL").all()) assert.equal(Buffer.from(String(found.text), "utf8").toString("utf8"), String(found.text));
+});
+
 test("text-extremes: half surrogate pairs are normalized by the conversion and kept as facts, so the last gate of the writer never fires, and they read back exactly", t => {
   const { root, db } = v13Root(t, [loadV13Fixture("text-extremes")]);
   const original = snapshotsOf(db), text = (value: string): boolean => /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u.test(value);
@@ -727,6 +759,33 @@ test("a database of a version the migration does not know is refused and not tou
   assert.deepEqual(dumpOf(db), before);
   db.exec("PRAGMA user_version=0");
   assert.throws(() => migrateToV14(db, { root }), codeOf("INVALID_DATA"));
+});
+
+test("an upgrade an earlier build began (some conversation converted, nobody having said who gives up a native session two conversations hold) is finished with the converted one keeping its session", t => {
+  // The two fixtures hold native-alpha-1 and native-bravo-2 both. The earlier build converted the switches conversation (the one that used them less recently) and stopped.
+  const root = join(temporary(t), "data");
+  writeV13Root(root, [loadV13Fixture("switches"), later(loadV13Fixture("tools"), 1)]);
+  const db = connect(t, root);
+  upgradeSchema(db, 13);
+  db.exec("DROP TABLE migration_v14_moves");
+  assert.equal(convertConversation(db, sessionId("session-sw-1")), true);
+  assert.equal(count(db, "SELECT COUNT(*) AS n FROM bindings WHERE session_id='session-sw-1' AND status='ready'"), 2);
+  const lines: string[] = [];
+  const report = migrateToV14(db, { root, verify, log: line => lines.push(line) });
+  assert.equal(report.stopped, null);
+  assert.deepEqual(report.moved.map(move => ({ ...move })), [
+    { sessionId: "session-tl-1", ordinal: 0, harnessId: "alpha", controlId: "alpha-acp", keptBy: "session-sw-1" },
+    { sessionId: "session-tl-1", ordinal: 1, harnessId: "bravo", controlId: "bravo-acp", keptBy: "session-sw-1" }], "the converted conversation keeps what it holds, whatever the rule would have said");
+  assert.equal(lines.length, 2);
+  assert.deepEqual(db.prepare("SELECT session_id, status FROM bindings WHERE checkpoint IN ('native-alpha-1','native-bravo-2') ORDER BY session_id, ordinal").all().map(row => [row.session_id, row.status]),
+    [["session-sw-1", "ready"], ["session-sw-1", "ready"], ["session-tl-1", "archived"], ["session-tl-1", "archived"]]);
+  ok(db);
+});
+
+test("a database that nobody holds a native session twice in has no moves, and the bookkeeping of the upgrade says so", t => {
+  const { root, db } = v13Root(t, sharable(["switches", "commands", "tools"]));
+  const report = migrateToV14(db, { root, verify });
+  assert.deepEqual(report.moved, []); assert.equal(count(db, "SELECT COUNT(*) AS n FROM migration_v14_moves"), 0);
 });
 
 test("migrating a database that is already migrated changes nothing and does not compare the references again", t => {

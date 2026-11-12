@@ -5,7 +5,7 @@ import type { ExecutedOn, RelayIndexRow } from "../../contracts/relay.js";
 import { SessionError, type PublicRun, type SessionEvent, type SessionId, type SessionSnapshot } from "../../contracts/session.js";
 import { conversationTitle } from "../../contracts/web.js";
 import { noticePrint } from "../../contexts/session/domain/items-place.js";
-import { originToRows, storageConversion } from "../../contexts/session/domain/store-conversion.js";
+import { originToRows, sound, storageConversion } from "../../contexts/session/domain/store-conversion.js";
 import type { RelayFact } from "../../contexts/session/domain/relay/delivery.js";
 import { applyMutation } from "./apply.js";
 import { backupBeforeV14 } from "./backup.js";
@@ -20,8 +20,10 @@ import { ConversationTables } from "./read.js";
 import { RELAY_V14_REBUILD, schemaV14Statements } from "./schema-v14.js";
 import { repairRelayPrefs } from "./relay-tables.js";
 import { bindingColumns, bindingRowFrom, bindingRowOf, canonicalJson, commandRowOf, itemRowOf, runRowFrom, sourceThroughOrdinal, switchColumns, switchRowFrom, switchRowOf, utf8Length } from "./rows.js";
+import { MOVES_DDL, UnreadableHolders, movedOrdinals, recordMoves, recordedMoves, resolveSharedSessions, withMoves, type NativeMove } from "./shared-sessions.js";
 import { snapshotFromRows } from "./snapshot-adapter.js";
 import { all, one, prepared } from "./statements.js";
+import { ladderFaults, refusal, repeatedRunIds } from "./upgrade-check.js";
 
 /*
  * The migration of a database to store v14 (ADR-057 3.6): from the one-snapshot-per-conversation tables of v1 to v13 to the rows of v14, once, in the order
@@ -29,8 +31,12 @@ import { all, one, prepared } from "./statements.js";
  *
  *   1. backup (backup.ts; nothing is changed if it fails or the disk is too small), then
  *   2. THE FIRST TRANSACTION (`upgradeSchema`): the old ladder from the database's version to v13 (legacy/ladder.ts), the relay tables rebuilt without the sizes
- *      they were held to, `sessions` altered (`snapshot` becomes `head`; every row `format` 13) and the v14 tables made, the migration's bookkeeping made, the
- *      version set to 14. After it the database is v14 and every conversation is still the snapshot it was; an old build refuses it.
+ *      they were held to, `sessions` altered (`snapshot` becomes `head`; every row `format` 13) and the v14 tables made, the migration's bookkeeping made (and in it the
+ *      decision which conversation keeps a native session two conversations hold, shared-sessions.ts), the version set to 14. After it the database is v14 and every
+ *      conversation is still the snapshot it was (but for the bindings given up); an old build refuses it. Until it commits the database is the very bytes it was: a
+ *      failure, a refusal or a kill leaves it so, and when it is the ladder or the decision that cannot take a conversation, the error names every such conversation and
+ *      the rule (upgrade-check.ts: the same frozen functions, run on the database as it was once the changes are rolled back). `sessions check-upgrade`
+ *      (upgrade-preflight.ts) walks both stages over a library it only reads.
  *   3. EACH CONVERSATION IN A TRANSACTION OF ITS OWN (`convertConversation`): its snapshot is read with the frozen parse, its Runs made into rows by the storage
  *      conversion (T3), the facts of the event log and of the relay's index that a Run needs placed on its row (below), the rows written (apply.ts) with its
  *      head last and `format` 14, the rows read back with the readers the store will use and held to the snapshot (below). Only then is it committed.
@@ -45,7 +51,12 @@ import { all, one, prepared } from "./statements.js";
  *
  * THE FACTS A RUN GETS FROM THE EVENTS AND THE INDEX (review I1; the relay sends again what it cannot place, and loses nothing):
  *   ended_seq        the first of its `run.ended` and the `session.recovered` that names it in `unknownRunIds` or `cancelledRunIds`; else its `relay_index` row's
- *                    seq (a Run made before v13); else NULL, which a reader takes as ABOVE the relay's mark (never 0, never skipped). Not the conversation's `lastSeq`.
+ *                    seq (a Run made before v13); else, for a finished, dispatched Run, the conversation's `lastSeq` OF THE MOMENT OF THE MIGRATION (the old ledger read
+ *                    that fallback at every read, so a fact nothing placed rose with the conversation and was above every later mark; fixed, it is at or above where the
+ *                    Run really ended, owed to every binding whose mark is below it, and not owed to one that has everything through the last event: right after a
+ *                    clear, or after its own Turn, where "not owed" is right); else NULL, which a reader takes as ABOVE the relay's mark (never 0, never skipped) — a
+ *                    Run not finished or not dispatched is no fact, and a finished one whose input is the last event has no seq above it to give (`verify`: an end is
+ *                    after its input).
  *   is_command       a `run.native_command` names the Run, or (before v13) its index row has a command effect. command_effect: the effect the command was read with (the
  *                    last `run.native_command`'s), settled_effect the one its first `run.ended` settled. A command whose effect cannot be read is `is_command` with
  *                    neither. For a Run made before v13 the index row's effect IS the settled one (the v13 migration worked it out from the end and the outcome), and
@@ -82,9 +93,15 @@ export interface MigrationOptions {
   /** The storage conversion; the one of the domain unless a test gives another (to see what a wrong one does). */
   readonly conversion?: StorageConversion;
   readonly log?: (line: string) => void;
+  /** Told, after a conversation is converted, what the check of the upgrade counts and the conversation alone knows (`sessions check-upgrade` reads it; the upgrade does not need it). */
+  readonly note?: (note: ConversionNote) => void;
+  /** Called at four points INSIDE the first transaction, before it commits (after the owner is confirmed gone, the ladder is climbed, the tables and bookkeeping are made, the generation is claimed); a test or a peer process is stopped here to see that a kill inside it changes nothing. */
+  readonly inside?: (point: "owner-confirmed" | "laddered" | "built" | "claimed") => void;
   /** Called at each point of the work with its name and what it is about; a test or a peer process waits here to be stopped at a chosen point. */
   readonly step?: (phase: "backup" | "backed-up" | "upgraded" | "written" | "converted" | "finished", detail: string) => void;
 }
+/** What a converted conversation tells the check of the upgrade: how many of its Runs were placed at the conversation's last event for want of a seq that anything placed. */
+export interface ConversionNote { readonly sessionId: string; readonly endedSeqPlaced: number }
 export interface MigrationReport {
   /** The version the database was at when this call began. */
   readonly from: number;
@@ -97,6 +114,11 @@ export interface MigrationReport {
   readonly stopped: { readonly sessionId: SessionId; readonly reason: string } | null;
   /** The content references compared (when every conversation is converted); null until then. */
   readonly references: ReferenceReport | null;
+  /**
+   * The native sessions that two conversations held and one gave up (shared-sessions.ts): every binding the upgrade archived for that reason, whether in this call or in one
+   * before it, with the conversation that kept the native session. Empty when no native session was held twice.
+   */
+  readonly moved: readonly NativeMove[];
 }
 export interface ReferenceReport {
   readonly equal: boolean;
@@ -118,10 +140,12 @@ const count = (db: DatabaseSync, sql: string, ...args: (string | number)[]): num
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** Made in the first transaction and gone when the first start after the migration has reported (`acknowledgeFirstStart`). */
-const BOOKKEEPING: readonly string[] = [
-  "CREATE TABLE migration_v14(key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT, WITHOUT ROWID",
+const BOOKKEEPING: readonly { readonly name: string; readonly sql: string }[] = [
+  { name: "migration_v14", sql: "CREATE TABLE migration_v14(key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT, WITHOUT ROWID" },
   // The content ids the OLD code worked out for each conversation before it was converted: kept in the same transaction as the conversion, so that a resumed migration compares all of them.
-  "CREATE TABLE migration_v14_refs(session_id TEXT NOT NULL, content_id TEXT NOT NULL, PRIMARY KEY(session_id, content_id)) STRICT, WITHOUT ROWID",
+  { name: "migration_v14_refs", sql: "CREATE TABLE migration_v14_refs(session_id TEXT NOT NULL, content_id TEXT NOT NULL, PRIMARY KEY(session_id, content_id)) STRICT, WITHOUT ROWID" },
+  // The bindings the upgrade archives because another conversation held and used the same native session more recently (shared-sessions.ts), decided once, in the first transaction.
+  { name: "migration_v14_moves", sql: MOVES_DDL },
 ];
 function mark(db: DatabaseSync, key: string, value: string): void { prepared(db, "INSERT INTO migration_v14(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, value); }
 function marked(db: DatabaseSync, key: string): string | undefined { const row = hasTable(db, "migration_v14") ? one(db, "SELECT value FROM migration_v14 WHERE key=?", key) : undefined; return row === undefined ? undefined : String(row.value); }
@@ -150,6 +174,16 @@ export function migrationState(db: DatabaseSync): MigrationState {
     + (stopped === null ? "" : "; the upgrade stopped at " + stopped.sessionId + " (" + stopped.reason + ")") };
 }
 
+/**
+ * Whether the migration has work left in a database that is v14: a conversation not converted yet, or every one converted and the references not compared, with the phase
+ * not marked as the comparison's end. A process killed between the last conversation's commit and the comparison leaves exactly that, and a start that did not go on from it
+ * would leave the gate shut for good (it opens only on references found equal) with no way to compare them.
+ */
+export function upgradeUnderWay(db: DatabaseSync): boolean {
+  if (count(db, "SELECT COUNT(*) AS n FROM sessions WHERE format<14") > 0) return true;
+  return hasTable(db, "migration_v14") && marked(db, "phase") !== "converted";
+}
+
 export interface CollectionGate {
   readonly allowed: boolean;
   /** The first start after the migration: the collector reports what it would collect and deletes nothing. */
@@ -174,7 +208,8 @@ export function collectionGate(db: DatabaseSync): CollectionGate {
 export function acknowledgeFirstStart(db: DatabaseSync): void {
   if (!hasTable(db, "migration_v14")) return;
   if (marked(db, "references") !== "equal" || count(db, "SELECT COUNT(*) AS n FROM sessions WHERE format<14") > 0) throw new SessionError("INVALID_TRANSITION", "the migration did not end with equal references: its bookkeeping stays");
-  db.exec("DROP TABLE migration_v14"); if (hasTable(db, "migration_v14_refs")) db.exec("DROP TABLE migration_v14_refs");
+  db.exec("DROP TABLE migration_v14");
+  for (const table of ["migration_v14_refs", "migration_v14_moves"]) if (hasTable(db, table)) db.exec("DROP TABLE " + table);
 }
 /**
  * Holds the references the collector will use (`ConversationTables.contentReferences`: the references of the converted conversations) to the ones the old code
@@ -198,28 +233,48 @@ export function compareReferences(db: DatabaseSync): ReferenceReport {
  * leaves the database as it was. `PRAGMA foreign_keys=OFF` comes before the transaction (it does nothing inside one) because the relay tables are rebuilt, and the
  * keys are checked, and put back on, before it ends (SQLite's way of rebuilding a table other tables point at).
  */
-export function upgradeSchema(db: DatabaseSync, from: number, options: Pick<MigrationOptions, "confirmOwnerExited" | "claim"> = {}): void {
+export function upgradeSchema(db: DatabaseSync, from: number, options: Pick<MigrationOptions, "confirmOwnerExited" | "claim" | "log" | "inside"> = {}): void {
   if (!Number.isSafeInteger(from) || from < 1 || from > 13) throw new SessionError("INVALID_INPUT", "only a database of version 1 to 13 is upgraded");
   const keys = Number(db.prepare("PRAGMA foreign_keys").get()?.foreign_keys) === 1;
   db.exec("PRAGMA foreign_keys=OFF");
   try {
     db.exec("BEGIN IMMEDIATE");
+    let climbing = false;
     try {
       options.confirmOwnerExited?.(db);
+      options.inside?.("owner-confirmed");
+      climbing = true;
       climbToV13(db, from);
+      climbing = false;
+      options.inside?.("laddered");
       // A v13 database made while the contract listed fewer preference keys keeps its preferences under the current list.
       repairRelayPrefs(db);
       for (const sql of RELAY_V14_REBUILD) db.exec(sql);
       for (const sql of schemaV14Statements("v13")) db.exec(sql);
-      for (const sql of BOOKKEEPING) db.exec(sql);
+      for (const table of BOOKKEEPING) db.exec(table.sql);
       mark(db, "from", String(from)); mark(db, "phase", "converting"); mark(db, "references", "pending");
+      // A native session two conversations hold cannot be held twice by the tables: who gives it up is decided here, with everything else in this transaction, and kept.
+      recordMoves(db, resolveSharedSessions(db));
+      // A Run id two conversations hold cannot be held twice by the tables either, and there is nothing to decide about it: the upgrade does not begin.
+      const repeated = repeatedRunIds(db, "head");
+      if (repeated.length > 0) { const refused = refusal(from, repeated); options.log?.(refused.message); throw refused; }
+      options.inside?.("built");
       options.claim?.(db);
+      options.inside?.("claimed");
       const violations = db.prepare("PRAGMA foreign_key_check").all();
       if (violations.length > 0) throw new SessionError("INVALID_DATA", "the upgrade left " + violations.length + " broken foreign keys");
       db.exec("PRAGMA user_version=14");
       db.exec("COMMIT");
     } catch (error) {
       if (db.isTransaction) db.exec("ROLLBACK");
+      // The ladder stops at the first conversation it cannot take, saying a rule and not whose. Which conversations they are, all of them, is worked out on the database as it was (the
+      // changes are rolled back), with the same frozen functions, and told: the first stage changed nothing, and the old build still opens the database. The success path never pays for this.
+      if (climbing && !isSqliteError(error)) {
+        const faults = ladderFaults(db, from);
+        if (faults.length > 0) { const refused = refusal(from, faults); refused.cause = error; options.log?.(refused.message); throw refused; }
+      }
+      // Who gives up a native session two conversations hold cannot be told when one of them cannot be read: the same refusal, with nothing changed.
+      if (error instanceof UnreadableHolders) { const refused = refusal(from, error.faults); refused.cause = error; options.log?.(refused.message); throw refused; }
       throw error;
     }
   } finally { db.exec("PRAGMA foreign_keys=" + (keys ? "ON" : "OFF")); }
@@ -275,12 +330,13 @@ function throughOrdinal(db: DatabaseSync, source: string, run: string): number {
 type ConversionAt = Parameters<StorageConversion["toItems"]>[2];
 /** What each Run was converted with: the facts of the events and the index it was given, and where the index says it ran (for a Run made before v13, whose own facts say nothing). */
 interface RunContext { readonly at: ConversionAt; readonly executedOn: ExecutedOn | null }
-interface Prepared { readonly mutation: Mutation; readonly contexts: readonly RunContext[] }
+interface Prepared { readonly mutation: Mutation; readonly contexts: readonly RunContext[]; readonly endedSeqPlaced: number }
 /** The Mutation that writes a conversation: its snapshot as rows, the head last (apply.ts writes it so, with `format` 14). */
 function prepare(db: DatabaseSync, state: SessionSnapshot, version: number, conversion: StorageConversion): Prepared {
   const id = state.id, events = scanEvents(db, id), { facts: index } = indexRows(db, id);
   const messages = new Map(state.messages.map(message => [message.id as string, message]));
   const mutation: { -readonly [K in keyof Mutation]: Mutation[K] } = { events: [] }, prints = new Set<string>();
+  let endedSeqPlaced = 0;
   const contexts: RunContext[] = [], runs: NonNullable<Mutation["runs"]>[number][] = [], items: NonNullable<Mutation["items"]>[number][] = [], text: NonNullable<Mutation["text"]>[number][] = [], refs: ContentRefRow[] = [];
   state.runs.forEach((run: PublicRun, ordinal) => {
     const user = messages.get(run.userMessageId), assistant = messages.get(run.assistantMessageId);
@@ -291,7 +347,9 @@ function prepare(db: DatabaseSync, state: SessionSnapshot, version: number, conv
     let commandEffect: ContextEffect | undefined, settledEffect: ContextEffect | undefined;
     if (isCommand && legacy) { commandEffect = events.commands.get(run.id) ?? found?.commandEffect ?? undefined; settledEffect = found?.commandEffect ?? (finished ? "unknown" : undefined); }
     else if (isCommand) { commandEffect = events.commands.get(run.id); settledEffect = events.settled.get(run.id); }
-    const endedSeq = events.ended.get(run.id) ?? found?.seq;
+    const placed = events.ended.get(run.id) ?? found?.seq, fallback = placed === undefined && finished && state.lastSeq > user.seq;
+    if (fallback) endedSeqPlaced++;
+    const endedSeq = fallback ? state.lastSeq : placed;
     const claimed = run.status === "unknown" ? state.switches.find(change => change.status === "effective" && (change.sourceRunIds.includes(run.id) || change.acknowledgedUnknown?.includes(run.id) === true)) : undefined;
     const at: ConversionAt = { sessionId: id, ordinal, ...(endedSeq === undefined ? {} : { endedSeq }), ...(isCommand ? { isCommand: true } : {}),
       ...(commandEffect === undefined ? {} : { commandEffect }), ...(settledEffect === undefined ? {} : { settledEffect }), ...(claimed === undefined ? {} : { acknowledgedBy: claimed.id }) };
@@ -325,7 +383,7 @@ function prepare(db: DatabaseSync, state: SessionSnapshot, version: number, conv
   if (state.nativeBindings !== undefined && state.nativeBindings.length > 0) mutation.bindings = state.nativeBindings.map((binding, ordinal) => ({ op: "insert" as const, row: bindingRowOf(id, ordinal, binding) }));
   if (state.switches.length > 0) mutation.switches = state.switches.map((change, ordinal) => ({ op: "insert" as const, row: switchRowOf(id, ordinal, change, sourceThroughOrdinal(change.sourceRunIds, at => state.runs[at]?.id)) }));
   if (refs.length > 0) mutation.contentRefs = refs;
-  return { mutation, contexts };
+  return { mutation, contexts, endedSeqPlaced };
 }
 
 /** Where two plain values first differ, as a path and the kinds of what differs: never a value, so that nothing of a conversation's words reaches a log. */
@@ -371,13 +429,16 @@ export function relayFactsFromRows(db: DatabaseSync, id: SessionId, lastSeq: num
  */
 function rowsAgree(db: DatabaseSync, state: SessionSnapshot, contexts: readonly RunContext[], conversion: StorageConversion): void {
   const id = state.id;
+  // A TEXT column holds half of a surrogate pair as U+FFFD (a native session's reference may have one, as an id may): the column then holds the same fact as its JSON in the only
+  // form it can, and the JSON, which keeps the original, is what is read.
+  const holds = (column: unknown, wanted: unknown): boolean => column === wanted || (typeof wanted === "string" && column === sound(wanted).text);
   for (const row of all(db, "SELECT * FROM bindings WHERE session_id=? ORDER BY ordinal", id)) {
     const decoded = bindingRowFrom(row), wanted = bindingColumns(bindingRowOf(id, decoded.ordinal, decoded.binding));
-    for (const [key, value] of Object.entries(wanted)) if (key !== "binding_json" && row[key] !== value) throw mismatch("conversation " + id + ": native binding " + decoded.ordinal + " holds its " + key + " in its column and in its JSON and the two differ");
+    for (const [key, value] of Object.entries(wanted)) if (key !== "binding_json" && !holds(row[key], value)) throw mismatch("conversation " + id + ": native binding " + decoded.ordinal + " holds its " + key + " in its column and in its JSON and the two differ");
   }
   for (const row of all(db, "SELECT * FROM switches WHERE session_id=? ORDER BY ordinal", id)) {
     const decoded = switchRowFrom(row), wanted = switchColumns(switchRowOf(id, decoded.ordinal, decoded.switch, decoded.sourceThroughOrdinal));
-    for (const [key, value] of Object.entries(wanted)) if (key !== "switch_json" && row[key] !== value) throw mismatch("conversation " + id + ": switch " + decoded.ordinal + " holds its " + key + " in its column and in its JSON and the two differ");
+    for (const [key, value] of Object.entries(wanted)) if (key !== "switch_json" && !holds(row[key], value)) throw mismatch("conversation " + id + ": switch " + decoded.ordinal + " holds its " + key + " in its column and in its JSON and the two differ");
   }
   for (const row of all(db, "SELECT * FROM runs WHERE session_id=? ORDER BY ordinal", id)) {
     const stored = runRowFrom(row), context = contexts[stored.ordinal];
@@ -447,7 +508,7 @@ function check(db: DatabaseSync, state: SessionSnapshot, version: number, contex
  * Converts one conversation in a transaction of its own, or does nothing when it is converted. Throws what stopped it (a SessionError of the data or of a check)
  * after rolling its transaction back; an error of SQLite that is not a rule of the rows (a full disk) passes as it is.
  */
-export function convertConversation(db: DatabaseSync, id: SessionId, options: Pick<MigrationOptions, "conversion" | "verify" | "step"> = {}): boolean {
+export function convertConversation(db: DatabaseSync, id: SessionId, options: Pick<MigrationOptions, "conversion" | "verify" | "step" | "note"> = {}): boolean {
   const row = one(db, "SELECT version, last_seq, head FROM sessions WHERE id=? AND format<14", id);
   if (row === undefined) return false;
   let value: unknown;
@@ -457,19 +518,24 @@ export function convertConversation(db: DatabaseSync, id: SessionId, options: Pi
   const logged = one(db, "SELECT COUNT(*) AS n, MIN(seq) AS first, MAX(seq) AS last FROM events WHERE session_id=?", id);
   if (Number(logged?.n) !== state.lastSeq || (state.lastSeq > 0 && (logged?.first !== 1 || logged.last !== state.lastSeq))) throw new SessionError("INVALID_DATA", "conversation " + id + ": its event log and its cursor disagree");
   const version = Number(row.version);
+  let endedSeqPlaced = 0;
   db.exec("BEGIN IMMEDIATE");
   try {
-    const conversion = options.conversion ?? storageConversion, { mutation, contexts } = prepare(db, state, version, conversion);
+    // The conversation as it is written: its snapshot, with the native sessions it gives up archived (shared-sessions.ts) and nothing else changed.
+    const given = withMoves(state, movedOrdinals(db, id));
+    const conversion = options.conversion ?? storageConversion, { mutation, contexts, endedSeqPlaced: placed } = prepare(db, given, version, conversion);
+    endedSeqPlaced = placed;
     // Written as a conversion: a Run may be finished at its insert and its items follow, because the conversation is not v14 until its head says so, last.
     applyMutation(db, mutation, { ownerGeneration: 1, timestamp: new Date(0).toISOString() });
     for (const ref of legacyContentReferences(state)) prepared(db, "INSERT INTO migration_v14_refs(session_id,content_id) VALUES(?,?) ON CONFLICT DO NOTHING").run(id, ref);
     options.step?.("written", id);
-    check(db, state, version + 1, contexts, conversion, options);
+    check(db, given, version + 1, contexts, conversion, options);
     db.exec("COMMIT");
   } catch (error) {
     if (db.isTransaction) db.exec("ROLLBACK");
     throw error;
   }
+  options.note?.({ sessionId: id, endedSeqPlaced });
   options.step?.("converted", id);
   return true;
 }
@@ -477,6 +543,31 @@ export function convertConversation(db: DatabaseSync, id: SessionId, options: Pi
 // ---------------------------------------------------------------------------------------------------------------------
 // The whole migration
 // ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * A v14 database with conversations not converted has the bookkeeping the first transaction makes. One that an earlier build left without some of it, or without any, is given
+ * the rest here: with nobody having said who gives up a native session two conversations hold (the upgrade that began was another build's), it is said now, the conversations
+ * already converted keeping theirs. Returns the moves it decided.
+ */
+function ensureBookkeeping(db: DatabaseSync): readonly NativeMove[] {
+  if (count(db, "SELECT COUNT(*) AS n FROM sessions WHERE format<14") === 0) return [];
+  const missing = BOOKKEEPING.filter(table => !hasTable(db, table.name));
+  if (missing.length === 0) return [];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const table of missing) db.exec(table.sql);
+    const moves = missing.some(table => table.name === "migration_v14_moves") ? resolveSharedSessions(db) : [];
+    recordMoves(db, moves);
+    db.exec("COMMIT");
+    return moves;
+  } catch (error) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    if (error instanceof UnreadableHolders) throw new SessionError("MIGRATION_REFUSED", "the upgrade cannot go on: " + error.message + ". Nothing was changed.");
+    throw error;
+  }
+}
+const nativeMoveLine = (move: NativeMove): string => "conversation " + move.sessionId + " gave up its native session of " + move.harnessId + "/" + move.controlId + " (binding " + move.ordinal
+  + ") to conversation " + move.keptBy + ", which used it more recently: the next Turn of " + move.sessionId + " opens a new native session and carries its history";
 
 /**
  * Brings the database `db` (at `options.root`, owned by the caller, no transaction open) to v14: the backup and the first transaction when it is not v14 yet, then
@@ -493,10 +584,11 @@ export function migrateToV14(db: DatabaseSync, options: MigrationOptions): Migra
     backup = backupBeforeV14(db, from, { root: options.root, ...(options.freeBytes === undefined ? {} : { freeBytes: options.freeBytes }) });
     options.step?.("backed-up", backup);
     upgradeSchema(db, from, options);
+    for (const move of recordedMoves(db)) options.log?.(nativeMoveLine(move));
     options.step?.("upgraded", String(from));
   }
   const alreadyConverted = count(db, "SELECT COUNT(*) AS n FROM sessions WHERE format=14");
-  if (!hasTable(db, "migration_v14") && count(db, "SELECT COUNT(*) AS n FROM sessions WHERE format<14") > 0) for (const sql of BOOKKEEPING) db.exec(sql);
+  for (const move of ensureBookkeeping(db)) options.log?.(nativeMoveLine(move));
   let converted = 0;
   for (const row of all(db, "SELECT id FROM sessions WHERE format<14 ORDER BY rowid")) {
     const id = String(row.id) as SessionId;
@@ -506,7 +598,7 @@ export function migrateToV14(db: DatabaseSync, options: MigrationOptions): Migra
       const reason = error instanceof Error ? error.message : "unknown failure";
       try { prepared(db, "UPDATE sessions SET last_error=? WHERE id=? AND format<14").run(reason, id); } catch { /* the reason is in the report */ }
       options.log?.("the upgrade stopped at conversation " + id + ": " + reason);
-      return { from, backup, converted, alreadyConverted, stopped: { sessionId: id, reason }, references: null };
+      return { from, backup, converted, alreadyConverted, stopped: { sessionId: id, reason }, references: null, moved: recordedMoves(db) };
     }
   }
   // The references are compared once, when the last conversation is converted, and the answer kept with the phase in one transaction. A database that was compared and
@@ -518,5 +610,5 @@ export function migrateToV14(db: DatabaseSync, options: MigrationOptions): Migra
     if (!references.equal) options.log?.("the content references after the upgrade differ from before: " + references.missingCount + " not kept, " + references.extraCount + " kept that were not referenced");
   }
   options.step?.("finished", String(converted));
-  return { from, backup, converted, alreadyConverted, stopped: null, references };
+  return { from, backup, converted, alreadyConverted, stopped: null, references, moved: recordedMoves(db) };
 }

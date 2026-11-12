@@ -35,7 +35,8 @@ export function databaseBytes(root: string): number {
   for (const name of ["gateway.sqlite", "gateway.sqlite-wal"]) { const path = join(root, name); if (existsSync(path)) bytes += lstatSync(path).size; }
   return bytes;
 }
-function freeBytesOf(root: string): number { const found = statfsSync(root); return Number(found.bavail) * Number(found.bsize); }
+/** The bytes free for this user on the volume `root` is on. */
+export function freeBytesOf(root: string): number { const found = statfsSync(root); return Number(found.bavail) * Number(found.bsize); }
 function errorCode(error: unknown): unknown { return error !== null && typeof error === "object" && "code" in error ? error.code : undefined; }
 /** A failure's reason without paths: this file's own message, SQLite's generic error text or the system error code. */
 function reason(error: unknown): string {

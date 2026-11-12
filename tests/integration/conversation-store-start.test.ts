@@ -11,9 +11,9 @@ import { verify } from "../../src/contexts/session/domain/conversation-verify.js
 import { SqliteConversationStore, type SqliteConversationStoreOptions } from "../../src/infrastructure/session/conversation-store.js";
 import { canonicalJson } from "../../src/infrastructure/session/rows.js";
 import { snapshotFromRows } from "../../src/infrastructure/session/snapshot-adapter.js";
-import { V12_FIXTURES, loadV12Fixture, writeV12Root } from "../fixtures/relay/v12/database.js";
+import { V12_FIXTURES, loadV12Fixture, separate, writeV12Root } from "../fixtures/relay/v12/database.js";
 import { GENERATIONS, loadGeneration, writeGenerationRoot } from "../fixtures/storage/generations/database.js";
-import { V13_FIXTURES, loadV13Fixture, writeV13Root, type V13Fixture, type V13FixtureName } from "../fixtures/storage/v13/database.js";
+import { V13_FIXTURES, later, loadV13Fixture, writeV13Root, type V13Fixture, type V13FixtureName } from "../fixtures/storage/v13/database.js";
 import { code, count, rawDatabase, recoverUnfinished, temporary } from "../fixtures/store-helpers.js";
 
 // Opening a data root with the store of conversations: a root a v13 build left (every frozen fixture), a root of an older generation, a root whose upgrade was stopped by a
@@ -178,6 +178,100 @@ test("an upgrade that has no room, or whose backup cannot be made, changes nothi
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------
+// An upgrade that cannot begin
+// ---------------------------------------------------------------------------------------------------------------------------------
+test("a v12 conversation the old ladder cannot take stops the start before anything is changed: the error names every such conversation and the rule, none of their words, the database is as it was, and the backup is kept", t => {
+  const data = join(temporary(t), "data"), secret = "the words of a private conversation";
+  writeV12Root(data, [separate(loadV12Fixture("d1"), "one"), separate(loadV12Fixture("clear"), "two"), separate(loadV12Fixture("import"), "three")]);
+  const probe = rawDatabase(data), ids = probe.prepare("SELECT id FROM sessions ORDER BY rowid").all().map(row => String(row.id));
+  assert.equal(ids.length, 3);
+  // The second conversation holds an event of a kind the v12 inference reads that says another seq than its row; the third a Run status no version knew, and words that must not be told.
+  const seq = Number(probe.prepare("SELECT seq FROM events WHERE session_id=? AND json_extract(event_json,'$.type')='run.ended' ORDER BY seq LIMIT 1").get(ids[1]!)!.seq);
+  probe.prepare("UPDATE events SET event_json=json_set(event_json,'$.seq',?) WHERE session_id=? AND seq=?").run(seq + 1000, ids[1]!, seq);
+  const whole = String(probe.prepare("SELECT snapshot FROM sessions WHERE id=?").get(ids[2]!)!.snapshot);
+  probe.prepare("UPDATE sessions SET snapshot=json_set(json_set(json_set(snapshot,'$.runs[0].status','exploding'),'$.messages[0].text',?),'$.runs[0].input',?) WHERE id=?").run(secret, secret, ids[2]!);
+  probe.exec("PRAGMA wal_checkpoint(TRUNCATE)"); probe.close();
+  const before = readFileSync(join(data, "gateway.sqlite"));
+  const lines: string[] = [];
+  let failure: unknown;
+  try { new SqliteConversationStore(data, { log: line => lines.push(line) }); } catch (error) { failure = error; }
+  assert.ok(failure instanceof SessionError && failure.code === "MIGRATION_REFUSED", String(failure));
+  for (const id of [ids[1]!, ids[2]!]) assert.ok(failure.message.includes(id), "it names " + id + ": " + failure.message);
+  assert.ok(!failure.message.includes(ids[0]!), "and not the conversation that is fine");
+  assert.match(failure.message, /persistent event sequence is inconsistent/u); assert.match(failure.message, /unknown Run status/u);
+  assert.ok(!failure.message.includes(secret) && !failure.message.includes("exploding"), "and not a word of what they hold");
+  assert.ok(lines.length > 0 && lines.every(line => !line.includes(secret) && !line.includes("exploding")) && lines.some(line => line.includes(ids[1]!) && line.includes(ids[2]!)), "the log names them too: " + lines.join(" | "));
+  // The first stage failed: the database is as it was, byte for byte, the owner is not claimed, the lock is let go, and the backup of this try stays.
+  assert.deepEqual(readFileSync(join(data, "gateway.sqlite")), before, "the database file is the very bytes it was");
+  assert.deepEqual(readdirSync(data).sort(), [".harness-gateway.json", "backups", "gateway.sqlite", "owner.sqlite"], "and nothing else was made");
+  const left = rawDatabase(data, true);
+  try { assert.equal(userVersion(left), 12); assert.equal(Number(left.prepare("SELECT owner_active FROM owner_metadata").get()?.owner_active), 0); } finally { left.close(); }
+  const lock = new DatabaseSync(join(data, "owner.sqlite"), { timeout: 0 });
+  try { lock.exec("BEGIN EXCLUSIVE"); lock.exec("ROLLBACK"); } finally { lock.close(); }
+  const backup = new DatabaseSync(join(data, "backups", "gateway-v12-before-v14.sqlite"), { readOnly: true });
+  try { assert.equal(userVersion(backup), 12); assert.equal(count(backup, "sessions"), 3); } finally { backup.close(); }
+  // The cause repaired, the next start upgrades.
+  const fixed = rawDatabase(data);
+  fixed.prepare("UPDATE events SET event_json=json_set(event_json,'$.seq',?) WHERE session_id=? AND seq=?").run(seq, ids[1]!, seq);
+  fixed.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(whole, ids[2]!); fixed.close();
+  assert.equal(opened(t, data).migration?.stopped, null);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// One native session held by two conversations
+// ---------------------------------------------------------------------------------------------------------------------------------
+/** The conversations that hold each native session live (ready or unconfirmed, and one the conversation can resume), by Harness control and native session. */
+function holders(db: DatabaseSync): Map<string, string[]> {
+  const found = new Map<string, string[]>();
+  for (const row of db.prepare("SELECT session_id, harness_id, control_id, checkpoint FROM bindings WHERE status IN('ready','unconfirmed') AND opens_new=0 ORDER BY session_id").all()) {
+    const key = row.harness_id + "/" + row.control_id + "/" + row.checkpoint;
+    found.set(key, [...(found.get(key) ?? []), String(row.session_id)]);
+  }
+  return found;
+}
+for (const [recent, other] of [["tools", "switches"], ["switches", "tools"]] as const) {
+  test(`two conversations that hold one native session (the ${other} and ${recent} fixtures): the upgrade completes, the one used less recently (${other}) gives it up as a native reset would, and nothing else of it changes`, t => {
+    const first = loadV13Fixture("switches"), second = loadV13Fixture("tools"), data = join(temporary(t), "data");
+    // The same conversations as the fixtures hold them; one fixture is a day later than the other, which decides who used the native sessions last.
+    writeV13Root(data, recent === "tools" ? [first, later(second, 1)] : [later(first, 1), second]);
+    const before = rawDatabase(data, true), originals = originalsOf(before);
+    const shared = new Map<string, string[]>();
+    for (const [id, text] of originals) for (const binding of (JSON.parse(text) as { nativeBindings?: { harnessId: string; controlId: string; checkpoint: string }[] }).nativeBindings ?? []) {
+      const key = binding.harnessId + "/" + binding.controlId + "/" + binding.checkpoint; shared.set(key, [...(shared.get(key) ?? []), id]);
+    }
+    before.close();
+    const clashes = [...shared].filter(([, ids]) => ids.length > 1);
+    assert.deepEqual(clashes.map(([key]) => key).sort(), ["alpha/alpha-acp/native-alpha-1", "bravo/bravo-acp/native-bravo-2"], "the fixtures share these native sessions");
+    const winner = recent === "tools" ? "session-tl-1" : "session-sw-1", loser = recent === "tools" ? "session-sw-1" : "session-tl-1";
+    const lines: string[] = [];
+    const store = opened(t, data, { log: line => lines.push(line) });
+    const report = store.migration;
+    assert.ok(report !== null && report.stopped === null && report.references?.equal === true);
+    assert.deepEqual(report.moved.map(move => ({ ...move })), [
+      { sessionId: loser, ordinal: 0, harnessId: "alpha", controlId: "alpha-acp", keptBy: winner },
+      { sessionId: loser, ordinal: 1, harnessId: "bravo", controlId: "bravo-acp", keptBy: winner }], "the report says who gave up what, to whom");
+    assert.ok(lines.length >= 2 && lines.every(line => line.includes(loser) && line.includes(winner)) && lines.every(line => !/native-(alpha|bravo)-/u.test(line)), "the log says it too: " + lines.join(" | "));
+    const reader = rawDatabase(data, true);
+    try {
+      ok(reader);
+      assert.deepEqual([...holders(reader)].filter(([key]) => clashes.some(([shared]) => shared === key)), clashes.map(([key]) => [key, [winner]]), "each shared native session has one holder: the one used last");
+      // The giving up changes the status of the binding and nothing else of the conversation: it reads back as it was but for the version and those two statuses.
+      for (const [id, text] of originals) {
+        const original = JSON.parse(text) as { nativeBindings?: { status: string }[] };
+        if (id === loser) for (const binding of original.nativeBindings!) binding.status = "archived";
+        assertReadsBack(store.snapshot(sessionId(id)), JSON.stringify(original), id);
+        assert.deepEqual(verify(store.get(sessionId(id)), store), [], id + " breaks no rule");
+      }
+      const archived = reader.prepare("SELECT status, json_extract(binding_json,'$.status') AS inside FROM bindings WHERE session_id=? ORDER BY ordinal").all(loser).map(row => [row.status, row.inside]);
+      assert.deepEqual(archived, [["archived", "archived"], ["archived", "archived"]], "the column and the JSON agree");
+    } finally { reader.close(); }
+    // The bookkeeping of the upgrade keeps the answer until the first start has reported.
+    const kept = rawDatabase(data, true);
+    try { assert.equal(count(kept, "migration_v14_moves"), 2); } finally { kept.close(); }
+  });
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
 // An upgrade that stops
 // ---------------------------------------------------------------------------------------------------------------------------------
 /**
@@ -298,6 +392,29 @@ test("a start killed at each point of the upgrade, and at random moments, leaves
   }
   t.diagnostic(`${killed} of 12 random kills landed before the end`);
   assert.ok(killed >= 3);
+});
+
+test("a start killed after the last conversation was converted and before the references were compared goes on at the next start: the collector reports once, then is free", async t => {
+  const base = sharedRoot(t, ["switches", "commands", "tools"]);
+  const probe = rawDatabase(base, true), conversations = count(probe, "sessions"); probe.close();
+  // Steps: backup, backed-up, upgraded, then written and converted for each conversation, then finished. The kill lands on the `converted` of the last one: its
+  // transaction is committed, the comparison of the references and the phase mark are not.
+  const child = spawn(process.execPath, [storePeer, base, "open", "--kill-at", String(3 + 2 * conversations)], { stdio: ["ignore", "ignore", "inherit"] });
+  const [, signal] = await once(child, "exit") as [number | null, NodeJS.Signals | null];
+  assert.equal(signal, "SIGKILL");
+  const killed = rawDatabase(base, true);
+  try {
+    assert.equal(count(killed, "sessions", "format<14"), 0, "every conversation was converted");
+    assert.equal(String(killed.prepare("SELECT value FROM migration_v14 WHERE key='phase'").get()?.value), "converting", "and the phase was not marked");
+    assert.equal(String(killed.prepare("SELECT value FROM migration_v14 WHERE key='references'").get()?.value), "pending", "nor the references compared");
+  } finally { killed.close(); }
+  const second = opened(t, base);
+  assert.equal(second.migration?.stopped, null); assert.equal(second.migration?.references?.equal, true, "the start went on with what was left: the comparison");
+  assert.deepEqual(second.collectionGate(), { allowed: false, reportOnly: true, reason: "the first start after the upgrade only reports what would be collected and deletes nothing" }, "the first start after the upgrade only reports");
+  second.acknowledgeFirstStart(); second.close();
+  const third = opened(t, base);
+  assert.equal(third.migration, null, "nothing is left to go on with");
+  assert.deepEqual(third.collectionGate(), { allowed: true, reportOnly: false, reason: null }, "and the next start collects");
 });
 
 test("an upgrade that the migration alone began and a process killed (the migration peer) is finished by the store, whatever step it stopped at", async t => {
