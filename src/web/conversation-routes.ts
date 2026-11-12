@@ -175,7 +175,7 @@ export class ConversationRoutes {
     if (list.version !== written.version - 1) { this.editLists.delete(id); return; }
     for (const write of commit.changes.items ?? []) {
       const row = write.row;
-      if (row.type !== "file_change" || (row.fields as { readonly detail?: unknown }).detail === undefined) continue;
+      if (row.type !== "file_change" || ((row.fields as { readonly detail?: unknown }).detail === undefined && (row.fields as { readonly by?: unknown }).by !== "hub")) continue;
       if (list.value.some(held => held.runId === row.runId && held.seq === row.seq)) continue;
       const run = this.options.facts.runById(row.runId);
       if (run === null) { this.editLists.delete(id); return; }

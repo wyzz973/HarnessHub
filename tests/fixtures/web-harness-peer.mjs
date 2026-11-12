@@ -21,9 +21,11 @@ createInterface({ input: process.stdin }).on("line", line => {
   if (value.method === "skills/list") return reply(value.id, { data: [{ cwd: process.cwd(), skills: [{ name: "browser-skill", description: "浏览器验收技能", path: "/skills/browser-skill/SKILL.md", scope: "user", enabled: true }], errors: [] }] });
   if (value.method === "mcpServerStatus/list") return reply(value.id, { data: [{ name: "browser-docs", runtimeStatus: "connected", authStatus: "unsupported", tools: { lookup: {} }, toolsError: null }], nextCursor: null });
   if (value.method === "plugin/installed") return reply(value.id, { marketplaces: [{ name: "browser-market", plugins: [{ name: "browser-plugin", installed: true, enabled: true, localVersion: "2.0.0" }] }], marketplaceLoadErrors: [] });
-  if (value.method === "thread/start") { nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native } }); }
+  // As a real app-server does, the thread reports the approval policy and sandbox it runs with (the ones asked for, else Codex's own).
+  const settings = params => ({ approvalPolicy: params.approvalPolicy ?? "on-request", sandbox: { type: { "read-only": "readOnly", "workspace-write": "workspaceWrite", "danger-full-access": "dangerFullAccess" }[params.sandbox ?? "workspace-write"] } });
+  if (value.method === "thread/start") { nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native }, ...settings(value.params) }); }
   if (value.method === "thread/fork") { const id = "browser-fork-" + process.pid; notify("thread/started", { thread: { id } }); return reply(value.id, { thread: { id } }); }
-  if (value.method === "thread/resume") { native = value.params.threadId; nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native } }); }
+  if (value.method === "thread/resume") { native = value.params.threadId; nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native }, ...settings(value.params) }); }
   if (value.method === "turn/start") {
     const input = value.params.input[0].text;
     // File pointers follow the user's words, after the relay packet's end line; they are not part of either.

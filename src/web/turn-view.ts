@@ -12,6 +12,7 @@ import {
   errorClass, modelLabel, normalizeTool, planFromInput, runEnded, stopReason, turnStatus, turnUsage, type ToolDetailInput,
 } from "../contexts/session/domain/protocol/index.js";
 import { wireItem } from "./commit-frame.js";
+import { selectionLevels } from "../contracts/levels.js";
 
 /*
  * A Turn as the wire tells it (ADR-057 3.4): the Run's row and its items, made into the protocol's Turn (docs/proposals/protocol/hub-protocol.html §4-§5) the way the
@@ -190,7 +191,8 @@ export class TurnView {
   }
   executor(row: RunRow): Executor {
     const harnessId = row.facts.selection.harnessId, native = this.nativeModel(row);
-    return { harnessId, harness: this.env.harnessName(harnessId) ?? harnessId, ...(native === undefined ? {} : { model: modelLabel(harnessId, native, this.env.modelName?.(harnessId, native) ?? null) }) };
+    return { harnessId, harness: this.env.harnessName(harnessId) ?? harnessId, ...(native === undefined ? {} : { model: modelLabel(harnessId, native, this.env.modelName?.(harnessId, native) ?? null) }),
+      ...selectionLevels(harnessId, row.facts.selection.nativeOptions) };
   }
 
   header(row: RunRow, waiting = false): WireTurnHeader {

@@ -711,7 +711,7 @@ test("native settings switch without Apply and approvals survive refresh or canc
   await composer.fill("FAIL_ONCE：检查重试按钮布局"); await expect(page.getByRole("button",{name:"发送消息",exact:true})).toBeEnabled(); await composer.press("Enter"); await expect.poll(async () => (await current()).runs[2]?.status).toBe("failed");
   // A failed Turn says what failed in its error card and ends with the same footer as any Turn; the header names the state in the table's word (ruling N).
   await expect(page.locator(".assistant-message").last().locator(".run-error")).toBeVisible();
-  await expect(page.locator(".assistant-message").last().locator(".turn-footer")).toHaveText(/^Codex · Native B · 用时 [0-9.]+ 秒$/u);
+  await expect(page.locator(".assistant-message").last().locator(".turn-footer")).toHaveText(/^Codex · Native B · (?:[^·]+ · )*用时 [0-9.]+ 秒$/u);
   await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Codex 失败");
   await page.locator(".assistant-message").last().hover();
   for (const width of [943, 390, 320]) {
@@ -1175,7 +1175,7 @@ test("a new conversation starts a Harness with the model and thinking level last
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), fast = page.getByRole("button", { name: "Native fast", exact: true }), thinking = page.getByRole("button", { name: "思考强度", exact: true });
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
-  await thinking.click(); await page.getByRole("option", { name: "最大", exact: true }).click();
+  await thinking.click(); await page.getByRole("option", { name: "最高", exact: true }).click();
   await openAdvanced(page);
   await fast.click(); await page.getByRole("option", { name: "On", exact: true }).click(); await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeDisabled(); await composer.fill("first");
@@ -1183,8 +1183,8 @@ test("a new conversation starts a Harness with the model and thinking level last
   await expect(page.getByRole("log", { name: "对话历史" })).toContainText("你好 fixture", { timeout: 15000 });
   const check = async () => {
     // The thinking level comes back, marked as last used; the other native setting follows the program's default.
-    await expect(thinking).toContainText("最大");
-    await thinking.click(); await expect(page.getByRole("option", { name: "最大", exact: true })).toHaveAccessibleDescription(/上次使用/); await page.keyboard.press("Escape");
+    await expect(thinking).toContainText("最高");
+    await thinking.click(); await expect(page.getByRole("option", { name: "最高", exact: true })).toHaveAccessibleDescription(/上次使用/); await page.keyboard.press("Escape");
     await openAdvanced(page); await expect(fast).toContainText("本机默认"); await page.keyboard.press("Escape");
   };
   // Through the picker of a new conversation.
@@ -1728,7 +1728,7 @@ test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is 
   // C03: a reply has no header of its own; who answered, with which model and how long it took stand in the footer, led by the Harness's mark (16 px).
   await expect(first).toHaveAttribute("aria-label", "Codex 的回复");
   const footer = first.locator(".turn-footer");
-  await expect(footer).toHaveText(/^Codex · Native B · 用时 [0-9.]+ 秒/u);
+  await expect(footer).toHaveText(/^Codex · Native B · (?:[^·]+ · )*用时 [0-9.]+ 秒/u);
   const mark = await footer.locator(".brand-tile").boundingBox(); assert.ok(mark && Math.round(mark.width) === 16 && Math.round(mark.height) === 16, "the Harness mark is 16 px");
   await expect(first.locator(".brand-tile")).toHaveCount(1);
   // C04: the actions are one line once the Turn ended, counting each kind of action; failures would be counted in it.
@@ -2202,20 +2202,21 @@ test("G054-DL3 the home greets, says who is ready from the readiness facts and w
   await list.getByRole("button", { name: "选择 Codex", exact: true }).click();
   await expect(chip).toContainText("Codex"); await expect(composer).toBeFocused();
   await shoot("dl3-home");
-  // H05: the program's own approval rule sits at the bottom left after the attachments, before the merged picker.
+  // H05: the permission list sits at the bottom left after the attachments, before the merged picker. This fixture's entry is no Harness the
+  // unified levels know, so it follows its own settings and every level is greyed with why.
   await chip.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex Policy", exact: true }).click();
-  const rule = page.getByRole("button", { name: "审批策略", exact: true });
-  await expect(rule).toHaveText("从不请求审批");
+  const rule = page.getByRole("button", { name: "权限", exact: true });
+  await expect(rule).toHaveText("本机设置");
   const [ruleBox, addBox, chipBox] = await Promise.all([rule.boundingBox(), add.boundingBox(), chip.boundingBox()]);
   assert.ok(ruleBox && addBox && chipBox && ruleBox.x > addBox.x + addBox.width && ruleBox.x + ruleBox.width < chipBox.x && Math.abs(ruleBox.y + ruleBox.height / 2 - (addBox.y + addBox.height / 2)) <= 2,
     "the rule follows the add button on its line, before the picker");
-  await rule.click(); await expect(page.getByRole("option", { name: "按需请求审批", exact: true })).toBeVisible();
+  await rule.click(); await expect(page.getByRole("option", { name: /^自动执行/u })).toBeVisible();
   await page.keyboard.press("Escape"); await expect(rule).toBeFocused();
   // Ruling R2: the bottom left keeps "+" and the rule only, as the Main board draws it. What adds to this message is in "+",
   // the native sessions included; the Agent's extensions and advanced settings are in the Agent list's footer.
   const corner = page.getByRole("group", { name: "附件与权限", exact: true });
   await expect(corner.getByRole("button")).toHaveCount(2);
-  await expect(corner.getByRole("button").nth(0)).toHaveAccessibleName("添加文件或上下文"); await expect(corner.getByRole("button").nth(1)).toHaveAccessibleName("审批策略");
+  await expect(corner.getByRole("button").nth(0)).toHaveAccessibleName("添加文件或上下文"); await expect(corner.getByRole("button").nth(1)).toHaveAccessibleName("权限");
   await expect(page.getByRole("button", { name: /^(本机会话|原生扩展|高级配置)$/u })).toHaveCount(0);
   await add.click();
   await expect(page.getByRole("menuitem", { name: /^添加文件或图片…/u })).toBeVisible(); await expect(page.getByRole("menuitem", { name: "继续原程序的会话…", exact: true })).toBeVisible();

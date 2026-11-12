@@ -403,8 +403,9 @@ test("the mode list is the same: an Esc pressed right after a choice in it stops
   const started = await start(t);
   const { page, composer, errors } = started;
   const run = await running(started);
-  await page.getByRole("button", { name: "协作模式", exact: true }).click();
-  await page.getByRole("option", { name: "计划", exact: true }).click();
+  // The collaboration mode is chosen through the unified permission list now ("只规划" is Codex's plan mode).
+  await page.getByRole("button", { name: "权限", exact: true }).click();
+  await page.getByRole("option", { name: /^只规划/u }).click();
   await expect(composer).toBeFocused();
   await canStop(page);
   await page.keyboard.press("Escape");

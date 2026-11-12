@@ -342,7 +342,7 @@ test("Codex thread permission settings come from the native configuration, apply
     const start = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line)).find(row => row.method === "thread/start");
     assert.equal(start.params.approvalPolicy, "on-request"); assert.equal(start.params.sandbox, "read-only");
   } finally { await driver.close(); }
-  for (const [scenario, native, code] of [["permissions-settings", { sandbox: "everything" }, "NATIVE_OPTION_UNAVAILABLE"], ["basic", { approval_policy: "never" }, "NATIVE_OPTION_UNAVAILABLE"], ["ignore-permissions", { approval_policy: "on-request" }, "NATIVE_OPTION_MISMATCH"]] as const) {
+  for (const [scenario, native, code] of [["permissions-settings", { sandbox: "everything" }, "NATIVE_OPTION_UNAVAILABLE"], ["ignore-permissions", { approval_policy: "on-request" }, "NATIVE_OPTION_MISMATCH"]] as const) {
     const other = control(scenario);
     try { await other.initialize(); await assert.rejects(other.open(process.cwd(), undefined, native), (error: unknown) => error instanceof ControlError && error.code === code, scenario); }
     finally { await other.close(); }
@@ -528,7 +528,7 @@ test("Codex plan mode is declared only by a connection opened with a chosen mode
 test("a Codex without collaboration modes is still offered the option, and a Run that chooses one fails before any thread opens, saying why (ADR-053)", async t => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-codex-collab-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
   const reader = control("collab-missing");
-  try { await reader.initialize(); assert.deepEqual((await reader.models()).options?.map(option => option.id), ["collaboration_mode"], "the option is offered before anything is known"); }
+  try { await reader.initialize(); assert.deepEqual((await reader.models()).options?.map(option => option.id), ["collaboration_mode", "approval_policy", "sandbox"], "the options are offered before anything is known"); }
   finally { await reader.close(); }
   const planning = control("collab-missing", { FIXTURE_TRACE: trace }, { selectedOptions: { collaboration_mode: "plan" } });
   try {

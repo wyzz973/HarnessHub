@@ -1,5 +1,6 @@
 import type { ReadTurn } from "./protocol-read.js";
 import { STOP_REASON_WORDS, TURN_STATUS_WORDS } from "./protocol-words.js";
+import { EFFORT_WORDS, PERMISSION_WORDS } from "./levels.js";
 
 /*
  * The words a Turn's facts are written in, said once for every place that writes them (docs/proposals/protocol/hub-protocol.html §13): the
@@ -67,7 +68,9 @@ export function turnFacts(turn: Pick<ReadTurn, "usage" | "durationMs">): readonl
  * native session's so far ("对话累计 US$0.87"), last.
  */
 export function turnFooter(turn: Pick<ReadTurn, "executor" | "usage" | "durationMs">): string {
-  return [turn.executor.harness, turn.executor.model?.label, ...turnFacts(turn)].filter(Boolean).join(" · ");
+  // The unified levels the Turn ran with, when its selection named one (src/contracts/levels.ts): "自动执行 · 思考 高".
+  const permission = turn.executor.permission === undefined ? null : PERMISSION_WORDS[turn.executor.permission], effort = turn.executor.effort === undefined ? null : "思考 " + EFFORT_WORDS[turn.executor.effort];
+  return [turn.executor.harness, turn.executor.model?.label, permission, effort, ...turnFacts(turn)].filter(Boolean).join(" · ");
 }
 
 /**

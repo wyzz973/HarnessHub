@@ -35,8 +35,9 @@ function number(value: unknown): number { return typeof value === "number" && Nu
 function bool(value: unknown): boolean { return typeof value === "boolean" ? value : invalid(); }
 function nullableText(value: unknown): string | null { return value === null ? null : text(value); }
 function nullableNumber(value: unknown): number | null { return value === null ? null : number(value); }
-function list<T>(value: unknown, decode: (row: unknown) => T, limit = 2048): readonly T[] {
-  if (!Array.isArray(value) || value.length > limit) return invalid();
+/** A list of any length (2026-11-12): the page mirrors no count bound the Gateway does not have. */
+function list<T>(value: unknown, decode: (row: unknown) => T): readonly T[] {
+  if (!Array.isArray(value)) return invalid();
   return value.map(decode);
 }
 function choice<const T extends readonly string[]>(value: unknown, choices: T): T[number] {
@@ -47,7 +48,7 @@ const RUN_STATES = ["queued", "preparing", "running", "settling", "completed", "
 const SESSION_STATES = ["open", "closed", "blocked"] as const;
 export const PROVIDER_PROTOCOLS = ["openai-responses", "openai-chat-completions", "anthropic-messages", "gemini"] as const;
 function nativeOption(value: unknown): NativeOption {
-  const row = record(value), values = list(row.values,value => { const option = record(value); return { value: text(option.value), name: text(option.name) }; },4096);
+  const row = record(value), values = list(row.values,value => { const option = record(value); return { value: text(option.value), name: text(option.name) }; });
   if (!values.length || new Set(values.map(option=>option.value)).size!==values.length) return invalid();
   return { id:text(row.id), name:text(row.name), category:text(row.category), currentValue:text(row.currentValue), values };
 }
@@ -73,7 +74,7 @@ function publicError(value: unknown): { code: string; message: string } | null {
 export function decodeProvider(value: unknown): ProviderView {
   const row = record(value);
   return { id: text(row.id), revision: number(row.revision), name: text(row.name), protocol: choice(row.protocol, PROVIDER_PROTOCOLS),
-    baseUrl: text(row.baseUrl), models: list(row.models, text, 256), defaultModel: text(row.defaultModel), enabled: bool(row.enabled), hasCredential: bool(row.hasCredential) };
+    baseUrl: text(row.baseUrl), models: list(row.models, text), defaultModel: text(row.defaultModel), enabled: bool(row.enabled), hasCredential: bool(row.hasCredential) };
 }
 /** An ISO time as the Gateway writes it (`toISOString`); anything else is an invalid response. */
 function isoTime(value: unknown): string {
@@ -83,22 +84,22 @@ function isoTime(value: unknown): string {
 function decodeHarness(value: unknown): HarnessView {
   const row = record(value);
   const install = row.install === null ? null : record(row.install);
-  return { id: text(row.id), name: text(row.name), tier: choice(row.tier, HARNESS_TIERS), installed: bool(row.installed), defaultControlId: nullableText(row.defaultControlId), providerProtocols: list(row.providerProtocols, text, 16), management: decodeManagement(row.management),
+  return { id: text(row.id), name: text(row.name), tier: choice(row.tier, HARNESS_TIERS), installed: bool(row.installed), defaultControlId: nullableText(row.defaultControlId), providerProtocols: list(row.providerProtocols, text), management: decodeManagement(row.management),
     controls: list(row.controls, value => { const control = record(value), entry = control.entry === null ? null : record(control.entry);
       return { id: text(control.id), protocol: text(control.protocol), available: bool(control.available), reason: nullableText(control.reason),
-        entry: entry === null ? null : { source: choice(entry.source, ["path", "standard-directory", "custom-entry", "package-root", "managed"]) } }; }, 64),
+        entry: entry === null ? null : { source: choice(entry.source, ["path", "standard-directory", "custom-entry", "package-root", "managed"]) } }; }),
     install: install === null ? null : { command: text(install.command), docs: text(install.docs), checkedAt: text(install.checkedAt), note: nullableText(install.note),
       method: choice(install.method, ["script", "npm", "terminal"]), available: bool(install.available) },
     installations: list(row.installations, value => { const item = record(value);
       return { ref: text(item.ref), channel: item.channel === null ? null : choice(item.channel, ["npm", "brew-formula", "brew-cask", "script", "uv", "pnpm", "bun"]), label: text(item.label), command: text(item.command),
         version: nullableText(item.version), role: choice(item.role, ["product", "adapter"]), active: bool(item.active), maintained: bool(item.maintained), canUninstall: bool(item.canUninstall),
         upgrade: item.upgrade === null ? null : choice(item.upgrade, ["version", "self-update", "rerun", "terminal", "maintenance"]),
-        latest: item.latest === null ? null : (() => { const latest = record(item.latest); return { version: nullableText(latest.version), source: choice(latest.source, ["npm", "homebrew-local"]), checkedAt: text(latest.checkedAt), error: nullableText(latest.error) }; })() }; }, 64),
+        latest: item.latest === null ? null : (() => { const latest = record(item.latest); return { version: nullableText(latest.version), source: choice(latest.source, ["npm", "homebrew-local"]), checkedAt: text(latest.checkedAt), error: nullableText(latest.error) }; })() }; }),
     unofficial: row.unofficial === null ? null : (() => { const item = record(row.unofficial); return { command: text(item.command), onPath: bool(item.onPath), pathDefault: bool(item.pathDefault) }; })() };
 }
 function decodeLoginShell(value: unknown): LoginShellView {
   const row = record(value);
-  return { available: bool(row.available), ...(row.shell === undefined ? {} : { shell: text(row.shell) }), dirs: list(row.dirs, text).slice(0, 64), readAt: row.readAt === null ? null : number(row.readAt) };
+  return { available: bool(row.available), ...(row.shell === undefined ? {} : { shell: text(row.shell) }), dirs: list(row.dirs, text), readAt: row.readAt === null ? null : number(row.readAt) };
 }
 function decodeManagement(value: unknown): HarnessManagementView {
   const row = record(value), recipe = row.recipe === null ? null : record(row.recipe);
@@ -110,28 +111,28 @@ export function decodeInstallationJob(value: unknown): InstallationJobView {
   const row = record(value);
   return { id: text(row.id), harnessId: text(row.harnessId), controlId: text(row.controlId), action: choice(row.action, ["install", "upgrade", "uninstall"]), status: choice(row.status, ["queued", "resolving", "installing", "verifying", "activating", "completed", "cancelled", "failed", "unknown"]), phase: text(row.phase), cancelRequested: bool(row.cancelRequested), createdAt: text(row.createdAt), updatedAt: text(row.updatedAt), resolvedVersion: nullableText(row.resolvedVersion), installationId: nullableText(row.installationId), error: publicError(row.error), logCursor: number(row.logCursor),
     ...(row.native === undefined ? {} : { native: (() => { const native = record(row.native); return { channel: text(native.channel), location: text(native.location), beforeVersion: nullableText(native.beforeVersion), actualVersion: nullableText(native.actualVersion), dispatched: bool(native.dispatched), configurationPreserved: native.configurationPreserved === null ? null : bool(native.configurationPreserved),
-      ...(native.restartServices === undefined ? {} : { restartServices: list(native.restartServices, text, 16) }),
+      ...(native.restartServices === undefined ? {} : { restartServices: list(native.restartServices, text) }),
       ...(native.closedConversations === undefined ? {} : { closedConversations: number(native.closedConversations) }),
       ...(native.clearedRecords === undefined ? {} : { clearedRecords: number(native.clearedRecords) }),
-      ...(native.services === undefined ? {} : { services: list(native.services, value => { const item = record(value); return { label: text(item.label), outcome: choice(item.outcome, ["restarted", "not_running", "not_recovered"]), pid: item.pid === null ? null : number(item.pid), ready: item.ready === null ? null : bool(item.ready) }; }, 16) }),
+      ...(native.services === undefined ? {} : { services: list(native.services, value => { const item = record(value); return { label: text(item.label), outcome: choice(item.outcome, ["restarted", "not_running", "not_recovered"]), pid: item.pid === null ? null : number(item.pid), ready: item.ready === null ? null : bool(item.ready) }; }) }),
       ...(native.configurationChangedByService === undefined ? {} : { configurationChangedByService: bool(native.configurationChangedByService) }),
       ...(native.uninstall === undefined ? {} : { uninstall: (() => { const facts = record(native.uninstall); return { label: text(facts.label), role: choice(facts.role, ["product", "adapter"]),
-        stopServices: list(facts.stopServices, text, 16), stoppedServices: list(facts.stoppedServices, text, 16), removed: bool(facts.removed) }; })() }),
+        stopServices: list(facts.stopServices, text), stoppedServices: list(facts.stoppedServices, text), removed: bool(facts.removed) }; })() }),
       ...(native.official === undefined ? {} : { official: (() => { const facts = record(native.official); return { method: choice(facts.method, ["script", "npm"]), source: text(facts.source), sha256: nullableText(facts.sha256),
-        shellChanges: list(facts.shellChanges, item => { const change = record(item); return { file: text(change.file), added: list(change.added, value => typeof value === "string" ? value : invalid(), 64), removed: list(change.removed, value => typeof value === "string" ? value : invalid(), 64) }; }, 4),
-        configChanges: list(facts.configChanges, item => { const change = record(item); return { file: text(change.file), keys: list(change.keys, key => { const entry = record(key); return { path: text(entry.path), value: nullableText(entry.value) }; }, 64) }; }, 4),
-        blocked: list(facts.blocked, text, 16), installed: bool(facts.installed) }; })() }),
+        shellChanges: list(facts.shellChanges, item => { const change = record(item); return { file: text(change.file), added: list(change.added, value => typeof value === "string" ? value : invalid()), removed: list(change.removed, value => typeof value === "string" ? value : invalid()) }; }),
+        configChanges: list(facts.configChanges, item => { const change = record(item); return { file: text(change.file), keys: list(change.keys, key => { const entry = record(key); return { path: text(entry.path), value: nullableText(entry.value) }; }) }; }),
+        blocked: list(facts.blocked, text), installed: bool(facts.installed) }; })() }),
       ...(native.installation === undefined ? {} : { installation: (() => { const facts = record(native.installation); return { label: text(facts.label), role: choice(facts.role, ["product", "adapter"]),
-        kind: choice(facts.kind, ["version", "self-update", "rerun"]), command: text(facts.command), dependencies: list(facts.dependencies, text, 64), ...changes(facts), blocked: list(facts.blocked, text, 16) }; })() }),
+        kind: choice(facts.kind, ["version", "self-update", "rerun"]), command: text(facts.command), dependencies: list(facts.dependencies, text), ...changes(facts), blocked: list(facts.blocked, text) }; })() }),
       // A sequenced upgrade's hops, backup confirmation and the configuration its Doctor migrated (ADR-052).
-      ...(native.hops === undefined ? {} : { hops: list(native.hops, value => { const hop = record(value); return { version: text(hop.version), installed: bool(hop.installed), doctor: choice(hop.doctor, ["ok", "failed", "skipped"]) }; }, 4) }),
+      ...(native.hops === undefined ? {} : { hops: list(native.hops, value => { const hop = record(value); return { version: text(hop.version), installed: bool(hop.installed), doctor: choice(hop.doctor, ["ok", "failed", "skipped"]) }; }) }),
       ...(native.backupConfirmed === undefined ? {} : { backupConfirmed: bool(native.backupConfirmed) }),
-      ...(native.configurationMigrated === undefined ? {} : { configurationMigrated: list(native.configurationMigrated, text, 8) }) }; })() }) };
+      ...(native.configurationMigrated === undefined ? {} : { configurationMigrated: list(native.configurationMigrated, text) }) }; })() }) };
 }
 /** Lines an installer changed in a shell startup file and key paths it changed in a product configuration (ADR-044). */
 function changes(facts: Record<string, unknown>): Pick<NonNullable<NonNullable<InstallationJobView["native"]>["installation"]>, "shellChanges" | "configChanges"> {
-  return { shellChanges: list(facts.shellChanges, item => { const change = record(item); return { file: text(change.file), added: list(change.added, value => typeof value === "string" ? value : invalid(), 64), removed: list(change.removed, value => typeof value === "string" ? value : invalid(), 64) }; }, 4),
-    configChanges: list(facts.configChanges, item => { const change = record(item); return { file: text(change.file), keys: list(change.keys, key => { const entry = record(key); return { path: text(entry.path), value: nullableText(entry.value) }; }, 64) }; }, 4) };
+  return { shellChanges: list(facts.shellChanges, item => { const change = record(item); return { file: text(change.file), added: list(change.added, value => typeof value === "string" ? value : invalid()), removed: list(change.removed, value => typeof value === "string" ? value : invalid()) }; }),
+    configChanges: list(facts.configChanges, item => { const change = record(item); return { file: text(change.file), keys: list(change.keys, key => { const entry = record(key); return { path: text(entry.path), value: nullableText(entry.value) }; }) }; }) };
 }
 /** What upgrading one installation through its channel would run and change (ADR-044). */
 export function decodeUpgradeCheck(value: unknown): InstallationUpgradeCheckView {
@@ -139,27 +140,27 @@ export function decodeUpgradeCheck(value: unknown): InstallationUpgradeCheckView
   const runtime = row.runtime === null ? null : record(row.runtime), terminal = row.terminal === null ? null : record(row.terminal), script = row.script === null ? null : record(row.script);
   return { harnessId: text(row.harnessId), ref: text(row.ref), checkedAt: text(row.checkedAt), fingerprint: text(row.fingerprint), expiresAt: text(row.expiresAt), label: text(row.label),
     role: choice(row.role, ["product", "adapter"]), channel: choice(row.channel, ["npm", "brew-formula", "brew-cask", "script", "uv"]), kind: choice(row.kind, ["version", "self-update", "rerun", "terminal"]),
-    current: nullableText(row.current), target: nullableText(row.target), prerelease: bool(row.prerelease), runs: text(row.runs), writes: list(row.writes, text, 16),
-    script: script === null ? null : { source: text(script.source), sha256: text(script.sha256) }, shellProfile: nullableText(row.shellProfile), configFiles: list(row.configFiles, text, 8),
-    dependencies: list(row.dependencies, text, 64), sharedRuntimes: list(row.sharedRuntimes, text, 64),
+    current: nullableText(row.current), target: nullableText(row.target), prerelease: bool(row.prerelease), runs: text(row.runs), writes: list(row.writes, text),
+    script: script === null ? null : { source: text(script.source), sha256: text(script.sha256) }, shellProfile: nullableText(row.shellProfile), configFiles: list(row.configFiles, text),
+    dependencies: list(row.dependencies, text), sharedRuntimes: list(row.sharedRuntimes, text),
     runtime: runtime === null ? null : { runtime: choice(runtime.runtime, ["Node.js"]), required: text(runtime.required), found: nullableText(runtime.found), path: text(runtime.path),
       satisfied: bool(runtime.satisfied), service: nullableText(runtime.service), restarted: bool(runtime.restarted), upgradeCommand: nullableText(runtime.upgradeCommand) },
-    active: bool(row.active), conversations: list(row.conversations, item => { const conversation = record(item); return { sessionId: text(conversation.sessionId), title: text(conversation.title), busy: bool(conversation.busy) }; }, 256),
-    otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) }), 256), processes: list(row.processes, entry, 128),
+    active: bool(row.active), conversations: list(row.conversations, item => { const conversation = record(item); return { sessionId: text(conversation.sessionId), title: text(conversation.title), busy: bool(conversation.busy) }; }),
+    otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) })), processes: list(row.processes, entry),
     terminal: terminal === null ? null : { command: text(terminal.command), explains: text(terminal.explains), localChanges: terminal.localChanges === null ? null : number(terminal.localChanges) },
-    notes: list(row.notes, text, 16), blocked: nullableText(row.blocked) };
+    notes: list(row.notes, text), blocked: nullableText(row.blocked) };
 }
 /** What installing a missing product the official way would run and change (ADR-044). */
 export function decodeInstallCheck(value: unknown): InstallCheckView {
   const row = record(value), terminal = record(row.terminal), prefix = row.prefix === null ? null : record(row.prefix), runtime = row.runtime === null ? null : record(row.runtime);
   return { harnessId: text(row.harnessId), checkedAt: text(row.checkedAt), fingerprint: text(row.fingerprint), expiresAt: text(row.expiresAt), method: choice(row.method, ["script", "npm"]),
-    officialCommand: text(row.officialCommand), docs: text(row.docs), source: text(row.source), sha256: nullableText(row.sha256), runs: text(row.runs), writes: list(row.writes, text, 16),
-    shellProfile: nullableText(row.shellProfile), configFiles: list(row.configFiles, text, 8), version: nullableText(row.version),
+    officialCommand: text(row.officialCommand), docs: text(row.docs), source: text(row.source), sha256: nullableText(row.sha256), runs: text(row.runs), writes: list(row.writes, text),
+    shellProfile: nullableText(row.shellProfile), configFiles: list(row.configFiles, text), version: nullableText(row.version),
     prefix: prefix === null ? null : { label: text(prefix.label), path: text(prefix.path) },
     runtime: runtime === null ? null : { runtime: choice(runtime.runtime, ["Node.js"]), required: text(runtime.required), found: nullableText(runtime.found), path: text(runtime.path),
       satisfied: bool(runtime.satisfied), service: nullableText(runtime.service), restarted: bool(runtime.restarted), upgradeCommand: nullableText(runtime.upgradeCommand) },
     terminal: { command: text(terminal.command), before: nullableText(terminal.before), after: choice(terminal.after, ["this", "unchanged", "not-on-path"]) },
-    notes: list(row.notes, text, 16), blocked: nullableText(row.blocked) };
+    notes: list(row.notes, text), blocked: nullableText(row.blocked) };
 }
 /** What uninstalling one installation would remove, stop and leave (ADR-044). */
 export function decodeUninstallCheck(value: unknown): UninstallCheckView {
@@ -167,13 +168,13 @@ export function decodeUninstallCheck(value: unknown): UninstallCheckView {
   const after = record(row.after), kind = choice(after.kind, ["next", "none", "unchanged"]);
   return { harnessId: text(row.harnessId), ref: text(row.ref), checkedAt: text(row.checkedAt), fingerprint: text(row.fingerprint), channel: choice(row.channel, ["npm", "brew-formula", "brew-cask", "script", "uv"]),
     label: text(row.label), role: choice(row.role, ["product", "adapter"]), version: nullableText(row.version), active: bool(row.active),
-    commands: list(row.commands, text, 16), removes: list(row.removes, text, 32), skipped: list(row.skipped, item => { const skipped = record(item); return { path: text(skipped.path), reason: text(skipped.reason) }; }, 16),
-    documented: bool(row.documented), kept: list(row.kept, text, 16),
-    services: list(row.services, item => { const service = record(item); return { label: text(service.label), name: text(service.name), pid: number(service.pid), commands: list(service.commands, text, 8), interrupts: text(service.interrupts) }; }, 16),
-    undeclaredServices: list(row.undeclaredServices, item => { const service = record(item); return { label: text(service.label), pid: number(service.pid) }; }, 64),
-    resident: list(row.resident, entry, 64), processes: list(row.processes, entry, 64),
-    conversations: list(row.conversations, item => { const conversation = record(item); return { sessionId: text(conversation.sessionId), title: text(conversation.title), busy: bool(conversation.busy) }; }, 256),
-    otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) }), 256), localChanges: row.localChanges === null ? null : number(row.localChanges),
+    commands: list(row.commands, text), removes: list(row.removes, text), skipped: list(row.skipped, item => { const skipped = record(item); return { path: text(skipped.path), reason: text(skipped.reason) }; }),
+    documented: bool(row.documented), kept: list(row.kept, text),
+    services: list(row.services, item => { const service = record(item); return { label: text(service.label), name: text(service.name), pid: number(service.pid), commands: list(service.commands, text), interrupts: text(service.interrupts) }; }),
+    undeclaredServices: list(row.undeclaredServices, item => { const service = record(item); return { label: text(service.label), pid: number(service.pid) }; }),
+    resident: list(row.resident, entry), processes: list(row.processes, entry),
+    conversations: list(row.conversations, item => { const conversation = record(item); return { sessionId: text(conversation.sessionId), title: text(conversation.title), busy: bool(conversation.busy) }; }),
+    otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) })), localChanges: row.localChanges === null ? null : number(row.localChanges),
     after: kind === "next" ? { kind, label: text(after.label), version: nullableText(after.version) } : { kind } };
 }
 /** A release's Node.js range against one runtime that will run it (ADR-043). */
@@ -185,31 +186,31 @@ function decodeRuntime(value: unknown): RuntimeRequirement {
 /** A product's documented upgrade sequence as the confirmation shows it (ADR-052). */
 function decodeSequence(value: unknown): UpgradeSequenceCheck {
   const row = record(value), gateway = row.gateway === null ? null : record(row.gateway), doctor = record(row.doctor);
-  return { hops: list(row.hops, item => { const hop = record(item); return { version: text(hop.version), bridge: bool(hop.bridge), runtimes: list(hop.runtimes, decodeRuntime, 32) }; }, 4), commands: list(row.commands, text, 32),
+  return { hops: list(row.hops, item => { const hop = record(item); return { version: text(hop.version), bridge: bool(hop.bridge), runtimes: list(hop.runtimes, decodeRuntime) }; }), commands: list(row.commands, text),
     gateway: gateway === null ? null : { label: text(gateway.label), name: text(gateway.name), pid: number(gateway.pid) },
-    restarts: list(row.restarts, item => { const service = record(item); return { label: text(service.label), name: text(service.name), pid: number(service.pid), command: text(service.command) }; }, 16),
-    backupCommand: text(row.backupCommand), doctor: { command: text(doctor.command), rewrites: list(doctor.rewrites, text, 8), backups: text(doctor.backups) }, rollback: text(row.rollback) };
+    restarts: list(row.restarts, item => { const service = record(item); return { label: text(service.label), name: text(service.name), pid: number(service.pid), command: text(service.command) }; }),
+    backupCommand: text(row.backupCommand), doctor: { command: text(doctor.command), rewrites: list(doctor.rewrites, text), backups: text(doctor.backups) }, rollback: text(row.rollback) };
 }
 /** What upgrading a Harness would touch (ADR-043). */
 export function decodeMaintenance(value: unknown): MaintenanceView {
   const row = record(value), entry = (item: unknown) => { const program = record(item); return { pid: number(program.pid), name: text(program.name) }; };
   return { harnessId: text(row.harnessId), checkedAt: text(row.checkedAt), fingerprint: text(row.fingerprint), channel: text(row.channel), location: text(row.location),
     currentVersion: nullableText(row.currentVersion), targetVersion: nullableText(row.targetVersion), servicesKnown: bool(row.servicesKnown),
-    restart: list(row.restart, item => { const service = record(item); return { label: text(service.label), name: text(service.name), pid: number(service.pid), command: text(service.command), portKnown: bool(service.portKnown) }; }, 16),
-    resident: list(row.resident, item => { const program = record(item); return { label: nullableText(program.label), name: text(program.name), pid: number(program.pid), restartCommand: nullableText(program.restartCommand) }; }, 96),
-    processes: list(row.processes, entry, 64),
-    conversations: list(row.conversations, item => { const conversation = record(item); return { sessionId: text(conversation.sessionId), title: text(conversation.title), busy: bool(conversation.busy) }; }, 256),
-    otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) }), 256), staleRecords: number(row.staleRecords),
-    plugins: list(row.plugins, text, 32), notes: list(row.notes, text, 16), rollback: nullableText(row.rollback),
-    runtimes: list(row.runtimes, decodeRuntime, 32), ...(row.sequence === undefined ? {} : { sequence: decodeSequence(row.sequence) }) };
+    restart: list(row.restart, item => { const service = record(item); return { label: text(service.label), name: text(service.name), pid: number(service.pid), command: text(service.command), portKnown: bool(service.portKnown) }; }),
+    resident: list(row.resident, item => { const program = record(item); return { label: nullableText(program.label), name: text(program.name), pid: number(program.pid), restartCommand: nullableText(program.restartCommand) }; }),
+    processes: list(row.processes, entry),
+    conversations: list(row.conversations, item => { const conversation = record(item); return { sessionId: text(conversation.sessionId), title: text(conversation.title), busy: bool(conversation.busy) }; }),
+    otherUsers: list(row.otherUsers, item => ({ pid: number(record(item).pid) })), staleRecords: number(row.staleRecords),
+    plugins: list(row.plugins, text), notes: list(row.notes, text), rollback: nullableText(row.rollback),
+    runtimes: list(row.runtimes, decodeRuntime), ...(row.sequence === undefined ? {} : { sequence: decodeSequence(row.sequence) }) };
 }
 function decodeCapabilityFacts(value: unknown): CapabilityFacts {
   const row = record(value);
   switch (choice(row.kind, CAPABILITY_KINDS)) {
     case "skill": return { kind: "skill", files: number(row.files), bytes: number(row.bytes) };
-    case "mcp": return { kind: "mcp", transport: choice(row.transport, ["stdio", "http", "sse", "unknown"]), program: nullableText(row.program), host: nullableText(row.host), variables: list(row.variables, text, 64),
-      headers: list(row.headers, text, 64), references: number(row.references), literal: number(row.literal), enabled: bool(row.enabled) };
-    case "instructions": return { kind: "instructions", bytes: number(row.bytes), managedBlocks: list(row.managedBlocks, text, 16) };
+    case "mcp": return { kind: "mcp", transport: choice(row.transport, ["stdio", "http", "sse", "unknown"]), program: nullableText(row.program), host: nullableText(row.host), variables: list(row.variables, text),
+      headers: list(row.headers, text), references: number(row.references), literal: number(row.literal), enabled: bool(row.enabled) };
+    case "instructions": return { kind: "instructions", bytes: number(row.bytes), managedBlocks: list(row.managedBlocks, text) };
     case "subagent": return { kind: "subagent", format: choice(row.format, ["markdown", "toml"]) };
     case "command": return { kind: "command", format: choice(row.format, ["markdown", "toml"]) };
     case "hook": return { kind: "hook", event: text(row.event), matcher: nullableText(row.matcher), program: nullableText(row.program) };
@@ -227,13 +228,13 @@ export function decodeCapabilities(value: unknown): CapabilitiesView {
   return { checkedAt: text(row.checkedAt), truncated: bool(row.truncated),
     harnesses: list(row.harnesses, item => { const harness = record(item); return { harnessId: text(harness.harnessId), name: text(harness.name), version: nullableText(harness.version),
       kinds: kindsOf(harness.kinds), skillSwitch: harness.skillSwitch === null ? null : choice(harness.skillSwitch, ["file", "command"]),
-      pluginSwitch: harness.pluginSwitch === null ? null : choice(harness.pluginSwitch, ["file"]), pluginReason: nullableText(harness.pluginReason), shared: decodeSharedReads(harness.shared), notes: list(harness.notes, text, 64) }; }, 64),
+      pluginSwitch: harness.pluginSwitch === null ? null : choice(harness.pluginSwitch, ["file"]), pluginReason: nullableText(harness.pluginReason), shared: decodeSharedReads(harness.shared), notes: list(harness.notes, text) }; }),
     entries: list(row.entries, item => { const entry = record(item); return { kind: choice(entry.kind, CAPABILITY_KINDS), key: text(entry.key), name: text(entry.name), description: nullableText(entry.description),
-      owner: choice(entry.owner, CAPABILITY_OWNERS), source: nullableText(entry.source), location: nullableText(entry.location), edges: list(entry.edges, decodeCapabilityEdge, 256),
-      warnings: list(entry.warnings, warning => { const fields = record(warning); return { kind: choice(fields.kind, CAPABILITY_WARNINGS), harnessId: nullableText(fields.harnessId), text: text(fields.text) }; }, 256),
+      owner: choice(entry.owner, CAPABILITY_OWNERS), source: nullableText(entry.source), location: nullableText(entry.location), edges: list(entry.edges, decodeCapabilityEdge),
+      warnings: list(entry.warnings, warning => { const fields = record(warning); return { kind: choice(fields.kind, CAPABILITY_WARNINGS), harnessId: nullableText(fields.harnessId), text: text(fields.text) }; }),
       ...(entry.facts === undefined ? {} : { facts: decodeCapabilityFacts(entry.facts) }),
-      ...(entry.shared === undefined ? {} : { shared: (() => { const shared = record(entry.shared); return { folder: text(shared.folder), placed: list(shared.placed, text, 16) }; })() }) }; }, MAX_CAPABILITY_ENTRIES),
-    unreadable: list(row.unreadable, item => { const fields = record(item); return { harnessId: nullableText(fields.harnessId), file: text(fields.file), reason: text(fields.reason) }; }, 1024) };
+      ...(entry.shared === undefined ? {} : { shared: (() => { const shared = record(entry.shared); return { folder: text(shared.folder), placed: list(shared.placed, text) }; })() }) }; }),
+    unreadable: list(row.unreadable, item => { const fields = record(item); return { harnessId: nullableText(fields.harnessId), file: text(fields.file), reason: text(fields.reason) }; }) };
 }
 function decodeSharedReads(value: unknown): CapabilitiesView["harnesses"][number]["shared"] {
   const row = record(value);
@@ -246,7 +247,7 @@ function decodeLink(value: unknown): CapabilityLinkChange {
 function decodeSkillPlan(value: unknown): CapabilitySkillPlan {
   const row = record(value);
   return { name: text(row.name), folder: text(row.folder), action: choice(row.action, ["add", "update", "delete", "restore"]), files: number(row.files), bytes: number(row.bytes), executables: number(row.executables), plugin: bool(row.plugin),
-    changes: list(row.changes, item => { const change = record(item); return { path: text(change.path), action: choice(change.action, ["add", "change", "remove"]) }; }, 256), overwrites: number(row.overwrites) };
+    changes: list(row.changes, item => { const change = record(item); return { path: text(change.path), action: choice(change.action, ["add", "change", "remove"]) }; }), overwrites: number(row.overwrites) };
 }
 export function decodeChangeCheck(value: unknown): CapabilityChangeCheck {
   const row = record(value);
@@ -257,30 +258,30 @@ export function decodeChangeCheck(value: unknown): CapabilityChangeCheck {
     "subagent-sync", "subagent-remove", "skill-create", "skill-edit", "plugin-switch"]),
     harnessId: text(row.harnessId), name: text(row.name), enabled: bool(row.enabled), file: text(row.file),
     ...(proceed === undefined ? {} : { proceed: proceed === null ? null : { option: choice(proceed.option, INSTRUCTION_CHECK_OPTIONS), label: text(proceed.label) } }),
-    ...(row.skills === undefined ? {} : { skills: list(row.skills, decodeSkillPlan, 64) }),
+    ...(row.skills === undefined ? {} : { skills: list(row.skills, decodeSkillPlan) }),
     ...(source === undefined ? {} : { source: source === null ? null : { repository: text(source.repository), ref: nullableText(source.ref), commit: text(source.commit) } }),
     ...(lock === undefined ? {} : { lock: lock === null ? null : { file: text(lock.file), diff: text(lock.diff) } }),
-    ...(row.orphans === undefined ? {} : { orphans: list(row.orphans, item => { const orphan = record(item); return { harnessId: text(orphan.harnessId), file: text(orphan.file) }; }, 64) }),
-    command: nullableText(row.command), diff: nullableText(row.diff), links: list(row.links, decodeLink, 4096),
-    rewrite: rewrite === null ? null : { target: text(rewrite.target), before: nullableText(rewrite.before), after: nullableText(rewrite.after), added: list(rewrite.added, text, 32), removed: list(rewrite.removed, text, 32),
-      changed: list(rewrite.changed, text, 32), commentLines: number(rewrite.commentLines) },
-    current: choice(row.current, ["harnesshub", "other", "none"]), notes: list(row.notes, text, 32), blocked: nullableText(row.blocked), fingerprint: text(row.fingerprint), expiresAt: text(row.expiresAt) };
+    ...(row.orphans === undefined ? {} : { orphans: list(row.orphans, item => { const orphan = record(item); return { harnessId: text(orphan.harnessId), file: text(orphan.file) }; }) }),
+    command: nullableText(row.command), diff: nullableText(row.diff), links: list(row.links, decodeLink),
+    rewrite: rewrite === null ? null : { target: text(rewrite.target), before: nullableText(rewrite.before), after: nullableText(rewrite.after), added: list(rewrite.added, text), removed: list(rewrite.removed, text),
+      changed: list(rewrite.changed, text), commentLines: number(rewrite.commentLines) },
+    current: choice(row.current, ["harnesshub", "other", "none"]), notes: list(row.notes, text), blocked: nullableText(row.blocked), fingerprint: text(row.fingerprint), expiresAt: text(row.expiresAt) };
 }
 export function decodeChange(value: unknown): CapabilityChangeView {
   const row = record(value), error = row.error === null ? null : record(row.error);
   return { id: text(row.id), kind: choice(row.kind, CAPABILITY_CHANGE_KINDS), harnessId: nullableText(row.harnessId), subject: text(row.subject), file: text(row.file), status: choice(row.status, ["applied", "failed"]),
-    diff: nullableText(row.diff), backupId: nullableText(row.backupId), error: error === null ? null : { code: text(error.code), message: text(error.message) }, notes: list(row.notes, text, 32),
-    ...(row.links === undefined ? {} : { links: list(row.links, decodeLink, 4096) }),
-    ...(row.skills === undefined ? {} : { skills: list(row.skills, item => { const skill = record(item); return { name: text(skill.name), folder: text(skill.folder), before: nullableText(skill.before), after: nullableText(skill.after) }; }, 64) }),
+    diff: nullableText(row.diff), backupId: nullableText(row.backupId), error: error === null ? null : { code: text(error.code), message: text(error.message) }, notes: list(row.notes, text),
+    ...(row.links === undefined ? {} : { links: list(row.links, decodeLink) }),
+    ...(row.skills === undefined ? {} : { skills: list(row.skills, item => { const skill = record(item); return { name: text(skill.name), folder: text(skill.folder), before: nullableText(skill.before), after: nullableText(skill.after) }; }) }),
     at: text(row.at) };
 }
 function decodeHistory(value: unknown): CapabilityHistory {
   const row = record(value);
-  return { changes: list(row.changes, decodeChange, 64), backups: list(row.backups, item => { const backup = record(item); return { id: text(backup.id), file: text(backup.file), createdAt: text(backup.createdAt), bytes: number(backup.bytes),
-    changeId: text(backup.changeId), subject: text(backup.subject) }; }, 4096),
+  return { changes: list(row.changes, decodeChange), backups: list(row.backups, item => { const backup = record(item); return { id: text(backup.id), file: text(backup.file), createdAt: text(backup.createdAt), bytes: number(backup.bytes),
+    changeId: text(backup.changeId), subject: text(backup.subject) }; }),
     drift: list(row.drift, item => { const drift = record(item); return { id: text(drift.id), kind: choice(drift.kind, ["skill-switch", "shared-dir", "skill-link", "mcp", "instructions", "subagent", "plugin"]), harnessId: text(drift.harnessId), subject: text(drift.subject),
-      file: text(drift.file), state: choice(drift.state, CAPABILITY_DRIFT_STATES), changeId: text(drift.changeId), at: text(drift.at) }; }, 4096),
-    orphans: list(row.orphans, item => { const orphan = record(item); return { id: text(orphan.id), kind: choice(orphan.kind, ["skill", "plugin"]), harnessId: text(orphan.harnessId), subject: text(orphan.subject), file: text(orphan.file) }; }, 4096),
+      file: text(drift.file), state: choice(drift.state, CAPABILITY_DRIFT_STATES), changeId: text(drift.changeId), at: text(drift.at) }; }),
+    orphans: list(row.orphans, item => { const orphan = record(item); return { id: text(orphan.id), kind: choice(orphan.kind, ["skill", "plugin"]), harnessId: text(orphan.harnessId), subject: text(orphan.subject), file: text(orphan.file) }; }),
     snapshots: (() => { const snapshots = record(row.snapshots); return { count: number(snapshots.count), bytes: number(snapshots.bytes), keep: number(snapshots.keep) }; })() };
 }
 function decodeSkillListing(value: unknown): SkillSourceListing {
@@ -289,42 +290,42 @@ function decodeSkillListing(value: unknown): SkillSourceListing {
     const skill = record(item);
     return { name: text(skill.name), installName: nullableText(skill.installName), description: nullableText(skill.description), folder: text(skill.folder), files: number(skill.files), bytes: number(skill.bytes),
       executables: number(skill.executables), plugin: bool(skill.plugin), state: choice(skill.state, ["new", "installed", "conflict", "refused"]), reason: nullableText(skill.reason) };
-  }, 512) };
+  }) };
 }
 export function decodeMcpDefinition(value: unknown): McpDefinitionView {
   const row = record(value);
-  return { transport: choice(row.transport, ["stdio", "http", "sse"]), command: nullableText(row.command), args: list(row.args, text, 128), cwd: nullableText(row.cwd), url: nullableText(row.url),
-    env: list(row.env, item => { const env = record(item); return typeof env.variable === "string" ? { key: text(env.key), variable: text(env.variable) } : { key: text(env.key), value: text(env.value) }; }, 64),
-    headers: list(row.headers, item => { const header = record(item); return typeof header.variable === "string" ? { name: text(header.name), variable: text(header.variable), prefix: text(header.prefix) } : { name: text(header.name), value: text(header.value) }; }, 64) };
+  return { transport: choice(row.transport, ["stdio", "http", "sse"]), command: nullableText(row.command), args: list(row.args, text), cwd: nullableText(row.cwd), url: nullableText(row.url),
+    env: list(row.env, item => { const env = record(item); return typeof env.variable === "string" ? { key: text(env.key), variable: text(env.variable) } : { key: text(env.key), value: text(env.value) }; }),
+    headers: list(row.headers, item => { const header = record(item); return typeof header.variable === "string" ? { name: text(header.name), variable: text(header.variable), prefix: text(header.prefix) } : { name: text(header.name), value: text(header.value) }; }) };
 }
 function decodeMcpInventory(value: unknown): McpInventoryView {
   const row = record(value);
   return {
     servers: list(row.servers, item => { const server = record(item); return { name: text(server.name), definition: decodeMcpDefinition(server.definition), command: nullableText(server.command),
-      variables: list(server.variables, entry => { const variable = record(entry); return { name: text(variable.name), set: bool(variable.set) }; }, 64),
-      targets: list(server.targets, entry => { const target = record(entry); return { harnessId: text(target.harnessId), state: choice(target.state, MCP_TARGET_STATES), reason: nullableText(target.reason), file: nullableText(target.file) }; }, 32),
-      updatedAt: text(server.updatedAt) }; }, 512),
+      variables: list(server.variables, entry => { const variable = record(entry); return { name: text(variable.name), set: bool(variable.set) }; }),
+      targets: list(server.targets, entry => { const target = record(entry); return { harnessId: text(target.harnessId), state: choice(target.state, MCP_TARGET_STATES), reason: nullableText(target.reason), file: nullableText(target.file) }; }),
+      updatedAt: text(server.updatedAt) }; }),
     candidates: list(row.candidates, item => { const candidate = record(item); return { id: text(candidate.id), name: text(candidate.name), definition: candidate.definition === null ? null : decodeMcpDefinition(candidate.definition),
-      problem: nullableText(candidate.problem), foundIn: list(candidate.foundIn, entry => { const found = record(entry); return { harnessId: text(found.harnessId), file: text(found.file) }; }, 32),
-      state: choice(candidate.state, ["new", "listed", "different"]) }; }, 512),
-    harnesses: list(row.harnesses, item => { const harness = record(item); return { harnessId: text(harness.harnessId), name: text(harness.name), writable: bool(harness.writable), reason: nullableText(harness.reason) }; }, 32),
+      problem: nullableText(candidate.problem), foundIn: list(candidate.foundIn, entry => { const found = record(entry); return { harnessId: text(found.harnessId), file: text(found.file) }; }),
+      state: choice(candidate.state, ["new", "listed", "different"]) }; }),
+    harnesses: list(row.harnesses, item => { const harness = record(item); return { harnessId: text(harness.harnessId), name: text(harness.name), writable: bool(harness.writable), reason: nullableText(harness.reason) }; }),
   };
 }
 function decodeSubagents(value: unknown): SubagentInventoryView {
   const row = record(value);
   return {
     subagents: list(row.subagents, item => { const agent = record(item), definition = record(agent.definition); return { name: text(agent.name), definition: { description: text(definition.description), prompt: text(definition.prompt) },
-      targets: list(agent.targets, entry => { const target = record(entry); return { harnessId: text(target.harnessId), state: choice(target.state, MCP_TARGET_STATES), reason: nullableText(target.reason), file: nullableText(target.file) }; }, 32),
-      updatedAt: text(agent.updatedAt) }; }, 512),
-    harnesses: list(row.harnesses, item => { const harness = record(item); return { harnessId: text(harness.harnessId), name: text(harness.name), writable: bool(harness.writable), reason: nullableText(harness.reason) }; }, 32),
+      targets: list(agent.targets, entry => { const target = record(entry); return { harnessId: text(target.harnessId), state: choice(target.state, MCP_TARGET_STATES), reason: nullableText(target.reason), file: nullableText(target.file) }; }),
+      updatedAt: text(agent.updatedAt) }; }),
+    harnesses: list(row.harnesses, item => { const harness = record(item); return { harnessId: text(harness.harnessId), name: text(harness.name), writable: bool(harness.writable), reason: nullableText(harness.reason) }; }),
   };
 }
 function decodeInstructions(value: unknown): InstructionsView {
   const row = record(value), shared = record(row.shared);
   return { shared: { text: text(shared.text), updatedAt: nullableText(shared.updatedAt) }, limitBytes: number(row.limitBytes),
-    additions: list(row.additions, item => { const addition = record(item); return { harnessId: text(addition.harnessId), text: text(addition.text), updatedAt: text(addition.updatedAt) }; }, 32),
+    additions: list(row.additions, item => { const addition = record(item); return { harnessId: text(addition.harnessId), text: text(addition.text), updatedAt: text(addition.updatedAt) }; }),
     targets: list(row.targets, item => { const target = record(item); return { harnessId: text(target.harnessId), name: text(target.name), file: nullableText(target.file), state: choice(target.state, INSTRUCTION_TARGET_STATES),
-      reason: nullableText(target.reason), effect: nullableText(target.effect), cautions: list(target.cautions, text, 8) }; }, 32) };
+      reason: nullableText(target.reason), effect: nullableText(target.effect), cautions: list(target.cautions, text) }; }) };
 }
 function decodeSkillUpdates(value: unknown): SkillUpdateView {
   const row = record(value);
@@ -332,15 +333,15 @@ function decodeSkillUpdates(value: unknown): SkillUpdateView {
     const skill = record(item);
     return { name: text(skill.name), manager: choice(skill.manager, ["harnesshub", "skills-cli"]), repository: nullableText(skill.repository), state: choice(skill.state, ["current", "available", "gone", "unknown", "unsupported"]),
       modified: skill.modified === null ? null : bool(skill.modified), reason: nullableText(skill.reason) };
-  }, 4096) };
+  }) };
 }
 function decodeRestoreCheck(value: unknown): CapabilityRestoreCheck {
   const row = record(value);
-  return { backupId: text(row.backupId), file: text(row.file), diff: text(row.diff), changedSince: bool(row.changedSince), notes: list(row.notes, text, 32), fingerprint: text(row.fingerprint), expiresAt: text(row.expiresAt) };
+  return { backupId: text(row.backupId), file: text(row.file), diff: text(row.diff), changedSince: bool(row.changedSince), notes: list(row.notes, text), fingerprint: text(row.fingerprint), expiresAt: text(row.expiresAt) };
 }
 function decodeLogPage(value: unknown): InstallationLogPage {
   const row = record(value);
-  return { entries: list(row.entries, value => { const item = record(value); return { seq: number(item.seq), time: text(item.time), stream: choice(item.stream, ["stdout", "stderr", "system"]), text: text(item.text) }; }, 256), nextSeq: number(row.nextSeq), hasMore: bool(row.hasMore) };
+  return { entries: list(row.entries, value => { const item = record(value); return { seq: number(item.seq), time: text(item.time), stream: choice(item.stream, ["stdout", "stderr", "system"]), text: text(item.text) }; }), nextSeq: number(row.nextSeq), hasMore: bool(row.hasMore) };
 }
 function decodeSummary(value: unknown): SessionSummary {
   const row = record(value);
@@ -361,7 +362,7 @@ export function decodeAttentionFrame(value: unknown): AttentionFrame {
       kind: choice(item.kind, ["approval", "question"]), requestedAt: number(item.requestedAt),
       ...(item.expiresAt === undefined ? {} : { expiresAt: number(item.expiresAt), expiresBy: choice(item.expiresBy, ["native", "turn"]) }) };
     return decoded;
-  }, 32) };
+  }) };
 }
 function decodeReadiness(value: unknown): HarnessReadinessView {
   const row = record(value), state = choice(row.state, ["ready", "signed_out", "failed", "unchecked"]);
@@ -371,9 +372,9 @@ function decodeReadiness(value: unknown): HarnessReadinessView {
 }
 function decodeState(value: unknown): WebState {
   const row = record(value);
-  return { ...(row.providerManagement === undefined ? {} : { providerManagement: bool(row.providerManagement) }), workspace: text(row.workspace), providers: list(row.providers, decodeProvider, 256), harnesses: list(row.harnesses, decodeHarness, 256),
-    harnessesScannedAt: isoTime(row.harnessesScannedAt), sessions: list(row.sessions, decodeSummary, Infinity), ...(row.sessionsNext === undefined ? {} : { sessionsNext: nullableText(row.sessionsNext) }), jobs: list(row.jobs, decodeInstallationJob, 100),
-    readiness: list(row.readiness, decodeReadiness, 512), installationPolicy: choice(row.installationPolicy, ["official", "any"]) };
+  return { ...(row.providerManagement === undefined ? {} : { providerManagement: bool(row.providerManagement) }), workspace: text(row.workspace), providers: list(row.providers, decodeProvider), harnesses: list(row.harnesses, decodeHarness),
+    harnessesScannedAt: isoTime(row.harnessesScannedAt), sessions: list(row.sessions, decodeSummary), ...(row.sessionsNext === undefined ? {} : { sessionsNext: nullableText(row.sessionsNext) }), jobs: list(row.jobs, decodeInstallationJob),
+    readiness: list(row.readiness, decodeReadiness), installationPolicy: choice(row.installationPolicy, ["official", "any"]) };
 }
 function decodeAuth(value: unknown): AuthSession { return { csrfToken: text(record(value).csrfToken) }; }
 function acknowledge(value: unknown, session: string, result: "runId" | "switchId" | "target"): void {
@@ -464,13 +465,13 @@ export class GatewayApi {
     return this.request("/state", "GET", undefined, value => { this.relayAdvertised = typeof value === "object" && value !== null && (value as Record<string, unknown>).relay === true; return decodeState(value); }, signal);
   }
   /** What the latest catalog reads and Runs showed of each Harness entry; reading it starts nothing. */
-  readiness(signal?: AbortSignal): Promise<readonly HarnessReadinessView[]> { return this.request("/harnesses/readiness", "GET", undefined, value => list(record(value).readiness, decodeReadiness, 512), signal); }
+  readiness(signal?: AbortSignal): Promise<readonly HarnessReadinessView[]> { return this.request("/harnesses/readiness", "GET", undefined, value => list(record(value).readiness, decodeReadiness), signal); }
   nativeModels(harness: string, control: string, workspace: string, signal: AbortSignal, refresh = false, nativeModel?: string): Promise<NativeModelCatalog> {
     const query = new URLSearchParams({ controlId: control, workspace, ...(refresh ? { refresh: "1" } : {}), ...(nativeModel ? { nativeModel } : {}) });
     return this.request(`/harnesses/${encodeURIComponent(harness)}/models?${query}`, "GET", undefined, value => {
-      const row = record(value), models = list(row.models, value => { const model = record(value); return { id: text(model.id), name: text(model.name), ...(model.options === undefined ? {} : { options: list(model.options,nativeOption,128) }), ...(model.inputs === undefined ? {} : { inputs: nativeInputs(model.inputs) }) }; }, 4096);
+      const row = record(value), models = list(row.models, value => { const model = record(value); return { id: text(model.id), name: text(model.name), ...(model.options === undefined ? {} : { options: list(model.options,nativeOption) }), ...(model.inputs === undefined ? {} : { inputs: nativeInputs(model.inputs) }) }; });
       if (new Set(models.map(model => model.id)).size !== models.length) return invalid();
-      return { models, defaultModel: nullableText(row.defaultModel), authentication: choice(row.authentication, ["ready", "missing", "unknown"]), canSelect: bool(row.canSelect), ...(row.selectionError === undefined ? {} : {selectionError:publicError(row.selectionError)??invalid()}), ...(row.options === undefined ? {} : { options: list(row.options,nativeOption,128) }), ...(row.commands === undefined ? {} : { commands: list(row.commands,value => {const command=record(value);return { name:text(command.name),description:text(command.description) };},2048) }), ...(row.inputs === undefined ? {} : { inputs: nativeInputs(row.inputs) }) };
+      return { models, defaultModel: nullableText(row.defaultModel), authentication: choice(row.authentication, ["ready", "missing", "unknown"]), canSelect: bool(row.canSelect), ...(row.selectionError === undefined ? {} : {selectionError:publicError(row.selectionError)??invalid()}), ...(row.options === undefined ? {} : { options: list(row.options,nativeOption) }), ...(row.commands === undefined ? {} : { commands: list(row.commands,value => {const command=record(value);return { name:text(command.name),description:text(command.description) };}) }), ...(row.inputs === undefined ? {} : { inputs: nativeInputs(row.inputs) }) };
     }, signal);
   }
   /** The selected Harness's own sessions in this workspace, newest first; `sessions` is null when it cannot list them. */
@@ -479,7 +480,7 @@ export class GatewayApi {
       const row = record(value), next = row.nextCursor === null ? null : text(row.nextCursor);
       if (row.sessions === null) return { sessions: null, nextCursor: null };
       return { nextCursor: next, ...(row.hiddenProbes === undefined ? {} : { hiddenProbes: number(row.hiddenProbes) }), sessions: list(row.sessions, value => { const item = record(value);
-        return { id: text(item.id), title: nullableText(item.title), updatedAt: item.updatedAt === null ? null : number(item.updatedAt), ...(item.source === undefined ? {} : { source: text(item.source) }), ...(item.conversationId === undefined ? {} : { conversationId: text(item.conversationId) }) }; }, 1000) };
+        return { id: text(item.id), title: nullableText(item.title), updatedAt: item.updatedAt === null ? null : number(item.updatedAt), ...(item.source === undefined ? {} : { source: text(item.source) }), ...(item.conversationId === undefined ? {} : { conversationId: text(item.conversationId) }) }; }) };
     }, signal);
   }
   /** The login shell's directories added to discovery (G(ii)). */
@@ -550,8 +551,8 @@ export class GatewayApi {
   saveMcpServer(name: string, definition: McpDefinitionView, replace: boolean): Promise<string> { return this.request("/capabilities/mcp/servers", "POST", { name, definition, replace }, value => text(record(value).name)); }
   removeMcpServer(name: string): Promise<boolean> { return this.request("/capabilities/mcp/servers/delete", "POST", { name }, value => bool(record(value).removed)); }
   /** Lists a server the Harnesses already have and records the identical entries in `claim` as HarnessHub's; no Harness file changes. */
-  importMcpServer(candidate: string, claim: readonly string[]): Promise<readonly CapabilityChangeView[]> { return this.request("/capabilities/mcp/import", "POST", { candidate, claim }, value => list(value, decodeChange, 32)); }
-  claimMcpServer(name: string, harnessIds: readonly string[]): Promise<readonly CapabilityChangeView[]> { return this.request("/capabilities/mcp/claim", "POST", { name, harnessIds }, value => list(value, decodeChange, 32)); }
+  importMcpServer(candidate: string, claim: readonly string[]): Promise<readonly CapabilityChangeView[]> { return this.request("/capabilities/mcp/import", "POST", { candidate, claim }, value => list(value, decodeChange)); }
+  claimMcpServer(name: string, harnessIds: readonly string[]): Promise<readonly CapabilityChangeView[]> { return this.request("/capabilities/mcp/claim", "POST", { name, harnessIds }, value => list(value, decodeChange)); }
   checkMcpSync(name: string, harnessId: string, overwrite: boolean): Promise<CapabilityChangeCheck> {
     return this.request("/capabilities/mcp/sync?" + new URLSearchParams({ name, harnessId, ...(overwrite ? { overwrite: "true" } : {}) }), "GET", undefined, decodeChangeCheck);
   }
@@ -561,7 +562,7 @@ export class GatewayApi {
   /** Keeps a subagent in the list; `replace` changes a listed one. No Harness file changes. */
   saveSubagent(name: string, definition: SubagentDefinitionView, replace: boolean): Promise<string> { return this.request("/capabilities/subagents/save", "POST", { name, definition, replace }, value => text(record(value).name)); }
   removeSubagent(name: string): Promise<boolean> { return this.request("/capabilities/subagents/delete", "POST", { name }, value => bool(record(value).removed)); }
-  claimSubagent(name: string, harnessIds: readonly string[]): Promise<readonly CapabilityChangeView[]> { return this.request("/capabilities/subagents/claim", "POST", { name, harnessIds }, value => list(value, decodeChange, 32)); }
+  claimSubagent(name: string, harnessIds: readonly string[]): Promise<readonly CapabilityChangeView[]> { return this.request("/capabilities/subagents/claim", "POST", { name, harnessIds }, value => list(value, decodeChange)); }
   checkSubagent(action: "sync" | "remove", name: string, harnessId: string, overwrite: boolean): Promise<CapabilityChangeCheck> {
     return this.request("/capabilities/subagents/" + action + "?" + new URLSearchParams({ name, harnessId, ...(overwrite ? { overwrite: "true" } : {}) }), "GET", undefined, decodeChangeCheck);
   }
@@ -582,9 +583,9 @@ export class GatewayApi {
       const row = record(value); if (row.extensions === null) return null;
       const extensions = record(row.extensions), optional = (item: Record<string, unknown>, key: string) => item[key] === undefined ? {} : { [key]: text(item[key]) };
       return {
-        skills: list(extensions.skills, value => { const item = record(value); return { name: text(item.name), description: text(item.description), enabled: bool(item.enabled), ...optional(item, "scope"), ...optional(item, "command") }; }, 512),
-        mcpServers: list(extensions.mcpServers, value => { const item = record(value); return { name: text(item.name), status: text(item.status), tools: number(item.tools), failed: bool(item.failed), ...optional(item, "auth") }; }, 512),
-        plugins: list(extensions.plugins, value => { const item = record(value); return { name: text(item.name), enabled: bool(item.enabled), ...optional(item, "version"), ...optional(item, "source") }; }, 512),
+        skills: list(extensions.skills, value => { const item = record(value); return { name: text(item.name), description: text(item.description), enabled: bool(item.enabled), ...optional(item, "scope"), ...optional(item, "command") }; }),
+        mcpServers: list(extensions.mcpServers, value => { const item = record(value); return { name: text(item.name), status: text(item.status), tools: number(item.tools), failed: bool(item.failed), ...optional(item, "auth") }; }),
+        plugins: list(extensions.plugins, value => { const item = record(value); return { name: text(item.name), enabled: bool(item.enabled), ...optional(item, "version"), ...optional(item, "source") }; }),
         ...(extensions.truncated === undefined ? {} : { truncated: bool(extensions.truncated) }),
       };
     }, signal);
@@ -623,7 +624,7 @@ export class GatewayApi {
     return this.request(`/content/${encodeURIComponent(content.id)}`, "GET", undefined, value => {
       const row = record(value), optional = (key: string) => row[key] === undefined ? {} : { [key]: text(row[key]) };
       return { ...optional("kind"), ...optional("name"), ...optional("input"), ...optional("output"), ...optional("diff"), ...optional("parentId"),
-        ...(row.locations === undefined ? {} : { locations: list(row.locations, text, 16) }), ...(row.exitCode === undefined ? {} : { exitCode: number(row.exitCode) }), ...(row.truncated === undefined ? {} : { truncated: bool(row.truncated) }) };
+        ...(row.locations === undefined ? {} : { locations: list(row.locations, text) }), ...(row.exitCode === undefined ? {} : { exitCode: number(row.exitCode) }), ...(row.truncated === undefined ? {} : { truncated: bool(row.truncated) }) };
     }, signal);
   }
   /** Owns one cancellable fact stream; reconnecting never submits a conversation command. */
@@ -734,7 +735,7 @@ export class GatewayApi {
   endKeptProcess(id: string, key: string): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/end-process`, "POST", { commandId: key }, decodeSessionViewV14); }
   /** Conversations that keep a native process, with the workspace each holds. */
   keptProcesses(signal?: AbortSignal): Promise<readonly { readonly sessionId: string; readonly workspace: string; readonly harnessId: string }[]> {
-    return this.request("/kept-processes", "GET", undefined, value => list(record(value).processes, value => { const row = record(value); return { sessionId: text(row.sessionId), workspace: text(row.workspace), harnessId: text(row.harnessId) }; }, 16), signal);
+    return this.request("/kept-processes", "GET", undefined, value => list(record(value).processes, value => { const row = record(value); return { sessionId: text(row.sessionId), workspace: text(row.workspace), harnessId: text(row.harnessId) }; }), signal);
   }
   branchNative(id: string, epoch: number, key: string): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/native-branch`, "POST", { epoch, commandId: key }, decodeSessionViewV14); }
   writeProvider(input: ProviderWriteInput, key: string, current?: ProviderView): Promise<ProviderView> {
@@ -743,7 +744,7 @@ export class GatewayApi {
   }
   async probeProvider(id: string): Promise<readonly string[]> {
     return this.request(`/providers/${encodeURIComponent(id)}/probe`, "POST", {}, value => {
-      const row = record(value); if (row.status !== "models_reachable") return invalid(); return list(row.models, text, 1024);
+      const row = record(value); if (row.status !== "models_reachable") return invalid(); return list(row.models, text);
     });
   }
   /**
@@ -751,10 +752,10 @@ export class GatewayApi {
    * Gateway's clock, such as a task's end), answers once a scan that began then or later has ended.
    */
   async rescan(signal?: AbortSignal, after?: string): Promise<readonly HarnessView[]> {
-    return this.request("/harnesses/rescan", "POST", after === undefined ? {} : { after }, value => list(value, decodeHarness, 256), signal);
+    return this.request("/harnesses/rescan", "POST", after === undefined ? {} : { after }, value => list(value, decodeHarness), signal);
   }
   checkUpdates(harnessIds?: readonly string[]): Promise<readonly HarnessView[]> {
-    return this.request("/harnesses/check-updates", "POST", harnessIds ? { harnessIds } : {}, value => list(value, decodeHarness, 256));
+    return this.request("/harnesses/check-updates", "POST", harnessIds ? { harnessIds } : {}, value => list(value, decodeHarness));
   }
   submitInstallation(input: ManagementJobInput): Promise<InstallationJobView> { return this.request("/installation-jobs", "POST", input, decodeInstallationJob); }
   /** Prepares installing a missing product the official way and reads what it would run and change (ADR-044); changes nothing of the user's. */
@@ -768,7 +769,7 @@ export class GatewayApi {
   }
   /** Reads what upgrading this Harness would touch, for the confirmation (ADR-043); changes nothing. */
   maintenance(harnessId: string, signal?: AbortSignal): Promise<MaintenanceView> { return this.request(`/harnesses/${encodeURIComponent(harnessId)}/maintenance`, "GET", undefined, decodeMaintenance, signal); }
-  jobs(signal?: AbortSignal): Promise<readonly InstallationJobView[]> { return this.request("/installation-jobs?limit=50", "GET", undefined, value => list(value, decodeInstallationJob, 100), signal); }
+  jobs(signal?: AbortSignal): Promise<readonly InstallationJobView[]> { return this.request("/installation-jobs?limit=50", "GET", undefined, value => list(value, decodeInstallationJob), signal); }
   cancelInstallation(id: string, key: string): Promise<InstallationJobView> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key }, decodeInstallationJob); }
   inspectInstallation(id: string): Promise<InstallationJobView> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/inspect`, "POST", {}, decodeInstallationJob); }
   installationLogs(id: string, afterSeq: number, signal?: AbortSignal): Promise<InstallationLogPage> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/logs?afterSeq=${afterSeq}&limit=50`, "GET", undefined, decodeLogPage, signal); }

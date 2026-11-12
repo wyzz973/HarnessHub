@@ -68,7 +68,7 @@ export interface ConversationPlan { readonly steps: PlanItem["steps"]; readonly 
 interface Edit { readonly runId: string; readonly ordinal: number; readonly harnessId: string; readonly item: FileChangeItem }
 const editKey = (edit: { readonly runId: string; readonly item: { readonly seq: number } }): string => edit.runId + "/" + edit.item.seq;
 const sameOrder = (left: Edit, right: Edit): number => left.ordinal - right.ordinal || left.item.seq - right.item.seq;
-const asEdits = (rows: readonly ClientConversationEdit[]): Edit[] => rows.flatMap(row => row.item.type === "file_change" && row.item.detail !== undefined ? [{ runId: row.runId, ordinal: row.ordinal, harnessId: row.harnessId, item: row.item as FileChangeItem }] : []);
+const asEdits = (rows: readonly ClientConversationEdit[]): Edit[] => rows.flatMap(row => row.item.type === "file_change" && (row.item.detail !== undefined || (row.item as FileChangeItem).by === "hub") ? [{ runId: row.runId, ordinal: row.ordinal, harnessId: row.harnessId, item: row.item as FileChangeItem }] : []);
 export function useConversationChanges(session: ConversationView, wanted: boolean, load: ToolDetailLoader | undefined, loadChanges: ChangesLoader | undefined): ConversationChanges & { readonly plan: ConversationPlan | null } {
   const reader = useRef(loadChanges); reader.current = loadChanges;
   const readable = loadChanges !== undefined, total = session.facts.changes;
@@ -131,6 +131,16 @@ export function useConversationChanges(session: ConversationView, wanted: boolea
     const merged = new Map<string, { path: string; add: number; del: number; created: boolean; diffs: DiffFile[]; runIds: Set<string>; harnessIds: string[] }>();
     for (const { runId, item, harnessId } of every) {
       const detail = item.detail ? knownToolDetail(item.detail.id) : undefined;
+      // The Hub's record without a diff (a workspace that is not a repository, a binary file) still names its files and counts.
+      if (item.by === "hub" && item.detail === undefined) {
+        for (const change of item.changes) {
+          const entry = merged.get(change.path) ?? { path: change.path, add: 0, del: 0, created: change.op === "create", diffs: [], runIds: new Set<string>(), harnessIds: [] };
+          entry.add += change.added ?? 0; entry.del += change.removed ?? 0; entry.runIds.add(runId);
+          if (!entry.harnessIds.includes(harnessId)) entry.harnessIds.push(harnessId);
+          merged.set(change.path, entry);
+        }
+        continue;
+      }
       if (!detail?.diff) continue;
       for (const file of parseUnifiedDiff(detail.diff, detail.locations?.[0] ?? item.changes[0]?.path ?? "改动")) {
         const entry = merged.get(file.path) ?? { path: file.path, add: 0, del: 0, created: file.created, diffs: [], runIds: new Set<string>(), harnessIds: [] };

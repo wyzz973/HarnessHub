@@ -203,8 +203,15 @@ function inside(workspace: string, path: string): string {
   const prefix = workspace.endsWith("/") ? workspace : workspace + "/";
   return path.startsWith(prefix) && path.length > prefix.length ? path.slice(prefix.length) : path;
 }
-/** The files a Turn's change tools touched, from the details read; the change tools whose files could not be told are `unread`. */
+/**
+ * The files a Turn changed: the Hub's own record of its workspace when it made one (what the workspace really changed, compared at the Turn's
+ * start and end), else the files its change tools touched, from the details read; the change tools whose files could not be told are `unread`.
+ */
 function filesOf(run: PublicRun, details: TableDetails, workspace: string): { readonly files: readonly TableFile[]; readonly unread: readonly PublicTool[] } {
+  if (run.workspace !== undefined) {
+    const op = (change: { readonly op: string }): FileChange["op"] => change.op === "create" ? "create" : change.op === "delete" ? "delete" : change.op === "rename" ? "move" : "edit";
+    return { files: run.workspace.changes.map(change => ({ path: change.path, ops: [op(change)], changes: 1, added: change.added ?? null, removed: change.removed ?? null })), unread: [] };
+  }
   const own = new Map<string, TableToolDetail>();
   for (const tool of run.tools ?? []) { const detail = details.get(detailKey(run.id, tool.id)); if (detail !== undefined) own.set(tool.id, detail); }
   const rows = new Map<string, { ops: FileChange["op"][]; changes: number; added: number; removed: number; counted: boolean }>(), unread: PublicTool[] = [];
@@ -229,8 +236,8 @@ function fileLine(file: TableFile, redaction: TableRedaction): string {
 }
 /** The sections the files of a Turn are told in: the files, then the changes whose files could not be read (by title). */
 function filesSections(run: PublicRun, details: TableDetails, redaction: TableRedaction, workspace: string): readonly { readonly title: string; readonly lines: readonly string[] }[] {
-  const { files, unread } = filesOf(run, details, workspace);
-  return [...(files.length ? [{ title: "Files changed (" + files.length + ")", lines: files.map(file => fileLine(file, redaction)) }] : []),
+  const { files, unread } = filesOf(run, details, workspace), shared = run.workspace?.shared === true ? ", as the Hub saw the workspace; another conversation's turn ran there meanwhile, so some may be its" : run.workspace !== undefined ? ", as the Hub saw the workspace" : "";
+  return [...(files.length ? [{ title: "Files changed (" + files.length + shared + ")", lines: files.map(file => fileLine(file, redaction)) }] : []),
     ...(unread.length ? [{ title: "Changes whose files could not be read (" + unread.length + "), by title", lines: unread.map(tool => "- " + clip(fold(redaction.redact(tool.title, "text")), 160)) }] : [])];
 }
 function filesText(run: PublicRun, details: TableDetails, redaction: TableRedaction, workspace: string): string {

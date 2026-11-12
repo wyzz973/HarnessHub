@@ -31,6 +31,7 @@ import { RelayPacketDialog, type PacketTarget } from "./RelayDetails.js";
 import { RelayCard, RelayInstallation, SEND_ALONE, type RelayNext } from "./RelayCard.js";
 import { ProtocolTurn, type TurnReads } from "./ProtocolTurn.js";
 import { Welcome } from "./Welcome.js";
+import { PERMISSION_WORDS, selectionLevels } from "../../../src/contracts/levels.js";
 
 export interface SelectionDraft { harnessId: string; controlId: string; providerId: string; providerRevision: number | null; model: string; nativeOptions: Readonly<Record<string, string>> }
 export const EMPTY_SELECTION: SelectionDraft = { harnessId: "", controlId: "", providerId: "", providerRevision: null, model: "", nativeOptions: {} };
@@ -397,6 +398,9 @@ export function ChatPage(props: ChatProps) {
     if (!docked || !session) return undefined;
     const run = runs.get(docked.runId as never), harnessId = run?.selection.harnessId ?? session.selection.harnessId;
     if (harnessId !== draft.harnessId || run?.selection.provider) return undefined;
+    // The unified permission level the Turn ran with, when its selection named one; else the program's own rule by its own name.
+    const unified = selectionLevels(harnessId, run?.selection.nativeOptions).permission;
+    if (unified !== undefined) return PERMISSION_WORDS[unified];
     const option = props.nativeModels?.options?.find(row => row.category === "permission");
     if (!option) return undefined;
     const value = session.nativeStates?.find(state => state.harnessId === harnessId)?.observed?.options[option.id] ?? run?.selection.nativeOptions?.[option.id] ?? option.currentValue;

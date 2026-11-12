@@ -169,8 +169,9 @@ function threadReport(response: Record<string, unknown>): { readonly settings: N
 }
 function permissionOptions(configured: Record<string, unknown>): NativeOption[] {
   return (Object.keys(PERMISSION_SETTINGS) as PermissionSetting[]).flatMap(id => {
-    const setting = PERMISSION_SETTINGS[id], current = configured[setting.config];
-    if (typeof current !== "string" || !Object.hasOwn(setting.values, current)) return [];
+    // Offered whether or not the configuration names it (a thread takes either on thread/start, the unified permission levels need both); the
+    // current value is the configuration's, or none said when it names none (Codex then runs on its own default, which is not claimed here).
+    const setting = PERMISSION_SETTINGS[id], configuredValue = configured[setting.config], current = typeof configuredValue === "string" && Object.hasOwn(setting.values, configuredValue) ? configuredValue : "";
     // on-failure is deprecated: offered only when the configuration still uses it.
     const values = Object.entries(setting.values).filter(([value]) => value !== "on-failure" || current === "on-failure").map(([value, name]) => ({ value, name }));
     return [{ id, name: setting.name, category: "permission", currentValue: current, values }];

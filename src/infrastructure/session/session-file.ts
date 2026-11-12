@@ -178,8 +178,9 @@ export interface TurnLineFacts { edits: number[]; plan: number | null; refs: str
 export const noFacts = (): TurnLineFacts => ({ edits: [], plan: null, refs: [] });
 /** What one item adds to its Turn's facts. */
 export function addItemFacts(facts: TurnLineFacts, item: Pick<HeldItem, "seq" | "type" | "fields">): void {
-  const fields = item.fields as { readonly detail?: { readonly id?: unknown }; readonly content?: { readonly id?: unknown }; readonly steps?: unknown };
-  if (item.type === "file_change" && fields.detail !== undefined && !facts.edits.includes(item.seq)) facts.edits.push(item.seq);
+  const fields = item.fields as { readonly detail?: { readonly id?: unknown }; readonly content?: { readonly id?: unknown }; readonly steps?: unknown; readonly by?: unknown };
+  // The Hub's own record of the workspace is an edit with or without a diff (a workspace that is not a repository, a binary file).
+  if (item.type === "file_change" && (fields.detail !== undefined || fields.by === "hub") && !facts.edits.includes(item.seq)) facts.edits.push(item.seq);
   if (item.type === "plan" && Array.isArray(fields.steps) && fields.steps.length > 0 && (facts.plan === null || item.seq > facts.plan)) facts.plan = item.seq;
   if (item.type === "recap" && (facts.recap === undefined || facts.recap === null || item.seq > facts.recap)) facts.recap = item.seq;
   for (const id of [fields.detail?.id, fields.content?.id]) if (typeof id === "string" && !facts.refs.includes(id)) facts.refs.push(id);

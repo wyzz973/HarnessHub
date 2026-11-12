@@ -16,6 +16,9 @@ import type { ChatProps } from "./ChatPage.js";
 import { NativeExtensionsPanel } from "./NativeExtensions.js";
 import { NativeSessionsPanel } from "./NativeSessions.js";
 import { SearchPicker, type PickerOption } from "./SearchPicker.js";
+import { EFFORT_WORDS, PERMISSION_MEANINGS, PERMISSION_WORDS } from "../../../src/contracts/levels.js";
+import { EFFORT_LEVELS, PERMISSION_LEVELS, type EffortLevel, type PermissionLevel } from "../../../src/contracts/protocol.js";
+import { carryLevels, levelState, withEffort, withPermission } from "../lib/levels.js";
 
 /** An approval that waits in the composer's place (ADR-054 §5), with what the dock needs to decide it. */
 export interface DockedApproval {
@@ -274,11 +277,13 @@ export function Composer(props: ComposerProps) {
   if (!provider && draft.model && props.nativeModels && !props.nativeModels.models.some(model => model.id === draft.model)) modelOptions.unshift({ value: draft.model, label: draft.model + " · 不可用", disabled: true, reason: "当前本机目录未提供这个模型" });
   // Native options belong to the Harness's own connection: a managed Provider's model takes none of them.
   const nativeOptions = draft.providerId ? [] : [...(props.nativeModels?.options ?? []), ...(props.nativeModels?.models.find(model => model.id === (draft.model || props.nativeModels?.defaultModel))?.options ?? [])];
+  // The unified levels (src/contracts/levels.ts): one way of saying permission and effort for every Harness; its native values stay among its own options.
+  const level = levelState(draft.harnessId, nativeOptions, draft.nativeOptions);
   const thought = nativeOptions.find(option => option.category === "thought_level");
   // The merged picker shows one pill, as the boards do: the thinking level, or the mode where there is no thinking level
   // (OpenCode's Build). With both, the mode is among the execution settings.
   const mode = nativeOptions.find(option => option.category === "mode");
-  const modeInChip = mode !== undefined && thought === undefined;
+  const modeInChip = mode !== undefined && thought === undefined && !level.ids.has(mode.id);
   // The program's own approval rule (Codex's approval policy) sits at the bottom left; its sandbox and the rest stay in the settings.
   const permission = nativeOptions.find(option => option.category === "permission");
   const changeOption = (id: string, value: string) => { const choices = { ...draft.nativeOptions }; if (value) choices[id] = value; else delete choices[id]; props.onDraft({ ...draft, nativeOptions: Object.fromEntries(Object.entries(choices).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) }); };
@@ -357,7 +362,7 @@ export function Composer(props: ComposerProps) {
   const takeOver = nextHarness ? session && session.selection.harnessId !== nextHarness.id ? `由 ${nextHarness.name} 接手` : "改用新的模型与设置" : "改用新的选择";
   const placeholder = readonly ? "对话已关闭，历史仍可查看" : blocked ? "先写下想继续的内容，恢复后发送…" : active ? "回复进行中，可以先写下一条…" : session ? "继续这段对话…"
     : harness ? `让 ${harness.name} 做什么？${commands.length ? "用 / 调原生命令，" : ""}@ 引用文件` : "说说你想完成的事…";
-  const thinkingShown = thought ? valueName(thought, draft.nativeOptions[thought.id] ?? thought.currentValue) : null;
+  const thinkingShown = thought ? level.effort === "custom" ? "自定义" : level.effort !== null ? EFFORT_WORDS[level.effort] : valueName(thought, thought.currentValue) : null;
   const modeShown = mode ? valueName(mode, draft.nativeOptions[mode.id] ?? mode.currentValue) : null;
   const showProvider = props.providerManagement !== false || draft.providerId !== "";
   const segments = ["agent", ...(showProvider ? ["provider"] : []), ...(draft.harnessId ? ["model"] : []), ...(thought ? ["thought"] : []), ...(modeInChip ? ["mode"] : [])];
@@ -367,6 +372,9 @@ export function Composer(props: ComposerProps) {
   const popSide: "top" | "bottom" = session ? "top" : "bottom";
   const pickAgent = (value: string) => {
     if (value === draft.harnessId) return;
+    // The levels go with the conversation to the Harness chosen: applied once its catalog says what it has (below).
+    setLevelNotes([]);
+    carriedLevels.current = { harnessId: value, ...(level.permission !== null && level.permission !== "custom" ? { permission: level.permission } : {}), ...(level.effort !== null && level.effort !== "custom" ? { effort: level.effort } : {}) };
     const next = harnesses.find(row => row.id === value), previous = [...(session?.runs ?? [])].reverse().find(run => run.selection.harnessId === value)?.selection ?? props.rememberedChoice?.(value) ?? undefined;
     const control = previous && next?.controls.some(row => row.id === previous.controlId && row.available) ? previous.controlId : next?.controls.find(row => row.id === next.defaultControlId && row.available)?.id ?? next?.controls.find(row => row.available)?.id ?? "";
     props.onDraft({ ...draft, harnessId: value, controlId: control, model: draft.providerId ? draft.model : previous?.nativeModel ?? "", nativeOptions: draft.providerId ? {} : previous?.nativeOptions ?? {} });
@@ -386,6 +394,7 @@ export function Composer(props: ComposerProps) {
   // The composer's other layers, the "+" menu and the lists of the merged picker and of the approval rule, close the same
   // way when an approval takes the composer's place, and stay closed once it is decided: the dock has taken their focus.
   // The page owns whether the Agent list is open (⌘J opens it), so it is asked to close it.
+  const carriedLevels = useRef<{ readonly harnessId: string; readonly permission?: PermissionLevel; readonly effort?: EffortLevel } | null>(null);
   const [list, setList] = useState<"add" | "permission" | "provider" | "model" | "thought" | "mode" | null>(null);
   const listOpen = (id: NonNullable<typeof list>) => ({ open: list === id && !docked, onOpenChange: (open: boolean) => setList(current => open ? id : current === id ? null : current) });
   const { agentPickerOpen, onAgentPickerOpen } = props;
@@ -393,6 +402,37 @@ export function Composer(props: ComposerProps) {
   const openPanel = (kind: NonNullable<typeof panel>["kind"]) => setPanel({ kind, harnessId: draft.harnessId });
   const panelOpenChange = (kind: NonNullable<typeof panel>["kind"]) => (open: boolean) => setPanel(open ? { kind, harnessId: draft.harnessId } : null);
   const fromAgentList = (kind: NonNullable<typeof panel>["kind"]) => { props.onAgentPickerOpen(false); openPanel(kind); };
+  // The unified lists: every level, the ones this Harness lacks greyed with why; its own native values are one step away (the footer).
+  const permissionChoices: PickerOption[] = [{ value: "", label: "跟随 " + (harness?.name ?? "Harness") + " 自己的设置", short: "本机设置", group: "权限" },
+    ...PERMISSION_LEVELS.map(id => ({ value: id, label: PERMISSION_WORDS[id], short: PERMISSION_WORDS[id], description: PERMISSION_MEANINGS[id], group: "权限",
+      ...(level.levels.permission.some(entry => entry.level === id) ? {} : { disabled: true, reason: level.levels.permissionMissing }) })),
+    ...(level.permission === "custom" ? [{ value: "custom", label: "自定义", short: "自定义", description: "改过这一家的原生选项，不对应任何一档", group: "权限", disabled: true }] : [])];
+  const effortChoices = (option: NativeOption): PickerOption[] => [{ value: "", label: valueName(option, option.currentValue) + " · 本机默认", short: valueName(option, option.currentValue), group: "思考强度" },
+    ...EFFORT_LEVELS.map(id => ({ value: id, label: EFFORT_WORDS[id], short: EFFORT_WORDS[id], group: "思考强度",
+      ...(() => { const native = level.levels.effort.find(entry => entry.level === id)?.options[option.id]; const used = native === undefined ? undefined : lastUsed(native, recalled?.nativeOptions?.[option.id]); return used === undefined ? {} : { description: used }; })(),
+      ...(level.levels.effort.some(entry => entry.level === id) ? {} : { disabled: true, reason: level.levels.effortMissing }) })),
+    ...(level.effort === "custom" ? [{ value: "custom", label: "自定义", short: "自定义", description: "改过这一家的原生选项，不对应任何一档", group: "思考强度", disabled: true }] : [])];
+  const nativeFooter = <button type="button" className="link-btn text-caption" onClick={() => { setList(null); openPanel("advanced"); }}>{(harness?.name ?? "这一家") + " 的原生选项…"}</button>;
+  const [levelNotes, setLevelNotes] = useState<readonly string[]>([]);
+  const changeLevels = (options: Readonly<Record<string, string>>) => { setLevelNotes([]); props.onDraft({ ...draft, nativeOptions: options }); };
+  // Once the chosen Harness's catalog is read, the levels carried from the one before are applied (the nearest where it lacks one, said in the
+  // note), and a new conversation's permission defaults to auto (the product's direction). Nothing is applied to a conversation just opened.
+  const defaulted = useRef<string | null>(null);
+  // The catalog shown when the Harness changed is the one before's (the page reads the new one after): it is never read as the new Harness's.
+  const harnessAt = useRef<{ readonly id: string; readonly catalog: unknown }>({ id: draft.harnessId, catalog: props.nativeModels });
+  if (harnessAt.current.id !== draft.harnessId) harnessAt.current = { id: draft.harnessId, catalog: props.nativeModels };
+  useEffect(() => {
+    const want = carriedLevels.current;
+    if (draft.providerId || !draft.harnessId || props.nativeModelsLoading || !props.nativeModels || props.nativeModels === harnessAt.current.catalog) return;
+    if (want !== null && want.harnessId !== draft.harnessId) { carriedLevels.current = null; return; }
+    const fresh = want === null && session === null && defaulted.current !== draft.harnessId && level.permission === null;
+    if (want === null && !fresh) return;
+    carriedLevels.current = null; defaulted.current = draft.harnessId;
+    const wanted = { ...(want?.permission !== undefined ? { permission: want.permission } : fresh || session === null ? { permission: "auto" as const } : {}), ...(want?.effort === undefined ? {} : { effort: want.effort }) };
+    const result = carryLevels(level, draft.nativeOptions, wanted, harness?.name ?? "这一家");
+    setLevelNotes(fresh ? [] : result.notes);
+    if (JSON.stringify(result.options) !== JSON.stringify(draft.nativeOptions)) props.onDraft({ ...draft, nativeOptions: result.options });
+  }, [props.nativeModels, props.nativeModelsLoading, draft.harnessId, draft.providerId]);
   // A skill chosen in the extensions puts its command in front of the message, "/command " and then what was written, which
   // is never lost; a message that already starts with that command keeps it once. The panel closes, and the user goes on
   // writing right after the command. A message that changes takes that caret once its new value is shown (`caretAfter`):
@@ -437,6 +477,7 @@ export function Composer(props: ComposerProps) {
         <button type="button" className="btn btn-sm" disabled={disabled} onClick={() => props.onAgentPickerOpen(true)}>换一个 Harness</button></> : undefined}>{note}</ComposerNotice>
       : <p id="composer-notice" className="composer-note motion-fade-in m-0 px-1 text-caption text-fg-2">{note}</p> : null}
     {!draft.providerId && props.nativeModelsError && !selectionFailed && !docked ? <p className="composer-note m-0 px-1 text-caption text-fg-2" role="status">{props.nativeModelsError} <button type="button" className="link-btn" onClick={props.onRefreshModels}>刷新模型</button></p> : null}
+    {levelNotes.length && !docked ? <p className="composer-note level-note m-0 px-1 text-caption text-fg-2" role="status">{levelNotes.join(" ")}</p> : null}
     {props.above}
     <div className="relative">
       {slashOpen ? <div className="surface-pop motion-fade-in absolute bottom-[calc(100%+8px)] left-0 z-20 flex max-h-[min(320px,50vh)] w-[min(400px,100%)] flex-col overflow-hidden" style={motionStyle({ duration: 120 })}>
@@ -518,9 +559,9 @@ export function Composer(props: ComposerProps) {
                 ...(sessionsOffered ? [{ label: "继续原程序的会话…", icon: <History size={15}/>, disabled: disabled || props.mutation !== null, onSelect: () => openPanel("sessions") }] : []),
                 ...(props.sendAlone ? [{ separator: true as const }, { label: "只发这条消息", icon: <ArrowLeftRight size={15}/>, description: "不附之前的对话，只发你写的这一条", checked: props.sendAlone.checked, disabled: disabled, onSelect: props.sendAlone.onToggle }] : []),
               ]}/>
-              {permission ? <SearchPicker side={popSide} {...listOpen("permission")} label={OPTION_NAMES[permission.id] ?? permission.name} value={draft.nativeOptions[permission.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(permission, true)}
-                disabled={disabled || props.nativeModelsLoading} onChange={value => changeOption(permission.id, value)} {...afterChoice} chevron className="gap-[5px] text-fg-2"
-                trigger={selected => <><ShieldCheck size={15} className="flex-none" aria-hidden="true"/><span className="hidden max-w-[140px] truncate sm:inline">{selected?.short ?? selected?.label ?? valueName(permission, permission.currentValue)}</span></>}/> : null}
+              {draft.harnessId && !draft.providerId ? <SearchPicker side={popSide} {...listOpen("permission")} label="权限" value={level.permission ?? ""} placeholder="跟随本机配置" options={permissionChoices}
+                disabled={disabled || props.nativeModelsLoading} onChange={value => changeLevels(withPermission(level, draft.nativeOptions, value === "" ? null : value as PermissionLevel))} {...afterChoice} chevron className="gap-[5px] text-fg-2" footer={nativeFooter}
+                trigger={selected => <><ShieldCheck size={15} className="flex-none" aria-hidden="true"/><span className="hidden max-w-[140px] truncate sm:inline">{level.permission === "custom" ? "自定义" : selected?.short ?? selected?.label ?? "本机设置"}</span></>}/> : null}
             </div>
             <div className="ml-auto flex max-w-full min-w-0 items-center gap-1">
               <div ref={chip} className="agent-chip flex h-[34px] max-w-full min-w-0 items-center overflow-hidden rounded-[12px] p-0.5 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle has-[[data-popup-open]]:bg-subtle"
@@ -546,8 +587,8 @@ export function Composer(props: ComposerProps) {
                     const independent = Object.fromEntries(Object.entries(draft.nativeOptions).filter(([id]) => nativeOptions.some(option => option.id === id && option.category !== "thought_level")));
                     props.onDraft({ ...draft, model: value, nativeOptions: independent });
                   }} footer={!provider ? <><span>{props.nativeModelsLoading ? "正在读取本机模型…" : "列表来自本机安装"}</span><button type="button" className="link-btn text-caption" onClick={props.onRefreshModels}>刷新本机模型</button></> : undefined}/> : null}
-                {thought ? <SearchPicker side={popSide} {...listOpen("thought")} label="思考强度" value={draft.nativeOptions[thought.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(thought, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "thought"}
-                  className={cn(SEGMENT, "flex-none")} {...afterChoice} trigger={() => <Pill>思考 {thinkingShown}</Pill>} onChange={value => changeOption(thought.id, value)}/> : null}
+                {thought ? <SearchPicker side={popSide} {...listOpen("thought")} label="思考强度" value={level.effort ?? ""} placeholder="跟随本机配置" options={effortChoices(thought)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "thought"}
+                  className={cn(SEGMENT, "flex-none")} {...afterChoice} footer={nativeFooter} trigger={() => <Pill>思考 {thinkingShown}</Pill>} onChange={value => changeLevels(withEffort(level, draft.nativeOptions, value === "" ? null : value as EffortLevel))}/> : null}
                 {mode && modeInChip ? <SearchPicker side={popSide} {...listOpen("mode")} label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
                   className={cn(SEGMENT, "flex-none")} {...afterChoice} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
               </div>
@@ -569,7 +610,7 @@ export function Composer(props: ComposerProps) {
           onImport={props.onImportNative!} onOpen={props.onOpenSession!} open={shownPanel === "sessions"} onOpenChange={panelOpenChange("sessions")} anchor={plusButton} returnFocus={plusButton}/> : null}
         {extensionsOffered ? <NativeExtensionsPanel key={draft.harnessId + ":" + draft.controlId} side={popSide} load={props.onLoadExtensions!} onCommand={commandFromPanel}
           open={shownPanel === "extensions"} onOpenChange={panelOpenChange("extensions")} anchor={chip} returnFocus={agentButton}/> : null}
-        {draft.harnessId ? <AdvancedSettings {...props} popSide={popSide} controls={controls} selectedControl={selectedControl} outdated={outdated} disabled={disabled} nativeOptions={nativeOptions.filter(option => option !== thought && !(option === mode && modeInChip) && option !== permission)} optionPicker={optionPicker} nativeState={nativeState} describeNative={describeNative}
+        {draft.harnessId ? <AdvancedSettings {...props} popSide={popSide} controls={controls} selectedControl={selectedControl} outdated={outdated} disabled={disabled} nativeOptions={nativeOptions.filter(option => !(option === mode && modeInChip))} optionPicker={optionPicker} nativeState={nativeState} describeNative={describeNative}
           open={shownPanel === "advanced"} onOpenChange={panelOpenChange("advanced")} anchor={chip} returnFocus={agentButton}/> : null}
         <span id={outdatedId} hidden>所选模型连接有新的配置版本，可以在高级配置里改用</span>
         {dockShown ? <div ref={dockLayer} className={cn("ease-standard", docked ? "motion-enter relative" : "pointer-events-none absolute inset-x-0 top-0 opacity-0 transition-opacity duration-100")}

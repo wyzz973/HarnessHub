@@ -50,7 +50,7 @@ export function hubRecordOf(turn: Pick<ReadTurn, "items">): FileChangeItem | und
 /** A Turn's changes with a stored detail: the Hub's record when there is one (what the workspace really changed), else the Harness's own edits. */
 export function editsOf(turn: ReadTurn): readonly FileChangeItem[] {
   const record = hubRecordOf(turn);
-  if (record !== undefined) return record.detail === undefined ? [] : [record];
+  if (record !== undefined) return [record];
   return turn.items.filter((item): item is FileChangeItem => item.type === "file_change" && item.detail !== undefined);
 }
 /** How many changes some Turns made, counted as places, known without reading any detail. */
