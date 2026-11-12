@@ -541,10 +541,12 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
       if (was === undefined) starts.push({ runId, anchor, entry: add("turn", { phase: "start", anchor, run: storedRun(row ?? runRowOf(next.id, run)) }).id });
       const endsNow = runFinished(run.status), inMain = held?.mainItems.get(runId), changedItems = itemWrites.get(runId), changedText = textWrites.get(runId);
       const wroteHere = new Set<number>();
+      // The seq of the commit that made an item is on the item as this store settled it (`was`); the reducer's own copy of an item it did not touch has none.
+      const madeAt = new Map((was?.items ?? []).map(item => [item.seq, item.createdSeq]));
       for (const item of run.items ?? (endsNow ? was?.items : undefined) ?? []) {
         const changed = changedItems?.has(item.seq) === true || changedText?.has(item.seq) === true;
         if (!changed && (!endsNow || sameAsWritten(inMain?.get(item.seq), item))) continue;
-        const createdSeq = changedItems?.get(item.seq)?.row.createdSeq ?? item.createdSeq;
+        const createdSeq = changedItems?.get(item.seq)?.row.createdSeq ?? item.createdSeq ?? madeAt.get(item.seq) ?? null;
         // One line per item: the user's message the moment it is accepted, every other item once, when its Turn ends. An item's own end is not its last change (a call's
         // stored detail is put on it by a later commit: items-place.ts asks the content store for it when the call ends), so until the Turn ends it lives in the WIP log.
         if (endsNow || item.type === "user_message") {
