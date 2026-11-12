@@ -56,7 +56,7 @@ export function NativeSessionsPanel({ load, onImport, onOpen, disabled, side = "
     <div className="flex flex-col gap-1 p-[5px]">
       {state.error ? <p className="m-0 px-2 py-1.5 text-ui-sm text-red" role="alert">{state.error}</p> : null}
       {state.value !== undefined && sessions === null ? <p className="m-0 px-2 py-1.5 text-ui-sm text-fg-2">这个 Harness 的接口不能列出或继续它自己的会话。</p> : null}
-      {sessions ? sessions.length ? <ul className="m-0 flex list-none flex-col p-0">{sessions.map(row => <li key={row.id} className="row flex items-center gap-2 rounded-[9px] px-2 py-1.5">
+      {sessions ? sessions.length ? <ul className="m-0 flex list-none flex-col p-0">{sessions.map(row => <li key={row.id} className="row flex items-center gap-2 rounded-row px-2 py-1.5">
         <div className="min-w-0 flex-1"><strong className="block truncate text-ui-sm font-medium">{row.title ?? "未命名会话"}</strong><small className="text-caption text-fg-3">{[when(row.updatedAt), row.source ? SOURCES[row.source] ?? row.source : ""].filter(Boolean).join(" · ")}</small></div>
         {row.conversationId
           ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => onOpen(row.conversationId!)}>打开对话 <ArrowUpRight size={12} aria-hidden="true"/></button>

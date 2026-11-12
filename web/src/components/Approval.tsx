@@ -160,7 +160,7 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
   return <section ref={section} id="approval-dock" tabIndex={-1} onKeyDown={onKeyDown} onPointerDown={() => { guard.current = 0; }} aria-label="工具审批" aria-describedby="approval-dock-title"
     className="approval-dock flex flex-col gap-3 rounded-composer pt-4 pr-4 pb-3 pl-[18px]">
     <div className="flex items-start gap-3">
-      <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[11px] bg-amber-soft text-amber" aria-hidden="true"><ShieldAlert size={18}/></span>
+      <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-block bg-amber-soft text-amber" aria-hidden="true"><ShieldAlert size={18}/></span>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         {/* The state in the words the header and the Turn use (Interaction board: 等你批准). */}
         <strong id="approval-dock-title" className="text-ui font-semibold">{harness} 等你批准</strong>

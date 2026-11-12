@@ -114,7 +114,7 @@ export function harnessOptions(harnesses: readonly HarnessView[], readiness: rea
 const SEGMENT = "h-[30px] max-w-none rounded-row px-1 outline-offset-[-2px] hover:bg-hover data-[popup-open]:bg-hover";
 /** The small blue pill of a native option inside the merged picker (the thinking level, or the mode). */
 function Pill({ children }: { readonly children: ReactNode }) {
-  return <span className="inline-flex h-5 items-center rounded-full bg-accent-soft px-[7px] text-[11px] leading-4 font-medium whitespace-nowrap text-accent-text">{children}</span>;
+  return <span className="inline-flex h-5 items-center rounded-full bg-subtle px-[7px] text-[11px] leading-4 font-medium whitespace-nowrap text-fg-2">{children}</span>;
 }
 
 /**
@@ -503,7 +503,7 @@ export function Composer(props: ComposerProps) {
         <div className="scroll-area min-h-0 p-[5px]" id={listId} role="listbox" aria-label="原生命令">
           {slashMatches.length ? slashMatches.map((command, index) => <button key={command.name} type="button" role="option" id={`${listId}-${index}`} aria-selected={index === slashIndex} tabIndex={-1}
             onPointerMove={() => setSlashActive(index)} onMouseDown={event => event.preventDefault()} onClick={() => chooseCommand(command.name)}
-            className={cn("flex w-full items-baseline gap-2.5 rounded-[9px] border-none bg-transparent px-2.5 py-[7px] text-left", index === slashIndex && "bg-subtle")}>
+            className={cn("flex w-full items-baseline gap-2.5 rounded-row border-none bg-transparent px-2.5 py-[7px] text-left", index === slashIndex && "bg-subtle")}>
             <span className="mono flex-none text-ui-sm font-medium">/{command.name}</span><span className="min-w-0 truncate text-caption text-fg-3">{command.description}</span>
           </button>) : <p className="m-0 px-3 py-4 text-center text-ui-sm text-fg-3">没有匹配的命令</p>}
         </div>
@@ -512,7 +512,7 @@ export function Composer(props: ComposerProps) {
       {mentionOpen ? <div className="surface-pop motion-fade-in absolute bottom-[calc(100%+8px)] left-0 z-20 flex w-[min(360px,100%)] flex-col overflow-hidden" style={motionStyle({ duration: 120 })}>
         <div role="listbox" aria-label="引用文件" id={listId} className="p-[5px]">
           <button type="button" role="option" id={`${listId}-file`} aria-selected="true" tabIndex={-1} onMouseDown={event => event.preventDefault()} onClick={() => chooseFile(mention)}
-            className="flex w-full items-center gap-2.5 rounded-[9px] border-none bg-subtle px-2.5 py-2 text-left"><Paperclip size={15} className="flex-none text-fg-2" aria-hidden="true"/>
+            className="flex w-full items-center gap-2.5 rounded-row border-none bg-subtle px-2.5 py-2 text-left"><Paperclip size={15} className="flex-none text-fg-2" aria-hidden="true"/>
             <span className="flex min-w-0 flex-col"><span className="text-ui-sm font-medium">从这台电脑选择文件…</span><span className="text-caption text-fg-3">作为附件随这条消息发出；HarnessHub 不浏览工作区目录</span></span></button>
         </div>
         <div className="px-3.5 py-2 text-caption text-fg-3 hairline-t">Enter 选择 · Esc 保留 @ 作为文字</div>
@@ -582,7 +582,7 @@ export function Composer(props: ComposerProps) {
                 trigger={selected => <><ShieldCheck size={15} className="flex-none" aria-hidden="true"/><span className="hidden max-w-[140px] truncate sm:inline">{level.permission === "custom" ? "自定义" : selected?.short ?? selected?.label ?? "本机设置"}</span></>}/> : null}
             </div>
             <div className="ml-auto flex max-w-full min-w-0 items-center gap-1">
-              <div ref={chip} className="agent-chip flex h-[34px] max-w-full min-w-0 items-center overflow-hidden rounded-[12px] p-0.5 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle has-[[data-popup-open]]:bg-subtle"
+              <div ref={chip} className="agent-chip flex h-[34px] max-w-full min-w-0 items-center overflow-hidden rounded-block p-0.5 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle has-[[data-popup-open]]:bg-subtle"
                 role="group" aria-label="由谁来做：Harness、模型与思考强度">
                 <SearchPicker side={popSide} label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
                   title={<span className="flex items-center gap-1">由谁来做 · <Kbd>⌘</Kbd><Kbd>J</Kbd></span>} open={agentPickerOpen && !docked} onOpenChange={onAgentPickerOpen} className={cn(SEGMENT, "flex-none gap-[7px] pl-1")}

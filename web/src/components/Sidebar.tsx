@@ -247,12 +247,16 @@ function SessionRow({ row, now, harness, current, disabled, onOpen }: { readonly
   const id = useId(), metaId = id + "-meta", lineId = id + "-line", title = session.title || "新对话";
   const indicator = state === "wait" ? <StatusDot tone="wait"/> : state === "run" ? <StatusDot tone="run"/> : state === "fail" ? <StatusDot tone="fail"/>
     : state === "unknown" ? <CircleHelp size={14} className="text-fg-3" aria-hidden="true"/> : null;
+  // The app's row: a 6 px state dot in the leading slot, the title, and a second line that says whose conversation it is and how it stands
+  // (what it waits for, while it waits for you).
   return <button type="button" disabled={disabled} onClick={onOpen} aria-current={current ? "page" : undefined} aria-label={title} aria-describedby={left ? metaId + " " + lineId : metaId}
-    className={cn("session-item nav-row w-full flex-col items-stretch justify-center gap-0 pr-2.5 pl-8 disabled:opacity-60", left ? "has-attention h-auto py-1.5" : "h-8")}>
-    <span className="flex h-5 min-w-0 items-center gap-2">
-      <span className={cn("session-title min-w-0 flex-1 trunc", state === "closed" && "text-fg-2")}>{title}</span>{indicator}
+    className={cn("session-item nav-row h-auto w-full items-start gap-2 py-[5px] pr-2.5 pl-2 disabled:opacity-60", left && "has-attention")}>
+    <span className="flex h-5 w-4 flex-none items-center justify-center">{indicator}</span>
+    <span className="flex min-w-0 flex-1 flex-col">
+      <span className={cn("session-title trunc", state === "closed" && "text-fg-2")}>{title}</span>
+      {urgent && left ? <span id={lineId} className="attention-line line-clamp-2 text-caption font-normal text-amber-on-tint" title={left.hint}>{attentionKind(urgent)}{items.length > 1 ? `（${items.length} 项）` : ""}{left.source ? " · " + left.source : ""} <span className="whitespace-nowrap">{left.text}</span></span>
+        : <span className="session-meta trunc text-caption font-normal text-fg-3" aria-hidden="true">{harness}{STATE_WORDS[state] ? " · " + STATE_WORDS[state] : ""}</span>}
     </span>
-    {urgent && left ? <span id={lineId} className="attention-line line-clamp-2 text-caption text-amber-on-tint" title={left.hint}>{attentionKind(urgent)}{items.length > 1 ? `（${items.length} 项）` : ""}{left.source ? " · " + left.source : ""} <span className="whitespace-nowrap">{left.text}</span></span> : null}
     <span id={metaId} className="sr-only">{harness}{STATE_WORDS[state] ? " · " + STATE_WORDS[state] : ""}</span>
   </button>;
 }

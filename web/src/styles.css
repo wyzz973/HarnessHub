@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 /*
- * HarnessHub design language 2.0 (ADR-054). One stylesheet holds every token, the shared component classes and the
- * motion system; components use the semantic names below, never raw colors, curves or durations.
+ * HarnessHub's design language (ADR-054, retuned 2026-11-13 to the measured Claude desktop app). One stylesheet holds every token, the
+ * shared component classes and the motion system; components use the semantic names below, never raw colors, curves or durations.
  *
  * Appearance follows the system. A manual choice in the settings is recorded as data-theme on the root element and wins
  * over the system; the `dark:` variant below follows the same rule, so `dark:` utilities and these tokens never disagree.
@@ -24,90 +24,96 @@
 @font-face { font-family: "HH Quote"; src: local("PingFangSC-Medium"), local("PingFang SC Medium"); unicode-range: U+2018-2019, U+201C-201D; font-weight: 500; }
 @font-face { font-family: "HH Quote"; src: local("PingFangSC-Semibold"), local("PingFang SC Semibold"); unicode-range: U+2018-2019, U+201C-201D; font-weight: 600; }
 
-/* Color, hairline and shadow tokens: light, then dark (ADR-054 §1). Color only states something. */
+/*
+ * Color, hairline and shadow tokens: light, then dark. Color only states something. The values follow the measured Claude desktop app
+ * (docs/research/claude-desktop-ui-2026-11-12.md B7, B8): neutral greys with no tint, one blue accent, three levels of text, hairlines
+ * and two soft shadows. The third text level and the text on tints are a step stronger than the app's, to read at 4.5:1.
+ */
 :root {
   color-scheme: light;
   /* Surfaces */
-  --bg-sidebar: #F9FAFB;                       /* the sidebar shell */
-  --bg-sidebar-hover: rgba(38, 49, 72, .05);   /* a row hovered on the sidebar */
-  --bg-selected: rgba(38, 49, 72, .07);        /* the selected row, anywhere */
+  --bg-sidebar: #FAFAFA;                       /* the sidebar shell */
+  --bg-sidebar-hover: rgba(0, 0, 0, .05);      /* a row hovered on the sidebar */
+  --bg-selected: rgba(0, 0, 0, .08);           /* the selected row, anywhere */
   --bg-app: #FFFFFF;                           /* the main area and the page */
-  --bg-surface: #FFFFFF;                       /* cards, popovers, dialogs */
-  --bg-subtle: #F4F5F7;                        /* fills: secondary buttons, chips, your message */
-  --bg-hover: #EBEDF0;                         /* a filled control hovered */
-  --bg-active: #E4E6EA;                        /* a filled control pressed or chosen */
-  --bg-inset: #F6F7F9;                         /* code, commands and other recessed text */
-  --bg-well: #FFFFFF;                          /* the tile behind an Agent's mark */
+  --bg-surface: #FFFFFF;                       /* cards, panels, dialogs */
+  --bg-pop: #FFFFFF;                           /* floating layers: menus, pickers, tooltips */
+  --bg-subtle: #F4F4F4;                        /* fills: secondary buttons, chips, your message */
+  --bg-hover: #EBEBEB;                         /* a filled control hovered */
+  --bg-active: #E2E2E2;                        /* a filled control pressed or chosen */
+  --bg-inset: #F8F8F8;                         /* code, commands and other recessed text */
+  --bg-well: #FFFFFF;                          /* the tile behind a Harness's mark */
   /* Hairlines (drawn 0.5 px) */
-  --border: rgba(0, 0, 0, .07);
-  --border-strong: rgba(0, 0, 0, .12);
-  /* Text: 4.7:1 or better for the third level on the page and on the sidebar */
-  --text: #0F1115; --text-2: #4B5059; --text-3: #646973; --text-placeholder: #8A8F98;
+  --border: rgba(0, 0, 0, .09);
+  --border-strong: rgba(0, 0, 0, .14);
+  /* Text: 4.5:1 or better for the third level on the page and on the sidebar */
+  --text: #1A1A1A; --text-2: #5F5F5F; --text-3: #737373; --text-placeholder: #9A9A9A;
   /* Blue: send, primary buttons, selection, focus and work in progress */
-  --accent: #3A6AE0; --accent-hover: #3160D4; --accent-soft: rgba(58, 106, 224, .10); --accent-text: #2F5FD0; --on-accent: #FFFFFF;
-  --run: #3A6AE0;
+  --accent: #257DE0; --accent-hover: #2171CA; --accent-soft: rgba(37, 125, 224, .10); --accent-text: #1757AC; --on-accent: #FFFFFF;
+  --run: #257DE0;
   /* Amber means only "waiting for you"; red means only failure */
-  --amber: #B45309; --amber-dot: #F59E0B; --amber-soft: rgba(245, 158, 11, .12); --amber-line: rgba(245, 158, 11, .45);
-  --red: #DC2626; --red-dot: #EF4444; --red-soft: rgba(239, 68, 68, .09); --red-line: rgba(239, 68, 68, .32);
+  --amber: #7A4D02; --amber-dot: #F5A70A; --amber-soft: rgba(251, 179, 21, .14); --amber-line: rgba(251, 179, 21, .55);
+  --red: #B3282B; --red-dot: #DC3C3D; --red-soft: rgba(220, 60, 61, .08); --red-line: rgba(220, 60, 61, .32);
   /* Green appears only on the added lines of a diff */
-  --green: #15803D; --green-dot: #22C55E; --green-soft: rgba(34, 197, 94, .12);
-  --add-bg: rgba(34, 197, 94, .12); --add-text: #15803D; --del-bg: rgba(239, 68, 68, .10); --del-text: #DC2626;
+  --green: #0B7A1E; --green-dot: #10A122; --green-soft: rgba(16, 161, 34, .12);
+  --add-bg: rgba(30, 158, 60, .12); --add-text: #17832F; --del-bg: rgba(205, 32, 84, .09); --del-text: #C01D4E;
   /*
    * Small text that sits on a tint (a soft pill, a diff's tinted line, a row tinted when hovered or chosen) takes a
-   * higher-contrast shade of its hue, darker here and lighter in the dark, so it reads at 4.5:1 (ruling M). Dots, rings and
-   * marks keep the colours above.
+   * higher-contrast shade of its hue, darker here and lighter in the dark, so it reads at 4.5:1. Dots, rings and marks keep
+   * the colours above.
    */
-  --amber-on-tint: #A14A07; --red-on-tint: #B91C1C; --add-on-tint: #166534; --del-on-tint: #B91C1C; --text-3-on-tint: #5A5F69;
-  /* Behind dialogs, drawers and sheets: a veil of the sidebar's color, light or dark with it (Capabilities board) */
+  --amber-on-tint: #6B4302; --red-on-tint: #8F1F22; --add-on-tint: #14702A; --del-on-tint: #A31743; --text-3-on-tint: #636363;
+  /* Behind dialogs, drawers and sheets: a veil of the sidebar's color, light or dark with it */
   --scrim: color-mix(in srgb, var(--bg-sidebar) 60%, transparent);
-  --selection: rgba(58, 106, 224, .18);
+  --selection: rgba(37, 125, 224, .20);
   --scrollbar: rgba(0, 0, 0, .18);
-  --shimmer-peak: #0F1115;
-  /* Depth: hairlines everywhere; only the composer and floating layers cast a faint shadow */
-  --sh-hairline: 0 0 0 .5px rgba(0, 0, 0, .12);
-  --sh-card: 0 0 0 .5px rgba(0, 0, 0, .10), 0 1px 2px rgba(0, 0, 0, .03);
-  --sh-card-hover: 0 0 0 .5px rgba(0, 0, 0, .12), 0 4px 14px rgba(0, 0, 0, .05);
-  --sh-composer: 0 0 0 .5px rgba(0, 0, 0, .10), 0 4px 16px rgba(0, 0, 0, .03), 0 0 24px rgba(0, 0, 0, .03);
-  --sh-focus: 0 0 0 .5px rgba(58, 106, 224, .6), 0 0 0 3px rgba(58, 106, 224, .12), 0 4px 16px rgba(0, 0, 0, .04);
-  --sh-pop: 0 0 0 .5px rgba(0, 0, 0, .10), 0 12px 32px rgba(0, 0, 0, .10), 0 2px 6px rgba(0, 0, 0, .04);
+  --shimmer-peak: #1A1A1A;
+  /* Depth: hairlines everywhere; only the composer and floating layers cast a soft shadow */
+  --sh-hairline: 0 0 0 .5px rgba(0, 0, 0, .14);
+  --sh-card: 0 0 0 .5px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .04);
+  --sh-card-hover: 0 0 0 .5px rgba(0, 0, 0, .14), 0 2px 8px rgba(0, 0, 0, .07);
+  --sh-composer: 0 0 0 .5px rgba(0, 0, 0, .14), 0 1px 2px rgba(0, 0, 0, .05), 0 2px 8px rgba(0, 0, 0, .06);
+  --sh-focus: 0 0 0 1px rgba(37, 125, 224, .75), 0 0 0 3.5px rgba(37, 125, 224, .14), 0 2px 8px rgba(0, 0, 0, .06);
+  --sh-pop: 0 0 0 .5px rgba(0, 0, 0, .12), 0 8px 24px rgba(0, 0, 0, .12), 0 2px 6px rgba(0, 0, 0, .08);
   --sh-well: 0 0 0 .5px rgba(0, 0, 0, .14), 0 1px 2px rgba(0, 0, 0, .06);
-  --sh-kbd: inset 0 -1px 0 rgba(0, 0, 0, .08), 0 0 0 .5px rgba(0, 0, 0, .12);
+  --sh-kbd: inset 0 -1px 0 rgba(0, 0, 0, .08), 0 0 0 .5px rgba(0, 0, 0, .14);
   /* Names kept from ADR-042 for code not yet moved to the names above */
   --shadow-sm: var(--sh-hairline); --shadow-md: var(--sh-pop); --shadow-lg: var(--sh-pop);
 
   @variant dark {
     color-scheme: dark;
-    --bg-sidebar: #111214;
-    --bg-sidebar-hover: rgba(255, 255, 255, .05);
-    --bg-selected: rgba(255, 255, 255, .08);
-    --bg-app: #18191C;
-    --bg-surface: #1F2023;
-    --bg-subtle: #26272B;
-    --bg-hover: #2F3034;
-    --bg-active: #36373C;
-    --bg-inset: #141518;
-    --bg-well: #2A2B2F;
-    --border: rgba(255, 255, 255, .07);
-    --border-strong: rgba(255, 255, 255, .13);
-    --text: #F3F4F6; --text-2: #B4B8BF; --text-3: #959AA2; --text-placeholder: #7A7F88;
-    --accent: #3A6AE0; --accent-hover: #4A78E8; --accent-soft: rgba(110, 150, 255, .16); --accent-text: #8AB0FF; --on-accent: #FFFFFF;
-    --run: #6E96FF;
-    --amber: #FBBF24; --amber-dot: #F59E0B; --amber-soft: rgba(245, 158, 11, .16); --amber-line: rgba(245, 158, 11, .5);
-    --red: #F87171; --red-dot: #F05252; --red-soft: rgba(240, 82, 82, .14); --red-line: rgba(240, 82, 82, .38);
-    --green: #4ADE80; --green-dot: #22C55E; --green-soft: rgba(34, 197, 94, .16);
-    --add-bg: rgba(34, 197, 94, .16); --add-text: #4ADE80; --del-bg: rgba(240, 82, 82, .16); --del-text: #F87171;
-    --amber-on-tint: #FCD34D; --red-on-tint: #FCA5A5; --add-on-tint: #86EFAC; --del-on-tint: #FCA5A5; --text-3-on-tint: #A9AEB5;
-    --selection: rgba(110, 150, 255, .30);
+    --bg-sidebar: #1F1F1F;
+    --bg-sidebar-hover: rgba(255, 255, 255, .07);
+    --bg-selected: rgba(255, 255, 255, .11);
+    --bg-app: #191919;
+    --bg-surface: #212121;
+    --bg-pop: #2C2C2C;
+    --bg-subtle: #282828;
+    --bg-hover: #303030;
+    --bg-active: #393939;
+    --bg-inset: #141414;
+    --bg-well: #2A2A2A;
+    --border: rgba(255, 255, 255, .09);
+    --border-strong: rgba(255, 255, 255, .15);
+    --text: #EDEDED; --text-2: #A3A3A3; --text-3: #8C8C8C; --text-placeholder: #6F6F6F;
+    --accent: #257DE0; --accent-hover: #3A8BE8; --accent-soft: rgba(106, 171, 241, .16); --accent-text: #6AABF1; --on-accent: #FFFFFF;
+    --run: #6AABF1;
+    --amber: #E8A317; --amber-dot: #F5A70A; --amber-soft: rgba(251, 179, 21, .14); --amber-line: rgba(251, 179, 21, .45);
+    --red: #F17778; --red-dot: #E5484D; --red-soft: rgba(241, 119, 120, .13); --red-line: rgba(241, 119, 120, .38);
+    --green: #53C556; --green-dot: #32D74B; --green-soft: rgba(50, 215, 75, .14);
+    --add-bg: rgba(50, 215, 75, .13); --add-text: #4FD364; --del-bg: rgba(255, 44, 86, .15); --del-text: #FF6482;
+    --amber-on-tint: #F5C24B; --red-on-tint: #F9A8A8; --add-on-tint: #7FE28D; --del-on-tint: #FF9DB0; --text-3-on-tint: #A8A8A8;
+    --selection: rgba(106, 171, 241, .32);
     --scrollbar: rgba(255, 255, 255, .18);
     --shimmer-peak: #FFFFFF;
-    --sh-hairline: 0 0 0 .5px rgba(255, 255, 255, .12);
-    --sh-card: 0 0 0 .5px rgba(255, 255, 255, .10);
-    --sh-card-hover: 0 0 0 .5px rgba(255, 255, 255, .14), 0 4px 14px rgba(0, 0, 0, .3);
-    --sh-composer: 0 0 0 .5px rgba(255, 255, 255, .12), 0 8px 24px rgba(0, 0, 0, .35);
-    --sh-focus: 0 0 0 .5px rgba(138, 176, 255, .7), 0 0 0 3px rgba(138, 176, 255, .16), 0 8px 24px rgba(0, 0, 0, .4);
-    --sh-pop: 0 0 0 .5px rgba(255, 255, 255, .12), 0 16px 40px rgba(0, 0, 0, .55);
-    --sh-well: 0 0 0 .5px rgba(255, 255, 255, .12);
-    --sh-kbd: inset 0 -1px 0 rgba(0, 0, 0, .35), 0 0 0 .5px rgba(255, 255, 255, .14);
+    --sh-hairline: 0 0 0 .5px rgba(255, 255, 255, .14);
+    --sh-card: 0 0 0 .5px rgba(255, 255, 255, .11);
+    --sh-card-hover: 0 0 0 .5px rgba(255, 255, 255, .16), 0 2px 8px rgba(0, 0, 0, .3);
+    --sh-composer: 0 0 0 .5px rgba(255, 255, 255, .14), 0 2px 8px rgba(0, 0, 0, .28);
+    --sh-focus: 0 0 0 1px rgba(106, 171, 241, .8), 0 0 0 3.5px rgba(106, 171, 241, .18), 0 2px 8px rgba(0, 0, 0, .3);
+    --sh-pop: 0 0 0 .5px rgba(255, 255, 255, .13), 0 8px 24px rgba(0, 0, 0, .34), 0 2px 6px rgba(0, 0, 0, .2);
+    --sh-well: 0 0 0 .5px rgba(255, 255, 255, .13);
+    --sh-kbd: inset 0 -1px 0 rgba(0, 0, 0, .35), 0 0 0 .5px rgba(255, 255, 255, .15);
   }
 }
 
@@ -121,6 +127,7 @@
   --color-selected: var(--bg-selected);
   --color-app: var(--bg-app);
   --color-surface: var(--bg-surface);
+  --color-pop: var(--bg-pop);
   --color-subtle: var(--bg-subtle);
   --color-hover: var(--bg-hover);
   --color-active: var(--bg-active);
@@ -183,16 +190,16 @@
   --text-greeting: 32px; --text-greeting--line-height: 42px; --text-greeting--font-weight: 500; --text-greeting--letter-spacing: -0.02em;
   --text-title: 28px; --text-title--line-height: 36px; --text-title--font-weight: 600; --text-title--letter-spacing: -0.02em;
   --text-section: 20px; --text-section--line-height: 28px; --text-section--font-weight: 600; --text-section--letter-spacing: -0.01em;
-  --text-panel: 17px; --text-panel--line-height: 24px; --text-panel--font-weight: 600;
-  --text-reading: 15px; --text-reading--line-height: 26px;
-  --text-ui: 14px; --text-ui--line-height: 20px;
+  --text-panel: 16px; --text-panel--line-height: 22px; --text-panel--font-weight: 600;
+  --text-reading: 14px; --text-reading--line-height: 22px;
+  --text-ui: 13px; --text-ui--line-height: 20px;
   --text-ui-sm: 13px; --text-ui-sm--line-height: 20px;
-  --text-caption: 12px; --text-caption--line-height: 18px;
-  --text-code: 12.5px; --text-code--line-height: 20px;
+  --text-caption: 12px; --text-caption--line-height: 16px;
+  --text-code: 12px; --text-code--line-height: 18px;
   /* Radii: keys and tags, rows and icon buttons, buttons and fields, code and small cards, cards and the plan bar, the composer and approvals */
-  --radius-tag: 6px; --radius-row: 8px; --radius-control: 10px; --radius-block: 12px; --radius-card: 14px; --radius-composer: 28px;
-  --container-reading: 680px;
-  --container-sidebar: 264px;
+  --radius-tag: 4px; --radius-row: 6px; --radius-control: 6px; --radius-block: 8px; --radius-card: 10px; --radius-composer: 12px;
+  --container-reading: 768px;
+  --container-sidebar: 288px;
   /* Curves: appear, snap, expand, overshoot; standard for hover, tabs, ticks and swaps; panel for the details panel; token for streamed text */
   --ease-out: cubic-bezier(.165, .84, .44, 1);
   --ease-snap: cubic-bezier(.32, .72, 0, 1);
@@ -216,7 +223,7 @@
   html, body, #root { height: 100%; }
   html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
   body {
-    margin: 0; background: var(--bg-app); color: var(--text); font-family: var(--font-sans); font-size: 14px; line-height: 20px;
+    margin: 0; background: var(--bg-app); color: var(--text); font-family: var(--font-sans); font-size: 13px; line-height: 20px;
     font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   }
   button, input, textarea, select { font: inherit; color: inherit; }
@@ -270,6 +277,7 @@
 @keyframes hh-draw { to { stroke-dashoffset: 0; } }
 @keyframes hh-end-dot { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.25); } }
 @keyframes hh-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .75; } }
+@keyframes hh-blink { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 @keyframes hh-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--dot-color) 45%, transparent); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
 @keyframes hh-message-rise { from { transform: translateY(10px); } to { transform: none; } }
 @keyframes hh-pop-in { from { transform: scale(var(--motion-scale-from, .5)); } to { transform: none; } }
@@ -362,13 +370,13 @@
   .press { transition: transform var(--dur-fast) var(--ease-snap); }
   .press:active:not(:disabled) { transform: scale(.97); transition-duration: var(--dur-instant); }
 
-  /* #35 Status dot: running breathes a ring every 1.8 s; waiting is amber; failed is red */
-  .status-dot { --dot-color: var(--text-3); display: inline-block; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--dot-color); }
+  /* #35 Status dot, 6 px: running blinks every 1.2 s; waiting is amber; failed is red */
+  .status-dot { --dot-color: var(--text-3); display: inline-block; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--dot-color); }
   .status-dot[data-tone="run"] { --dot-color: var(--run); }
   .status-dot[data-tone="wait"] { --dot-color: var(--amber-dot); }
   .status-dot[data-tone="fail"] { --dot-color: var(--red-dot); }
   .status-dot[data-tone="idle"] { --dot-color: var(--border-strong); }
-  .status-dot[data-live] { animation: hh-pulse 1.8s ease-in-out infinite; }
+  .status-dot[data-live] { animation: hh-blink 1.2s ease-in-out infinite; }
   /* Names kept from ADR-042 */
   .spin { animation: hh-spin .8s linear infinite; }
   .pulse { animation: hh-breathe 1.8s ease-in-out infinite; }
@@ -390,16 +398,23 @@
    */
   .floating-bar {
     inset-inline: 16px; width: fit-content; margin-inline: auto;
-    display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 8px 0 16px; border-radius: var(--radius-card); background: var(--bg-surface);
+    display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 8px 0 16px; border-radius: var(--radius-card); background: var(--bg-pop);
     box-shadow: var(--sh-pop); color: var(--text); font-size: 12px; line-height: 18px; white-space: nowrap;
     transition: opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out);
   }
   @starting-style { .floating-bar { opacity: 0; transform: translateY(16px); } }
   .floating-bar[data-state="closing"] { opacity: 0; transform: translateY(16px); transition-duration: var(--dur-base); pointer-events: none; }
 
-  /* Buttons: blue primary, grey secondary (default), outline, ghost, danger; md 34, sm 28, lg 38. #30 hover 120 ms */
+  /*
+   * What stands above the message box is not said twice (the app keeps the task list and the next step in the bottom stack, never in the
+   * timeline): the latest Turn's task list and wrap-up have no line of their own while the bar or the box shows them. Earlier Turns keep theirs.
+   */
+  .chat-page:has(.next-step) .transcript > .protocol-turn:last-of-type .quiet-line[data-item="recap"],
+  .chat-page:has(.plan-bar) .transcript > .protocol-turn:last-of-type .quiet-line[data-item="plan"] { display: none; }
+
+  /* Buttons: blue primary, grey secondary (default), outline, ghost, danger; md 30, sm 26, lg 34. #30 hover 120 ms */
   .btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 12px; border: none; border-radius: var(--radius-control);
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 12px; border: none; border-radius: var(--radius-control);
     background: var(--bg-subtle); color: var(--text); font-size: 13px; line-height: 20px; font-weight: 500; white-space: nowrap; text-decoration: none; user-select: none;
     transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-snap);
   }
@@ -414,15 +429,15 @@
   .btn-ghost:hover:not(:disabled) { background: var(--bg-subtle); color: var(--text); }
   .btn-danger { color: var(--red); }
   .btn-danger:hover:not(:disabled) { color: var(--red); }
-  .btn-sm { height: 28px; padding: 0 10px; gap: 5px; border-radius: var(--radius-row); font-size: 12px; line-height: 18px; }
-  .btn-lg { height: 38px; padding: 0 14px; gap: 8px; border-radius: var(--radius-block); font-size: 14px; }
+  .btn-sm { height: 26px; padding: 0 9px; gap: 5px; border-radius: var(--radius-row); font-size: 12px; line-height: 18px; }
+  .btn-lg { height: 34px; padding: 0 14px; gap: 8px; border-radius: var(--radius-block); font-size: 13px; }
   .icon-btn {
-    display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: none; padding: 0; border: none; border-radius: var(--radius-row);
+    display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: none; padding: 0; border: none; border-radius: var(--radius-row);
     background: transparent; color: var(--text-2); transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
   }
   .icon-btn:hover:not(:disabled), .icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"], .icon-btn[data-popup-open] { background: var(--bg-subtle); color: var(--text); }
   .icon-btn:disabled { opacity: .45; }
-  .icon-btn-sm { width: 26px; height: 26px; }
+  .icon-btn-sm { width: 24px; height: 24px; }
   .link-btn { border: none; background: transparent; padding: 0; color: var(--accent-text); font-size: inherit; font-weight: 500; }
   .link-btn:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 2px; }
   .link-btn:disabled { color: var(--text-3); }
@@ -448,13 +463,13 @@
 
   /* Fields (radius 10) */
   .field {
-    width: 100%; height: 34px; padding: 0 10px; border: none; border-radius: var(--radius-control); background: var(--bg-surface); box-shadow: inset 0 0 0 1px var(--border-strong);
+    width: 100%; height: 32px; padding: 0 10px; border: none; border-radius: var(--radius-control); background: var(--bg-surface); box-shadow: inset 0 0 0 1px var(--border-strong);
     color: var(--text); font-size: 13px; line-height: 20px; outline: none;
   }
   textarea.field { height: auto; padding: 8px 10px; resize: vertical; }
   .field:focus, .field:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
   .field:disabled { opacity: .55; }
-  .label { display: block; margin-bottom: 6px; font-size: 13px; line-height: 20px; font-weight: 500; color: var(--text-2); }
+  .label { display: block; margin-bottom: 6px; font-size: 12px; line-height: 18px; font-weight: 500; color: var(--text-2); }
 
   /* Badges (pills) and status pills */
   .badge { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 999px; background: var(--bg-subtle); color: var(--text-2); font-size: 11px; line-height: 16px; font-weight: 500; white-space: nowrap; }
@@ -478,8 +493,8 @@
   .row { border-radius: var(--radius-row); transition: background-color var(--dur-fast) var(--ease-standard); }
   .row:hover { background: var(--bg-subtle); }
   .nav-row {
-    display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border: none; border-radius: var(--radius-control); background: transparent;
-    color: var(--text); font-size: 14px; line-height: 20px; text-align: left; text-decoration: none; transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+    display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border: none; border-radius: var(--radius-row); background: transparent;
+    color: var(--text); font-size: 13px; line-height: 20px; text-align: left; text-decoration: none; transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
   }
   .nav-row:hover { background: var(--bg-sidebar-hover); text-decoration: none; }
   .nav-row[aria-current="page"], .nav-row[aria-current="true"], .nav-row[data-selected="true"] { background: var(--bg-selected); font-weight: 500; }
@@ -488,7 +503,7 @@
 
   /* Floating surfaces. #26 popovers and menus scale .98 → 1 from the trigger with a fade: 120 ms snap, 100 ms back */
   .surface-pop {
-    background: var(--bg-surface); border-radius: var(--radius-card); box-shadow: var(--sh-pop); color: var(--text); outline: none; transform-origin: var(--transform-origin);
+    background: var(--bg-pop); border-radius: var(--radius-card); box-shadow: var(--sh-pop); color: var(--text); outline: none; transform-origin: var(--transform-origin);
     transition: opacity var(--dur-fast) var(--ease-snap), transform var(--dur-fast) var(--ease-snap);
   }
   .surface-pop[data-starting-style], .surface-pop[data-ending-style] { opacity: 0; transform: scale(.98); }
@@ -514,7 +529,7 @@
   }
   .dialog-pop[data-starting-style], .dialog-pop[data-ending-style] { opacity: 0; transform: scale(.98); }
   .palette-pop {
-    position: fixed; left: 50%; top: 16vh; translate: -50% 0; background: var(--bg-surface); border-radius: var(--radius-card); box-shadow: var(--sh-pop); color: var(--text); outline: none;
+    position: fixed; left: 50%; top: 16vh; translate: -50% 0; background: var(--bg-pop); border-radius: var(--radius-card); box-shadow: var(--sh-pop); color: var(--text); outline: none;
     transform-origin: 50% 0; transition: opacity var(--dur-fast) var(--ease-snap), transform var(--dur-fast) var(--ease-snap);
   }
   .palette-pop[data-starting-style], .palette-pop[data-ending-style] { opacity: 0; transform: scale(.98); }

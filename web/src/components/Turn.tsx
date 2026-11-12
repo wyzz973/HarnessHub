@@ -59,7 +59,7 @@ export const UserMessage = memo(function UserMessage({ message, run, onEdit, bra
   if (editing !== null && branching?.onResend) {
     const send = () => { const text = editing.trim(); if (text === "" || busy) return; branching.onResend!(editing); setEditing(null); };
     return <article className="message user-message flex flex-col items-end gap-1.5" aria-label="改发这条消息">
-      <div className="flex w-full max-w-[82%] min-w-0 flex-col gap-2 rounded-[18px] bg-subtle px-[15px] py-2.5">
+      <div className="flex w-full max-w-[85%] min-w-0 flex-col gap-2 rounded-card bg-subtle px-3 py-2">
         <textarea className="branch-edit min-h-20 w-full resize-y bg-transparent text-reading leading-6 text-fg outline-none" aria-label="改发的内容" autoFocus value={editing}
           onChange={event => setEditing(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); send(); } else if (event.key === "Escape") setEditing(null); }}/>
         <div className="flex items-center justify-end gap-2">
@@ -77,7 +77,7 @@ export const UserMessage = memo(function UserMessage({ message, run, onEdit, bra
         <ActionButton label="放回输入框" onClick={() => onEdit(message.text)}><PencilLine size={14}/></ActionButton>
         {branching?.onResend ? <ActionButton label={busy ? BUSY : "编辑并重发"} onClick={() => { if (!busy) setEditing(message.text); }}><Pencil size={14}/></ActionButton> : null}
       </div>
-      <div className="max-w-[82%] min-w-0 rounded-[18px] bg-subtle px-[15px] py-2.5 text-reading leading-6 whitespace-pre-wrap break-words text-fg"><span className="sr-only">你：</span>{message.text}</div>
+      <div className="user-bubble max-w-[85%] min-w-0 rounded-card bg-subtle px-3 py-2 text-reading whitespace-pre-wrap break-words text-fg transition-colors hover:bg-hover"><span className="sr-only">你：</span>{message.text}</div>
     </div>
     {branch !== undefined ? <div className="branch-nav flex items-center gap-0.5 text-caption text-fg-3" role="group" aria-label={"第 " + branch.n + " 个分支，共 " + branch.of + " 个"}>
       <Tip label={busy ? BUSY : "上一个分支"} side="bottom"><button type="button" className="icon-btn size-6" aria-label="上一个分支" disabled={branch.prev === null || busy || !branching?.onSelectBranch}

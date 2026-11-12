@@ -122,8 +122,8 @@ function ActionRow({ item }: { readonly item: WorkItem }) {
     </span> : null;
   const content = <>
     <span className="flex size-[15px] flex-none items-center justify-center"><ActionMark item={item}/></span>
-    <span className={cn("flex-none", bad ? "text-red-on-tint" : "text-fg-2")}>{label.verb}</span>{label.object !== null && !label.object.startsWith("“") ? " " : ""}
-    {label.object !== null ? <span className={cn("min-w-0 trunc", label.mono ? "font-mono text-code text-fg" : "text-fg")} title={label.title}>{label.object}</span> : null}{" "}
+    <span className={cn("flex-none", bad ? "text-red-on-tint" : "text-fg-3")}>{label.verb}</span>{label.object !== null && !label.object.startsWith("“") ? " " : ""}
+    {label.object !== null ? <span className={cn("min-w-0 trunc text-fg-2 transition-colors group-hover/step:text-fg", label.mono && "font-mono text-code")} title={label.title}>{label.object}</span> : null}{" "}
     <span className="min-w-2 flex-1"/>{" "}{facts}
     {expandable ? <Chevron open={open}/> : null}
   </>;
@@ -171,9 +171,9 @@ function ActionGroup({ block }: { readonly block: WorkBlock }) {
   const [choice, setChoice] = useState<boolean | null>(null);
   const open = choice ?? opensByDefault(block, !ctx.over, ctx.detailed), live = block.work.some(item => item.status === "running");
   return <div className="action-group min-w-0" data-open={open ? "true" : "false"} data-problems={summary.problems || undefined}>
-    <button type="button" className={cn(ROW, "row group/step border-none bg-transparent text-fg hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => setChoice(!open)}>
+    <button type="button" className={cn(ROW, "row group/step !w-fit max-w-full border-none bg-transparent pr-2 text-fg hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => setChoice(!open)}>
       {live ? <span className="flex size-[15px] flex-none items-center justify-center"><Spinner size={14} tone="run" label=""/></span> : null}
-      <span className="min-w-0 flex-1 font-medium text-fg">{summary.parts.map((part, index) => <span key={index} className={part.failed ? "text-red-on-tint" : undefined}>{index ? "，" : ""}{part.text}</span>)}
+      <span className={cn("min-w-0 trunc transition-colors group-hover/step:text-fg", open ? "text-fg" : "text-fg-2")}>{summary.parts.map((part, index) => <span key={index} className={part.failed ? "text-red-on-tint" : undefined}>{index ? "，" : ""}{part.text}</span>)}
         {block.rows.some(isGap) ? <span className="font-normal text-fg-3">，中间 {block.rows.map(gapOf).find(gap => gap !== undefined)?.count} 项未载入</span> : null}</span>
       <ChevronRight size={12} strokeWidth={2.2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
     </button>

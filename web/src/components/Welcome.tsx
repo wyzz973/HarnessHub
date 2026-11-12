@@ -132,7 +132,7 @@ function AgentList({ trigger, open, onOpenChange, harnesses, status, selected, f
               const state = status(harness), version = harness.management.programVersion ?? harness.management.installedVersion;
               return <button key={harness.id} type="button" aria-label={`选择 ${harness.name}`} aria-pressed={selected === harness.id}
                 onClick={() => { chose.current = true; onChoose(harness); onOpenChange(false); }}
-                className="row flex w-full items-center gap-3 rounded-[9px] border-none bg-transparent px-2.5 py-2 text-left hover:bg-subtle">
+                className="row flex w-full items-center gap-3 rounded-row border-none bg-transparent px-2.5 py-2 text-left hover:bg-subtle">
                 <BrandIcon brand={harness.id} name={harness.name} size={28}/>
                 <span className="flex min-w-0 flex-1 flex-col"><strong className="trunc text-ui font-medium">{harness.name}</strong>
                   <span className="trunc text-caption text-fg-3">{[version ?? null, SOURCE[harness.management.source] ?? null].filter(Boolean).join(" · ")}</span></span>

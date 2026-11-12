@@ -5,10 +5,11 @@ import { rehypeReveal, reveal, type Chunk, type Reveal } from "../lib/turn.js";
 import { useReducedMotion } from "../ui/motion.js";
 import { CodeBlock } from "./CodeBlock.js";
 
+// The renderer's modules are asked for as the page starts, not when the first reply is drawn: a conversation opened a moment later is
+// drawn as Markdown at once, instead of showing its raw marks until the modules arrive.
+const rendererModules = Promise.all([import("react-markdown"), import("remark-gfm"), import("remend")]);
 const MarkdownRenderer = lazy(async () => {
-  const [{ default: Markdown }, { default: remarkGfm }, { default: remend }] = await Promise.all([
-    import("react-markdown"), import("remark-gfm"), import("remend"),
-  ]);
+  const [{ default: Markdown }, { default: remarkGfm }, { default: remend }] = await rendererModules;
   return {
     default: ({ text, repair, chunks }: { text: string; repair: boolean; chunks: readonly Chunk[] }) => <Markdown skipHtml remarkPlugins={[remarkGfm]} rehypePlugins={chunks.length ? [[rehypeReveal, { chunks }]] : []}
       components={{
