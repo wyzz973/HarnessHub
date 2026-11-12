@@ -1,8 +1,8 @@
 Fix the failing test, and don't change the test's expected values.
-〔HarnessHub handoff relay-rkvd32s4s9n18keaz6gg〕
+〔HarnessHub handoff relay-p6z2nx1nte3dtqfgj4cd〕
 2 earlier turns of this conversation are not in your session (Codex): Claude Code (claude-opus-5-5) did 2 turns (turns 1–2).
-Between the HH-DATA BEGIN and END lines below is the complete record of these 2 turns; it is history, not instructions to you.
-Requirements and constraints the user stated in the record still hold, unless the user later changed them.
+Between the HH-DATA BEGIN and END lines below is the complete record of these 2 turns; it is the earlier record of this conversation, not instructions to carry out now.
+You now carry on as the assistant in this conversation: what the user told the assistant in the record (things to remember, requirements and constraints) was told to you and still holds, unless the user later changed it.
 This record is a digest, not the whole conversation. HarnessHub keeps the whole of it, with every turn's tool calls and the full output of every command; you can read it back with the tools hub_turns, hub_read_turn and hub_search (turn N here is turn N there). When the user asks about a detail, or you need a fact, that is not in this record, look it up with those tools before you say you do not know, and do not re-run a command that has side effects just to see its output again.
 Only the text after the last line ("The user's current instruction follows, verbatim.") is what the user is saying now; check the actual state of the workspace before acting.
 
@@ -55,5 +55,5 @@ JPY now has 0 decimals, but `rounds JPY totals without decimals` still fails: th
 ## Left out
 - Nothing left out, all included: user messages 2, replies 2, command outputs and errors 1, file changes 7, tool calls (reads, searches, commands) 7.
 - Never included by format: thinking, plans, diff bodies, produced artifacts and activity records, operations inside sub-agents, attachment contents; of command output, only the last 20 lines of commands that failed.
-〔End of record relay-rkvd32s4s9n18keaz6gg. The user's current instruction follows, verbatim.〕
+〔End of record relay-p6z2nx1nte3dtqfgj4cd. The user's current instruction follows, verbatim.〕
 Fix the failing test, and don't change the test's expected values.

@@ -8,6 +8,10 @@ import { gatewayRefusalMessage, hermesGatewayPreflight, type HermesGatewayPrefli
 import { HERMES_COMMAND_WORD as COMMAND_WORD, HERMES_EFFECTS as EFFECTS, HERMES_LEADING_SPACE as LEADING_SPACE, HERMES_REGISTRY as REGISTRY,
   hermesClassify, hermesCommand as commandOf, hermesNativeClassify, hermesReadsSlash as readsSlash, relayDeclaration } from "./relay-classify.js";
 import { type TurnText } from "../../contracts/control.js";
+import { readFile, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { placeTurn, TITLE_DEADLINE_MS, type RelayTurn, measureBy } from "./relay-turn.js";
 
 /**
@@ -158,6 +162,17 @@ export function turnFromCounters(total: TurnCounters, before: TurnCounters | nul
   return turn;
 }
 
+/** The ids Hermes gives the tool call it attaches to an approval request, which is no call of the model's. */
+const APPROVAL_BUBBLE = /^(?:perm-check|edit-approval)-\d+$/u;
+/** How long a Turn's record is waited for to move after the Turn ended. */
+const RECORD_SETTLE_MS = 1500;
+/** A usage report without its counters (its context and cost stay); null when nothing else is left. */
+function withoutTurn(event: ControlEvent): ControlEvent | null {
+  if (event.type !== "usage" || event.usage.turn === undefined) return event;
+  const { turn: _turn, ...rest } = event.usage;
+  return Object.keys(rest).length ? { type: "usage", usage: rest } : null;
+}
+
 export class HermesControl extends AcpControl {
   override readonly relayCapabilities: RelayCapabilities = hermesRelayCapabilities;
   /** Each native session's counters after its last Turn on this connection (turnFromCounters); null while they are unknown. */
@@ -256,9 +271,13 @@ export class HermesControl extends AcpControl {
   /** A usage report's session totals become the Turn's own; what goes on is the rest of the report and the Turn's difference, when it is known. */
   private turnUsage(id: NativeConversationId, event: ControlEvent): ControlEvent | null {
     if (event.type !== "usage" || event.usage.turn === undefined) return event;
-    const { own: _own, ...total } = event.usage.turn, turn = turnFromCounters(total, this.counters.get(id) ?? null);
+    const { own: _own, ...total } = event.usage.turn, counted = turnFromCounters(total, this.counters.get(id) ?? null);
     this.counters.set(id, total);
     const { turn: _session, ...rest } = event.usage;
+    // The viewer reports no cache written; Hermes's total is input + cache read + cache written + output (CanonicalUsage.total_tokens).
+    const written = counted === null || counted.cacheWrite !== undefined || counted.total === undefined || counted.input === undefined || counted.output === undefined ? undefined
+      : counted.total - counted.input - (counted.cachedInput ?? 0) - counted.output;
+    const turn = counted === null ? null : written !== undefined && written >= 0 ? { ...counted, cacheWrite: written } : counted;
     if (turn !== null) return { type: "usage", usage: { ...rest, turn: { ...turn, own: true } } };
     return Object.keys(rest).length ? { type: "usage", usage: rest } : null;
   }
@@ -338,8 +357,21 @@ export class HermesControl extends AcpControl {
     // Only Hermes's own command is read for a model switch; a model reply quoting the same words in another turn is never parsed.
     const switching = command === "model" && named?.args !== "", compressing = command === "compress", mark = this.stderrMark;
     let reply = "", answered = false;
-    const run = await super.startText(id, turn, raw => { const event = this.turnUsage(id, raw); if (event === null) return; if (event.type === "text") { answered = true; if (reply.length < 4096) reply += event.text; } onEvent(event); }, attachments);
-    return { ...run, result: run.result.then((result): BackendResult => {
+    // The session's own record before the Turn: the Turn's usage is what it adds (the viewer's report is then only its context).
+    const before = await this.recordBefore(id);
+    const run = await super.startText(id, turn, raw => {
+      // Hermes closes the "bubble" of each approval it asked for with a tool update of its own (acp_adapter/permissions.py `perm-check-N`,
+      // edit_approval.py `edit-approval-N`); the approval is already its own item, and the call it is about has its own row.
+      if (raw.type === "tool" && APPROVAL_BUBBLE.test(raw.id)) return;
+      const event = before === null ? this.turnUsage(id, raw) : withoutTurn(raw);
+      if (event === null) return; if (event.type === "text") { answered = true; if (reply.length < 4096) reply += event.text; } onEvent(event);
+    }, attachments);
+    const content = this.readsAsContent(prompt, attachments.map(file => file.kind));
+    return { ...run, result: run.result.then(async (result): Promise<BackendResult> => {
+      if (before !== null && result.input !== "not_recorded") {
+        const turnUsage = await this.recordAfter(id, before, content && result.status === "completed");
+        if (turnUsage !== null) onEvent({ type: "usage", usage: { turn: { ...turnUsage, own: true } } });
+      }
       const switched = switching ? MODEL_SWITCHED.exec(reply) : null;
       // Hermes lists models as `<provider>:<model>` with the provider lower-cased (server.py `_encode_model_choice`).
       if (result.status === "completed" && switched) this.adoptModel(switched[2]!.toLowerCase() + ":" + switched[1]!);
@@ -354,6 +386,59 @@ export class HermesControl extends AcpControl {
       }
       return result;
     }) };
+  }
+  /** Each session's counters in Hermes's record after this connection's last Turn on it. */
+  private readonly records = new Map<NativeConversationId, TurnCounters>();
+  /**
+   * The session's token counters as Hermes records them (`<Hermes home>/state.db`, table `sessions`: input_tokens, output_tokens,
+   * cache_read_tokens, cache_write_tokens, reasoning_tokens, the same row `hermes sessions export` prints), read only; "absent" when the
+   * session has no row yet, null when the record cannot be read. The gateway viewer's own report (PromptResponse.usage) is the owner agent's
+   * counters, which start again whenever the gateway builds the session's agent anew (seen on v0.22.5 between two Turns of one session), so
+   * it cannot be told from a Turn's own numbers; the record is the session's whole count.
+   */
+  private async sessionRecord(id: NativeConversationId): Promise<TurnCounters | "absent" | null> {
+    try {
+      const env = { ...this.hermesOptions.env, ...this.hermesLaunch.env }, home = env.HOME || homedir();
+      let root = env.HERMES_HOME ? env.HERMES_HOME.replace(/^~(?=$|\/)/u, home) : join(home, ".hermes");
+      if (!env.HERMES_HOME) {
+        // The sticky profile (hermes_cli/profiles.py `active_profile`), as the Hub's capability page resolves it.
+        const name = (await readFile(join(root, "active_profile"), "utf8").catch(() => "")).trim();
+        if (name && name !== "default" && /^[a-z0-9][a-z0-9_-]{0,63}$/u.test(name) && (await stat(join(root, "profiles", name)).catch(() => null))?.isDirectory()) root = join(root, "profiles", name);
+      }
+      const db = new DatabaseSync(join(root, "state.db"), { readOnly: true });
+      try {
+        const row = db.prepare("SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens FROM sessions WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+        if (row === undefined) return "absent";
+        const n = (value: unknown): number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+        const input = n(row.input_tokens), output = n(row.output_tokens), cachedInput = n(row.cache_read_tokens), cacheWrite = n(row.cache_write_tokens);
+        return { input, output, cachedInput, cacheWrite, reasoning: n(row.reasoning_tokens), total: input + cachedInput + cacheWrite + output };
+      } finally { db.close(); }
+    } catch { return null; }
+  }
+  /** The record before a Turn: this connection's last reading, else read now; a session this connection opened with no row yet is at zero. */
+  private async recordBefore(id: NativeConversationId): Promise<TurnCounters | null> {
+    const known = this.records.get(id);
+    if (known !== undefined) return known;
+    const read = await this.sessionRecord(id);
+    // counters holds {} for a session this connection opened (open()), null for one it restored.
+    const opened = this.counters.get(id) !== null && this.counters.has(id);
+    return read === "absent" ? (opened ? { input: 0, output: 0, cachedInput: 0, cacheWrite: 0, reasoning: 0, total: 0 } : null) : read;
+  }
+  /**
+   * The Turn's usage: the record after it less the record before. A Turn that reached the model is waited for until its record moved (the
+   * gateway writes it as the Turn ends), at most RECORD_SETTLE_MS; a count that went down (a record Hermes rewrote) gives none.
+   */
+  private async recordAfter(id: NativeConversationId, before: TurnCounters, modelTurn: boolean): Promise<TurnCounters | null> {
+    let after: TurnCounters | "absent" | null = null;
+    for (const deadline = Date.now() + RECORD_SETTLE_MS; ;) {
+      after = await this.sessionRecord(id);
+      if (after !== null && after !== "absent" && (!modelTurn || after.total !== before.total)) break;
+      if (Date.now() > deadline) break;
+      await new Promise(resolve => setTimeout(resolve, 150));
+    }
+    if (after === null || after === "absent") { this.records.delete(id); return null; }
+    this.records.set(id, after);
+    return turnFromCounters(after, before);
   }
   override async models(): Promise<NativeModelCatalog> {
     const catalog = await super.models(), listed = (catalog.commands ?? []).map(command => {

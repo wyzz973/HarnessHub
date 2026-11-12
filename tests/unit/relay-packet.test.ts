@@ -82,9 +82,9 @@ test("G070-slim S1 at a small budget renders byte for byte as its golden brief p
     await golden("s3-brief." + language + ".md", rendered.text);
     assert.equal(record.tier, "brief"); assert.equal(record.complete, false); assert.ok(record.tokens <= cap, record.tokens + " > " + cap);
     for (const kind of ITEM_KINDS) assert.equal(record.items[kind].included + record.items[kind].omitted, record.items[kind].total, kind);
-    // The words of all five turns fit; the replies kept are the latest, the first, then the newest of the rest; the others are left out whole.
+    // The words of all five turns fit; the replies kept are the latest, then the first where it fits; the others are left out whole.
     assert.deepEqual(turnsWith(rendered.text, WORDS), [1, 2, 3, 4, 5]);
-    assert.deepEqual(turnsWith(rendered.text, REPLIES), language === "zh" ? [1, 4, 5] : [1, 5]);
+    assert.deepEqual(turnsWith(rendered.text, REPLIES), language === "zh" ? [1, 5] : [5]);
     const replies = scenario.sources.map(run => scenario.state.messages.find(message => message.id === run.assistantMessageId)!.text);
     for (const [index, reply] of replies.entries()) assert.equal(rendered.text.includes(reply), turnsWith(rendered.text, REPLIES).includes(index + 1), "a reply is there whole or not at all: turn " + (index + 1));
     assert.doesNotMatch(rendered.text, /…（中间省略|characters omitted|首段与末段/u, "nothing is cut");

@@ -133,7 +133,7 @@ interface ShownTool { readonly title: string; readonly status: string }
  * outcome. A tool call the bridge already streamed under the same id (`live`) keeps its row and live title: it is not
  * emitted again, and only an outcome the stream never settled is added from the transcript's result, as a status update.
  */
-function reconcileTurn(entries: readonly unknown[], backend: BackendResult, emit: (event: ControlEvent) => void, withThinking: boolean, live: ReadonlyMap<string, ShownTool>): BackendResult {
+function reconcileTurn(entries: readonly unknown[], backend: BackendResult, emit: (event: ControlEvent) => void, withThinking: boolean, live: ReadonlyMap<string, ShownTool>, contextSize?: number): BackendResult {
   const results = new Map<string, { output: string; failed: boolean }>();
   for (const entry of entries) {
     const row = entry as Record<string, unknown>;
@@ -143,7 +143,7 @@ function reconcileTurn(entries: readonly unknown[], backend: BackendResult, emit
   // The embedded runtime writes one assistant row per model request (agent-core streamAgentResponse, v2026.10.9); a turn of an
   // external CLI harness writes one per turn, with `contextUsage`, so its rows are no per-request report.
   const requests: NonNullable<ReturnType<typeof usageRequest>>[] = [], harnessTurn = entries.some(entry => (entry as Record<string, unknown>).role === "assistant" && (entry as Record<string, unknown>).contextUsage !== undefined);
-  let counted = false, last: Record<string, unknown> | undefined;
+  let counted = false, last: Record<string, unknown> | undefined, occupied: number | undefined;
   for (const entry of entries) {
     const row = entry as Record<string, unknown>;
     if (row.role !== "assistant") continue;
@@ -168,13 +168,17 @@ function reconcileTurn(entries: readonly unknown[], backend: BackendResult, emit
       counted = true;
       const add = (key: keyof typeof usage, value: unknown) => { if (typeof value === "number" && Number.isFinite(value) && value >= 0) usage[key] += value; };
       add("input", call.input); add("output", call.output); add("cachedInput", call.cacheRead); add("cacheWrite", call.cacheWrite); add("total", call.totalTokens);
+      // The context the Turn ends on is its last request's: what it read and what it wrote.
+      if (typeof call.totalTokens === "number" && Number.isSafeInteger(call.totalTokens) && call.totalTokens >= 0) occupied = call.totalTokens;
       const request = harnessTurn ? null : usageRequest(call.input, call.cacheRead, call.cacheWrite);
       if (request !== null) requests.push(request);
       const spent = call.cost !== null && typeof call.cost === "object" ? (call.cost as { total?: unknown }).total : undefined;
       if (typeof spent === "number" && Number.isFinite(spent) && spent > 0) cost.amount += spent;
     }
   }
-  if (counted) emit({ type: "usage", usage: { turn: usage, ...(cost.amount > 0 ? { cost: { amount: cost.amount, currency: "USD", scope: "turn" } } : {}), ...(requests.length ? { requests: boundedRequests(requests) } : {}) } });
+  // The bridge reports the context's occupancy when a prompt starts (the previous Turn's), so the Turn's own comes from its transcript.
+  if (counted) emit({ type: "usage", usage: { turn: usage, ...(occupied === undefined ? {} : { context: { used: occupied, ...(contextSize === undefined ? {} : { size: contextSize }) } }),
+    ...(cost.amount > 0 ? { cost: { amount: cost.amount, currency: "USD", scope: "turn" } } : {}), ...(requests.length ? { requests: boundedRequests(requests) } : {}) } });
   // The bridge turns a model or provider error into end_turn; the transcript keeps the real stop reason.
   if (backend.status === "completed" && last?.stopReason === "error") {
     const classified = typeof last.errorMessage === "string" ? classifyRemoteFailure(last.errorMessage) : undefined;
@@ -274,18 +278,42 @@ export class OpenClawControl extends AcpControl {
     }
     return { ...await super.sessionParameters(cwd), _meta: { sessionKey: this.sessionKey, ...(this.restoredKey === null ? {} : { requireExistingSession: true, resetSession: false }) } };
   }
-  /** The agent roster of the native configuration file; a missing file is no roster. Rejects with NATIVE_CONFIGURATION_INVALID. */
-  private async readRoster(): Promise<Exclude<OpenClawRoster, { readonly problem: string }>> {
+  /** The native configuration file, parsed; a missing file is an empty one. Rejects with NATIVE_CONFIGURATION_INVALID. Read only. */
+  private async readConfig(): Promise<unknown> {
     const env = this.nativeLaunch.env, path = env.OPENCLAW_CONFIG_PATH ?? join(env.OPENCLAW_STATE_DIR ?? join(env.HOME ?? homedir(), ".openclaw"), "openclaw.json");
-    let config: unknown;
     try {
       const info = await stat(path); if (!info.isFile() || info.size > 2 * 1024 * 1024) throw new ControlError("NATIVE_CONFIGURATION_INVALID", "native configuration exceeds its budget");
       const source = await readFile(path, "utf8"); if (Buffer.byteLength(source) > 2 * 1024 * 1024) throw new ControlError("NATIVE_CONFIGURATION_INVALID", "native configuration grew beyond its budget");
-      config = JSON5.parse(source);
+      return JSON5.parse(source);
     } catch (error) {
-      if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") config = {};
-      else throw new ControlError("NATIVE_CONFIGURATION_INVALID", "cannot read the native OpenClaw configuration");
+      if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return {};
+      throw new ControlError("NATIVE_CONFIGURATION_INVALID", "cannot read the native OpenClaw configuration");
     }
+  }
+  /**
+   * The input kinds the configuration declares for its own providers' models (`models.providers.<provider>.models[].input`, "text" and
+   * "image"), by provider/model: 2026.10.9's models.list leaves a model's input kinds out, and OpenClaw sends an image only to a model that
+   * takes one. Empty when the file cannot be read or declares none.
+   */
+  private async configuredInputs(): Promise<ReadonlyMap<string, NativeInputs>> {
+    const found = new Map<string, NativeInputs>();
+    let config: unknown;
+    try { config = await this.readConfig(); } catch { return found; }
+    const providers = (config as { models?: { providers?: unknown } } | null)?.models?.providers;
+    if (providers === null || typeof providers !== "object" || Array.isArray(providers)) return found;
+    for (const [provider, entry] of Object.entries(providers as Record<string, unknown>)) {
+      const models = entry !== null && typeof entry === "object" ? (entry as { models?: unknown }).models : undefined;
+      if (!Array.isArray(models)) continue;
+      for (const model of models) {
+        const row = model !== null && typeof model === "object" ? model as { id?: unknown; input?: unknown } : {};
+        if (typeof row.id === "string" && Array.isArray(row.input) && row.input.every(kind => typeof kind === "string")) found.set(provider + "/" + row.id, { image: row.input.includes("image"), audio: false, file: true });
+      }
+    }
+    return found;
+  }
+  /** The agent roster of the native configuration file; a missing file is no roster. Rejects with NATIVE_CONFIGURATION_INVALID. */
+  private async readRoster(): Promise<Exclude<OpenClawRoster, { readonly problem: string }>> {
+    const config = await this.readConfig();
     const roster = openClawRoster(config);
     if ("problem" in roster) throw new ControlError("NATIVE_CONFIGURATION_INVALID", roster.problem);
     return roster;
@@ -331,14 +359,16 @@ export class OpenClawControl extends AcpControl {
    * and it is neither offered nor accepted as a selection.
    */
   private readNativeModels(): Promise<readonly OpenClawModel[]> {
-    this.nativeModels ??= this.call("models.list", {}).then(value => {
+    this.nativeModels ??= Promise.all([this.call("models.list", {}), this.configuredInputs()]).then(([value, configured]) => {
       const data = object(value, "OpenClaw native models");
       if (!Array.isArray(data.models) || data.models.length > 4096) throw new ControlError("INVALID_PROTOCOL", "invalid OpenClaw model catalog");
       const models = data.models.map((value): OpenClawModel => {
         const row = object(value, "OpenClaw model"), provider = string(row.provider, "model provider", 128), id = string(row.id, "model identity", 768);
         if (row.input !== undefined && (!Array.isArray(row.input) || row.input.length > 16 || row.input.some(item => typeof item !== "string"))) throw new ControlError("INVALID_PROTOCOL", "invalid OpenClaw model input kinds");
         // The bridge forwards only images as attachments (audio is dropped); a model without image input would answer without seeing it.
-        return { id: provider + "/" + id, name: string(row.name, "model name", 1024), ...(Array.isArray(row.input) ? { inputs: { image: row.input.includes("image"), audio: false, file: true } } : {}),
+        // A row without input kinds takes the ones the configuration declares for it, if any.
+        const declared = configured.get(provider + "/" + id);
+        return { id: provider + "/" + id, name: string(row.name, "model name", 1024), ...(Array.isArray(row.input) ? { inputs: { image: row.input.includes("image"), audio: false, file: true } } : declared !== undefined ? { inputs: declared } : {}),
           unavailable: row.available === false ? unavailability(row) : null };
       });
       if (new Set(models.map(row => row.id)).size !== models.length) throw new ControlError("INVALID_PROTOCOL", "duplicate OpenClaw models");
@@ -458,6 +488,15 @@ export class OpenClawControl extends AcpControl {
     if (!Array.isArray(rows) || rows.length > 50) throw new ControlError("INVALID_NATIVE_METADATA", "invalid OpenClaw session list");
     return rows.map(value => object(value, "OpenClaw session")).find(value => value.key === key);
   }
+  /**
+   * The bridge passes an embedded file on as its bare text and a resource link as `[Resource link (<title>)] <uri>` (extractTextFromPrompt
+   * at v2026.10.9), so the model would not know which attachment the text is: the file's name goes before it as text, and a link carries
+   * the name as its title.
+   */
+  protected override async promptBlocks(file: ControlAttachment): Promise<readonly Record<string, unknown>[]> {
+    return (await super.promptBlocks(file)).flatMap(block => block.type === "resource" ? [{ type: "text", text: "[附件 " + file.name + " 的内容]" }, block]
+      : block.type === "resource_link" && block.title === undefined ? [{ ...block, title: file.name }] : [block]);
+  }
   /** Agent-level checks first, then the running model's own input kinds from the original catalog when it lists them. */
   override async checkAttachments(attachments: readonly ContentRef[]): Promise<void> {
     await super.checkAttachments(attachments);
@@ -514,10 +553,11 @@ export class OpenClawControl extends AcpControl {
     }
     const before = await this.transcriptSeq();
     // What the bridge showed live in this Turn: any reasoning, and each tool call by id as last shown.
-    let thought = false;
+    let thought = false, contextSize: number | undefined;
     const live = new Map<string, ShownTool>();
     const run = await super.startText(id, turn, event => {
       if (event.type === "thinking") thought = true;
+      if (event.type === "usage" && event.usage.context?.size !== undefined) contextSize = event.usage.context.size;
       if (event.type === "tool") live.set(event.id, { title: event.title, status: event.status });
       onEvent(event);
     }, attachments);
@@ -537,7 +577,7 @@ export class OpenClawControl extends AcpControl {
       }
       if (messages.length >= window && first !== null && first > before + 1)
         onEvent({ type: "diagnostic", message: `OpenClaw transcript window held ${messages.length} entries; ${first - before - 1} earlier entries of this turn were not reconciled` });
-      const rows = messages.filter(value => (transcriptSeq(value) ?? 0) > before), reconciled = reconcileTurn(rows, backend, onEvent, !thought, live);
+      const rows = messages.filter(value => (transcriptSeq(value) ?? 0) > before), reconciled = reconcileTurn(rows, backend, onEvent, !thought, live, contextSize);
       // The Gateway commits the user turn to this session's transcript (only the Hub writes it) before the model sees it: a
       // user row after the turn began is the input recorded, whatever the turn's outcome. None found leaves it unknown.
       const recorded = content && rows.some(value => value !== null && typeof value === "object" && (value as { readonly role?: unknown }).role === "user");

@@ -411,8 +411,10 @@ export class AcpControl implements HarnessControl {
     this.assertInitialized();
     checkInputs(attachments, this.inputs(), { image: this.maxInlineImageBytes });
   }
+  /** The ACP blocks one attachment goes as: its one block (promptBlock), unless a Driver's agent needs more to read it. */
+  protected async promptBlocks(file: ControlAttachment): Promise<readonly Record<string, unknown>[]> { return [await this.promptBlock(file)]; }
   /** Native ACP content blocks: inline image/audio, embedded small text, otherwise a file link the agent reads itself. */
-  private async promptBlock(file: ControlAttachment): Promise<Record<string, unknown>> {
+  protected async promptBlock(file: ControlAttachment): Promise<Record<string, unknown>> {
     const uri = pathToFileURL(file.path).href;
     if (file.kind === "image" || file.kind === "audio") return { type: file.kind, data: (await readAttachment(file)).toString("base64"), mimeType: file.mediaType };
     if (textual(file.mediaType) && file.bytes <= EMBED_TEXT_BYTES && this.promptCapabilities().embeddedContext) {
@@ -737,7 +739,7 @@ export class AcpControl implements HarnessControl {
       if (limit != null && exceedsInput(texts, this.relayCapabilities!.placement, this.inputOverhead(limit.unit))) return refusedRun(INPUT_LIMIT_REFUSED);
     }
     const blocks: Record<string, unknown>[] = texts.map(text => ({ type: "text", text }));
-    for (const file of attachments) if (!pointers.includes(file)) blocks.push(await this.promptBlock(file));
+    for (const file of attachments) if (!pointers.includes(file)) blocks.push(...await this.promptBlocks(file));
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
     const active: ActivePrompt = { event: onEvent, lastUpdate: 0, answered: false, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null };
     this.active = active;

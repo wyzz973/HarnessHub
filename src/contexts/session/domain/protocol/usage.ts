@@ -26,18 +26,22 @@ const MEANING: ReadonlyMap<string, Meaning> = new Map(Object.entries({
   // was seen: its numbers are the sums over its requests (the input plus the cache, 55,590, is larger than the context the Turn ends on, 19,761).
   opencode: { cache: "beside", reasoning: "beside" },
   // OpenClaw (openclaw.ts:136-176): the Driver adds up its transcript's per-request usage, which is the Pi message format: `input` leaves out
-  // `cacheRead` and `cacheWrite`, and the output contains its reasoning. Inferred from that format; no trial conversation had an OpenClaw Turn.
+  // `cacheRead` and `cacheWrite`, and the output contains its reasoning. Checked on the real Harness 2026-11-13 (deepseek-chat, four Turns):
+  // input + cacheRead + output is the transcript's own totalTokens, with 17k read from the cache beside a few hundred input.
   openclaw: { cache: "beside", reasoning: "inside" },
   pi: { cache: "beside", reasoning: "inside" },
-  // Hermes (hermes.ts turnFromCounters): its session counters minus the Turn's baseline. Its ACP `inputTokens` is `prompt_tokens`, which
-  // agent/usage_pricing.py defines as input + cache read + cache write, and `total_tokens` is prompt + output: the cache is inside the input
-  // and the output is the completion, reasoning included. Read from the installed hermes-agent; no real Turn has checked the numbers yet.
-  // Only a report the Driver marked as the Turn's own (`own`) is read: the Driver passed the session totals on before, and those records are not a Turn's.
-  // The trial conversation's Hermes Turn, its session's first, agrees (n=5: 21,409 + 278 = 21,687, its `total`, with no cache reported beside it).
-  hermes: { cache: "inside", reasoning: "inside", ownOnly: true },
+  // Hermes (hermes.ts recordAfter): the session's record in Hermes's state.db after the Turn less the record before it. Its `input_tokens`
+  // is the prompt less what was read from and written to the cache (agent/usage_pricing.py `normalize_usage`), which are kept beside it; the
+  // output is the completion, reasoning included. Checked on the real Harness 2026-11-13 (deepseek-v4-pro): four Turns, two of them after a
+  // restart, each with input + cache + output = total, and the first two adding up to `hermes sessions export`'s record. The viewer's own
+  // report is the same counting, but of the gateway's agent, which starts again when the gateway builds it anew.
+  // Only a report the Driver marked as the Turn's own (`own`) is read: a report that is the session's running total is not a Turn's.
+  hermes: { cache: "beside", reasoning: "inside", ownOnly: true },
+  // DeepSeek Harness (dsh.ts): the Driver adds up the requests its session log wrote for the Turn (DeepSeek's Anthropic-format usage: the
+  // input leaves out the cache read and written, the output holds the thinking; totalTokens is all four). Checked on the real Harness
+  // 2026-11-13 (deepseek-v4-flash, four Turns, two after a restart): input + cache + output = totalTokens each time.
+  dsh: { cache: "beside", reasoning: "inside" },
 } satisfies Record<string, Meaning>));
-// Not here, on purpose: DeepSeek Harness reports only its context window (acp.ts:847-858; its prompt result carries no usage, docs/verification/
-// native-capability-matrix.md:340).
 
 /**
  * `complete` needs both `input` and `output`, and a Turn that ended `completed`: the numbers of a Turn that was stopped, failed or is
