@@ -399,7 +399,7 @@ export function ChatPage(props: ChatProps) {
     const run = runs.get(docked.runId as never), harnessId = run?.selection.harnessId ?? session.selection.harnessId;
     if (harnessId !== draft.harnessId || run?.selection.provider) return undefined;
     // The unified permission level the Turn ran with, when its selection named one; else the program's own rule by its own name.
-    const unified = selectionLevels(harnessId, run?.selection.nativeOptions).permission;
+    const unified = selectionLevels(run?.selection.nativeOptions).permission;
     if (unified !== undefined) return PERMISSION_WORDS[unified];
     const option = props.nativeModels?.options?.find(row => row.category === "permission");
     if (!option) return undefined;

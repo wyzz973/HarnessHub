@@ -278,7 +278,7 @@ export function Composer(props: ComposerProps) {
   // Native options belong to the Harness's own connection: a managed Provider's model takes none of them.
   const nativeOptions = draft.providerId ? [] : [...(props.nativeModels?.options ?? []), ...(props.nativeModels?.models.find(model => model.id === (draft.model || props.nativeModels?.defaultModel))?.options ?? [])];
   // The unified levels (src/contracts/levels.ts): one way of saying permission and effort for every Harness; its native values stay among its own options.
-  const level = levelState(draft.harnessId, nativeOptions, draft.nativeOptions);
+  const level = levelState(draft.providerId ? undefined : props.nativeModels?.flavor, nativeOptions, draft.nativeOptions);
   const thought = nativeOptions.find(option => option.category === "thought_level");
   // The merged picker shows one pill, as the boards do: the thinking level, or the mode where there is no thinking level
   // (OpenCode's Build). With both, the mode is among the execution settings.
@@ -404,13 +404,15 @@ export function Composer(props: ComposerProps) {
   const fromAgentList = (kind: NonNullable<typeof panel>["kind"]) => { props.onAgentPickerOpen(false); openPanel(kind); };
   // The unified lists: every level, the ones this Harness lacks greyed with why; its own native values are one step away (the footer).
   const permissionChoices: PickerOption[] = [{ value: "", label: "跟随 " + (harness?.name ?? "Harness") + " 自己的设置", short: "本机设置", group: "权限" },
-    ...PERMISSION_LEVELS.map(id => ({ value: id, label: PERMISSION_WORDS[id], short: PERMISSION_WORDS[id], description: PERMISSION_MEANINGS[id], group: "权限",
-      ...(level.levels.permission.some(entry => entry.level === id) ? {} : { disabled: true, reason: level.levels.permissionMissing }) })),
+    // Every level is offered (the adapter carries out what the Harness lacks); one that only comes near says how, under it; one that cannot be done says why.
+    ...PERMISSION_LEVELS.map(id => { const way = level.levels.permission.find(entry => entry.level === id);
+      return { value: id, label: PERMISSION_WORDS[id], short: PERMISSION_WORDS[id], description: PERMISSION_MEANINGS[id] + (way?.note === undefined ? "" : "（" + way.note + "）"), group: "权限",
+        ...(way?.impossible === undefined ? {} : { disabled: true, reason: way.impossible }) }; }),
     ...(level.permission === "custom" ? [{ value: "custom", label: "自定义", short: "自定义", description: "改过这一家的原生选项，不对应任何一档", group: "权限", disabled: true }] : [])];
   const effortChoices = (option: NativeOption): PickerOption[] => [{ value: "", label: valueName(option, option.currentValue) + " · 本机默认", short: valueName(option, option.currentValue), group: "思考强度" },
-    ...EFFORT_LEVELS.map(id => ({ value: id, label: EFFORT_WORDS[id], short: EFFORT_WORDS[id], group: "思考强度",
-      ...(() => { const native = level.levels.effort.find(entry => entry.level === id)?.options[option.id]; const used = native === undefined ? undefined : lastUsed(native, recalled?.nativeOptions?.[option.id]); return used === undefined ? {} : { description: used }; })(),
-      ...(level.levels.effort.some(entry => entry.level === id) ? {} : { disabled: true, reason: level.levels.effortMissing }) })),
+    ...EFFORT_LEVELS.map(id => { const way = level.levels.effort.find(entry => entry.level === id), native = way?.options[option.id], used = native === undefined ? undefined : lastUsed(native, recalled?.nativeOptions?.[option.id]);
+      const description = [used, way?.note].filter(Boolean).join("；");
+      return { value: id, label: EFFORT_WORDS[id], short: EFFORT_WORDS[id], group: "思考强度", ...(description ? { description } : {}), ...(way === undefined ? { disabled: true, reason: level.levels.effortMissing } : {}) }; }),
     ...(level.effort === "custom" ? [{ value: "custom", label: "自定义", short: "自定义", description: "改过这一家的原生选项，不对应任何一档", group: "思考强度", disabled: true }] : [])];
   const nativeFooter = <button type="button" className="link-btn text-caption" onClick={() => { setList(null); openPanel("advanced"); }}>{(harness?.name ?? "这一家") + " 的原生选项…"}</button>;
   const [levelNotes, setLevelNotes] = useState<readonly string[]>([]);

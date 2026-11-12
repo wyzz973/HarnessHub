@@ -39,6 +39,8 @@ import {
   type RelayChoices, type RelayDeclaration, type RelaySettings, type SettledTurn, type TurnDecision,
 } from "./relay-coordinator.js";
 import { assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
+import { nativeOnly, selectedPermission } from "../../../contracts/flavor.js";
+import { policyDecision, withPlanNote } from "./permission-policy.js";
 
 interface ActiveExecution {
   readonly sessionId: SessionId;
@@ -321,6 +323,24 @@ export class SessionRuntime {
     this.permissions.delete(permission);
     this.commit(id, current => ({ next: current, events: [event("permission.submitted", { permissionId: permission, runId: pending.execution.runId, optionId: option, backendAcknowledged: false })] }));
     return { replayed: false };
+  }
+  /**
+   * Answers a permission request by the Hub's policy for the conversation's permission level when the policy decides it: the decision is the
+   * item's, by "policy" and the level (the user sees what the Hub allowed or refused for them), and goes to the Harness as the user's would.
+   */
+  private async answerByPolicy(execution: ActiveExecution, permission: string, run: ConversationRun, value: Extract<ControlEvent, { type: "permission_requested" }>): Promise<void> {
+    const pending = this.permissions.get(permission), level = selectedPermission(run.selection.nativeOptions), control = execution.binding?.control;
+    if (pending === undefined || level === undefined || !control?.decidePermission) return;
+    const toolKind = value.forCall === undefined || execution.turn === null ? undefined : itemsOf(execution.turn).find(item => item.itemId === "tool:" + value.forCall)?.fields.native?.kind;
+    const decision = policyDecision(this.options.flavor?.(run.selection.harnessId), level, { title: value.title, options: value.options, question: value.kind === "question" || value.input !== undefined }, toolKind);
+    if (decision.option === null || pending.option !== null) return;
+    pending.option = decision.option; pending.command = "policy"; pending.request = { ...pending.request, decided: true };
+    this.placed(execution, { kind: "decided", id: pending.nativeId, option: decision.option, by: "policy", level, at: this.options.now().getTime() },
+      [event("permission.decided", { permissionId: permission, runId: execution.runId, optionId: decision.option, by: "policy", level })], { always: true });
+    this.leaveWait(execution);
+    await control.decidePermission(pending.nativeId, decision.option); this.owned(execution);
+    this.permissions.delete(permission);
+    this.commit(execution.sessionId, current => ({ next: current, events: [event("permission.submitted", { permissionId: permission, runId: execution.runId, optionId: decision.option!, backendAcknowledged: false })] }));
   }
   /** The switch target each conversation is validating, at most one per conversation. */
   private readonly switchBindings = new Map<SessionId, { readonly binding: PreparedSessionBinding; close: Promise<CleanupEvidence> | null }>();
@@ -1484,7 +1504,9 @@ export class SessionRuntime {
       const id = "permission-" + this.options.id(), request: PermissionRequest = { id, runId: run.id, title: value.title, options: value.options, ...(value.detail===undefined?{}:{detail:value.detail}),...(value.input===undefined?{}:{input:value.input}), decided: false, requestedAt, ...expires, ...(value.kind === "question" ? { kind: "question" as const } : {}) };
       this.permissions.set(id, { request, nativeId: value.id, execution, option: null, command: null, harnessId: run.selection.harnessId });
       // The request is an item that waits, written with the event that tells it.
-      try { this.placed(execution, { kind: "event", event: value, at }, [event("permission.requested", { permissionId: id, runId: run.id, title: value.title, options: value.options, ...expires })], { always: true }); } catch (error) { this.permissions.delete(id); throw error; } return;
+      try { this.placed(execution, { kind: "event", event: value, at }, [event("permission.requested", { permissionId: id, runId: run.id, title: value.title, options: value.options, ...expires })], { always: true }); } catch (error) { this.permissions.delete(id); throw error; }
+      // The Hub's policy for the conversation's permission level answers what it can (permission-policy.ts); the rest waits for the user.
+      void this.answerByPolicy(execution, id, run, value).catch(() => {}); return;
     }
     if (value.type === "permission") {
       // The Harness withdrew a question it had asked (for example its own dialog deadline): the public request closes too.
@@ -1760,7 +1782,8 @@ export class SessionRuntime {
         // A requested value the native session changed itself is applied as it is now instead of being reverted (ADR-028).
         const carriedConfiguration = carriedNativeConfiguration(current, run.selection, run.epoch);
         if (carriedConfiguration !== null) this.commit(id, current => ({ next: current, events: [event("native.config_carried", { runId: target, ...carriedConfiguration })] }));
-        const nativeOptions = carriedConfiguration?.options === undefined ? run.selection.nativeOptions : { ...run.selection.nativeOptions, ...carriedConfiguration.options };
+        // The Hub's own keys (the permission level, contracts/flavor.ts) are the Hub's: the Driver is given its native values only.
+        const nativeOptions = nativeOnly(carriedConfiguration?.options === undefined ? run.selection.nativeOptions : { ...run.selection.nativeOptions, ...carriedConfiguration.options });
         // A binding whose native session the Driver gave up on a clear (opensNew, R4) opens a new one: its checkpoint names the
         // abandoned session, never resumed.
         const resumeFrom = previousNative?.opensNew === true ? undefined : previousNative?.checkpoint;
@@ -1976,7 +1999,9 @@ export class SessionRuntime {
       }
       this.commit(id, current => ({ next: updatedRun(current, target, phase(current, target, "dispatchedAt", this.options.now().getTime())), events: [event("run.dispatched", { runId: target })] }));
       execution.dispatched = true;
-      execution.run = await control.startText(native, turnText, value => this.output(execution, value), ...(files.length ? [files] : []));
+      // "Plan" as the Hub's policy (no plan mode of the Harness's own): the model is told it is read only before it tries.
+      const planned = selectedPermission(run.selection.nativeOptions) === "plan" && this.options.flavor?.(run.selection.harnessId).nativePlan === false ? withPlanNote(turnText) : turnText;
+      execution.run = await control.startText(native, planned, value => this.output(execution, value), ...(files.length ? [files] : []));
       this.owned(execution);
       void execution.run.result.then(() => { execution.backendSettled = true; }, () => { execution.backendSettled = true; });
       if (this.load(id).runs.find(run => run.id === target)!.cancelRequested || !this.accepting || this.fatal || this.closingSessions.has(id)) this.stop(execution);
@@ -2313,7 +2338,7 @@ export class SessionRuntime {
       if (current.pendingSwitchId !== targetId || this.closingSessions.has(id) || !this.accepting || this.fatal) throw new SessionError("CANCELLED", "switch cancelled before target initialization");
       await binding.control.initialize(); this.store.assertOwner(); binding.assertOwned();
       if (this.load(id).pendingSwitchId !== targetId || this.closingSessions.has(id) || !this.accepting || this.fatal) throw new SessionError("CANCELLED", "switch cancelled before target conversation");
-      await binding.control.open(binding.workspace, target.nativeModel, target.nativeOptions); this.store.assertOwner(); binding.assertOwned();
+      await binding.control.open(binding.workspace, target.nativeModel, nativeOnly(target.nativeOptions)); this.store.assertOwner(); binding.assertOwned();
       }
     } catch (error) { problem = fault(error); }
     finally {

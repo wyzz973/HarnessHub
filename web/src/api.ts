@@ -12,6 +12,8 @@ import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog }
 import { parseNativeOptions, commandId, messageId, runId, sessionId, switchId } from "../../src/contracts/session.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
 import { RUN_STATUS_WORDS } from "../../src/contracts/protocol-words.js";
+import type { HarnessFlavor } from "../../src/contracts/flavor.js";
+import { PERMISSION_LEVELS } from "../../src/contracts/protocol.js";
 import type { NativeUsage } from "../../src/contracts/control.js";
 import { CAPABILITY_CHANGE_KINDS, CAPABILITY_DRIFT_STATES, CAPABILITY_KINDS, CAPABILITY_MECHANISMS, CAPABILITY_OWNERS, CAPABILITY_STATUSES, CAPABILITY_WARNINGS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityChangeCheck, type CapabilityChangeView,
   type CapabilityEdge, type CapabilityFacts, type CapabilityHistory, type CapabilityLinkChange, type CapabilityRestoreCheck, type CapabilitySkillPlan, type McpDefinitionView, type McpInventoryView, MCP_TARGET_STATES,
@@ -39,6 +41,14 @@ function nullableNumber(value: unknown): number | null { return value === null ?
 function list<T>(value: unknown, decode: (row: unknown) => T): readonly T[] {
   if (!Array.isArray(value)) return invalid();
   return value.map(decode);
+}
+/** A Harness's adapter declaration as the Gateway sends it with its catalog: checked for its shape, its words taken as they are. */
+function decodeFlavor(value: unknown): HarnessFlavor {
+  const row = record(value), permission = record(row.permission), effort = record(row.effort), asks = record(row.asks);
+  for (const level of PERMISSION_LEVELS) record(permission[level]);
+  return { harnessId: text(row.harnessId), permission: permission as unknown as HarnessFlavor["permission"], ...(row.neutral === undefined ? {} : { neutral: list(row.neutral, item => item) as NonNullable<HarnessFlavor["neutral"]> }),
+    effort: { ...(effort.option === undefined ? {} : { option: record(effort.option) as unknown as NonNullable<HarnessFlavor["effort"]["option"]> }), values: record(effort.values) as HarnessFlavor["effort"]["values"], ...(typeof effort.note === "string" ? { note: effort.note } : {}) },
+    asks: { read: bool(asks.read), edit: bool(asks.edit), execute: bool(asks.execute), ...(typeof asks.note === "string" ? { note: asks.note } : {}) }, nativePlan: bool(row.nativePlan) };
 }
 function choice<const T extends readonly string[]>(value: unknown, choices: T): T[number] {
   if (typeof value !== "string" || !choices.includes(value)) return invalid();
@@ -471,7 +481,7 @@ export class GatewayApi {
     return this.request(`/harnesses/${encodeURIComponent(harness)}/models?${query}`, "GET", undefined, value => {
       const row = record(value), models = list(row.models, value => { const model = record(value); return { id: text(model.id), name: text(model.name), ...(model.options === undefined ? {} : { options: list(model.options,nativeOption) }), ...(model.inputs === undefined ? {} : { inputs: nativeInputs(model.inputs) }) }; });
       if (new Set(models.map(model => model.id)).size !== models.length) return invalid();
-      return { models, defaultModel: nullableText(row.defaultModel), authentication: choice(row.authentication, ["ready", "missing", "unknown"]), canSelect: bool(row.canSelect), ...(row.selectionError === undefined ? {} : {selectionError:publicError(row.selectionError)??invalid()}), ...(row.options === undefined ? {} : { options: list(row.options,nativeOption) }), ...(row.commands === undefined ? {} : { commands: list(row.commands,value => {const command=record(value);return { name:text(command.name),description:text(command.description) };}) }), ...(row.inputs === undefined ? {} : { inputs: nativeInputs(row.inputs) }) };
+      return { models, defaultModel: nullableText(row.defaultModel), authentication: choice(row.authentication, ["ready", "missing", "unknown"]), canSelect: bool(row.canSelect), ...(row.selectionError === undefined ? {} : {selectionError:publicError(row.selectionError)??invalid()}), ...(row.options === undefined ? {} : { options: list(row.options,nativeOption) }), ...(row.commands === undefined ? {} : { commands: list(row.commands,value => {const command=record(value);return { name:text(command.name),description:text(command.description) };}) }), ...(row.inputs === undefined ? {} : { inputs: nativeInputs(row.inputs) }), ...(row.flavor === undefined ? {} : { flavor: decodeFlavor(row.flavor) }) };
     }, signal);
   }
   /** The selected Harness's own sessions in this workspace, newest first; `sessions` is null when it cannot list them. */

@@ -96,7 +96,8 @@ export type ApprovalRole = typeof APPROVAL_ROLES[number];
 export interface ApprovalItem extends ItemBase {
   readonly type: "approval"; readonly subject: typeof APPROVAL_SUBJECTS[number]; readonly title: string;
   readonly options: readonly { readonly id: string; readonly role: ApprovalRole; readonly label: string }[];
-  readonly decision?: { readonly role: ApprovalRole; readonly by: "user" | "policy" | "timeout" | "harness"; readonly at: number };
+  /** `level`: the permission level the Hub's policy answered by, when it was the policy (contracts/flavor.ts). */
+  readonly decision?: { readonly role: ApprovalRole; readonly by: "user" | "policy" | "timeout" | "harness"; readonly at: number; readonly level?: PermissionLevel };
   /** ADR-057: the id of the action item the approval is about, when the Harness names the call. */
   readonly forItem?: string;
 }

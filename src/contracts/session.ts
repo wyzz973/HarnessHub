@@ -6,6 +6,7 @@ import type { ReadTurn } from "./protocol-read.js";
 import type { ConversationCommit } from "./conversation.js";
 import type { WorkspaceChanges } from "./workspace.js";
 import type { FileChange } from "./protocol.js";
+import type { HarnessFlavor } from "./flavor.js";
 
 declare const sessionBrand: unique symbol;
 declare const runBrand: unique symbol;
@@ -462,6 +463,8 @@ export interface SessionRuntimeOptions {
   readonly fingerprint: (value: string) => string;
   /** Stores native outputs and tool details; without it those facts stay summaries/diagnostics. */
   readonly content?: ContentPort;
+  /** Each Harness's adapter declaration (contracts/flavor.ts): the permission policy the Runtime answers requests by. Without it no request is answered for the user. */
+  readonly flavor?: (harnessId: string) => HarnessFlavor;
   /** The Hub's own record of what each Turn changed in its workspace (contracts/workspace.ts); without it only what the Harness reported is kept. */
   readonly workspace?: WorkspaceChanges;
   /** How long a kept native process may stay without a Turn before it is closed (ADR-030); 30 minutes unless shortened. */

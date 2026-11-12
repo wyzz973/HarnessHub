@@ -2,6 +2,7 @@ import { ITEM_STATUS_WORDS, STOP_REASON_WORDS, TURN_STATUS_WORDS } from "../../.
 import type { ApprovalItem, Executor, ItemStatus, SwitchItem } from "../../../../src/contracts/protocol.js";
 import type { ReadItem, ReadTurn } from "../../../../src/contracts/protocol-read.js";
 import { turnOver } from "./work.js";
+import { PERMISSION_WORDS } from "../../../../src/contracts/levels.js";
 
 /*
  * The lines a Turn is wrapped in, each written one way (docs/proposals/protocol/hub-protocol.html §13): the footer under a Turn, the
@@ -122,7 +123,9 @@ export function quietLine(item: ReadItem): string | null {
       if (item.kind === "compaction") return item.status === "running" || item.status === "pending" ? "正在压缩上下文" : item.status === "failed" ? "上下文压缩失败" : withState("上下文已压缩", item.status);
       return item.kind === "clear" ? withState("上下文已清空，下一条消息开新会话", item.status) : withState("已回退到这里", item.status);
     case "delegation": return item.status === "completed" ? `已交给 ${item.to.harness}：${item.task}` : withState(`交给 ${item.to.harness}：${item.task}`, item.status);
-    case "approval": return item.decision === undefined ? null : `${DECIDED[item.decision.role]}${BY[item.decision.by]}：${item.title}`;
+    // What the Hub's policy decided says by which level: "按「自动改文件」自动允许：修改 a.js".
+    case "approval": return item.decision === undefined ? null : item.decision.by === "policy" && item.decision.level !== undefined
+      ? `按「${PERMISSION_WORDS[item.decision.level]}」${item.decision.role === "deny" ? "自动拒绝" : "自动允许"}：${item.title}` : `${DECIDED[item.decision.role]}${BY[item.decision.by]}：${item.title}`;
     case "question": return item.answer === undefined ? null : `已回答：${item.title}（${item.answer}）`;
     case "unrecognized": return "未识别的条目" + (item.nativeType ? `（${item.nativeType}）` : "");
     default: return null;

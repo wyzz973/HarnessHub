@@ -55,7 +55,7 @@ function nativeModelOf(run: WebRun, bindings: readonly NativeSessionBinding[], l
 function executorOf(run: WebRun, bindings: readonly NativeSessionBinding[], latest: ReadonlyMap<string, string>, env: ProjectionEnv): Executor {
   const harnessId = run.selection.harnessId, native = nativeModelOf(run, bindings, latest);
   return { harnessId, harness: env.harnessName(harnessId) ?? harnessId, ...(native === undefined ? {} : { model: modelLabel(harnessId, native, env.modelName?.(harnessId, native) ?? null) }),
-    ...selectionLevels(harnessId, run.selection.nativeOptions) };
+    ...selectionLevels(run.selection.nativeOptions) };
 }
 
 /** Whether the Harness or the model changed from one Run to the next (the interface's own test of where a hand-over line goes). */

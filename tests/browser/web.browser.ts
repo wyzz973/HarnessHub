@@ -958,7 +958,7 @@ test("a setting a native command changed is kept, shown in the composer and can 
     await expect.poll(async () => { if (!new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session")) return null; const value = await current(); return value.runs.length === count && value.activeRunId === null && value.runs.at(-1).status; }, { timeout: 15000 }).toBe("completed");
   };
   await reply("first turn", 1);
-  assert.deepEqual((await current()).selection.nativeOptions, { "native-fast": "off" });
+  assert.deepEqual((await current()).selection.nativeOptions, { hub_permission: "auto", "native-fast": "off" }, "the new conversation's permission level defaults to auto");
   await reply("/native-fast on", 2);
   const hint = page.locator(".native-carried");
   await expect(hint).toContainText("原生命令已改为 Native fast On；下一回合沿用，不改回所选。");

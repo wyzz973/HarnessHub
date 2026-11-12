@@ -192,7 +192,7 @@ export class TurnView {
   executor(row: RunRow): Executor {
     const harnessId = row.facts.selection.harnessId, native = this.nativeModel(row);
     return { harnessId, harness: this.env.harnessName(harnessId) ?? harnessId, ...(native === undefined ? {} : { model: modelLabel(harnessId, native, this.env.modelName?.(harnessId, native) ?? null) }),
-      ...selectionLevels(harnessId, row.facts.selection.nativeOptions) };
+      ...selectionLevels(row.facts.selection.nativeOptions) };
   }
 
   header(row: RunRow, waiting = false): WireTurnHeader {

@@ -47,6 +47,7 @@ import type { GithubFetch } from "../infrastructure/capabilities/github.js";
 import { TableMount } from "../infrastructure/table/mount.js";
 import type { HubToolsOptions } from "../infrastructure/capabilities/hub-tools.js";
 import type { ClaudeRunner } from "../infrastructure/capabilities/claude-mcp.js";
+import { flavorOf } from "../adapters/flavors/index.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 /**
@@ -911,10 +912,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
         packageRoots: options.configuration.packageRoots, searchDirs: searchDirs(), pathOnly: options.configuration.pathOnly });
       const selected = select({ harnessId: modelsRoute[1], ...(controlId === null ? {} : { controlId }), ...(url.searchParams.get("nativeModel") === null ? {} : {nativeModel:url.searchParams.get("nativeModel")}) });
-      try { json(response, 200, await nativeModels.read(selected, configuration, refresh === "1")); }
+      // The Harness's adapter declaration goes with its catalog: the page draws the permission and thinking levels from it (contracts/flavor.ts).
+      try { json(response, 200, { ...await nativeModels.read(selected, configuration, refresh === "1"), flavor: flavorOf(selected.harnessId) }); }
       catch (error) {
         const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "MODEL_DISCOVERY_FAILED";
-        if (code === "GATEWAY_AUTH_REQUIRED" || code === "HARNESS_AUTH_REQUIRED" || code === "NATIVE_AUTH_REQUIRED") { json(response, 200, { models: [], defaultModel: null, authentication: "missing", canSelect: false }); return; }
+        if (code === "GATEWAY_AUTH_REQUIRED" || code === "HARNESS_AUTH_REQUIRED" || code === "NATIVE_AUTH_REQUIRED") { json(response, 200, { models: [], defaultModel: null, authentication: "missing", canSelect: false, flavor: flavorOf(selected.harnessId) }); return; }
         throw new HttpError(502, code, "无法读取这个 Harness 的本机模型列表。请检查它的登录和配置后刷新。");
       }
       return;

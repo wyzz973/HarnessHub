@@ -2,6 +2,7 @@ import type { ControlProtocol } from "../contexts/catalog/domain/discovery.js";
 import type { ResolvedCommand } from "../contexts/catalog/domain/catalog.js";
 import type { ContentKind, ContentRef, ControlAttachment } from "./content.js";
 import type { RelayCapabilities, RelayPacketId, TurnText } from "./relay.js";
+import type { HarnessFlavor } from "./flavor.js";
 export type { TurnText };
 
 declare const nativeConversationBrand: unique symbol;
@@ -267,6 +268,8 @@ export interface NativeModelCatalog {
   readonly canSelect: boolean;
   readonly options?: readonly NativeOption[];
   readonly commands?: readonly NativeCommand[];
+  /** The Harness's adapter declaration (contracts/flavor.ts), sent with its catalog so that the page draws the levels from it alone. */
+  readonly flavor?: HarnessFlavor;
 }
 export interface StopRequestReceipt { readonly requested: true }
 export interface CleanupEvidence {

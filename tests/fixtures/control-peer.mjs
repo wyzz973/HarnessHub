@@ -65,6 +65,7 @@ const lines = createInterface({ input: process.stdin });
 // FIXTURE_DEAF_MS: a program that takes in no input for this long at first (a busy one, reading late).
 if (Number(process.env.FIXTURE_DEAF_MS ?? 0) > 0) { lines.pause(); setTimeout(() => lines.resume(), Number(process.env.FIXTURE_DEAF_MS)); }
 let promptId = null, turn = 0, initialized = false, pendingPermission = false;
+let policySaid = [], policyPrompt = "", policyAsk = () => {};
 // The workspace of the session Hermes opened last (session/new names it), where STEP_APPROVAL waits for its go-ahead.
 let sessionCwd = null;
 // STEP_APPROVAL_FAILS: once its step is refused, the Turn fails (Hermes answers the prompt with an error) instead of ending.
@@ -648,6 +649,14 @@ lines.on("line", line => {
         { id: "native-text", header: "Native input", question: "输入原生问题答案", isSecret: true, options: null },
       ] } }); return;
     }
+    // An agent with no mode of its own that asks about a read, an edit and a command in turn (the Hub's permission policy answers what it can);
+    // each answer is said in its reply, and the prompt's first words too (the Hub's read-only note under "plan").
+    if (scenario === "policy") {
+      pendingPermission = true; policySaid = []; policyPrompt = JSON.stringify((message.params.prompt ?? []).at(-1) ?? "").slice(0, 160);
+      const ask = (id, title, kind) => emit({ id, method: "session/request_permission", params: { sessionId: message.params.sessionId, toolCall: { toolCallId: id, title, kind },
+        options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }, { optionId: "reject", kind: "reject_once", name: "Reject" }] } });
+      policyAsk = ask; ask("policy-read", "Read notes.txt", "read"); return;
+    }
     // Claude Code takes back an approval it still has open (a request with a numeric id here).
     if (scenario === "permission-withdrawn") {
       emit({ id: 41, method: "session/request_permission", params: { sessionId: message.params.sessionId, toolCall: { toolCallId: "tool-1", title: "Edit notes.txt", kind: "edit" },
@@ -736,6 +745,13 @@ lines.on("line", line => {
       finish();
     }, 50);
     return;
+  }
+  if (typeof message.id === "string" && message.id.startsWith("policy-")) {
+    policySaid.push(message.id.slice(7) + ":" + (message.result?.outcome?.optionId ?? "none"));
+    const next = { "policy-read": ["policy-edit", "Edit notes.txt", "edit"], "policy-edit": ["policy-exec", "rm -rf build", "execute"] }[message.id];
+    if (next) { policyAsk(...next); return; }
+    notification("session/update", { sessionId: SESSION, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "policy " + policySaid.join(" ") + " prompt " + policyPrompt } } });
+    pendingPermission = false; finish(); return;
   }
   if (message.id === "elicit-1") { notification("session/update", { sessionId: SESSION, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "form " + JSON.stringify(message.result) } } }); finish(); return; }
   if (message.id === "late-permission" || message.id === "child-approval" || message.id === "unrelated-approval") return;

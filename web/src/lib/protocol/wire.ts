@@ -123,7 +123,7 @@ function typed(row: Record<string, unknown>, b: ItemBase): ProtocolItem {
     case "plan_proposal": return { ...b, type: "plan_proposal", markdown: str(row.markdown, "a proposal") };
     case "recap": { const ask = maybe(row.ask, item => str(item, "an ask")), actions = maybe(row.actions, item => words(item, "an action")); return { ...b, type: "recap", summary: str(row.summary, "a summary"), ...(ask === undefined ? {} : { ask }), ...(actions === undefined ? {} : { actions }) }; }
     case "approval": {
-      const decision = maybe(row.decision, item => { const made = rec(item, "a decision"); return { role: pick(made.role, APPROVAL_ROLES, "a role"), by: pick(made.by, ["user", "policy", "timeout", "harness"] as const, "a decider"), at: amount(made.at, "a time") }; });
+      const decision = maybe(row.decision, item => { const made = rec(item, "a decision"); const level = maybe(made.level, value => pick(value, PERMISSION_LEVELS, "a permission level")); return { role: pick(made.role, APPROVAL_ROLES, "a role"), by: pick(made.by, ["user", "policy", "timeout", "harness"] as const, "a decider"), at: amount(made.at, "a time"), ...(level === undefined ? {} : { level }) }; });
       const forItem = maybe(row.forItem, item => str(item, "forItem"));
       return { ...b, type: "approval", subject: pick(row.subject, APPROVAL_SUBJECTS, "a subject"), title: str(row.title, "a title"),
         options: many(row.options, item => { const option = rec(item, "an option"); return { id: str(option.id, "an option id"), role: pick(option.role, APPROVAL_ROLES, "a role"), label: str(option.label, "a label") }; }, "options"),

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ContentRef } from "../../../contracts/content.js";
 import type { ContentRefRow, HeldItem, ItemFields, ItemRow, ItemWrite, Mutation, NativeFacts, RunRow, TextAppend } from "../../../contracts/conversation.js";
 import type { ControlEvent, NativeToolDetail } from "../../../contracts/control.js";
-import type { ApprovalItem, ApprovalRole, FileChange, ItemStatus, ItemType, PlanStep } from "../../../contracts/protocol.js";
+import type { ApprovalItem, ApprovalRole, FileChange, ItemStatus, ItemType, PermissionLevel, PlanStep } from "../../../contracts/protocol.js";
 import { STREAM_WINDOW_BYTES, type PublicTool, type RunStatus } from "../../../contracts/session.js";
 import { classifyTool, detailHead, itemStatus, runItemStatus } from "./protocol/index.js";
 import { derive, sound } from "./store-conversion.js";
@@ -173,7 +173,7 @@ export type PlaceInput =
   | { readonly kind: "detail"; readonly toolId: string; readonly ref: ContentRef; readonly at: number }
   /** The content store could not keep a call's detail: the call's item says so (`DETAIL_NOT_SAVED`), and does until a detail is kept. */
   | { readonly kind: "detail_lost"; readonly toolId: string; readonly at: number }
-  | { readonly kind: "decided"; readonly id: string; readonly option: string; readonly input?: string; readonly by?: "user" | "policy"; readonly at: number }
+  | { readonly kind: "decided"; readonly id: string; readonly option: string; readonly input?: string; readonly by?: "user" | "policy"; readonly level?: PermissionLevel; readonly at: number }
   | { readonly kind: "expired"; readonly at: number }
   | { readonly kind: "notice"; readonly severity: "info" | "warning"; readonly title: string; readonly detail?: string; readonly code?: string; readonly at: number }
   /** The Hub's record of what the Turn changed in its workspace (WorkspaceRecord), with its stored diff: one `workspace` item, placed before the Turn settles. */
@@ -557,7 +557,7 @@ export function approvalRole(option: { readonly id: string; readonly name: strin
   return "other";
 }
 /** What an approval is about, as far as its title says (a derived value, worked out again when the rule is better: `other` when nothing says). */
-function subjectOf(title: string): ApprovalItem["subject"] {
+export function subjectOf(title: string): ApprovalItem["subject"] {
   const words = title.replace(/^子 Agent\s*·\s*/u, "").trim();
   if (/请求修改文件|^(?:edit|write|create|update|patch|apply|delete|remove|move|rename|modify)\b/iu.test(words)) return "file_change";
   if (/请求执行命令|^(?:run|bash|shell|exec|execute|terminal|command)\b/iu.test(words)) return "command";
@@ -606,13 +606,13 @@ function endRequest(s: Draft, w: Writes, position: number, status: ItemStatus, a
   change(s, w, position, ended, rest);
   if (status === "declined" && decision !== null) refuseCall(s, w, ended, at);
 }
-function decide(s: Draft, w: Writes, id: string, option: string, input: string | undefined, by: "user" | "policy", at: number): void {
+function decide(s: Draft, w: Writes, id: string, option: string, input: string | undefined, by: "user" | "policy", at: number, level?: PermissionLevel): void {
   const position = find(s, "permission:" + scrub(str(id), "id", [])), entry = position === undefined ? undefined : vecAt(s.entries, position);
   if (position === undefined || entry === undefined || entry.request === undefined || entry.item.status !== "waiting") return;
   const request = entry.request, chosen = request.options.find(candidate => candidate.id === str(option));
   if (request.kind === "approval") {
     const role = chosen === undefined ? "other" : approvalRole(chosen);
-    endRequest(s, w, position, role === "deny" ? "declined" : "completed", at, { role, by, at }, null);
+    endRequest(s, w, position, role === "deny" ? "declined" : "completed", at, { role, by, at, ...(level === undefined ? {} : { level }) }, null);
     return;
   }
   const refusing = /^(?:cancel|skip|decline|reject|deny)$/iu.test(str(option));
@@ -752,7 +752,7 @@ export function place(turn: ActiveTurn, input: PlaceInput, env: PlaceEnv = {}): 
       case "flush": flushWindow(s, w, false); break;
       case "detail": flushWindow(s, w, false); placeDetail(s, w, input.toolId, input.ref); break;
       case "detail_lost": flushWindow(s, w, false); placeDetailLost(s, w, input.toolId); break;
-      case "decided": flushWindow(s, w, false); decide(s, w, input.id, input.option, input.input, input.by ?? "user", input.at); break;
+      case "decided": flushWindow(s, w, false); decide(s, w, input.id, input.option, input.input, input.by ?? "user", input.at, input.level); break;
       case "expired": flushWindow(s, w, false); expire(s, w, input.at); break;
       case "notice": flushWindow(s, w, false); placeNotice(s, w, input, input.at, env, false); break;
       case "workspace": flushWindow(s, w, false); placeWorkspace(s, w, input); break;
