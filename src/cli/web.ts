@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { dataRoot } from "./session-application.js";
-import { MAX_PARALLEL_CONVERSATIONS, SessionError, resolveTurnBudgets } from "../contracts/session.js";
+import { SessionError, resolveTurnBudgets } from "../contracts/session.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { resolveInstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { MANIFEST_IGNORED } from "../infrastructure/catalog/inventory-composition.js";
@@ -23,10 +23,10 @@ export async function main(args: readonly string[]): Promise<number> {
   try {
     const { values } = parseArgs({ args: [...args], options: { "data-dir": { type: "string" }, cwd: { type: "string" }, port: { type: "string" },
       manifest: { type: "string" }, "config-home": { type: "string" }, "package-root": { type: "string", multiple: true }, "search-dir": { type: "string", multiple: true },
-      "path-only": { type: "boolean" }, "assets-dir": { type: "string" }, "execution-budget": { type: "string" }, "wait-budget": { type: "string" }, "no-login-shell": { type: "boolean" }, "workspace-lock-root": { type: "string" }, "allow-unofficial": { type: "boolean" }, help: { type: "boolean", short: "h" } }, strict: true, allowPositionals: false });
-    if (values.help) { process.stdout.write("HarnessGateway web --cwd <workspace> --data-dir <path> [--port <0..65535>] [--execution-budget <30..3600 秒>] [--wait-budget <1..120 分钟>] [--no-login-shell] [--workspace-lock-root <绝对目录>] [--allow-unofficial]\n本机页面使用一次性启动链接。Ctrl+C等待在途执行清理并保留公共历史。\n--workspace-lock-root 另用一个工作区租约目录：这个 Gateway 不再与本机其他 Gateway 互斥同一工作区，只用于隔离的测试或刻意独立的实例。\n--allow-unofficial 把官网渠道以外的入口（开发目录、npm link、测试用程序）也算作已安装，只用于开发和测试；默认只认官网安装方式。\n"); return 0; }
-    // Each Turn's budgets (ADR-036): execution 300 s and waiting 30 minutes unless set here.
-    const budgets = resolveTurnBudgets({ executionSeconds: values["execution-budget"], waitMinutes: values["wait-budget"] });
+      "path-only": { type: "boolean" }, "assets-dir": { type: "string" }, "execution-budget": { type: "string" }, "wait-budget": { type: "string" }, "max-parallel": { type: "string" }, "no-login-shell": { type: "boolean" }, "workspace-lock-root": { type: "string" }, "allow-unofficial": { type: "boolean" }, help: { type: "boolean", short: "h" } }, strict: true, allowPositionals: false });
+    if (values.help) { process.stdout.write("HarnessGateway web --cwd <workspace> --data-dir <path> [--port <0..65535>] [--execution-budget <≥30 秒>] [--wait-budget <≥1 分钟>] [--max-parallel <≥1>] [--no-login-shell] [--workspace-lock-root <绝对目录>] [--allow-unofficial]\n本机页面使用一次性启动链接。Ctrl+C等待在途执行清理并保留公共历史。\n回合默认没有时间上限，对话也不限同时运行的个数；下面三项是可选的自动限制，不给就不限：--execution-budget 回合干活满这么久（不含等你决定的时间）就自动停止；--wait-budget 审批或提问等了这么久没人答就算过期；--max-parallel 同时运行的对话个数上限，超出的排队。\n--workspace-lock-root 另用一个工作区租约目录：这个 Gateway 不再与本机其他 Gateway 互斥同一工作区，只用于隔离的测试或刻意独立的实例。\n--allow-unofficial 把官网渠道以外的入口（开发目录、npm link、测试用程序）也算作已安装，只用于开发和测试；默认只认官网安装方式。\n"); return 0; }
+    // A Turn has no time limit and conversations run at once without a fixed number; only what is set here limits them (2026-11-12, ADR-036 superseded).
+    const budgets = resolveTurnBudgets({ executionSeconds: values["execution-budget"], waitMinutes: values["wait-budget"], maxParallel: values["max-parallel"] });
     if (values.port !== undefined && !/^(0|[1-9][0-9]{0,4})$/u.test(values.port)) throw new SessionError("INVALID_INPUT", "port must be 0..65535");
     for (const value of [values.cwd, values.manifest, values["config-home"], values["assets-dir"], ...(values["package-root"] ?? []), ...(values["search-dir"] ?? [])])
       if (value !== undefined && (!value.trim() || value.length > 4096 || /[\0\r\n]/u.test(value))) throw new SessionError("INVALID_INPUT", "explicit paths must be bounded and nonempty");
@@ -44,8 +44,10 @@ export async function main(args: readonly string[]): Promise<number> {
       ...(values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] }),
       ...(values["assets-dir"] === undefined ? {} : { assetsDirectory: resolve(values["assets-dir"]) }) });
     process.stdout.write("HarnessGateway\n" + gateway.url + "\n");
-    // What this service runs with (ADR-036), so its log says it without reading the code.
-    process.stdout.write(`HarnessGateway: up to ${MAX_PARALLEL_CONVERSATIONS} conversations run at once; each Turn may work ${budgets.executionBudgetMs / 1000} s and wait ${budgets.waitBudgetMs / 60_000} min for the user\n`);
+    // What this service runs with, so its log says it without reading the code.
+    process.stdout.write("HarnessGateway: " + (budgets.maxParallel === undefined ? "conversations run at once without a fixed number" : `up to ${budgets.maxParallel} conversations run at once, the rest wait`)
+      + "; " + (budgets.executionBudgetMs === undefined ? "a Turn has no time limit" : `a Turn is stopped after ${budgets.executionBudgetMs / 1000} s of work`)
+      + "; " + (budgets.waitBudgetMs === undefined ? "an approval or question waits for you" : `an approval or question expires after ${budgets.waitBudgetMs / 60_000} min`) + "\n");
     await new Promise<void>(done => {
       const stop = () => { process.off("SIGINT", stop); process.off("SIGTERM", stop); done(); };
       process.on("SIGINT", stop); process.on("SIGTERM", stop);

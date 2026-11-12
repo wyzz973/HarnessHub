@@ -1,4 +1,5 @@
 import { application } from "../../../src/cli/session-application.js";
+import type { TurnLimits } from "../../../src/contracts/session.js";
 import type { InstallationPolicy } from "../../../src/contexts/catalog/domain/catalog.js";
 import { prepareConfiguration } from "../../../src/infrastructure/session/binding-factory.js";
 import type { NativeEnvironment } from "../../../src/infrastructure/session/native-environment.js";
@@ -15,7 +16,7 @@ import type { CellHub } from "./run.js";
  * server's probe finds in the configuration of the user's own Harnesses is only read.
  */
 export async function openWebHub(where: { readonly workspace: string; readonly data: string },
-  options: { readonly mount: WatchedMount; readonly installations: InstallationPolicy; readonly locks: string; readonly budgets: { readonly executionBudgetMs: number; readonly waitBudgetMs: number }; readonly manifest?: string;
+  options: { readonly mount: WatchedMount; readonly installations: InstallationPolicy; readonly locks: string; readonly budgets: TurnLimits; readonly manifest?: string;
     /** The environment the Hub discovers and starts Harnesses in; this computer's own when absent (a test of the ruler gives it a private home and a PATH without the user's Harnesses). */
     readonly environment?: NativeEnvironment }): Promise<CellHub> {
   let composed: ReturnType<typeof application> | undefined;

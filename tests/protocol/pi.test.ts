@@ -57,6 +57,15 @@ test("Pi rejects malformed wire, unavailable models and native authentication wi
   } finally { await driver.close(); }
 });
 
+test("Pi cuts an error text past 64 KiB instead of refusing the response, and still classifies it", async () => {
+  const driver = new PiControl({ executable: process.execPath, args: [resolve("tests/fixtures/pi-rpc-peer.mjs"), "rejected-long"], env: {}, protocol: "pi-rpc" },
+    { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: 5000, closeGraceMs: 100, maxFrameBytes: 4 * 1024 * 1024, maxDiagnosticBytes: 4096 });
+  try {
+    await driver.initialize(); const result = await (await driver.startText(await driver.open(process.cwd()), "test", () => {})).result;
+    assert.equal(result.error?.code, "NATIVE_AUTH_REQUIRED", "a long error is the error it says, not INVALID_PROTOCOL"); assert.equal(JSON.stringify(result).includes("private-key"), false);
+    assert.equal((await driver.close()).protocolFailure, null);
+  } finally { await driver.close(); }
+});
 // Pi 0.85.1 editor dialogs send `prefill` and accept only `{value}` (rpc-mode.ts:254-271); `{text}` would read as a cancel.
 for (const [scenario,option,input,field,expected] of [["ui-input","submit","typed input","value","typed input"],["ui-editor","submit","edited native text","value","edited native text"],["ui-select","choice-1",undefined,"value","Two"]] as const) test(`Pi ${scenario} surfaces native interaction and round-trips its response`, async t=>{
   const root=await mkdtemp(join(tmpdir(),"pi-native-ui-")), trace=join(root,"trace");t.after(()=>rm(root,{recursive:true,force:true})); const driver=control(scenario,trace);
@@ -94,6 +103,23 @@ test("Pi editor dialogs show the native prefill", async () => {
     assert.deepEqual(asked.input, { kind: "editor", value: "native draft" });
     await driver.decidePermission(asked.id, "cancel"); assert.equal((await run.result).status, "completed");
   } finally { await driver.close(); }
+});
+test("Pi editor dialogs carry a prefill and an answer of any size: the frame bound is the only limit, a NUL is still refused", async t => {
+  const root = await mkdtemp(join(tmpdir(), "pi-native-big-")), trace = join(root, "trace"); t.after(() => rm(root, { recursive: true, force: true }));
+  const prefill = 200_000, answer = "答".repeat(100_000); // 300,000 bytes: past the 64 KiB an answer once had to fit
+  const driver = new PiControl({ executable: process.execPath, args: [resolve("tests/fixtures/pi-rpc-peer.mjs"), "ui-editor"], env: { FIXTURE_TRACE: trace, FIXTURE_PREFILL_BYTES: String(prefill) }, protocol: "pi-rpc" },
+    { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: 5000, closeGraceMs: 100, maxFrameBytes: 4 * 1024 * 1024, maxDiagnosticBytes: 4096 });
+  try {
+    await driver.initialize(); driver.enablePermissions(); const id = await driver.open(process.cwd());
+    let receive!: (event: Extract<ControlEvent, { type: "permission_requested" }>) => void;
+    const request = new Promise<Extract<ControlEvent, { type: "permission_requested" }>>(resolve => { receive = resolve; });
+    const run = await driver.startText(id, "edit", event => { if (event.type === "permission_requested") receive(event); }), asked = await request;
+    assert.equal(asked.input?.kind, "editor"); assert.equal(asked.input?.value.length, prefill, "the whole prefill reaches the user");
+    await assert.rejects(driver.decidePermission(asked.id, "submit", "a\0b"), (error: unknown) => error instanceof ControlError && error.code === "PERMISSION_UNAVAILABLE");
+    await driver.decidePermission(asked.id, "submit", answer); assert.equal((await run.result).status, "completed");
+    const wire = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    assert.equal(wire.find(row => row.type === "extension_ui_response").value, answer, "the whole answer reaches Pi");
+  } finally { assert.equal((await driver.close()).closed, true); }
 });
 test("Pi prompts handled by an extension command or input hook settle without waiting for a run", async () => {
   const driver = control("handled", undefined, 2000);

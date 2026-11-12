@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ManagementError, type InstallationJobView, type ManagementInstallContext, type ManagementInstallerPort, type ManagementMetadataPort, type ManagementRecipe } from "../../src/contracts/management.js";
+import { ManagementError, type InstallationJobView, type InstallationLog, type ManagementInstallContext, type ManagementInstallerPort, type ManagementMetadataPort, type ManagementRecipe } from "../../src/contracts/management.js";
 import { LocalHarnessManagement, type ManagementOptions } from "../../src/infrastructure/management/service.js";
 import { runManagementProcess } from "../../src/infrastructure/management/process.js";
 
@@ -112,7 +112,49 @@ test("one active installer and at most eight queued Jobs are admitted, with dupl
     for (let index = 1; index <= 8; index++) manager.submit({ harnessId: "fixture-" + index, action: "install", commandId: "queue-" + index });
     assert.throws(() => manager.submit({ harnessId: "fixture-9", action: "install", commandId: "queue-overflow" }), code("QUEUE_LIMIT"));
     await manager.shutdown(); assert.throws(() => manager.submit({ harnessId: "fixture-10", action: "install", commandId: "closed" }), code("MANAGEMENT_CLOSED"));
+  }, { recipes, maxQueuedJobs: 8, ...dependencies({ mode: () => "wait", ready }) });
+});
+test("without a limit of an operator's the queue admits far more than the former eight Jobs", async () => {
+  let ready!: (pid: number) => void; const active = new Promise<number>(resolve => { ready = resolve; });
+  const recipes = Array.from({ length: 41 }, (_, index) => recipe("fixture-" + index));
+  await fixture(async (_root, manager) => {
+    manager.submit({ harnessId: "fixture-0", action: "install", commandId: "active" }); await active;
+    for (let index = 1; index <= 40; index++) manager.submit({ harnessId: "fixture-" + index, action: "install", commandId: "queue-" + index });
+    assert.equal(manager.listJobs(100).filter(job => job.status === "queued").length, 40);
+    await manager.shutdown();
   }, { recipes, ...dependencies({ mode: () => "wait", ready }) });
+});
+test("the tables of finished Jobs and their logs have no row or byte bound that could make the page's state unreadable or the service unable to start", async () => {
+  await fixture(async (root, manager) => {
+    const done = await settled(manager, manager.submit({ harnessId: "fixture-a", action: "install", commandId: "first" }).id); assert.equal(done.status, "completed");
+    await manager.shutdown();
+    // 2,200 finished Jobs (the table was bounded at 2,048 rows, and a service whose table reached it could not read it or start), and a log row count past the former 65,536 is not what counts.
+    const db = new DatabaseSync(join(root, "management", "management.sqlite"));
+    try {
+      db.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<2200) INSERT INTO management_jobs(id,harness_id,status,command_id,fingerprint,expected_revision,view_json) "
+        + "SELECT 'management-' || printf('%08d-0000-4000-8000-%012d', i, i), harness_id, status, 'copy-' || i, fingerprint, expected_revision, "
+        + "json_set(json_set(view_json,'$.id','management-' || printf('%08d-0000-4000-8000-%012d', i, i)),'$.logCursor',0) FROM management_jobs, n WHERE management_jobs.id=" + JSON.stringify(done.id).replace(/"/gu, "'"));
+      assert.ok(Number(db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n) > 2048);
+    } finally { db.close(); }
+    const reopened = new LocalHarnessManagement(root, { installationMode: "private-fixture", assertOwner: () => {}, ownerGeneration: 2, recipes: [recipe(), recipe("fixture-b")], ...dependencies() });
+    try {
+      assert.equal(reopened.listJobs(50).length, 50, "the page's state reads its newest jobs"); assert.equal(reopened.listJobs(1000).length, 1000);
+      assert.equal((await settled(reopened, reopened.submit({ harnessId: "fixture-b", action: "install", commandId: "after-many" }).id)).status, "completed", "and a new job is admitted");
+      assert.equal(reopened.views(["fixture-a", "fixture-b"]).length, 2);
+    } finally { await reopened.shutdown(); }
+  });
+});
+test("a talkative installer does not fail its Job: the log keeps its first chunks, says once that the rest was not kept, and the Job completes", async () => {
+  const noise = "x".repeat(4096 * 2100);
+  await fixture(async (_root, manager) => {
+    const result = await settled(manager, manager.submit({ harnessId: "fixture-a", action: "install", commandId: "noisy" }).id);
+    assert.equal(result.status, "completed", JSON.stringify(result.error));
+    const all: InstallationLog[] = [];
+    for (let after = 0; ;) { const page = manager.logs(result.id, after, 1000); if (!page.length) break; all.push(...page); after = page.at(-1)!.seq; }
+    assert.equal(all.at(-1)?.text, "…（日志已达上限，之后的输出没有保存）", "the log says once that the rest was not kept");
+    assert.equal(all.filter(entry => entry.text.startsWith("…（日志已达上限")).length, 1);
+    assert.ok(all.length <= 2048, "the log stays within its chunks");
+  }, dependencies({ log: noise }));
 });
 test("management log chunks preserve all UTF8 text and sanitize before splitting", async () => {
   const original = "中😀".repeat(4000) + " synthetic-private-provider-key trailing";

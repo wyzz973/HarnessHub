@@ -59,8 +59,14 @@ export function treeId(items: readonly TreeItem[]): string | null {
 
 /** What a folder on disk holds, by the rule a copy follows, and its tree id. */
 export interface FolderTree { readonly id: string | null; readonly items: readonly TreeItem[]; readonly files: number; readonly bytes: number; readonly executables: number; readonly links: number }
-/** Bounds of one folder read: a skill is small, and a folder beyond them is not one HarnessHub copies or compares. */
-export const MAX_SKILL_FILES = 4000, MAX_SKILL_BYTES = 64 * 1024 * 1024, MAX_SKILL_DEPTH = 32;
+/**
+ * Bounds of one folder read: a skill is a folder of instructions, scripts and assets, and a folder beyond them is not one HarnessHub copies
+ * or compares into the user's directories. A skill with its models, fixtures or vendored packages is far larger than a page of instructions
+ * (4,000 files and 64 MB were too tight for legitimate ones, 2026-11-12), so these are set where only a directory that is not a skill reaches them.
+ */
+export const MAX_SKILL_FILES = 50_000, MAX_SKILL_BYTES = 1024 * 1024 * 1024, MAX_SKILL_DEPTH = 32;
+/** A size in the words of the refusal that names a bound. */
+export function sizeWords(bytes: number): string { return bytes >= 1024 * 1024 * 1024 ? bytes / (1024 * 1024 * 1024) + " GB" : bytes / (1024 * 1024) + " MB"; }
 
 /**
  * Reads a folder the way git would store it: regular files with their executable bit, symbolic links by what they point
@@ -80,7 +86,7 @@ export async function folderTree(folder: string, exclude: (name: string, directo
       if (info.isSymbolicLink()) { links++; items.push({ path: relative, mode: "120000", id: blobId(Buffer.from(await readlink(path))) }); continue; }
       if (!info.isFile()) throw new CapabilityError("CAPABILITY_TARGET_REFUSED", "技能文件夹里有既不是文件也不是文件夹的条目：" + relative);
       bytes += info.size;
-      if (bytes > MAX_SKILL_BYTES) throw new CapabilityError("CAPABILITY_TARGET_REFUSED", "技能文件夹超过 64 MB");
+      if (bytes > MAX_SKILL_BYTES) throw new CapabilityError("CAPABILITY_TARGET_REFUSED", "技能文件夹超过 " + sizeWords(MAX_SKILL_BYTES));
       const executable = (info.mode & 0o111) !== 0;
       if (executable) executables++;
       items.push({ path: relative, mode: executable ? "100755" : "100644", id: blobId(await readFile(path)) });

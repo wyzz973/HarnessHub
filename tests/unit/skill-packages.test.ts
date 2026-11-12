@@ -8,8 +8,19 @@ import { c as createTar, Header, Pax } from "tar";
 import { CapabilityError } from "../../src/contracts/capabilities.js";
 import { listArchive, parseGithubSource, settledCommit } from "../../src/infrastructure/capabilities/github.js";
 import { editLock, findSkills, linksInto, lockSkills, SkillSnapshots, skillFolderName, writeSkill } from "../../src/infrastructure/capabilities/skill-packages.js";
-import { blobId, folderTree, npxExcluded, npxExcludedPath, remoteFolderTree, treeId } from "../../src/infrastructure/capabilities/skill-tree.js";
+import { MAX_SKILL_BYTES, MAX_SKILL_FILES, blobId, folderTree, npxExcluded, npxExcludedPath, remoteFolderTree, treeId } from "../../src/infrastructure/capabilities/skill-tree.js";
 import type { HarnessReadTable } from "../../src/adapters/capability-reads.js";
+
+test("a skill folder is held to bounds only a directory that is not a skill reaches: 4,500 files and a 70 MiB file, both refused before, are read", async t => {
+  const root = await temporary(t, "skill-bounds-"), skill = join(root, "big");
+  await mkdir(skill, { recursive: true });
+  await writeFile(join(skill, "SKILL.md"), "---\nname: big\ndescription: A large skill\n---\n");
+  await Promise.all(Array.from({ length: 4500 }, (_, index) => writeFile(join(skill, "file-" + index + ".txt"), String(index))));
+  await writeFile(join(skill, "model.bin"), Buffer.alloc(70 * 1024 * 1024));
+  const tree = await folderTree(skill);
+  assert.equal(tree.files, 4502); assert.ok(tree.bytes > 70 * 1024 * 1024);
+  assert.ok(MAX_SKILL_FILES >= 50_000 && MAX_SKILL_BYTES >= 1024 * 1024 * 1024, "the bounds are far above the former 4,000 files and 64 MB");
+});
 
 async function temporary(t: test.TestContext, prefix: string): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), prefix))); t.after(() => rm(root, { recursive: true, force: true })); return root;

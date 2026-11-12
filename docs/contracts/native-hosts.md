@@ -79,7 +79,6 @@
 | `hostMemoryBudgetBytes` | 物理内存的 1/8（向下取整） | 256 MiB 至物理内存；物理内存小于 2 GiB 时整体拒绝 |
 | `maxHosts` | 8 | 1–64 |
 | `maxPinned` | 4（ADR-030） | 1–16，且不超过 `maxHosts` |
-| `maxParallel` | 4（`MAX_PARALLEL_CONVERSATIONS`，ADR-036） | 1–16 |
 | `pinnedIdleTtlMs` | 30 分钟 | 1 分钟–4 小时，且不超过 `pinnedHardCapMs` |
 | `pinnedHardCapMs` | 4 小时 | 30 分钟–24 小时 |
 | `classCaps.single.hostIdleMs` | 5 分钟 | 1–60 分钟 |

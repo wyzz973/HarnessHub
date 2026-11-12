@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  CONTEXT_EFFECTS, DELIVERY_STATUSES, LEGACY_CONTINUITY, MAX_BINDING_RELAY_BYTES, MAX_RUN_RELAY_BYTES, RELAY_MAX_RUNS, RELAY_MAX_SEQ, RELAY_PREF_KEYS,
-  deliveryTransitionAllowed, packetsOf, parseBindingRelayState, parseContinuityLevel, parseDeliveryOutcome, parseHandoffRecord, parseRelayPref,
-  parseRunRelay, parseRunRelayRequest, parseSwitchTiming, type DeliveryStatus,
+  CONTEXT_EFFECTS, DELIVERY_STATUSES, LEGACY_CONTINUITY, MAX_BINDING_RELAY_BYTES, MAX_RUN_RELAY_BYTES, RELAY_EXPLICIT_RUNS, RELAY_MAX_EPOCH, RELAY_MAX_RUNS, RELAY_MAX_SEQ, RELAY_PREF_KEYS,
+  countRunIndexes, deliveryTransitionAllowed, packRunIndexes, packetsOf, parseBindingRelayState, parseContinuityLevel, parseDeliveryOutcome, parseHandoffRecord, parseRelayPacket, parseRelayPref,
+  parseRunRelay, parseRunRelayRequest, parseSourceRange, parseSwitchTiming, spanOf, type DeliveryStatus,
 } from "../../src/contracts/relay.js";
 import { SessionError, type SessionSnapshot } from "../../src/contracts/session.js";
-import { MAX_RUNS, MAX_SESSION_EVENTS, assertSessionTransition, parseSession } from "../../src/contexts/session/domain/state.js";
+import { assertSessionTransition, parseSession } from "../../src/contexts/session/domain/state.js";
 
 // The relay contract's parsers and bounds (ADR-055 §4, §14.3; slim.md), and the v13 rules of assertSessionTransition, each
 // with an invalid sample. Pure: nothing here opens a store or runs a Harness.
@@ -51,8 +51,10 @@ function withRelay(value: Plain, index: number, patch: Plain): Plain {
   return withBinding(value, index, { relay: { ...(bindings[index]!.relay as Plain), ...patch } });
 }
 
-test("the relay contract's closed enums and bounds agree with the Session domain", () => {
-  assert.equal(RELAY_MAX_SEQ, MAX_SESSION_EVENTS); assert.equal(RELAY_MAX_RUNS, MAX_RUNS);
+test("the relay contract's closed enums are the ones the parsers check, and its numbers have no bound of a conversation's size", () => {
+  // Decided 2026-11-12: no conversation has a size limit. The relay's parsers once stopped at 16,384 events and 256 Runs (the Session's
+  // own limits at the time); they read every value a conversation can reach, which is every safe integer.
+  assert.equal(RELAY_MAX_SEQ, Number.MAX_SAFE_INTEGER); assert.equal(RELAY_MAX_RUNS, Number.MAX_SAFE_INTEGER); assert.equal(RELAY_MAX_EPOCH, Number.MAX_SAFE_INTEGER);
   assert.deepEqual([...CONTEXT_EFFECTS].sort(), ["clear", "compact", "keep", "none", "rewind", "unknown"]);
   assert.deepEqual(Object.keys(LEGACY_CONTINUITY).sort(), ["native_fork", "native_import", "native_resume", "public_context_rehydrate"]);
   assert.deepEqual([...RELAY_PREF_KEYS], ["relay.attach"]);
@@ -68,11 +70,61 @@ test("binding relay states parse field by field and reject what the contract doe
   assert.deepEqual(parseBindingRelayState(relay({ mark: -1, floor: 7, resendAll: true })), { epoch: 1, mark: -1, floor: 7, pending: null, resendAll: true });
   for (const [label, value] of [
     ["unknown field", relay({ extra: 1 })], ["the old sync state", relay({ sync: { kind: "synced" } })], ["epoch 0", relay({ epoch: 0 })], ["floor below -1", relay({ floor: -2 })], ["mark below -1", relay({ mark: -2 })],
-    ["mark beyond the Session", relay({ mark: RELAY_MAX_SEQ + 1 })], ["epoch beyond the Session", relay({ epoch: RELAY_MAX_SEQ + 2 })],
+    ["mark beyond the safe integers", relay({ mark: RELAY_MAX_SEQ + 1 })], ["epoch beyond the safe integers", relay({ epoch: RELAY_MAX_EPOCH + 1 })], ["a fractional mark", relay({ mark: 1.5 })], ["a mark that is not a number", relay({ mark: "7" })],
     ["bad packet id", relay({ pending: { ...pending, packetId: "relay-UPPERCASEUPPERCASE00" } })], ["two automatic resends", relay({ pending: { ...pending, autoResends: 2 } })],
     ["a pending range that runs backwards", relay({ pending: { ...pending, fromSeq: 10, throughSeq: 9 } })], ["a pending packet with an unknown field", relay({ pending: { ...pending, attachOverride: true } })],
     ["resendAll not a boolean", relay({ resendAll: 1 })], ["pending missing", { epoch: 1, mark: 3, floor: -1, resendAll: false }],
   ] as const) assert.throws(() => parseBindingRelayState(value), SessionError, label);
+});
+
+test("a binding's relay state and a delivery's seqs read what an old bound refused: a conversation of 20,000 events and 300 Turns", () => {
+  // The bounds were 16,384 events and 256 Runs; the parsers accept all they did and everything beyond, up to the safe integers.
+  for (const events of [16_384, 16_385, 20_000, 1_000_000, RELAY_MAX_SEQ]) {
+    const pending = { packetId: packet("b"), fromSeq: events - 3, throughSeq: events, autoResends: 0 };
+    const state = parseBindingRelayState(relay({ epoch: events === RELAY_MAX_SEQ ? RELAY_MAX_EPOCH : events + 1, mark: events - 4, floor: events - 10, pending }));
+    assert.equal(state.pending?.throughSeq, events, "pending range through " + events); assert.equal(state.mark, events - 4);
+    assert.equal(parseDeliveryOutcome({ kind: "recorded", evidence: "E1", decidedSeq: events, decidedAt: 9 }).kind, "recorded");
+    assert.equal(parseDeliveryOutcome({ kind: "not_recorded", reason: "rejected_before_insert", decidedSeq: events, decidedAt: 9 }).kind, "not_recorded");
+    assert.equal(parseDeliveryOutcome({ kind: "unknown", reason: "owner_ended", decidedSeq: events, decidedAt: 9 }).kind, "unknown");
+    assert.deepEqual(parseSourceRange({ fromSeq: 0, throughSeq: events, fromRun: 0, throughRun: 299 }), { fromSeq: 0, throughSeq: events, fromRun: 0, throughRun: 299 });
+  }
+  assert.deepEqual(parseContinuityLevel({ kind: "native_resume_delta", tier: "full", runs: 300 }), { kind: "native_resume_delta", tier: "full", runs: 300 });
+  assert.equal(parseRunRelay({ packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: { ...alpha, nativeEpoch: 301 } }).executedOn?.nativeEpoch, 301);
+  // What it still refuses is not a number it could hold.
+  for (const value of [{ fromSeq: 0, throughSeq: RELAY_MAX_SEQ + 1, fromRun: 0, throughRun: 0 }, { fromSeq: 0, throughSeq: 1, fromRun: 0, throughRun: 1.5 }, { fromSeq: 0, throughSeq: 1, fromRun: -1, throughRun: 0 }, { fromSeq: 2, throughSeq: 1, fromRun: 0, throughRun: 0 }])
+    assert.throws(() => parseSourceRange(value), SessionError);
+});
+
+/** A packet manifest as a store holds it, quoting the given Run indexes. */
+function manifest(runs: readonly unknown[], extra: Plain = {}): Plain {
+  return { id: packet("c"), kind: "packet", tier: "brief", target: { harnessId: "alpha", controlId: "alpha-acp", model: null, nativeEpoch: 1 }, range: { fromSeq: 0, throughSeq: 700, fromRun: 0, throughRun: 299 },
+    runs, supersedes: null, policyVersion: "relay/1", language: "en", repeat: false, attachOverride: false, firstLineOmitted: null, redactions: 0,
+    body: { sha256: hex("d"), bytes: 100, estTokens: 30 }, budget: { capTokens: 8000, window: 128_000, windowSource: "assumed", clampedBy: [] }, omissions: [], ...extra };
+}
+
+test("a packet manifest quotes up to 256 Runs one by one, as it always did, and a longer list as spans of consecutive ones", () => {
+  const run = (count: number, step = 1) => Array.from({ length: count }, (_, at) => at * step);
+  // The old form is read unchanged, whatever its length: nothing stored before is refused.
+  assert.deepEqual(parseRelayPacket(manifest([0, 1, 2, 7])).runs, [0, 1, 2, 7]);
+  assert.equal(parseRelayPacket(manifest(run(RELAY_EXPLICIT_RUNS))).runs.length, RELAY_EXPLICIT_RUNS);
+  // A list of up to RELAY_EXPLICIT_RUNS is stored as it is (so every manifest written before is written the same now); a longer one is spans.
+  assert.deepEqual(packRunIndexes(run(RELAY_EXPLICIT_RUNS)), run(RELAY_EXPLICIT_RUNS));
+  assert.deepEqual(packRunIndexes([]), []);
+  assert.deepEqual(packRunIndexes(run(300)), [[0, 299]], "300 consecutive Runs are one span");
+  assert.deepEqual(packRunIndexes([...run(200), ...run(100).map(index => index + 250)]), [[0, 199], [250, 349]]);
+  assert.deepEqual(packRunIndexes([0, ...run(300).map(index => index + 2), 400]), [0, [2, 301], 400], "a lone index stays an index");
+  // 300 Turns whose 20,000-event conversation owes every one of them: the manifest names all 300, in a few bytes.
+  const long = parseRelayPacket(manifest(packRunIndexes(run(300)), { range: { fromSeq: 0, throughSeq: 20_000, fromRun: 0, throughRun: 299 } }));
+  assert.deepEqual(long.runs, [[0, 299]]); assert.equal(countRunIndexes(long.runs), 300);
+  assert.deepEqual(parseRelayPacket(JSON.parse(JSON.stringify(long))), long, "a manifest read back from its stored text is the same");
+  // Alternating Turns (two Harnesses taking one each) cannot be spans: 5,000 quoted Runs still fit the 64 KiB a manifest may take.
+  const alternating = packRunIndexes(run(5000, 2));
+  assert.equal(alternating.length, 5000); assert.doesNotThrow(() => parseRelayPacket(manifest(alternating, { range: { fromSeq: 0, throughSeq: 90_000, fromRun: 0, throughRun: 9998 } })));
+  assert.deepEqual([spanOf(4), spanOf([2, 9])], [[4, 4], [2, 9]]);
+  for (const [label, runs] of [["a span of one", [[3, 3]]], ["a span that runs backwards", [[9, 2]]], ["a span of three", [[1, 2, 3]]], ["a span with a fraction", [[1, 2.5]]], ["a negative index", [-1]], ["a text index", ["1"]], ["a span in a span", [[[1, 2], 3]]]] as const)
+    assert.throws(() => parseRelayPacket(manifest(runs)), SessionError, label);
+  // The byte bound of a manifest stays: a list no span can shorten and no 64 KiB can hold is refused, not cut.
+  assert.throws(() => parseRelayPacket(manifest(run(20_000, 2))), /byte budget/u);
 });
 
 test("a handoff log row is the first handoff to one Harness", () => {
@@ -218,16 +270,16 @@ test("a relay recovery failure is recorded by recovery and cleared by a new nati
   accepts(failed, { ...withBinding(failed, 0, { status: "archived" }), relayRecoveryFailed: undefined, commands: [...(failed.commands as Plain[]), reset] });
 });
 
-test("the longest legal relay state of a binding and of a Run stays within its byte bound", () => {
+test("the longest legal relay state of a binding and of a Run stays within its byte bound, every number at the largest safe integer", () => {
   // Every field at its longest: the largest numbers, a pending packet at its automatic resend, "false" rather than "true".
-  const longest = relay({ epoch: RELAY_MAX_SEQ + 1, mark: RELAY_MAX_SEQ, floor: RELAY_MAX_SEQ, resendAll: false,
+  const longest = relay({ epoch: RELAY_MAX_EPOCH, mark: RELAY_MAX_SEQ, floor: RELAY_MAX_SEQ, resendAll: false,
     pending: { packetId: packet("a"), fromSeq: RELAY_MAX_SEQ, throughSeq: RELAY_MAX_SEQ, autoResends: 1 } });
   const bytes = Buffer.byteLength(JSON.stringify(parseBindingRelayState(longest)));
-  assert.ok(bytes <= MAX_BINDING_RELAY_BYTES, bytes + " B"); assert.ok(bytes > MAX_BINDING_RELAY_BYTES - 128, "the bound is close to the longest value: " + bytes + " B");
+  assert.ok(bytes <= MAX_BINDING_RELAY_BYTES, bytes + " B"); assert.ok(bytes > MAX_BINDING_RELAY_BYTES - 64, "the bound is close to the longest value: " + bytes + " B");
   const id = "a" + "b".repeat(95);
   // The longest continuity level is a delta of the most Runs at the longer tier name; "packet" is the longer packet kind.
-  const runRelay = { packetId: packet("f"), kind: "packet", continuity: { kind: "native_resume_delta", tier: "brief", runs: 256 }, executedOn: { harnessId: id, controlId: id, nativeEpoch: RELAY_MAX_SEQ + 1 } };
+  const runRelay = { packetId: packet("f"), kind: "packet", continuity: { kind: "native_resume_delta", tier: "brief", runs: RELAY_MAX_RUNS }, executedOn: { harnessId: id, controlId: id, nativeEpoch: RELAY_MAX_EPOCH } };
   const request = { attach: "full", fingerprint: hex("f") };
   const runBytes = Buffer.byteLength(JSON.stringify({ relay: parseRunRelay(runRelay), relayRequest: parseRunRelayRequest(request) }));
-  assert.ok(runBytes <= MAX_RUN_RELAY_BYTES, runBytes + " B");
+  assert.ok(runBytes <= MAX_RUN_RELAY_BYTES, runBytes + " B"); assert.ok(runBytes > MAX_RUN_RELAY_BYTES - 128, "the bound is close to the longest value: " + runBytes + " B");
 });

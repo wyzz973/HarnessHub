@@ -196,7 +196,7 @@ Node 要求 `>=24`，pnpm 固定 `10.12.3`。依赖已安装；需要恢复依�
 | `--config-home` | 明确私有配置来源/测试用途；生产默认不要填空目录来替代原 profile |
 | `HOME`、XDG、`CODEX_HOME`、`CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG_DIR`、`OPENCLAW_CONFIG_PATH` 等 | 由 `native-environment.ts` 和引用解析继承；以该文件白名单为权威，不输出值/原环境全文 |
 | Provider 管理 | 正式 Web `providerManagement:false`；旧实验接口和明确的旧 Provider 会话保留，不隐式替换 |
-| 生产控制预算 | 当前请求 10 秒、Run 300 秒；目录读取 20 秒，资源关闭独立；以解析器/组合根实际值为准 |
+| 生产控制预算 | 普通请求 10 秒；回合没有时间墙（2026-11-12 起，见决定记录）；目录读取 2 分钟，资源关闭独立；以解析器/组合根实际值为准 |
 | 原配置参考位置 | `.codex/config.toml`、`.openclaw/openclaw.json`、`.pi/agent/settings.json` / `models.json`；有效目录可能受原环境覆盖，先解析实际来源 |
 
 ### 数据库（只读统计可查，内容不可随意导出）

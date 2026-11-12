@@ -211,8 +211,8 @@ function decodePacket(value: unknown): RelayPacket | null {
 /** The conversation's relay state; null when the answer is not the relay view (an older Gateway, another shape). */
 export function decodeRelayView(value: unknown): RelayView | null {
   if (!isRecord(value) || !Array.isArray(value.bindings) || !Array.isArray(value.packets)) return null;
-  return { bindings: value.bindings.slice(0, 64).flatMap(row => decodeBinding(row) ?? []), packets: value.packets.slice(0, 512).flatMap(row => decodePacket(row) ?? []),
-    handedOver: Array.isArray(value.handedOver) ? value.handedOver.slice(0, 64).flatMap(item => word(item, 96) ?? []) : [], installation: decodeInstallation(value.installation) };
+  return { bindings: value.bindings.flatMap(row => decodeBinding(row) ?? []), packets: value.packets.flatMap(row => decodePacket(row) ?? []),
+    handedOver: Array.isArray(value.handedOver) ? value.handedOver.flatMap(item => word(item, 96) ?? []) : [], installation: decodeInstallation(value.installation) };
 }
 
 function decodeContinuity(value: unknown): RunRelayInfo["continuity"] | null {

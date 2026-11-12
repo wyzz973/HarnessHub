@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { CleanupEvidence } from "../../src/contracts/control.js";
 import {
-  MAX_BINDING_RELAY_BYTES, MAX_RUN_RELAY_BYTES, RELAY_MAX_SEQ, parseBindingRelayState, parseDeliveryRecord, parseRelayPacket, parseRunRelay, parseRunRelayRequest,
+  MAX_BINDING_RELAY_BYTES, MAX_RUN_RELAY_BYTES, RELAY_MAX_EPOCH, RELAY_MAX_RUNS, RELAY_MAX_SEQ, parseBindingRelayState, parseDeliveryRecord, parseRelayPacket, parseRunRelay, parseRunRelayRequest,
   type RelayPacket, type RelayRows,
 } from "../../src/contracts/relay.js";
 import { commandId, messageId, runId, sessionId, type NativeSessionBinding, type PublicRun, type SessionSnapshot } from "../../src/contracts/session.js";
@@ -56,7 +56,7 @@ test("G066-C08 the longest legal relay state of a binding and of a Run, committe
     // The packets the longest sync state names, kept for the Session as the Store requires.
     const packets = ["a", "b", "c", "d"].map(char => packetFor(char, harnessId, controlId));
     step(current => current, { packets: packets.map(row => ({ runId: runId("run-one"), packet: row.packet, body: row.body })) });
-    const longest = parseBindingRelayState({ epoch: RELAY_MAX_SEQ + 1, mark: RELAY_MAX_SEQ, floor: RELAY_MAX_SEQ, resendAll: true,
+    const longest = parseBindingRelayState({ epoch: RELAY_MAX_EPOCH, mark: RELAY_MAX_SEQ, floor: RELAY_MAX_SEQ, resendAll: true,
       pending: { packetId: packets[1]!.packet.id, fromSeq: RELAY_MAX_SEQ, throughSeq: RELAY_MAX_SEQ, autoResends: 1 } });
     const bytesOf = () => Number(new DatabaseSync(join(root, "data", "gateway.sqlite"), { readOnly: true }).prepare("SELECT octet_length(snapshot) AS bytes FROM sessions WHERE id=?").get(id)?.bytes);
     const before = bytesOf();
@@ -72,7 +72,7 @@ test("G066-C08 the longest legal relay state of a binding and of a Run, committe
     step(current => ({ ...current, runs: [...current.runs, accepted], messages: [...current.messages, { id: accepted.userMessageId, runId: accepted.id, role: "user", text: accepted.input, seq: current.lastSeq + 1, status: "queued" }],
       commands: [...current.commands, { id: accepted.commandId, kind: "send", fingerprint: hex("b"), resultId: accepted.id }] }));
     const queued = bytesOf();
-    const runRelay = parseRunRelay({ packetId: packets[3]!.packet.id, kind: "packet", continuity: { kind: "native_resume_delta", tier: "brief", runs: 256 }, executedOn: { harnessId, controlId, nativeEpoch: RELAY_MAX_SEQ + 1 } });
+    const runRelay = parseRunRelay({ packetId: packets[3]!.packet.id, kind: "packet", continuity: { kind: "native_resume_delta", tier: "brief", runs: RELAY_MAX_RUNS }, executedOn: { harnessId, controlId, nativeEpoch: RELAY_MAX_EPOCH } });
     step(current => ({ ...current, activeRunId: accepted.id, runs: current.runs.map(row => row.id === accepted.id ? { ...row, status: "running" as const, contextThroughSeq: current.lastSeq, relay: runRelay,
       timing: { acceptedAt: 10, preparingAt: 8.64e15 - 4, contextReadyAt: 8.64e15 - 3, readyAt: 8.64e15 - 2, dispatchedAt: 8.64e15 - 1, recordedAt: 8.64e15 } } : row),
       messages: current.messages.map(message => message.runId === accepted.id ? { ...message, status: "running" as const } : message) }));

@@ -423,10 +423,8 @@ export function decodeSession(value: unknown): SessionView {
       ...(retention.lost === undefined ? {} : { lost: (() => { const lost = record(retention.lost); return { outcome: choice(lost.outcome, ["terminated", "gone", "unconfirmed"]), leaseReleased: bool(lost.leaseReleased), at: number(lost.at) }; })() }),
       ...(retention.outside === undefined ? {} : { outside: (() => { const outside = record(retention.outside); return { count: number(outside.count), at: number(outside.at) }; })() }),
       ...(retention.upgraded === undefined ? {} : { upgraded: (() => { const upgraded = record(retention.upgraded); return { harnessId: text(upgraded.harnessId), at: number(upgraded.at) }; })() }) }; })() }),
-    ...(row.queue === undefined ? {} : { queue: (() => { const queue = record(row.queue), kind = choice(queue.kind, ["workspace", "slot"]);
-      return kind === "workspace" ? { kind, runId: text(queue.runId), holderSessionId: text(queue.holderSessionId), holderWaitsForUser: bool(queue.holderWaitsForUser), since: number(queue.since), endsAt: number(queue.endsAt) }
-        : { kind, runId: text(queue.runId), running: number(queue.running), limit: number(queue.limit), since: number(queue.since) }; })() }),
-    ...(row.busyHolders === undefined ? {} : { busyHolders: Object.fromEntries(Object.entries(record(row.busyHolders)).slice(0, 256).map(([run, holder]) => [run, text(holder)])) }),
+    ...(row.queue === undefined ? {} : { queue: (() => { const queue = record(row.queue), kind = choice(queue.kind, ["slot"]);
+      return { kind, runId: text(queue.runId), running: number(queue.running), limit: number(queue.limit), since: number(queue.since) }; })() }),
     ...(row.nativeStates === undefined ? {} : { nativeStates: list(row.nativeStates, value => { const state = record(value);
       return { harnessId: text(state.harnessId), controlId: text(state.controlId), status: choice(state.status, ["ready", "unconfirmed", "forking"]),
         ...(state.observed === undefined ? {} : { observed: (() => { const observed = record(state.observed); return { model: observed.model === null ? null : text(observed.model), options: parseNativeOptions(observed.options) }; })() }),
@@ -932,8 +930,10 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     SWITCH_NOT_EFFECTIVE: "这条消息尚未执行，因为选择切换失败。重新选择后，可明确重发这条消息。",
     HARNESS_UNAVAILABLE: "这个 Harness 当前不可用。请换一个，或到 Harness 页检查安装。",
     PROVIDER_DISABLED: "所选 Provider 已停用。请选择其他连接，或到模型连接页启用它。",
+    NATIVE_INITIALIZE_TIMEOUT: "这个 Harness 启动后一直没有完成握手（initialize）。它可能在启动插件或 MCP 服务，也可能卡住了。这条消息没有发出；可以稍后重试，或先在终端里单独运行它看看卡在哪里。",
+    NATIVE_SESSION_TIMEOUT: "这个 Harness 已经启动，但打开对话会话（创建、恢复或载入）一直没有完成。它可能在载入很长的历史，也可能卡住了。这条消息没有发出；可以稍后重试，或换一个 Harness 继续。",
     WORKSPACE_BUSY: "工作区正被另一项任务使用，这条消息没有发出。可以等它结束后重新发送，或为新对话选择其他工作区。",
-    WAIT_EXPIRED: "等待你的决定超过了等待期限，原程序没有收到决定；它没有在停止宽限内结束，已被强制结束。结果尚待核实，不会自动重新执行。",
+    WAIT_EXPIRED: "等待你的决定超过了设置的等待期限，原程序没有收到决定；它没有在停止宽限内结束，已被强制结束。结果尚待核实，不会自动重新执行。",
     WORKSPACE_QUARANTINED: "工作区仍有未核实的执行资源。请先核实并停止相关进程；历史和草稿已保留。",
     NATIVE_COMMAND_REJECTED: "原程序没有执行这个命令，原因见上方的活动记录。",
     NATIVE_EXPORT_UNAVAILABLE: "原程序暂时没有可导出的会话记录。",
@@ -943,7 +943,7 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     NATIVE_CONTEXT_EXCEEDED: "对话超出了模型的上下文长度。可以先用这个 Harness 的压缩命令（如 /compact），或开始新对话。",
     NATIVE_MODEL_UNAVAILABLE: "所选模型在这个 Harness 的模型服务中不可用，请换一个模型。",
     MODEL_REQUEST_FAILED: "这个 Harness 向模型服务发出的请求失败了。请检查它本机的模型配置，或换一个模型再试。",
-    NATIVE_CATALOG_TIMEOUT: "这个 Harness 在 20 秒内没有给出模型列表。可以稍后刷新本机模型重试。",
+    NATIVE_CATALOG_TIMEOUT: "这个 Harness 在 2 分钟内没有给出模型列表，可能卡在启动上。可以稍后刷新本机模型重试。",
     WORKSPACE_KEPT: "这个工作区正被另一个对话保留的原生进程使用。可以结束那个对话的后台进程后重试，也可以稍后再试。",
     MODEL_POLICY_REFUSED: "模型服务按自身的内容策略拒绝了这次请求。",
     MODEL_UNAVAILABLE: "所选模型当前不在这个 Harness 的本机模型目录中，请重新选择模型。",
@@ -954,7 +954,7 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     NATIVE_RESUME_UNAVAILABLE: "原程序无法确认恢复后的原生会话，没有另建新会话。公共历史已保留，可以换一个 Harness 继续。",
     NATIVE_STATE_UNCONFIRMED: "原生会话的状态尚未确认。可以换一个 Harness，或明确建立新的原生分支；公共历史会保留。",
     SESSION_BLOCKED: "这段对话还有执行结果尚未核实，已暂停接收新消息。请在对话顶部核实后恢复；不会自动重新执行。",
-    RUN_TIMEOUT: "本回合超过了 HarnessHub 的执行期限（不含等待你的时间），原程序没有按时结束，已被强制结束。结果尚待核实，不会自动重新执行。",
+    RUN_TIMEOUT: "本回合超过了设置的执行期限（不含等待你的时间），原程序没有按时结束，已被强制结束。结果尚待核实，不会自动重新执行。",
     RELAY_INPUT_LIMIT: "这条消息和交接单合起来超过了这个 Harness 能收的大小，这条消息没有发出。可以只发这条消息，或把消息拆短。",
     RELAY_PREPARE_FAILED: "你选了附上交接单，但它没有准备好，这条消息没有发出，草稿已保留。可以重试，或选“只发这条消息”。",
     LOGIN_SHELL_UNAVAILABLE: "HarnessHub 没有运行你的登录 shell：它必须是列在 /etc/shells 中的绝对路径。用 Homebrew 等方式安装、没有加入这个文件的 shell 常见这种情况。搜索目录没有变化。",

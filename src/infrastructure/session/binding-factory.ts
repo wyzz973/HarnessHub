@@ -15,7 +15,7 @@ import { chooseControl } from "../../contexts/catalog/application/select-control
 import { inventory } from "../catalog/inventory-composition.js";
 import type { CleanupEvidence, ControlLaunch, HarnessControl } from "../../contracts/control.js";
 import { resolveHostBudgets, type HostBudgets } from "../../contracts/native-host.js";
-import { NATIVE_TURN_HARD_CAP_MS, SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest,
+import { SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest,
   type SessionBindingFactory, type SessionConfiguration, type SessionId, type WorkspaceLease,
   type WorkspaceLeaseProvider } from "../../contracts/session.js";
 import { MAX_CATALOG_BYTES, type ControlObservation, type InstallationPolicy, type ResolvedCommand } from "../../contexts/catalog/domain/catalog.js";
@@ -24,8 +24,13 @@ import { credentialValues } from "../../contexts/session/domain/relay/redaction.
 import { HostTmpdirs, type HostTmpdir, type HostTmpdirIdentity } from "./host-tmpdir.js";
 import type { TableAttachment, TableMount } from "../table/mount.js";
 import type { NativeExtensions, NativeModelCatalog, NativeSessionImport, NativeSessionPage } from "../../contracts/control.js";
-/** Reading a long native history (an ACP agent replays it in full) is bounded separately from Turn budgets. */
-const NATIVE_IMPORT_MS = 120_000;
+/** Reading a long native history (an ACP agent replays it in full) is bounded separately from Turn budgets, and long: a history of a long conversation takes minutes to replay. */
+const NATIVE_IMPORT_MS = 10 * 60_000;
+/**
+ * How long a Harness's start is waited for before the Turn fails and says which step it was waiting for (the handshake, or opening its
+ * session). Starting its plugins and MCP servers can take a minute or two, the first time more; this is for a start that is stuck, not slow.
+ */
+const NATIVE_STARTUP_MS = 5 * 60_000;
 import type { NativeInstallationLocks, NativeUsageLease } from "../management/native-lock.js";
 
 export interface ConfigurationInput {
@@ -283,9 +288,9 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       // that Harness's configuration holds the entry. A kept process keeps this answer; a probe that cannot tell says no.
       const hubTools = attached !== null && this.table !== null && selection.provider === undefined && configuration.configHome === null && await this.table.hasTools(selection.harnessId);
       const launch: ControlLaunch = { ...observed.selected.command, env: environment, protocol };
-      // The Turn's budgets are the Runtime's (ADR-036); the driver's own timeout only backstops a hung protocol. The close grace
-      // is the host budgets' (ADR-056 §4.11); a Turn's close never waits for what left the program's group.
-      const options = { cwd: configuration.workspace, env: environment, requestTimeoutMs: 10000, runTimeoutMs: NATIVE_TURN_HARD_CAP_MS,
+      // A Turn has no time wall (2026-11-12): the driver sets no deadline for it, and the Runtime stops it only for an operator's budget or
+      // the user. The close grace is the host budgets' (ADR-056 §4.11); a Turn's close never waits for what left the program's group.
+      const options = { cwd: configuration.workspace, env: environment, requestTimeoutMs: 10000, startupTimeoutMs: NATIVE_STARTUP_MS,
         maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024, closeGraceMs: this.budgets.closeGraceMs,
         ...(selection.nativeOptions === undefined ? {} : { selectedOptions: selection.nativeOptions }) };
       this.assertOwner(); lease.assertOwned();

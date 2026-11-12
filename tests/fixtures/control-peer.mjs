@@ -55,6 +55,8 @@ function hermesBlocked(sessionId, id = "terminal-blocked") {
   notification("session/update", { sessionId, update: { sessionUpdate: "tool_call_update", toolCallId: id, kind: "execute", status: "completed", content: [{ type: "content", content: { type: "text", text: "terminal failed: BLOCKED: User denied. Do NOT retry." } }] } });
 }
 const lines = createInterface({ input: process.stdin });
+// FIXTURE_DEAF_MS: a program that takes in no input for this long at first (a busy one, reading late).
+if (Number(process.env.FIXTURE_DEAF_MS ?? 0) > 0) { lines.pause(); setTimeout(() => lines.resume(), Number(process.env.FIXTURE_DEAF_MS)); }
 let promptId = null, turn = 0, initialized = false, pendingPermission = false;
 // The workspace of the session Hermes opened last (session/new names it), where STEP_APPROVAL waits for its go-ahead.
 let sessionCwd = null;
@@ -166,6 +168,18 @@ lines.on("line", line => {
     if (scenario === "bad-json") { process.stdout.write("not-json\n"); return; }
     if (scenario === "bad-utf8") { process.stdout.write(Buffer.from([0xff, 0x0a])); return; }
     if (scenario === "huge") { process.stdout.write(`${" ".repeat(100000)}\n`); return; }
+    // One answer far larger than a chunk of the pipe (FIXTURE_BIG_BYTES, 64 MiB by default), written in pieces: the client assembles a big frame from many chunks.
+    if (scenario === "bigframe") {
+      const total = Number(process.env.FIXTURE_BIG_BYTES ?? 64 * 1024 * 1024), head = `{"jsonrpc":"2.0","id":${JSON.stringify(message.id)},"result":{"text":"`, piece = "x".repeat(64 * 1024);
+      let written = 0;
+      process.stdout.write(head);
+      function more() {
+        while (written < total) { const size = Math.min(piece.length, total - written); written += size; if (!process.stdout.write(size === piece.length ? piece : piece.slice(0, size))) { process.stdout.once("drain", more); return; } }
+        process.stdout.write('"}}\n');
+      }
+      more();
+      return;
+    }
     if (scenario === "half") { process.stdout.write('{"id":'); process.exit(0); }
     if (scenario === "orphan") {
       const child = spawn(process.execPath, ["-e", "process.stdin.resume();setInterval(()=>{},1000)"], { stdio: ["ignore", "inherit", "inherit"] });
@@ -186,11 +200,14 @@ lines.on("line", line => {
     if (protocol === "codex-app-server") experimental = message.params?.capabilities?.experimentalApi === true;
     // claude-agent-acp pushes its sign-in report after the initialize response. FIXTURE_AUTH_AT=initialize sends the report
     // in the same write, so the client reads both from one chunk.
+    // FIXTURE_INITIALIZE_DELAY_MS: a program that is slow to start answers its handshake late.
+    if (Number(process.env.FIXTURE_INITIALIZE_DELAY_MS ?? 0) > 0) { setTimeout(() => answer(message.id, result), Number(process.env.FIXTURE_INITIALIZE_DELAY_MS)); return; }
     if (scenario === "claude-auth" && process.env.FIXTURE_AUTH_AT === "initialize") emitAtomicBatch([{ id: message.id, result }, { method: "_auth/status_update", params: claudeAuthStatus(process.env.FIXTURE_AUTH_KIND) }]);
     else answer(message.id, result);
     if (scenario === "flood") {
-      let remaining = 10000;
-      const frame = `${JSON.stringify({ jsonrpc: "2.0", method: "fixture/flood", params: { text: "x".repeat(2048) } })}\n`;
+      // FIXTURE_FLOOD_FRAMES frames of FIXTURE_FLOOD_BYTES each (10,000 of 2 KiB by default).
+      let remaining = Number(process.env.FIXTURE_FLOOD_FRAMES ?? 10000);
+      const frame = `${JSON.stringify({ jsonrpc: "2.0", method: "fixture/flood", params: { text: "x".repeat(Number(process.env.FIXTURE_FLOOD_BYTES ?? 2048)) } })}\n`;
       function drain() {
         while (remaining-- > 0) if (!process.stdout.write(frame)) { process.stdout.once("drain", drain); return; }
       }

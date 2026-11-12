@@ -26,6 +26,8 @@ import { LocalOfficialInstaller } from "./official-install.js";
 import { LocalInstallationUpgrader, sharedRuntimes } from "./installation-upgrade.js";
 
 export interface ManagementOptions {
+  /** How many jobs may wait to run at once (MAX_QUEUED_JOBS, 256, unless set). */
+  readonly maxQueuedJobs?: number;
   readonly installationMode?: "native" | "private-fixture";
   readonly native?: NativeManagementPort;
   readonly nativeEnvironment?: NativeEnvironment;
@@ -53,6 +55,13 @@ export interface ManagementOptions {
 }
 /** How long a prepared official install or installation upgrade waits for the user's confirmation (ADR-044). */
 const INSTALL_CHECK_MS = 15 * 60 * 1000;
+/**
+ * Jobs that may wait to run at once (they run one at a time): a guard against a client that submits without end, far above what a user
+ * queues by hand (it was 8). The table of finished jobs has no bound of its own.
+ */
+const MAX_QUEUED_JOBS = 256;
+/** The chunks of 4 KiB a job's log keeps; what a job prints beyond them is not kept and the log says so, never failing the job. */
+const LOG_CHUNKS_PER_JOB = 2048;
 /** A Homebrew upgrade may build or download for longer than other maintenance (ADR-044). */
 const HOMEBREW_UPGRADE_MS = 15 * 60 * 1000;
 /** A product's documented upgrade sequence (ADR-052) downloads, installs and migrates one release per hop: an hour each, when the owner set no other budget. */
@@ -328,7 +337,7 @@ export class LocalHarnessManagement {
     if (this.storage.db.prepare("SELECT id FROM management_commands WHERE id=?").get(request.commandId)) throw new ManagementError("COMMAND_CONFLICT", "management command identity already used by cancellation");
     if (this.storage.db.prepare("SELECT id FROM management_jobs WHERE harness_id=? AND status NOT IN('completed','cancelled','failed','unknown')").get(request.harnessId)) throw new ManagementError("MANAGEMENT_BUSY", "this Harness already has an active installation job");
     const queued = this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs WHERE status='queued'").get()?.n;
-    if (typeof queued !== "number" || queued >= 8 || this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n === 2048) throw new ManagementError("QUEUE_LIMIT", "installation job queue or storage budget exhausted");
+    if (typeof queued !== "number" || queued >= (this.options.maxQueuedJobs ?? MAX_QUEUED_JOBS)) throw new ManagementError("QUEUE_LIMIT", "installation job queue or storage budget exhausted");
     const time = this.now(), job: InstallationJobView = { id: "management-" + randomUUID(), harnessId: target.harnessId, controlId: target.controlId, action: "uninstall", status: "queued", phase: "queued",
       cancelRequested: false, createdAt: time, updatedAt: time, resolvedVersion: target.version, installationId: null, error: null, logCursor: 0,
       native: { channel: target.channel, location: this.shown(target.entry), beforeVersion: target.version, actualVersion: null, dispatched: false, configurationPreserved: null,
@@ -404,7 +413,7 @@ export class LocalHarnessManagement {
     if (this.storage.db.prepare("SELECT id FROM management_commands WHERE id=?").get(request.commandId)) throw new ManagementError("COMMAND_CONFLICT", "management command identity already used by cancellation");
     if (this.storage.db.prepare("SELECT id FROM management_jobs WHERE harness_id=? AND status NOT IN('completed','cancelled','failed','unknown')").get(request.harnessId)) throw new ManagementError("MANAGEMENT_BUSY", "this Harness already has an active installation job");
     const queued = this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs WHERE status='queued'").get()?.n;
-    if (typeof queued !== "number" || queued >= 8 || this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n === 2048) throw new ManagementError("QUEUE_LIMIT", "installation job queue or storage budget exhausted");
+    if (typeof queued !== "number" || queued >= (this.options.maxQueuedJobs ?? MAX_QUEUED_JOBS)) throw new ManagementError("QUEUE_LIMIT", "installation job queue or storage budget exhausted");
     const id = "management-" + randomUUID(), parent = join(this.storage.root, "install-jobs"); mkdirSync(parent, { recursive: true, mode: 0o700 }); managementIdentity(parent, true);
     const directory = join(parent, id); renameSync(entry.directory, directory); managementIdentity(directory, true); this.prepared.delete(request.expectedInstallFingerprint);
     const prepared: PreparedInstall = { ...entry.prepared, script: entry.prepared.script === null ? null : join(directory, basename(entry.prepared.script)) };
@@ -688,7 +697,7 @@ export class LocalHarnessManagement {
     if (this.storage.db.prepare("SELECT id FROM management_commands WHERE id=?").get(request.commandId)) throw new ManagementError("COMMAND_CONFLICT", "management command identity already used by cancellation");
     if (this.storage.db.prepare("SELECT id FROM management_jobs WHERE harness_id=? AND status NOT IN('completed','cancelled','failed','unknown')").get(request.harnessId)) throw new ManagementError("MANAGEMENT_BUSY", "this Harness already has an active installation job");
     const queued = this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs WHERE status='queued'").get()?.n;
-    if (typeof queued !== "number" || queued >= 8 || this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n === 2048) throw new ManagementError("QUEUE_LIMIT", "installation job queue or storage budget exhausted");
+    if (typeof queued !== "number" || queued >= (this.options.maxQueuedJobs ?? MAX_QUEUED_JOBS)) throw new ManagementError("QUEUE_LIMIT", "installation job queue or storage budget exhausted");
     if (entry.prepared.runtime !== null && !entry.prepared.runtime.satisfied) throw new ManagementError("RUNTIME_INCOMPATIBLE", "这份安装用的 Node.js 不满足新版本的要求，没有升级。");
     const id = "management-" + randomUUID(), parent = join(this.storage.root, "install-jobs"); mkdirSync(parent, { recursive: true, mode: 0o700 }); managementIdentity(parent, true);
     const directory = join(parent, id); renameSync(entry.directory, directory); managementIdentity(directory, true); this.preparedUpgrades.delete(request.expectedInstallationFingerprint);
@@ -841,8 +850,6 @@ export class LocalHarnessManagement {
   }
   listJobs(limit?: number): readonly InstallationJobView[] {
     this.own(); const count = boundedManagementLimit(limit, 1000);
-    const total = this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n;
-    if (typeof total !== "number" || total > 2048) throw new ManagementError("STORAGE_LIMIT", "installation job budget exceeded");
     this.payloadBudgets();
     return this.storage.db.prepare("SELECT id,harness_id,status,view_json FROM management_jobs ORDER BY rowid DESC LIMIT ?").all(count).map(row => this.parseJobRow(row));
   }
@@ -865,12 +872,14 @@ export class LocalHarnessManagement {
   private saveJob(job: InstallationJobView): void {
     this.own(); parseManagementJob(job); this.storage.db.prepare("UPDATE management_jobs SET status=?,view_json=? WHERE id=?").run(job.status, JSON.stringify(job), job.id);
   }
+  /**
+   * Each stored payload is held to its own byte bound (a row that is larger is not one of ours: INVALID_DATA). The number of rows and the
+   * bytes of a table are not bounded any more (2026-11-12): a table that only grows must never be what makes the page's state unreadable
+   * or the service unable to start, and a user who has installed and upgraded for years has thousands of jobs.
+   */
   private payloadBudgets(): void {
-    for (const [table, column, size, maximum] of [["management_jobs", "view_json", 65536, 2048], ["management_installations", "record_json", 65536, 2048],
-      ["management_updates", "view_json", 65536, 256], ["management_logs", "entry_json", 32768, 65536], ["management_native_plans", "plan_json", 32768, 2048], ["management_installation_targets", "target_json", 32768, 2048], ["management_install_requests", "request_json", 32768, 2048], ["management_installation_upgrades", "request_json", 32768, 2048]] as const) {
-      const total = this.storage.db.prepare("SELECT count(*) AS count,coalesce(sum(length(CAST(" + column + " AS BLOB))),0) AS bytes FROM " + table).get();
-      if (!total || typeof total.count !== "number" || total.count > maximum || typeof total.bytes !== "number" || total.bytes > 32 * 1024 * 1024)
-        throw new ManagementError("STORAGE_LIMIT", "management storage exceeded its row or byte budget");
+    for (const [table, column, size] of [["management_jobs", "view_json", 65536], ["management_installations", "record_json", 65536],
+      ["management_updates", "view_json", 65536], ["management_logs", "entry_json", 32768], ["management_native_plans", "plan_json", 32768], ["management_installation_targets", "target_json", 32768], ["management_install_requests", "request_json", 32768], ["management_installation_upgrades", "request_json", 32768]] as const) {
       if (this.storage.db.prepare("SELECT 1 FROM " + table + " WHERE length(CAST(" + column + " AS BLOB))>? LIMIT 1").get(size))
         throw new ManagementError("INVALID_DATA", "management payload exceeded its byte budget");
     }
@@ -1007,7 +1016,7 @@ export class LocalHarnessManagement {
     const active = this.storage.db.prepare("SELECT id FROM management_jobs WHERE harness_id=? AND status NOT IN('completed','cancelled','failed','unknown')").get(request.harnessId);
     if (active) throw new ManagementError("MANAGEMENT_BUSY", "this Harness already has an active installation job");
     const queued = this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs WHERE status='queued'").get()?.n;
-    if (typeof queued !== "number" || queued >= 8 || this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n === 2048)
+    if (typeof queued !== "number" || queued >= (this.options.maxQueuedJobs ?? MAX_QUEUED_JOBS))
       throw new ManagementError("QUEUE_LIMIT", "installation job queue or storage budget exhausted");
     const revision = this.defaultRevision(request.harnessId);
     if (request.expectedDefaultRevision !== undefined && request.expectedDefaultRevision !== revision) throw new ManagementError("DEFAULT_CONFLICT", "managed default changed since it was read");
@@ -1040,7 +1049,10 @@ export class LocalHarnessManagement {
     const chunks: string[] = []; let part = "", bytes = 0;
     for (const char of cleaned) { const size = Buffer.byteLength(char, "utf8"); if (bytes + size > 4096) { chunks.push(part); part = ""; bytes = 0; } part += char; bytes += size; }
     if (part || chunks.length === 0) chunks.push(part);
-    if (job.logCursor + chunks.length > 2048) throw new ManagementError("LOG_LIMIT", "installation log budget exhausted");
+    // A job's log keeps its first LOG_CHUNKS_PER_JOB chunks of 4 KiB and then says once that the rest was not kept: an installer that is
+    // very talkative must not fail the installation (it used to, with LOG_LIMIT).
+    if (job.logCursor >= LOG_CHUNKS_PER_JOB) return;
+    if (job.logCursor + chunks.length > LOG_CHUNKS_PER_JOB) { chunks.length = Math.max(0, LOG_CHUNKS_PER_JOB - 1 - job.logCursor); chunks.push("…（日志已达上限，之后的输出没有保存）"); }
     this.storage.db.exec("BEGIN IMMEDIATE"); try {
       for (const text of chunks) { const entry: InstallationLog = { seq: job.logCursor + 1, time: this.now(), stream, text };
         this.storage.db.prepare("INSERT INTO management_logs(job_id,seq,entry_json) VALUES(?,?,?)").run(id, entry.seq, JSON.stringify(entry)); job = { ...job, logCursor: entry.seq, updatedAt: entry.time }; }

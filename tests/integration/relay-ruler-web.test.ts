@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { TABLE_ENV } from "../../src/contracts/table.js";
-import { DEFAULT_WAIT_BUDGET_MS } from "../../src/contracts/session.js";
 import { WatchedMount } from "../real/ruler/mount.js";
 import { openWebHub } from "../real/ruler/web.js";
 
@@ -46,7 +45,7 @@ test("the ruler's web Hub gives a native process the table: its token is good at
   await mkdir(workspace); await mkdir(home);
   const mount = new WatchedMount();
   // A private home and a PATH that holds none of this computer's Harnesses: the Hub's start-up discovery finds the fixture only.
-  hub = await openWebHub({ workspace, data }, { mount, installations: "any", locks: join(root, "locks"), budgets: { executionBudgetMs: 60_000, waitBudgetMs: DEFAULT_WAIT_BUDGET_MS }, manifest, environment: { home, values: { HOME: home, PATH: "/usr/bin:/bin" } } });
+  hub = await openWebHub({ workspace, data }, { mount, installations: "any", locks: join(root, "locks"), budgets: { executionBudgetMs: 60_000 }, manifest, environment: { home, values: { HOME: home, PATH: "/usr/bin:/bin" } } });
   assert.match(mount.url ?? "", /^http:\/\/127\.0\.0\.1:[0-9]{1,5}$/u, "the server gave the mount its address");
   assert.ok(hub.table !== undefined, "the cell's Hub says it has a mount to ask");
 

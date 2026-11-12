@@ -212,25 +212,14 @@ export function ChatPage(props: ChatProps) {
     }
     return hints;
   }, [session?.runs, props.readiness]);
-  // The queued Turn names the conversation whose work holds the workspace (ADR-036); whether that one waits for the user
-  // follows the pushed list of waiting requests, and the view's own answer until the first list arrives.
+  // A Turn queues only for a slot, when an operator limited how many conversations run at once; conversations that share a workspace do not wait.
   const [cancellingQueue, setCancellingQueue] = useState<string | null>(null);
   const queue = session?.queue ?? null;
   const queueNotice = useMemo((): QueueNotice | undefined => {
     if (queue === null) return undefined;
-    const cancel = { cancelling: cancellingQueue === queue.runId,
+    return { kind: "slot", running: queue.running, cancelling: cancellingQueue === queue.runId,
       onCancel: props.onCancelQueued ? () => { setCancellingQueue(queue.runId); void props.onCancelQueued!(queue.runId).finally(() => setCancellingQueue(null)); } : undefined };
-    if (queue.kind === "slot") return { kind: "slot", running: queue.running, ...cancel };
-    const holder = queue.holderSessionId, waiting = props.attention?.filter(item => item.sessionId === holder);
-    const holderWaits = waiting === undefined ? queue.holderWaitsForUser ? "approval" as const : null
-      : waiting.some(item => item.kind === "approval") ? "approval" as const : waiting.length ? "question" as const : null;
-    return { kind: "workspace", holderTitle: shortTitle(props.sessionTitle?.(holder)), holderWaits, endsAt: queue.endsAt, ...cancel,
-      onOpen: props.onOpenSession ? () => props.onOpenSession!(holder) : undefined };
-  }, [queue, props.attention, props.sessionTitle, props.onOpenSession, props.onCancelQueued, cancellingQueue]);
-  const busyHolder = useCallback((runId: string) => {
-    const holder = session?.busyHolders?.[runId];
-    return holder === undefined || !props.onOpenSession ? undefined : { title: shortTitle(props.sessionTitle?.(holder)), onOpen: () => props.onOpenSession!(holder) };
-  }, [session?.busyHolders, props.sessionTitle, props.onOpenSession]);
+  }, [queue, props.onCancelQueued, cancellingQueue]);
 
   const scrollToLatest = useCallback(() => {
     const element = scroll.current; if (!element) return;
@@ -401,7 +390,7 @@ export function ChatPage(props: ChatProps) {
     return <ProtocolTurn key={"turn:" + run.id} run={run} message={messageOf} arrived={arrived} detailed={detailed} onEdit={fillDraft}
       onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
       onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? current.runs.at(-1)?.id) === run.id} onViewPacket={relay ? viewPacket : undefined}
-      startupHint={startupHints.get(run.id)} queue={queue?.runId === run.id ? queueNotice : undefined} busyHolder={busyHolder(run.id)}
+      startupHint={startupHints.get(run.id)} queue={queue?.runId === run.id ? queueNotice : undefined}
       waiting={open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{turnRequests(run.id)}</ProtocolTurn>;
   });
 

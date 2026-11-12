@@ -13,7 +13,8 @@ import { dispatched } from "./relay/advance.js";
 
 export const MAX_RUNS = 256;
 export const MAX_COMMANDS = 1024;
-export const MAX_QUEUE = 8;
+/** Inputs a conversation holds waiting: its queued Turns are Runs, so the conversation's own Run limit bounds them (it was 8 until 2026-11-12). */
+export const MAX_QUEUE = MAX_RUNS;
 export const MAX_INPUT_BYTES = 64 * 1024;
 export const MAX_OUTPUT_BYTES = 1024 * 1024;
 export const MAX_CONTEXT_BYTES = 1024 * 1024;

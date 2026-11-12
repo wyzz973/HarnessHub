@@ -9,6 +9,8 @@ interface State { readonly held: boolean; readonly token: string | null; readonl
 // SQLite's POSIX locks are process-scoped: opening/closing another FD to the
 // same file could release existing locks. Refuse same-process contenders before
 // touching the file. Other processes contend on SQLite's OS lock.
+// The conversations of one provider (one Gateway) are not contenders: they share the lease it holds
+// (see `SharedWorkspaceLease`); only another provider in this process, or another process, is refused.
 const active = new Set<string>();
 
 function absolute(path: string, label: string): void {
@@ -76,6 +78,8 @@ function closeDatabase(db: DatabaseSync | undefined): void {
 export class SqliteWorkspaceLeaseProvider implements WorkspaceLeaseProvider {
   private readonly root: string;
   private readonly rootIdentity: FileIdentity;
+  /** The leases this provider holds, by workspace: a second conversation of the same Gateway in a workspace joins the one lease. */
+  private readonly shared = new Map<string, SharedWorkspaceLease>();
   constructor(lockRoot: string) {
     absolute(lockRoot, "workspace lock root");
     try {
@@ -91,6 +95,9 @@ export class SqliteWorkspaceLeaseProvider implements WorkspaceLeaseProvider {
   /**
    * Resolves workspace aliases before deriving the stable key. Never waits for
    * another owner, uses PID/TTL takeover, or clears a previous held record.
+   * Every conversation of one Gateway may work in a workspace at once (2026-11-12: the Hub does not queue them, it tells the later
+   * Turn who else is there): its second and later holders join the lease the first took, which is released with the last of them.
+   * Only another Gateway, in this process or another, is a contender and is refused.
    */
   acquire(workspace: string, session: SessionId, run: string): WorkspaceLease {
     absolute(workspace, "workspace");
@@ -109,6 +116,8 @@ export class SqliteWorkspaceLeaseProvider implements WorkspaceLeaseProvider {
     const key = createHash("sha256").update(canonical).digest("hex");
     const lockPath = join(this.root, `${key}.lock.sqlite`);
     const statePath = join(this.root, `${key}.state.sqlite`);
+    const joined = this.shared.get(lockPath);
+    if (joined !== undefined) return joined.join();
     if (active.has(lockPath)) throw new SessionError("WORKSPACE_BUSY", "another owner holds the workspace lease");
     let lockDb: DatabaseSync | undefined;
     let stateDb: DatabaseSync | undefined;
@@ -155,7 +164,9 @@ export class SqliteWorkspaceLeaseProvider implements WorkspaceLeaseProvider {
       stateDb.prepare("UPDATE workspace_state SET held = 1, token = ?, session = ?, run = ? WHERE id = 1 AND held = 0").run(token, session, run);
       stateDb.exec("COMMIT");
       active.add(lockPath);
-      return new SqliteWorkspaceLease(lockDb, stateDb, token, canonical, workspaceIdentity, this.root, this.rootIdentity, lockPath, lockIdentity, statePath, stateIdentity);
+      const shared = new SharedWorkspaceLease(new SqliteWorkspaceLease(lockDb, stateDb, token, canonical, workspaceIdentity, this.root, this.rootIdentity, lockPath, lockIdentity, statePath, stateIdentity), () => { this.shared.delete(lockPath); });
+      this.shared.set(lockPath, shared);
+      return shared.join();
     } catch (error) {
       let cleanupError: unknown;
       try { closeDatabase(stateDb); } catch (closeError) { cleanupError = closeError; }
@@ -204,6 +215,45 @@ export class SqliteWorkspaceLeaseProvider implements WorkspaceLeaseProvider {
       try { closeDatabase(lockDb); } catch (closeError) { cleanupError ??= closeError; }
       if (cleanupError) throw new SessionError("WORKSPACE_STORAGE", "abandoned lease release could not close its storage");
     }
+  }
+}
+
+/**
+ * One workspace lease held for several conversations of one Gateway. `join()` hands each holder its own handle; the lease is
+ * released when the last handle is, and quiescent only if every handle was released with its program confirmed ended (one that was
+ * not keeps the workspace quarantined, as it would have alone). Ownership is the lease's: a handle is owned while the lease is.
+ */
+class SharedWorkspaceLease {
+  private holders = 0;
+  private quiescent = true;
+  private released = false;
+  constructor(private readonly lease: SqliteWorkspaceLease, private readonly done: () => void) {}
+  join(): WorkspaceLease {
+    this.lease.assertOwned();
+    this.holders += 1;
+    return new LeaseHandle(this);
+  }
+  assertOwned(): void { this.lease.assertOwned(); }
+  /** One holder lets go; the last releases the lease itself, quiescent only if every holder was. */
+  let(quiescent: boolean): void {
+    this.holders -= 1; this.quiescent &&= quiescent;
+    if (this.holders > 0 || this.released) return;
+    this.released = true; this.done();
+    this.lease.release(this.quiescent);
+  }
+}
+/** One conversation's hold on a shared lease. */
+class LeaseHandle implements WorkspaceLease {
+  private open = true;
+  constructor(private readonly shared: SharedWorkspaceLease) {}
+  assertOwned(): void {
+    if (!this.open) throw new SessionError("WORKSPACE_OWNERSHIP_LOST", "workspace lease is closed");
+    this.shared.assertOwned();
+  }
+  release(quiescent: boolean): void {
+    if (!this.open) return;
+    this.open = false;
+    this.shared.let(quiescent);
   }
 }
 

@@ -3,7 +3,7 @@ import { parseProviderTarget } from "../../../contracts/provider.js";
 import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeToolDetail, type NativeUsage } from "../../../contracts/control.js";
 import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import {
-  SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, DEFAULT_EXECUTION_BUDGET_MS, DEFAULT_WAIT_BUDGET_MS, MAX_PARALLEL_CONVERSATIONS, STOP_GRACE_MS, STREAM_WINDOW_BYTES, STREAM_WINDOW_MS,
+  SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, STOP_GRACE_MS, STREAM_WINDOW_BYTES, STREAM_WINDOW_MS,
   type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type OutsideEvidence, type OutsideProcess, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
@@ -27,7 +27,7 @@ import {
   rangeOf, recordedStep, relayDeclaration, relaySettings, renderView, runRelayOf, runRelayRequest, settleTurn, undeclaredReading,
   type RelayChoices, type RelayDeclaration, type RelaySettings, type SettledTurn, type TurnDecision,
 } from "./relay-coordinator.js";
-import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_PLAN_ENTRIES, MAX_QUEUE, MAX_RUNS, MAX_RUN_ACTIVITIES, MAX_RUN_NOTICES, MAX_RUN_TOOLS, assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
+import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_PLAN_ENTRIES, MAX_RUNS, MAX_RUN_ACTIVITIES, MAX_RUN_NOTICES, MAX_RUN_TOOLS, assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
 
 interface ActiveExecution {
   readonly sessionId: SessionId;
@@ -47,10 +47,12 @@ interface ActiveExecution {
   /** Where this Turn's stderr begins in its program's stderr, for its diagnostics; null before a program serves it. */
   diagnosticMark: number | null;
   /**
-   * The Turn's budgets (ADR-036): what is left of each, whether it waits for the user now, since when (monotonic), and the
-   * timer of the one that runs.
+   * The Turn's time (it has no time wall, 2026-11-12): how long it has worked before `since` (monotonic; the clock stops while it
+   * waits for the user), whether it waits for the user now, what is left of the budgets an operator set (null: none), the cancels
+   * of the timer that watches those and of the one that says "still working", how many of those hints were said, and when its
+   * Harness last sent anything.
    */
-  readonly budget: { executionLeftMs: number; waitLeftMs: number; waiting: boolean; since: number; timer: ReturnType<typeof setTimeout> | null };
+  readonly clock: { workedMs: number; since: number; waiting: boolean; executionLeftMs: number | null; waitLeftMs: number | null; budget: (() => void) | null; hint: (() => void) | null; hinted: number; lastEventAt: number };
   /** Why the Runtime stopped this Turn on its own, when it did. */
   stopReason: "RUN_TIMEOUT" | "WAIT_EXPIRED" | null;
   /** Ends the program when it has not settled once the stop grace has passed. */
@@ -92,8 +94,6 @@ interface KeptProcess {
 }
 /** Why a kept process was closed; each close is recorded for its conversation. */
 type KeptRelease = "idle" | "disabled" | "ended_by_user" | "selection_changed" | "conversation_closed" | "native_reset" | "branched" | "exited" | "gateway_shutdown" | "harness_upgrade";
-/** At most this many processes are kept at once (ADR-030). */
-const KEPT_LIMIT = 4;
 /** A kept process without a Turn for this long is closed (ADR-030). */
 export const KEPT_IDLE_MS = 30 * 60 * 1000;
 function sameSelection(left: HarnessSelection, right: HarnessSelection): boolean {
@@ -135,7 +135,6 @@ function safeName(value: string): string { return value.replace(/[^A-Za-z0-9._-]
 function joinedBytes(priorBytes: number, priorLast: string, next: string): number {
   return priorBytes - utf8Bytes(priorLast) + utf8Bytes(priorLast + next);
 }
-const MAX_PENDING_CREATES = 16;
 function requested(value: SelectionRequest): SelectionRequest {
   if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => key !== "harnessId" && key !== "controlId" && key !== "provider" && key !== "nativeModel" && key !== "nativeOptions") ||
     typeof value.harnessId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(value.harnessId) ||
@@ -157,8 +156,6 @@ function fault(error: unknown): { readonly code: string; readonly message: strin
 }
 /** How much of a Turn's stderr is kept for its diagnostics, and for how many Turns. */
 const RUN_DIAGNOSTIC_BYTES = 4096, MAX_RUN_DIAGNOSTICS = 64;
-/** Longest wait a driver may announce for one request (a day); anything else is ignored rather than shown. */
-const MAX_PERMISSION_WAIT_MS = 24 * 60 * 60 * 1000;
 /** A commit's failure that fails only what asked for it (INV-35: a relay error; a bound), never the Runtime. */
 function expectedFailure(error: unknown): boolean {
   return error instanceof RelayError || error instanceof SessionError && ["OUTPUT_LIMIT", "QUEUE_FULL", "COMMAND_LIMIT", "RUN_LIMIT", "SESSION_LIMIT", "EVENT_LIMIT"].includes(error.code);
@@ -171,13 +168,51 @@ const STRANDED_SWITCH = { code: "SWITCH_SOURCE_UNKNOWN", message: "the Turn this
  * below a clear too ("附上交接单", "再附一次"). Without a choice the relay decides.
  */
 export type RelayChoice = RelayChoices;
-/** A duration in the user's words: seconds below a minute, whole minutes otherwise. */
-function duration(ms: number): string { return ms < 1000 ? ms + " 毫秒" : ms < 60_000 ? Math.round(ms / 1000) + " 秒" : Math.round(ms / 60_000) + " 分钟"; }
-/** What the conversation says when the Runtime stopped a Turn on its own (ADR-036). */
-function budgetNotice(kind: "execution" | "wait", budgetMs: number): PublicNotice {
-  return kind === "wait" ? { severity: "warning", title: "等待期限已到", detail: `等待你的决定超过 ${duration(budgetMs)}，本回合已取消；原程序没有收到决定。` }
-    : { severity: "warning", title: "执行期限已到", detail: `本回合的执行时间（不含等待你的时间）超过 ${duration(budgetMs)}，HarnessHub 已停止它。` };
+/** A duration in the user's words: seconds below a minute, whole minutes below two hours, hours (and the minutes over) beyond. */
+function duration(ms: number): string {
+  if (ms < 1000) return ms + " 毫秒";
+  if (ms < 60_000) return Math.round(ms / 1000) + " 秒";
+  if (ms < 120 * 60_000) return Math.round(ms / 60_000) + " 分钟";
+  const hours = Math.floor(ms / 3_600_000), minutes = Math.round((ms - hours * 3_600_000) / 60_000);
+  return minutes === 0 ? hours + " 小时" : hours + " 小时 " + minutes + " 分钟";
 }
+/** What the conversation says when the Runtime stopped a Turn on its own: only an operator's budget does it (ADR-036, superseded 2026-11-12). */
+function budgetNotice(kind: "execution" | "wait", budgetMs: number): PublicNotice {
+  return kind === "wait" ? { severity: "warning", title: "等待期限已到", detail: `等待你的决定超过了设置的 ${duration(budgetMs)}，本回合已取消；原程序没有收到决定。` }
+    : { severity: "warning", title: "执行期限已到", detail: `本回合的执行时间（不含等待你的时间）超过了设置的 ${duration(budgetMs)}，HarnessHub 已按设置停止它。` };
+}
+/**
+ * The hint a Turn that goes on gets at the marks of its working time: it is not stopped and nothing is asked; the user may stop it at
+ * any time. When its Harness has sent nothing for a while the hint says how long, since a quiet Harness is the one that may be stuck.
+ */
+function workingNotice(workedMs: number, quietMs: number | null): PublicNotice {
+  return { severity: "info", title: `已运行 ${duration(workedMs)}，仍在工作`,
+    detail: "HarnessHub 不给回合设时间上限，会一直等它做完；想停下可以随时点停止。" + (quietMs === null ? "" : `最近 ${duration(quietMs)} 没有收到这个 Harness 的任何动静，可能在等一个很慢的步骤，也可能卡住了。`) };
+}
+/** The hint a Turn gets when another conversation is working in its directory: the Hub did not make it wait. */
+function sharedNotice(others: number): PublicNotice {
+  return { severity: "info", title: "另一个对话也在这个目录里工作",
+    detail: (others === 1 ? "另一个对话" : `另外 ${others} 个对话`) + "正在同一个目录里工作，HarnessHub 没有让这一轮等它；两边改同一批文件时可能互相覆盖。" };
+}
+/** The hint a Turn gets when it asked to keep its process and the limit an operator set on kept processes was reached. */
+function keptSkippedNotice(limit: number): PublicNotice {
+  return { severity: "info", title: "这一轮的 Harness 进程没有保留", detail: `已经保留了 ${limit} 个对话的 Harness 进程，达到了设置的上限；下一轮会重新启动它。` };
+}
+/** The longest a timer can wait; a longer wait is chained. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+/** Runs `fn` once after `ms`, however long, without keeping the process alive; returns what cancels it. */
+function after(ms: number, fn: () => void): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = (left: number): void => {
+    timer = setTimeout(() => { if (left > MAX_TIMER_MS) arm(left - MAX_TIMER_MS); else fn(); }, Math.min(left, MAX_TIMER_MS));
+    timer.unref?.();
+  };
+  arm(Number.isFinite(ms) ? Math.max(0, ms) : MAX_TIMER_MS);
+  return () => { if (timer !== undefined) clearTimeout(timer); };
+}
+/** The marks of a Turn's working time at which it says it goes on (10 min, 30 min, 1 h, 2 h, 4 h, 8 h, then again every 8 h), and how long its Harness may be quiet before the hint says so. */
+const WORKING_HINTS_MS: readonly number[] = [10, 30, 60, 120, 240, 480].map(minutes => minutes * 60_000);
+const QUIET_NOTE_MS = 5 * 60_000;
 /** Adds a notice of the Hub itself to a Run, within the Run's notice budget. */
 function withNotice(state: SessionSnapshot, id: string, notice: PublicNotice): SessionSnapshot {
   const run = state.runs.find(item => item.id === id);
@@ -231,20 +266,17 @@ export class SessionRuntime {
   private readonly work = new Set<SessionId>();
   /** Callers of `wait` whose conversation's work is not taken yet; woken after every scheduling pass. */
   private readonly wakers = new Set<() => void>();
-  /** The worker serving each conversation that has one: it runs that conversation's work in order; at most `maxParallel` run at once. */
+  /** The worker serving each conversation that has one: it runs that conversation's work in order; all run at once unless the operator set `maxParallel`. */
   private readonly workers = new Map<SessionId, Promise<void>>();
   /** The Turn each conversation is executing, at most one per conversation. */
   private readonly actives = new Map<SessionId, ActiveExecution>();
-  /** The workspace each worker holds while it serves its conversation; another conversation's work there waits (ADR-036). */
-  private readonly holders = new Map<string, SessionId>();
-  /** Conversations whose next Turn waits for a workspace another conversation's work holds, with since when. */
-  private readonly waitingForWorkspace = new Map<SessionId, { readonly runId: string; readonly holder: SessionId; readonly since: number; readonly sinceMono: number; readonly timer: ReturnType<typeof setTimeout> }>();
-  /** Conversations whose next Turn waits for a slot while every slot is taken, with since when (ADR-036); no budget runs. */
+  /**
+   * The conversations whose worker is serving them in each workspace, in the order they came. They all run (2026-11-12: the Hub does
+   * not queue conversations that share a workspace); a Turn that starts with others already there is told so.
+   */
+  private readonly holders = new Map<string, SessionId[]>();
+  /** Conversations whose next Turn waits for a slot while the operator's limit on conversations running at once is reached, with since when. */
   private readonly waitingForSlot = new Map<SessionId, { readonly runId: string; readonly since: number }>();
-  /** How much of each Turn's wait budget its waits for a workspace used before it started (ADR-036). */
-  private readonly waitUsed = new Map<string, number>();
-  /** The conversation that held the workspace of each Turn this owner ended with WORKSPACE_BUSY, latest first out. */
-  private readonly busyHolders = new Map<string, SessionId>();
   private readonly permissions = new Map<string, { request: PermissionRequest; nativeId: string; execution: ActiveExecution; option: string | null; command: string | null; readonly harnessId: string }>();
   permissionRequests(id: SessionId): readonly PermissionRequest[] { this.load(id); return [...this.permissions.values()].filter(value => value.execution.sessionId === id).map(value => value.request); }
   /**
@@ -260,13 +292,13 @@ export class SessionRuntime {
   async decidePermission(id: SessionId, permission: string, option: string, key: string, input?: string): Promise<{ readonly replayed: boolean }> {
     const command=commandId(key);
     if (!/^permission-[A-Za-z0-9-]{1,96}$/u.test(permission) || typeof option!=="string" || !option || option.length>1024 || /[\0\r\n]/u.test(option)) throw new SessionError("INVALID_INPUT","invalid native permission decision");
-    if (input !== undefined && (typeof input !== "string" || Buffer.byteLength(input) > 65536 || input.includes("\0"))) throw new SessionError("INVALID_INPUT", "invalid native input response");
+    if (input !== undefined && (typeof input !== "string" || input.includes("\0"))) throw new SessionError("INVALID_INPUT", "invalid native input response");
     const state = this.load(id), fingerprint=this.fingerprint({kind:"permission",permission,option,...(input===undefined?{}:{input})}), prior=replayCommand(state,command,"permission",fingerprint);
     if (prior) return {replayed:true};
     this.commandBudget(state);
     const pending = this.permissions.get(permission);
     if (!pending || pending.execution.sessionId !== id || !pending.request.options.some(value => value.id === option)) throw new SessionError("PERMISSION_UNAVAILABLE", "native permission or option is no longer pending");
-    if(input!==undefined&&(!pending.request.input||Buffer.byteLength(input)>65536||input.includes("\0")))throw new SessionError("INVALID_INPUT","invalid native input response");
+    if(input!==undefined&&(!pending.request.input||input.includes("\0")))throw new SessionError("INVALID_INPUT","invalid native input response");
     if (pending.option !== null) { if (pending.option === option && pending.command === key) return { replayed: true }; throw new SessionError("PERMISSION_CONFLICT", "native permission has already been decided"); }
     this.continue(pending.execution);
     const control = pending.execution.binding?.control;
@@ -308,7 +340,6 @@ export class SessionRuntime {
   create(configuration: SessionConfiguration, selection: SelectionRequest, key: string): Promise<SessionSnapshot> {
     try {
       this.admit();
-      if (this.creating.size >= MAX_PENDING_CREATES) throw new SessionError("CREATE_LIMIT", "at most " + MAX_PENDING_CREATES + " Session creations may be awaiting validation");
     } catch (error) { return Promise.reject(error); }
     const pending = this.createOwned(configuration, selection, key);
     this.creating.add(pending);
@@ -346,7 +377,6 @@ export class SessionRuntime {
   importNative(configuration: SessionConfiguration, selection: SelectionRequest, nativeId: string, key: string): Promise<SessionSnapshot> {
     try {
       this.admit();
-      if (this.creating.size >= MAX_PENDING_CREATES) throw new SessionError("CREATE_LIMIT", "at most " + MAX_PENDING_CREATES + " Session creations may be awaiting validation");
     } catch (error) { return Promise.reject(error); }
     const pending = this.importOwned(configuration, selection, nativeId, key);
     this.creating.add(pending);
@@ -422,7 +452,6 @@ export class SessionRuntime {
       attachments = this.options.content.resolve(attachmentIds, state.configuration.workspace);
     }
     if (state.runs.length >= MAX_RUNS) throw new SessionError("RUN_LIMIT", "Session Run budget exhausted");
-    if (state.runs.filter(run => run.status === "queued").length >= MAX_QUEUE) throw new SessionError("QUEUE_FULL", "Session queued input limit reached");
     // A key that cannot be used never stops an input (one sent alone included): its choice is then fingerprinted under a key
     // kept in memory only (EPHEMERAL_KEY_ID, not checkable), and any packet it would carry fails at its own preparation.
     let relayRequest: ReturnType<typeof runRelayRequest>;
@@ -764,14 +793,14 @@ export class SessionRuntime {
     if (kept.binding.control.healthy?.() !== true) { await this.release(id, "exited"); return null; }
     this.kept.delete(id); clearTimeout(kept.timer); return kept;
   }
-  /** Whether a finished Turn hands its process to the conversation: opted in, completed cleanly, confirmed, and under the limit. */
+  /** Whether a finished Turn hands its process to the conversation: opted in, completed cleanly, confirmed, and under the limit when an operator set one (none by default). */
   private keepable(id: SessionId, execution: ActiveExecution, backend: BackendResult | null, problem: unknown, confirmed: boolean): { readonly keep: boolean; readonly skipped?: "limit" } {
     try {
       const state = this.load(id), run = state.runs.find(row => row.id === execution.runId);
       if (state.retainNative !== true || run === undefined || run.cancelRequested || run.selection.provider !== undefined || !confirmed || problem !== null || backend?.status !== "completed"
         || execution.stop !== null || execution.earlyClose !== null || !this.accepting || this.fatal !== null || this.closingSessions.has(id) || this.releasing.has(id)
         || execution.binding?.control.healthy?.() !== true) return { keep: false };
-      return this.kept.size >= KEPT_LIMIT ? { keep: false, skipped: "limit" } : { keep: true };
+      return this.options.keptLimit !== undefined && this.kept.size >= this.options.keptLimit ? { keep: false, skipped: "limit" } : { keep: true };
     } catch { return { keep: false }; }
   }
 
@@ -1018,21 +1047,31 @@ export class SessionRuntime {
     const ordered = [...this.work].sort((a, b) => this.headAccepted(a) - this.headAccepted(b));
     for (const id of ordered) {
       if (this.workers.has(id)) continue;
-      if (!this.runnable(id)) { this.work.delete(id); this.leaveQueue(id); this.leaveSlot(id); continue; }
-      const workspace = this.load(id).configuration.workspace, holder = this.holders.get(workspace);
-      if (holder !== undefined && holder !== id) { this.leaveSlot(id); this.joinQueue(id, holder); continue; }
-      // With every slot taken, later work is still looked at, so work behind a held workspace shows that it waits.
-      if (this.workers.size >= (this.options.maxParallel ?? MAX_PARALLEL_CONVERSATIONS)) { this.joinSlot(id); continue; }
-      this.work.delete(id); this.holders.set(workspace, id); this.leaveQueue(id); this.leaveSlot(id);
+      if (!this.runnable(id)) { this.work.delete(id); this.leaveSlot(id); continue; }
+      // A fixed number of conversations at once is the operator's setting, never the Runtime's: without one every conversation starts.
+      // With one, later work is still looked at, so work behind a full house shows that it waits.
+      if (this.full()) { this.joinSlot(id); continue; }
+      // Conversations in one workspace all run; the Turn that comes after another is told so when it starts (execute).
+      const workspace = this.load(id).configuration.workspace;
+      this.work.delete(id); this.leaveSlot(id);
+      this.holders.set(workspace, [...(this.holders.get(workspace) ?? []), id]);
       const worker: Promise<void> = Promise.resolve().then(() => this.serve(id));
       this.workers.set(id, worker);
       void worker.then(() => {}, error => { this.fail(error, id); }).finally(() => {
         if (this.workers.get(id) === worker) this.workers.delete(id);
-        if (this.holders.get(workspace) === id) this.holders.delete(workspace);
+        const rest = (this.holders.get(workspace) ?? []).filter(holder => holder !== id);
+        if (rest.length === 0) this.holders.delete(workspace); else this.holders.set(workspace, rest);
         this.drive();
       });
     }
   }
+  /** The conversations that came to a workspace before `id` and still work in it, oldest first. */
+  private coworkers(id: SessionId, workspace: string): readonly SessionId[] {
+    const here = this.holders.get(workspace) ?? [], at = here.indexOf(id);
+    return at < 0 ? [] : here.slice(0, at);
+  }
+  /** Whether the operator's limit on conversations running at once, when there is one, is reached. */
+  private full(): boolean { return this.options.maxParallel !== undefined && this.workers.size >= this.options.maxParallel; }
   /** Whether a conversation has work its worker would do now: a native fork, a switch or a queued Turn while it is open. */
   private runnable(id: SessionId): boolean {
     try {
@@ -1046,49 +1085,8 @@ export class SessionRuntime {
     try { return this.load(id).runs.find(run => run.status === "queued")?.timing?.acceptedAt ?? Number.MAX_SAFE_INTEGER; } catch { return Number.MAX_SAFE_INTEGER; }
   }
   /**
-   * Records once that a conversation's next Turn waits for `holder` to free their shared workspace. When that Turn is no
-   * longer the next one (it was cancelled), its wait ends and the next Turn's wait begins.
-   */
-  private joinQueue(id: SessionId, holder: SessionId): void {
-    const state = this.load(id), run = state.runs.find(item => item.status === "queued");
-    if (this.waitingForWorkspace.get(id)?.runId !== run?.id) this.leaveQueue(id);
-    if (run === undefined) return;
-    const prior = this.waitingForWorkspace.get(id);
-    if (prior !== undefined && prior.holder === holder) return;
-    // Waiting for a workspace uses the Turn's wait budget; at its end the Turn fails with WORKSPACE_BUSY (ADR-036).
-    const left = (this.options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS) - (this.waitUsed.get(run.id) ?? 0) - (prior === undefined ? 0 : performance.now() - prior.sinceMono);
-    if (prior !== undefined) clearTimeout(prior.timer);
-    const timer = setTimeout(() => this.queueExpired(id, run.id), Math.max(0, left)); timer.unref?.();
-    this.waitingForWorkspace.set(id, { runId: run.id, holder, since: prior?.since ?? this.options.now().getTime(), sinceMono: prior?.sinceMono ?? performance.now(), timer });
-    this.commit(id, current => ({ next: current, events: [event("run.waiting", { runId: run.id, kind: "workspace", holderSessionId: holder })] }));
-  }
-  /** A Turn waited for its workspace for its whole wait budget: it fails with WORKSPACE_BUSY, naming the holder, and is not retried. */
-  private queueExpired(id: SessionId, run: string): void {
-    const waiting = this.waitingForWorkspace.get(id);
-    if (waiting === undefined || waiting.runId !== run) return;
-    this.leaveQueue(id);
-    // Known before the commit publishes, so the view that announces the failure already names the holder.
-    this.busyHolders.set(run, waiting.holder);
-    while (this.busyHolders.size > 256) this.busyHolders.delete(this.busyHolders.keys().next().value!);
-    try {
-      this.commit(id, current => ({ next: updatedRun(current, run, { status: "failed", error: { code: "WORKSPACE_BUSY", message: "another conversation's Turn held this workspace for the whole wait budget; this input was not dispatched" },
-        ...phase(current, runId(run), "endedAt", this.options.now().getTime()) }), events: [event("run.ended", { runId: run, status: "failed", error: { code: "WORKSPACE_BUSY" }, neverDispatched: true, holderSessionId: waiting.holder })] }));
-      this.waitUsed.delete(run);
-    } catch (error) { this.busyHolders.delete(run); this.fail(error, id); }
-    this.schedule(id);
-  }
-  /** Ends a conversation's wait for a workspace, recording how long it waited. */
-  private leaveQueue(id: SessionId): void {
-    const waiting = this.waitingForWorkspace.get(id);
-    if (waiting === undefined) return;
-    this.waitingForWorkspace.delete(id); clearTimeout(waiting.timer);
-    this.waitUsed.set(waiting.runId, (this.waitUsed.get(waiting.runId) ?? 0) + (performance.now() - waiting.sinceMono));
-    const waitedMs = Math.max(0, this.options.now().getTime() - waiting.since);
-    try { this.commit(id, current => ({ next: current, events: [event("run.waiting_ended", { runId: waiting.runId, kind: "workspace", waitedMs })] })); } catch (error) { this.fail(error, id); }
-  }
-  /**
-   * Records once that a conversation's next Turn waits for a slot because every slot is taken (ADR-036). It waits without a
-   * budget of its own: each running Turn is bounded by its budgets, and slots go to work in the order it was accepted.
+   * Records once that a conversation's next Turn waits for a slot because the operator's limit on conversations running at once is
+   * reached. It waits without a deadline of its own, and slots go to work in the order it was accepted.
    */
   private joinSlot(id: SessionId): void {
     const run = this.load(id).runs.find(item => item.status === "queued");
@@ -1106,32 +1104,19 @@ export class SessionRuntime {
     try { this.commit(id, current => ({ next: current, events: [event("run.waiting_ended", { runId: waiting.runId, kind: "slot", waitedMs })] })); } catch (error) { this.fail(error, id); }
   }
   /**
-   * Whether another conversation should go before this worker's next work, by acceptance (FIFO, ADR-036): one waiting for
-   * this workspace, or one waiting for a slot while every slot is taken.
+   * Whether another conversation should go before this worker's next work, by acceptance (FIFO): one waiting for a slot while the
+   * operator's limit on conversations running at once is reached.
    */
   private earlierWaiter(id: SessionId): boolean {
-    const workspace = this.load(id).configuration.workspace, mine = this.headAccepted(id), full = this.workers.size >= (this.options.maxParallel ?? MAX_PARALLEL_CONVERSATIONS);
-    return [...this.work].some(other => other !== id && !this.workers.has(other) && this.headAccepted(other) < mine
-      && (this.waitingForWorkspace.has(other) ? this.load(other).configuration.workspace === workspace : full));
+    if (!this.full()) return false;
+    const mine = this.headAccepted(id);
+    return [...this.work].some(other => other !== id && !this.workers.has(other) && this.headAccepted(other) < mine);
   }
-  /**
-   * What a conversation's next Turn waits for, when it waits for another conversation's work in their shared workspace:
-   * which conversation holds it and whether that one waits for the user (ADR-036).
-   */
-  queueState(id: SessionId): { readonly runId: string; readonly holderSessionId: SessionId; readonly holderWaitsForUser: boolean; readonly since: number; readonly endsAt: number } | null {
-    const waiting = this.waitingForWorkspace.get(id);
-    if (waiting === undefined) return null;
-    const holderWaits = [...this.permissions.values()].some(value => value.execution.sessionId === waiting.holder && !value.request.decided);
-    const left = (this.options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS) - (this.waitUsed.get(waiting.runId) ?? 0);
-    return { runId: waiting.runId, holderSessionId: waiting.holder, holderWaitsForUser: holderWaits, since: waiting.since, endsAt: waiting.since + Math.max(0, left) };
-  }
-  /** What a conversation's next Turn waits for, when every slot is taken: how many conversations run and the limit (ADR-036). */
+  /** What a conversation's next Turn waits for, when the operator's limit on conversations running at once is reached: how many run and the limit. */
   slotWait(id: SessionId): { readonly runId: string; readonly running: number; readonly limit: number; readonly since: number } | null {
     const waiting = this.waitingForSlot.get(id);
-    return waiting === undefined ? null : { runId: waiting.runId, running: this.workers.size, limit: this.options.maxParallel ?? MAX_PARALLEL_CONVERSATIONS, since: waiting.since };
+    return waiting === undefined ? null : { runId: waiting.runId, running: this.workers.size, limit: this.options.maxParallel ?? this.workers.size, since: waiting.since };
   }
-  /** The conversation that held the workspace of each of this conversation's Turns this owner ended with WORKSPACE_BUSY. */
-  busyHolderOf(run: string): SessionId | null { return this.busyHolders.get(run) ?? null; }
   /** One conversation's work in order: its native fork, then a switch or its next Turn, until none is left (ADR-036). */
   private async serve(id: SessionId): Promise<void> {
     for (;;) {
@@ -1222,46 +1207,86 @@ export class SessionRuntime {
     }
   }
 
-  /** Runs the Turn's current budget: the execution budget while it works, the wait budget while it waits for the user (ADR-036). */
+  /**
+   * Starts the timer of the budget that applies now: the execution budget while the Turn works, the wait budget while it waits for the
+   * user. Only an operator's budgets have one (none by default); a Turn without them is never stopped for its time.
+   */
   private armBudget(execution: ActiveExecution): void {
-    const budget = execution.budget;
-    if (budget.timer !== null) clearTimeout(budget.timer);
-    const waiting = budget.waiting;
-    budget.timer = setTimeout(() => this.expire(execution, waiting ? "wait" : "execution"), Math.max(0, waiting ? budget.waitLeftMs : budget.executionLeftMs));
-    budget.timer.unref?.();
+    const clock = execution.clock;
+    clock.budget?.(); clock.budget = null;
+    const waiting = clock.waiting, left = waiting ? clock.waitLeftMs : clock.executionLeftMs;
+    if (left === null) return;
+    clock.budget = after(left, () => this.expire(execution, waiting ? "wait" : "execution"));
   }
-  /** The Turn waits for the user from now (if it did not already); returns how long it may still wait. */
-  private enterWait(execution: ActiveExecution, run: string): number {
-    const budget = execution.budget, now = performance.now();
-    if (budget.waiting) return Math.max(0, budget.waitLeftMs - (now - budget.since));
-    budget.executionLeftMs -= now - budget.since; budget.waiting = true; budget.since = now;
+  /** The mark of a Turn's working time at which its `n`-th "still working" hint is due: the configured marks, then again every last mark. */
+  private hintMark(n: number): number {
+    const marks = this.options.pacing?.hintsMs ?? WORKING_HINTS_MS;
+    return n < marks.length ? marks[n]! : marks[marks.length - 1]! * (n - marks.length + 2);
+  }
+  /** Starts the timer of the Turn's next hint, if it works now: the clock does not run while it waits for the user. */
+  private armHint(execution: ActiveExecution): void {
+    const clock = execution.clock;
+    clock.hint?.(); clock.hint = null;
+    if (clock.waiting || execution.stopReason !== null || execution.backendSettled || (this.options.pacing?.hintsMs ?? WORKING_HINTS_MS).length === 0) return;
+    const worked = clock.workedMs + (performance.now() - clock.since);
+    clock.hint = after(this.hintMark(clock.hinted) - worked, () => this.workingHint(execution));
+  }
+  /**
+   * A Turn has worked as long as a mark says: it gets a notice that it goes on (and for how long its Harness has been quiet, when it
+   * has been for a while) and an event; nothing is stopped or asked. A Turn that is being stopped, waits for the user or ended gets none.
+   */
+  private workingHint(execution: ActiveExecution): void {
+    const clock = execution.clock;
+    clock.hint = null;
+    if (clock.waiting || execution.stopReason !== null || execution.backendSettled || execution.stop !== null || execution.grace !== null || execution.earlyClose !== null || this.actives.get(execution.sessionId) !== execution) return;
+    const mark = this.hintMark(clock.hinted), quiet = performance.now() - clock.lastEventAt, quietNote = quiet >= (this.options.pacing?.quietMs ?? QUIET_NOTE_MS);
+    clock.hinted += 1;
+    // Text streamed before the hint is committed first, so the hint never precedes it in the log (ADR-047).
+    this.flushStreamQuietly(execution);
+    // A hint that cannot be recorded (the conversation reached a limit of the Store) is not worth a failure; commit fails the Runtime itself when it must.
+    try {
+      this.commit(execution.sessionId, current => ({ next: withNotice(current, execution.runId, workingNotice(mark, quietNote ? quiet : null)),
+        events: [event("run.still_working", { runId: execution.runId, workedMs: mark, ...(quietNote ? { quietMs: Math.round(quiet) } : {}) })] }));
+    } catch { /* see above */ }
+    this.armHint(execution);
+  }
+  /** The Turn waits for the user from now (if it did not already); returns how long it may still wait, or null when no wait budget was set. */
+  private enterWait(execution: ActiveExecution, run: string): number | null {
+    const clock = execution.clock, now = performance.now();
+    if (clock.waiting) return clock.waitLeftMs === null ? null : Math.max(0, clock.waitLeftMs - (now - clock.since));
+    const worked = now - clock.since;
+    clock.workedMs += worked; if (clock.executionLeftMs !== null) clock.executionLeftMs -= worked;
+    clock.waiting = true; clock.since = now;
+    clock.hint?.(); clock.hint = null;
     if (execution.stopReason === null) this.armBudget(execution);
     this.commit(execution.sessionId, current => ({ next: current, events: [event("run.waiting", { runId: run, kind: "user" })] }));
-    return Math.max(0, budget.waitLeftMs);
+    return clock.waitLeftMs === null ? null : Math.max(0, clock.waitLeftMs);
   }
   /** Back to work once no request of this Turn waits for the user any longer. */
   private leaveWait(execution: ActiveExecution): void {
-    const budget = execution.budget;
-    if (!budget.waiting || [...this.permissions.values()].some(value => value.execution === execution && !value.request.decided)) return;
-    const now = performance.now(), waitedMs = now - budget.since;
-    budget.waitLeftMs -= waitedMs; budget.waiting = false; budget.since = now;
-    if (execution.stopReason === null && !execution.backendSettled) this.armBudget(execution);
+    const clock = execution.clock;
+    if (!clock.waiting || [...this.permissions.values()].some(value => value.execution === execution && !value.request.decided)) return;
+    const now = performance.now(), waitedMs = now - clock.since;
+    if (clock.waitLeftMs !== null) clock.waitLeftMs -= waitedMs;
+    clock.waiting = false; clock.since = now;
+    if (execution.stopReason === null && !execution.backendSettled) { this.armBudget(execution); this.armHint(execution); }
     try { this.commit(execution.sessionId, current => ({ next: current, events: [event("run.waiting_ended", { runId: execution.runId, kind: "user", waitedMs: Math.round(waitedMs) })] })); }
     catch (error) { this.fail(error, execution.sessionId); }
   }
   /**
-   * A budget ran out (ADR-036): requests still waiting expire first (the program gets the stop's cancellation, never an
+   * An operator's budget ran out (ADR-036): requests still waiting expire first (the program gets the stop's cancellation, never an
    * approval), the conversation says why, and the Turn is stopped with the normal stop chain.
    */
   private expire(execution: ActiveExecution, kind: "execution" | "wait"): void {
     if (execution.stopReason !== null || execution.backendSettled || this.actives.get(execution.sessionId) !== execution) return;
     execution.stopReason = kind === "wait" ? "WAIT_EXPIRED" : "RUN_TIMEOUT";
+    execution.clock.hint?.(); execution.clock.hint = null;
     // Text streamed before the budget ran out is committed first, so the expiry never precedes it in the log (ADR-047).
     this.flushStreamQuietly(execution);
     try {
       const waiting = [...this.permissions.entries()].filter(([, value]) => value.execution === execution && value.option === null).map(([permissionId]) => permissionId);
       for (const permissionId of waiting) this.permissions.delete(permissionId);
-      const budgetMs = kind === "wait" ? this.options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS : this.options.executionBudgetMs ?? DEFAULT_EXECUTION_BUDGET_MS;
+      const budgetMs = (kind === "wait" ? this.options.waitBudgetMs : this.options.executionBudgetMs) ?? 0;
       this.commit(execution.sessionId, current => ({ next: withNotice(current, execution.runId, budgetNotice(kind, budgetMs)),
         events: [...waiting.map(permissionId => event("permission.closed", { permissionId, runId: execution.runId, reason: "expired" })), event("run.budget_expired", { runId: execution.runId, kind, budgetMs })] }));
       // The wait ends with its requests, so it is recorded like any other end of a wait.
@@ -1276,6 +1301,7 @@ export class SessionRuntime {
    * commit is thrown to the driver, which ends the Turn with it.
    */
   private output(execution: ActiveExecution, value: ControlEvent): void {
+    execution.clock.lastEventAt = performance.now();
     // A Driver that declares `live: "agent_output"` (dsh) proves a packet recorded by the Turn's first agent text, thinking or
     // tool call, never by a plan or usage (ADR-055 §7.1 weak E1, C8): E1 is committed before that output (R3).
     if (execution.relay.declaration.capabilities?.delivery.live === "agent_output" && execution.relay.turn.kind === "carry" && !execution.relay.recorded
@@ -1287,12 +1313,13 @@ export class SessionRuntime {
     if (run.status !== "running") throw new SessionError("STALE_EVENT", "output arrived outside its active Run");
     if (VISIBLE_OUTPUT.has(value.type)) this.firstOutput(state, run);
     if (value.type === "permission_requested") {
-      if (this.permissions.size >= 32) throw new SessionError("PERMISSION_LIMIT", "too many pending native permissions");
-      // The Turn now waits for the user: its execution budget pauses and its wait budget runs (ADR-036). The request expires at
-      // the earlier of the program's own deadline, as its driver says, and the end of the wait budget, on this clock (ADR-035).
-      const requestedAt = this.options.now().getTime(), hubLeft = Math.round(this.enterWait(execution, run.id)), wait = value.expiresInMs;
-      const native = value.expiresBy === "native" && wait !== undefined && Number.isSafeInteger(wait) && wait >= 0 && wait <= MAX_PERMISSION_WAIT_MS ? wait : null;
-      const expires = native !== null && native <= hubLeft ? { expiresAt: requestedAt + native, expiresBy: "native" as const } : { expiresAt: requestedAt + hubLeft, expiresBy: "turn" as const };
+      // The Turn now waits for the user: its working time stops. A request expires only at the deadline its own Harness announced
+      // (it withdraws the request itself then) or, when an operator set a wait budget, at the end of that budget: the earlier of the two (ADR-035).
+      // With neither it waits for the user as long as it takes.
+      const requestedAt = this.options.now().getTime(), hubLeft = this.enterWait(execution, run.id), wait = value.expiresInMs;
+      const native = value.expiresBy === "native" && wait !== undefined && Number.isSafeInteger(wait) && wait >= 0 ? wait : null;
+      const expires = native !== null && (hubLeft === null || native <= Math.round(hubLeft)) ? { expiresAt: requestedAt + native, expiresBy: "native" as const }
+        : hubLeft !== null ? { expiresAt: requestedAt + Math.round(hubLeft), expiresBy: "turn" as const } : {};
       const id = "permission-" + this.options.id(), request: PermissionRequest = { id, runId: run.id, title: value.title, options: value.options, ...(value.detail===undefined?{}:{detail:value.detail}),...(value.input===undefined?{}:{input:value.input}), decided: false, requestedAt, ...expires, ...(value.kind === "question" ? { kind: "question" as const } : {}) };
       this.permissions.set(id, { request, nativeId: value.id, execution, option: null, command: null, harnessId: run.selection.harnessId });
       try { this.commit(state.id, current => ({ next: current, events: [event("permission.requested", { permissionId: id, runId: run.id, title: value.title, options: value.options, ...expires })] })); } catch (error) { this.permissions.delete(id); throw error; } return;
@@ -1528,14 +1555,15 @@ export class SessionRuntime {
     const pinned = waitedSwitch?.target ?? queued.selection;
     const execution: ActiveExecution = { sessionId: id, runId: target, binding: null, run: null, dispatched: false,
       backendSettled: false, stop: null, earlyClose: null, details: new Map(), dirty: new Set(), writes: Promise.resolve(), writeFailure: null, diagnosticMark: null,
-      budget: { executionLeftMs: this.options.executionBudgetMs ?? DEFAULT_EXECUTION_BUDGET_MS, waitLeftMs: (this.options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS) - (this.waitUsed.get(target) ?? 0),
-        waiting: false, since: performance.now(), timer: null }, stopReason: null, grace: null,
+      clock: { workedMs: 0, since: performance.now(), waiting: false, executionLeftMs: this.options.executionBudgetMs ?? null, waitLeftMs: this.options.waitBudgetMs ?? null, budget: null, hint: null, hinted: 0, lastEventAt: performance.now() },
+      stopReason: null, grace: null,
       stream: { kind: null, text: "", committedBytes: 0, bytes: 0, last: "", cancel: null }, streamFailure: null,
       relay: { declaration: relayDeclaration(null), turn: { kind: "none" }, recorded: false, e1Refused: false } };
     if (this.actives.has(id)) throw new SessionError("OWNERSHIP_LOST", "another Turn of this conversation is active");
-    this.actives.set(id, execution); this.waitUsed.delete(target);
-    // The execution budget runs from here: starting the program, its model, tools and result (ADR-036).
-    this.armBudget(execution);
+    this.actives.set(id, execution);
+    // The Turn's clock runs from here: starting the program, its model, tools and result. An operator's execution budget, when there is
+    // one, and the hints that a Turn goes on are both counted from it (ADR-036, superseded 2026-11-12: no budget unless set).
+    this.armBudget(execution); this.armHint(execution);
     let backend: BackendResult | null = null, cleanup: CleanupEvidence | null = null, problem: ReturnType<typeof fault> | null = null;
     let checkpoint: string | null = null, checkpointStored = false, nativeConfirmed = false;
     let previousNative: NativeSessionBinding | undefined;
@@ -1554,8 +1582,13 @@ export class SessionRuntime {
     // I-1a). C5 (I-1b): the checkpoint the Driver refused as a session it does not have, and how its connection was closed.
     let openedNew = false, replacedEmpty: string | null = null, refusedCleanup: CleanupEvidence | null = null;
     try {
-      this.commit(id, current => ({ next: { ...updatedRun(current, target, { status: "preparing", selection: pinned, epoch: waitedSwitch ? current.epoch : queued.epoch, ...phase(current, target, "preparingAt", this.options.now().getTime()) }), activeRunId: target },
-        events: [event("run.preparing", { runId: target, selection: state.selection, epoch: state.epoch })] }));
+      // Conversations that came to this workspace before this one and still work in it: this Turn does not wait for them, it says they are there.
+      const company = this.coworkers(id, state.configuration.workspace);
+      this.commit(id, current => {
+        const next: SessionSnapshot = { ...updatedRun(current, target, { status: "preparing", selection: pinned, epoch: waitedSwitch ? current.epoch : queued.epoch, ...phase(current, target, "preparingAt", this.options.now().getTime()) }), activeRunId: target };
+        return { next: company.length === 0 ? next : withNotice(next, target, sharedNotice(company.length)),
+          events: [event("run.preparing", { runId: target, selection: state.selection, epoch: state.epoch }), ...(company.length === 0 ? [] : [event("run.workspace_shared", { runId: target, otherSessionIds: company })])] };
+      });
       const current = this.owned(execution), run = this.continue(execution);
       previousNative = run.selection.provider === undefined ? current.nativeBindings?.find(binding => binding.harnessId === run.selection.harnessId && binding.controlId === run.selection.controlId && binding.status !== "archived") : undefined;
       if (previousNative !== undefined && previousNative.status !== "ready") throw new SessionError("NATIVE_STATE_UNCONFIRMED", "原生会话状态尚未确认；可以切换其他 Harness，或明确建立新的原生分支。公共历史会保留。");
@@ -1905,6 +1938,8 @@ export class SessionRuntime {
           let next: SessionSnapshot = { ...updatedRun(current, target, { status, backend, cleanup: closed,
             error: failure, ...phase(current, target, "endedAt", endedAt), ...(keep.keep ? { retained: true as const } : {}) }), activeRunId: null, status: unsafe ? "blocked" : current.status,
             ...(keep.keep ? { retained: { harnessId: pinned.harnessId, controlId: pinned.controlId, runId: target, since: reusing?.since ?? endedAt, ...(identity === undefined ? {} : { process: identity }) } } : {}) };
+          // The user asked to keep this conversation's process and the operator's limit on kept processes is reached: the Turn says it was not kept.
+          if (keep.skipped !== undefined) next = withNotice(next, target, keptSkippedNotice(this.options.keptLimit ?? this.kept.size));
           // A Turn that failed on the relay before it ran says so in its relay (§12.2: blocked, with the code).
           const latestRun = next.runs.find(row => row.id === target)!;
           if (latestRun.relay === undefined && failure !== null && (BLOCKED_CODES as readonly string[]).includes(failure.code))
@@ -1988,7 +2023,7 @@ export class SessionRuntime {
       }
       if (this.actives.get(id) === execution) this.actives.delete(id);
       this.acceptedRelay.delete(target);
-      if (execution.budget.timer !== null) clearTimeout(execution.budget.timer);
+      execution.clock.budget?.(); execution.clock.hint?.();
       if (execution.grace !== null) clearTimeout(execution.grace);
       this.discardStream(execution);
     }
@@ -2002,16 +2037,12 @@ export class SessionRuntime {
     return { ...turn, agentOutput: (reply?.text ?? "") !== "" || (run?.thinking ?? "") !== "" || (run?.tools?.length ?? 0) > 0 };
   }
   /**
-   * Starts the Turn's program (its binding), with the installation it resolved; another conversation's kept process holding the
-   * workspace is the user's to end (ADR-030, option C).
+   * Starts the Turn's program (its binding), with the installation it resolved.
    */
   private async startProgram(execution: ActiveExecution, run: PublicRun, current: SessionSnapshot, id: SessionId, target: PublicRun["id"]): Promise<void> {
-    try { execution.binding = await this.factory.prepare(run.selection, current.configuration, id, target); execution.diagnosticMark = execution.binding.control.diagnosticMark?.() ?? null; }
-    catch (error) {
-      if (error instanceof SessionError && error.code === "WORKSPACE_BUSY" && [...this.kept].some(([holder, kept]) => holder !== id && kept.binding.workspace === current.configuration.workspace))
-        throw new SessionError("WORKSPACE_KEPT", "another conversation keeps a native process in this workspace");
-      throw error;
-    }
+    // The conversations of this Gateway share a workspace's lease (a kept process of another conversation included), so a refusal here is
+    // another Gateway holding it: WORKSPACE_BUSY, as the lease says.
+    execution.binding = await this.factory.prepare(run.selection, current.configuration, id, target); execution.diagnosticMark = execution.binding.control.diagnosticMark?.() ?? null;
     this.continue(execution);
     const installation = execution.binding.installation;
     if (installation !== undefined) this.commit(id, latest => ({ next: latest, events: [event("run.installation_resolved", { runId: target, installation })] }));

@@ -147,10 +147,9 @@ test("what a Turn says while it goes on and shows nothing else: why it waits, wh
   assert.deepEqual(live({ waiting: "question" }), { text: "等你回答", tone: "wait", timer: true, wrap: false, thinking: false });
   // A Turn not started reads 排队中 wherever it is named, with its reason after it.
   assert.equal(live({ status: "queued" }).text, "排队中");
-  const holder: QueueNotice = { kind: "workspace", holderTitle: "另一个", holderWaits: "approval", endsAt: 1, cancelling: false };
-  assert.equal(live({ status: "queued", queue: holder }).text, "排队中：等待对话「另一个」释放工作区（它在等你批准）");
-  assert.equal(live({ status: "queued", queue: { kind: "slot", running: 4, cancelling: false } }).text, "排队中：4 个对话正在执行，其中一个结束后自动开始");
-  assert.equal(live({ status: "queued", queue: holder }).wrap, true, "a longer explanation wraps instead of sliding");
+  const slot: QueueNotice = { kind: "slot", running: 4, cancelling: false };
+  assert.equal(live({ status: "queued", queue: slot }).text, "排队中：4 个对话正在执行，其中一个结束后自动开始");
+  assert.equal(live({ status: "queued", queue: slot }).wrap, true, "a longer explanation wraps instead of sliding");
   assert.equal(live({ status: "queued" }).tone, "queue");
   assert.equal(live({ status: "preparing", startupHint: { seconds: 6.4, usual: true } }).text, "正在启动 Codex（通常约 6 秒）");
   assert.equal(live({ status: "preparing", startupHint: { seconds: 1, usual: false } }).text, "正在启动 Codex");

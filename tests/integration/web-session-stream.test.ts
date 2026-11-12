@@ -124,10 +124,9 @@ test("stream API rejects future/conflicting cursors, cross-origin callers and in
   const anonymous = await fetch(f.origin + `/api/v1/sessions/${id}/events/stream`); assert.equal(anonymous.status, 401);
 });
 
-test("eight long-lived streams have an independent cap and shutdown closes them without waiting for TTL", async t => {
+test("long-lived streams are not capped at eight: forty are open at once, the API stays available, and shutdown closes them without waiting for TTL", async t => {
   const f = await httpFixture(t), id = await create(f);
-  for (let at = 0; at < 8; at++) { const live = await stream(f, id); await live.next(); }
-  const excess = await fetch(f.origin + `/api/v1/sessions/${id}/events/stream`, { headers: { Cookie: f.cookie } }); assert.equal(excess.status, 429); assert.equal(record(await excess.json()).code, "STREAM_LIMIT");
+  for (let at = 0; at < 40; at++) { const live = await stream(f, id); await live.next(); }
   assert.equal((await call(f, `/sessions/${id}`)).status, 200);
   const started = Date.now(); await f.gateway.close(); assert.ok(Date.now() - started < 3000);
 });
@@ -169,6 +168,16 @@ test("socket write failure and slow subscriber timeout release only that subscri
   const slow = new FakeSocket(); slow.blocked = true; f.hub.open(f.id, 0, Date.now() + 5000, slow, () => {}); await delay(60); assert.equal(f.hub.size, 0); assert.equal(slow.writableEnded, true);
   const snapshot = f.app.runtime.read(f.id); assert.equal(snapshot.status, "open"); assert.ok(snapshot.runs.some(run => run.status === "running" || run.status === "preparing"));
   assert.equal(f.hub.readFailure, null); assert.deepEqual(f.reports, [], "external socket errors were misreported as authoritative storage failures");
+});
+
+test("the cap on subscriptions is a hub's option, 256 by default: a hundred are open at once, and a hub given a cap refuses the one over it", async t => {
+  const f = await hubFixture(t);
+  for (let at = 0; at < 100; at++) f.hub.open(f.id, 0, Date.now() + 5000, new FakeSocket(), () => {});
+  assert.equal(f.hub.size, 100);
+  const capped = new SessionStreamHub(id => view(f.app.runtime.read(id)), { maxConnections: 2 });
+  capped.open(f.id, 0, Date.now() + 5000, new FakeSocket(), () => {}); capped.open(f.id, 0, Date.now() + 5000, new FakeSocket(), () => {});
+  assert.throws(() => capped.open(f.id, 0, Date.now() + 5000, new FakeSocket(), () => {}), (error: unknown) => record(error).code === "STREAM_LIMIT");
+  assert.equal(capped.size, 2); capped.close();
 });
 
 test("heartbeat, connection TTL and login expiry are owned and removed when a subscriber closes", async t => {

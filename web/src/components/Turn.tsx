@@ -55,15 +55,11 @@ export const UserMessage = memo(function UserMessage({ message, run, onEdit }: {
 });
 
 /**
- * The actions of a queued Turn. One waiting for its workspace says how long it may still wait (it is never sent after
- * that); one waiting for a slot has no deadline of its own, since every running Turn is bounded by its budgets.
+ * The actions of a queued Turn: it waits for a slot, which has no deadline of its own, and may be cancelled.
  */
-export function QueuedTurn({ queue, now }: { readonly queue: QueueNotice; readonly now: number }) {
+export function QueuedTurn({ queue }: { readonly queue: QueueNotice }) {
   return <div className="queued-turn -mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-[22px] text-caption text-fg-3">
-    {queue.kind === "workspace"
-      ? <small className="text-caption" title="HarnessHub 为外部等待设的期限；到期后这条消息不会发出，也不会自动重试。">最多再等 {Math.max(1, Math.ceil((queue.endsAt - now) / 60000))} 分钟，到时这条消息不会发出。</small>
-      : <small className="text-caption" title="同时执行的对话有上限；每个正在执行的回合都受自己的期限约束，所以位置总会空出。">没有单独的等待期限，按发送先后轮到。</small>}
-    {queue.kind === "workspace" && queue.onOpen ? <button type="button" className="link-btn text-caption" onClick={queue.onOpen}>打开那个对话</button> : null}
+    <small className="text-caption" title="同时执行的对话数设了上限；排在前面的回合结束，位置就会空出来。">没有单独的等待期限，按发送先后轮到。</small>
     {queue.onCancel ? <button type="button" className="link-btn text-caption" disabled={queue.cancelling} onClick={queue.onCancel}>{queue.cancelling ? "正在取消…" : "取消排队"}</button> : null}
   </div>;
 }

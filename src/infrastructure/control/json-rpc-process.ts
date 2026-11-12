@@ -111,7 +111,8 @@ export interface RpcWireCodec {
 interface Pending {
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: Error) => void;
-  readonly timer: ReturnType<typeof setTimeout>;
+  /** Absent for a request that has no deadline (a Turn's prompt: a Turn has no time wall). */
+  readonly timer: ReturnType<typeof setTimeout> | undefined;
 }
 /**
  * What a request's deadline does (JsonRpcProcess.request): "abort" fails the connection (every caller's default: a peer that
@@ -155,13 +156,13 @@ function id(value: unknown): RpcId {
 }
 function key(value: RpcId): string { return JSON.stringify(value); }
 /**
- * Cumulative inbound and outbound budget for one connection; streamed output is never unbounded.
- * Native agents legitimately repeat large tool results (content, raw output, hook payloads) and replay
- * long histories on load, so the budget covers a long Turn rather than a short chat reply.
+ * One native frame can carry a whole read file, a run summary several times over or a long history replayed on load; this bounds
+ * the memory one frame can take (a frame is held whole, then decoded and parsed, so a frame costs about three times its size while it
+ * is handled). Far larger than any frame a Harness sends in normal work: it is a guard against a runaway stream, not a limit on what
+ * a Turn may carry. A connection has no cumulative budget (2026-11-12): a kept process serves many Turns on one connection, and
+ * what it replays on load grows with the conversation, so a total would be a conversation-size limit in another place.
  */
-export const MAX_CONNECTION_WIRE_BYTES = 256 * 1024 * 1024;
-/** One native frame can carry a whole read file or a run summary several times over; this bounds parse memory. */
-export const NATIVE_FRAME_BYTES = 16 * 1024 * 1024;
+export const NATIVE_FRAME_BYTES = 256 * 1024 * 1024;
 /** The cleanup fields a Run keeps (CleanupEvidence, the persisted shape), without the host close's own stage and time. */
 function persisted(cleanup: HostCleanup): CleanupEvidence {
   return { closed: true, exitCode: cleanup.exitCode, signal: cleanup.signal, protocolFailure: cleanup.protocolFailure };
@@ -175,7 +176,9 @@ export class JsonRpcProcess {
   /** Requests given up at a "reject" deadline: their late answers are dropped instead of failing the connection. */
   private readonly abandoned = new Set<string>();
   private readonly incomingIds = new Set<string>();
-  private input = Buffer.alloc(0);
+  /** The inbound frame being assembled: its pieces as they came, and their total (concatenated once, when the line ends). */
+  private input: Buffer[] = [];
+  private inputBytes = 0;
   private sequence = 0;
   private failed: Error | null = null;
   private closing = false;
@@ -192,7 +195,6 @@ export class JsonRpcProcess {
   /** The latest stderr bytes, for a driver that reads what the program logged during one turn; `stderrBytes` counts all of it. */
   private recentStderr = Buffer.alloc(0);
   private stderrBytes = 0;
-  private wireBytes = 0;
   private readonly decoder = new TextDecoder("utf-8", { fatal: true });
 
   constructor(readonly launch: ControlLaunch, readonly options: ControlOptions, private readonly handlers: RpcHandlers, private readonly codec?: RpcWireCodec) {
@@ -204,9 +206,8 @@ export class JsonRpcProcess {
       if (!name || /[=\0]/u.test(name) || typeof value !== "string" || value.includes("\0"))
         throw new ControlError("INVALID_INPUT", "invalid private environment");
     for (const [name, value] of Object.entries({ requestTimeoutMs: options.requestTimeoutMs,
-      runTimeoutMs: options.runTimeoutMs, maxFrameBytes: options.maxFrameBytes,
-      maxDiagnosticBytes: options.maxDiagnosticBytes, closeGraceMs: options.closeGraceMs, closeOutsideWaitMs: options.closeOutsideWaitMs ?? HOST_BUDGET_BOUNDS.closeOutsideWaitMs.fallback,
-      maxWireBytes: options.maxWireBytes ?? MAX_CONNECTION_WIRE_BYTES }))
+      runTimeoutMs: options.runTimeoutMs ?? 1, maxFrameBytes: options.maxFrameBytes,
+      maxDiagnosticBytes: options.maxDiagnosticBytes, closeGraceMs: options.closeGraceMs, closeOutsideWaitMs: options.closeOutsideWaitMs ?? HOST_BUDGET_BOUNDS.closeOutsideWaitMs.fallback }))
       if (!Number.isSafeInteger(value) || value <= 0 || value > 2_147_483_647)
         throw new ControlError("INVALID_INPUT", `${name} must be a positive bounded integer`);
   }
@@ -224,19 +225,20 @@ export class JsonRpcProcess {
   get processGroup(): number | null { return this.pid; }
 
   /**
-   * One request with its own deadline (the connection's request timeout by default). At the deadline the connection fails
-   * (`deadline` "abort", the default), or only this request is given up ("reject", see RequestDeadline).
+   * One request with its own deadline (the connection's request timeout by default; `null`: no deadline, for a Turn's prompt,
+   * which runs as long as the Turn does). At the deadline the connection fails (`deadline` "abort", the default), or only this
+   * request is given up ("reject", see RequestDeadline). A deadline that runs out fails with `timeoutCode`: a step of a Harness's start
+   * names itself (NATIVE_INITIALIZE_TIMEOUT, NATIVE_SESSION_TIMEOUT), so the user is told what was waited for.
    */
-  request(method: string, params: unknown, timeoutMs = this.options.requestTimeoutMs, deadline: RequestDeadline = "abort"): Promise<unknown> {
+  request(method: string, params: unknown, timeoutMs: number | null = this.options.requestTimeoutMs, deadline: RequestDeadline = "abort", timeoutCode = "REQUEST_TIMEOUT"): Promise<unknown> {
     if (this.failed || this.closing) return Promise.reject(this.failed ?? new ControlError("CLOSED", "connection is closed"));
-    if (this.pending.size >= 128) return Promise.reject(new ControlError("REQUEST_LIMIT", "too many pending requests"));
-    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647)
+    if (timeoutMs !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647))
       return Promise.reject(new ControlError("INVALID_INPUT", "request timeout must be a positive bounded integer"));
     this.start();
     const requestId = ++this.sequence, requestKey = key(requestId);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const expired = new ControlError("REQUEST_TIMEOUT", `${method} exceeded its deadline`);
+      const timer = timeoutMs === null ? undefined : setTimeout(() => {
+        const expired = new ControlError(timeoutCode, `${method} exceeded its deadline`);
         if (deadline === "abort" || this.abandoned.size >= MAX_ABANDONED_REQUESTS) { this.abort(expired); return; }
         // Only this request is given up; its answer, should it still come, is dropped by dispatch().
         if (!this.pending.delete(requestKey)) return;
@@ -317,7 +319,7 @@ export class JsonRpcProcess {
       this.recentStderr = recent.length > RECENT_STDERR_BYTES ? recent.subarray(recent.length - RECENT_STDERR_BYTES) : recent;
     });
     child.stdout.on("end", () => {
-      if (!this.closing && this.input.length) this.abort(new ControlError("INCOMPLETE_FRAME", "stdout ended inside a frame"));
+      if (!this.closing && this.inputBytes > 0) this.abort(new ControlError("INCOMPLETE_FRAME", "stdout ended inside a frame"));
     });
     child.on("exit", (code, signal) => {
       this.exitCode = code; this.exitSignal = signal;
@@ -338,34 +340,37 @@ export class JsonRpcProcess {
   }
   private async write(message: Record<string, unknown>): Promise<void> {
     const wire = JSON.stringify(this.codec ? this.codec.encode(message) : this.launch.protocol === "acp-v1" ? { jsonrpc: "2.0", ...message } : message);
-    if (Buffer.byteLength(wire) > this.options.maxFrameBytes)
+    const bytes = Buffer.byteLength(wire);
+    if (bytes > this.options.maxFrameBytes)
       throw new ControlError("FRAME_LIMIT", "outbound frame exceeds its byte limit");
-    this.accountWire(Buffer.byteLength(wire) + 1);
     const stdin = this.child?.stdin;
     if (!stdin || stdin.destroyed) throw new ControlError("WRITE_FAILED", "process input is closed");
+    // A program that takes in a MiB a second is reading: the frame gets the plain deadline and a second for every MiB it holds, so that
+    // a large one (a file inlined into a message can be tens of MiB) is not mistaken for a stuck program (2026-11-12).
+    const takeInMs = this.options.requestTimeoutMs + Math.ceil(bytes / 1024);
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new ControlError("WRITE_TIMEOUT", "process input did not accept a frame")), this.options.requestTimeoutMs);
+      const timer = setTimeout(() => reject(new ControlError("WRITE_TIMEOUT", "process input did not accept a frame")), takeInMs);
       stdin.write(`${wire}\n`, error => { clearTimeout(timer); if (error) reject(error); else resolve(); });
     });
   }
   private read(chunk: Buffer): void {
     if (this.failed || this.closing) return;
-    try { this.accountWire(chunk.length); }
-    catch (error) { this.abort(errorFrom(error)); return; }
     let offset = 0;
     while (offset < chunk.length) {
       const newline = chunk.indexOf(10, offset);
       const end = newline === -1 ? chunk.length : newline;
       const part = chunk.subarray(offset, end);
-      if (this.input.length + part.length > this.options.maxFrameBytes) {
+      if (this.inputBytes + part.length > this.options.maxFrameBytes) {
         this.abort(new ControlError("FRAME_LIMIT", "inbound frame exceeds its byte limit")); return;
       }
-      this.input = Buffer.concat([this.input, part]);
+      // The pieces of a frame are kept as they came and joined once, when its line ends: joining at every chunk copies everything
+      // received so far each time, which for a large frame grows with the square of its size.
+      if (part.length > 0) { this.input.push(part); this.inputBytes += part.length; }
       if (newline === -1) return;
       let parsed: unknown;
       try {
-        const frame = this.decoder.decode(this.input);
-        this.input = Buffer.alloc(0);
+        const frame = this.decoder.decode(this.input.length === 1 ? this.input[0]! : Buffer.concat(this.input, this.inputBytes));
+        this.input = []; this.inputBytes = 0;
         parsed = JSON.parse(frame);
       } catch { this.abort(new ControlError("INVALID_FRAME", "stdout is not valid UTF-8 JSON")); return; }
       try { const message = object(parsed, "RPC frame"); this.dispatch(this.codec ? this.codec.decode(message) : message); }
@@ -383,8 +388,9 @@ export class JsonRpcProcess {
       if ("result" in message || "error" in message) throw new ControlError("INVALID_PROTOCOL", "request contains a response payload");
       if (message.id === undefined) { this.handlers.notification(method, message.params); return; }
       const requestId = id(message.id), requestKey = key(requestId);
+      // The ids of the peer's requests on this connection: one that repeats is a protocol failure. The set has no count bound (it ended a Turn at
+      // its 4,097th peer request until 2026-11-12); an entry is a short string, and a connection that has seen a million of them holds a few dozen MB.
       if (this.incomingIds.has(requestKey)) throw new ControlError("DUPLICATE_REQUEST", "server repeated an RPC request identity");
-      if (this.incomingIds.size >= 4096) throw new ControlError("REQUEST_LIMIT", "server request identity budget exhausted");
       this.incomingIds.add(requestKey);
       const request: RpcRequest = { id: requestId, method, params: message.params };
       void Promise.resolve().then(() => this.handlers.request(request)).then(
@@ -422,11 +428,6 @@ export class JsonRpcProcess {
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
     this.pending.clear();
   }
-  private accountWire(bytes: number): void {
-    this.wireBytes += bytes;
-    if (this.wireBytes > (this.options.maxWireBytes ?? MAX_CONNECTION_WIRE_BYTES))
-      throw new ControlError("WIRE_LIMIT", "connection exceeded its cumulative wire byte budget");
-  }
   private groupAlive(): boolean {
     if (this.pid === null) return false;
     try { process.kill(-this.pid, 0); return true; }
@@ -451,7 +452,7 @@ export class JsonRpcProcess {
     const chain = await quiesce({ group: this.pid, leaderRunning: () => this.exitCode === null && this.exitSignal === null, endInput: () => child.stdin.end(),
       quiescent: () => this.closeObserved && !this.groupAlive(), signal: signal => this.signalGroup(signal) }, this.options.closeGraceMs, sample ? POSIX_SHUTDOWN_PROBES.outsiders : undefined);
     if (!chain.quiescent) throw new ControlError("CLEANUP_FAILED", "owned process group or streams did not close within the cleanup budget");
-    this.input = Buffer.alloc(0);
+    this.input = []; this.inputBytes = 0;
     return { cleanup: { closed: true, exitCode: this.exitCode, signal: this.exitSignal, protocolFailure: this.protocolFailure(), stage: chain.stage, closeMs: chain.closeMs }, found: chain.found };
   }
   private protocolFailure(): CleanupEvidence["protocolFailure"] {

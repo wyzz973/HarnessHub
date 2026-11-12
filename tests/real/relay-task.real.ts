@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { application } from "../../src/cli/session-application.js";
-import { DEFAULT_WAIT_BUDGET_MS, type SelectionRequest } from "../../src/contracts/session.js";
+import { type SelectionRequest } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, guardTargets, recheck, snapshot, standaloneHeader, type EvidenceHeader, type GuardCheck } from "./guard.js";
@@ -115,8 +115,8 @@ test("a real coding task survives a change of Harness: the repo, judged by its t
     }
     const open = async (_spec: CellSpec, where: { readonly workspace: string; readonly data: string }): Promise<CellHub> => {
       if (dry) return mounted ? dryTableHub(where, scripted) : dryHub(where, scripted);
-      if (mount !== undefined) return openWebHub(where, { mount, installations: realInstallations, locks, budgets: { executionBudgetMs: stepLimitMs, waitBudgetMs: DEFAULT_WAIT_BUDGET_MS }, ...(process.env.HH_REAL_MANIFEST ? { manifest: process.env.HH_REAL_MANIFEST } : {}) });
-      const app = application(where.data, () => {}, { installations: realInstallations, workspaceLockRoot: locks, budgets: { executionBudgetMs: stepLimitMs, waitBudgetMs: DEFAULT_WAIT_BUDGET_MS } });
+      if (mount !== undefined) return openWebHub(where, { mount, installations: realInstallations, locks, budgets: { executionBudgetMs: stepLimitMs }, ...(process.env.HH_REAL_MANIFEST ? { manifest: process.env.HH_REAL_MANIFEST } : {}) });
+      const app = application(where.data, () => {}, { installations: realInstallations, workspaceLockRoot: locks, budgets: { executionBudgetMs: stepLimitMs } });
       try {
         const configuration = await prepareConfiguration({ workspace: where.workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
         return { runtime: app.runtime, store: app.store, content: app.content, configuration, close: () => closeApp(app) };

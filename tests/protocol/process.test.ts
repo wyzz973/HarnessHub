@@ -30,6 +30,11 @@ test("request deadline closes a peer that never replies", async () => {
   const rpc = peer("timeout", {}, { requestTimeoutMs: 60 });
   try { await assert.rejects(rpc.request("initialize", {}), /deadline/); } finally { await closed(rpc); }
 });
+test("a deadline that runs out fails with the code the request names, so a step of a start says which step was waited for", async () => {
+  const rpc = peer("timeout", {}, { requestTimeoutMs: 1000 });
+  try { await assert.rejects(rpc.request("initialize", {}, 60, "abort", "NATIVE_INITIALIZE_TIMEOUT"), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_INITIALIZE_TIMEOUT" && /initialize exceeded its deadline/u.test(error.message)); }
+  finally { await closed(rpc); }
+});
 test("a request whose deadline gives up only itself (ADR-055 C6): it rejects with REQUEST_TIMEOUT, the connection stays usable, and its late answer is dropped without a protocol failure", async t => {
   const root = await mkdtemp(join(tmpdir(), "rpc-deadline-")); t.after(() => rm(root, { recursive: true, force: true }));
   // A peer that answers `slow` after 300 ms and every other request at once.
@@ -170,13 +175,48 @@ test("close owns and terminates descendants in its process group", async () => {
     assert.equal((await rpc.close()).closed, true); assert.throws(() => process.kill(pid, 0));
   } finally { await rpc.close(); await rm(directory, { recursive: true, force: true }); }
 });
-test("many valid small frames cannot bypass the cumulative wire budget", async () => {
-  const rpc = peer("flood", {}, { maxWireBytes: 16 * 1024 * 1024 });
+test("a connection has no cumulative byte budget: more than the former 256 MiB of valid frames over one connection is taken without a failure", async () => {
+  // 5,000 notifications of 64 KiB each, 320 MiB in all; the connection then answers the next request, as a kept process does Turn after Turn.
+  let seen = 0;
+  const rpc = new JsonRpcProcess({ protocol: "acp-v1", executable: process.execPath, args: [fixture, "acp-v1", "flood"], env: { FIXTURE_FLOOD_FRAMES: "5000", FIXTURE_FLOOD_BYTES: String(64 * 1024) } },
+    { ...options, maxFrameBytes: 1024 * 1024 }, { notification: () => { seen++; }, request: () => { throw new ControlError("METHOD_NOT_FOUND", "unsupported"); }, failure: () => {} });
   try {
     await rpc.request("initialize", {});
-    for (let i = 0; i < 100 && !rpc.failure; i++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert.ok(rpc.failure instanceof ControlError); assert.equal(rpc.failure.code, "WIRE_LIMIT");
+    for (let i = 0; i < 1500 && seen < 5000 && !rpc.failure; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(rpc.failure, null); assert.equal(seen, 5000, "every frame was dispatched");
+    assert.deepEqual(await rpc.request("ping", {}), { echoed: {} }, "the connection goes on");
   } finally { assert.equal((await rpc.close()).closed, true); }
+});
+test("a frame is assembled from its chunks in linear time: a 64 MiB answer, which the former 16 MiB bound refused, is read whole in a moment", async () => {
+  const rpc = peer("bigframe", { FIXTURE_BIG_BYTES: String(64 * 1024 * 1024) }, { requestTimeoutMs: 30_000, maxFrameBytes: 256 * 1024 * 1024 });
+  const started = performance.now();
+  try {
+    const answer = await rpc.request("initialize", {}) as { text: string };
+    assert.equal(answer.text.length, 64 * 1024 * 1024);
+    assert.ok(performance.now() - started < 10_000, "joining the chunks of a frame once, not once per chunk: " + Math.round(performance.now() - started) + " ms");
+  } finally { assert.equal((await rpc.close()).closed, true); }
+});
+test("the frame bound is a guard against a runaway stream: a frame past it fails the connection with FRAME_LIMIT, however it is cut into chunks", async () => {
+  const rpc = peer("bigframe", { FIXTURE_BIG_BYTES: String(8 * 1024 * 1024) }, { requestTimeoutMs: 30_000, maxFrameBytes: 4 * 1024 * 1024 });
+  try { await assert.rejects(rpc.request("initialize", {}), (error: unknown) => error instanceof ControlError && error.code === "FRAME_LIMIT"); }
+  finally { assert.equal((await rpc.close()).closed, true); }
+});
+test("a request without a deadline waits as long as its answer takes: the connection's own request deadline does not apply to it", async () => {
+  const rpc = peer("timeout", {}, { requestTimeoutMs: 40 });
+  const pending = rpc.request("initialize", {}, null), rejected = assert.rejects(pending, /closed/);
+  await new Promise(resolve => setTimeout(resolve, 250));
+  assert.equal(rpc.failure, null, "no deadline ran out in six times the request deadline");
+  await closed(rpc); await rejected;
+});
+test("a frame is given time to be taken in in proportion to its size: a program slow to read a large frame is not a stuck one, and one that never reads is", async () => {
+  // The program takes in nothing for 1.5 s; the plain deadline is 300 ms, a 2 MiB frame gets 2 s more.
+  const slow = peer("basic", { FIXTURE_DEAF_MS: "1500" }, { requestTimeoutMs: 300, maxFrameBytes: 8 * 1024 * 1024 });
+  try { assert.ok(await slow.request("initialize", { padding: "x".repeat(2 * 1024 * 1024) }, 20_000)); assert.equal(slow.failure, null); }
+  finally { await closed(slow); }
+  // The same program that stays deaf past that time is given up on, with the code that says what did not happen.
+  const stuck = peer("basic", { FIXTURE_DEAF_MS: "60000" }, { requestTimeoutMs: 300, maxFrameBytes: 8 * 1024 * 1024 });
+  try { await assert.rejects(stuck.request("initialize", { padding: "x".repeat(2 * 1024 * 1024) }, 20_000), (error: unknown) => error instanceof ControlError && error.code === "WRITE_TIMEOUT"); }
+  finally { await stuck.close(); }
 });
 test("close remains idempotent when a failure observer calls close reentrantly", async () => {
   let observed: Promise<unknown> | null = null;

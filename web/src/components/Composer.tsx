@@ -322,7 +322,7 @@ export function Composer(props: ComposerProps) {
   const commands = props.nativeModels?.commands ?? [];
   const slashQuery = /^\/(\S*)$/u.exec(props.messageDraft)?.[1];
   const [slashClosedAt, setSlashClosedAt] = useState<string | null>(null);
-  const slashMatches = slashQuery === undefined ? [] : commands.filter(command => command.name.toLocaleLowerCase().includes(slashQuery.toLocaleLowerCase())).slice(0, 50);
+  const slashMatches = slashQuery === undefined ? [] : commands.filter(command => command.name.toLocaleLowerCase().includes(slashQuery.toLocaleLowerCase()));
   const slashOpen = slashQuery !== undefined && commands.length > 0 && slashClosedAt !== props.messageDraft && !docked && !disabled;
   const [slashActive, setSlashActive] = useState(0);
   const slashIndex = Math.min(slashActive, Math.max(0, slashMatches.length - 1));

@@ -32,6 +32,22 @@ function control(scenario = "basic", env: Record<string, string> = {}, overrides
 }
 async function ready(driver: AcpControl) { await driver.initialize(); return driver.open(process.cwd()); }
 
+test("a start that is slow but not stuck is waited for: the handshake takes the startup time, not the plain request time, and a start that runs out of it names the step", async () => {
+  // A program that answers its handshake after 400 ms, with a plain request deadline of 100 ms: without a startup time it fails, with one it starts.
+  const slow = { FIXTURE_INITIALIZE_DELAY_MS: "400" };
+  const refused = control("basic", slow, { requestTimeoutMs: 100, runTimeoutMs: 5000 });
+  try { await assert.rejects(refused.initialize(), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_INITIALIZE_TIMEOUT"); } finally { await refused.close(); }
+  const patient = control("basic", slow, { requestTimeoutMs: 100, runTimeoutMs: 5000, startupTimeoutMs: 3000 });
+  try { assert.equal((await patient.initialize()).protocolVersion, 1); } finally { await patient.close(); }
+  // A handshake that never comes ends at the startup time, and the failure says it was the handshake that was waited for.
+  const stuck = control("timeout", {}, { requestTimeoutMs: 100, startupTimeoutMs: 250 });
+  const started = performance.now();
+  try {
+    await assert.rejects(stuck.initialize(), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_INITIALIZE_TIMEOUT");
+    assert.ok(performance.now() - started >= 240 && performance.now() - started < 2500, "waited the startup time, not the request time and not for ever");
+  } finally { await stuck.close(); }
+});
+
 test("ACP handshake, sequential prompts and exact client capability declaration", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-acp-")), trace = join(directory, "trace");
   const driver = control("split", { FIXTURE_TRACE: trace });
@@ -482,8 +498,8 @@ test("Hermes's 60-second approval deadline applies only to the reviewed 0.12 bri
     for (let i = 0; i < 50 && !events.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
     const requested = events.find(event => event.type === "permission_requested");
     assert.ok(requested?.type === "permission_requested" && !(requested.detail ?? "").includes("command_allowlist"));
-    // Without a deadline of its own, the request can wait as long as the Turn's deadline allows.
-    assert.equal(requested.expiresBy, "turn"); assert.ok(requested.expiresInMs !== undefined && requested.expiresInMs > 0 && requested.expiresInMs <= options.runTimeoutMs);
+    // Without a deadline of its own, the request has none: it waits for the user (a Turn has no deadline the driver would put on it, 2026-11-12).
+    assert.equal(requested.expiresBy, undefined); assert.equal(requested.expiresInMs, undefined);
     assert.equal(requested.kind, undefined, "an approval of the agent's own action");
     await ordinary.decidePermission(requested.id, "deny"); await run.result;
   } finally { await ordinary.close(); }
@@ -873,15 +889,14 @@ test("OpenClaw lists its workspace skills and plugin tool groups from the Gatewa
   } finally { await driver.close(); }
 });
 
-test("a request's wait is the earlier of the program's own deadline and the Turn's, never negative", async () => {
+test("a request's wait is the program's own deadline, never negative; a program with none leaves the request without one", async () => {
   const { requestExpiry } = await import("../../src/contracts/control.js");
-  assert.deepEqual(requestExpiry(10_000, 3_000, 1_000), { expiresInMs: 3_000, expiresBy: "native" });
-  assert.deepEqual(requestExpiry(10_000, 30_000, 1_000), { expiresInMs: 9_000, expiresBy: "turn" });
-  assert.deepEqual(requestExpiry(10_000, null, 1_000), { expiresInMs: 9_000, expiresBy: "turn" });
-  assert.deepEqual(requestExpiry(1_000, null, 5_000), { expiresInMs: 0, expiresBy: "turn" });
-  assert.deepEqual(requestExpiry(10_000, -5, 1_000), { expiresInMs: 0, expiresBy: "native" });
+  assert.deepEqual(requestExpiry(3_000), { expiresInMs: 3_000, expiresBy: "native" });
+  assert.deepEqual(requestExpiry(-5), { expiresInMs: 0, expiresBy: "native" });
+  assert.deepEqual(requestExpiry(0.4), { expiresInMs: 0, expiresBy: "native" });
+  assert.deepEqual(requestExpiry(null), {}, "no deadline of the program's, none of the driver's");
 });
-test("an ACP prompt that outlives the Turn's deadline fails with RUN_TIMEOUT while its approval waits", async t => {
+test("an ACP prompt given a deadline of its own by whoever owns the connection fails with RUN_TIMEOUT while its approval waits; the request's expiry is the program's, never that deadline's", async t => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
   const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 600 }, attached);
   try {
@@ -889,7 +904,7 @@ test("an ACP prompt that outlives the Turn's deadline fails with RUN_TIMEOUT whi
     const run = await driver.startText(id, "approve this", event => events.push(event));
     await assert.rejects(run.result, (error: unknown) => error instanceof Error && "code" in error && error.code === "RUN_TIMEOUT");
     const requested = events.find(event => event.type === "permission_requested");
-    assert.ok(requested?.type === "permission_requested" && requested.expiresBy === "turn" && (requested.expiresInMs ?? 0) <= 600);
+    assert.ok(requested?.type === "permission_requested" && requested.expiresBy !== "turn", "the driver's deadline for the Turn is not the request's");
   } finally { await driver.close(); }
 });
 
@@ -1242,27 +1257,32 @@ test("G032-NC26 OpenClaw offers its modes once, as thought_level, when they only
   const sent = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { readonly method?: string; readonly params?: { readonly modeId?: string } });
   assert.deepEqual(sent.filter(row => row.method === "session/set_mode").map(row => row.params?.modeId), ["high"]);
 });
-test("G032-NC27 OpenClaw reports a full transcript window that starts after the turn's first entry, and still reconciles the entries it holds (T-OC-08, ADR-027)", async t => {
+test("G032-NC27 OpenClaw reads the transcript back as far as the Turn goes: a window that starts after the Turn's first entry is asked for again, larger, and only a transcript past the largest window leaves entries unreconciled (T-OC-08, ADR-027)", async t => {
   const root = await mkdtemp(join(tmpdir(), "openclaw-nc27-")); t.after(() => rm(root, { recursive: true, force: true }));
   const config = join(root, "openclaw.json"); await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
   const env = { HOME: root, OPENCLAW_CONFIG_PATH: config }, before = 5;
   const earlier = { role: "assistant", content: [{ type: "text", text: "earlier turn" }], __openclaw: { seq: before } };
-  // `count` transcript entries from seq `from` on; the last two are a tool call and its result.
-  const window = (from: number, count: number) => Array.from({ length: count }, (_, index) => ({ __openclaw: { seq: from + index },
-    ...(index === count - 2 ? { role: "assistant", content: [{ type: "toolCall", id: "call-late", name: "exec", arguments: { command: "echo late" } }] }
-      : index === count - 1 ? { role: "toolResult", toolCallId: "call-late", toolName: "exec", content: [{ type: "text", text: "late" }], isError: false }
+  // The latest `limit` entries of a transcript of `total` entries after seq `before`; the last two are a tool call and its result.
+  const transcript = (total: number) => Array.from({ length: total }, (_, index) => ({ __openclaw: { seq: before + 1 + index },
+    ...(index === total - 2 ? { role: "assistant", content: [{ type: "toolCall", id: "call-late", name: "exec", arguments: { command: "echo late" } }] }
+      : index === total - 1 ? { role: "toolResult", toolCallId: "call-late", toolName: "exec", content: [{ type: "text", text: "late" }], isError: false }
       : { role: "assistant", content: [{ type: "text", text: "step " + index }] }) }));
-  // [first seq in the window, entries, diagnostics]: 4 entries (seq 6 to 9) of the turn fell outside a full window.
-  for (const [from, count, diagnostics] of [[before + 5, 200, ["OpenClaw transcript window held 200 entries; 4 earlier entries of this turn were not reconciled"]],
-    [before + 1, 200, []], [before - 2, 200, []], [before + 5, 199, []]] as const) {
-    let reads = 0;
+  // [entries this Turn wrote, the limits it was asked for in turn after the first read of the position before the Turn]: 150 fit the first window; 900 need two more asks; 250 need one.
+  for (const [total, asked] of [[150, [200]], [250, [200, 800]], [900, [200, 800, 3200]], [199, [200]]] as const) {
+    const limits: number[] = [];
     const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "basic"], env }, { ...options, env },
-      async method => method === "sessions.get" ? { messages: reads++ === 0 ? [earlier] : window(from, count) } : { models: [] });
+      async (method, params) => {
+        if (method !== "sessions.get") return { models: [] };
+        const limit = (params as { readonly limit?: number }).limit ?? 0;
+        if (limit === 1) return { messages: [earlier] };
+        limits.push(limit); const all = transcript(total); return { messages: all.slice(-limit) };
+      });
     try {
       const id = await ready(driver), events: ControlEvent[] = [];
       assert.deepEqual(await (await driver.startText(id, "go", event => events.push(event))).result, turnEnded);
-      assert.deepEqual(events.flatMap(event => event.type === "diagnostic" ? [event.message] : []), diagnostics, `${count} entries from seq ${from}`);
-      assert.deepEqual(events.flatMap(event => event.type === "tool" ? [event.id + " " + event.status] : []), ["call-late completed"], "the entries the window holds are reconciled");
+      assert.deepEqual(limits, asked, `${total} entries`);
+      assert.deepEqual(events.flatMap(event => event.type === "diagnostic" ? [event.message] : []), [], "every entry of the Turn was read");
+      assert.deepEqual(events.flatMap(event => event.type === "tool" ? [event.id + " " + event.status] : []), ["call-late completed"], "the entries are reconciled");
     } finally { await driver.close(); }
   }
 });

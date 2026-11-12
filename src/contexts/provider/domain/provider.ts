@@ -1,9 +1,15 @@
 import { ProviderError, providerId, type ProviderProtocol, type ProviderView, type ProviderWriteInput } from "../../../contracts/provider.js";
 
-export const MAX_PROVIDERS = 128;
-export const MAX_MODELS = 128;
+/**
+ * What one Provider may list as models: a guard on the form's list (an aggregator lists hundreds), not a count of anything the user
+ * keeps. The number of Providers, of their revisions and of the commands that made them has no bound (2026-11-12): a store that
+ * reaches one must not be what keeps the service from starting.
+ */
+export const MAX_MODELS = 4096;
+/** A credential is a key or a token; a larger value is not one. */
 export const MAX_CREDENTIAL_BYTES = 8192;
-export const MAX_REVISIONS = 1024;
+/** A Provider's revisions count up from 1 for as long as it is edited. */
+export const MAX_REVISIONS = Number.MAX_SAFE_INTEGER;
 const protocols: readonly ProviderProtocol[] = ["openai-responses", "openai-chat-completions", "anthropic-messages", "gemini"];
 function object(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value) ||

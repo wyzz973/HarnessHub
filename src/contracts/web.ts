@@ -197,14 +197,11 @@ export interface SessionView {
    * first kept, its last Turn, when it ends unless used, and how many updates it sent outside Turns (counted, not shown).
    */
   /**
-   * The Turn of this conversation that waits to start (ADR-036): for another conversation's work in their shared workspace
-   * (which conversation holds it, whether that one waits for the user as of this view, since when and until when it may
-   * wait), or for a slot while every slot is taken (how many conversations run, of how many; no deadline of its own).
+   * The Turn of this conversation that waits to start: only when an operator limited how many conversations run at once and the limit
+   * is reached, for a slot (how many run, of how many; no deadline of its own). Conversations that share a workspace do not wait for
+   * each other (2026-11-12): the later Turn says so in a notice.
    */
-  readonly queue?: { readonly kind: "workspace"; readonly runId: string; readonly holderSessionId: string; readonly holderWaitsForUser: boolean; readonly since: number; readonly endsAt: number }
-    | { readonly kind: "slot"; readonly runId: string; readonly running: number; readonly limit: number; readonly since: number };
-  /** The conversation that held the workspace of each Turn this service ended with WORKSPACE_BUSY after waiting (ADR-036). */
-  readonly busyHolders?: Readonly<Record<string, string>>;
+  readonly queue?: { readonly kind: "slot"; readonly runId: string; readonly running: number; readonly limit: number; readonly since: number };
   readonly retention?: { readonly enabled: boolean; readonly process: KeptProcessView | null;
     /** The process this conversation kept when the previous service ended without closing it, as this service found it. */
     readonly lost?: { readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean; readonly at: number };

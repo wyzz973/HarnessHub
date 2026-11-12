@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
   DELIVERY_TRANSITIONS, RELAY_PREF_KEYS, RELAY_BODY_BYTES, RELAY_INDEX_BYTES, RELAY_SESSION_BODY_BYTES,
-  RelayError, packetsOf, parseDeliveryOutcome, parseDeliveryRecord, parseRelayPacket,
+  RelayError, packetsOf, parseDeliveryOutcome, parseDeliveryRecord, parseRelayPacket, spanOf,
   type DeliveryOutcome, type DeliveryRecord, type DeliveryStatus, type RelayBehindIndex, type RelayIndexRow, type RelayPacket, type RelayRows, type RunRelay,
 } from "../../contracts/relay.js";
 import { SessionError, runId, type PublicRun, type RunId, type SessionId, type SessionSnapshot } from "../../contracts/session.js";
@@ -108,12 +108,21 @@ const TERMINAL = new Set<PublicRun["status"]>(["completed", "cancelled", "failed
  */
 export function checkQuoted(state: SessionSnapshot, current: PublicRun, packet: RelayPacket): void {
   const before = userSeq(state, current);
+  // One pass over the messages, not one per quoted Run: a long conversation quotes thousands of them.
+  const seqs = new Map(state.messages.map(message => [message.id, message.seq] as const));
   const quoted = (index: number): void => {
     const run = state.runs[index];
     if (run === undefined || run.id === current.id || !TERMINAL.has(run.status)) throw prepareFailed("render", "the relay packet quotes a Turn that has not finished");
-    if (userSeq(state, run) >= before) throw prepareFailed("render", "the relay packet quotes a Turn accepted after the current input");
+    const accepted = seqs.get(run.userMessageId);
+    if (accepted === undefined) throw new SessionError("INVALID_DATA", "a Run lacks its user message");
+    if (accepted >= before) throw prepareFailed("render", "the relay packet quotes a Turn accepted after the current input");
   };
-  for (const index of packet.runs) quoted(index);
+  // A long list is stored as spans of consecutive indexes (packRunIndexes): a span past the Session's last Run is refused before it is walked.
+  for (const entry of packet.runs) {
+    const [first, last] = spanOf(entry);
+    if (last >= state.runs.length) throw prepareFailed("render", "the relay packet quotes a Turn that has not finished");
+    for (let index = first; index <= last; index++) quoted(index);
+  }
 }
 interface CheckedPacket { readonly packet: RelayPacket; readonly body: string; readonly manifest: string; readonly fresh: boolean; readonly freshBody: boolean }
 interface CheckedDelivery { readonly kind: "insert"; readonly record: DeliveryRecord }

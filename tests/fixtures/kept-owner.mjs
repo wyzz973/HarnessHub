@@ -1,5 +1,5 @@
 // A Gateway owner that keeps one native process for a conversation (ADR-030), with mode "ask" leaves one approval waiting
-// (ADR-035), or with mode "queue" also a Turn queued behind it (ADR-036), and then waits to be killed, so that a later
+// (ADR-035), or with mode "queue" also a Turn queued behind it for a slot (an operator's limit of one conversation at once, ADR-036), and then waits to be killed, so that a later
 // owner can be tested on what it finds. Arguments: build
 // root, data root, lease root, workspace, ACP peer script, "1" to record the kept process group's identity, and the mode.
 // FIXTURE_LINGER, FIXTURE_PID, FIXTURE_CHILD_PID, FIXTURE_OUTSIDER and FIXTURE_HOLD reach the peer.
@@ -34,17 +34,17 @@ const factory = {
 const store = new SqliteSessionStore(data);
 let id = 0;
 const app = new SessionRuntime(store, factory, { id: () => "owner-" + (++id), now: () => new Date(), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"),
-  ...(identify === "1" ? { processes: new PosixProcessGroups() } : {}) });
+  ...(identify === "1" ? { processes: new PosixProcessGroups() } : {}), ...(mode === "queue" ? { maxParallel: 1 } : {}) });
 const configuration = { workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true };
 const session = await app.create(configuration, { harnessId: "alpha" }, "create");
 if (mode === "queue") {
-  // One conversation waits for an approval; another in the same workspace queues behind it (ADR-036).
+  // One conversation waits for an approval; another queues behind it for the only slot there is.
   const other = await app.create(configuration, { harnessId: "alpha" }, "create-queued");
   app.send(session.id, "approve this", "first");
   for (let i = 0; i < 200 && app.attention().length === 0; i++) await new Promise(resolve => setTimeout(resolve, 20));
   app.send(other.id, "turn", "queued");
-  for (let i = 0; i < 200 && app.queueState(other.id) === null; i++) await new Promise(resolve => setTimeout(resolve, 20));
-  process.stdout.write(JSON.stringify({ session: session.id, queued: other.id, queue: app.queueState(other.id) }) + "\n");
+  for (let i = 0; i < 200 && app.slotWait(other.id) === null; i++) await new Promise(resolve => setTimeout(resolve, 20));
+  process.stdout.write(JSON.stringify({ session: session.id, queued: other.id, queue: app.slotWait(other.id) }) + "\n");
 } else if (mode === "ask") {
   app.send(session.id, "approve this", "first");
   for (let i = 0; i < 200 && app.attention().length === 0; i++) await new Promise(resolve => setTimeout(resolve, 20));

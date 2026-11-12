@@ -50,11 +50,11 @@ class KeptFactory implements SessionBindingFactory {
   }
   releaseAbandonedLease(configuration: SessionConfiguration, session: SessionId): boolean { return this.lease.releaseAbandoned(configuration.workspace, session); }
 }
-async function setup(t: test.TestContext, keptIdleMs?: number, protocol: "acp-v1" | "codex-app-server" = "acp-v1") {
+async function setup(t: test.TestContext, keptIdleMs?: number, protocol: "acp-v1" | "codex-app-server" = "acp-v1", keptLimit?: number) {
   const root = await mkdtemp(join(tmpdir(), "harness-kept-process-")), store = new SqliteSessionStore(join(root, "data")), factory = new KeptFactory(root, protocol);
   let id = 0;
   const app = new SessionRuntime(store, factory, { id: () => String(++id), now: () => NOW, publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"),
-    ...(keptIdleMs === undefined ? {} : { keptIdleMs }) });
+    ...(keptIdleMs === undefined ? {} : { keptIdleMs }), ...(keptLimit === undefined ? {} : { keptLimit }) });
   t.after(async () => { try { await app.close(); } finally { store.close(); await rm(root, { recursive: true, force: true }); } });
   const workspace = async (name: string): Promise<SessionConfiguration> => {
     const path = join(root, name); await mkdir(path, { recursive: true });
@@ -138,30 +138,50 @@ test("switching, rebuilding, branching, closing and shutting down each close the
   assert.ok(factory.prepared.every(entry => entry.closed), "no process outlives its owner");
 });
 
-test("at most four processes are kept at once; a fifth Turn closes its process as usual", async t => {
-  const { factory, store, app, workspace } = await setup(t);
+test("no fixed number of processes is kept: six conversations each keep theirs", async t => {
+  const { factory, app, workspace } = await setup(t);
   const sessions = [];
-  for (let index = 0; index < 5; index++) {
+  for (let index = 0; index < 6; index++) {
+    const session = await app.create(await workspace("many-" + index), { harnessId: "alpha" }, "create-" + index);
+    app.setRetention(session.id, true, "keep-" + index); app.send(session.id, "turn", "send-" + index); await app.wait(session.id);
+    sessions.push(session.id);
+  }
+  assert.deepEqual(sessions.map(id => app.read(id).retained !== undefined), Array(6).fill(true));
+  assert.ok(factory.prepared.every(entry => !entry.closed), "none was closed to make room");
+  assert.equal(app.keptProcesses().length, 6);
+});
+
+test("an operator's limit on kept processes closes the process of a Turn over it as usual, and the Turn says it was not kept", async t => {
+  const { factory, store, app, workspace } = await setup(t, undefined, "acp-v1", 2);
+  const sessions = [];
+  for (let index = 0; index < 3; index++) {
     const session = await app.create(await workspace("limit-" + index), { harnessId: "alpha" }, "create-" + index);
     app.setRetention(session.id, true, "keep-" + index); app.send(session.id, "turn", "send-" + index); await app.wait(session.id);
     sessions.push(session.id);
   }
-  assert.deepEqual(sessions.map(id => app.read(id).retained !== undefined), [true, true, true, true, false]);
-  assert.equal(factory.prepared[4]!.closed, true);
-  assert.deepEqual(store.events(sessions[4]!, 0).filter(event => event.type === "native.retention_skipped").map(event => (event.data as { reason: string }).reason), ["limit"]);
-  assert.equal(app.read(sessions[4]!).runs[0]!.cleanup?.closed, true);
+  assert.deepEqual(sessions.map(id => app.read(id).retained !== undefined), [true, true, false]);
+  assert.equal(factory.prepared[2]!.closed, true);
+  assert.deepEqual(store.events(sessions[2]!, 0).filter(event => event.type === "native.retention_skipped").map(event => (event.data as { reason: string }).reason), ["limit"]);
+  assert.equal(app.read(sessions[2]!).runs[0]!.cleanup?.closed, true);
+  assert.deepEqual(app.read(sessions[2]!).runs[0]!.notices?.map(notice => [notice.severity, notice.title]), [["info", "这一轮的 Harness 进程没有保留"]]);
+  assert.match(app.read(sessions[2]!).runs[0]!.notices![0]!.detail!, /已经保留了 2 个/u);
+  assert.equal(app.read(sessions[0]!).runs[0]!.notices, undefined, "a Turn that was kept has nothing to say");
 });
 
-test("another conversation in the same workspace is told which kept process holds it, and runs once the user ends it", async t => {
-  const { app, workspace, closes } = await setup(t);
+test("another conversation in the same workspace runs beside a kept process: they share the Gateway's lease and nothing needs ending", async t => {
+  const { factory, app, workspace, closes } = await setup(t);
   const shared = await workspace("shared");
   const holder = await app.create(shared, { harnessId: "alpha" }, "create-holder");
   app.setRetention(holder.id, true, "keep"); app.send(holder.id, "turn", "holder-turn"); await app.wait(holder.id);
   const other = await app.create(shared, { harnessId: "alpha" }, "create-other");
-  app.send(other.id, "blocked", "other-first"); await app.wait(other.id);
-  const refused = app.read(other.id).runs[0]!;
-  assert.equal(refused.status, "failed"); assert.equal(refused.error?.code, "WORKSPACE_KEPT"); assert.equal(app.read(other.id).status, "open");
+  app.send(other.id, "beside it", "other-first"); await app.wait(other.id);
+  const ran = app.read(other.id).runs[0]!;
+  assert.equal(ran.status, "completed"); assert.equal(ran.error, null); assert.equal(app.read(other.id).status, "open");
+  assert.equal(factory.prepared.length, 2, "both programs ran in the directory");
+  assert.equal(app.read(holder.id).retained !== undefined, true, "the holder's kept process was not touched");
+  assert.equal(factory.prepared[0]!.closed, false);
   assert.deepEqual(app.keptProcesses().map(row => [row.sessionId, row.workspace]), [[holder.id, shared.workspace]]);
+  // The lease is released with the last holder: ending the kept process lets the workspace go.
   await app.endKept(holder.id, "end-holder");
   assert.equal(app.read(holder.id).retained, undefined); assert.equal(closes(holder.id)[0]?.reason, "ended_by_user");
   app.send(other.id, "now", "other-second"); await app.wait(other.id);

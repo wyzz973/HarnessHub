@@ -1,5 +1,5 @@
 import type { CleanupEvidence, HarnessControl, NativeConversationId } from "./control.js";
-import { MAX_PARALLEL_CONVERSATIONS, SessionError, type HarnessSelection, type KeptProcessIdentity, type NativeSessionBinding, type OutsideEvidence, type RunId,
+import { SessionError, type HarnessSelection, type KeptProcessIdentity, type NativeSessionBinding, type OutsideEvidence, type RunId,
   type SessionConfiguration, type SessionId, type WorkspaceLease } from "./session.js";
 
 // Native hosts and session leases (ADR-056; design §4.2–4.4, §4.10–4.12). A native session is data, recorded as a binding;
@@ -322,8 +322,6 @@ export interface HostBudgets {
   readonly maxHosts: number;
   /** Hosts pinned to conversations (ADR-030); never more than maxHosts. */
   readonly maxPinned: number;
-  /** Conversations running a Turn at once (ADR-036). */
-  readonly maxParallel: number;
   /** A pinned host with neither a Turn nor a native event for this long is closed (ADR-030). */
   readonly pinnedIdleTtlMs: number;
   /** A pinned host is closed this long after its last Turn whatever it does; never shorter than pinnedIdleTtlMs. */
@@ -358,7 +356,6 @@ type ScalarBudget = Exclude<keyof HostBudgets, "hostMemoryBudgetBytes" | "classC
 export const HOST_BUDGET_BOUNDS: { readonly [K in ScalarBudget]: Bounds } = Object.freeze({
   maxHosts: { min: 1, max: 64, fallback: 8 },
   maxPinned: { min: 1, max: 16, fallback: 4 },
-  maxParallel: { min: 1, max: 16, fallback: MAX_PARALLEL_CONVERSATIONS },
   pinnedIdleTtlMs: { min: MINUTE, max: 4 * HOUR, fallback: 30 * MINUTE },
   pinnedHardCapMs: { min: 30 * MINUTE, max: DAY, fallback: 4 * HOUR },
   closeGraceMs: { min: 1_500, max: 30_000, fallback: 1_500 },
@@ -407,7 +404,7 @@ export function resolveHostBudgets(input: { readonly physicalMemoryBytes: number
   };
   const single = kind("single"), light = kind("light"), reclaimable = kind("heavy_reclaimable"), processOnly = kind("heavy_process_only");
   const budgets: HostBudgets = { hostMemoryBudgetBytes: whole(row.hostMemoryBudgetBytes, { min: MIN_HOST_MEMORY_BUDGET_BYTES, max: physical, fallback: Math.floor(physical / 8) }, "hostMemoryBudgetBytes"),
-    maxHosts: scalar("maxHosts"), maxPinned: scalar("maxPinned"), maxParallel: scalar("maxParallel"), pinnedIdleTtlMs: scalar("pinnedIdleTtlMs"), pinnedHardCapMs: scalar("pinnedHardCapMs"),
+    maxHosts: scalar("maxHosts"), maxPinned: scalar("maxPinned"), pinnedIdleTtlMs: scalar("pinnedIdleTtlMs"), pinnedHardCapMs: scalar("pinnedHardCapMs"),
     classCaps: { single: { hostIdleMs: single("hostIdleMs") }, light: { maxSessionsPerHost: light("maxSessionsPerHost"), hostIdleMs: light("hostIdleMs") },
       heavy_reclaimable: { maxLiveSessions: reclaimable("maxLiveSessions"), sessionIdleMs: reclaimable("sessionIdleMs"), emptyHostIdleMs: reclaimable("emptyHostIdleMs") },
       heavy_process_only: { maxProcesses: processOnly("maxProcesses"), hostIdleMs: processOnly("hostIdleMs") } },

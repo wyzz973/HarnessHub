@@ -60,7 +60,7 @@ Web DTO屏蔽commands/fingerprints与私有configuration引用，保留Run/switc
 
 草稿按当前标签页的工作区/对话保存在sessionStorage，含未确认命令身份，刷新/导航后恢复。不保存Provider表单/密钥，存储字段/字节严格校验；保存的committed标记不能代替服务端事实，写受理仍用canonical命令身份确认。浏览器不能保存时保留内存并提示，不清空用户内容。明确结束会话前显示原生焦点约束对话框，取消不发close；确认后保留历史并停止在途准入/执行。安装/入口发现与原生连接认证分开说明。实际审查与验收见[恢复记录](../verification/conversation-recovery-2026-10-10.md)。
 
-HTTP body≤128KiB、response≤8MiB、资产≤4MiB、并发请求≤16、连接≤32；body10s和半包连接关闭均有界。进程关闭等待Run停止/资源清理、HTTP请求、Provider探测，再关闭业务Store。停止服务保留Session历史。
+HTTP body≤128KiB（回答审批提问的那条路由≤16MiB）、response≤8MiB、资产≤4MiB、并发请求≤256、连接≤1024（2026-11-12 由 16 与 32 放开）；请求头10s，请求体只在连续10s没有字节、半包连接15s没有任何字节时才被放弃（花多久都不限，静默才算）。登录有活动就续期：每个请求把登录的结束推到 8 小时之后，cookie 的 Max-Age 随之重发，沉默 8 小时才失效。进程关闭等待Run停止/资源清理、HTTP请求、Provider探测，再关闭业务Store。停止服务保留Session历史。
 
 图形布局使用暖白对话正文、浅灰侧栏、铜色强调，Provider管理采用行列表和普通表单。支持键盘、IME、手机侧栏和无横向溢出，状态文字不依赖颜色。品牌为HarnessHub，工程工作目录仍为独立HarnessGateway。
 
@@ -83,6 +83,8 @@ ADR-030（2026-10-12，Session v11）追加：`POST /api/v1/sessions/:id/retenti
 ADR-030 服务异常退出后的清理（2026-10-12，Session v12）：保留记录带进程组身份`retained.process: {group, startedAt}`（v11→v12 只升版本号）。服务启动时先接管上一服务保留的进程组，结果记为对话事件`native.process_lost`（`outcome`为`terminated`、`gone`或`unconfirmed`，`leaseReleased`表示是否释放了工作区租约）；会话视图在本次服务运行期间、该对话下一条消息之前带`retention.lost: {outcome, leaseReleased, at}`。`unconfirmed`时工作区保持隔离。关闭或接管保留进程时，`native.process_closed`与`native.process_lost`带`outside`：发信号前枚举到的、离开该进程组的后代数量、组结束后仍在运行的数量与命令基名（`{state: "enumerated", found, remaining, commands}`），或无法枚举（`{state: "unknown"}`）；Hub 不向它们发信号。仍在运行时，会话视图在下一条消息之前带`retention.outside: {count, at}`。
 
 ADR-035（2026-10-12）追加：待决的审批与提问带`requestedAt`、`expiresAt`、`expiresBy`（`native`为原程序自己的期限，`turn`为本回合期限，取较早者）和`kind`（提问为`question`）。`GET /api/v1/attention`返回`{revision, items}`：所有尚未决定的请求（对话、请求、回合、Harness、类型、期限，不含标题与详情），最多32项，只含当前服务内存中的请求。会话事件流在会话事实之外携带`event: attention`帧（不带事件编号，不移动游标）；没有打开对话的页面订阅`GET /api/v1/attention/stream`（`id`为修订号，与会话流相同的连接上限、心跳与TTL）。回合期限到期时仍在等待的请求记为`permission.closed`且`reason: "expired"`，回合以`RUN_TIMEOUT`结束、结果未知。
+
+> 2026-11-12 起，下面这一段（ADR-036 追加）里的默认预算、上限、最多 4 个对话、同一工作区排队、`queue.kind: "workspace"`、`busyHolders` 与 `WORKSPACE_BUSY`（对话之间）已由[决定记录](../decisions/LOG.md)取代：回合没有时间墙，`--execution-budget`（至少 30 秒）、`--wait-budget`（至少 1 分钟）只是可选的自动停止，`--max-parallel` 可选地限制同时运行的对话数（`queue` 只剩 `slot`），同一目录的对话都运行，后到的一轮带一条通知并有事件 `run.workspace_shared`；回合干活到一定时长时有事件 `run.still_working`；`run.waiting` 的 `kind` 只有 `user` 与 `slot`。
 
 ADR-036（2026-10-12）追加：每个回合有执行预算（默认300秒，从派发起算，等待用户时暂停）和等待预算（默认30分钟、上限2小时，覆盖等待用户决定与排队等待工作区），由`web`命令的`--execution-budget <秒>`（30至3600）和`--wait-budget <分钟>`（1至120）设定，无效值启动失败。待决请求的`expiresBy: "turn"`表示等待预算。执行预算到期以`RUN_TIMEOUT`、等待预算到期以`WAIT_EXPIRED`停止：仍在等待的请求记为`permission.closed`且`reason: "expired"`，回合事件`run.budget_expired`带`kind`与`budgetMs`，宽限内结算的回合为`cancelled`，否则为`unknown`。回合等待时记`run.waiting`（`kind`为`user`或`workspace`；后者带`holderSessionId`），等待结束记`run.waiting_ended`（带`waitedMs`）。最多4个对话同时执行，服务启动时在日志中写出上限与两个预算；同一工作区由另一个对话正在执行的回合持有时，回合保持`queued`排队，会话视图带`queue: {kind: "workspace", runId, holderSessionId, holderWaitsForUser, since, endsAt}`；所有位置已满时，回合等待空位，`queue`为`{kind: "slot", runId, running, limit, since}`，记`run.waiting`（`kind: "slot"`），没有单独的期限；排队超过等待预算时回合以`WORKSPACE_BUSY`失败（从未派发，`run.ended`带`neverDispatched`与`holderSessionId`），会话视图的`busyHolders`按回合给出持有对话（当前服务内存中最多256条）。排队中的回合用`POST /api/v1/sessions/:id/cancel`的`runId`取消。已取消的回合在界面和Markdown导出中按`error.code`说明原因（执行预算用尽、等待你的决定超时、服务重启时没有发出、用户停止）。业务格式不变。
 

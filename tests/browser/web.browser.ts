@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium, expect, type Browser, type BrowserContextOptions, type Page } from "@playwright/test";
 import { application } from "../../src/cli/session-application.js";
+import type { TurnLimits } from "../../src/contracts/session.js";
 import { runManagementProcess } from "../../src/infrastructure/management/process.js";
 import type { ManagementMetadataPort, ManagementInstallerPort } from "../../src/contracts/management.js";
 import { startWebServer } from "../../src/web/server.js";
@@ -32,8 +33,14 @@ function catalogShim(version: string, scenario: string): string {
   return "#!" + process.execPath + "\nif (process.argv.includes(\"--version\")) { process.stdout.write(" + JSON.stringify(version + "\n") + "); process.exit(0); }\n"
     + "process.argv.splice(2, Infinity, \"acp-v1\", " + JSON.stringify(scenario) + ");\nawait import(" + JSON.stringify(controlPeer) + ");\n";
 }
+/**
+ * What the fixture's Gateway is started with unless a test says otherwise. A Gateway has no wait budget and no limit on conversations
+ * unless an operator sets one (2026-11-12); most tests of the page read an approval's deadline in its words, so the fixture sets
+ * the 30 minutes those words describe. The test of the default passes `{}`.
+ */
+const FIXTURE_LIMITS: TurnLimits = { waitBudgetMs: 30 * 60_000 };
 async function launchFixture(providerManagement = true, nativeAcp: { readonly name: string; readonly scenario: string; readonly env?: Readonly<Record<string, string>> } | null = null, nativeCodex: { readonly name: string; readonly scenario: string } | null = null, hermes = false,
-  budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number }, loginShell?: { readonly shell: string; readonly shells: string },
+  budgets?: TurnLimits, loginShell?: { readonly shell: string; readonly shells: string },
   /**
    * Catalog Harnesses the control-peer stands in for, by the version their entry reports. With any, discovery's PATH holds
    * Node.js alone instead of its whole directory, where this computer's own `dsh` or `claude` may be installed.
@@ -82,7 +89,7 @@ async function launchFixture(providerManagement = true, nativeAcp: { readonly na
   let composed: ReturnType<typeof application> | null = null;
   const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true }), port: 0, providerManagement, ...(loginShell === undefined ? {} : { loginShell }),
     // The fixture's Harnesses are discovery-manifest entries, which only a development Gateway reads (ADR-044).
-    application: (data, publish) => (composed = application(data, publish, { installations: "any", management: { installationMode: "private-fixture", metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: (isolated ? nodeOnly : dirname(process.execPath)) + ":/usr/bin:/bin" } }, ...(budgets === undefined ? {} : { budgets }), workspaceLockRoot: join(root, "locks") })) });
+    application: (data, publish) => (composed = application(data, publish, { installations: "any", management: { installationMode: "private-fixture", metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: (isolated ? nodeOnly : dirname(process.execPath)) + ":/usr/bin:/bin" } }, budgets: budgets ?? FIXTURE_LIMITS, workspaceLockRoot: join(root, "locks") })) });
   return { root, gateway, runtime: () => { assert.ok(composed); return composed.runtime; }, setVersion: (value: string) => { fixtureVersion = value; }, baseUrl: `http://127.0.0.1:${address.port}/v1`, close: async () => { await gateway.close(); modelServer.closeAllConnections(); await new Promise<void>(done => modelServer.close(() => done())); await rm(root, { recursive: true, force: true }); } };
 }
 /** The settings switch that lists the frozen Harnesses (Cursor, Gemini CLI, Pi) for new work as well (ADR-050). */
@@ -1263,8 +1270,8 @@ test("a Turn's diagnostics are copied from its details without conversation cont
   assert.deepEqual(errors, []);
 });
 
-test("a Turn waiting for another conversation's work in their workspace names it and why, opens it, can be cancelled, and starts once it is free", { timeout: 120000 }, async t => {
-  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }); let browser: Browser | null = null;
+test("a Turn that comes to a directory another conversation works in does not wait: it runs at once and says the other conversation is there; an approval without a budget has no deadline", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }, null, false, {}); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
@@ -1272,63 +1279,27 @@ test("a Turn waiting for another conversation's work in their workspace names it
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   const send = async (text: string) => { await composer.fill(text); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter"); };
-  // The first conversation waits for an approval, holding the workspace; its deadline is HarnessHub's wait budget.
+  // The first conversation waits for an approval, in the directory the second will come to. Without a wait budget, the approval has no deadline.
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
   await send("approve this");
   const card = page.getByRole("region", { name: "工具审批", exact: true });
   await expect(card).toContainText("rm -rf build", { timeout: 15000 });
-  await expect(card.locator(".permission-deadline")).toHaveText("等待期限 · 剩余 30 分");
-  await expect(page.locator(".session-item.has-attention .attention-line")).toHaveText("等你批准 · 等待期限 剩余 30 分");
-  // A second conversation in the same workspace queues behind it, and says which conversation and why, without paths.
+  await expect(card.locator(".permission-deadline")).toHaveCount(0);
+  await expect(page.locator(".session-item.has-attention .attention-line")).toHaveText("等你批准 等待你的决定");
+  // A second conversation in the same directory does not queue behind it: it runs, and its Turn says the other one is there, as every notice of a Turn does.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
-  await send("queued work");
-  const status = log.locator(".response-status");
-  // What the holder waits for is said as every other place says it (ADR-054 decision G).
-  await expect(status).toHaveText("排队中：等待对话「approve this」释放工作区（它在等你批准）", { timeout: 15000 });
-  // Waiting, it has not started: the line under the composer counts no time for it, as the Turn's own line counts none.
-  await expect(page.locator(".composer-status")).toHaveText("第 1 轮");
-  await expect(log.locator(".queued-turn small")).toHaveText("最多再等 30 分钟，到时这条消息不会发出。");
-  assert.equal((await log.textContent())?.includes(fixture.root), false, "no private path reaches the page");
-  await page.screenshot({ path: join(artifact, "queued-turn.png"), animations: "disabled" });
-  // Cancelling the queued Turn stops only it; a new message queues again.
-  await log.getByRole("button", { name: "取消排队", exact: true }).click();
-  await expect(log.locator("[data-run-status=cancelled]")).toHaveCount(1);
-  await send("queued again");
-  await expect(log.locator(".response-status").last()).toHaveText(/^排队中：等待对话「approve this」/u, { timeout: 15000 });
-  // The holder opens from the queued Turn; once its approval is decided and its Turn ends, the queued Turn starts by itself.
-  // It opened in place of the page whose link was pressed: the approval waiting in its composer's place takes the focus.
-  await log.getByRole("button", { name: "打开那个对话", exact: true }).click();
-  await expect(card).toBeVisible(); await expect(card).toBeFocused(); await card.getByRole("button", { name: "Allow once", exact: true }).click();
-  await page.locator(".session-item", { hasText: "queued work" }).click();
+  await send("quick work");
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
-  await expect(log).toContainText("你好 fixture");
-  assert.deepEqual(errors, []);
-});
-
-test("a Turn that waits for its workspace past its wait budget is not sent, and names the conversation that held it", { timeout: 120000 }, async t => {
-  const fixture = await launchFixture(false, { name: "Busy Agent", scenario: "stop" }, null, false, { executionBudgetMs: 60_000, waitBudgetMs: 3000 }); let browser: Browser | null = null;
-  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
-  browser = await chromium.launch({ headless: true });
-  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
-  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
-  await page.goto(fixture.gateway.url);
-  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  const send = async (text: string) => { await composer.fill(text); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter"); };
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
-  await send("long work"); await expect(log).toContainText("你好 fixture", { timeout: 15000 });
-  await page.getByRole("button", { name: "新对话", exact: true }).click();
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Busy Agent", exact: true }).click();
-  await send("waits too long");
-  await expect(log.locator(".response-status")).toHaveText("排队中：等待对话「long work」释放工作区（它正在运行）", { timeout: 15000 });
-  const failure = log.locator(".run-error");
-  await expect(failure).toHaveText("工作区正被另一项任务使用，这条消息没有发出。可以等它结束后重新发送，或为新对话选择其他工作区。占用它的是对话「long work」。打开那个对话", { timeout: 15000 });
-  await page.screenshot({ path: join(artifact, "workspace-busy.png"), animations: "disabled" });
-  // The conversation that held the workspace opens in place of this page and takes the focus in its message box.
-  await failure.getByRole("button", { name: "打开那个对话", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "long work" })).toBeVisible(); await expect(composer).toBeFocused();
-  await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
-  await expect(log.locator("[data-run-status=cancelled]")).toHaveCount(1, { timeout: 15000 });
+  await expect(log).toContainText("你好 fixture"); await expect(log).toContainText("另一个对话也在这个目录里工作");
+  await expect(log.locator(".queued-turn")).toHaveCount(0); await expect(log.getByRole("button", { name: "取消排队", exact: true })).toHaveCount(0);
+  assert.equal((await log.textContent())?.includes(fixture.root), false, "no private path reaches the page");
+  await page.screenshot({ path: join(artifact, "shared-workspace.png"), animations: "disabled" });
+  // The first conversation is where it was: its approval still waits, and deciding it finishes its Turn.
+  await page.locator(".session-item", { hasText: "approve this" }).click();
+  await expect(card).toBeVisible(); await card.getByRole("button", { name: "Allow once", exact: true }).click();
+  await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  await expect(log).not.toContainText("另一个对话也在这个目录里工作");
   assert.deepEqual(errors, []);
 });
 
@@ -1402,8 +1373,8 @@ test("a Turn the Runtime cancelled when its wait budget ran out says 已停止 w
   assert.deepEqual(errors, []);
 });
 
-test("a Turn waiting for a slot says how many conversations run, has no deadline of its own, and can be cancelled", { timeout: 120000 }, async t => {
-  const fixture = await launchFixture(false, { name: "Busy Agent", scenario: "hermes" }); let browser: Browser | null = null;
+test("a Turn waiting for a slot, when an operator limited the conversations running at once, says how many run, has no deadline of its own, and can be cancelled", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Busy Agent", scenario: "hermes" }, null, false, { ...FIXTURE_LIMITS, maxParallel: 4 }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];

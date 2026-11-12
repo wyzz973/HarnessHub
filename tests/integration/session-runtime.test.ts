@@ -379,13 +379,13 @@ test("closing during a busy pending switch retains source identity until old exe
   assert.deepEqual(final.switches[0]?.sourceRunIds, [active.runId]); assert.equal(factory.prepared.length, 1);
 });
 
-test("queue input count and byte limits reject admission without launching cancelled tombstones", async (t) => {
+test("a message over its byte limit is refused, the queue of waiting inputs has no count limit of its own, and cancelled tombstones launch nothing", async (t) => {
   const f = await fixture(t), factory = new ControlledFactory([]), app = runtime(f, factory);
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   for (const value of ["", " ", "x".repeat(64 * 1024 + 1), "中文".repeat(22000), "nul\0input"])
     assert.throws(() => app.send(state.id, value, "invalid"), /64 KiB/);
-  const receipts = Array.from({ length: 8 }, (_, index) => app.send(state.id, "queued " + index, "send-" + index));
-  assert.throws(() => app.send(state.id, "ninth", "ninth"), /queued input limit/);
+  // Eight was the most inputs a conversation held waiting; the queue is the conversation's Turns that have not started, bounded only by the conversation itself.
+  const receipts = Array.from({ length: 40 }, (_, index) => app.send(state.id, "queued " + index, "send-" + index));
   for (const [index, receipt] of receipts.entries()) app.cancel(state.id, "cancel-" + index, receipt.runId);
   await app.wait(state.id);
   assert.equal(factory.prepared.length, 0); assert.ok(app.read(state.id).runs.every(run => run.status === "cancelled"));
@@ -471,20 +471,19 @@ test("runtime shutdown waits for in-flight creation validation to release its re
   f.store.assertOwner(); assert.equal(f.store.list().length, 0);
 });
 
-test("no more than sixteen creations can hold simultaneous external validation resources", async (t) => {
+test("creations are not limited in number: twenty-four hold validation resources at once, and closing the runtime ends every one of them", async (t) => {
   const f = await fixture(t), allReady = new Gate<void>(), release = new Gate<void>(); let calls = 0, ready = 0;
   const app = runtime(f, {
     validate: async request => {
       const directory = join(f.root, "validation-" + ++calls); await mkdir(directory);
-      if (++ready === 16) allReady.resolve();
+      if (++ready === 24) allReady.resolve();
       try { await release.promise; return selection(request); } finally { await rm(directory, { recursive: true }); }
     }, prepare: async () => { throw new Error("validation-only fixture must not prepare"); },
   });
-  const creations = Array.from({ length: 16 }, (_, index) => app.create(f.configuration, { harnessId: "alpha" }, "create-" + index));
+  const creations = Array.from({ length: 24 }, (_, index) => app.create(f.configuration, { harnessId: "alpha" }, "create-" + index));
   const failures = creations.map(pending => assert.rejects(pending, (error: unknown) => error instanceof SessionError && error.code === "RUNTIME_CLOSED"));
   await allReady.promise;
-  await assert.rejects(() => app.create(f.configuration, { harnessId: "alpha" }, "seventeenth"), (error: unknown) => error instanceof SessionError && error.code === "CREATE_LIMIT");
-  assert.equal(calls, 16); assert.equal((await readdir(f.root)).filter(name => name.startsWith("validation-")).length, 16);
+  assert.equal(calls, 24); assert.equal((await readdir(f.root)).filter(name => name.startsWith("validation-")).length, 24);
   const closing = app.close(); f.store.assertOwner(); release.resolve(); await Promise.all([closing, ...failures]);
   assert.equal((await readdir(f.root)).filter(name => name.startsWith("validation-")).length, 0); assert.equal(f.store.list().length, 0);
 });
@@ -660,6 +659,33 @@ test("uncertain native dispatch cannot be silently restored after public recover
   assert.equal(app.read(session.id).nativeBindings?.[0]?.status, "archived");
   assert.equal(app.read(session.id).nativeBindings?.[1]?.status, "ready");
   assert.equal(app.read(session.id).runs[0]?.status, "unknown");
+});
+
+test("neither the answer to a question nor the number of requests waiting at once has a limit of the Hub's: a 3 MiB answer reaches the Harness, and two hundred approvals wait together", { timeout: 20000 }, async t => {
+  const f = await fixture(t), peer = controlled({ holdResult: true }), factory = new ControlledFactory([peer]);
+  const prepare = factory.prepare.bind(factory), asked = new Gate<void>(), answers: { readonly id: string; readonly option: string; readonly input: string | undefined }[] = [];
+  factory.prepare = async (...args) => {
+    const binding = await prepare(...args);
+    return { ...binding, control: { ...binding.control, enablePermissions: () => {}, decidePermission: async (id: string, option: string, input?: string) => { answers.push({ id, option, input }); },
+      startText: async (id: NativeConversationId, text: TurnText, output: (event: ControlEvent) => void) => {
+        const run = await binding.control.startText(id, text, output);
+        // The first is a question that takes free text; two hundred approvals follow it, none decided (the Runtime used to refuse the 33rd and end the Turn).
+        output({ type: "permission_requested", id: "question", title: "What should the file say?", kind: "question", options: [{ id: "submit", name: "Submit" }], input: { kind: "text", value: "" } });
+        for (let at = 0; at < 200; at++) output({ type: "permission_requested", id: "approval-" + at, title: "Run step " + at, options: [{ id: "yes", name: "Yes" }] });
+        asked.resolve(); return run;
+      } } };
+  };
+  const app = runtime(f, factory), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(session.id, "ask me everything", "one"); await asked.promise;
+  const waiting = app.permissionRequests(session.id);
+  assert.equal(waiting.length, 201, "all of them wait for the user"); assert.equal(app.read(session.id).runs[0]!.status, "running", "and the Turn goes on");
+  const answer = "答案 ".repeat(500_000);
+  assert.ok(Buffer.byteLength(answer) > 3 * 1024 * 1024);
+  await app.decidePermission(session.id, waiting[0]!.id, "submit", "answer-1", answer);
+  assert.equal(answers.length, 1); assert.equal(answers[0]!.input, answer, "the whole answer, byte for byte");
+  await assert.rejects(app.decidePermission(session.id, waiting[1]!.id, "yes", "answer-2", "text for an approval"), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT");
+  await assert.rejects(app.decidePermission(session.id, waiting[0]!.id + "x", "submit", "answer-3", "a\0b"), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT", "NUL is still refused");
+  peer.result.resolve({ status: "cancelled", reason: "fixture" }); await app.wait(session.id);
 });
 
 test("a question the Harness withdraws closes its public request and refuses a late answer", { timeout: 10000 }, async t => {
@@ -944,10 +970,11 @@ class StreamingFactory implements SessionBindingFactory {
   }
 }
 /** A Runtime whose ADR-047 windows expire only when the test fires its timers; the clock steps a millisecond per reading. */
-function windowed(f: Fixture, factory: SessionBindingFactory, options: { readonly publish?: (event: SessionEvent) => void; readonly executionBudgetMs?: number } = {}): { readonly app: SessionRuntime; readonly timers: ManualTimers } {
+function windowed(f: Fixture, factory: SessionBindingFactory, options: { readonly publish?: (event: SessionEvent) => void; readonly executionBudgetMs?: number; readonly waitBudgetMs?: number } = {}): { readonly app: SessionRuntime; readonly timers: ManualTimers } {
   const timers = new ManualTimers(); let id = 0, clock = Date.parse("2026-10-21T00:00:00Z");
   const app = new SessionRuntime(f.store, factory, { id: () => "window-" + String(++id), now: () => new Date(clock += 1), publish: options.publish ?? (() => {}),
-    fingerprint: value => createHash("sha256").update(value).digest("hex"), schedule: timers.schedule, ...(options.executionBudgetMs === undefined ? {} : { executionBudgetMs: options.executionBudgetMs }) });
+    fingerprint: value => createHash("sha256").update(value).digest("hex"), schedule: timers.schedule, ...(options.executionBudgetMs === undefined ? {} : { executionBudgetMs: options.executionBudgetMs }),
+    ...(options.waitBudgetMs === undefined ? {} : { waitBudgetMs: options.waitBudgetMs }) });
   f.runtimes.push(app); return { app, timers };
 }
 /** The whole committed log of a Session, oldest first (the Store pages it). */
@@ -1005,6 +1032,36 @@ test("INV-06/INV-20 ADR-047: 200 text chunks a millisecond apart are committed a
   t.diagnostic(`ADR-047 thinking: ${thoughts.length} chunks became ${thinking.length} run.output events (one per chunk before)`);
   assert.equal(thinking.map(row => row.slice("thinking:".length)).join(""), thoughts.join(""));
   assert.equal(log(f, session.id).filter(row => row.type === "run.first_output").length, 2, "one first output per Turn");
+});
+
+test("an approval's deadline is the one its program announced, an operator's wait budget when there is one and it comes first, and none without either (2026-11-12)", async t => {
+  const ask = (turn: StreamingTurn, id: string, expiry: { readonly expiresInMs?: number; readonly expiresBy?: "native" | "turn" } = {}) => turn.emit({ type: "permission_requested", id, title: "May I?", options: [{ id: "yes", name: "Yes" }], ...expiry });
+  // Without a wait budget: a request the program gave no deadline waits for the user; one it gave a deadline keeps it, however long (a day was the longest it took once).
+  const f = await fixture(t), factory = new StreamingFactory(), { app } = windowed(f, factory);
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  const first = factory.dispatched(1); app.send(session.id, "ask", "ask"); const turn = await first;
+  ask(turn, "plain"); ask(turn, "native", { expiresInMs: 90_000, expiresBy: "native" }); ask(turn, "week", { expiresInMs: 7 * 24 * 3600_000, expiresBy: "native" });
+  const [plain, native, week] = app.attention();
+  assert.deepEqual([plain!.expiresAt, plain!.expiresBy], [undefined, undefined], "nothing of the Hub's, nothing of the program's");
+  assert.deepEqual([native!.expiresBy, native!.expiresAt! - native!.requestedAt], ["native", 90_000]);
+  assert.deepEqual([week!.expiresBy, week!.expiresAt! - week!.requestedAt], ["native", 7 * 24 * 3600_000]);
+  // Time passes: none of them is the Runtime's to expire, and the Turn is not cancelled for waiting.
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(app.read(session.id).runs[0]!.status, "running"); assert.equal(app.attention().length, 3);
+  turn.result.resolve({ status: "cancelled", reason: "fixture" }); await app.wait(session.id);
+});
+
+test("an operator's wait budget is the deadline of a request whose program announced none or a later one, and the program's own when it is earlier", async t => {
+  const ask = (turn: StreamingTurn, id: string, expiry: { readonly expiresInMs?: number; readonly expiresBy?: "native" | "turn" } = {}) => turn.emit({ type: "permission_requested", id, title: "May I?", options: [{ id: "yes", name: "Yes" }], ...expiry });
+  const f = await fixture(t), factory = new StreamingFactory(), { app } = windowed(f, factory, { waitBudgetMs: 60_000 });
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  const first = factory.dispatched(1); app.send(session.id, "ask", "ask"); const turn = await first;
+  ask(turn, "plain"); ask(turn, "later", { expiresInMs: 600_000, expiresBy: "native" }); ask(turn, "sooner", { expiresInMs: 20_000, expiresBy: "native" });
+  const [plain, later, sooner] = app.attention();
+  assert.equal(plain!.expiresBy, "turn"); assert.ok(plain!.expiresAt! - plain!.requestedAt <= 60_000 && plain!.expiresAt! - plain!.requestedAt > 59_000);
+  assert.equal(later!.expiresBy, "turn", "the budget ends before the program's deadline");
+  assert.deepEqual([sooner!.expiresBy, sooner!.expiresAt! - sooner!.requestedAt], ["native", 20_000], "the program's deadline ends before the budget");
+  turn.result.resolve({ status: "cancelled", reason: "fixture" }); await app.wait(session.id);
 });
 
 // Directed mutation (checked by hand): without the flush before a non-text event in output(), or without the flush on a

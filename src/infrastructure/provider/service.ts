@@ -3,14 +3,12 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ProviderError, parseProviderTarget, providerId, type ProviderTarget, type ProviderTextRedactor, type ProviderView } from "../../contracts/provider.js";
-import { MAX_PROVIDERS, MAX_REVISIONS, assertProviderCompatibility, parseProviderCommand, parseProviderView, parseProviderWrite } from "../../contexts/provider/domain/provider.js";
+import { assertProviderCompatibility, parseProviderCommand, parseProviderView, parseProviderWrite } from "../../contexts/provider/domain/provider.js";
 import { materializeProvider } from "../../adapters/provider/materialize.js";
 import { fileIdentity, readPrivateFile, sameIdentity, ProviderVault, type FileIdentity } from "./vault.js";
 
-const MAX_TOTAL_REVISIONS = 4096;
-const MAX_COMMANDS = 8192;
+// How many Providers, revisions and commands the store holds, and how many bytes of metadata, has no bound (2026-11-12): only each record's own size is checked.
 const MAX_VIEW_BYTES = 65536;
-const MAX_METADATA_BYTES = 32 * 1024 * 1024;
 const MAX_PROBE_BYTES = 1024 * 1024;
 const PROBE_TIMEOUT_MS = 5000;
 const MAX_ACTIVE_PROBES = 16;
@@ -68,11 +66,6 @@ export class LocalProviderService {
       const version = this.db.prepare("PRAGMA user_version").get()?.user_version;
       if (version !== 0 && version !== 1) throw new ProviderError("INVALID_STORAGE", "unsupported Provider storage schema");
       this.db.exec("CREATE TABLE IF NOT EXISTS providers (id TEXT PRIMARY KEY, current_revision INTEGER NOT NULL) STRICT; CREATE TABLE IF NOT EXISTS provider_revisions (provider_id TEXT NOT NULL, revision INTEGER NOT NULL, view_json TEXT NOT NULL, PRIMARY KEY(provider_id, revision)) STRICT; CREATE TABLE IF NOT EXISTS provider_commands (command_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, provider_id TEXT NOT NULL, revision INTEGER NOT NULL) STRICT; PRAGMA user_version=1");
-      if (count(this.db.prepare("SELECT count(*) AS total FROM provider_revisions").get()?.total) > MAX_TOTAL_REVISIONS)
-        throw new ProviderError("STORAGE_LIMIT", "Provider revision storage budget exceeded");
-      if (count(this.db.prepare("SELECT count(*) AS total FROM providers").get()?.total) > MAX_PROVIDERS ||
-          count(this.db.prepare("SELECT count(*) AS total FROM provider_commands").get()?.total) > MAX_COMMANDS)
-        throw new ProviderError("STORAGE_LIMIT", "Provider storage budget exceeded");
       this.vault = openedVault = new ProviderVault(this.storage.root, this.db);
       this.validateStoredMetadata();
       for (const secret of this.vault.all()) this.knownKeys.add(secret);
@@ -88,12 +81,10 @@ export class LocalProviderService {
     const revisions = this.db.prepare("SELECT provider_id,revision,view_json FROM provider_revisions").all();
     const credentials = this.db.prepare("SELECT provider_id,revision FROM provider_credentials").all();
     const commands = this.db.prepare("SELECT command_id,fingerprint,provider_id,revision FROM provider_commands").all();
-    if (parents.length > MAX_PROVIDERS || revisions.length > MAX_TOTAL_REVISIONS || credentials.length > MAX_TOTAL_REVISIONS || commands.length > MAX_COMMANDS)
-      throw new ProviderError("STORAGE_LIMIT", "Provider storage budget exceeded");
     const parentMap = new Map<string, number>();
     for (const row of parents) {
       const id = providerId(row.id);
-      if (typeof row.current_revision !== "number" || !Number.isSafeInteger(row.current_revision) || row.current_revision < 1 || row.current_revision > MAX_REVISIONS)
+      if (typeof row.current_revision !== "number" || !Number.isSafeInteger(row.current_revision) || row.current_revision < 1)
         throw new ProviderError("INVALID_DATA", "invalid current Provider revision");
       parentMap.set(id, row.current_revision);
     }
@@ -124,12 +115,10 @@ export class LocalProviderService {
     }
   }
   private metadataBudgets(): void {
-    const total = this.db.prepare("SELECT coalesce(sum(length(CAST(view_json AS BLOB))),0) AS bytes FROM provider_revisions").get()?.bytes;
-    if (typeof total !== "number" || total > MAX_METADATA_BYTES) throw new ProviderError("STORAGE_LIMIT", "Provider metadata byte budget exceeded");
-    if (this.db.prepare("SELECT 1 FROM providers WHERE length(CAST(id AS BLOB))>45 OR current_revision NOT BETWEEN 1 AND 1024 LIMIT 1").get() ||
-        this.db.prepare("SELECT 1 FROM provider_revisions WHERE length(CAST(provider_id AS BLOB))>45 OR revision NOT BETWEEN 1 AND 1024 OR length(CAST(view_json AS BLOB))>65536 LIMIT 1").get() ||
-        this.db.prepare("SELECT 1 FROM provider_credentials WHERE length(CAST(provider_id AS BLOB))>45 OR revision NOT BETWEEN 1 AND 1024 LIMIT 1").get() ||
-        this.db.prepare("SELECT 1 FROM provider_commands WHERE length(CAST(command_id AS BLOB))>128 OR length(CAST(fingerprint AS BLOB))>64 OR length(CAST(provider_id AS BLOB))>45 OR revision NOT BETWEEN 1 AND 1024 LIMIT 1").get())
+    if (this.db.prepare("SELECT 1 FROM providers WHERE length(CAST(id AS BLOB))>45 OR current_revision NOT BETWEEN 1 AND 9007199254740991 LIMIT 1").get() ||
+        this.db.prepare("SELECT 1 FROM provider_revisions WHERE length(CAST(provider_id AS BLOB))>45 OR revision NOT BETWEEN 1 AND 9007199254740991 OR length(CAST(view_json AS BLOB))>65536 LIMIT 1").get() ||
+        this.db.prepare("SELECT 1 FROM provider_credentials WHERE length(CAST(provider_id AS BLOB))>45 OR revision NOT BETWEEN 1 AND 9007199254740991 LIMIT 1").get() ||
+        this.db.prepare("SELECT 1 FROM provider_commands WHERE length(CAST(command_id AS BLOB))>128 OR length(CAST(fingerprint AS BLOB))>64 OR length(CAST(provider_id AS BLOB))>45 OR revision NOT BETWEEN 1 AND 9007199254740991 LIMIT 1").get())
       throw new ProviderError("INVALID_DATA", "Provider metadata field exceeded its byte or revision budget");
   }
   private assertOwned(): void {
@@ -160,7 +149,6 @@ export class LocalProviderService {
   list(): readonly ProviderView[] {
     this.assertOwned();
     const total = count(this.db.prepare("SELECT count(*) AS total FROM providers").get()?.total);
-    if (total > MAX_PROVIDERS) throw new ProviderError("STORAGE_LIMIT", "Provider count budget exceeded");
     this.metadataBudgets();
     const rows = this.db.prepare("SELECT p.id,p.current_revision,r.view_json,(SELECT max(revision) FROM provider_revisions WHERE provider_id=p.id) AS latest, EXISTS(SELECT 1 FROM provider_credentials c WHERE c.provider_id=p.id AND c.revision=p.current_revision) AS credential_present FROM providers p JOIN provider_revisions r ON r.provider_id=p.id AND r.revision=p.current_revision WHERE length(CAST(p.id AS BLOB))<=45 AND length(CAST(r.view_json AS BLOB))<=65536 ORDER BY p.id").all();
     if (rows.length !== total) throw new ProviderError("INVALID_DATA", "Provider current revision is missing");
@@ -192,23 +180,17 @@ export class LocalProviderService {
           throw new ProviderError("COMMAND_CONFLICT", "Provider command identity was already used with different input");
         const replay = this.revision(prior.provider_id, prior.revision); this.db.exec("COMMIT"); return replay;
       }
-      if (count(this.db.prepare("SELECT count(*) AS total FROM provider_commands").get()?.total) >= MAX_COMMANDS ||
-          count(this.db.prepare("SELECT count(*) AS total FROM provider_revisions").get()?.total) >= MAX_TOTAL_REVISIONS)
-        throw new ProviderError("STORAGE_LIMIT", "Provider storage budget exhausted");
       const current = id === null ? null : this.revision(id);
       if (current && current.revision !== expected) throw new ProviderError("REVISION_CONFLICT", "Provider changed since it was read");
-      if (current && current.revision >= MAX_REVISIONS) throw new ProviderError("STORAGE_LIMIT", "Provider revision budget exhausted");
-      if (current === null && count(this.db.prepare("SELECT count(*) AS total FROM providers").get()?.total) >= MAX_PROVIDERS)
-        throw new ProviderError("STORAGE_LIMIT", "Provider count budget exhausted");
       const identity = id ?? "provider-" + randomUUID(), revision = current === null ? 1 : current.revision + 1;
       const previousSecret = current === null ? null : this.vault.read(identity, current.revision);
       if (current && current.hasCredential !== (previousSecret !== null)) throw new ProviderError("INVALID_VAULT", "Provider credential reference is inconsistent");
       secret = parsed.apiKey ?? previousSecret;
       const view: ProviderView = { id: identity, revision, name: parsed.name, protocol: parsed.protocol, baseUrl: parsed.baseUrl,
         models: parsed.models, defaultModel: parsed.defaultModel, enabled: parsed.enabled, hasCredential: secret !== null };
-      const serialized = JSON.stringify(view), storedBytes = this.db.prepare("SELECT coalesce(sum(length(CAST(view_json AS BLOB))),0) AS bytes FROM provider_revisions").get()?.bytes;
-      if (typeof storedBytes !== "number" || storedBytes + Buffer.byteLength(serialized, "utf8") > MAX_METADATA_BYTES)
-        throw new ProviderError("STORAGE_LIMIT", "Provider metadata byte budget exhausted");
+      const serialized = JSON.stringify(view);
+      // A record larger than a record may be would be stored and then not read back, which would keep the service from starting: it is refused here.
+      if (Buffer.byteLength(serialized, "utf8") > MAX_VIEW_BYTES) throw new ProviderError("INVALID_INPUT", "the Provider's name, address and models are larger than a Provider record may be (64 KiB)");
       if (secret !== null) this.vault.store(identity, revision, secret);
       this.db.prepare("INSERT INTO provider_revisions(provider_id,revision,view_json) VALUES(?,?,?)").run(identity, revision, serialized);
       if (current === null) this.db.prepare("INSERT INTO providers(id,current_revision) VALUES(?,?)").run(identity, revision);

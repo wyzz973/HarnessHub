@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { loadBuiltinCatalog } from "../../src/adapters/catalog.js";
 import { CONSERVATIVE_HOST_CAPABILITIES, HOST_BUDGET_BOUNDS, HOST_CLASS_CAP_BOUNDS, MIN_HOST_MEMORY_BUDGET_BYTES, MIN_PHYSICAL_MEMORY_BYTES, hostClassKey, hostId, hostKind,
   parseHostCapabilities, resolveHostBudgets, sessionLeaseId, type HostCapabilities, type HostKind } from "../../src/contracts/native-host.js";
-import { MAX_PARALLEL_CONVERSATIONS, SessionError } from "../../src/contracts/session.js";
+import { SessionError } from "../../src/contracts/session.js";
 
 // The host and session-lease contract of ADR-056 (design §4.2, §4.3; G078). Nothing here starts a program or reads a store:
 // every parser is checked against its own rule, and every refusal is a refusal, never an adjusted value.
@@ -75,15 +75,15 @@ test("G078-C01 a class's budget kind follows sessions, sessionMemory and session
 });
 
 const PHYSICAL = 64 * GIB;
-test("G078-C02 the host budgets' defaults: an eighth of memory, the measured class caps, ADR-030 and ADR-036 limits, a 1.5 s close grace and the TMPDIR limits", () => {
+test("G078-C02 the host budgets' defaults: an eighth of memory, the measured class caps, the ADR-030 limit, a 1.5 s close grace and the TMPDIR limits", () => {
   const budgets = resolveHostBudgets({ physicalMemoryBytes: PHYSICAL });
   assert.deepEqual(budgets, {
-    hostMemoryBudgetBytes: 8 * GIB, maxHosts: 8, maxPinned: 4, maxParallel: MAX_PARALLEL_CONVERSATIONS, pinnedIdleTtlMs: 30 * MINUTE, pinnedHardCapMs: 4 * HOUR,
+    hostMemoryBudgetBytes: 8 * GIB, maxHosts: 8, maxPinned: 4, pinnedIdleTtlMs: 30 * MINUTE, pinnedHardCapMs: 4 * HOUR,
     classCaps: { single: { hostIdleMs: 5 * MINUTE }, light: { maxSessionsPerHost: 8, hostIdleMs: 15 * MINUTE },
       heavy_reclaimable: { maxLiveSessions: 3, sessionIdleMs: 10 * MINUTE, emptyHostIdleMs: 2 * MINUTE }, heavy_process_only: { maxProcesses: 3, hostIdleMs: 5 * MINUTE } },
     closeGraceMs: 1_500, closeOutsideWaitMs: 10_000, hostTmpdirMaxBytes: 256 * MIB, hostTmpdirMaxEntries: 4_096, hostTmpdirUnusedMs: 7 * DAY, hostTmpdirCloseWaitMs: 5_000 });
   assert.deepEqual(resolveHostBudgets({ physicalMemoryBytes: PHYSICAL, configured: {} }), budgets, "nothing configured is the defaults");
-  assert.equal(MAX_PARALLEL_CONVERSATIONS, 4);
+  assert.equal("maxParallel" in budgets, false, "how many conversations run at once is nobody's budget: it is the operator's optional setting, and unlimited without it (2026-11-12)");
   assert.equal(resolveHostBudgets({ physicalMemoryBytes: 16 * GIB + 7 }).hostMemoryBudgetBytes, 2 * GIB, "an eighth, rounded down");
   assert.equal(resolveHostBudgets({ physicalMemoryBytes: MIN_PHYSICAL_MEMORY_BYTES }).hostMemoryBudgetBytes, MIN_HOST_MEMORY_BUDGET_BYTES, "the least memory still has a default within bounds");
   // Every default lies within its own bounds.

@@ -412,12 +412,14 @@ export interface SessionBindingFactory {
    */
   close?(): Promise<void>;
 }
-/** A Turn's budgets unless configured, and their bounds (ADR-036). */
-export const DEFAULT_EXECUTION_BUDGET_MS = 300_000, MAX_EXECUTION_BUDGET_MS = 60 * 60_000, MIN_EXECUTION_BUDGET_MS = 30_000;
-export const DEFAULT_WAIT_BUDGET_MS = 30 * 60_000, MAX_WAIT_BUDGET_MS = 2 * 60 * 60_000, MIN_WAIT_BUDGET_MS = 60_000;
+/**
+ * A Turn has no time wall (decided 2026-11-12; ADR-036 is superseded by it). The two budgets below are an operator's optional
+ * automatic stops, off unless given on the command line: `executionBudgetMs` stops a Turn that has worked this long (the time it
+ * waits for the user does not count), `waitBudgetMs` expires an approval or question nobody answered in this long. Only their
+ * smallest values are bounded, so a typing slip cannot stop every Turn at once; there is no largest.
+ */
+export const MIN_EXECUTION_BUDGET_MS = 30_000, MIN_WAIT_BUDGET_MS = 60_000;
 /** How long a stopped Turn's program may take to settle before its process is ended. */
-/** How many conversations run work at once (ADR-036); the same as the kept-process limit. */
-export const MAX_PARALLEL_CONVERSATIONS = 4;
 export const STOP_GRACE_MS = 15_000;
 /**
  * Streamed reply text and thinking are committed per window, not per chunk (ADR-047): a window is committed once it is this
@@ -425,22 +427,24 @@ export const STOP_GRACE_MS = 15_000;
  * published and does not advance the persistent cursor.
  */
 export const STREAM_WINDOW_MS = 100, STREAM_WINDOW_BYTES = 16 * 1024;
-/** The drivers' own per-Turn timeout: only a backstop against a hung protocol, beyond both budgets at their largest. */
-export const NATIVE_TURN_HARD_CAP_MS = MAX_EXECUTION_BUDGET_MS + MAX_WAIT_BUDGET_MS + 60 * 60_000;
 /**
- * The configured budgets (command-line values in seconds and minutes), with their defaults and bounds (ADR-036). A value
- * that is not a whole number within its bounds is refused, never adjusted.
+ * The operator's optional limits (command-line values: seconds, minutes, a count), each present only when given. Nothing here has a
+ * default: without a value a Turn is never stopped for its time, an approval never expires on the Hub's account, and every
+ * conversation runs at once.
  */
-export function resolveTurnBudgets(input: { readonly executionSeconds?: string | undefined; readonly waitMinutes?: string | undefined } = {}): { readonly executionBudgetMs: number; readonly waitBudgetMs: number } {
-  const whole = (value: string | undefined, unit: number, fallback: number, minimum: number, maximum: number, label: string): number => {
-    if (value === undefined) return fallback;
-    if (!/^[1-9][0-9]{0,5}$/u.test(value)) throw new SessionError("INVALID_INPUT", label + " must be a whole number");
+export interface TurnLimits { readonly executionBudgetMs?: number; readonly waitBudgetMs?: number; readonly maxParallel?: number }
+/** The limits given on the command line; a value that is not a whole number at least as large as its minimum is refused, never adjusted. */
+export function resolveTurnBudgets(input: { readonly executionSeconds?: string | undefined; readonly waitMinutes?: string | undefined; readonly maxParallel?: string | undefined } = {}): TurnLimits {
+  const whole = (value: string | undefined, unit: number, minimum: number, label: string): number | undefined => {
+    if (value === undefined) return undefined;
+    if (!/^[1-9][0-9]{0,8}$/u.test(value)) throw new SessionError("INVALID_INPUT", label + " must be a whole number");
     const ms = Number(value) * unit;
-    if (ms < minimum || ms > maximum) throw new SessionError("INVALID_INPUT", label + " is out of bounds");
+    if (ms < minimum) throw new SessionError("INVALID_INPUT", label + " is below its minimum");
     return ms;
   };
-  return { executionBudgetMs: whole(input.executionSeconds, 1000, DEFAULT_EXECUTION_BUDGET_MS, MIN_EXECUTION_BUDGET_MS, MAX_EXECUTION_BUDGET_MS, "execution budget (seconds)"),
-    waitBudgetMs: whole(input.waitMinutes, 60_000, DEFAULT_WAIT_BUDGET_MS, MIN_WAIT_BUDGET_MS, MAX_WAIT_BUDGET_MS, "wait budget (minutes)") };
+  const executionBudgetMs = whole(input.executionSeconds, 1000, MIN_EXECUTION_BUDGET_MS, "execution budget (seconds)"), waitBudgetMs = whole(input.waitMinutes, 60_000, MIN_WAIT_BUDGET_MS, "wait budget (minutes)");
+  const maxParallel = whole(input.maxParallel, 1, 1, "parallel conversations");
+  return { ...(executionBudgetMs === undefined ? {} : { executionBudgetMs }), ...(waitBudgetMs === undefined ? {} : { waitBudgetMs }), ...(maxParallel === undefined ? {} : { maxParallel }) };
 }
 export interface SessionRuntimeOptions {
   readonly id: () => string;
@@ -451,12 +455,23 @@ export interface SessionRuntimeOptions {
   readonly content?: ContentPort;
   /** How long a kept native process may stay without a Turn before it is closed (ADR-030); 30 minutes unless shortened. */
   readonly keptIdleMs?: number;
-  /** How many conversations may run a Turn, switch or native fork at once (ADR-036); 4 unless set. Each conversation runs one at a time. */
+  /**
+   * How many conversations may run a Turn, switch or native fork at once; unlimited unless set (an operator's choice, never a default).
+   * Each conversation runs one at a time. Conversations in one workspace all run: the later Turn is told the others are there.
+   */
   readonly maxParallel?: number;
-  /** A Turn's execution budget (ADR-036): it runs while the Turn works and pauses while it waits for the user. */
+  /** An automatic stop for a Turn that has worked this long (the time it waits for the user does not count); none unless set. */
   readonly executionBudgetMs?: number;
-  /** A Turn's wait budget (ADR-036): time spent waiting for the user's decisions and for a workspace another conversation holds. */
+  /** An automatic expiry for an approval or question the user has not answered in this long; none unless set (a deadline its Harness announces stays). */
   readonly waitBudgetMs?: number;
+  /**
+   * When a Turn that goes on says so, and when a Harness that went quiet is mentioned: `hintsMs` are the marks of the time it has worked
+   * (10 min, 30 min, 1 h, 2 h, 4 h, 8 h, then again every 8 h), `quietMs` how long without any event from its Harness (5 min) makes the
+   * hint say so. A hint is a notice on the Turn; it never stops anything.
+   */
+  readonly pacing?: { readonly hintsMs?: readonly number[]; readonly quietMs?: number };
+  /** How many native processes conversations may keep between Turns; unlimited unless set. A Turn that cannot keep its process says so. */
+  readonly keptLimit?: number;
   /** How long a stopped Turn's program may take to settle before its process is ended. */
   readonly stopGraceMs?: number;
   /** Recognizes kept process groups across owner restarts; without it a previous owner's kept process cannot be ended. */

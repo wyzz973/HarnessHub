@@ -50,11 +50,11 @@ interface Native { readonly harnessId: string; readonly controlId: string; reado
   /** The unconfirmed packet the binding waits for is the user's own attach of the whole history: its resends carry what the user asked for, below a clear too. */
   userPending: boolean;
   seen: { epoch: number; floor: number; mark: number } }
-interface World { seq: number; runs: number; packets: number; origin: boolean; harnesses: readonly string[]; importer: string; facts: Fact[]; natives: Map<string, Native>; kinds: Record<string, Kind>; current: string; trace: string[] }
+interface World { seq: number; /** How many seqs the events of one Turn take (a real Turn writes tens to thousands); 1 keeps a conversation small. */ stride: number; runs: number; packets: number; origin: boolean; harnesses: readonly string[]; importer: string; facts: Fact[]; natives: Map<string, Native>; kinds: Record<string, Kind>; current: string; trace: string[] }
 
-function newWorld(ctx: Ctx, harnesses: number, origin: boolean): World {
+function newWorld(ctx: Ctx, harnesses: number, origin: boolean, stride = 1): World {
   const names = HARNESSES.slice(0, harnesses);
-  return { seq: 1, runs: 0, packets: 0, origin, harnesses: names, importer: names[0]!, facts: [], natives: new Map(), current: names[0]!, trace: [],
+  return { seq: 1, stride, runs: 0, packets: 0, origin, harnesses: names, importer: names[0]!, facts: [], natives: new Map(), current: names[0]!, trace: [],
     kinds: Object.fromEntries(names.map(name => [name, pick(ctx, ["event", "proof", "blind"] as const)])) };
 }
 /** The native session of `harnessId`, opened on first use (an import's holds the history the Session started from, any other nothing). */
@@ -115,7 +115,7 @@ interface Sent { readonly plan: TurnPlan; readonly ending: Ending }
 /** One content input to the current Harness, planned by the state machine and settled by the Turn's end. */
 function send(w: World, ctx: Ctx, options: { readonly attach?: "full" | "none"; readonly ending?: Ending } = {}): Sent {
   const n = native(w, w.current), before = n.relay, planned = plan(before, input(w, n, options.attach));
-  const end = options.ending ?? ending(ctx, n.kind), runId = ("run-" + ++w.runs) as RunId, contextThroughSeq = w.seq, endedSeq = (w.seq += 1 + Math.floor(ctx.random() * 3));
+  const end = options.ending ?? ending(ctx, n.kind), runId = ("run-" + ++w.runs) as RunId, contextThroughSeq = w.seq, endedSeq = (w.seq += w.stride * (1 + Math.floor(ctx.random() * 3)));
   w.trace.push(`${n.harnessId} send${options.attach === undefined ? "" : "(" + options.attach + ")"} -> ${planned.kind}${planned.kind === "carry" ? "/" + planned.by + "/" + String(planned.resend) : planned.kind === "alone" ? "/" + planned.by : ""} end=${end.status}${end.input === undefined ? "" : "/" + end.input}${end.e1 ? "/e1" : ""}${end.delivered ? "/delivered" : ""}${end.lost ? "/lost" : ""} state=${JSON.stringify(before)}`);
   // The plan, against the rules it must keep.
   if (options.attach === "none") assert.deepEqual(planned, { kind: "alone", by: "user" }, "the user's only-this-message goes alone");
@@ -169,7 +169,7 @@ function send(w: World, ctx: Ctx, options: { readonly attach?: "full" | "none"; 
 /** A native command Turn on the current Harness: what the Driver said it does, what became of it, and the truth it leaves. */
 function command(w: World, ctx: Ctx): void {
   const n = native(w, w.current), declaredEffect = pick(ctx, ["clear", "rewind", "compact", "keep", "none", "unknown"] as const satisfies readonly ContextEffect[]);
-  const how = pick(ctx, ["executed", "executed", "executed", "noop", "refused", "lost"] as const), endedSeq = (w.seq += 1 + Math.floor(ctx.random() * 3));
+  const how = pick(ctx, ["executed", "executed", "executed", "noop", "refused", "lost"] as const), endedSeq = (w.seq += w.stride * (1 + Math.floor(ctx.random() * 3)));
   const ran = how === "executed" || how === "lost" && ctx.random() < 0.5, reported = declaredEffect === "clear" && how === "executed" && ctx.random() < 0.8;
   w.trace.push(`${n.harnessId} /${declaredEffect} ${how}${reported ? " reported" : ""} state=${JSON.stringify(n.relay)}`);
   const settled = settleTurn({ relay: n.relay, runId: ("run-" + ++w.runs) as RunId, turn: { kind: "command", declared: declaredEffect }, dispatched: how !== "refused", status: how === "lost" ? null : how === "refused" ? null : "completed",
@@ -209,16 +209,15 @@ function check(w: World): void {
     }
   }
 }
-function walk(ctx: Ctx, w: World, steps: number): void {
-  for (let at = 0; at < steps; at++) {
-    const draw = ctx.random();
-    if (draw < 0.5) send(w, ctx, { ...(ctx.random() < 0.25 ? { attach: ctx.random() < 0.5 ? "none" as const : "full" as const } : {}) });
-    else if (draw < 0.7) switchTo(w, ctx);
-    else if (draw < 0.85) command(w, ctx);
-    else probe(w, ctx);
-    check(w);
-  }
+function step(ctx: Ctx, w: World): void {
+  const draw = ctx.random();
+  if (draw < 0.5) send(w, ctx, { ...(ctx.random() < 0.25 ? { attach: ctx.random() < 0.5 ? "none" as const : "full" as const } : {}) });
+  else if (draw < 0.7) switchTo(w, ctx);
+  else if (draw < 0.85) command(w, ctx);
+  else probe(w, ctx);
+  check(w);
 }
+function walk(ctx: Ctx, w: World, steps: number): void { for (let at = 0; at < steps; at++) step(ctx, w); }
 /**
  * The liveness probe: on a copy of the world, the next input goes to a Harness whose Driver does everything it can. Whatever its
  * native session lacked is then held — except when the state is the one that sends the input alone, after its packet's one resend.
@@ -246,6 +245,23 @@ test("PR-01 over random conversations the state never counts as delivered what a
     turns += w.facts.length;
   }
   t.diagnostic(`PR-01 400 conversations of 70 steps, ${turns} Turns`);
+});
+
+test("PR-05 in conversations of 300 Turns and 20,000 events the state keeps every invariant: the relay's numbers have no bound of a conversation's size", t => {
+  // The parsers once stopped at 16,384 events and 256 Turns (the Session's limits of that time); a conversation past them made every state unreadable.
+  let turns = 0, events = 0, largest = 0, beyond = 0;
+  for (let seed = 1; seed <= 24; seed++) {
+    const ctx: Ctx = { random: generator(5000 + seed) }, w = newWorld(ctx, 1 + (seed % 3), seed % 2 === 0, 40);
+    counted(seed, w, () => {
+      let at = 0;
+      for (; at < 4000 && (w.facts.length < 300 || w.seq < 20_000); at++) step(ctx, w);
+      assert.ok(w.facts.length >= 300 && w.seq >= 20_000, "the walk reached 300 Turns and 20,000 events (" + w.facts.length + " Turns, seq " + w.seq + ")");
+    });
+    turns += w.facts.length; events += w.seq; largest = Math.max(largest, w.seq);
+    for (const n of w.natives.values()) if (n.relay.mark > 16_384) beyond += 1;
+  }
+  assert.ok(beyond > 0, "some native sessions were known to hold facts past the old bound of 16,384");
+  t.diagnostic(`PR-05 24 conversations, ${turns} Turns, ${events} events in all, the largest to seq ${largest}, ${beyond} native sessions marked past 16,384`);
 });
 
 test("PR-02 with one Harness and no history from before, nothing is ever attached, whatever the commands do", () => {

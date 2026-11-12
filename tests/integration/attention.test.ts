@@ -86,7 +86,7 @@ test("a request still waiting at the end of the wait budget expires: the Turn is
   await app.wait(session.id);
   const state = app.read(session.id), run = state.runs[0]!;
   assert.equal(run.status, "cancelled", "the program settled after the stop"); assert.equal(run.error?.code, "WAIT_EXPIRED"); assert.equal(state.status, "open");
-  assert.equal(run.notices?.at(-1)?.title, "等待期限已到"); assert.match(run.notices?.at(-1)?.detail ?? "", /^等待你的决定超过 400 毫秒，本回合已取消；原程序没有收到决定。$/u);
+  assert.equal(run.notices?.at(-1)?.title, "等待期限已到"); assert.match(run.notices?.at(-1)?.detail ?? "", /^等待你的决定超过了设置的 400 毫秒，本回合已取消；原程序没有收到决定。$/u);
   const closed = store.events(session.id, 0).filter(event => event.type === "permission.closed").map(event => event.data as { reason?: string });
   assert.deepEqual(closed.map(data => data.reason), ["expired"]);
   // The program answered what it received: a cancellation, never an approval.
@@ -122,7 +122,7 @@ test("a restarted owner lists no request its predecessor left waiting", { skip: 
   assert.equal(app.read(asked.session).runs[0]?.status, "unknown", "the Turn's outcome is unknown, as after any crash");
 });
 
-test("a restarted owner records a Turn that was queued for a workspace as interrupted, never queued again", { skip: process.platform === "win32" ? "the fixture owner is killed with a POSIX signal" : false }, async t => {
+test("a restarted owner records a Turn that was queued for a slot as interrupted, never queued again", { skip: process.platform === "win32" ? "the fixture owner is killed with a POSIX signal" : false }, async t => {
   const root = await mkdtemp(join(tmpdir(), "harness-attention-")), workspacePath = join(root, "queued"); await mkdir(workspacePath);
   const leaderFile = join(root, "leader.pid");
   t.after(async () => { try { process.kill(-Number(await readFile(leaderFile, "utf8")), "SIGKILL"); } catch { /* already ended */ } });
@@ -134,13 +134,13 @@ test("a restarted owner records a Turn that was queued for a workspace as interr
     child.stdout.on("data", (chunk: string) => { output += chunk; const end = output.indexOf("\n"); if (end >= 0) { clearTimeout(timer); done(output.slice(0, end)); } });
     child.once("exit", code => { clearTimeout(timer); reject(new Error("the owner exited first (" + String(code) + ")")); });
   });
-  const seen = JSON.parse(line) as { readonly session: SessionId; readonly queued: SessionId; readonly queue: { readonly holderSessionId: string } | null };
-  assert.equal(seen.queue?.holderSessionId, seen.session, "the previous owner had a Turn queued behind the waiting one");
+  const seen = JSON.parse(line) as { readonly session: SessionId; readonly queued: SessionId; readonly queue: { readonly running: number; readonly limit: number } | null };
+  assert.deepEqual([seen.queue?.running, seen.queue?.limit], [1, 1], "the previous owner had a Turn queued behind the waiting one, for its only slot");
   const exited = once(child, "exit"); child.kill("SIGKILL"); await exited;
   const { app } = await setup(t, 5000, root);
   t.after(() => rm(root, { recursive: true, force: true }));
   const queued = app.read(seen.queued).runs[0]!;
   assert.equal(queued.status, "cancelled"); assert.equal(queued.error?.code, "OWNER_ENDED");
-  assert.equal(app.queueState(seen.queued), null); assert.deepEqual(app.attention(), []);
+  assert.equal(app.slotWait(seen.queued), null); assert.deepEqual(app.attention(), []);
   assert.equal(app.read(seen.session).runs[0]!.status, "unknown");
 });

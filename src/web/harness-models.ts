@@ -8,8 +8,13 @@ import type { NativeCatalogCache, NativeReadiness } from "./native-catalog-cache
 const SIGNED_OUT = new Set(["GATEWAY_AUTH_REQUIRED", "HARNESS_AUTH_REQUIRED", "NATIVE_AUTH_REQUIRED"]);
 /** Failures of the Hub itself or of this request rather than of the Harness; they say nothing about its readiness. */
 const NOT_READINESS = /CLEANUP|OWNER_LOST|OWNERSHIP_LOST|STORAGE|^CANCELLED$|^MODEL_LIMIT$|^RUNTIME_CLOSED$|^HARNESS_BUSY$|^INVALID_INPUT$/u;
-/** Longest wait for one native catalog read. */
-const CATALOG_READ_MS = 20000;
+/**
+ * Longest wait for one native catalog read. A catalog is read by starting the Harness, which can take a minute or two the first
+ * time (plugins, MCP servers); a Harness that is merely slow is not a failed one, so this ends only a read that is stuck.
+ */
+const CATALOG_READ_MS = 120_000;
+/** Reads and listings in progress at once: a guard on the child processes they start, set well above what choosing among the Harnesses starts. */
+const MAX_DISCOVERIES = 64;
 
 /**
  * Owns native catalog reads and their observations; shutdown awaits every read and the cache's last write. A catalog read
@@ -26,7 +31,7 @@ export class HarnessModels {
     if (this.stopping) return Promise.reject(new SessionError("RUNTIME_CLOSED", "native model reader is stopping"));
     const request = JSON.stringify({ selection, configuration }), existing = this.active.get(request);
     if (existing) return existing.promise;
-    if (this.active.size >= 8) return Promise.reject(new SessionError("MODEL_LIMIT", "too many native model discoveries"));
+    if (this.active.size >= MAX_DISCOVERIES) return Promise.reject(new SessionError("MODEL_LIMIT", "too many native model discoveries"));
     const abort = new AbortController(), timeout = setTimeout(() => abort.abort(), CATALOG_READ_MS);
     const key = createHash("sha256").update(request).digest("hex");
     let controlId: string | null = null;
@@ -74,7 +79,7 @@ export class HarnessModels {
     if (this.stopping) return Promise.reject(new SessionError("RUNTIME_CLOSED", "native model reader is stopping"));
     const key = JSON.stringify({ kind, selection, configuration }), existing = this.listing.get(key);
     if (existing) return existing.promise as Promise<T>;
-    if (this.active.size + this.listing.size >= 8) return Promise.reject(new SessionError("MODEL_LIMIT", "too many native model discoveries"));
+    if (this.active.size + this.listing.size >= MAX_DISCOVERIES) return Promise.reject(new SessionError("MODEL_LIMIT", "too many native model discoveries"));
     const abort = new AbortController(), timeout = setTimeout(() => abort.abort(), 30000);
     const promise = read(abort.signal).catch((error: unknown) => {
       const code = error !== null && typeof error === "object" && "code" in error ? String(error.code) : "";

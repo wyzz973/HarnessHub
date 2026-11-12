@@ -34,7 +34,7 @@ export class AttentionStreamHub {
   readonly now: () => number;
   /** `listener` receives every newer list too: the Session streams carry it for pages with a conversation open. */
   constructor(private readonly read: () => readonly AttentionItem[], options: AttentionStreamLimits = {}, private readonly listener?: (frame: AttentionFrame) => void) {
-    this.maxConnections = limit(options.maxConnections, 8); this.heartbeatMs = limit(options.heartbeatMs, 15000);
+    this.maxConnections = limit(options.maxConnections, 256); this.heartbeatMs = limit(options.heartbeatMs, 15000);
     this.connectionTtlMs = limit(options.connectionTtlMs, 60000); this.drainTimeoutMs = limit(options.drainTimeoutMs, 10000); this.now = options.now ?? Date.now;
   }
   get size(): number { return this.clients.size; }

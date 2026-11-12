@@ -21,9 +21,11 @@ function piCodec(): RpcWireCodec {
     if (!/^[1-9][0-9]*$/u.test(id) || !Number.isSafeInteger(Number(id)) || typeof message.success !== "boolean") throw new ControlError("INVALID_PROTOCOL", "invalid Pi response identity/status");
     if (string(message.command, "Pi response command") !== commands.get(id)) throw new ControlError("IDENTITY_MISMATCH", "Pi response command does not belong to its pending request");
     commands.delete(id);
-    if (!message.success && (typeof message.error !== "string" || Buffer.byteLength(message.error) > 65536)) throw new ControlError("INVALID_PROTOCOL", "invalid Pi remote error");
+    const failure = message.error;
+    if (!message.success && typeof failure !== "string") throw new ControlError("INVALID_PROTOCOL", "invalid Pi remote error");
+    // Text from the other side that is too long is cut, not refused (2026-11-12): the error it carries is still the error, and is classified as one.
     return message.success ? { id: Number(id), result: message.data ?? {} }
-      : { id: Number(id), error: { code: -32001, message: message.error } };
+      : { id: Number(id), error: { code: -32001, message: typeof failure === "string" ? failure.slice(0, 65536) : "" } };
   },
 };
 }
@@ -31,9 +33,8 @@ interface Prompt {
   readonly event: (event: ControlEvent) => void;
   readonly resolve: (result: BackendResult) => void;
   readonly reject: (error: Error) => void;
-  readonly timer: ReturnType<typeof setTimeout>;
-  /** When the run times out (its deadline, ADR-035). */
-  readonly deadline: number;
+  /** The driver's own deadline for the run, when one was set (the Gateway sets none: a Turn has no time wall); absent otherwise. */
+  readonly timer: ReturnType<typeof setTimeout> | undefined;
   acknowledged: boolean;
   /** An agent run began for this prompt; extension commands and input hooks can be handled without one. */
   started: boolean;
@@ -112,7 +113,7 @@ export class PiControl implements HarnessControl {
     this.initialization ??= this.initializeOnce(); return this.initialization;
   }
   private async readState(): Promise<void> {
-    this.state = object(await this.rpc.request("get_state", {}), "Pi state");
+    this.state = object(await this.rpc.request("get_state", {}, this.options.startupTimeoutMs ?? this.options.requestTimeoutMs, "abort", "NATIVE_INITIALIZE_TIMEOUT"), "Pi state");
     string(this.state.sessionId, "Pi session identity");
     const available = object(await this.rpc.request("get_available_models", {}), "Pi models");
     if (!Array.isArray(available.models) || available.models.length > 4096) throw new ControlError("INVALID_PROTOCOL", "Pi models exceed the catalog budget");
@@ -245,8 +246,8 @@ export class PiControl implements HarnessControl {
     message += fileMentions(attachments.filter(file => file.kind === "file"));
     if (this.closed || this.failure || this.active) throw this.failure ?? new ControlError("INVALID_STATE", "Pi conversation is not ready for a prompt");
     const result = new Promise<BackendResult>((resolve, reject) => {
-      const timer = setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Pi run exceeded its deadline")), this.options.runTimeoutMs);
-      this.active = { event, resolve, reject, timer, deadline: Date.now() + this.options.runTimeoutMs, acknowledged: false, started: false, settled: false, final: null, stop: null, tools: new Map(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0, cost: 0, costed: false } };
+      const timer = this.options.runTimeoutMs === undefined ? undefined : setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Pi run exceeded its deadline")), this.options.runTimeoutMs);
+      this.active = { event, resolve, reject, timer, acknowledged: false, started: false, settled: false, final: null, stop: null, tools: new Map(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0, cost: 0, costed: false } };
     });
     const prompt = this.active!;
     const compact = this.hubCompact && !attachments.length ? /^\/compact(?:\s+([\s\S]*))?$/u.exec(message.trim()) : null;
@@ -278,7 +279,6 @@ export class PiControl implements HarnessControl {
     if (type === "extension_ui_request") {
       const id = string(event.id, "Pi UI request"), method = string(event.method, "Pi UI method");
       if (this.interactivePermissions && this.active && ["confirm","select","input","editor"].includes(method)) {
-        if (this.permissions.size >= 32) throw new ControlError("PERMISSION_LIMIT", "native UI requests exceed their budget");
         const choices=method==="select" ? event.options : [];
         if (!Array.isArray(choices) || choices.length>128 || choices.some(value=>typeof value!=="string"||value.length>4096)) throw new ControlError("INVALID_PROTOCOL","invalid native UI choices");
         // Pi resolves timed dialogs itself and ignores later answers; the question is withdrawn at the same deadline.
@@ -288,9 +288,8 @@ export class PiControl implements HarnessControl {
         const freeform=method==="input"||method==="editor";
         const options=method==="confirm" ? [{id:"yes",name:"允许"},{id:"no",name:"拒绝"}] : method==="select" ? [...choices.map((name,index)=>({id:"choice-"+index,name:String(name)})),{id:"cancel",name:"取消"}] : [{id:"submit",name:"提交"},{id:"cancel",name:"取消"}];
         const value=method==="editor"&&typeof event.prefill==="string" ? event.prefill : "";
-        if(value.length>65536)throw new ControlError("OUTPUT_LIMIT","native editor input exceeded its budget");
         this.active.event({ type: "permission_requested", id, title: typeof event.title === "string" ? event.title.slice(0,4096) : "Pi 扩展请求交互", ...(typeof event.message==="string"?{detail:event.message.slice(0,4096)}:{}),...(freeform?{input:{kind:method==="editor"?"editor":"text",value}}:{}), options,
-          ...(method === "confirm" ? {} : { kind: "question" as const }), ...requestExpiry(this.active.deadline, timeout) });
+          ...(method === "confirm" ? {} : { kind: "question" as const }), ...requestExpiry(timeout) });
         void pending.then(value => this.rpc.notify("extension_ui_response", { id, ...value })).catch(error => this.rpc.abort(errorFrom(error))); return;
       }
       if (method === "notify") {
@@ -401,7 +400,7 @@ export class PiControl implements HarnessControl {
     if(pending.method==="confirm"&&["yes","no"].includes(option))response={confirmed:option==="yes"};
     else if(option==="cancel")response={cancelled:true};
     else if(pending.method==="select"&&/^choice-[0-9]+$/u.test(option)&&pending.choices[Number(option.slice(7))]!==undefined)response={value:pending.choices[Number(option.slice(7))]};
-    else if(["input","editor"].includes(pending.method)&&option==="submit"&&typeof input==="string"&&Buffer.byteLength(input)<=65536&&!input.includes("\0"))response={value:input};
+    else if(["input","editor"].includes(pending.method)&&option==="submit"&&typeof input==="string"&&!input.includes("\0"))response={value:input};
     else throw new ControlError("PERMISSION_UNAVAILABLE","native UI response unavailable");
     this.permissions.delete(id);if(pending.timer)clearTimeout(pending.timer);pending.resolve(response);
   }

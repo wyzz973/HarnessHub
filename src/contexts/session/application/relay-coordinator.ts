@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { CommandClass, ContextEffect } from "../../../contracts/control.js";
 import {
-  CONTEXT_EFFECTS, EPHEMERAL_KEY_ID, ITEM_KINDS, RELAY_MAX_RUNS, RELAY_MAX_SEQ, RELAY_PREF_DEFAULTS, RelayError, hmacDigest, parseExecutedOn, redactionTag, relayPacketId,
+  CONTEXT_EFFECTS, EPHEMERAL_KEY_ID, ITEM_KINDS, RELAY_MAX_SEQ, RELAY_PREF_DEFAULTS, RelayError, hmacDigest, packRunIndexes, parseExecutedOn, redactionTag, relayPacketId,
   type BindingRelayState, type ContinuityLevel, type DeliveryRecord, type ExecutedOn, type Fingerprint, type HmacDigest, type RedactionTag, type RelayAttention, type RelayCapabilities, type RelayDecision,
   type RelayDeliveryWrite, type RelayIndexRow, type RelayKeyPort, type RelayPacket, type RelayPacketId, type RelayPrefKey, type RunRelay, type RunRelayRequest, type SourceRange,
 } from "../../../contracts/relay.js";
@@ -332,7 +332,7 @@ export function packetManifest(input: { readonly state: SessionSnapshot; readonl
   return {
     id: relayPacketId(record.packetId), kind: record.kind, tier: record.tier,
     target: { harnessId: run.selection.harnessId, controlId: run.selection.controlId, model: run.selection.nativeModel ?? null, nativeEpoch: input.relay.epoch },
-    range: input.range, runs: indexes.slice(0, RELAY_MAX_RUNS), supersedes: input.supersedes, policyVersion: MANIFEST_POLICY, language: record.language, repeat: record.repeat,
+    range: input.range, runs: packRunIndexes(indexes), supersedes: input.supersedes, policyVersion: MANIFEST_POLICY, language: record.language, repeat: record.repeat,
     attachOverride: input.attachOverride, firstLineOmitted: input.firstLineOmitted, redactions: record.redactions,
     body: { sha256: sha(input.body), bytes: Buffer.byteLength(input.body, "utf8"), estTokens: record.tokens },
     budget: { capTokens: record.budget.cap, window: record.budget.window, windowSource: record.budget.windowSource, clampedBy: [...new Set(input.clamped ?? [])] },
@@ -342,7 +342,7 @@ export function packetManifest(input: { readonly state: SessionSnapshot; readonl
 /** How a Turn continued its context (§12.2), for its `relay`. */
 export function continuityOf(decision: TurnDecision | null, record: RelayRecord | null, runs: number): ContinuityLevel {
   if (decision?.kind !== "carry" || record === null) return { kind: "native_resume" };
-  return record.kind === "delta" ? { kind: "native_resume_delta", tier: record.tier, runs: Math.max(1, Math.min(RELAY_MAX_RUNS, runs)) } : { kind: "rehydrate", tier: record.tier, complete: record.complete };
+  return record.kind === "delta" ? { kind: "native_resume_delta", tier: record.tier, runs: Math.max(1, runs) } : { kind: "rehydrate", tier: record.tier, complete: record.complete };
 }
 export function runRelayOf(packet: RelayPacket | null, continuity: ContinuityLevel, executedOn: ExecutedOn | null): RunRelay {
   return { packetId: packet?.id ?? null, kind: packet === null ? null : packet.kind, continuity, executedOn };

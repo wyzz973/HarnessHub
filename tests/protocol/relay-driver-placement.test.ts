@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { MAX_USAGE_REQUESTS, type ControlEvent, type NativeUsage } from "../../src/contracts/control.js";
+import { type ControlEvent, type NativeUsage } from "../../src/contracts/control.js";
 import { contentId, type ControlAttachment } from "../../src/contracts/content.js";
 import { claudeRelayCapabilities } from "../../src/adapters/control/claude.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
@@ -158,21 +158,21 @@ test("G069-C01 a placement over the declared input bound is never sent: Codex in
   assert.equal((await run(bridge, session, sized(room - prefix))).result.status, "completed");
 });
 
-test("G069-C09 Codex reports each model request's own counts, the latest 64 kept; a Turn without reports has none; OpenClaw's transcript rows give them unless a CLI harness wrote the turn", { timeout: 60000 }, async t => {
+test("G069-C09 Codex reports each model request's own counts, all of them (64 were kept until 2026-11-12); a Turn without reports has none; OpenClaw's transcript rows give them unless a CLI harness wrote the turn", { timeout: 60000 }, async t => {
   const usage = (events: readonly ControlEvent[]) => events.flatMap(event => event.type === "usage" ? [event.usage] : []) as NativeUsage[];
   const many = await peerRoot(t, { RELAY_REQUESTS: "70" }), control = driver(t, "codex", many); await control.initialize(); const id = await control.open(many.workspace);
   const reported = usage((await run(control, id, "继续")).events);
   assert.equal(reported.length, 70, "one report per request");
   assert.deepEqual(reported[0]!.requests, [{ input: 100, cachedInput: 50, cacheWrite: 1 }]);
   const last = reported.at(-1)!.requests!;
-  assert.equal(last.length, MAX_USAGE_REQUESTS);
-  assert.deepEqual([last[0], last.at(-1)], [{ input: 700, cachedInput: 350, cacheWrite: 7 }, { input: 7000, cachedInput: 3500, cacheWrite: 70 }], "the latest, oldest first");
+  assert.equal(last.length, 70, "every request, not the latest 64");
+  assert.deepEqual([last[0], last.at(-1)], [{ input: 100, cachedInput: 50, cacheWrite: 1 }, { input: 7000, cachedInput: 3500, cacheWrite: 70 }], "oldest first");
   const none = await peerRoot(t, { RELAY_REQUESTS: "0" }), quiet = driver(t, "codex", none); await quiet.initialize(); const thread = await quiet.open(none.workspace);
   assert.deepEqual(usage((await run(quiet, thread, "继续")).events), [], "not reported: no requests field anywhere");
   // OpenClaw: one assistant row per model request in the embedded runtime.
   const rows = (harness: boolean, count: number) => async () => ({ messages: [{ role: "user", content: "[Working directory: ~]\n\n继续", __openclaw: { seq: 1 } },
     ...Array.from({ length: count }, (_, index) => ({ role: "assistant", content: [{ type: "text", text: "ok" }], usage: { input: 10 + index, output: 1, cacheRead: 5, cacheWrite: 2, totalTokens: 13 }, ...(harness ? { contextUsage: {} } : {}), __openclaw: { seq: 2 + index } }))] });
-  for (const [harness, count, expected] of [[false, 2, [{ input: 10, cachedInput: 5, cacheWrite: 2 }, { input: 11, cachedInput: 5, cacheWrite: 2 }]], [true, 2, undefined], [false, 70, MAX_USAGE_REQUESTS]] as const) {
+  for (const [harness, count, expected] of [[false, 2, [{ input: 10, cachedInput: 5, cacheWrite: 2 }, { input: 11, cachedInput: 5, cacheWrite: 2 }]], [true, 2, undefined], [false, 70, 70]] as const) {
     const claw = await peerRoot(t, { RELAY_OPENCLAW: "1" });
     let reads = 0;
     const bridge = driver(t, "openclaw", claw, gatewayOf(claw, { "sessions.get": async params => (reads++, params.limit === 1 ? { messages: [] } : rows(harness, count)()) }));

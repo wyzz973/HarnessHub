@@ -52,7 +52,7 @@ export function CommandPalette({ open, onOpenChange, commands, onClosed }: { rea
     for (const item of scored) { const seen = best.get(item.command.group); if (!seen || item.score < seen.score) best.set(item.command.group, { score: item.score, index: Math.min(item.index, seen?.index ?? item.index) }); }
     const groupOrder = (group: string) => best.get(group)!;
     return scored.sort((a, b) => groupOrder(a.command.group).score - groupOrder(b.command.group).score || groupOrder(a.command.group).index - groupOrder(b.command.group).index || a.score - b.score || a.index - b.index)
-      .slice(0, 60).map(item => item.command);
+      .map(item => item.command);
   }, [commands, query]);
   const current = Math.min(active, Math.max(0, filtered.length - 1));
   useEffect(() => { document.getElementById(`${listId}-${current}`)?.scrollIntoView({ block: "nearest" }); }, [current, listId]);

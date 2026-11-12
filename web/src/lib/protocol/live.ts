@@ -11,14 +11,15 @@ import { askingFor, isWork, workLabel } from "./work.js";
  * words of a long silence are counted from).
  */
 
-/** What a queued Turn shows about what it waits for (ADR-036); no paths. */
-export type QueueNotice = ({
-  /** Another conversation's work holds the workspace: which one, what it waits for (approval, an answer, or nothing: it runs), and the deadline. */
-  readonly kind: "workspace"; readonly holderTitle: string; readonly holderWaits: "approval" | "question" | null; readonly endsAt: number; readonly onOpen?: (() => void) | undefined;
-} | {
-  /** Every slot is taken: how many conversations run; there is no deadline of its own. */
+/**
+ * What a queued Turn shows about what it waits for; no paths. It waits for a slot only when an operator limited how many
+ * conversations run at once: how many run; there is no deadline of its own. (Conversations that share a workspace do not wait for each
+ * other, 2026-11-12: the later Turn carries a notice.)
+ */
+export type QueueNotice = {
   readonly kind: "slot"; readonly running: number;
-}) & { readonly cancelling: boolean; readonly onCancel?: (() => void) | undefined };
+  readonly cancelling: boolean; readonly onCancel?: (() => void) | undefined;
+};
 
 /**
  * What a running Turn says it is doing (ADR-054 §3, Interaction board's states). `tone` picks the symbol: "run" a turning arc with the sweep
@@ -78,7 +79,6 @@ export function liveStatus(input: LiveInput): LiveStatus {
   const queued = { tone: "queue" as const, timer: false, wrap: true, thinking: false };
   if (turn.status === "queued") {
     if (run.awaitingSwitchId) return { ...queued, text: TURN_STATUS_WORDS.queued + "：等待选择切换生效" };
-    if (queue?.kind === "workspace") return { ...queued, text: `${TURN_STATUS_WORDS.queued}：等待对话「${queue.holderTitle}」释放工作区（${queue.holderWaits === "approval" ? "它在等你批准" : queue.holderWaits === "question" ? "它在等你回答" : "它正在运行"}）` };
     if (queue?.kind === "slot") return { ...queued, text: `${TURN_STATUS_WORDS.queued}：${queue.running} 个对话正在执行，其中一个结束后自动开始` };
     return { ...queued, text: TURN_STATUS_WORDS.queued };
   }

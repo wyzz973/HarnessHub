@@ -7,13 +7,12 @@ export type { TurnText };
 declare const nativeConversationBrand: unique symbol;
 export type NativeConversationId = string & { readonly [nativeConversationBrand]: true };
 /**
- * The wait a driver announces with a permission request (ADR-035): the earlier of the program's own deadline (already less
- * the driver's margin, in milliseconds from now) and what is left of the driver's own deadline for the Turn (a time), never
- * negative. The Runtime then applies the Turn's wait budget (ADR-036).
+ * The wait a driver announces with a permission request (ADR-035): only the program's own deadline (already less the driver's
+ * margin, in milliseconds from now). A request the program gave no deadline has none: it waits for the user (2026-11-12: the driver
+ * no longer has a deadline of its own for the Turn). The Runtime then applies an operator's wait budget, when there is one.
  */
-export function requestExpiry(turnDeadline: number, nativeMs: number | null, now = Date.now()): { readonly expiresInMs: number; readonly expiresBy: "native" | "turn" } {
-  const turn = Math.max(0, Math.round(turnDeadline - now));
-  return nativeMs !== null && nativeMs <= turn ? { expiresInMs: Math.max(0, Math.round(nativeMs)), expiresBy: "native" } : { expiresInMs: turn, expiresBy: "turn" };
+export function requestExpiry(nativeMs: number | null): { readonly expiresInMs: number; readonly expiresBy: "native" } | Record<never, never> {
+  return nativeMs === null ? {} : { expiresInMs: Math.max(0, Math.round(nativeMs)), expiresBy: "native" };
 }
 export function nativeConversationId(value: unknown): NativeConversationId {
   if (typeof value !== "string" || !value || value.length > 512 || /[\0\r\n]/u.test(value))
@@ -27,7 +26,18 @@ export interface ControlOptions {
   readonly cwd: string;
   readonly env: Readonly<Record<string, string>>;
   readonly requestTimeoutMs: number;
-  readonly runTimeoutMs: number;
+  /**
+   * The driver's own deadline for one Turn; absent (the Gateway sets none: a Turn has no time wall, 2026-11-12) it has none. It is
+   * a way for a probe or a test to bound a protocol that hangs, not a limit of the product.
+   */
+  readonly runTimeoutMs?: number;
+  /**
+   * How long the start of a connection is waited for: the handshake (`initialize`), which a Harness answers only once it has started its
+   * plugins, MCP servers and model catalog (a first start can take minutes), and the opening of a session. A start that is merely slow is
+   * not a failure. Absent: `requestTimeoutMs`. A start that runs out of it fails with NATIVE_INITIALIZE_TIMEOUT or NATIVE_SESSION_TIMEOUT,
+   * which say which step it was waiting for.
+   */
+  readonly startupTimeoutMs?: number;
   readonly maxFrameBytes: number;
   readonly maxDiagnosticBytes: number;
   readonly closeGraceMs: number;
@@ -37,8 +47,6 @@ export interface ControlOptions {
    * host budgets' default (resolveHostBudgets) when absent.
    */
   readonly closeOutsideWaitMs?: number;
-  /** Cumulative inbound+outbound bytes for one connection; defaults to the native-turn budget. */
-  readonly maxWireBytes?: number;
   /**
    * The native options the connection's conversation is chosen to open with, known before initialize (a Run's selection).
    * A driver whose protocol fixes capabilities at initialize reads them; open() still validates what it receives.
@@ -80,12 +88,11 @@ export interface NativeUsage {
   readonly context?: { readonly used: number; readonly size?: number };
   readonly cost?: { readonly amount: number; readonly currency: string; readonly scope: "turn" | "session" };
   /**
-   * The Turn's model requests one by one, oldest first, at most MAX_USAGE_REQUESTS (the latest are kept): what each read and
+   * The Turn's model requests one by one, oldest first, all of them (they were the latest 64 until 2026-11-12): what each read and
    * what the cache gave it (ADR-055 §3.2, VF2-09). Absent when the native side reports only totals.
    */
   readonly requests?: readonly { readonly input: number; readonly cachedInput?: number; readonly cacheWrite?: number }[];
 }
-export const MAX_USAGE_REQUESTS = 64;
 /** Non-text native output. Bytes are handed to the content owner; links are never fetched. */
 export type NativeOutput =
   | { readonly kind: "content"; readonly name: string; readonly mediaType: string; readonly data: Uint8Array }

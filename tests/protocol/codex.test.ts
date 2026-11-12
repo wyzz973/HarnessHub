@@ -218,6 +218,21 @@ test("Codex native questions return actual option labels and freeform values, an
     assert.deepEqual(frames.find(frame => frame.id === "native-question").result, { answers: { "native-choice": { answers: ["Second"] }, "native-text": { answers: ["synthetic answer\nsecond line"] } } });
   } finally { await driver.close(); await rm(root, { recursive: true, force: true }); }
 });
+test("Codex carries a native question's freeform answer of any size: the frame bound is the only limit, a NUL is still refused", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-native-big-")), trace = join(root, "trace"), driver = control("native-question", { FIXTURE_TRACE: trace }, { maxFrameBytes: 4 * 1024 * 1024, runTimeoutMs: 5000 });
+  const answer = "答".repeat(50_000), decisions: Promise<void>[] = []; // 150,000 bytes: past the 64 KiB an answer once had to fit
+  try {
+    const id = await ready(driver); driver.enablePermissions();
+    const run = await driver.startText(id, "native questions", event => {
+      if (event.type !== "permission_requested") return;
+      if (event.input) { decisions.push(driver.decidePermission(event.id, "submit", "a\0b").then(() => assert.fail("a NUL answer is refused"), (error: unknown) => assert.ok(error instanceof ControlError && error.code === "INVALID_INPUT")).then(() => driver.decidePermission(event.id, "submit", answer))); }
+      else decisions.push(driver.decidePermission(event.id, "answer-1"));
+    });
+    assert.equal((await run.result).status, "completed"); await Promise.all(decisions);
+    const frames = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    assert.deepEqual(frames.find(frame => frame.id === "native-question").result, { answers: { "native-choice": { answers: ["Second"] }, "native-text": { answers: [answer] } } });
+  } finally { await driver.close(); await rm(root, { recursive: true, force: true }); }
+});
 test("Codex ignores attached foreign threads, surfaces sub-agent approvals and never approves unrelated work", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-codex-foreign-")), trace = join(directory, "trace");
   const driver = control("foreign-thread", { FIXTURE_TRACE: trace });

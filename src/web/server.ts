@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { application as composeApplication, builtinHarnessName } from "../cli/session-application.js";
 import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
-import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionSnapshot } from "../contracts/session.js";
+import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionSnapshot, type TurnLimits } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
 import { conversationTitle, type EventPage, type HarnessReadinessView, type HarnessView, type InstallationLogPage, type InstallationUpgradeCheckView, type KeptProcessView, type MaintenanceView, type NativeSessionListView, type SessionSummary, type SessionView, type UninstallCheckView, type InstallCheckView, type WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
@@ -44,13 +44,31 @@ import type { HubToolsOptions } from "../infrastructure/capabilities/hub-tools.j
 import type { ClaudeRunner } from "../infrastructure/capabilities/claude-mcp.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
+/** What the answer to a question a Harness asked may take (a pasted file can be one): the request body bound of that route alone. */
+const MAX_ANSWER_BODY_BYTES = 16 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_ASSET_BYTES = 4 * 1024 * 1024;
-const MAX_REQUESTS = 16;
+/**
+ * Requests in progress at once, and connections open at once (streams included): guards against a client that opens them without end,
+ * set far above what any page or tool of one user opens (a page keeps a few streams; 2026-11-12: 16 and 32 were too few for several
+ * windows and a Harness's tool calls).
+ */
+const MAX_REQUESTS = 256;
+const MAX_CONNECTIONS = 1024;
+/** A request that has sent nothing for this long, with its body unfinished, is given up on: only silence ends it, however long it has taken so far. */
+const REQUEST_IDLE_MS = 15_000;
 const COOKIE_NAME = "harnessgateway_session";
 const BOOTSTRAP_MS = 10 * 60 * 1000;
+/**
+ * How long a login lasts without a request (2026-11-12): every request of the logged-in page pushes the end of the login this far from
+ * itself, and the cookie's Max-Age with it, so a login ends only after this much silence, not after a fixed time since it began.
+ */
 const LOGIN_MS = 8 * 60 * 60 * 1000;
-interface Login { readonly csrf: string; readonly expires: number }
+/** The cookie is sent again after this long since it last was: not with every request, but long before its Max-Age could run out. */
+const LOGIN_COOKIE_REFRESH_MS = 60_000;
+interface Login { readonly id: string; readonly csrf: string; expires: number; renewed: number }
+/** The Set-Cookie value of a login that ends `idleMs` after the request it answers. */
+function loginCookie(id: string, idleMs: number): string { return COOKIE_NAME + "=" + id + "; HttpOnly; SameSite=Strict; Path=/api/; Max-Age=" + Math.ceil(idleMs / 1000); }
 class HttpError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
 }
@@ -61,8 +79,12 @@ export interface WebServerOptions {
   readonly port?: number;
   readonly assetsDirectory?: string;
   readonly application?: (root: string, publish: (event: SessionEvent) => void) => Omit<ReturnType<typeof composeApplication>, "grants"> & { readonly grants?: TableGrants };
-  /** The Turn budgets (ADR-036), resolved by `resolveTurnBudgets`; the defaults otherwise. */
-  readonly budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number };
+  /** The operator's optional limits (the execution and wait budgets, conversations at once), resolved by `resolveTurnBudgets`; none otherwise. */
+  readonly budgets?: TurnLimits;
+  /** How long a login lasts without a request, and how often its cookie is sent again (8 hours and 1 minute by default); for tests that cannot wait for hours. */
+  readonly login?: { readonly idleMs?: number; readonly refreshMs?: number };
+  /** How long a request with an unfinished body may send nothing before it is given up on (15 seconds by default); for tests. */
+  readonly requestIdleMs?: number;
   /**
    * The login shell the user may ask to read PATH from (G(ii)) and the system's shell list; absent or false: not offered
    * (CI, sandboxes and tests that do not name a fixture shell).
@@ -204,24 +226,44 @@ function json(response: ServerResponse, status: number, value: unknown): void {
   response.setHeader("Content-Type", "application/json; charset=utf-8"); response.setHeader("Content-Length", bytes.length);
   response.end(bytes);
 }
-async function body(request: IncomingMessage): Promise<unknown> {
+async function body(request: IncomingMessage, maximum = MAX_BODY_BYTES): Promise<unknown> {
   if ((request.headers["content-type"] ?? "").split(";", 1)[0]?.trim().toLowerCase() !== "application/json") throw new HttpError(415, "INVALID_CONTENT_TYPE", "JSON request body required");
   if (request.headers["content-encoding"] !== undefined) throw new HttpError(415, "INVALID_CONTENT_ENCODING", "Encoded request bodies are unsupported");
+  const limit = maximum < 1024 * 1024 ? Math.round(maximum / 1024) + " KiB" : Math.round(maximum / 1024 / 1024) + " MiB";
   const contentLength = request.headers["content-length"];
-  if (contentLength !== undefined && (!/^[0-9]+$/u.test(contentLength) || Number(contentLength) > MAX_BODY_BYTES)) throw new HttpError(413, "BODY_LIMIT", "Request body exceeds 128 KiB");
+  if (contentLength !== undefined && (!/^[0-9]+$/u.test(contentLength) || Number(contentLength) > maximum)) throw new HttpError(413, "BODY_LIMIT", "Request body exceeds " + limit);
   const chunks: Buffer[] = []; let length = 0;
+  // The body may take as long as it takes while bytes keep coming: it is given up on only after ten seconds of silence.
   const timer = setTimeout(() => request.destroy(new HttpError(408, "BODY_TIMEOUT", "Request body timed out")), 10000);
   timer.unref();
   try {
     for await (const chunk of request) {
       if (!(chunk instanceof Buffer)) throw new HttpError(400, "INVALID_INPUT", "Invalid request bytes");
+      timer.refresh();
       length += chunk.length;
-      if (length > MAX_BODY_BYTES) throw new HttpError(413, "BODY_LIMIT", "Request body exceeds 128 KiB");
+      if (length > maximum) throw new HttpError(413, "BODY_LIMIT", "Request body exceeds " + limit);
       chunks.push(chunk);
     }
     try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, length))) as unknown; }
     catch { throw new HttpError(400, "INVALID_JSON", "Request body must be valid UTF-8 JSON"); }
   } finally { clearTimeout(timer); }
+}
+/**
+ * Gives up on a request that has gone silent: checked every `idleMs`, a request whose body is unfinished and whose connection
+ * has read no byte since the last check is destroyed. The request is not read here (a listener on the request or its socket would take
+ * the body from its route); only the connection's byte count is.
+ */
+function watchIdle(request: IncomingMessage, idleMs: number): void {
+  if (request.complete) return;
+  const socket = request.socket;
+  let seen = socket.bytesRead;
+  const timer = setInterval(() => {
+    if (request.complete || request.destroyed || socket.destroyed) { clearInterval(timer); return; }
+    if (socket.bytesRead === seen) { clearInterval(timer); socket.destroy(); return; }
+    seen = socket.bytesRead;
+  }, idleMs);
+  timer.unref();
+  request.once("close", () => clearInterval(timer));
 }
 /** How many of an entry's latest Runs set its usual startup time. */
 const STARTUP_SAMPLES = 5;
@@ -256,7 +298,7 @@ function summary(snapshot: SessionSnapshot): SessionSummary {
     selection: snapshot.selection, updatedSeq: snapshot.lastSeq, activeRunId: snapshot.activeRunId };
 }
 function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = [], kept: KeptProcessView | null = null, lost: NonNullable<SessionView["retention"]>["lost"] | null = null,
-  queue: SessionView["queue"] | null = null, busyHolders: SessionView["busyHolders"] = {}, outside: NonNullable<SessionView["retention"]>["outside"] | null = null,
+  queue: SessionView["queue"] | null = null, outside: NonNullable<SessionView["retention"]>["outside"] | null = null,
   upgraded: NonNullable<SessionView["retention"]>["upgraded"] | null = null): SessionView {
   return { id: snapshot.id, version: snapshot.version, lastSeq: snapshot.lastSeq, epoch: snapshot.epoch, status: snapshot.status,
     workspace: snapshot.configuration.workspace, selection: snapshot.selection, activeRunId: snapshot.activeRunId, pendingSwitchId: snapshot.pendingSwitchId,
@@ -266,7 +308,7 @@ function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"]
       return [{ harnessId: binding.harnessId, controlId: binding.controlId, status: binding.status === "fork-pending" || binding.status === "forking" ? "forking" as const : binding.status,
         ...(binding.observed === undefined ? {} : { observed: binding.observed }), ...(carried === null ? {} : { carried }) }];
     }) ?? [],
-    ...(snapshot.origin === undefined ? {} : { origin: snapshot.origin }), ...(queue === null ? {} : { queue }), ...(Object.keys(busyHolders).length ? { busyHolders } : {}),
+    ...(snapshot.origin === undefined ? {} : { origin: snapshot.origin }), ...(queue === null ? {} : { queue }),
     ...(snapshot.schemaVersion < 11 ? {} : { retention: { enabled: snapshot.retainNative === true, process: kept, ...(lost === null ? {} : { lost }), ...(outside === null ? {} : { outside }), ...(upgraded === null ? {} : { upgraded }) } }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
 /**
@@ -372,10 +414,10 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const table = options.table ?? new TableMount(options.tableGrants);
   // The relay's API (ADR-055 §12.4): its routes, the delivery state of the Runs it shows and the bodies of the errors it explains.
   let relayApi: RelayApi;
-  // A Turn waits for its workspace or, when every slot is taken, for a slot (ADR-036).
+  // A Turn waits for a slot only when an operator limited the conversations running at once; conversations sharing a workspace do not wait.
   const queueOf = (id: SessionSnapshot["id"]): NonNullable<SessionView["queue"]> | null => {
-    const workspace = app.runtime.queueState(id), slot = workspace === null ? app.runtime.slotWait(id) : null;
-    return workspace !== null ? { kind: "workspace", ...workspace } : slot !== null ? { kind: "slot", ...slot } : null;
+    const slot = app.runtime.slotWait(id);
+    return slot !== null ? { kind: "slot", ...slot } : null;
   };
   // The protocol (hh/1) reading of each Run of a view (src/contracts/protocol.ts); made once the Gateway's parts it reads from exist, below.
   let protocolView: ProtocolView | undefined;
@@ -384,8 +426,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     // Each Run that carried a packet with its delivery state, which can still change after the Run ended.
     const runs = relayApi.runViews(snapshot);
     return { ...view(snapshot, permissions, app.runtime.keptProcess(snapshot.id), app.runtime.keptLoss(snapshot.id),
-      queueOf(snapshot.id), Object.fromEntries(snapshot.runs.flatMap(run => { const holder = app.runtime.busyHolderOf(run.id); return holder === null ? [] : [[run.id, holder]]; })),
-      app.runtime.keptOutside(snapshot.id), app.runtime.keptUpgrade(snapshot.id)),
+      queueOf(snapshot.id), app.runtime.keptOutside(snapshot.id), app.runtime.keptUpgrade(snapshot.id)),
       runs: protocolView === undefined ? runs : protocolView.attach(snapshot, runs, new Set(permissions.flatMap(request => request.decided ? [] : [request.runId]))) };
   };
   const streams = new SessionStreamHub(id => sessionView(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
@@ -466,6 +507,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (homePathsIn(value, homeForms(), 1 << 20).length) throw new HttpError(500, "PRIVACY_GUARD", "a capability answer named a path by its absolute home form");
     json(response, 200, value);
   };
+  const loginMs = options.login?.idleMs ?? LOGIN_MS, loginRefreshMs = options.login?.refreshMs ?? LOGIN_COOKIE_REFRESH_MS;
   let origin = "", host = "", running = 0, stopping = false, closing: Promise<void> | null = null;
   const bootstrap = randomBytes(32).toString("hex"), bootstrapExpires = Date.now() + BOOTSTRAP_MS;
   let bootstrapAvailable = true;
@@ -548,9 +590,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     void pending.then(() => { if (scan === running) scan = null; }, () => { if (scan === running) scan = null; });
     return pending;
   };
-  const authenticated = (request: IncomingMessage): Login => {
-    const token = cookie(request), login = token === null ? undefined : logins.get(token);
-    if (!login || login.expires < Date.now()) { if (token !== null) logins.delete(token); throw new HttpError(401, "AUTH_REQUIRED", "Open the Gateway startup link to connect"); }
+  const authenticated = (request: IncomingMessage, response: ServerResponse): Login => {
+    const token = cookie(request), login = token === null ? undefined : logins.get(token), now = Date.now();
+    if (!login || login.expires < now) { if (token !== null) logins.delete(token); throw new HttpError(401, "AUTH_REQUIRED", "Open the Gateway startup link to connect"); }
+    // A request is activity: the login now ends LOGIN_MS after it, and the cookie says so (sent again once a minute has passed since it last was).
+    login.expires = now + loginMs;
+    if (now - login.renewed >= loginRefreshMs) { login.renewed = now; response.setHeader("Set-Cookie", loginCookie(login.id, loginMs)); }
     return login;
   };
   async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -578,11 +623,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (!bootstrapAvailable || Date.now() > bootstrapExpires || !equal(token, bootstrap)) throw new HttpError(401, "AUTH_REQUIRED", "Startup link expired or already used");
       bootstrapAvailable = false;
       const loginId = randomBytes(32).toString("hex"), csrf = randomBytes(32).toString("hex");
-      logins.set(loginId, { csrf, expires: Date.now() + LOGIN_MS });
-      response.setHeader("Set-Cookie", COOKIE_NAME + "=" + loginId + "; HttpOnly; SameSite=Strict; Path=/api/; Max-Age=" + LOGIN_MS / 1000);
+      logins.set(loginId, { id: loginId, csrf, expires: Date.now() + loginMs, renewed: Date.now() });
+      response.setHeader("Set-Cookie", loginCookie(loginId, loginMs));
       json(response, 200, { csrfToken: csrf }); return;
     }
-    const login = authenticated(request);
+    const login = authenticated(request, response);
     if (write && (typeof request.headers["x-csrf-token"] !== "string" || !equal(request.headers["x-csrf-token"], login.csrf))) throw new HttpError(403, "CSRF_REJECTED", "Invalid write token");
     if (path === "/api/v1/auth/session" && method === "GET") { queries(url, []); json(response, 200, { csrfToken: login.csrf }); return; }
     // Both answer with the last completed scan (ADR-050): reading them starts no discovery, and a scan still running is
@@ -590,7 +635,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (path === "/api/v1/state" && method === "GET") {
       queries(url, []); const snapshots = app.store.list(100);
       const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses, harnessesScannedAt: scannedAt,
-        sessions: snapshots.map(summary), jobs: app.management.listJobs().slice(0, 50), readiness: readinessViews(nativeModels.readiness(), snapshots), installationPolicy: app.factory.installations,
+        sessions: snapshots.map(summary), jobs: app.management.listJobs(50), readiness: readinessViews(nativeModels.readiness(), snapshots), installationPolicy: app.factory.installations,
         // This Gateway has the relay API (ADR-055 §12.4): the page asks for the relay of a Gateway that says so and of none else.
         relay: true };
       json(response, 200, output); return;
@@ -822,7 +867,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (typeof input.epoch !== "number" || !Number.isSafeInteger(input.epoch) || input.epoch < 1) throw new HttpError(400, "INVALID_INPUT", "invalid native branch epoch");
       json(response, 200, sessionView(app.runtime.resetNative(sessionId(nativeBranch[1]), text(input.commandId, "commandId", 128), input.epoch))); return;
     }
-    if (permissionRoute && method === "POST") { queries(url, []); const input = record(await body(request), ["optionId", "commandId", "input"], ["optionId", "commandId"]); const id = sessionId(permissionRoute[1]); json(response, 200, await app.runtime.decidePermission(id, permissionRoute[2]!, text(input.optionId, "optionId", 512), text(input.commandId, "commandId", 128), input.input===undefined?undefined:(typeof input.input==="string"&&Buffer.byteLength(input.input)<=65536&&!input.input.includes("\0")?input.input:(()=>{throw new HttpError(400,"INVALID_INPUT","invalid native UI input")})()))); return; }
+    if (permissionRoute && method === "POST") { queries(url, []); const input = record(await body(request, MAX_ANSWER_BODY_BYTES), ["optionId", "commandId", "input"], ["optionId", "commandId"]); const id = sessionId(permissionRoute[1]); json(response, 200, await app.runtime.decidePermission(id, permissionRoute[2]!, text(input.optionId, "optionId", 512), text(input.commandId, "commandId", 128), input.input===undefined?undefined:(typeof input.input==="string"&&!input.input.includes("\0")?input.input:(()=>{throw new HttpError(400,"INVALID_INPUT","invalid native UI input")})()))); return; }
     const nativeSessionsRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/native-sessions$/u.exec(path);
     if (nativeSessionsRoute && method === "GET") {
       queries(url, ["controlId", "workspace", "cursor", "probes"]);
@@ -1152,6 +1197,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const server = createServer({ maxHeaderSize: 8192 }, (request, response) => {
     // A disconnected client is independent of the durable command it may already have submitted.
     response.on("error", () => {});
+    watchIdle(request, options.requestIdleMs ?? REQUEST_IDLE_MS);
     if (running >= MAX_REQUESTS) { json(response, 429, { code: "CLIENT_LIMIT", message: "Too many concurrent requests" }); request.resume(); return; }
     running++;
     void route(request, response).catch(error => {
@@ -1159,7 +1205,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       json(response, fault.status, { code: fault.code, message: app.providers.redact(fault.message) }); request.resume();
     }).finally(() => { running--; });
   });
-  server.headersTimeout = 10000; server.requestTimeout = 15000; server.keepAliveTimeout = 5000; server.maxConnections = 32;
+  // The time a request takes to arrive is not limited (an upload takes as long as its bytes do, watchIdle ends one that falls silent); its headers must come within ten seconds.
+  server.headersTimeout = 10000; server.requestTimeout = 0; server.keepAliveTimeout = 5000; server.maxConnections = MAX_CONNECTIONS;
   const close = (): Promise<void> => {
     if (closing) return closing;
     stopping = true; table.listening(null); table.toolsIn(null);

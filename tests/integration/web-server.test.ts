@@ -23,7 +23,7 @@ function row(value: unknown): Record<string, unknown> {
   assert.ok(value !== null && typeof value === "object" && !Array.isArray(value)); return value as Record<string, unknown>;
 }
 interface Fixture { root: string; data: string; workspace: string; manifest: string; trace: string; assets: string; gateway: WebServer; origin: string; token: string; cookie: string; csrf: string; expectedShutdownError: boolean }
-async function fixture(t: test.TestContext, scenario = "basic"): Promise<Fixture> {
+async function fixture(t: test.TestContext, scenario = "basic", serverOptions: { readonly login?: { readonly idleMs?: number; readonly refreshMs?: number }; readonly requestIdleMs?: number } = {}): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), "harness-web-")), workspace = join(root, "workspace"), assets = join(root, "assets"), manifest = join(root, "catalog.json"), trace = join(root, "trace.ndjson");
   await mkdir(workspace); await mkdir(assets);
   await writeFile(join(assets, "index.html"), "<!doctype html><title>HarnessGateway fixture</title>");
@@ -36,7 +36,7 @@ async function fixture(t: test.TestContext, scenario = "basic"): Promise<Fixture
       requiredExecutables: [], package: null, distribution: null, source }] }));
   await writeFile(manifest, JSON.stringify({ version: 2, definitions, overrides: Object.fromEntries(definitions.map(item => [item.controls[0]!.id, { executable: process.execPath }])) }));
   const configuration = await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true });
-  const data = join(root, "data"), gateway = await startWebServer({ installations: "any", root: data, configuration, port: 0, assetsDirectory: assets, workspaceLockRoot: join(root, "locks"),
+  const data = join(root, "data"), gateway = await startWebServer({ installations: "any", root: data, configuration, port: 0, assetsDirectory: assets, workspaceLockRoot: join(root, "locks"), ...serverOptions,
     application: (dataRoot, publish) => application(dataRoot, publish, { installations: "any", workspaceLockRoot: join(root, "locks") }) });
   const parsed = new URL(gateway.url), f = { root, workspace: configuration.workspace, assets, manifest, trace, data, gateway, origin: parsed.origin, token: new URLSearchParams(parsed.hash.slice(1)).get("token")!, cookie: "", csrf: "", expectedShutdownError: false };
   t.after(async () => {
@@ -230,6 +230,11 @@ test("web input rejects malformed JSON, UTF-8, unknown fields, over-limit bodies
     const response = await fetch(f.origin + "/api/v1/sessions", { method: "POST", headers: { Cookie: f.cookie, Origin: f.origin, "X-CSRF-Token": f.csrf, "Content-Type": "application/json" }, body: bytes }); assert.equal(response.status, 400);
   }
   const large = await fetch(f.origin + "/api/v1/sessions", { method: "POST", headers: { Cookie: f.cookie, Origin: f.origin, "X-CSRF-Token": f.csrf, "Content-Type": "application/json" }, body: " ".repeat(128 * 1024 + 1) }); assert.equal(large.status, 413);
+  // The answer to a question a Harness asked has no 64 KiB limit of its own: its route takes a body of several MiB, and the request is judged (no such request is waiting) rather than refused for its size.
+  const answer = (bytes: number) => fetch(f.origin + "/api/v1/sessions/session-absent/permissions/permission-absent", { method: "POST", headers: { Cookie: f.cookie, Origin: f.origin, "X-CSRF-Token": f.csrf, "Content-Type": "application/json" },
+    body: JSON.stringify({ optionId: "submit", commandId: "answer", input: "x".repeat(bytes) }) });
+  const big = await answer(3 * 1024 * 1024); assert.notEqual(big.status, 413, "a 3 MiB answer is not refused for its size"); assert.equal((row(await big.json())).code, "SESSION_NOT_FOUND");
+  const huge = await answer(17 * 1024 * 1024); assert.equal(huge.status, 413, "the route still has a bound against a runaway body"); await huge.text();
   assert.equal((await call(f, "/api/v1/sessions", "POST", { selection: { harnessId: "web-a" }, commandId: "unknown", configHome: f.root })).status, 400);
   assert.equal((await call(f, "/api/v1/sessions?limit=101")).status, 400);
   assert.equal((await call(f, "/api/v1/sessions?limit=1&limit=2")).status, 400);
@@ -246,15 +251,86 @@ test("static requests cannot escape the asset root or read a symlinked private f
   await writeFile(join(f.assets, "large.js"), Buffer.alloc(4 * 1024 * 1024 + 1)); assert.equal((await fetch(f.origin + "/large.js")).status, 404);
 });
 
-test("HTTP concurrent unfinished bodies are bounded and do not create Sessions", async t => {
+test("HTTP concurrent unfinished bodies are bounded at 256 requests in progress, and do not create Sessions", async t => {
   const f = await fixture(t); await auth(f);
-  const requests = Array.from({ length: 16 }, () => {
+  // Sixteen was the cap until 2026-11-12: sixteen unfinished requests leave the Gateway answering; the 257th meets the cap.
+  const open = (count: number) => Array.from({ length: count }, () => {
     const req = request(f.origin + "/api/v1/sessions", { method: "POST", headers: { Cookie: f.cookie, Origin: f.origin, "Content-Type": "application/json", "X-CSRF-Token": f.csrf, "Content-Length": "100" } });
     req.on("error", () => {}); req.flushHeaders(); req.write("{"); return req;
   });
-  try { await delay(100); assert.equal((await call(f, "/api/v1/state")).status, 429); }
+  const sixteen = open(16);
+  try { await delay(100); assert.equal((await call(f, "/api/v1/state")).status, 200); }
+  finally { for (const req of sixteen) req.destroy(); }
+  await delay(100);
+  // Opened in batches: the system lets only so many connections wait to be accepted at once (128 on macOS), and a burst of 256 from this process would be reset.
+  const requests: ReturnType<typeof open> = [];
+  for (let batch = 0; batch < 8; batch++) { requests.push(...open(32)); await delay(60); }
+  try {
+    // The 257th request is refused once all of them have come up.
+    let status = 0;
+    for (let at = 0; at < 100 && status !== 429; at++) { await delay(50); status = (await call(f, "/api/v1/state")).status; }
+    assert.equal(status, 429);
+  }
   finally { for (const req of requests) req.destroy(); }
-  await delay(100); assert.deepEqual((await call(f, "/api/v1/sessions")).data, []);
+  await delay(300); assert.deepEqual((await call(f, "/api/v1/sessions")).data, []);
+  assert.equal((await call(f, "/api/v1/state")).status, 200, "the cap is a count of requests in progress, not of requests made");
+});
+
+test("a login lasts while the page is active: each request pushes its end and the cookie is sent again; after silence it ends", async t => {
+  const f = await fixture(t, "basic", { login: { idleMs: 900, refreshMs: 200 } });
+  const bootstrapped = await fetch(f.origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: f.origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: f.token }) });
+  assert.equal(bootstrapped.status, 200); const first = bootstrapped.headers.get("set-cookie")!;
+  assert.match(first, /Max-Age=1(?:;|$)/u, "the cookie ends when the login would");
+  f.cookie = first.split(";", 1)[0]!; f.csrf = String(row(await bootstrapped.json()).csrfToken);
+  // 3 seconds of requests a third of a second apart: three times the time a login lasts without a request, and still it lasts.
+  const cookies: string[] = [];
+  for (let at = 0; at < 9; at++) {
+    await delay(330);
+    const response = await fetch(f.origin + "/api/v1/auth/session", { headers: { Cookie: f.cookie, Origin: f.origin } });
+    assert.equal(response.status, 200, "request " + at + " is still logged in");
+    const renewed = response.headers.get("set-cookie"); if (renewed !== null) cookies.push(renewed);
+    await response.text();
+  }
+  assert.ok(cookies.length >= 3, "the cookie was sent again as the login was pushed on: " + cookies.length);
+  for (const renewed of cookies) { assert.equal(renewed.split(";", 1)[0], f.cookie, "the same login, not a new one"); assert.match(renewed, /HttpOnly; SameSite=Strict; Path=\/api\/; Max-Age=1$/u); }
+  // Silence for longer than a login lasts, and it is over.
+  await delay(1100);
+  assert.equal((await call(f, "/api/v1/auth/session")).status, 401);
+});
+
+test("the default login lasts eight hours of silence and its cookie is not sent again with every request", async t => {
+  const f = await fixture(t); await auth(f);
+  const response = await fetch(f.origin + "/api/v1/auth/session", { headers: { Cookie: f.cookie, Origin: f.origin } });
+  assert.equal(response.status, 200); assert.equal(response.headers.get("set-cookie"), null, "a minute has not passed since it was sent");
+  await response.text();
+  const bootstrap = await fetch(f.origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: f.origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: f.token }) });
+  assert.equal(bootstrap.status, 401, "the startup link is used once"); await bootstrap.text();
+});
+
+test("a request is given up on only when it falls silent: a body that takes longer than the idle time but keeps coming is read, one that stops is cut", async t => {
+  const f = await fixture(t, "basic", { requestIdleMs: 300 }); await auth(f);
+  const post = (bytes: number, gap: number): Promise<{ readonly status: number | null; readonly cut: boolean }> => new Promise(resolve => {
+    const req = request(f.origin + "/api/v1/sessions", { method: "POST", headers: { Cookie: f.cookie, Origin: f.origin, "Content-Type": "application/json", "X-CSRF-Token": f.csrf, "Content-Length": String(bytes) } });
+    req.on("response", response => { response.resume(); response.on("end", () => resolve({ status: response.statusCode ?? null, cut: false })); });
+    req.on("error", () => resolve({ status: null, cut: true }));
+    req.flushHeaders();
+    let sent = 0;
+    const send = () => { if (sent >= bytes) return; req.write(" "); sent += 1; if (sent < bytes) setTimeout(send, gap); else req.end(); };
+    send();
+  });
+  const started = Date.now();
+  // Fifteen bytes a hundred milliseconds apart take one and a half seconds, five times the idle time: it is read, and it is not valid JSON.
+  assert.deepEqual(await post(15, 100), { status: 400, cut: false });
+  assert.ok(Date.now() - started >= 1400, "the body took longer than the idle time");
+  // One byte of five and then nothing: cut after the idle time, not held open.
+  const stalled = await new Promise<{ readonly status: number | null; readonly cut: boolean }>(resolve => {
+    const req = request(f.origin + "/api/v1/sessions", { method: "POST", headers: { Cookie: f.cookie, Origin: f.origin, "Content-Type": "application/json", "X-CSRF-Token": f.csrf, "Content-Length": "5" } });
+    req.on("response", response => { response.resume(); resolve({ status: response.statusCode ?? null, cut: false }); });
+    req.on("error", () => resolve({ status: null, cut: true }));
+    req.flushHeaders(); req.write(" ");
+  });
+  assert.equal(stalled.cut || stalled.status === 408, true, "a stalled request does not stay open: " + JSON.stringify(stalled));
+  assert.equal((await call(f, "/api/v1/state")).status, 200);
 });
 
 test("closing the web owner waits for the running Harness cleanup and releases the data owner", async t => {

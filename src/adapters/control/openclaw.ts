@@ -18,8 +18,11 @@ import { boundedRequests, usageRequest, measureBy, CWD_PREFIX_ALLOWANCE } from "
 type OpenClawMethod = "agents.list" | "models.list" | "sessions.patch" | "sessions.get" | "sessions.list" | "chat.history" | "skills.status" | "tools.catalog";
 /** The Hub's own Gateway session keys; no other key is patched or continued. */
 const HUB_KEY = /^agent:[a-z0-9_-]+:harnesshub:[a-f0-9-]+$/u;
-/** Transcript entries read back after a Turn (ADR-027); a longer Turn's earliest entries fall outside this window. */
-const TRANSCRIPT_WINDOW = 200;
+/**
+ * Transcript entries asked for after a Turn (ADR-027) to begin with. A Turn that wrote more than this asks again for more, up to
+ * MAX_TRANSCRIPT_WINDOW, so the entries of a long Turn are all reconciled and not only the latest 200 (the earlier ones were left out, with a note).
+ */
+const TRANSCRIPT_WINDOW = 200, MAX_TRANSCRIPT_WINDOW = 100_000;
 /** An agent id OpenClaw keeps as written (`normalizeAgentId`), so it can be the agent segment of a session key. */
 const AGENT_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/u;
 /** The most agents a roster may name for HarnessHub to read it. */
@@ -498,12 +501,17 @@ export class OpenClawControl extends AcpControl {
     const result = run.result.then(async (backend): Promise<BackendResult> => {
       if (this.sessionKey !== null) { const pending = this.readSessionSettings(this.sessionKey); this.sessionSettings = pending; pending.catch(() => {}); }
       if (before === null || this.sessionKey === null || backend.status === "cancelled") return backend;
-      let messages: unknown;
-      try { messages = object(await this.call("sessions.get", { key: this.sessionKey, limit: TRANSCRIPT_WINDOW }), "OpenClaw transcript").messages; }
-      catch { onEvent({ type: "diagnostic", message: "OpenClaw transcript was not readable after the turn" }); return backend; }
-      if (!Array.isArray(messages)) return backend;
-      const first = messages.reduce<number | null>((lowest, value) => { const seq = transcriptSeq(value); return seq !== null && (lowest === null || seq < lowest) ? seq : lowest; }, null);
-      if (messages.length >= TRANSCRIPT_WINDOW && first !== null && first > before + 1)
+      let messages: unknown, first: number | null = null, window = TRANSCRIPT_WINDOW;
+      for (;;) {
+        try { messages = object(await this.call("sessions.get", { key: this.sessionKey, limit: window }), "OpenClaw transcript").messages; }
+        catch { onEvent({ type: "diagnostic", message: "OpenClaw transcript was not readable after the turn" }); return backend; }
+        if (!Array.isArray(messages)) return backend;
+        first = messages.reduce<number | null>((lowest, value) => { const seq = transcriptSeq(value); return seq !== null && (lowest === null || seq < lowest) ? seq : lowest; }, null);
+        // The window reaches back to before this Turn's first entry, or holds the whole transcript: it is read to the beginning of the Turn. Otherwise it asks for more.
+        if (messages.length < window || first === null || first <= before + 1 || window >= MAX_TRANSCRIPT_WINDOW) break;
+        window = Math.min(MAX_TRANSCRIPT_WINDOW, window * 4);
+      }
+      if (messages.length >= window && first !== null && first > before + 1)
         onEvent({ type: "diagnostic", message: `OpenClaw transcript window held ${messages.length} entries; ${first - before - 1} earlier entries of this turn were not reconciled` });
       const rows = messages.filter(value => (transcriptSeq(value) ?? 0) > before), reconciled = reconcileTurn(rows, backend, onEvent, !thought, live);
       // The Gateway commits the user turn to this session's transcript (only the Hub writes it) before the model sees it: a

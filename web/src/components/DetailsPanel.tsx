@@ -1,5 +1,5 @@
 import { ChevronRight, Clock, File, FileText, ListChecks, X } from "lucide-react";
-import { Fragment, useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { ITEM_STATUS_WORDS, TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import type { CommandItem, SubagentItem } from "../../../src/contracts/protocol.js";
@@ -38,8 +38,12 @@ export interface ChangedFile {
 export interface ConversationChanges {
   /** Files with a diff, merged by path, in the order they were first changed. */
   readonly files: readonly ChangedFile[];
-  /** Edit steps with stored detail (at most the latest 40 are read). */
+  /** Edit steps whose detail is read (the latest 40 first, 40 more earlier ones each time `more` is asked for). */
   readonly edits: number;
+  /** How many earlier edit steps the conversation has that are not read yet; 0 when all are. */
+  readonly unread: number;
+  /** Reads the next 40 earlier edit steps. */
+  readonly more: () => void;
   /** Some details are still being read: counts are not final. */
   readonly loading: boolean;
   /** Why details could not be read, one per detail. */
@@ -48,11 +52,16 @@ export interface ConversationChanges {
 /**
  * The files the conversation changed, from the diffs its edit steps reported (ADR-042: read-only, nothing here undoes a
  * change). The latest 40 edit details are read once per page, only while the panel is shown, and shared with the steps that
- * show them; a detail that could not be read is reported once and not asked for again by this view. The numbers the button,
+ * show them; the panel offers the next 40 earlier ones as often as asked (every detail is a read of its own, so they are read by the page, not all
+ * at once); a detail that could not be read is reported once and not asked for again by this view. The numbers the button,
  * the tab and the scopes show are changeCount()'s, which needs no read.
  */
+const EDITS_PER_PAGE = 40;
 export function useConversationChanges(runs: readonly PublicRun[], load: ToolDetailLoader | undefined): ConversationChanges {
-  const edits = useMemo(() => runs.flatMap(run => run.protocol === undefined ? [] : editsOf(run.protocol).map(item => ({ run, item, harnessId: run.protocol!.executor.harnessId }))).slice(-40), [runs]);
+  const [pages, setPages] = useState(1);
+  const every = useMemo(() => runs.flatMap(run => run.protocol === undefined ? [] : editsOf(run.protocol).map(item => ({ run, item, harnessId: run.protocol!.executor.harnessId }))), [runs]);
+  const edits = useMemo(() => every.slice(-pages * EDITS_PER_PAGE), [every, pages]);
+  const more = useCallback(() => setPages(value => value + 1), []);
   const [failures, setFailures] = useState<ReadonlyMap<string, string>>(new Map());
   const [version, setVersion] = useState(0);
   useEffect(() => {
@@ -79,9 +88,9 @@ export function useConversationChanges(runs: readonly PublicRun[], load: ToolDet
       }
     }
     const loading = edits.some(({ item }) => item.detail !== undefined && knownToolDetail(item.detail.id) === undefined && !failures.has(item.detail.id));
-    return { files: [...merged.values()], edits: edits.length, loading, failures: [...failures.values()] };
+    return { files: [...merged.values()], edits: edits.length, unread: every.length - edits.length, more, loading, failures: [...failures.values()] };
     // `version` changes when a detail arrives in the shared store, which this reads.
-  }, [edits, failures, version]);
+  }, [edits, every, more, failures, version]);
 }
 
 /**
@@ -211,6 +220,7 @@ function Changes({ changes, counts, selected, workspace, name, sessionId }: { re
         {file.add ? <span className="flex-none text-[11px] text-add-on-tint">+{file.add}</span> : null}{file.del ? <span className="flex-none text-[11px] text-del-on-tint">−{file.del}</span> : null}
       </button></li>;
     })}</ul> : null}
+    {changes.unread > 0 ? <p className="m-0 flex items-center gap-2 px-4 pb-3 text-caption text-fg-3">更早还有 {changes.unread} 处编辑没有读取。<button type="button" className="link-btn text-caption" onClick={changes.more}>再读取 {Math.min(40, changes.unread)} 处</button></p> : null}
     {changes.loading ? <p className="m-0 flex items-center gap-1.5 px-4 pb-3 text-caption text-fg-3"><Spinner size={12} label=""/>正在读取改动…</p> : null}
     {changes.failures.length ? <p className="m-0 px-4 pb-3 text-caption text-red">{changes.failures.length} 处改动读取失败：{changes.failures[0]}</p> : null}
     {current ? <section className="mx-3 mt-1 mb-3 min-w-0 overflow-hidden rounded-block bg-surface shadow-hairline" aria-label={"差异：" + workspacePath(current.path, workspace)}>

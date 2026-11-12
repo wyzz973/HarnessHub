@@ -88,9 +88,9 @@ export class ProviderVault {
   }
   all(): readonly string[] {
     this.assertOwned();
-    const count = this.db.prepare("SELECT count(*) AS total FROM provider_credentials").get()?.total;
-    if (typeof count !== "number" || count > 4096) throw new ProviderError("INVALID_VAULT", "Provider credential storage budget exceeded");
-    if (this.db.prepare("SELECT 1 FROM provider_credentials WHERE length(CAST(provider_id AS BLOB))>45 OR revision NOT BETWEEN 1 AND 1024 LIMIT 1").get())
+    // How many credentials the vault holds is not bounded (one per revision of a Provider that has a key, 2026-11-12): the count of what
+    // a user keeps must not be what keeps the service from starting; each credential's own identity is still checked.
+    if (this.db.prepare("SELECT 1 FROM provider_credentials WHERE length(CAST(provider_id AS BLOB))>45 OR revision NOT BETWEEN 1 AND 9007199254740991 LIMIT 1").get())
       throw new ProviderError("INVALID_VAULT", "Provider credential identity exceeds its budget");
     const rows = this.db.prepare("SELECT provider_id,revision FROM provider_credentials ORDER BY provider_id,revision").all();
     return rows.map(row => {

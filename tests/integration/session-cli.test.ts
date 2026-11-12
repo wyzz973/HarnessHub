@@ -157,7 +157,10 @@ test("Session binding owns its lease, isolates configuration and closes idempote
   const selection = await factory.validate({ harnessId: "session-a" }, configuration);
   const binding = await factory.prepare(selection, configuration, sessionId("session-fixture"), "run-fixture");
   binding.assertOwned();
-  assert.throws(() => leases.acquire(f.workspace, sessionId("session-other"), "run-other"));
+  // Another Gateway is refused while the binding holds the workspace; this Gateway's other conversations share the lease.
+  assert.throws(() => new SqliteWorkspaceLeaseProvider(join(f.root, "locks")).acquire(f.workspace, sessionId("session-other"), "run-other"));
+  const beside = leases.acquire(f.workspace, sessionId("session-other"), "run-beside"); beside.assertOwned(); beside.release(true);
+  binding.assertOwned();
   await binding.control.initialize(); await binding.control.open(configuration.workspace);
   owned = false; assert.throws(() => binding.assertOwned(), /owner lost/u);
   const cleanup = await binding.close(); assert.equal(cleanup.closed, true); assert.equal(await binding.close(), cleanup);

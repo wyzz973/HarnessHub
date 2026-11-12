@@ -35,7 +35,6 @@ interface TurnContext {
   /** The ids of the items the reader has already seen: only others come in. */
   readonly seen: ReadonlySet<string>;
   readonly onViewPacket: ((packetId: string) => void) | undefined;
-  readonly busyHolder: { readonly title: string; readonly onOpen: () => void } | undefined;
 }
 const Context = createContext<TurnContext | null>(null);
 function useTurn(): TurnContext {
@@ -180,10 +179,9 @@ function ItemView({ item }: { readonly item: ReadItem }) {
     case "recap": return <div className="recap flex min-w-0 flex-col gap-1 px-1.5 text-ui-sm text-fg-2"><span>{item.summary}</span>{item.ask ? <strong className="font-semibold text-fg">{item.ask}</strong> : null}</div>;
     case "notice": return <NoticeList notices={[{ severity: item.severity, title: item.text, ...(item.more ? { detail: item.more } : {}) }]}/>;
     case "error": {
-      const holder = ctx.busyHolder !== undefined && item.code === "WORKSPACE_BUSY" ? ctx.busyHolder : undefined;
       return <div className="run-error flex items-start gap-2 rounded-block bg-surface px-3 py-2.5 text-ui-sm text-fg shadow-hairline" role="status" data-class={item.class}>
         {item.status === "unknown" ? <CircleHelp size={17} strokeWidth={1.9} className="mt-px flex-none text-fg-3" aria-hidden="true"/> : <CircleAlert size={17} strokeWidth={1.9} className="mt-px flex-none text-red" aria-hidden="true"/>}
-        <span className="min-w-0 break-words">{failureMessage({ code: item.code ?? "", message: item.message })}{holder ? <>占用它的是对话「{holder.title}」。<button type="button" className="link-btn" onClick={holder.onOpen}>打开那个对话</button></> : null}</span>
+        <span className="min-w-0 break-words">{failureMessage({ code: item.code ?? "", message: item.message })}</span>
       </div>;
     }
     case "artifact": { const output = outputOf(item); return output === null ? <QuietLine item="artifact">{item.name}</QuietLine> : <OutputList outputs={[output]}/>; }
@@ -257,7 +255,7 @@ function LiveLine({ queue, startupHint, waiting, replying }: { readonly queue: Q
 }
 
 /** The explanation of a Turn that waits in the queue, with the deadline counting down. */
-function QueuedLine({ queue }: { readonly queue: QueueNotice }) { return <QueuedTurn queue={queue} now={useNow(true)}/>; }
+function QueuedLine({ queue }: { readonly queue: QueueNotice }) { return <QueuedTurn queue={queue}/>; }
 
 function useCopy(text: string): { readonly state: "idle" | "copied" | "failed"; readonly write: () => void } {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle"), timer = useRef<ReturnType<typeof setTimeout> | null>(null), mounted = useRef(true);
@@ -318,7 +316,6 @@ export interface ProtocolTurnProps {
   readonly onViewPacket?: ((packetId: string) => void) | undefined;
   readonly startupHint?: { readonly seconds: number; readonly usual: boolean } | undefined;
   readonly queue?: QueueNotice | undefined;
-  readonly busyHolder?: { readonly title: string; readonly onOpen: () => void } | undefined;
   /** What this Turn waits for from the user now, when it waits. */
   readonly waiting?: "approval" | "question" | undefined;
   /** Waiting approvals and questions of this Turn, drawn at its end. */
@@ -352,7 +349,7 @@ export const ProtocolTurn = memo(function ProtocolTurn(props: ProtocolTurnProps)
   return props.run.protocol === undefined ? <UnreadableTurn run={props.run} message={props.message} arrived={props.arrived} onEdit={props.onEdit}/> : <TurnView {...props} turn={props.run.protocol}/>;
 });
 
-function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onDetails, detailsOpen, onViewPacket, startupHint, queue, busyHolder, waiting, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
+function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onDetails, detailsOpen, onViewPacket, startupHint, queue, waiting, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
   // The reply is a message of the conversation, which arrives on the stream apart from the Turn's other items: its words are shown at once.
   const replyMessage = message(run.assistantMessageId), turn = useMemo(() => withReply(given, replyMessage), [given, replyMessage]);
   const arrangement = useMemo(() => arrange(turn, { asking: waiting === "approval" }), [turn, waiting]), over = arrangement.over, cancelling = run.cancelRequested;
@@ -362,8 +359,8 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
   const [seen] = useState<Set<string>>(() => shownSteps(run.id) ?? new Set(turn.items.map(item => item.id)));
   useLayoutEffect(() => { rememberShown(run.id, seen); }, [run.id, seen]);
   useLayoutEffect(() => { for (const item of turn.items) seen.add(item.id); }, [turn.items, seen]);
-  const context = useMemo<TurnContext>(() => ({ turn, run, over, cancelling, detailed, children: arrangement.children, message, loadDetail: loadToolDetail, seen, onViewPacket, busyHolder }),
-    [turn, run, over, cancelling, detailed, arrangement.children, message, loadToolDetail, seen, onViewPacket, busyHolder]);
+  const context = useMemo<TurnContext>(() => ({ turn, run, over, cancelling, detailed, children: arrangement.children, message, loadDetail: loadToolDetail, seen, onViewPacket }),
+    [turn, run, over, cancelling, detailed, arrangement.children, message, loadToolDetail, seen, onViewPacket]);
   const pieces = useMemo(() => segments(arrangement.blocks), [arrangement.blocks]);
   // The reply shown last, for copying and for the line that says the Turn is replying.
   const replies = turn.items.flatMap(item => item.type === "assistant_message" ? [message(item.messageId)?.text ?? ""] : []);
@@ -412,7 +409,7 @@ export function TurnSteps({ run, turn, loadDetail, asking }: { readonly run: Pub
   const [seen] = useState<Set<string>>(() => new Set(turn.items.map(item => item.id)));
   useLayoutEffect(() => { for (const item of turn.items) seen.add(item.id); }, [turn.items, seen]);
   const blocks = useMemo(() => arrangement.blocks.filter(block => block.kind === "work" || block.item.type === "reasoning" || block.item.type === "context_event"), [arrangement.blocks]);
-  const context = useMemo<TurnContext>(() => ({ turn, run, over: arrangement.over, cancelling: false, detailed: true, children: arrangement.children, message: () => undefined, loadDetail, seen, onViewPacket: undefined, busyHolder: undefined }),
+  const context = useMemo<TurnContext>(() => ({ turn, run, over: arrangement.over, cancelling: false, detailed: true, children: arrangement.children, message: () => undefined, loadDetail, seen, onViewPacket: undefined }),
     [turn, run, arrangement, loadDetail, seen]);
   if (blocks.length === 0) return null;
   return <Context.Provider value={context}><div className="turn-steps flex min-w-0 flex-col gap-px" role="group" aria-label="这一轮的步骤"><Blocks blocks={blocks}/></div></Context.Provider>;

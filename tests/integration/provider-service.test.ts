@@ -27,6 +27,22 @@ async function http(fn: (request: IncomingMessage, response: ServerResponse) => 
     server.closeAllConnections(); server.close(error => error ? reject(error) : resolve());
   }) };
 }
+test("the store has no count or byte bound that could keep the service from starting: 200 Providers, a Provider edited 1,100 times, and a record too large to read back is refused at its write", async () => fixture(async (root, service) => {
+  // 128 Providers, 1,024 revisions of one and 4,096 in all were the bounds; a store that reached one threw at startup.
+  let first: ProviderView | null = null;
+  for (let index = 0; index < 200; index++) { const view = service.create({ ...write, name: "Provider " + index, apiKey: index === 0 ? secretA : undefined }, "create-many-" + index); first ??= view; }
+  assert.equal(service.list().length, 200);
+  let latest = first!;
+  for (let revision = 1; revision <= 1100; revision++) latest = service.update(first!.id, { ...write, name: "Edited " + revision }, latest.revision, "edit-" + revision);
+  assert.equal(latest.revision, 1101); assert.equal(latest.hasCredential, true, "the credential follows the revisions");
+  // A model list the 64 KiB record cannot hold is the user's input to refuse, not something to store and then fail to read.
+  const crowded = Array.from({ length: 1000 }, (_, index) => "model-" + "x".repeat(200) + index);
+  assert.throws(() => service.create({ ...write, models: crowded, defaultModel: crowded[0] }, "too-crowded"), hasCode("INVALID_INPUT"));
+  assert.equal(service.list().length, 200, "nothing of it was stored");
+  service.close(); const reopened = new LocalProviderService(root, () => {});
+  try { assert.equal(reopened.list().length, 200); assert.equal(reopened.list().find(view => view.id === first!.id)?.revision, 1101); }
+  finally { reopened.close(); }
+}));
 test("Provider revisions and idempotency persist through reopen with AES-GCM credentials", async () => fixture(async (root, service) => {
   const first = service.create({ ...write, apiKey: secretA }, "create-1");
   assert.equal(first.revision, 1); assert.equal(first.hasCredential, true); assert.deepEqual(service.list(), [first]);

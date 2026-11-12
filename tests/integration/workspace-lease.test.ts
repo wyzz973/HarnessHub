@@ -48,30 +48,44 @@ async function childOwner(t: test.TestContext, locks: string, workspace: string)
   return child;
 }
 
-test("same provider and independent provider cannot acquire one active workspace", async (t) => {
+test("an independent provider and another process cannot acquire one active workspace; the conversations of one provider share its lease", async (t) => {
   const { locks, workspace } = await fixture(t);
   const first = new SqliteWorkspaceLeaseProvider(locks), second = new SqliteWorkspaceLeaseProvider(locks);
   const lease = first.acquire(workspace, sid, "run-one");
   try {
-    assert.throws(() => first.acquire(workspace, sid, "run-two"), code("WORKSPACE_BUSY"));
+    // Another conversation of the same Gateway joins the lease it holds (2026-11-12: conversations in one workspace all run).
+    const joined = first.acquire(workspace, sessionId("session-other"), "run-two");
+    lease.assertOwned(); joined.assertOwned();
+    // Another Gateway, in this process or in another, is a contender and is refused.
     assert.throws(() => second.acquire(workspace, sid, "run-three"), code("WORKSPACE_BUSY"));
-    lease.assertOwned();
     assert.equal(contender(locks, workspace).stdout, "WORKSPACE_BUSY");
-    lease.assertOwned();
+    // The lease lasts until its last holder lets go.
+    lease.release(true); lease.release(true);
+    assert.throws(() => lease.assertOwned(), code("WORKSPACE_OWNERSHIP_LOST"));
+    joined.assertOwned();
+    assert.throws(() => second.acquire(workspace, sid, "run-four"), code("WORKSPACE_BUSY"));
+    assert.equal(contender(locks, workspace).stdout, "WORKSPACE_BUSY");
+    joined.release(true);
+    assert.throws(() => joined.assertOwned(), code("WORKSPACE_OWNERSHIP_LOST"));
+    second.acquire(workspace, sid, "run-five").release(true);
+    assert.equal(contender(locks, workspace).stdout, "acquired");
   } finally { lease.release(true); }
 });
 
-test("confirmed release permits reuse while false release quarantines durably", async (t) => {
+test("a lease shared by conversations is quarantined if any holder let go without its program confirmed ended, and a lost lease cannot be joined", async (t) => {
   const { locks, workspace } = await fixture(t);
   const provider = new SqliteWorkspaceLeaseProvider(locks);
-  const first = provider.acquire(workspace, sid, "run-one");
-  first.release(true); first.release(true);
-  assert.throws(() => first.assertOwned(), code("WORKSPACE_OWNERSHIP_LOST"));
-  const second = provider.acquire(workspace, sid, "run-two");
-  second.release(false);
+  const first = provider.acquire(workspace, sid, "run-one"), second = provider.acquire(workspace, sessionId("session-other"), "run-two");
+  second.release(true); first.release(false);
   assert.throws(() => provider.acquire(workspace, sid, "run-three"), code("WORKSPACE_QUARANTINED"));
-  assert.throws(() => new SqliteWorkspaceLeaseProvider(locks).acquire(workspace, sid, "run-four"), code("WORKSPACE_QUARANTINED"));
   assert.equal(contender(locks, workspace).stdout, "WORKSPACE_QUARANTINED");
+  // A lease whose lock file was swapped under it is lost for every holder: nobody joins it.
+  const lost = await fixture(t), losing = new SqliteWorkspaceLeaseProvider(lost.locks), held = losing.acquire(lost.workspace, sid, "run-four");
+  const lockName = (await readdir(lost.locks)).find((name) => name.endsWith(".lock.sqlite"))!, file = join(lost.locks, lockName);
+  await rename(file, file + ".moved"); await writeFile(file, "");
+  assert.throws(() => held.assertOwned(), code("WORKSPACE_OWNERSHIP_LOST"));
+  assert.throws(() => losing.acquire(lost.workspace, sessionId("session-other"), "run-five"), code("WORKSPACE_OWNERSHIP_LOST"));
+  assert.throws(() => held.release(true), code("WORKSPACE_OWNERSHIP_LOST"));
 });
 
 test("different workspaces can be leased independently", async (t) => {
@@ -85,7 +99,9 @@ test("workspace aliases resolve to one lock key", async (t) => {
   const { root, locks, workspace } = await fixture(t), alias = join(root, "alias");
   await symlink(workspace, alias);
   const provider = new SqliteWorkspaceLeaseProvider(locks), lease = provider.acquire(alias, sid, "run-one");
-  try { assert.throws(() => provider.acquire(workspace, sid, "run-two"), code("WORKSPACE_BUSY")); } finally { lease.release(true); }
+  // The alias and the workspace are one lease, which the conversations of the provider share; an independent provider is refused on either name.
+  const joined = provider.acquire(workspace, sessionId("session-other"), "run-two");
+  try { assert.throws(() => new SqliteWorkspaceLeaseProvider(locks).acquire(workspace, sid, "run-three"), code("WORKSPACE_BUSY")); } finally { joined.release(true); lease.release(true); }
   assert.equal((await readdir(locks)).filter((name) => name.endsWith(".lock.sqlite")).length, 1);
 });
 
@@ -152,8 +168,8 @@ test("persisted owner token tampering is detected without clearing foreign state
 
 test("lost exclusive transaction fails ownership and does not clear held state", async (t) => {
   const { locks, workspace } = await fixture(t), provider = new SqliteWorkspaceLeaseProvider(locks), lease = provider.acquire(workspace, sid, "run-one");
-  // Fault injection deliberately reaches the adapter's private SQLite handle.
-  const db: unknown = Reflect.get(lease, "lockDb");
+  // Fault injection deliberately reaches the adapter's private SQLite handle, through the holder's handle and the lease it shares.
+  const db: unknown = Reflect.get(Reflect.get(Reflect.get(lease, "shared") as object, "lease") as object, "lockDb");
   assert.ok(db instanceof DatabaseSync); db.exec("ROLLBACK");
   assert.throws(() => lease.assertOwned(), code("WORKSPACE_OWNERSHIP_LOST"));
   assert.throws(() => lease.release(true), code("WORKSPACE_OWNERSHIP_LOST"));

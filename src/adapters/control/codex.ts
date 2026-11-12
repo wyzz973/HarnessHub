@@ -8,7 +8,7 @@ import type { NativeToolDetail, NativeUsage } from "../../contracts/control.js";
 import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { MAX_CONTENT_BYTES, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
-import { MAX_NATIVE_EXTENSIONS, MAX_NATIVE_SESSIONS, MAX_USAGE_REQUESTS, type NativeExtensions, type NativeSessionImport, type NativeSessionPage } from "../../contracts/control.js";
+import { MAX_NATIVE_EXTENSIONS, MAX_NATIVE_SESSIONS, type NativeExtensions, type NativeSessionImport, type NativeSessionPage } from "../../contracts/control.js";
 import { checkInputs, fileMentions } from "../../infrastructure/control/attachments.js";
 import { randomUUID } from "node:crypto";
 import type { RelayCapabilities, RelayPacketId } from "../../contracts/relay.js";
@@ -35,13 +35,14 @@ export const codexRelayCapabilities: RelayCapabilities = relayDeclaration({
   title: "set",
 });
 
+/** The longest opening a thread is waited for (see setupMs). */
+const SESSION_SETUP_MS = 10 * 60_000;
 interface ActiveTurn {
   readonly event: (event: ControlEvent) => void;
   readonly resolve: (result: BackendResult) => void;
   readonly reject: (error: Error) => void;
-  readonly timer: ReturnType<typeof setTimeout>;
-  /** When the turn times out (its deadline, ADR-035). */
-  readonly deadline: number;
+  /** The driver's own deadline for the turn, when one was set (the Gateway sets none: a Turn has no time wall); absent otherwise. */
+  readonly timer: ReturnType<typeof setTimeout> | undefined;
   readonly started: Promise<void>;
   readonly signalStarted: () => void;
   readonly rejectStarted: (error: Error) => void;
@@ -72,8 +73,6 @@ interface ActiveTurn {
 }
 interface Tokens { readonly totalTokens: number; readonly inputTokens: number; readonly cachedInputTokens: number; readonly cacheWriteInputTokens: number; readonly outputTokens: number; readonly reasoningOutputTokens: number }
 const STREAM_MS = 300, ITEM_OUTPUT_BYTES = 128 * 1024;
-/** Threads one connection gives up (a clear each); past this many the connection is used up. */
-const MAX_ABANDONED_THREADS = 256;
 /**
  * Codex's refusal of turn/interrupt for a thread that has no active turn (JSON-RPC invalid request, -32600): the answer of a
  * turn it has not begun yet, or one that has already ended. Codex 0.166.0 answers turn/start at once and runs the user's hooks
@@ -284,6 +283,8 @@ export class CodexControl implements HarnessControl {
     this.initializing ??= this.initializeOnce();
     return this.initializing;
   }
+  /** How long opening a thread (start, resume, fork) is waited for: a cold start or a long resume loads native state first, so minutes; less when the Turn has a deadline of its own. */
+  private setupMs(): number { return Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs ?? SESSION_SETUP_MS)); }
   private async initializeOnce(): Promise<ProtocolObservation> {
     try {
       // Experimental fields are accepted only when declared here, for this connection.
@@ -291,7 +292,7 @@ export class CodexControl implements HarnessControl {
       const response = object(await this.rpc.request("initialize", {
         clientInfo: { name: "harnessgateway", title: "HarnessGateway", version: "0.0.0" },
         capabilities: { experimentalApi: this.experimental, requestAttestation: false },
-      }), "Codex initialize result");
+      }, this.options.startupTimeoutMs ?? this.options.requestTimeoutMs, "abort", "NATIVE_INITIALIZE_TIMEOUT"), "Codex initialize result");
       const userAgent = string(response.userAgent, "Codex user agent", 4096);
       await this.rpc.notify("initialized", {});
       this.initialized = true;
@@ -431,7 +432,7 @@ export class CodexControl implements HarnessControl {
       // A cold start or a long thread resume loads native state before answering; bounded by the run budget.
       const response = object(await this.rpc.request(checkpoint === undefined ? "thread/start" : "thread/resume", {
         cwd, ...(checkpoint === undefined ? { ephemeral: false } : { threadId: nativeConversationId(checkpoint), excludeTurns: true }), ...(model === undefined ? {} : { model }), ...overrides,
-      }, Math.max(this.options.requestTimeoutMs, Math.min(60000, this.options.runTimeoutMs))), "native thread setup result");
+      }, this.setupMs(), "abort", "NATIVE_SESSION_TIMEOUT"), "native thread setup result");
       // The thread reports the policy it actually runs with; an override it did not apply is a failure, not a silent default.
       if (overrides.approvalPolicy !== undefined && response.approvalPolicy !== overrides.approvalPolicy) throw new ControlError("NATIVE_OPTION_MISMATCH", "Codex did not apply the requested approval policy");
       if (overrides.sandbox !== undefined && SANDBOX_TYPES[String(object(response.sandbox, "Codex sandbox").type)] !== overrides.sandbox) throw new ControlError("NATIVE_OPTION_MISMATCH", "Codex did not apply the requested sandbox");
@@ -550,7 +551,7 @@ export class CodexControl implements HarnessControl {
     const source = nativeConversationId(checkpoint);
     this.forkConnection = true;
     try {
-      const response = object(await this.rpc.request("thread/fork", { threadId: source, cwd, excludeTurns: true }, Math.max(this.options.requestTimeoutMs, Math.min(60000, this.options.runTimeoutMs))), "thread/fork result");
+      const response = object(await this.rpc.request("thread/fork", { threadId: source, cwd, excludeTurns: true }, this.setupMs(), "abort", "NATIVE_SESSION_TIMEOUT"), "thread/fork result");
       const id = nativeConversationId(object(response.thread, "forked thread").id);
       if (id === source) throw new ControlError("IDENTITY_MISMATCH", "thread/fork returned its source thread");
       return id;
@@ -576,7 +577,6 @@ export class CodexControl implements HarnessControl {
   private clearRun(turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[]): ControlRun | null {
     const reading = typeof turn === "string" ? codexNativeClassify(turn, null, attachments.map(file => file.kind)) : null;
     if (reading === null || reading.kind !== "command" || reading.effect !== "clear") return null;
-    if (this.abandoned.size >= MAX_ABANDONED_THREADS) throw new ControlError("INVALID_STATE", "this connection gave up too many threads");
     this.abandoned.add(this.conversation!);
     // Token totals are the old thread's: the next thread counts from its own.
     this.conversation = null; this.threadPath = null; this.lastTotal = null;
@@ -619,8 +619,8 @@ export class CodexControl implements HarnessControl {
     const started = new Promise<void>((res, rej) => { signalStarted = res; rejectStarted = rej; });
     // The promise is also consumed by requestStop(); attach rejection ownership before any failure can occur.
     void started.catch(() => {});
-    const active: ActiveTurn = { event: onEvent, resolve, reject, deadline: Date.now() + this.options.runTimeoutMs,
-      timer: setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Codex turn exceeded its deadline")), this.options.runTimeoutMs),
+    const active: ActiveTurn = { event: onEvent, resolve, reject,
+      timer: this.options.runTimeoutMs === undefined ? undefined : setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Codex turn exceeded its deadline")), this.options.runTimeoutMs),
       started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set(), items: new Map(), agents: new Map(), reads: new Set(), baseline: this.lastTotal, inputRecorded: false,
       clientId, packetId, requests: [], begun: false, wake: null };
     this.active = active;
@@ -718,7 +718,6 @@ export class CodexControl implements HarnessControl {
       return;
     }
     if (this.turnIds.has(id)) throw new ControlError("DUPLICATE_TURN", "Codex reused a turn identity");
-    if (this.turnIds.size >= 4096) throw new ControlError("TURN_LIMIT", "turn identity budget exhausted");
     this.turnIds.add(id); active.turnId = id; active.signalStarted();
   }
   private scope(params: Record<string, unknown>, requireTurn = false): ActiveTurn | null {
@@ -738,7 +737,6 @@ export class CodexControl implements HarnessControl {
     return this.active;
   }
   private foreign(id: string, parent: string | null): void {
-    if (!this.foreignThreads.has(id) && this.foreignThreads.size >= 1024) throw new ControlError("THREAD_LIMIT", "foreign Codex thread budget exhausted");
     if (!this.foreignThreads.has(id) || parent !== null) this.foreignThreads.set(id, parent);
   }
   /** A sub-agent spawned (directly or transitively) by the owned thread works for the active public Run. */
@@ -839,7 +837,6 @@ export class CodexControl implements HarnessControl {
       const active = this.scope(params, true);
       if (!active) throw new ControlError("INVALID_STATE", "no active turn");
       const itemId = string(params.itemId, "message item identity");
-      if (active.deltaItems.size >= 4096 && !active.deltaItems.has(itemId)) throw new ControlError("ITEM_LIMIT", "message identity budget exhausted");
       active.deltaItems.add(itemId);
       active.event({ type: "text", text: text(params.delta, "agent message delta") }); return;
     }
@@ -932,7 +929,7 @@ export class CodexControl implements HarnessControl {
       // Each report of this turn follows one model request, whose own counts are `last` (inferred from the protocol's shape).
       const raw = usage.last !== null && typeof usage.last === "object" ? usage.last as Record<string, unknown> : null;
       const request = raw === null ? null : usageRequest(raw.inputTokens, raw.cachedInputTokens, raw.cacheWriteInputTokens);
-      if (request !== null) { active.requests.push(request); if (active.requests.length > MAX_USAGE_REQUESTS) active.requests.shift(); }
+      if (request !== null) active.requests.push(request);
       const value: NativeUsage = { turn: { input: minus("inputTokens"), output: minus("outputTokens"), cachedInput: minus("cachedInputTokens"), cacheWrite: minus("cacheWriteInputTokens"), reasoning: minus("reasoningOutputTokens"), total: minus("totalTokens") },
         ...(last !== null ? { context: { used: last.totalTokens, ...(window ? { size: window } : {}) } } : {}), ...(active.requests.length ? { requests: boundedRequests(active.requests) } : {}) };
       active.event({ type: "usage", usage: value }); return;
@@ -981,7 +978,7 @@ export class CodexControl implements HarnessControl {
       const files = request.method.includes("fileChange") ? (item?.locations ?? []).map(path => basename(path)).slice(0, 3).join(", ") : "";
       const title = (params.threadId !== this.conversation ? "子 Agent · " : "") + (typeof params.command === "string" ? line(params.command) : request.method.includes("fileChange") ? "Codex 请求修改文件" + (files ? "：" + files : "") : "Codex 请求执行命令");
       const detail = [typeof params.reason === "string" ? line(params.reason) : "", typeof params.cwd === "string" ? "目录：" + params.cwd : "", request.method.includes("fileChange") && item?.diff ? item.diff : ""].filter(Boolean).join("\n").slice(0, 4096);
-      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve, reply: decision => ({ decision }) }); active.event({ type: "permission_requested", id, title, ...(detail ? { detail } : {}), options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })), ...requestExpiry(active.deadline, null) }); });
+      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve, reply: decision => ({ decision }) }); active.event({ type: "permission_requested", id, title, ...(detail ? { detail } : {}), options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })), ...requestExpiry(null) }); });
     }
     const decision = active.stopping ? "cancel" : "decline";
     active.event({ type: "permission", id: String(request.id), decision: active.stopping ? "cancelled" : "denied" });
@@ -1002,16 +999,15 @@ export class CodexControl implements HarnessControl {
     const answers = new Map<string, { answers: readonly string[] }>();
     for (const question of questions) {
       if (!this.interactivePermissions || active.stopping || active.settled || this.active !== active) return { answers: {} };
-      if (this.permissions.size >= 32) throw new ControlError("PERMISSION_LIMIT", "native interactions exceeded their budget");
       const choices = [...question.choices.map((name, index) => ({ id: "answer-" + index, name })), ...(question.freeform ? [{ id: "submit", name: "提交回答" }] : []), { id: "cancel", name: "取消" }];
       const answer = await new Promise<unknown>(resolve => {
         this.permissions.set(question.requestId, { options: choices.map(choice => choice.id), resolve, reply: (option, input) => {
           if (option === "cancel") return null;
-          if (option === "submit") { if (typeof input !== "string" || Buffer.byteLength(input) > 65536 || input.includes("\0")) throw new ControlError("INVALID_INPUT", "invalid native input answer"); return input; }
+          if (option === "submit") { if (typeof input !== "string" || input.includes("\0")) throw new ControlError("INVALID_INPUT", "invalid native input answer"); return input; }
           const index = Number(option.slice(7)); if (!Number.isSafeInteger(index) || !question.choices[index]) throw new ControlError("INVALID_INPUT", "invalid native answer choice"); return question.choices[index];
         } });
         active.event({ type: "permission_requested", id: question.requestId, title: question.title, options: choices,
-          ...(question.freeform ? { input: { kind: question.secret ? "secret" : "text", value: "" } } : {}), kind: "question", ...requestExpiry(active.deadline, null) });
+          ...(question.freeform ? { input: { kind: question.secret ? "secret" : "text", value: "" } } : {}), kind: "question", ...requestExpiry(null) });
       });
       if (answer === null) return { answers: {} };
       answers.set(question.id, { answers: [text(answer, "native answer")] });

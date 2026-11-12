@@ -8,7 +8,7 @@ import type { HarnessReadTable, ReadEnvironment } from "../../adapters/capabilit
 import { CapabilityError } from "../../contracts/capabilities.js";
 import { frontmatter, parseConfig, record, text } from "./formats.js";
 import { readArchiveFolder, type ArchiveListing } from "./github.js";
-import { folderTree, MAX_SKILL_BYTES, MAX_SKILL_FILES, npxExcluded, npxExcludedPath, treeId, type FolderTree, type TreeItem } from "./skill-tree.js";
+import { folderTree, MAX_SKILL_BYTES, MAX_SKILL_FILES, npxExcluded, npxExcludedPath, sizeWords, treeId, type FolderTree, type TreeItem } from "./skill-tree.js";
 
 /**
  * Skills as folders in the shared `~/.agents/skills` (ADR-045 §4): finding them in a repository archive, writing one,
@@ -88,7 +88,7 @@ export function findSkills(listing: ArchiveListing, under: string | null): reado
     const installName = name === null ? null : skillFolderName(name);
     if (name !== null && installName === null) refused ??= "技能名 " + name + " 不能作为文件夹名";
     if (copy.length > MAX_SKILL_FILES) refused ??= "文件超过 " + MAX_SKILL_FILES + " 个";
-    if (bytes > MAX_SKILL_BYTES) refused ??= "超过 64 MB";
+    if (bytes > MAX_SKILL_BYTES) refused ??= "超过 " + sizeWords(MAX_SKILL_BYTES);
     found.push({ folder, name: name ?? (segments.at(-1) ?? ""), installName, description, files: copy.length, bytes, executables, upstreamTree: treeId(all), copyTree: treeId(copy),
       plugin: inside.some(entry => entry.path === prefix + ".claude-plugin/plugin.json"), refused });
   }

@@ -20,19 +20,23 @@ import { SessionError, messageId, runId, type MessageId, type RunId, type RunSta
 // Bounds
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** The largest event seq a Session can reach: MAX_SESSION_EVENTS of the Session domain (checked equal by its tests). */
-export const RELAY_MAX_SEQ = 16_384;
-/** The most Runs a Session holds: MAX_RUNS of the Session domain; Run indexes are below it. */
-export const RELAY_MAX_RUNS = 256;
+/**
+ * The largest event seq the relay's state can name: the largest safe integer. The relay put no bound of its own on a conversation
+ * (decided 2026-11-12: no conversation has a size limit), so these parsers read every value a conversation can reach; what the Store
+ * holds of a conversation is the Store's to bound, not the contract's. They accept all that the earlier bounds (16,384 and 256) did.
+ */
+export const RELAY_MAX_SEQ = Number.MAX_SAFE_INTEGER;
+/** The largest number of Runs a Session can hold as far as the relay is concerned; Run indexes are below it. */
+export const RELAY_MAX_RUNS = Number.MAX_SAFE_INTEGER;
 /** Native epochs start at 1 and grow by one per new native session or clear, each after at least one event. */
-export const RELAY_MAX_EPOCH = RELAY_MAX_SEQ + 1;
+export const RELAY_MAX_EPOCH = Number.MAX_SAFE_INTEGER;
 /** Counters a native side reports (context tokens). */
 export const MAX_RELAY_COUNTER = 2_147_483_647;
 /** Epoch milliseconds, as everywhere in the Session. */
 export const MAX_RELAY_TIME = 8.64e15;
-/** The serialized `relay` of one binding: five small fields and at most one pending packet (163 B at the largest values). */
+/** The serialized `relay` of one binding: five small fields and at most one pending packet (218 B with every number at the largest safe integer). */
 export const MAX_BINDING_RELAY_BYTES = 256;
-/** The serialized relay fields of one Run (`{ relay, relayRequest }`); the snapshot also gains contextReadyAt and recordedAt. */
+/** The serialized relay fields of one Run (`{ relay, relayRequest }`); the snapshot also gains contextReadyAt and recordedAt (532 B at the largest values). */
 export const MAX_RUN_RELAY_BYTES = 576;
 /** Relay table bounds, checked on serialized bytes before any statement runs. */
 export const RELAY_BODY_BYTES = 262_144;
@@ -169,6 +173,35 @@ export type TurnText = string | { readonly user: string; readonly relay: { reado
 
 // ---- The packet manifest --------------------------------------------------------------------------------------------
 
+/**
+ * One entry of the Run indexes a packet quotes: an index, or an inclusive span `[first, last]` (`first < last`) of consecutive ones. A
+ * list of up to `RELAY_EXPLICIT_RUNS` indexes is stored one by one, as manifests always were; a longer one is stored as spans, so the
+ * manifest stays inside its byte bound however long the conversation is (`packRunIndexes`).
+ */
+export type RunSpan = number | readonly [number, number];
+/** The longest list of Run indexes stored one by one: what a manifest could hold before spans (256 Runs); a longer list is stored as spans. */
+export const RELAY_EXPLICIT_RUNS = 256;
+/** Run indexes, ascending, as a manifest stores them: explicit up to RELAY_EXPLICIT_RUNS, otherwise runs of consecutive indexes as spans. */
+export function packRunIndexes(indexes: readonly number[]): readonly RunSpan[] {
+  if (indexes.length <= RELAY_EXPLICIT_RUNS) return indexes;
+  const packed: RunSpan[] = [];
+  for (let at = 0; at < indexes.length;) {
+    let last = at;
+    while (last + 1 < indexes.length && indexes[last + 1] === indexes[last]! + 1) last++;
+    packed.push(last === at ? indexes[at]! : [indexes[at]!, indexes[last]!]);
+    at = last + 1;
+  }
+  return packed;
+}
+/** The span a stored entry is: an index alone is a span of itself. */
+export function spanOf(entry: RunSpan): readonly [number, number] { return typeof entry === "number" ? [entry, entry] : entry; }
+/** How many Run indexes a stored list names. */
+export function countRunIndexes(runs: readonly RunSpan[]): number {
+  let count = 0;
+  for (const entry of runs) { const [first, last] = spanOf(entry); count += last - first + 1; }
+  return count;
+}
+
 /** The kinds of item a packet's ledger counts, as the record holds them (narration.ts picks them from the Runs). */
 export const ITEM_KINDS = ["userMessages", "replies", "outputs", "changes", "calls"] as const;
 export type ItemKind = typeof ITEM_KINDS[number];
@@ -193,8 +226,8 @@ export interface RelayPacket {
   readonly tier: Tier;
   readonly target: { readonly harnessId: string; readonly controlId: string; readonly model: string | null; readonly nativeEpoch: number };
   readonly range: SourceRange;
-  /** The Run indexes the packet quotes: each has finished and its user message came before the current input's (checked when it is written). */
-  readonly runs: readonly number[];
+  /** The Run indexes the packet quotes: each has finished and its user message came before the current input's (checked when it is written). Long lists are stored as spans (`packRunIndexes`). */
+  readonly runs: readonly RunSpan[];
   /** The unconfirmed packet this one sends again (the facts again, or with newer ones). */
   readonly supersedes: RelayPacketId | null;
   readonly policyVersion: PolicyVersion;
@@ -602,7 +635,14 @@ export function parseDeliveryRecord(value: unknown): DeliveryRecord {
     redaction: { rulesVersion: bounded(redaction.rulesVersion, "redaction rules version", 64), keyId: bounded(redaction.keyId, "redaction key id", 64), setHmac: redactionTag(redaction.setHmac) },
     autoResend: flag(item.autoResend, "automatic resend") };
 }
-const ids = (value: unknown, label: string) => list(value, label, RELAY_MAX_RUNS, raw => integer(raw, label, 0, RELAY_MAX_RUNS - 1));
+/** A list of Run indexes as a manifest stores them: indexes, and spans of consecutive ones (a span is two indexes with the first below the last). */
+const ids = (value: unknown, label: string): readonly RunSpan[] => list(value, label, RELAY_MAX_RUNS, (raw): RunSpan => {
+  if (!Array.isArray(raw)) return integer(raw, label, 0, RELAY_MAX_RUNS - 1);
+  if (raw.length !== 2) invalid(label);
+  const first = integer(raw[0], label, 0, RELAY_MAX_RUNS - 1), last = integer(raw[1], label, 0, RELAY_MAX_RUNS - 1);
+  if (last <= first) invalid(label);
+  return [first, last];
+});
 const tokens = (value: unknown, label: string) => counter(value, label);
 /** A packet manifest, checked field by field and against RELAY_MANIFEST_BYTES. */
 export function parseRelayPacket(value: unknown): RelayPacket {

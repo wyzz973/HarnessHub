@@ -1,4 +1,4 @@
-import { MAX_USAGE_REQUESTS, singleText, type BackendResult, type ControlEvent, type NativeUsage, type TurnText } from "../../contracts/control.js";
+import { singleText, type BackendResult, type ControlEvent, type NativeUsage, type TurnText } from "../../contracts/control.js";
 import type { ContentKind } from "../../contracts/content.js";
 import { relayPacketId, type RelayCapabilities, type RelayPacketId } from "../../contracts/relay.js";
 
@@ -140,7 +140,7 @@ export function usageRequest(input: unknown, cachedInput?: unknown, cacheWrite?:
   const cached = count(cachedInput), written = count(cacheWrite);
   return { input: read, ...(cached === undefined ? {} : { cachedInput: cached }), ...(written === undefined ? {} : { cacheWrite: written }) };
 }
-/** A Turn's requests, oldest first, bounded to the latest MAX_USAGE_REQUESTS. */
+/** A Turn's requests, oldest first: every one of them (the count has no bound; a request is a few numbers). */
 export function boundedRequests(requests: readonly NonNullable<NativeUsage["requests"]>[number][]): NonNullable<NativeUsage["requests"]> {
-  return requests.length > MAX_USAGE_REQUESTS ? requests.slice(-MAX_USAGE_REQUESTS) : [...requests];
+  return [...requests];
 }

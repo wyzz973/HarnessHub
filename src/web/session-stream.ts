@@ -63,7 +63,7 @@ export class SessionStreamHub {
    */
   constructor(private readonly read: (id: SessionId) => SessionView, options: SessionStreamLimits = {}, private readonly reportReadFailure?: (failure: SessionStreamReadFailure) => void,
     private readonly attention?: () => AttentionFrame) {
-    this.maxConnections = limit(options.maxConnections, 8); this.maxFrameBytes = limit(options.maxFrameBytes, 8 * 1024 * 1024);
+    this.maxConnections = limit(options.maxConnections, 256); this.maxFrameBytes = limit(options.maxFrameBytes, 8 * 1024 * 1024);
     this.heartbeatMs = limit(options.heartbeatMs, 15000); this.connectionTtlMs = limit(options.connectionTtlMs, 60000);
     this.drainTimeoutMs = limit(options.drainTimeoutMs, 10000); this.now = options.now ?? Date.now;
   }

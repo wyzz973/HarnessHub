@@ -28,13 +28,10 @@ interface ActivePrompt {
   stopping: boolean;
   settled: boolean;
   stop: Promise<StopRequestReceipt> | null;
-  /** When this prompt's request times out (the Turn's deadline, ADR-035). */
-  readonly deadline: number;
 }
 const metadataUpdates = new Set(["plan", "available_commands_update", "current_mode_update", "config_option_update", "session_info_update", "usage_update"]);
-/** Long agentic turns flatten subagent tools into the root session; budgets bound memory, not normal work. */
-const MAX_PROMPT_TOOLS = 4096;
-const MAX_NATIVE_COMMANDS = 2048;
+// A prompt's tools and the commands an agent announces have no count bound (2026-11-12): a long agentic turn flattens its sub-agents' tools into
+// the root session and runs thousands of them, and a table that refuses the 4,097th ended the Turn; each entry is a short title and a status.
 /**
  * Some agents keep streaming session/load history after the load response (Gemini, Hermes); the prompt waits until that
  * replay has been quiet this long, counted from the response at the earliest so a slow load cannot skip the wait.
@@ -53,12 +50,14 @@ const TRAILING_SETTLE_MS = 2000;
 const IMPORT_REPLAY_BYTES = 4 * 1024 * 1024, IMPORT_REPLAY_MESSAGES = 2000;
 /** Pages of session/list searched to confirm that a session belongs to the workspace. */
 const IMPORT_LIST_PAGES = 20;
-/** Session setup starts the agent's own runtime (plugins, MCP, model catalog); a cold start can exceed a plain request. */
-const SESSION_SETUP_MS = 60000;
+/**
+ * Session setup starts the agent's own runtime (plugins, MCP, model catalog); a cold start can exceed a plain request by minutes
+ * (many plugins and MCP servers, a first run installing its dependencies). A start that is merely slow is not a failure, so this is
+ * generous: it only ends a setup that has been silent for ten minutes, and the failure names the step that was waited for.
+ */
+const SESSION_SETUP_MS = 10 * 60_000;
 /** How long an abandoned session's session/close is waited for; the session is abandoned whatever the agent answers. */
 const CLOSE_SESSION_MS = 2000;
-/** Sessions one connection abandons; past this many the connection is used up (Claude's clear, one per Turn, never nears it). */
-const MAX_ABANDONED_SESSIONS = 256;
 /** Display label from native text: control characters (including newlines in multi-line commands) become spaces. */
 function label(value: unknown, fallback: string, maximum = 4096): string {
   if (typeof value !== "string") return fallback;
@@ -218,7 +217,7 @@ export class AcpControl implements HarnessControl {
         // elicitation.form lets an agent ask the user through a form (Claude's AskUserQuestion); the chat asks it field by field.
         protocolVersion: 1, clientCapabilities: { session: { notices: {}, compaction: {} }, elicitation: { form: {} } },
         clientInfo: { name: "harnessgateway", title: "HarnessGateway", version: "0.0.0" },
-      }), "ACP initialize result");
+      }, this.options.startupTimeoutMs ?? this.options.requestTimeoutMs, "abort", "NATIVE_INITIALIZE_TIMEOUT"), "ACP initialize result");
       if (response.protocolVersion !== 1) throw new ControlError("PROTOCOL_VERSION", "peer did not negotiate ACP v1");
       const capabilities = object(response.agentCapabilities, "ACP agent capabilities");
       this.capabilities = capabilities;
@@ -366,7 +365,7 @@ export class AcpControl implements HarnessControl {
     this.opening = true; this.conversation = nativeConversationId(id); this.replaying = true; this.lastReplay = Date.now();
     this.collected = { messages: [], bytes: 0, dropped: 0 };
     try {
-      const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs));
+      const setup = this.setupMs();
       const response = loaded(await this.sessionRequest("session/load", { ...await this.sessionParameters(cwd), sessionId: id }, setup));
       if (response.sessionId !== undefined && response.sessionId !== id) throw new ControlError("IDENTITY_MISMATCH", "native load changed the session identity");
       await this.replaySettled();
@@ -390,7 +389,7 @@ export class AcpControl implements HarnessControl {
     if (sessions.fork === undefined) throw new ControlError("NATIVE_FORK_UNAVAILABLE", "this agent does not declare session/fork");
     this.forking = true;
     try {
-      const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs)), meta = this.sessionMeta;
+      const setup = this.setupMs(), meta = this.sessionMeta;
       const response = object(await this.sessionRequest("session/fork", { sessionId: nativeConversationId(checkpoint), cwd, mcpServers: [], ...(meta === null ? {} : { _meta: meta }) }, setup), "session/fork result");
       const id = nativeConversationId(response.sessionId);
       if (id === checkpoint) throw new ControlError("IDENTITY_MISMATCH", "session/fork returned its source session");
@@ -572,7 +571,6 @@ export class AcpControl implements HarnessControl {
   protected async abandonConversation(): Promise<void> {
     this.assertInitialized();
     if (this.active !== null || this.opening || this.forking || this.conversation === null) throw new ControlError("INVALID_STATE", "no idle conversation to give up");
-    if (this.abandoned.size >= MAX_ABANDONED_SESSIONS) throw new ControlError("INVALID_STATE", "this connection gave up too many sessions");
     const previous = this.conversation;
     this.abandoned.add(previous); this.lastAbandoned = previous; this.conversation = null;
     const sessions = this.capabilities.sessionCapabilities == null ? {} : object(this.capabilities.sessionCapabilities, "native session capabilities");
@@ -627,7 +625,7 @@ export class AcpControl implements HarnessControl {
         // A session given up earlier on this connection and restored now is this connection's again.
         this.abandoned.delete(this.conversation);
       }
-      const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs));
+      const setup = this.setupMs();
       const raw = await this.sessionRequest(method, { ...await this.sessionParameters(cwd), ...(checkpoint === undefined ? {} : { sessionId: this.conversation }) }, setup);
       const response = method === "session/load" ? loaded(raw) : object(raw, "native session setup result");
       if (checkpoint === undefined) this.conversation = nativeConversationId(response.sessionId);
@@ -729,12 +727,12 @@ export class AcpControl implements HarnessControl {
     const blocks: Record<string, unknown>[] = texts.map(text => ({ type: "text", text }));
     for (const file of attachments) if (!pointers.includes(file)) blocks.push(await this.promptBlock(file));
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
-    const active: ActivePrompt = { event: onEvent, lastUpdate: 0, answered: false, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null, deadline: Date.now() + (deadlineMs ?? this.options.runTimeoutMs) };
+    const active: ActivePrompt = { event: onEvent, lastUpdate: 0, answered: false, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null };
     this.active = active;
     // Evidence of the prompt reaching the history is about content: a command's answer (a local reply) proves no such thing.
     const content = this.readsAsContent(prompt, kinds);
     const recorded = (reason: string | null): { readonly input?: "recorded" } => content && (active.answered || reason !== null && this.promptRecorded(reason)) ? { input: "recorded" } : {};
-    const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks }, deadlineMs ?? this.options.runTimeoutMs, deadlineMs === null ? "abort" : "reject")
+    const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks }, deadlineMs ?? this.options.runTimeoutMs ?? null, deadlineMs === null ? "abort" : "reject")
       .then(value => {
         const response = object(value, "session/prompt result");
         const reason = string(response.stopReason, "ACP stop reason");
@@ -790,9 +788,11 @@ export class AcpControl implements HarnessControl {
   private cancelPermissions(): void { for (const pending of this.permissions.values()) pending.resolve(pending.reply ? pending.reply("cancel") : { outcome: { outcome: "cancelled" } }); this.permissions.clear(); }
   close(): Promise<CleanupEvidence> { this.cancelPermissions(); return this.rpc.close(); }
   private nativeFailure(error: unknown): Error { return error instanceof ControlError && error.remoteFailure ? new ControlError(error.remoteFailure.code, error.remoteFailure.message) : errorFrom(error); }
+  /** How long a session setup (open, load, fork) is waited for: the agent's own start, no less than a plain request, no more than the Turn's deadline when one was set. */
+  private setupMs(): number { return Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs ?? SESSION_SETUP_MS)); }
   /** One session request whose refusal the driver may name (refusal()); any other outcome is the request's own. */
   private async sessionRequest(method: string, params: unknown, timeoutMs?: number): Promise<unknown> {
-    try { return await this.rpc.request(method, params, timeoutMs); }
+    try { return await this.rpc.request(method, params, timeoutMs, "abort", "NATIVE_SESSION_TIMEOUT"); }
     catch (error) {
       const named = error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null ? this.refusal(method, error) : null;
       throw named === null ? error : new ControlError(named.code, named.message);
@@ -838,7 +838,7 @@ export class AcpControl implements HarnessControl {
     }
     if (kind === "config_option_update") { this.readModels(update); return; }
     if (kind === "available_commands_update") {
-      if (!Array.isArray(update.availableCommands) || update.availableCommands.length > MAX_NATIVE_COMMANDS) throw new ControlError("INVALID_PROTOCOL", "native commands exceed their budget");
+      if (!Array.isArray(update.availableCommands)) throw new ControlError("INVALID_PROTOCOL", "native commands must be a list");
       this.catalog = { ...this.catalog, commands: update.availableCommands.map(value => { const command = object(value, "native command"); return { name: string(command.name, "native command name", 256), description: typeof command.description === "string" ? text(command.description, "native command description").slice(0, 1024) : "" }; }) };
       this.commandsAnnounced(); return;
     }
@@ -883,7 +883,6 @@ export class AcpControl implements HarnessControl {
       // Agents may announce a call from a permission request and again from the model stream, or update a call
       // first seen in a replay window. Identity is merged within this prompt; it never crosses prompts.
       const prior = active.tools.get(toolId);
-      if (!prior && active.tools.size >= MAX_PROMPT_TOOLS) throw new ControlError("TOOL_LIMIT", "tool identity budget exhausted");
       const title = update.title == null ? prior?.title ?? "工具调用" : label(update.title, prior?.title ?? "工具调用");
       const detail = toolDetail(update);
       const status = this.toolStatus(update.status == null ? (prior?.status ?? "pending") : string(update.status, "tool status", 64), detail);
@@ -956,7 +955,6 @@ export class AcpControl implements HarnessControl {
     const content: Record<string, unknown> = {};
     for (const [index, field] of fields.entries()) {
       if (this.active !== active || active.settled || active.stopping) return { action: "cancel" };
-      if (this.permissions.size >= 32) throw new ControlError("PERMISSION_LIMIT", "too many native permission requests");
       const id = String(request.id) + ":" + index, text = field.kind === "text" || field.custom !== null;
       const options = [...field.choices.map((choice, position) => ({ id: "answer-" + position, name: choice.label })), ...(text ? [{ id: "submit", name: "提交回答" }] : []), { id: "skip", name: "跳过" }, { id: "cancel", name: "取消" }];
       const detail = field.choices.filter(choice => choice.description).map(choice => choice.label + "：" + choice.description).join("\n").slice(0, 4096);
@@ -967,7 +965,7 @@ export class AcpControl implements HarnessControl {
           if (option === "submit") return { kind: "value", value: typeof input === "string" ? input : "", typed: true };
           return { kind: "value", value: field.choices[Number(option.slice(7))]?.value ?? null, typed: false };
         } });
-        active.event({ type: "permission_requested", id, title: field.title, ...(detail ? { detail } : {}), options, ...(text ? { input: { kind: "text", value: "" } } : {}), kind: "question", ...requestExpiry(active.deadline, null) });
+        active.event({ type: "permission_requested", id, title: field.title, ...(detail ? { detail } : {}), options, ...(text ? { input: { kind: "text", value: "" } } : {}), kind: "question", ...requestExpiry(null) });
       }) as Answer;
       if (answer.kind === "cancel") return { action: "cancel" };
       if (answer.kind === "skip") return { action: "decline" };
@@ -1002,7 +1000,6 @@ export class AcpControl implements HarnessControl {
       throw new ControlError("INVALID_PROTOCOL", "duplicate permission option identities");
     const reject = options.find(option => option.kind === "reject_once") ?? options.find(option => option.kind === "reject_always");
     if (this.interactivePermissions && !active.stopping) {
-      if (this.permissions.size >= 32) throw new ControlError("PERMISSION_LIMIT", "too many native permission requests");
       const id = String(request.id), deadline = this.approvalDeadlineMs, seconds = deadline === null ? 0 : Math.round(deadline / 1000);
       const detail = [permissionDetail(tool), this.permissionNote(options), deadline === null ? "" : `原程序最多等待 ${seconds} 秒，超时会自动拒绝。`].filter(Boolean).join("\n");
       return new Promise<unknown>(resolve => {
@@ -1010,7 +1007,7 @@ export class AcpControl implements HarnessControl {
         const settle = (value: unknown): void => { clearTimeout(timer); resolve(value); };
         this.permissions.set(id, { request: id, options: options.map(option => option.id), resolve: settle, dispose: () => clearTimeout(timer) });
         active.event({ type: "permission_requested", id, title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", ...(detail ? { detail } : {}), options: options.map(({ id, name }) => ({ id, name })),
-          ...requestExpiry(active.deadline, deadline === null ? null : Math.max(0, deadline - APPROVAL_DEADLINE_MARGIN_MS)) });
+          ...requestExpiry(deadline === null ? null : Math.max(0, deadline - APPROVAL_DEADLINE_MARGIN_MS)) });
         // The agent refuses on its own at its deadline; the public request closes just before, so no late choice looks applied.
         if (deadline !== null) timer = setTimeout(() => {
           if (this.permissions.get(id)?.resolve !== settle || this.active !== active || active.settled) return;
