@@ -67,4 +67,4 @@
 
 ## 6. 所有工作流共同遵守
 
-不提交到别的分支、不推送、不用 `git stash`；不碰主检出 `/Users/sd3/Desktop/project/HarnessHub`、4317 上的服务、`/Users/sd3/Desktop/project/HarnessGateway/data`；不改、不整段打印真实 Harness 配置（可能含明文令牌），不输出凭据；不杀不是自己启动的进程；测试数据放临时目录、用完删；测试里形状完整的假密钥拆成字符串拼接；界面文字叫 Harness；不触发 OpenClaw、Hermes 的出站消息。
+不提交到别的分支、不推送、不用 `git stash`；不碰主检出 `~/Desktop/project/HarnessHub`、4317 上的服务、`~/Desktop/project/HarnessGateway/data`；不改、不整段打印真实 Harness 配置（可能含明文令牌），不输出凭据；不杀不是自己启动的进程；测试数据放临时目录、用完删；测试里形状完整的假密钥拆成字符串拼接；界面文字叫 Harness；不触发 OpenClaw、Hermes 的出站消息。

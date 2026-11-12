@@ -1,6 +1,6 @@
 # HarnessHub 显示层审计：公共契约、六家 Driver 映射、前端渲染（只读）
 
-审计日期 2026-11-11。仓库 `/Users/sd3/Desktop/project/HarnessHub/.claude/worktrees/relay-stage2-7cb3e9`，分支 `claude/relay-stage2-7cb3e9`，HEAD `5d4c432`。下文路径均相对该仓库根。
+审计日期 2026-11-11。仓库 `~/Desktop/project/HarnessHub/.claude/worktrees/relay-stage2-7cb3e9`，分支 `claude/relay-stage2-7cb3e9`，HEAD `5d4c432`。下文路径均相对该仓库根。
 
 ## 0. 范围、方法与证据标记
 
@@ -482,7 +482,7 @@ Pi、Cursor、Gemini 的适配器还在，但已冻结（`src/adapters/catalog.t
 - Hermes viewer 的 `kind` 取值：只见到 `terminal:`/`delegate:` 两个标题和一个 execute 记录。
 - 视觉层面的间距、字号、配色：没有渲染。
 
-## 附录 2：关键文件索引（绝对路径前缀 `/Users/sd3/Desktop/project/HarnessHub/.claude/worktrees/relay-stage2-7cb3e9/`）
+## 附录 2：关键文件索引（绝对路径前缀 `~/Desktop/project/HarnessHub/.claude/worktrees/relay-stage2-7cb3e9/`）
 
 - 契约：`src/contracts/session.ts`、`control.ts`、`web.ts`、`table.ts`
 - Driver：`src/adapters/control/acp.ts`（ACP 通用）、`claude.ts`、`opencode.ts`、`hermes.ts`、`openclaw.ts`、`codex.ts`、`factory.ts`、`relay-turn.ts`

@@ -1,6 +1,6 @@
 # 上限、预算、配额与拒绝条件清点（只读）
 
-清点日期 2026-11-12。仓库 `/Users/sd3/Desktop/project/HarnessHub/.claude/worktrees/relay-stage2-7cb3e9`，分支 `claude/relay-stage2-7cb3e9`。
+清点日期 2026-11-12。仓库 `~/Desktop/project/HarnessHub/.claude/worktrees/relay-stage2-7cb3e9`，分支 `claude/relay-stage2-7cb3e9`。
 清点途中别的会话把协议第 1 步合进了这个分支（HEAD 从 `790761a` 走到 `467dd62`；之后到 `8edc426` 只改了两份文档，源码没变），所以**文中的文件:行号一律以 `467dd62` 为准**，新增的协议代码（`src/contexts/session/domain/protocol/*`、`src/web/protocol-view.ts`、`web/src/lib/protocol/*`）也一并清点了。路径除特别说明外都相对仓库根。
 
 ## 0 怎么查的、没查什么、证据标记

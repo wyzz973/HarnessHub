@@ -1,7 +1,7 @@
 # ADR-057 / step2-plan 独立审查
 
 审查对象：`docs/decisions/0057-ordered-turn-items.md`（proposed）、`docs/proposals/protocol/step2-plan.md`
-仓库：`/Users/sd3/Desktop/project/HarnessHub/.claude/worktrees/relay-stage2-7cb3e9`，分支 `claude/relay-stage2-7cb3e9`，提交 8edc426。只读，没有启动服务或 Harness，没有跑测试。
+仓库：`~/Desktop/project/HarnessHub/.claude/worktrees/relay-stage2-7cb3e9`，分支 `claude/relay-stage2-7cb3e9`，提交 8edc426。只读，没有启动服务或 Harness，没有跑测试。
 做法：先读代码（清单见第三节），再读设计，再回头逐条核对出处。行号都是这个提交上的。
 
 ## 结论一览
