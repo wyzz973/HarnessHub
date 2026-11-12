@@ -1,6 +1,6 @@
 import type { ContextEffect } from "./control.js";
 import type { ItemStatus, ItemType, ProtocolItem } from "./protocol.js";
-import type { ExecutedOn, RelayRows } from "./relay.js";
+import type { DeliveryRecord, ExecutedOn, RelayPacket, RelayRecovery, RelayRows } from "./relay.js";
 import type {
   CommandId, CommandRecord, EventDraft, ForkedMessage, HarnessSelection, PublicMessage, NativeSessionBinding, PublicRun, PublicSwitch, RetainedProcess, RunId,
   RunStatus, SessionConfiguration, SessionEvent, SessionId, SessionSnapshot, SwitchId,
@@ -389,8 +389,18 @@ export interface Mutation {
   readonly events: readonly EventDraft[];
   readonly relay?: RelayRows;
 }
-/** What a transaction of stage 1 returns for the Runtime's reducer: the next conversation, its events, the relay rows to write with them. */
-export interface ConversationMutation { readonly next: Conversation; readonly events: readonly EventDraft[]; readonly relay?: RelayRows }
+/**
+ * What a transaction of stage 1 returns for the Runtime's reducer: the next conversation, its events, the relay rows to write with them, and the three
+ * things a commit writes that the conversation does not carry (the store passes them to the comparison that makes the Mutation): the quoted messages a new
+ * conversation starts from, the fingerprints of the Harness notices shown for the first time, and which event made an item when the default is not right
+ * (the default: the `user` item is its Run's `message.accepted`, any other item the one event of a commit that has exactly one).
+ */
+export interface ConversationMutation {
+  readonly next: Conversation; readonly events: readonly EventDraft[]; readonly relay?: RelayRows;
+  readonly originHistory?: readonly OriginHistoryRow[];
+  readonly noticePrints?: readonly string[];
+  readonly createdBy?: (run: ConversationRun, item: HeldItem) => number | undefined;
+}
 /** A committed transaction: the conversation as it is now, its events, and the rows that were written. */
 export interface ConversationCommit { readonly conversation: Conversation; readonly events: readonly SessionEvent[]; readonly changes: Mutation }
 
@@ -412,6 +422,25 @@ export interface SessionListQuery { readonly after?: SessionListCursor; readonly
 export interface SessionListPage { readonly rows: readonly SessionListRow[]; readonly next: SessionListCursor | null }
 /** One Turn's start of a Harness entry, for the usual startup time: a column read of the latest few, not a scan of every Run. */
 export interface StartupSample { readonly harnessId: string; readonly controlId: string; readonly preparingAt: number; readonly readyAt: number }
+
+/**
+ * The domain's recovery of one conversation that has unfinished work, as the store calls it when it starts (for the conversations of `unfinished()`, in the
+ * transaction that claims the owner generation); null when nothing changes. Given to the store, not imported by it: the store knows no rule of the domain.
+ */
+export type RecoverConversation = (current: Conversation) => ConversationMutation | null;
+/** The relay's part of that recovery (`RecoverRelay` over the new shape): called for each conversation the recovery changes, in a savepoint of its own. */
+export type RecoverConversationRelay = (current: Conversation, deliveries: readonly DeliveryRecord[], packets?: readonly RelayPacket[]) => RelayRecovery | null;
+/**
+ * What the store of stage 1 is opened with. Opening a data root converts what is not converted yet (ADR-057 3.6: backup first, conversation by conversation,
+ * each checked; a conversation that does not pass stops the start and nothing runs on a store half trusted), then recovers. `verify` is the whole-conversation
+ * checker the conversion is held to.
+ */
+export interface ConversationStoreOptions {
+  readonly now?: () => Date;
+  readonly recover?: RecoverConversation;
+  readonly recoverRelay?: RecoverConversationRelay;
+  readonly verify?: VerifyConversation;
+}
 
 /**
  * The store of stage 1: `SessionStore` over the new shapes. The same transaction contract (synchronous, compare-and-swap on `version`,
