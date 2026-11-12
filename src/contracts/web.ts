@@ -1,4 +1,6 @@
 import type { ProviderView } from "./provider.js";
+import type { DeferredWork, TextRange } from "./conversation.js";
+import type { ProtocolItem, ProtocolTurn } from "./protocol.js";
 import type { HarnessManagementView, InstallationJobView, InstallationLog } from "./management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunId, SelectionRequest, SessionEvent, SessionOrigin, SessionSnapshot } from "./session.js";
 import type { DeliveryEvidence, DeliveryStatus, EvidenceClass, RelayAttention, RelayDecision, RelayInstallationNotice, RelayPacketId, RelayPacketKind, RelayPrefKey, RunRelay, Tier } from "./relay.js";
@@ -409,3 +411,92 @@ export interface RelayStreamFrame {
   readonly lastSeq: number;
   readonly event: RelayStreamEvent;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The conversation on the wire once it is kept as rows (ADR-057 3.4, store v14). Added beside SessionView and its frames, which stay
+// until the page reads these. A conversation is read as its head and a window of its newest Turns; older Turns, long text and long
+// stretches of work come by cursor and byte range, so no reply, no Turn and no conversation is too large to open.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * An item on the v14 wire: the protocol's own fields, and where it has a text (a user message, an assistant segment, reasoning) the text
+ * in `text`. There is no `messages` list: a message is an item, and the page builds the lookup its renderer asks for
+ * (`message(messageId)`, web/src/components/ProtocolTurn.tsx) from the items it holds. A text longer than `PAGE.itemInlineBytes`, or a
+ * body that is long in another way (a file change of thousands of files), is left out of the transfer: the item says `bodyOmitted`, a
+ * text says `textBytes`, and the page fetches the text by byte range (`ItemTextView`) or the item whole (`ItemView`). The stored item
+ * never has these marks.
+ */
+export type WireItem = ProtocolItem;
+/** The Turn's header: everything of a `ProtocolTurn` but its items (state, stop reason, executor, usage, times, `legacyOrder`). */
+export type WireTurnHeader = Omit<ProtocolTurn, "items">;
+/**
+ * A Run on the v14 wire: the facts it always had (a `WebRun` with the relay's delivery read in) without the display fields the items
+ * replaced, without `input` (the text of its `user` item) and without `protocol`, whose header is `turn`. The page assembles the Run its
+ * renderer draws from it: `{ ...run, input: <the user item's text>, protocol: { ...turn, items } }`.
+ */
+export interface WireRun extends Omit<WebRun, "protocol" | "input"> {
+  /** From 0; the Turn's number is `ordinal + 1`. */
+  readonly ordinal: number;
+  /** The seq of the event that accepted the input: where the message stands among the events. */
+  readonly userSeq: number;
+  readonly turn: WireTurnHeader;
+}
+/** One Turn of a window: its Run, its items in place order, and the middle of a long stretch of work when the window left it out. */
+export interface WireTurn { readonly run: WireRun; readonly items: readonly WireItem[]; readonly deferred?: DeferredWork }
+/** The newest Turns up to a size (at least one), oldest first; or the page of Turns before a cursor. */
+export interface TurnWindowView {
+  readonly turns: readonly WireTurn[];
+  /** The cursor of the page before `turns[0]`; null when `turns[0]` is the conversation's first Turn. */
+  readonly older: string | null;
+}
+/** What `SessionView` says of a conversation without its history: the head. */
+export interface SessionHeadView extends Omit<SessionView, "messages" | "runs" | "switches"> {
+  readonly title: string;
+  readonly runCount: number;
+  /** The switch asked for and not yet effective; the page needs its state, not the list of switches (a Turn's `switch` line is read from its Run). */
+  readonly pendingSwitch?: PublicSwitch;
+}
+/** `GET /api/v1/sessions/:id`. */
+export interface SessionViewV14 { readonly head: SessionHeadView; readonly window: TurnWindowView }
+/** `GET /api/v1/sessions/:id/turns?before=<cursor>&limit=`: the page of Turns before the cursor; `limit` is a page size and has no ceiling on what the conversation holds. */
+export type TurnPageView = TurnWindowView;
+/** `GET /api/v1/sessions/:id/runs/:ordinal/items?after=<seq>&limit=`: the items of a Turn from a place on (a deferred stretch, a Turn read to its end). */
+export interface RunItemsPageView { readonly items: readonly WireItem[]; /** The `after` of the next page; null at the end. */ readonly next: number | null }
+/** `GET /api/v1/sessions/:id/runs/:ordinal/items/:seq`: one item whole, with its text. */
+export interface ItemView { readonly item: WireItem }
+/** `GET /api/v1/sessions/:id/runs/:ordinal/items/:seq/text?from=&to=`: a byte range of an item's text, on code point boundaries; no range is the whole text. */
+export type ItemTextView = TextRange;
+/** `GET /api/v1/sessions?after=<cursor>&limit=`: the conversations newest first, a page at a time; every conversation is reached by the cursor. */
+export interface SessionListView { readonly sessions: readonly SessionSummary[]; readonly next: string | null }
+
+/** An item that is new or changed in a commit: placed by `(runId, item.seq)`, the item replacing the page's copy (its text is `texts`'s to extend). */
+export interface WireItemUpsert { readonly runId: string; readonly item: WireItem }
+/**
+ * Text appended in a commit, at byte offset `from` of the item's text. The page applies it only if `from` is the length of the text it
+ * holds; otherwise it missed a commit and fetches the conversation again (a snapshot), never guessing.
+ */
+export interface WireTextAppend { readonly runId: string; readonly itemSeq: number; readonly from: number; readonly text: string }
+/**
+ * Everything one commit changed, in ONE frame: the head when it changed, the Runs that began or changed (with their Turn headers), the
+ * items that are new or changed, the text appended. One frame per commit because a frame is applied if its `lastSeq` is above the page's
+ * (web/src/session-stream.ts): several frames at one watermark would lose all but the first. Made from the commit's changes
+ * (`ConversationCommit.changes`) after it, never before; it carries no large body (an item over the page size is `bodyOmitted`).
+ */
+export interface SessionCommitFrame {
+  readonly type: "commit";
+  readonly sessionId: string;
+  readonly version: number;
+  readonly lastSeq: number;
+  readonly head?: SessionHeadView;
+  readonly runs?: readonly WireRun[];
+  readonly items?: readonly WireItemUpsert[];
+  readonly texts?: readonly WireTextAppend[];
+}
+/**
+ * The frames of the v14 stream: the snapshot a connection starts with (always, after a reconnect: events are not replayed), one commit
+ * frame for each commit after it, and the relay's notice as before. The page behind a slow connection gets a snapshot, not the frames it missed.
+ */
+export type SessionStreamFrameV14 =
+  | { readonly type: "snapshot"; readonly session: SessionViewV14 }
+  | SessionCommitFrame
+  | RelayStreamFrame;
