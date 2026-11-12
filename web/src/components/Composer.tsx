@@ -18,6 +18,7 @@ import { NativeSessionsPanel } from "./NativeSessions.js";
 import { SearchPicker, type PickerOption } from "./SearchPicker.js";
 import { EFFORT_WORDS, PERMISSION_MEANINGS, PERMISSION_WORDS } from "../../../src/contracts/levels.js";
 import { EFFORT_LEVELS, PERMISSION_LEVELS, type EffortLevel, type PermissionLevel } from "../../../src/contracts/protocol.js";
+import { EFFORT_KEY, PERMISSION_KEY } from "../../../src/contracts/flavor.js";
 import { carryLevels, levelState, withEffort, withNativeOption, withPermission } from "../lib/levels.js";
 
 /** An approval that waits in the composer's place (ADR-054 §5), with what the dock needs to decide it. */
@@ -380,7 +381,12 @@ export function Composer(props: ComposerProps) {
     carriedLevels.current = { harnessId: value, ...(level.permission !== null && level.permission !== "custom" ? { permission: level.permission } : {}), ...(level.effort !== null && level.effort !== "custom" ? { effort: level.effort } : {}) };
     const next = harnesses.find(row => row.id === value), previous = [...(session?.runs ?? [])].reverse().find(run => run.selection.harnessId === value)?.selection ?? props.rememberedChoice?.(value) ?? undefined;
     const control = previous && next?.controls.some(row => row.id === previous.controlId && row.available) ? previous.controlId : next?.controls.find(row => row.id === next.defaultControlId && row.available)?.id ?? next?.controls.find(row => row.available)?.id ?? "";
-    props.onDraft({ ...draft, harnessId: value, controlId: control, model: draft.providerId ? draft.model : previous?.nativeModel ?? "", nativeOptions: draft.providerId ? {} : previous?.nativeOptions ?? {} });
+    // The levels are in the selection at once, by the Hub's keys (every Harness carries out every permission level, and the adapter resolves
+    // the thinking level against the model): a message sent before the chosen Harness's catalog is read runs at them too. What the catalog
+    // then says (the nearest thinking level, none at all) is applied below. A new conversation's permission is auto, the product's default.
+    const carried = carriedLevels.current, keys = { ...(carried.permission !== undefined ? { [PERMISSION_KEY]: carried.permission } : session === null ? { [PERMISSION_KEY]: "auto" } : {}),
+      ...(carried.effort !== undefined ? { [EFFORT_KEY]: carried.effort } : {}) };
+    props.onDraft({ ...draft, harnessId: value, controlId: control, model: draft.providerId ? draft.model : previous?.nativeModel ?? "", nativeOptions: draft.providerId ? {} : { ...(previous?.nativeOptions ?? {}), ...keys } });
   };
 
   // Ruling R2: the bottom left keeps "+" and the approval rule only. What adds to this message is in the "+" menu, the
@@ -589,7 +595,9 @@ export function Composer(props: ComposerProps) {
                   trigger={selected => <span className="max-w-[160px] truncate text-fg-3">{selected?.short ?? selected?.label ?? "选择模型"}</span>}
                   onChange={value => {
                     if (value === draft.model) return;
-                    const independent = Object.fromEntries(Object.entries(draft.nativeOptions).filter(([id]) => nativeOptions.some(option => option.id === id && option.category !== "thought_level")));
+                    // The Hub's levels stay with the conversation across a change of model (the adapter resolves them against the new model's catalog);
+                    // of the native values only those that do not depend on the model are kept.
+                    const independent = Object.fromEntries(Object.entries(draft.nativeOptions).filter(([id]) => id.startsWith("hub_") || nativeOptions.some(option => option.id === id && option.category !== "thought_level")));
                     props.onDraft({ ...draft, model: value, nativeOptions: independent });
                   }} footer={!provider ? <><span>{props.nativeModelsLoading ? "正在读取本机模型…" : "列表来自本机安装"}</span><button type="button" className="link-btn text-caption" onClick={props.onRefreshModels}>刷新本机模型</button></> : undefined}/> : null}
                 {thought ? <SearchPicker side={popSide} {...listOpen("thought")} label="思考强度" value={level.effort ?? ""} placeholder="跟随本机配置" options={effortChoices(thought)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "thought"}

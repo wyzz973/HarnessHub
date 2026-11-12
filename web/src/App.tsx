@@ -75,9 +75,9 @@ function rememberedChoice(harnessId: string): { readonly controlId: string; read
 }
 function rememberChoice(draft: SelectionDraft, catalog: NativeModelCatalog | null): void {
   if (draft.providerId || !draft.harnessId || !draft.controlId) return;
-  // Only thinking levels, as the catalog names them; any option the catalog does not describe is left out.
+  // Only thinking levels: the Hub's level, or a native one as the catalog names it; any other option the catalog does not describe is left out.
   const thinking = new Set([...(catalog?.options ?? []), ...(catalog?.models.find(model => model.id === (draft.model || catalog.defaultModel))?.options ?? [])].filter(option => option.category === "thought_level").map(option => option.id));
-  const options = Object.fromEntries(Object.entries(draft.nativeOptions).filter(([id]) => thinking.has(id)));
+  const options = Object.fromEntries(Object.entries(draft.nativeOptions).filter(([id]) => thinking.has(id) || id === "hub_effort"));
   try { localStorage.setItem(choiceStorageKey(draft.harnessId), JSON.stringify({ controlId: draft.controlId, ...(draft.model ? { model: draft.model } : {}), ...(Object.keys(options).length ? { nativeOptions: options } : {}) })); }
   catch { /* A convenience only: without storage the next conversation follows the native configuration. */ }
 }
