@@ -7,7 +7,8 @@ import { setImmediate as nextTick } from "node:timers/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { LocalHarnessManagement } from "../../src/infrastructure/management/service.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import type { ManagementRecipe } from "../../src/contracts/management.js";
 import { inventory } from "../../src/infrastructure/catalog/inventory-composition.js";
 const peer = fileURLToPath(new URL("../../../tests/fixtures/managed-inventory-peer.mjs", import.meta.url));
@@ -24,7 +25,7 @@ async function child(root: string, system: string, manifest?: string, validate =
 }
 test("original system PATH wins over a private copy; absent controls use the local copy and blocked overrides never fall back", async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-managed-discovery-"))), data = join(root, "data"), system = join(root, "system"); await mkdir(system);
-  const store = new SqliteSessionStore(data);
+  const store = appStore(data);
   const manager = new LocalHarnessManagement(data, { installationMode: "private-fixture", assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration, recipes: [recipe],
     metadata: { resolve: async original => ({ recipe: original, version: "1.0.0", artifactUrl: null, integrity: null, engines: {}, dependencies: [] }) },
     installer: { install: async (spec, context) => {

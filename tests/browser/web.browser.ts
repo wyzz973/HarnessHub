@@ -1271,7 +1271,7 @@ test("a Turn's diagnostics are copied from its details without conversation cont
 });
 
 test("a Turn that comes to a directory another conversation works in does not wait: it runs at once and says the other conversation is there; an approval without a budget has no deadline", { timeout: 120000 }, async t => {
-  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }, null, false, {}); let browser: Browser | null = null;
+  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes", env: { FIXTURE_UNIQUE_SESSIONS: "1" } }, null, false, {}); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
@@ -1374,7 +1374,7 @@ test("a Turn the Runtime cancelled when its wait budget ran out says 已停止 w
 });
 
 test("a Turn waiting for a slot, when an operator limited the conversations running at once, says how many run, has no deadline of its own, and can be cancelled", { timeout: 120000 }, async t => {
-  const fixture = await launchFixture(false, { name: "Busy Agent", scenario: "hermes" }, null, false, { ...FIXTURE_LIMITS, maxParallel: 4 }); let browser: Browser | null = null;
+  const fixture = await launchFixture(false, { name: "Busy Agent", scenario: "hermes", env: { FIXTURE_UNIQUE_SESSIONS: "1" } }, null, false, { ...FIXTURE_LIMITS, maxParallel: 4 }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
@@ -3111,7 +3111,7 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
 });
 
 test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes through what waits for you, the sheet lists every shortcut, and ⌘N, ⌘T, ⌘W and composition are left alone", { timeout: 120000 }, async t => {
-  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes" }); let browser: Browser | null = null;
+  const fixture = await launchFixture(false, { name: "Shared Agent", scenario: "hermes", env: { FIXTURE_UNIQUE_SESSIONS: "1" } }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   await mkdir(artifact, { recursive: true });

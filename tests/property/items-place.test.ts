@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { verify, verifyTransition } from "../../src/contexts/session/domain/conversation-verify.js";
 import {
-  approvalRole, finalItemSeq, itemsOf, mergeToolDetail, openTurn, place, settleItems, type ActiveTurn, type PlaceEnv, type PlaceInput, type Placed, type TerminalStatus,
+  approvalRole, finalItemSeq, itemsOf, mergeToolDetail, noticePrint, openTurn, place, settleItems, type ActiveTurn, type PlaceEnv, type PlaceInput, type Placed, type TerminalStatus,
 } from "../../src/contexts/session/domain/items-place.js";
 import { projectTurn } from "../../src/contexts/session/domain/protocol/index.js";
 import { runItemStatus } from "../../src/contexts/session/domain/protocol/index.js";
@@ -527,6 +527,11 @@ test("notices a Harness repeats are shown once; the Hub's own are not kept out; 
   const warning: ControlEvent = { type: "notice", severity: "warning", title: "startup", detail: "more" };
   const first = d.event(warning);
   assert.equal(first.changes.noticePrints?.length, 1); assert.match(first.changes.noticePrints![0]!, /^[0-9a-f]{64}$/u);
+  // The fingerprint is a function of the notice alone, which the storage conversion also works out for the notices an old Run showed (a NUL or half a pair is mended as it is when placed).
+  assert.equal(first.changes.noticePrints![0], noticePrint({ severity: "warning", title: "startup", detail: "more" }));
+  assert.equal(noticePrint({ severity: "warning", title: "sta\0rtup", detail: "more" }), noticePrint({ severity: "warning", title: "startup", detail: "more" }));
+  assert.notEqual(noticePrint({ severity: "info", title: "startup", detail: "more" }), noticePrint({ severity: "warning", title: "startup", detail: "more" }));
+  assert.equal(noticePrint({ severity: "warning", title: "startup", detail: "" }), noticePrint({ severity: "warning", title: "startup" }), "an empty detail is none");
   assert.deepStrictEqual(d.event(warning).changes, {}, "in the Turn");
   known.add(first.changes.noticePrints![0]!);
   const other = new Driver({ noticeShown: print => known.has(print) });

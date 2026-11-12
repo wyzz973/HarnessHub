@@ -1,7 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { commandId, sessionId, SessionError } from "../../src/contracts/session.js";
-import { assertSessionTransition, carriedNativeConfiguration, parseSession, recoverSession, replayCommand } from "../../src/contexts/session/domain/state.js";
+import { commandId, sessionId, SessionError, type SessionSnapshot } from "../../src/contracts/session.js";
+import type { Conversation, ConversationRun, HeldItem, ItemFields } from "../../src/contracts/conversation.js";
+import { assertConversationTransition, heldItems, recoverConversation } from "../../src/contexts/session/domain/conversation-state.js";
+import { originToRows } from "../../src/contexts/session/domain/store-conversion.js";
+import { carriedNativeConfiguration, replayCommand } from "../../src/contexts/session/domain/state.js";
+import { parseSession } from "../../src/infrastructure/session/legacy/state.js";
+
+// The rules about a conversation's state. What the frozen whole-snapshot parser (infrastructure/session/legacy/state.ts, the only one since the cut) accepts and refuses
+// is its contract with the old data and is held here as it was; the replay of a command, the native values a session changed itself, the recovery of a conversation and the
+// rules of who may change what (conversation-state.ts) are the live ones, read over the Runtime's shape of a conversation. What the tables' own keys and triggers refuse
+// (history taken away, a terminal Run or a committed command rewritten, a Run's accepted input) is tests/integration/schema-v14.test.ts's.
+
+/** A snapshot as the Runtime holds it: the head and a light row for each Run (what the rules read). */
+function conv(snapshot: SessionSnapshot): Conversation {
+  const { schemaVersion: _version, runs, messages, origin, ...head } = snapshot;
+  return { ...head, format: 14, ...(origin === undefined ? {} : { origin: originToRows(snapshot.id, origin, 0).stored }),
+    runs: runs.map(({ input: _input, thinking: _thinking, tools: _tools, plan: _plan, notices: _notices, activities: _activities, outputs: _outputs, protocol: _protocol, protocolProblem: _problem, ...light }, ordinal): ConversationRun =>
+      ({ ...light, ordinal, userSeq: messages.find(message => message.id === light.userMessageId)?.seq ?? 0, isCommand: false })) };
+}
+const transition = (before: SessionSnapshot, after: SessionSnapshot, events: readonly { type: string; data: Record<string, unknown> }[] = []): void => assertConversationTransition(conv(before), conv(after), events);
 
 const fingerprint = "a".repeat(64);
 const selection = { harnessId: "alpha", controlId: "alpha-acp" };
@@ -106,30 +124,19 @@ test("command retries preserve original result and conflicting payloads reject",
 test("owner recovery preserves completed facts and cancels only undispatched input without replay", () => {
   const state = seed(); const run = { ...state.runs[1], status: "queued", sourceRunIds: [], contextThroughSeq: 0, backend: null, cleanup: null };
   const queued = parseSession({ ...state, runs: [state.runs[0], run], messages: state.messages.filter(message => message.role === "user" || message.runId === state.runs[0]!.id).map(message => message.runId === run.id ? { ...message, status: "queued" } : message) });
-  const recovery = recoverSession(queued); assert.ok(recovery); assert.equal(recovery.next.runs[0]?.status, "completed");
+  const recovery = recoverConversation(conv(queued)); assert.ok(recovery); assert.equal(recovery.next.runs[0]?.status, "completed");
   assert.equal(recovery.next.runs[1]?.status, "cancelled"); assert.equal(recovery.events[0]?.data.replayed, false);
 });
 
-test("a shape-valid mutation cannot silently erase accepted public history", () => {
-  const before = parseSession(seed());
-  const erased = parseSession({ ...seed(), runs: [], messages: [], commands: seed().commands.slice(0, 1) });
-  assert.throws(() => assertSessionTransition(before, erased), /history cannot be removed/);
-});
-test("terminal output and committed command fingerprints cannot be rewritten", () => {
-  const before = parseSession(seed()), output = seed(); output.messages[1]!.text += " appended after terminal";
-  assert.throws(() => assertSessionTransition(before, parseSession(output)), /terminal public output/);
-  const commands = seed(); commands.commands[1]!.fingerprint = "b".repeat(64);
-  assert.throws(() => assertSessionTransition(before, parseSession(commands)), /committed command/);
-});
 test("configuration references and actual selection cannot change through an unrelated transaction", () => {
   const before = parseSession(seed());
-  assert.throws(() => assertSessionTransition(before, parseSession({ ...seed(), configuration: { ...seed().configuration, workspace: "/another" } })), /configuration reference/);
-  assert.throws(() => assertSessionTransition(before, parseSession({ ...seed(), selection: { harnessId: "bravo", controlId: "bravo-acp" } })), /effective switch epoch/);
+  assert.throws(() => transition(before, parseSession({ ...seed(), configuration: { ...seed().configuration, workspace: "/another" } })), /configuration reference/);
+  assert.throws(() => transition(before, parseSession({ ...seed(), selection: { harnessId: "bravo", controlId: "bravo-acp" } })), /effective switch epoch/);
 });
 test("blocking is valid but implicit reopening is not a recovery procedure", () => {
   const open = parseSession(seed()), blocked = parseSession({ ...seed(), status: "blocked" });
-  assertSessionTransition(open, blocked);
-  assert.throws(() => assertSessionTransition(blocked, open), /cannot reopen/);
+  transition(open, blocked);
+  assert.throws(() => transition(blocked, open), /cannot reopen/);
 });
 
 test("Provider target is a v2 public reference with immutable dispatched selection", () => {
@@ -138,11 +145,10 @@ test("Provider target is a v2 public reference with immutable dispatched selecti
   assert.deepEqual(current.selection.provider, target);
   assert.throws(() => parseSession({ ...state, schemaVersion: 1, selection: { ...selection, provider: target } }), /legacy/);
   assert.throws(() => parseSession({ ...state, selection: { ...selection, provider: { ...target, apiKey: "not-public" } } }), /unknown Provider/);
-  assert.throws(() => assertSessionTransition(current, { ...current, selection }), /selection can change/);
-  assert.throws(() => assertSessionTransition(current, { ...current, runs: [{ ...current.runs[0]!, selection: { ...selection, provider: target } }, current.runs[1]!] }), /terminal Run/);
+  assert.throws(() => transition(current, { ...current, selection }), /selection can change/);
 });
 
-test("v7 attachments are bounded, unique, canonical references that cannot change after admission", () => {
+test("v7 attachments are bounded, unique, canonical references", () => {
   const ref = (id: string, bytes = 10) => ({ id, name: id + ".png", mediaType: "image/png", kind: "image", bytes, sha256: "b".repeat(64) });
   const base = seed(), state = { ...base, schemaVersion: 7, runs: [{ ...base.runs[0]!, attachments: [ref("content-a"), ref("content-b")] }, base.runs[1]!] };
   assert.deepEqual(parseSession(state).runs[0]?.attachments?.map(item => item.id), ["content-a", "content-b"]);
@@ -150,11 +156,6 @@ test("v7 attachments are bounded, unique, canonical references that cannot chang
   for (const value of [variant([]), variant([ref("content-a"), ref("content-a")]), variant(Array.from({ length: 9 }, (_, index) => ref("content-" + index))),
     variant([ref("content-a", 20 * 1024 * 1024), ref("content-b", 20 * 1024 * 1024)]), variant([{ ...ref("content-a"), path: "/private" }]), variant([ref("content-a")], 6)])
     assert.throws(() => parseSession(value), SessionError);
-  // A queued input's attachments are part of what was accepted: they cannot be swapped before it runs.
-  const queued = { ...base.runs[1]!, status: "queued", backend: null, cleanup: null, contextThroughSeq: 0, sourceRunIds: [], attachments: [ref("content-c")] };
-  const waiting = { ...state, lastSeq: 3, runs: [state.runs[0]!, queued], messages: [...base.messages.slice(0, 2), { ...base.messages[2]!, status: "queued" }] };
-  const before = parseSession(waiting), after = parseSession({ ...waiting, version: waiting.version + 1, runs: [waiting.runs[0]!, { ...queued, attachments: [ref("content-d")] }] });
-  assert.throws(() => assertSessionTransition(before, after), (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION" && error.message === "accepted Run input and identities are immutable");
 });
 test("v8 branch origins are bounded quoted history and native fork references advance only along the fork path", () => {
   const base = seed(), origin = { kind: "fork", sessionId: "session-source", throughRunId: "run-source", history: [{ role: "user", text: "earlier", status: "completed" }, { role: "assistant", text: "reply", status: "completed", harnessId: "alpha" }] };
@@ -164,11 +165,11 @@ test("v8 branch origins are bounded quoted history and native fork references ad
   for (const value of [{ ...state, schemaVersion: 7 }, { ...state, origin: undefined }, { ...state, origin: { ...origin, kind: "copy" } }, { ...state, origin: { ...origin, sessionId: state.id } },
     { ...state, origin: { ...origin, history: [{ role: "assistant", text: "x", status: "completed", attachments: [] }] } }, { ...state, nativeBindings: [{ ...binding("forking"), throughRunId: "run-one" }] }])
     assert.throws(() => parseSession(value), SessionError);
-  const step = (from: string, to: string, checkpoint?: string) => () => assertSessionTransition(parseSession({ ...state, nativeBindings: [binding(from)] }), parseSession({ ...state, version: state.version + 1, nativeBindings: [binding(to, checkpoint)] }));
+  const step = (from: string, to: string, checkpoint?: string) => () => transition(parseSession({ ...state, nativeBindings: [binding(from)] }), parseSession({ ...state, version: state.version + 1, nativeBindings: [binding(to, checkpoint)] }));
   step("fork-pending", "forking")(); step("forking", "ready", "native-copy")(); step("fork-pending", "archived")(); step("forking", "archived")();
   for (const invalid of [step("fork-pending", "ready", "native-copy"), step("fork-pending", "forking", "native-other"), step("forking", "archived", "native-copy"), step("ready", "forking")])
     assert.throws(invalid, (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION");
-  assert.throws(() => assertSessionTransition(parseSession(state), parseSession({ ...state, version: state.version + 1, origin: { ...origin, history: origin.history.slice(1) } })), /branch origin is immutable/u);
+  assert.throws(() => transition(parseSession(state), parseSession({ ...state, version: state.version + 1, origin: { ...origin, throughRunId: "run-other" } })), /branch origin is immutable/u);
 });
 test("v9 bindings keep what the native session reported, and only a same-epoch change of a requested value is carried", () => {
   const base = seed(), chosen = { ...selection, nativeModel: "model-a", nativeOptions: { effort: "low" } };
@@ -199,7 +200,7 @@ test("v9 bindings keep what the native session reported, and only a same-epoch c
   assert.deepEqual(carriedNativeConfiguration(later, later.selection, 2), { model: "model-b", options: { effort: "high" } });
   assert.equal(carriedNativeConfiguration(later, later.selection, 1), null);
   // Only the Run that owns the native session may record what it reported.
-  assert.throws(() => assertSessionTransition(parsed, parseSession({ ...state, version: state.version + 1, nativeBindings: [{ ...ready, observed: { model: null, options: {} } }] })),
+  assert.throws(() => transition(parsed, parseSession({ ...state, version: state.version + 1, nativeBindings: [{ ...ready, observed: { model: null, options: {} } }] })),
     (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION");
 });
 test("v9 continued native sessions quote bounded history and keep the reference they were imported with", () => {
@@ -216,7 +217,7 @@ test("v9 continued native sessions quote bounded history and keep the reference 
     assert.throws(() => parseSession(value), SessionError);
   // An unread history quotes nothing and is never complete; the origin stays immutable.
   assert.equal(parseSession({ ...state, origin: { ...imported, history: [], historyRead: false, complete: false } }).origin?.kind, "import");
-  assert.throws(() => assertSessionTransition(parseSession(state), parseSession({ ...state, version: state.version + 1, origin: { ...imported, title: "renamed" } })), /origin is immutable/u);
+  assert.throws(() => transition(parseSession(state), parseSession({ ...state, version: state.version + 1, origin: { ...imported, title: "renamed" } })), /origin is immutable/u);
 });
 
 test("a conversation keeps its native process only from Session v11, through the completed Run that handed it over", () => {
@@ -237,11 +238,29 @@ test("a conversation keeps its native process only from Session v11, through the
     kept({ commands: [...state.commands, { id: "retention-1", kind: "retention", fingerprint, resultId: "session-unit" }] }, 10)])
     assert.throws(() => parseSession(invalid), SessionError);
   // Recovery leaves a previous owner's kept process recorded: the new owner's runtime recognizes and ends it (ADR-030).
-  assert.equal(recoverSession(valid), null);
+  assert.equal(recoverConversation(conv(valid)), null);
   // From v12 the record also says how to recognize the process group once its owner ended.
   const identified = { harnessId: selection.harnessId, controlId: selection.controlId, runId: handed.id, since: 5, process: { group: 4242, startedAt: "1791741701" } };
   assert.equal(parseSession(kept({ retained: identified }, 12)).retained?.process?.group, 4242);
   assert.throws(() => parseSession(kept({ retained: identified })), /requires Session v12/u);
   for (const process of [{ group: 1, startedAt: "1" }, { group: 4242 }, { group: 4242, startedAt: "" }, { group: 4242, startedAt: "x", pid: 1 }])
     assert.throws(() => parseSession(kept({ retained: { ...identified, process } }, 12)), SessionError);
+});
+
+test("the items a commit gives a Run keep what the store wrote into the ones it replaces: an unchanged item is the very object, a changed one keeps the event that made it", () => {
+  const item = (seq: number, patch: Partial<HeldItem> = {}): HeldItem => ({ runId: "run-held" as HeldItem["runId"], seq, itemId: "tool:" + seq, type: "tool", status: "completed", startedAt: 1, endedAt: 2, parentId: null, createdSeq: null,
+    textBytes: 0, textChunks: 0, fields: { type: "tool", native: { title: "t" + seq } } as unknown as ItemFields, text: [], ...patch });
+  const held = [item(1, { createdSeq: 5 }), item(2, { createdSeq: 6, status: "running", endedAt: null })];
+  // The Turn's version of them, which knows nothing of the events: the first as it was, the second finished, and a third that is new.
+  const turn = [{ ...held[0]!, createdSeq: null }, { ...held[1]!, status: "completed" as const, endedAt: 9, createdSeq: null }, item(3)];
+  const merged = heldItems(held, turn);
+  assert.equal(merged.length, 3);
+  assert.equal(merged[0], held[0], "nothing changed: the object the conversation holds, so that the next comparison passes it by identity");
+  assert.deepEqual(merged[1], { ...turn[1], createdSeq: 6 }, "a change is the Turn's, with the event that made the item");
+  assert.equal(merged[2], turn[2], "a new item is the Turn's");
+  assert.equal(heldItems(undefined, turn), turn, "a Run that held none takes the Turn's");
+  assert.equal(heldItems([], turn), turn);
+  // Text that grew is a change too (the chunks are the Turn's), and the item keeps its event.
+  const grown = [{ ...held[0]!, createdSeq: null, textBytes: 3, textChunks: 1, text: ["abc"] }];
+  assert.deepEqual(heldItems(held.slice(0, 1), grown), [{ ...grown[0]!, createdSeq: 5 }]);
 });

@@ -10,7 +10,8 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 import { startWebServer, type WebServer, type WebServerOptions } from "../../src/web/server.js";
 import { LocalHarnessManagement } from "../../src/infrastructure/management/service.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { LocalProviderService } from "../../src/infrastructure/provider/service.js";
 import { DirectorySessionBindingFactory } from "../../src/infrastructure/session/binding-factory.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
@@ -75,7 +76,7 @@ class ExternalInstallFixture {
   } };
   compose(): NonNullable<WebServerOptions["application"]> {
     return (root, publish) => {
-      const store = new SqliteSessionStore(root), owner = () => store.assertOwner();
+      const store = appStore(root), owner = () => store.assertOwner();
       const providers = new LocalProviderService(root, owner);
       const management = this.management = new LocalHarnessManagement(root, { installationMode: "private-fixture", assertOwner: owner, ownerGeneration: store.ownerGeneration, metadata: this.metadata, installer: this.installer, nodeExecutable: process.execPath });
       const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(root, "workspace-locks")), owner, "any", providers, management,

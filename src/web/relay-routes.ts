@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { RelayLedger } from "../contexts/session/application/relay-coordinator.js";
+import { EventRelayLedger } from "../contexts/session/application/relay-coordinator.js";
 import type { RelayChoice } from "../contexts/session/application/runtime.js";
 import { dispatched } from "../contexts/session/domain/relay/advance.js";
 import { estimateTokens, resolveRelayBudget } from "../contexts/session/domain/relay/budget.js";
@@ -147,10 +147,10 @@ const FRAME_TOKENS = 300;
 
 /** Mounts the relay's routes and builds its views; one per Gateway. */
 export class RelayApi {
-  private readonly ledger: RelayLedger;
+  private readonly ledger: EventRelayLedger;
   private readonly decisions: DecisionLedger;
   constructor(private readonly options: RelayApiOptions) {
-    this.ledger = new RelayLedger((id, afterSeq, limit) => options.reads.events(id, afterSeq, limit));
+    this.ledger = new EventRelayLedger((id, afterSeq, limit) => options.reads.events(id, afterSeq, limit));
     this.decisions = new DecisionLedger((id, afterSeq, limit) => options.reads.events(id, afterSeq, limit));
   }
 
@@ -266,7 +266,7 @@ export class RelayApi {
   }
   /**
    * The index (in the Session's Runs) of the latest finished Run whose fact the mark covers: a Run's fact is placed by its
-   * `run.ended` (RelayLedger), and a mark covers the facts up to it. None when it covers none (a mark of the history the Session
+   * `run.ended` (EventRelayLedger), and a mark covers the facts up to it. None when it covers none (a mark of the history the Session
    * started from, or no mark).
    */
   private throughRun(snapshot: SessionSnapshot, mark: number): number | null {

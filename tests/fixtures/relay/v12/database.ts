@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 /**
  * Rebuilds frozen Session v12 business databases (README.md next to this file) as a data root a Session v12 build would
  * have left: the ownership marker, then `gateway.sqlite` with the four v12 tables, their rows and user_version 12, no
- * owner holding it. Tests open such a root with the current SqliteSessionStore to migrate it.
+ * owner holding it. Tests open such a root with the current SqliteConversationStore to migrate it.
  */
 
 export interface V12Event { readonly type: string; readonly data: Readonly<Record<string, unknown>>; readonly sessionId: string; readonly seq: number; readonly ownerGeneration: number; readonly timestamp: string }

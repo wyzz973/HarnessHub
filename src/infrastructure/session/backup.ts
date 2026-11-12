@@ -8,8 +8,8 @@ import { SessionError } from "../../contracts/session.js";
  * `<root>/backups`, read back, synced, and only then given its name. It is taken for a database of version 1 to 13 and before anything of it is changed; a backup
  * that fails ends the upgrade with the database as it was.
  *
- * It is NOT one of the backups the store rotates (the newest two of the migrations before): the name `gateway-v<from>-before-v14.sqlite` is outside the
- * pattern the rotation recognizes, so nothing removes it but its owner. The reason is the one thing a backup cannot cover (ADR-057 M2): the content store is
+ * It is NOT one of the backups the store of v13 rotated (the newest two of the migrations before; the store of tables makes none of those and rotates none): the
+ * name `gateway-v<from>-before-v14.sqlite` is outside the pattern that rotation recognized, so nothing removes it but its owner. The reason is the one thing a backup cannot cover (ADR-057 M2): the content store is
  * not in it, and a content collector that deleted what a faulty conversion left unreferenced could not be undone from it; this copy stays for the owner to delete
  * when the upgrade has proven itself. There is one per source version: a second attempt (the first did not get through its first transaction, so the database
  * is as it was) replaces it.
@@ -18,7 +18,7 @@ import { SessionError } from "../../contracts/session.js";
  * the upgrade needs about twice the database free; with less it is refused before anything is written, and says so.
  */
 
-/** The rotation of the store's migration backups recognizes only names of this pattern; the one made here is not of it. */
+/** The names of the backups made here (the rotation of the store of v13 recognized only its own pattern, and this is not it). */
 export const BACKUP_BEFORE_V14 = /^gateway-v(\d+)-before-v14\.sqlite$/u;
 const PARTIAL = /^gateway-v\d+-before-v14\.sqlite\.partial$/u;
 /** The relay tables of Session v13, whose rows a backup of a v13 database is read back against. */

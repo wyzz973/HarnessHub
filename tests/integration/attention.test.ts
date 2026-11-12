@@ -11,7 +11,8 @@ import { AcpControl } from "../../src/adapters/control/acp.js";
 import type { CleanupEvidence } from "../../src/contracts/control.js";
 import { SessionError, type AttentionItem, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionId } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url));
@@ -27,7 +28,7 @@ class AskingFactory implements SessionBindingFactory {
     return { harnessId: "alpha", controlId: "alpha-acp" };
   }
   async prepare(_selected: HarnessSelection, configuration: SessionConfiguration, session: SessionId, run: string): Promise<PreparedSessionBinding> {
-    const lease = this.lease.acquire(configuration.workspace, session, run), env = { LANG: "C.UTF-8", FIXTURE_RESUME_MODELS: "1" };
+    const lease = this.lease.acquire(configuration.workspace, session, run), env = { LANG: "C.UTF-8", FIXTURE_RESUME_MODELS: "1", FIXTURE_SESSION_ID: "session-fixture-" + session };
     const control = new AcpControl({ protocol: "acp-v1", executable: process.execPath, args: [peer, "acp-v1", "hermes"], env },
       { cwd: configuration.workspace, env, requestTimeoutMs: 2000, runTimeoutMs: this.runTimeoutMs, maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 4096, closeGraceMs: 120 });
     let close: Promise<CleanupEvidence> | null = null;
@@ -38,7 +39,7 @@ class AskingFactory implements SessionBindingFactory {
   }
 }
 async function setup(t: test.TestContext, runTimeoutMs = 5000, root?: string, waitBudgetMs = 60_000) {
-  const directory = root ?? await mkdtemp(join(tmpdir(), "harness-attention-")), store = new SqliteSessionStore(join(directory, "data"));
+  const directory = root ?? await mkdtemp(join(tmpdir(), "harness-attention-")), store = appStore(join(directory, "data"));
   let id = 0;
   const app = new SessionRuntime(store, new AskingFactory(directory, runTimeoutMs), { id: () => "attention-" + String(++id), now: () => new Date(), publish: () => {},
     fingerprint: value => createHash("sha256").update(value).digest("hex"), waitBudgetMs });

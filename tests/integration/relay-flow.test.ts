@@ -5,10 +5,10 @@ import { SessionError, type SessionSnapshot } from "../../src/contracts/session.
 import { BLIND, Fakes, LIVE, declared, decisionOf, eventOf, events, fromAlpha, relayOf, turn, to, world } from "../fixtures/relay-fakes.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
-import { recoverRelay } from "../../src/contexts/session/domain/relay/recover.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 
-// The relay through the formal Runtime and a real SqliteSessionStore (slim.md): what a Turn sends, what the binding records, and
+// The relay through the formal Runtime and a real SqliteConversationStore (slim.md): what a Turn sends, what the binding records, and
 // what a restart leaves. The Harnesses are in-process fakes that keep a native history; nothing here runs a Harness.
 
 const kinds = (state: SessionSnapshot) => state.runs.map(run => run.relay?.kind ?? null);
@@ -325,7 +325,7 @@ test("a native session a handoff opened is named before its first prompt, by the
 
 /** A new owner on the same data: a new Store (which recovers what the old one left), a new Runtime and new Harnesses. */
 function restarted(t: import("node:test").TestContext, data: string, declarations: ConstructorParameters<typeof Fakes>[0]) {
-  const store = new SqliteSessionStore(data, { recoverRelay }), fakes = new Fakes(declarations), counter = { value: 0 };
+  const store = appStore(data), fakes = new Fakes(declarations), counter = { value: 0 };
   const app = new SessionRuntime(store, fakes, { id: () => "restart-" + ++counter.value, now: () => new Date(Date.UTC(2026, 10, 11, 13)), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex") });
   t.after(async () => { try { await app.close(); } catch { /* closed */ } try { store.close(); } catch { /* closed */ } });
   return { store, fakes, app };

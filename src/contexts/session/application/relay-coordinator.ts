@@ -5,6 +5,7 @@ import {
   type BindingRelayState, type ContinuityLevel, type DeliveryRecord, type ExecutedOn, type Fingerprint, type HmacDigest, type RedactionTag, type RelayAttention, type RelayCapabilities, type RelayDecision,
   type RelayDeliveryWrite, type RelayIndexRow, type RelayKeyPort, type RelayPacket, type RelayPacketId, type RelayPrefKey, type RunRelay, type RunRelayRequest, type SourceRange,
 } from "../../../contracts/relay.js";
+import type { ConversationRun } from "../../../contracts/conversation.js";
 import { SessionError, type PublicRun, type RunId, type SessionEvent, type SessionId, type SessionSnapshot } from "../../../contracts/session.js";
 import { commandOutcome, dispatched } from "../domain/relay/advance.js";
 import { commandTurnEvent, nothingOwed, owed, settledOutcome, step, type PacketRef, type RelayFact, type RelayEvent, type TurnPlan } from "../domain/relay/delivery.js";
@@ -104,14 +105,43 @@ export function acceptedChoices(data: Readonly<Record<string, unknown>> | undefi
 // The read path: facts
 // ---------------------------------------------------------------------------------------------------------------------
 
+/**
+ * The public facts of a conversation as its Runs' rows place them (ADR-057 3.3, review I1): a finished, dispatched Run is a fact, and the row says
+ * everything the relay needs of it. Where it ran is its `relay.executedOn`, or for a Run made before v13 (which has no `relay`) the column the migration
+ * filled from the relay's index (`executedOn`); the seq that places it is `endedSeq`, the seq of the event that ended it, and a Run whose end no event placed
+ * (a converted one) has none and counts as ABOVE any mark (the conversation's `lastSeq`: it may be sent again, never lost, and never taken as 0); a Run that
+ * was a native command (`isCommand`: not the same as having an effect) is a fact only when it entered the context like a message, which is its end's
+ * settled effect, else the one it was read with, being `keep`; an ordinary Run and a command Run are told apart by `isCommand` alone. Nothing is scanned: no
+ * event is read, so a conversation of any length costs one pass over its rows, and none over what a binding does not owe.
+ */
+export class RelayLedger {
+  /**
+   * The public facts of the conversation foreign to `binding` (its Harness control in its current native epoch): each finished, dispatched Run that did not
+   * run there, with its fact seq and where it ran, null when it is not told, which makes it foreign to every binding (a conservative reading: it may be sent
+   * again, never lost).
+   */
+  facts(state: { readonly runs: readonly ConversationRun[]; readonly lastSeq: number }, binding: { readonly harnessId: string; readonly controlId: string; readonly nativeEpoch: number }): readonly RelayFact[] {
+    const facts: RelayFact[] = [];
+    for (const run of state.runs) {
+      if (!terminal(run.status) || !dispatched(run)) continue;
+      const executedOn = run.relay !== undefined ? run.relay.executedOn : run.executedOn ?? null;
+      if (executedOn !== null && executedOn.harnessId === binding.harnessId && executedOn.controlId === binding.controlId && executedOn.nativeEpoch === binding.nativeEpoch) continue;
+      if (run.isCommand && (run.settledEffect ?? run.commandEffect) !== "keep") continue;
+      facts.push({ runId: run.id, seq: run.endedSeq ?? state.lastSeq, executedOn });
+    }
+    return facts;
+  }
+}
+
 type EventReader = (id: SessionId, afterSeq: number, limit: number) => readonly SessionEvent[];
 /**
  * The public facts of each Session as its events place them: the fact seq of each finished Run (its `run.ended`, or the
  * `session.recovered` that ended it) and the Runs that were native commands, with the effect each had on the native context (the
  * one its end settled, else the one it was read with): a command is a fact only when it entered the context like a message (keep).
  * Events are append-only, so each Session's are read once, from where the last read stopped; a new owner reads them again from the start.
+ * This is the reading of the readers that still hold the old shape of a conversation (the relay API's brief); the Runtime reads the rows (`RelayLedger`).
  */
-export class RelayLedger {
+export class EventRelayLedger {
   private readonly sessions = new Map<SessionId, { after: number; readonly ended: Map<string, number>; readonly commands: Map<string, ContextEffect | undefined>; readonly settled: Map<string, ContextEffect> }>();
   constructor(private readonly events: EventReader) {}
   private scan(state: SessionSnapshot): { readonly ended: ReadonlyMap<string, number>; readonly commands: ReadonlyMap<string, ContextEffect | undefined>; readonly settled: ReadonlyMap<string, ContextEffect> } {
@@ -185,7 +215,7 @@ function executedOf(value: unknown): ExecutedOn | null {
  * into (`throughRunId`), and no Turn of its Harness control dispatched in an epoch it holds, nor one the relay cannot place. A
  * binding that opens a new native session anyway (opensNew) resumes nothing, so it is never asked.
  */
-export function holdsNothing(state: SessionSnapshot, binding: { readonly harnessId: string; readonly controlId: string; readonly throughRunId: RunId | null; readonly opensNew?: true; readonly relay?: BindingRelayState }): boolean {
+export function holdsNothing(state: { readonly runs: readonly Pick<PublicRun, "selection" | "timing" | "backend" | "status" | "relay">[] }, binding: { readonly harnessId: string; readonly controlId: string; readonly throughRunId: RunId | null; readonly opensNew?: true; readonly relay?: BindingRelayState }): boolean {
   const relay = binding.relay;
   if (relay === undefined || relay.mark >= 0 || relay.pending !== null || relay.resendAll || binding.throughRunId !== null || binding.opensNew === true) return false;
   return !state.runs.some(run => run.selection.provider === undefined && run.selection.harnessId === binding.harnessId && run.selection.controlId === binding.controlId && dispatched(run)
@@ -194,16 +224,16 @@ export function holdsNothing(state: SessionSnapshot, binding: { readonly harness
 /**
  * Whether a binding's native session holds exactly the conversation through `through` (ADR-055 §7.5), for a native fork: `through`
  * ran in its current native epoch, nothing waits for confirmation or is to be sent again, and nothing foreign up to `through`'s
- * fact (`endedSeq`, the seq of its end) is owed to it. A binding without relay state is never exact. `endedSeq` and `facts` (those
- * foreign to it) are read only when the cheaper conditions hold: they page the Session's events.
+ * fact (`endedSeq`, the seq of its end) is owed to it. A binding without relay state is never exact. `origin.originHistory` is whether the conversation started
+ * from quoted history (which a binding is owed too). `endedSeq` and `facts` (those foreign to it) are read only when the cheaper conditions hold.
  */
-export function nativeExactAt(state: SessionSnapshot, binding: { readonly harnessId: string; readonly controlId: string; readonly relay?: BindingRelayState }, through: PublicRun, endedSeq: () => number | undefined,
+export function nativeExactAt(origin: { readonly originHistory: boolean }, binding: { readonly harnessId: string; readonly controlId: string; readonly relay?: BindingRelayState }, through: Pick<PublicRun, "relay">, endedSeq: () => number | undefined,
     facts: (on: { readonly harnessId: string; readonly controlId: string; readonly nativeEpoch: number }) => readonly RelayFact[]): boolean {
   const relay = binding.relay;
   if (relay === undefined || relay.pending !== null || relay.resendAll || through.relay?.executedOn?.nativeEpoch !== relay.epoch) return false;
   const seq = endedSeq();
   if (seq === undefined) return false;
-  const need = owed(relay, binding.harnessId, binding.controlId, facts({ harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.epoch }).filter(fact => fact.seq <= seq), { originHistory: (state.origin?.history.length ?? 0) > 0 });
+  const need = owed(relay, binding.harnessId, binding.controlId, facts({ harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: relay.epoch }).filter(fact => fact.seq <= seq), { originHistory: origin.originHistory });
   return nothingOwed(need);
 }
 

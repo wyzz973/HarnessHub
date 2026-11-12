@@ -6,11 +6,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { SessionRuntime } from "../../../src/contexts/session/application/runtime.js";
-import { recoverRelay } from "../../../src/contexts/session/domain/relay/recover.js";
 import { nativeConversationId, singleText, type BackendResult, type ControlEvent, type HarnessControl, type NativeConversationId } from "../../../src/contracts/control.js";
 import { SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionId } from "../../../src/contracts/session.js";
 import { LocalContentStore } from "../../../src/infrastructure/session/content-store.js";
-import { SqliteSessionStore } from "../../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../../src/infrastructure/session/conversation-store.js";
 import { TableApi } from "../../../src/web/table-routes.js";
 import { CLEAN, declared } from "../../fixtures/relay-fakes.js";
 import { listFiles, runTests } from "./judge.js";
@@ -228,7 +228,7 @@ async function hubToolsProgram(env: Readonly<Record<string, string>>, args: read
 let identities = 0;
 /** A Hub of real parts (the Runtime, a SQLite store, the content store) in `data`, over the scripted Harnesses. */
 export function dryHub(where: { readonly workspace: string; readonly data: string }, harnesses: ScriptedHarnesses): CellHub & { readonly content: LocalContentStore } {
-  const store = new SqliteSessionStore(where.data, { recoverRelay }), content = new LocalContentStore(where.data, () => store.assertOwner());
+  const store = appStore(where.data), content = new LocalContentStore(where.data, () => store.assertOwner());
   const runtime = new SessionRuntime(store, harnesses, { id: () => "dry-" + ++identities, now: () => new Date(), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"), content,
     harnessName: id => NAMES[id] ?? null });
   const configuration: SessionConfiguration = { workspace: where.workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true };

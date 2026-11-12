@@ -46,6 +46,6 @@ export function commandEffect(declared: ContextEffect, outcome: CommandOutcome):
  * has no times: it counts as dispatched when its Harness settled it or it ended unknown, since only those can have reached
  * a Harness (one that ended unknown before dispatch is counted too).
  */
-export function dispatched(run: PublicRun): boolean {
+export function dispatched(run: Pick<PublicRun, "timing" | "backend" | "status">): boolean {
   return run.timing === undefined ? run.backend !== null || run.status === "unknown" : run.timing.dispatchedAt !== undefined;
 }

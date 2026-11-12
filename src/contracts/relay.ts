@@ -438,15 +438,6 @@ export interface RelayRows {
 }
 /** One Run's delivery changed by recovery. */
 export interface RelayRecoveredDelivery { readonly runId: RunId; readonly outcome: Exclude<DeliveryOutcome, { readonly kind: "in_flight" }> }
-/** What recovery changes of a Session's relay state besides recoverSession's own changes. */
-export interface RelayRecovery { readonly next: SessionSnapshot; readonly deliveries: readonly RelayRecoveredDelivery[] }
-/**
- * The relay part of recovery: given a Session as recoverSession left it and its delivery rows, the Session with its bindings'
- * relay state recovered and the deliveries to decide; null when nothing changes. Pure and synchronous; the Store calls it in
- * claimAndRecover's transaction, inside a SAVEPOINT of the Session's own. `packets` are the Session's packet manifests (the
- * range of a packet that was in flight comes from its manifest); a caller without them passes none.
- */
-export type RecoverRelay = (state: SessionSnapshot, deliveries: readonly DeliveryRecord[], packets?: readonly RelayPacket[]) => RelayRecovery | null;
 /** The Session Store's relay writes and reads beyond SessionStore. */
 export interface RelayStorePort {
   /** Deletes a closed Session that keeps no process, with its events, create key and every relay row, in one transaction. */

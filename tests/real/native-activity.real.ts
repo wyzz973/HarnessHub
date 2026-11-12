@@ -124,7 +124,7 @@ test("installed Harness tool activity is committed with stored, readable details
         for (const [name, passed] of Object.entries(checks)) if (!passed) failures.push(harnessId + ": " + name);
       } catch (error) {
         // The last Run's own outcome explains a blocked Session (for example cleanup that could not be confirmed).
-        try { const last = app.runtime.read([...app.store.list(10)][0]!.id).runs.at(-1); if (last) proof.lastRun = { status: last.status, error: last.error, cleanup: last.cleanup ?? null }; } catch { /* the Session itself may be unreadable */ }
+        try { const last = app.runtime.read(app.store.list({ limit: 10 }).rows[0]!.id).runs.at(-1); if (last) proof.lastRun = { status: last.status, error: last.error, cleanup: last.cleanup ?? null }; } catch { /* the Session itself may be unreadable */ }
         proof.failure = { code: error !== null && typeof error === "object" && "code" in error ? String(error.code) : "ASSERTION", message: error instanceof Error ? error.message.slice(0, 512) : "failed" };
         failures.push(harnessId + ": " + (proof.failure as { code: string }).code);
       } finally {

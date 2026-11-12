@@ -4,18 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { parseSession, terminal } from "../../src/contexts/session/domain/state.js";
-import { recoverRelay } from "../../src/contexts/session/domain/relay/recover.js";
+import { terminal } from "../../src/contexts/session/domain/state.js";
+import { parseSession } from "../../src/infrastructure/session/legacy/state.js";
 import { sessionId, type PublicRun, type SessionEvent, type SessionSnapshot } from "../../src/contracts/session.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { V12_FIXTURES, loadV12Fixture, writeV12Root } from "../fixtures/relay/v12/database.js";
 import { GENERATIONS, loadGeneration, writeGenerationRoot } from "../fixtures/storage/generations/database.js";
-import { V13_FIXTURES, loadV13Fixture, v13Path, writeV13Root, type V13Fixture, type V13FixtureName } from "../fixtures/storage/v13/database.js";
+import { V13_FIXTURES, loadV13Fixture, renamed, v13Path, writeV13Root, type V13Fixture, type V13FixtureName } from "../fixtures/storage/v13/database.js";
 
 // The frozen Session v13 fixtures of the new storage (ADR-057 step 1, T1; tests/fixtures/storage/v13/README.md): each is opened by this build's
-// SqliteSessionStore (which validates every Session and recovers what an owner left unfinished), and together they are checked against the list of
-// shapes the storage conversion and the migration must carry. THIS FILE IS THE v13 STORE'S: at the cut the store converts to v14 and the assertions
-// that read snapshots through `store.get` move to the conversion; the coverage test reads the fixtures as plain data and stays.
+// SqliteConversationStore, which converts it to the tables, checks every conversation and recovers what an owner left unfinished; what the store gives back
+// in the shape of the old snapshot (`store.snapshot`) is held to the fixture, and the crash fixtures to the conversation the old recovery made of them (the
+// paired fixture). The coverage tests read the fixtures as plain data.
 
 /** A temporary directory removed after the test, once what was opened in it is closed (last opened, first closed). */
 const closers = new WeakMap<TestContext, (() => unknown)[]>();
@@ -26,17 +27,17 @@ function temporary(t: TestContext): string {
   return root;
 }
 function later(t: TestContext, close: () => unknown): void { closers.get(t)!.push(close); }
-function open(t: TestContext, data: string): SqliteSessionStore {
-  const store = new SqliteSessionStore(data, { recoverRelay, now: () => new Date("2026-11-13T00:00:00.000Z") });
+function open(t: TestContext, data: string): SqliteConversationStore {
+  const store = appStore(data, { now: () => new Date("2026-11-13T00:00:00.000Z") });
   later(t, () => store.close());
   return store;
 }
-function opened(t: TestContext, fixtures: readonly V13Fixture[]): SqliteSessionStore {
+function opened(t: TestContext, fixtures: readonly V13Fixture[]): SqliteConversationStore {
   const data = join(temporary(t), "data");
   writeV13Root(data, fixtures);
   return open(t, data);
 }
-function allEvents(store: SqliteSessionStore, id: string): readonly SessionEvent[] {
+function allEvents(store: SqliteConversationStore, id: string): readonly SessionEvent[] {
   const all: SessionEvent[] = [];
   for (let after = 0; ;) { const page = store.events(sessionId(id), after, 100); if (!page.length) return all; all.push(...page); after = page.at(-1)!.seq; }
 }
@@ -59,7 +60,7 @@ for (const name of NAMES) {
     const store = opened(t, [fixture]);
     if (!unfinished) {
       for (const row of fixture.sessions) {
-        assert.deepEqual(store.get(sessionId(row.id)), row.snapshot, row.id + ": the snapshot as stored");
+        assert.deepEqual(store.snapshot(sessionId(row.id)), { ...snapshotOf(row), version: snapshotOf(row).version + 1 }, row.id + ": the snapshot as it was, one version on (the conversion is a commit)");
         assert.deepEqual(allEvents(store, row.id), row.events, row.id + ": the event log as stored");
         assert.equal(store.relayPackets(sessionId(row.id)).length, fixture.relay.packets.filter(packet => packet.session_id === row.id).length, row.id + ": its relay packets");
         assert.equal(store.relayDeliveries(sessionId(row.id)).length, fixture.relay.deliveries.filter(delivery => delivery.session_id === row.id).length, row.id + ": its deliveries");
@@ -68,10 +69,11 @@ for (const name of NAMES) {
       // An owner that died left Runs unfinished: this build's start ends them (unknown, or cancelled when queued) and blocks what cannot be sure.
       const after = loadV13Fixture(RECOVERED[name]!);
       for (const row of fixture.sessions) {
-        const now = store.get(sessionId(row.id));
+        const now = store.snapshot(sessionId(row.id)), paired = snapshotOf(after.sessions.find(other => other.id === row.id)!);
         assert.ok(now.runs.every(run => terminal(run.status)), row.id + ": nothing is left unfinished");
         assert.equal(now.pendingSwitchId, null);
-        assert.deepEqual(now, after.sessions.find(other => other.id === row.id)!.snapshot, row.id + ": what recovery made of it is the paired fixture");
+        // The paired fixture is what the old build's recovery made of it; the conversion and the recovery are two commits, so the version is two on from the fixture's.
+        assert.deepEqual({ ...now, version: paired.version }, paired, row.id + ": what recovery made of it is the paired fixture");
       }
     }
     assert.deepEqual([...store.contentReferences()].sort(), fixture.contentReferences, "the content the conversations still refer to");
@@ -80,9 +82,9 @@ for (const name of NAMES) {
 
 test("the Sessions of different fixtures can share one database, and a copy of a fixture under other identities is another set of conversations", t => {
   const names: readonly V13FixtureName[] = ["switches", "commands", "tools", "trial-2026-11-11"];
-  const store = opened(t, names.map(loadV13Fixture));
+  const store = opened(t, names.map((name, index) => renamed(loadV13Fixture(name), "share" + index)));
   const total = names.reduce((count, name) => count + loadV13Fixture(name).sessions.length, 0);
-  assert.equal(store.list(100).length, total);
+  assert.equal(store.list({ limit: 100 }).rows.length, total);
 });
 
 for (const name of V12_FIXTURES) {
@@ -91,7 +93,7 @@ for (const name of V12_FIXTURES) {
     writeV12Root(data, [loadV12Fixture(name)]);
     const store = open(t, data);
     const fixture = loadV13Fixture(`from-v12-${name}` as V13FixtureName);
-    for (const row of fixture.sessions) assert.deepEqual(store.get(sessionId(row.id)), row.snapshot, row.id);
+    for (const row of fixture.sessions) assert.deepEqual(store.snapshot(sessionId(row.id)), { ...snapshotOf(row), version: snapshotOf(row).version + 1 }, row.id);
     // The Runs of a v12 database carry no relay facts of their own: the migration keeps where each ran in the index rows.
     const index = fixture.relay.index.length;
     assert.ok(fixture.sessions.every(row => snapshotOf(row).schemaVersion === 13));
@@ -108,10 +110,12 @@ for (const version of GENERATIONS) {
     writeGenerationRoot(data, sample);
     const store = open(t, data);
     for (const row of sample.sessions) {
-      const before = row.snapshot as unknown as SessionSnapshot, after = store.get(sessionId(row.id));
+      const before = row.snapshot as unknown as SessionSnapshot, after = store.snapshot(sessionId(row.id));
       assert.equal(after.schemaVersion, 13);
       // Version 13 gives every native binding its relay state (worked out from the events); nothing else is added or changed.
-      const { nativeBindings: migrated, schemaVersion: _after, ...kept } = after, { nativeBindings: sampled, schemaVersion: _before, ...asSampled } = before;
+      // (and the conversion into the tables is one commit more.)
+      const { nativeBindings: migrated, schemaVersion: _after, version: keptVersion, ...kept } = after, { nativeBindings: sampled, schemaVersion: _before, version: sampledVersion, ...asSampled } = before;
+      assert.equal(keptVersion, sampledVersion + 1, row.id + ": the conversion is a commit");
       assert.deepEqual(kept, asSampled, row.id);
       assert.deepEqual(migrated?.map(({ relay: _relay, ...binding }) => binding), sampled, row.id + ": the bindings but for their relay state");
       assert.ok((after.nativeBindings ?? []).every(binding => binding.relay !== undefined), row.id + ": every binding has its relay state");

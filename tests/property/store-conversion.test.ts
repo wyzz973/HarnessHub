@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { parseSession } from "../../src/contexts/session/domain/state.js";
+import { parseSession } from "../../src/infrastructure/session/legacy/state.js";
 import { dispatched } from "../../src/contexts/session/domain/relay/advance.js";
 import { normalizeTool, plainTool } from "../../src/contexts/session/domain/protocol/index.js";
 import { fromItems, originFromRows, originToRows, storageConversion, toItems, type ConversionAt } from "../../src/contexts/session/domain/store-conversion.js";

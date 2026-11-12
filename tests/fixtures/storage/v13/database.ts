@@ -6,11 +6,11 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 /**
  * Rebuilds frozen Session v13 business databases (README.md next to this file) as a data root a Session v13 build would have left: the
  * ownership marker, then `gateway.sqlite` with its tables, their rows and user_version 13, no owner holding it. A test opens such a root
- * with the SqliteSessionStore (today: it recovers whatever the owner left unfinished and keeps v13; after the cut: it converts to v14), and
+ * with the SqliteConversationStore (it converts the root to v14, then recovers whatever the owner left unfinished), and
  * the pure functions (the storage conversion) read the same fixtures as plain snapshots.
  *
  * The DDL is a FROZEN COPY of what a v13 build created (sqlite-store.ts and relay-tables.ts at the commit the fixtures were generated
- * at): it must not follow the sources, which turn to v14 at the cut.
+ * at): it must not follow the sources, which turned to v14 at the cut (sqlite-store.ts is gone).
  */
 
 export interface V13Event { readonly type: string; readonly data: Readonly<Record<string, unknown>>; readonly sessionId: string; readonly seq: number; readonly ownerGeneration: number; readonly timestamp: string }
@@ -127,11 +127,13 @@ export function writeV13Root(root: string, fixtures: readonly V13Fixture[]): voi
   } finally { database.close(); }
 }
 /**
- * A copy of `fixture` whose conversations are renamed with `suffix` (their identities wherever they appear as a whole value, and the
- * create command keys), so many copies can share one database. Digests keyed by the old identity (relay HMACs) are not recomputed.
+ * A copy of `fixture` whose conversations are renamed with `suffix` (their identities and the native sessions their bindings hold, wherever they appear as a
+ * whole value, and the create command keys), so many copies can share one database. Digests keyed by the old identity (relay HMACs) are not recomputed.
  */
 export function renamed(fixture: V13Fixture, suffix: string): V13Fixture {
   const ids = new Map(fixture.sessions.map(row => [row.id, row.id + "-" + suffix]));
+  // A native session has one holder in the whole store (ADR-057), so the native sessions the copy's bindings hold are renamed with it.
+  for (const row of fixture.sessions) for (const binding of ((row.snapshot as { readonly nativeBindings?: readonly { readonly checkpoint: string }[] }).nativeBindings ?? [])) ids.set(binding.checkpoint, binding.checkpoint + "-" + suffix);
   const keys = new Map(fixture.createKeys.map(row => [row.commandId, row.commandId + "-" + suffix]));
   const swap = (value: unknown): unknown => typeof value === "string" ? ids.get(value) ?? value : Array.isArray(value) ? value.map(swap)
     : value !== null && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([name, item]) => [name, swap(item)])) : value;

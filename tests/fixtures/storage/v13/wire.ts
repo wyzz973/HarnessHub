@@ -1,0 +1,151 @@
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { application } from "../../../../src/cli/session-application.js";
+import { sessionId } from "../../../../src/contracts/session.js";
+import { prepareConfiguration } from "../../../../src/infrastructure/session/binding-factory.js";
+import { MemoryTableGrants } from "../../../../src/infrastructure/session/table-grants.js";
+import { startWebServer } from "../../../../src/web/server.js";
+import { loadV13Fixture, writeV13Root, type V13FixtureName } from "./database.js";
+
+/*
+ * What the whole application says over HTTP of the conversations of a frozen v13 fixture, as digests: the list, the readiness, and for each conversation its view, its
+ * export (Markdown and JSON), its event log, its handoff view and the text of each handoff packet, and the context table's directory, Turns and search.
+ *
+ * It is written to run against two builds with the same text. `wire-golden.json` holds what the build BEFORE the cut (the store of snapshots, `SqliteSessionStore`)
+ * said of every fixture, made by running this file there (generate-wire.mjs); `tests/integration/cut-wire.test.ts` runs it on the current build and holds the digests
+ * to those. So it uses only what both builds have: `application`, `startWebServer`, `MemoryTableGrants`, `prepareConfiguration`, and the fixtures' own reader.
+ *
+ * What is not compared, because it is not the same by design: the conversation's `version` (the tables' conversion is a commit the old store never made), the time the
+ * application started at (the recovery of the two fixtures an owner left unfinished writes it, and the export says when it was made), and the ORDER of the conversations in
+ * the list (the old store listed them by creation, the tables list the one updated last first: ADR-057's list index; a list is compared as the set it holds, by identity).
+ * Every number and every ISO date within a minute of the run is written `<now>`; every JSON is written with its keys in order (the order an object is built in is no part of
+ * what it says).
+ */
+
+export interface WireDigest { readonly sha256: string; readonly bytes: number }
+export type Wire = Readonly<Record<string, WireDigest>>;
+export type WireGolden = Readonly<Record<string, Wire>>;
+
+/** The fixtures that are run: all but the one that records a kept process, which this application would try to end by its recorded group on its start. */
+export const WIRE_FIXTURES: readonly V13FixtureName[] = [
+  "switches", "relay-states", "commands", "branch", "branch-pending", "import", "tools", "text-extremes", "at-the-old-limits", "unknown-recovered", "unknown-acknowledged",
+  "running-crash", "recovered-after-crash", "waiting-crash", "recovered-after-waiting-crash", "trial-2026-11-11",
+  "from-v12-d1", "from-v12-dispatch-failed", "from-v12-insert-rejected", "from-v12-import", "from-v12-branch", "from-v12-clear", "from-v12-reset-d1",
+];
+
+const WINDOW_MS = 60_000;
+function digestOf(text: string): WireDigest { return { sha256: createHash("sha256").update(text).digest("hex"), bytes: Buffer.byteLength(text) }; }
+/** WIRE_DUMP=<directory> keeps the text each digest is of, one file a key, for whoever reads a difference (diff the two builds' directories). */
+async function keep(fixture: string, key: string, text: string): Promise<void> {
+  const where = process.env.WIRE_DUMP;
+  if (where === undefined || where === "") return;
+  const directory = join(where, fixture); await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, key.replace(/[^A-Za-z0-9._-]+/gu, "_") + ".txt"), text);
+}
+
+/** Keys in order, and the application's start written `<now>`. */
+function settled(value: unknown, window: { readonly from: number; readonly to: number }): unknown {
+  if (typeof value === "number") return value >= window.from && value <= window.to ? "<now>" : value;
+  if (typeof value === "string") { const time = /^\d{4}-\d\d-\d\dT[\d:.]+Z$/u.test(value) ? Date.parse(value) : NaN; return time >= window.from && time <= window.to ? "<now>" : value; }
+  if (Array.isArray(value)) return value.map(entry => settled(entry, window));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([name, entry]) => [name, settled(entry, window)]));
+  }
+  return value;
+}
+
+interface Reply { readonly status: number; readonly text: string }
+
+/** Runs the application on the fixture's data root and reads it as a page and a Harness's tool process would. Nothing outside a temporary directory is touched. */
+export async function wireOfFixture(name: V13FixtureName): Promise<Wire> {
+  const fixture = loadV13Fixture(name), scratch = await mkdtemp(join(tmpdir(), "wire-v13-"));
+  const workspace = join(scratch, "workspace"), assets = join(scratch, "assets"), manifest = join(scratch, "catalog.json"), home = join(scratch, "home"), locks = join(scratch, "locks"), data = join(scratch, "data");
+  const started = Date.now(), window = { from: started - WINDOW_MS, to: started + 10 * WINDOW_MS };
+  const wire: Record<string, WireDigest> = {};
+  let gateway: Awaited<ReturnType<typeof startWebServer>> | undefined;
+  try {
+    for (const directory of [workspace, assets, home]) await mkdir(directory);
+    await writeFile(join(assets, "index.html"), "<!doctype html><title>wire fixture</title>");
+    const source = { repository: "fixture", revision: "wire", upstreamId: "peer", url: "https://example.invalid/wire-peer" };
+    const definitions = [{ id: "wire-a", name: "Wire fixture", aliases: [], binaryNames: [], configHints: [], controls: [{ id: "wire-a-control", protocol: "codex-app-server", executableNames: ["fixture-peer"], args: [], env: {}, requiredExecutables: [], package: null, distribution: null, source }] }];
+    await writeFile(manifest, JSON.stringify({ version: 2, definitions, overrides: { "wire-a-control": { executable: process.execPath } } }));
+    writeV13Root(data, [fixture]);
+    const configuration = await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true });
+    // A private home and system root, so that nothing of the machine's own Harness configuration is read.
+    const nativeEnvironment = { home, values: { HOME: home, PATH: dirname(process.execPath) + ":/usr/bin:/bin" }, system: join(scratch, "system") };
+    const grants = new MemoryTableGrants();
+    gateway = await startWebServer({ installations: "any", root: data, configuration, port: 0, assetsDirectory: assets, workspaceLockRoot: locks,
+      application: (root, publish) => application(root, publish, { workspaceLockRoot: locks, installations: "any", nativeEnvironment, tableGrants: grants }) });
+    const parsed = new URL(gateway.url), origin = parsed.origin, token = new URLSearchParams(parsed.hash.slice(1)).get("token")!;
+    const login = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+    if (login.status !== 200) throw new Error("the login of the fixture's application failed: " + login.status);
+    const cookie = login.headers.get("set-cookie")!.split(";", 1)[0]!;
+    // WIRE_TRACE=1 says on stderr what each request got (its status and the start of the answer), for whoever reads a difference.
+    const trace = (path: string, reply: Reply): Reply => { if (process.env.WIRE_TRACE) process.stderr.write(reply.status + " " + path.slice(0, 90).padEnd(90) + " " + reply.text.slice(0, 70).replace(/\s+/gu, " ") + "\n"); return reply; };
+    const read = async (path: string): Promise<Reply> => { const response = await fetch(origin + path, { headers: { Cookie: cookie, Origin: origin } }); return trace(path, { status: response.status, text: await response.text() }); };
+    const table = async (path: string, bearer: string): Promise<Reply> => { const response = await fetch(origin + path, { headers: { Authorization: "Bearer " + bearer } }); return trace(path, { status: response.status, text: await response.text() }); };
+    /** A JSON answer, settled; `edit` leaves out what is not the same by design. */
+    const note = (key: string, text: string): void => { wire[key] = digestOf(text); pending.push(keep(name, key, text)); };
+    const pending: Promise<void>[] = [];
+    const json = (key: string, reply: Reply, edit: (value: Record<string, unknown>) => void = () => {}): void => {
+      let value: unknown; try { value = JSON.parse(reply.text); } catch { value = reply.text; }
+      if (value !== null && typeof value === "object" && !Array.isArray(value)) edit(value as Record<string, unknown>);
+      note(key, reply.status + " " + JSON.stringify(settled(value, window)));
+    };
+    const noVersion = (value: Record<string, unknown>): void => { delete value.version; };
+
+    // The lists, by identity (see above).
+    const byIdentity = (key: (entry: Record<string, unknown>) => string) => (list: unknown): unknown => Array.isArray(list) ? [...list].sort((left, right) => { const a = key(left as Record<string, unknown>), b = key(right as Record<string, unknown>); return a < b ? -1 : a > b ? 1 : 0; }) : list;
+    const byId = byIdentity(entry => String(entry.id)), byControl = byIdentity(entry => String(entry.harnessId) + "/" + String(entry.controlId));
+    const listed = await read("/api/v1/sessions");
+    note("list", listed.status + " " + JSON.stringify(settled(byId(JSON.parse(listed.text)), window)));
+    const state = JSON.parse((await read("/api/v1/state")).text) as { readonly sessions: unknown; readonly readiness: unknown };
+    note("state.sessions", JSON.stringify(settled(byId(state.sessions), window)));
+    note("state.readiness", JSON.stringify(settled(byControl(state.readiness), window)));
+    const readiness = await read("/api/v1/harnesses/readiness");
+    note("readiness", readiness.status + " " + JSON.stringify(settled(byControl((JSON.parse(readiness.text) as { readonly readiness: unknown }).readiness), window)));
+
+    for (const row of fixture.sessions) {
+      const id = row.id, base = "/api/v1/sessions/" + id;
+      json(id + " view", await read(base), noVersion);
+      const markdown = await read(base + "/export?format=markdown");
+      note(id + " export.md", markdown.status + " " + markdown.text.split("\n").filter(line => !line.startsWith("- 导出时间：")).join("\n"));
+      json(id + " export.json", await read(base + "/export?format=json"), value => { delete value.exportedAt; const exported = value.session; if (exported !== null && typeof exported === "object") delete (exported as Record<string, unknown>).version; });
+      // The event log, a page at a time.
+      const events: unknown[] = [];
+      for (let after = 0; ;) {
+        const page = JSON.parse((await read(base + "/events?afterSeq=" + after + "&limit=100")).text) as { readonly events: readonly unknown[]; readonly nextSeq: number; readonly hasMore: boolean };
+        events.push(...page.events);
+        if (!page.hasMore || page.events.length === 0) break;
+        after = page.nextSeq;
+      }
+      note(id + " events", JSON.stringify(settled(events, window)));
+      // The handoff: the relay view of the conversation and the text of each packet it shows.
+      const relay = await read(base + "/relay");
+      json(id + " relay", relay);
+      const packets = (JSON.parse(relay.text) as { readonly packets?: readonly { readonly packetId: string }[] }).packets ?? [];
+      for (const packet of packets) json(id + " relay " + packet.packetId, await read(base + "/relay/" + packet.packetId));
+      // The context table, as the tool process of a Harness running a Turn of this conversation reads it.
+      const grant = grants.mint({ sessionId: sessionId(id), harnessId: "wire-a", controlId: "wire-a-control" });
+      const directory = await table("/api/table/turns?limit=100", grant);
+      json(id + " table turns", directory);
+      const total = (JSON.parse(directory.text) as { readonly total?: number }).total ?? 0;
+      const numbers = [...new Set([...Array.from({ length: Math.min(total, 6) }, (_, index) => index + 1), ...(total > 6 ? [total] : [])])];
+      for (const n of numbers) for (const part of ["overview", "user", "reply", "tools", "files", "plan"]) json(id + " table turn " + n + " " + part, await table("/api/table/turns/" + n + "?part=" + part, grant));
+      for (const words of ["run", "的"]) json(id + " table search " + words, await table("/api/table/search?limit=10&q=" + encodeURIComponent(words), grant));
+    }
+    await Promise.all(pending);
+    return wire;
+  } finally {
+    try { await gateway?.close(); } finally { await rm(scratch, { recursive: true, force: true }); }
+  }
+}
+
+/** Every fixture that is run, or the ones named. */
+export async function wireOfAll(names: readonly V13FixtureName[] = WIRE_FIXTURES): Promise<WireGolden> {
+  const result: Record<string, Wire> = {};
+  for (const name of names) result[name] = await wireOfFixture(name);
+  return result;
+}

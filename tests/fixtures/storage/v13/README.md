@@ -7,7 +7,7 @@
 ```ts
 import { loadV13Fixture, writeV13Root } from "../fixtures/storage/v13/database.js";
 const fixture = loadV13Fixture("tools");        // 纯数据：sessions[].snapshot（SessionSnapshot v13）、events（事件日志）、relay（relay_* 表的行）…
-writeV13Root(join(tmp, "data"), [fixture]);     // 或者写成 v13 的数据根，用 SqliteSessionStore 打开
+writeV13Root(join(tmp, "data"), [fixture]);     // 或者写成 v13 的数据根，用 SqliteConversationStore（或整个应用）打开：升级到 v14，再恢复
 ```
 
 每个文件的结构（与 `tests/fixtures/relay/v12/` 同一做法，多了 relay 表与内容库）：
@@ -54,7 +54,13 @@ writeV13Root(join(tmp, "data"), [fixture]);     // 或者写成 v13 的数据根
 
 `tests/fixtures/storage/generations/v1.json` … `v11.json`：每代一个小库，按那一代能有的字段写（`state.ts` 的 `parseSession` 逐版本列了能有什么），打开它走完整的迁移阶梯。**合成的，不是录下来的**（没有旧构建写过它们）；v3 起有一个结果未知、被恢复切换按来源认领的回合，v8 起有分支，v9 起有导入。v12 用 `tests/fixtures/relay/v12/` 的七个文件（真 v12 构建生成，说明见那里的 README）。`generations/database.ts` 里是读法与写成某一代的数据根。
 
+## 切换点（ADR-057 第 2 步）之后加的：整个应用对这些夹具说什么
+
+`wire.ts`、`generate-wire.mjs`、`wire-golden.json`（`tests/integration/cut-wire.test.ts` 用）：把每个夹具（除 `kept-process`：应用启动时会按它记的进程组去结束进程）写成数据根，在它上面起**整个应用和真实的 web 服务**（升级、恢复、首次回收只报告），再用页面和 Harness 工具进程的读法读一遍：对话列表与就绪状态、每个对话的视图、Markdown 与 JSON 导出、事件日志、交接单视图与每张交接单的文字、上下文表（目录、各回合的各部分、搜索），取摘要。**`wire-golden.json` 是切换之前的构建（`SqliteSessionStore`，26d4907）跑同一份 `wire.ts` 得到的**，切换之后的构建必须给出一样的摘要；不比较的只有：对话的 `version`（转成表是一次提交，旧存储没有）、应用启动的时刻（恢复与导出写它，一律记 `<now>`）、对话列表的次序（旧的按创建，现在按最近更新，见 ADR-057 的列表索引；列表按身份当集合比）、JSON 里键的次序。`WIRE_DUMP=<目录>` 把每个摘要对应的文字留下来，两个构建各跑一遍就能 diff。`wire-golden.json` 不要用切换之后的构建重新生成。
+
 ## 生成方法
+
+**以下生成器（`generate.mjs`，以及 `tests/fixtures/relay/v12/generate.mjs`）要的是还有 `sqlite-store.js`（v13 的存储）的构建，即切换之前的提交；切换之后的构建里没有它们依赖的存储，这两个生成器不能再跑。**
 
 由 `generate.mjs` 生成：它用给定构建的**真实 v13 运行时与 SQLite 存储**，配进程内的假 Harness（alpha：报告输入记录事件 E1；bravo：正常结束即证实；charlie：什么都证实不了；delta：同 bravo；dsh/codex/opencode/claude/hermes：试用对话用），在 `os.tmpdir()` 下的临时数据根里跑完各场景，把业务库（快照原样、事件按 seq、relay 表）写成 JSON，然后删掉临时目录。身份是固定计数（带夹具前缀，所以不同夹具的会话不重名），时钟从 2026-11-12T00:00:00Z 起每次加 1 秒，接力密钥是固定的，文字窗口不靠计时器提交，所以**同一构建重跑得到逐字节相同的文件**。「所有者死了」的库是在回合还挂着时用只读连接拷下来的，「恢复之后」的库是把它写成数据根、让存储打开、再拷出来的。
 

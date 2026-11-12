@@ -445,12 +445,22 @@ function placePlan(s: Draft, w: Writes, event: Extract<ControlEvent, { type: "pl
   if (position === undefined || entry === undefined) { insert(s, w, { itemId: "plan", fields, status: "running", at }); return; }
   if (!sameJson(entry.item.fields, fields)) change(s, w, position, { ...entry.item, fields }, entry);
 }
+const noticeSeverity = (value: string): "error" | "warning" | "info" => value === "error" ? "error" : value === "warning" ? "warning" : "info";
+const printOf = (severity: string, title: string, more: string | undefined): string => createHash("sha256").update(JSON.stringify([severity, title, more ?? null])).digest("hex");
+/**
+ * The fingerprint of a Harness notice, by which one already shown in a conversation is not shown again (`notice_prints`): its severity, its words and its detail, as they are
+ * placed. The storage conversion writes the fingerprint of every notice a converted Run showed, so that a Harness started again after the upgrade does not show them twice.
+ */
+export function noticePrint(notice: { readonly severity: string; readonly title: string; readonly detail?: string }): string {
+  const clipped: string[] = [], title = label(notice.title, "title", "提示", clipped), detailed = notice.detail === undefined ? "" : scrub(str(notice.detail), "detail", clipped);
+  return printOf(noticeSeverity(notice.severity), title, detailed === "" ? undefined : detailed);
+}
 function placeNotice(s: Draft, w: Writes, notice: { readonly severity: string; readonly title: string; readonly detail?: string; readonly code?: string }, at: number, env: PlaceEnv, harness: boolean): void {
   const clipped: string[] = [], title = label(notice.title, "title", "提示", clipped), detailed = notice.detail === undefined ? "" : scrub(str(notice.detail), "detail", clipped), more = detailed === "" ? undefined : detailed;
-  const severity = notice.severity === "error" ? "error" : notice.severity === "warning" ? "warning" : "info";
+  const severity = noticeSeverity(notice.severity);
   if (harness) {
     // A Harness started again for every Turn repeats its start-up warnings: a notice already shown in the conversation is not shown again.
-    const print = createHash("sha256").update(JSON.stringify([severity, title, more ?? null])).digest("hex");
+    const print = printOf(severity, title, more);
     if (s.prints.has(print) || env.noticeShown?.(print) === true) return;
     s.prints = new Set([...s.prints, print]); w.prints.push(print);
   }
@@ -586,6 +596,22 @@ export function settleItems(items: readonly HeldItem[], status: TerminalStatus, 
     if (next !== item.status) writes.push({ op: "update", row: { ...rowOf(item), status: next, endedAt: item.endedAt ?? at } });
   }
   return writes;
+}
+/**
+ * The details of calls still waiting to be stored, taken now: `place` hands over the detail of a call when it ends, and the details of the calls that never
+ * ended only when the Turn is settled, which is after the Turn's program is closed; the Runtime takes them before that, while the program is still owned, stores them
+ * and tells each reference in a `detail` input. A detail taken is no longer waiting (the Turn comes back without it, and the same call is not stored twice).
+ */
+export function takeDetails(turn: ActiveTurn): { readonly turn: ActiveTurn; readonly store: readonly StoreRequest[] } {
+  const store: StoreRequest[] = [];
+  let entries = turn.entries;
+  vecList(turn.entries).forEach((entry, position) => {
+    if (entry.dirty !== true || entry.detail === undefined) return;
+    store.push({ toolId: entry.item.itemId.slice(5), detail: entry.detail });
+    const { dirty: _taken, ...rest } = entry;
+    entries = vecSet(entries, position, rest);
+  });
+  return store.length === 0 ? { turn, store } : { turn: { ...turn, entries }, store };
 }
 const BESIDE_THE_ANSWER: ReadonlySet<ItemType> = new Set<ItemType>(["notice", "error", "plan", "artifact", "context_event"]);
 /**

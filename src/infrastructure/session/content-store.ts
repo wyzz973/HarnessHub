@@ -253,6 +253,29 @@ export class LocalContentStore implements ContentPort {
     }
     return { records, blobs, files, partial };
   }
+  /**
+   * What `collect` would delete, counted and not deleted: the same records, then the blobs and files that would have nothing left to be kept for, and the partial uploads past
+   * their retention. The first start after an upgrade reports this and collects nothing (ADR-057 3.6).
+   */
+  wouldCollect(referenced: ReadonlySet<string>): { readonly records: number; readonly blobs: number; readonly files: number; readonly partial: number } {
+    this.owner();
+    let records = 0, blobs = 0, files = 0, partial = 0;
+    const dropped = new Set<string>(), kept = new Set<string>();
+    this.use(db => {
+      for (const value of db.prepare("SELECT * FROM content").all()) {
+        const item = parseRow(value), old = item.discarded === 1 || item.created_at < this.now() - CONTENT_RETENTION_MS;
+        if (old && !referenced.has(item.id)) { dropped.add(item.id); records++; } else { kept.add(item.id); }
+      }
+    });
+    const liveBlobs = this.use(db => new Set(db.prepare("SELECT id, sha256 FROM content").all().filter(value => !dropped.has(String((value as { id?: unknown }).id))).map(value => String((value as { sha256?: unknown }).sha256))));
+    for (const name of readdirSync(join(this.root, "blobs"))) if (!liveBlobs.has(name)) blobs++;
+    for (const name of readdirSync(join(this.root, "files"))) if (/^content-[a-zA-Z0-9-]{1,96}$/u.test(name) && !kept.has(name)) files++;
+    for (const name of readdirSync(join(this.root, "partial"))) {
+      const info = lstatSync(join(this.root, "partial", name));
+      if (info.isFile() && info.mtimeMs < this.now() - PARTIAL_RETENTION_MS) partial++;
+    }
+    return { records, blobs, files, partial };
+  }
   private blob(sha256: string, bytes: number): string {
     const path = join(this.root, "blobs", sha256), info = lstatSync(path, { throwIfNoEntry: false });
     if (!info) throw new SessionError("CONTENT_UNAVAILABLE", "stored content bytes are missing");

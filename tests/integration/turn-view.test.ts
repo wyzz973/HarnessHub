@@ -9,7 +9,7 @@ import type { PublicMessage, PublicRun, SessionEvent, SessionId, SessionSnapshot
 import type { WireTurn } from "../../src/contracts/web.js";
 import { ConversationFacts } from "../../src/infrastructure/session/facts.js";
 import { ConversationTables } from "../../src/infrastructure/session/read.js";
-import { readDeliveries } from "../../src/infrastructure/session/relay-tables.js";
+import { readDeliveriesV14 } from "../../src/infrastructure/session/relay-rows-v14.js";
 import { LINE_SEQ, TurnView, turnFactsOf, type TurnEnv, type TurnFacts } from "../../src/web/turn-view.js";
 import { RelayApi } from "../../src/web/relay-routes.js";
 import { V13_FIXTURES, type V13Fixture } from "../fixtures/storage/v13/database.js";
@@ -30,7 +30,7 @@ const harnessName = builtinHarnessName();
 function relayApiOf(db: import("node:sqlite").DatabaseSync, snapshot: SessionSnapshot): RelayApi {
   const events = (id: SessionId, afterSeq: number, limit = 100): readonly SessionEvent[] =>
     db.prepare("SELECT event_json FROM events WHERE session_id=? AND seq>? ORDER BY seq LIMIT ?").all(id, afterSeq, limit).map(row => JSON.parse(String(row.event_json)) as SessionEvent);
-  const reads = { relayDeliveries: (id: SessionId) => readDeliveries(db, id, snapshot), events } as unknown as ConstructorParameters<typeof RelayApi>[0]["reads"];
+  const reads = { relayDeliveries: (id: SessionId) => readDeliveriesV14(db, id), events } as unknown as ConstructorParameters<typeof RelayApi>[0]["reads"];
   return new RelayApi({ reads, read: () => snapshot, declaration: () => null, http: {} as never });
 }
 const contentHeads = (fixture: V13Fixture): ((ref: ContentRef) => ToolDetailInput | null) => ref => {

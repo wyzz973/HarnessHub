@@ -8,9 +8,9 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import test, { type TestContext } from "node:test";
-import { RelayLedger } from "../../src/contexts/session/application/relay-coordinator.js";
+import { EventRelayLedger, RelayLedger } from "../../src/contexts/session/application/relay-coordinator.js";
+import { noticePrint } from "../../src/contexts/session/domain/items-place.js";
 import { renderRelay } from "../../src/contexts/session/domain/relay/packet.js";
-import { parseSession as liveParse } from "../../src/contexts/session/domain/state.js";
 import { verify } from "../../src/contexts/session/domain/conversation-verify.js";
 import { storageConversion } from "../../src/contexts/session/domain/store-conversion.js";
 import type { ConvertedRun, StorageConversion } from "../../src/contracts/conversation.js";
@@ -18,16 +18,20 @@ import type { RelayIndexRow } from "../../src/contracts/relay.js";
 import { SessionError, sessionId, type SessionEvent, type SessionSnapshot } from "../../src/contracts/session.js";
 import { conversationTitle } from "../../src/contracts/web.js";
 import { backupBeforeV14, databaseBytes } from "../../src/infrastructure/session/backup.js";
+import { climbToV13 } from "../../src/infrastructure/session/legacy/ladder.js";
 import { LegacyRelayLedger } from "../../src/infrastructure/session/legacy/ledger.js";
+import { parseSession as liveParse } from "../../src/infrastructure/session/legacy/state.js";
 import {
   acknowledgeFirstStart, collectionGate, compareReferences, migrateToV14, migrationState, relayFactsFromRows, upgradeSchema,
 } from "../../src/infrastructure/session/migrate-v14.js";
+import { loadConversation } from "../../src/infrastructure/session/load.js";
 import { ConversationTables } from "../../src/infrastructure/session/read.js";
 import { canonicalJson } from "../../src/infrastructure/session/rows.js";
 import { schemaV14Statements } from "../../src/infrastructure/session/schema-v14.js";
 import { indexStates, rebuildSearchIndex } from "../../src/infrastructure/session/search-index.js";
 import { snapshotFromRows } from "../../src/infrastructure/session/snapshot-adapter.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { V12_FIXTURES, loadV12Fixture, writeV12Root } from "../fixtures/relay/v12/database.js";
 import { GENERATIONS, loadGeneration, writeGenerationRoot } from "../fixtures/storage/generations/database.js";
 import { V13_FIXTURES, loadV13Fixture, writeV13Root, type V13Fixture, type V13FixtureName } from "../fixtures/storage/v13/database.js";
@@ -200,12 +204,13 @@ const GENERATION_ROOTS: Generation[] = [
   ...V12_FIXTURES.map((name): Generation => ({ label: `v12-${name}`, from: 12, write: root => writeV12Root(root, [loadV12Fixture(name)]) })),
 ];
 for (const generation of GENERATION_ROOTS) {
-  test(`${generation.label}: the frozen ladder climbs to v13 as the live store's does (conversations and index rows), and the result converts and reads back`, t => {
+  test(`${generation.label}: the frozen ladder climbs to v13 (conversations and index rows), and the result converts and reads back`, t => {
     const directory = temporary(t), mine = join(directory, "mine"), live = join(directory, "live");
     generation.write(mine); generation.write(live);
-    // The live store's ladder (it opens the root, migrates it and, finding nothing unfinished, leaves the conversations as they were).
-    new SqliteSessionStore(live, { now: () => new Date("2026-11-13T00:00:00.000Z") }).close();
-    const reference = connect(t, live, true);
+    // The reference is the ladder run alone, on a copy. (The store of v13 that made the same climb, and that this test used to compare it with, went with the cut: until
+    // then the two were asserted equal for every generation; now the ladder is the one the migration runs, and what is checked is what the conversion makes of it.)
+    const reference = connect(t, live);
+    reference.exec("BEGIN IMMEDIATE"); climbToV13(reference, generation.from); reference.exec("COMMIT");
     const expected = new Map(reference.prepare("SELECT id, snapshot FROM sessions ORDER BY rowid").all().map(row => [String(row.id), String(row.snapshot)]));
     const expectedIndex = reference.prepare("SELECT * FROM relay_index ORDER BY session_id, run_index").all().map(row => JSON.stringify(row));
     assert.equal(userVersion(reference), 13);
@@ -225,10 +230,27 @@ for (const generation of GENERATION_ROOTS) {
   });
 }
 
+// The climb is one transaction: a conversation of an old generation that cannot be read ends it with the database as it was (these were the old store's tests of its migrations).
+for (const [version, victim] of [[8, 1], [11, 2]] as const) {
+  test(`v${version}: a conversation the ladder cannot read, met after others were migrated, ends the first transaction with the database as it was: the version, every row, the schema`, t => {
+    const root = join(temporary(t), "data");
+    writeGenerationRoot(root, loadGeneration(version));
+    const db = connect(t, root), ids = [...snapshotsOf(db).keys()];
+    assert.ok(ids.length > victim);
+    // A status no version has ever had: the frozen parse refuses it, when the ladder gets to it.
+    db.prepare("UPDATE sessions SET snapshot=json_set(snapshot,'$.status','weird') WHERE id=?").run(ids[victim]!);
+    const before = dumpOf(db);
+    assert.throws(() => migrateToV14(db, { root }), codeOf("INVALID_DATA"));
+    assert.deepEqual(dumpOf(db), before, "nothing of the climb stayed");
+    assert.equal(userVersion(db), version);
+    assert.equal(count(db, "SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE 'relay_%' OR name LIKE 'migration_v14%'"), 0, "no table of a later version was left");
+  });
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 // The frozen ledger is the live one's
 // ---------------------------------------------------------------------------------------------------------------------------------
-test("the frozen ledger gives the facts the live ledger gives, on every binding of every fixture and every place a Run ran", () => {
+test("the frozen ledger gives the facts the event ledger gives, on every binding of every fixture and every place a Run ran", () => {
   let compared = 0;
   for (const name of V13_FIXTURES) {
     const fixture = loadV13Fixture(name);
@@ -239,12 +261,34 @@ test("the frozen ledger gives the facts the live ledger gives, on every binding 
       const places = [{ harnessId: "none", controlId: "none", nativeEpoch: 1 }, ...(state.nativeBindings ?? []).map(binding => ({ harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: binding.relay?.epoch ?? 1 })),
         ...state.runs.flatMap(run => run.relay?.executedOn == null ? [] : [run.relay.executedOn])];
       for (const place of places) {
-        assert.deepStrictEqual(new LegacyRelayLedger(read).facts(state, index, place), new RelayLedger(read).facts(state, index, place), name + " " + row.id + " " + JSON.stringify(place));
+        assert.deepStrictEqual(new LegacyRelayLedger(read).facts(state, index, place), new EventRelayLedger(read).facts(state, index, place), name + " " + row.id + " " + JSON.stringify(place));
         compared++;
       }
     }
   }
   assert.ok(compared > 60);
+});
+
+test("the Runtime's ledger reads the Runs' rows and gives the facts the frozen ledger gives, on every binding of every fixture and every place a Run ran (a Run made before v13 is placed by its row)", t => {
+  let compared = 0, legacyPlaced = 0;
+  for (const name of V13_FIXTURES) {
+    const fixture = loadV13Fixture(name), { root, db } = v13Root(t, [fixture]);
+    assert.equal(migrateToV14(db, { root }).stopped, null);
+    for (const row of fixture.sessions) {
+      const state = liveParse(row.snapshot), events = row.events as readonly SessionEvent[], conversation = loadConversation(db, sessionId(row.id));
+      const read = (_id: unknown, after: number, limit: number): readonly SessionEvent[] => events.filter(event => event.seq > after).slice(0, limit);
+      const index: RelayIndexRow[] = fixture.relay.index.filter(entry => entry.session_id === row.id).map(entry => ({ runId: entry.run_id as never, index: JSON.parse(String(entry.index_json)) as Record<string, unknown> }));
+      legacyPlaced += conversation.runs.filter(run => run.executedOn !== undefined).length;
+      // The places: a binding's, every place a Run ran (its own `relay`, or for a Run made before v13 the row's `executedOn` the migration took from the index), and one nothing ran at.
+      const places = [{ harnessId: "none", controlId: "none", nativeEpoch: 1 }, ...(state.nativeBindings ?? []).map(binding => ({ harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: binding.relay?.epoch ?? 1 })),
+        ...state.runs.flatMap(run => run.relay?.executedOn == null ? [] : [run.relay.executedOn]), ...conversation.runs.flatMap(run => run.executedOn === undefined ? [] : [run.executedOn])];
+      for (const place of places) {
+        assert.deepStrictEqual(new RelayLedger().facts(conversation, place), new LegacyRelayLedger(read).facts(state, index, place), name + " " + row.id + " " + JSON.stringify(place));
+        compared++;
+      }
+    }
+  }
+  assert.ok(compared > 60); assert.ok(legacyPlaced > 0, "the fixtures hold Runs made before v13, which only their rows place");
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -715,6 +759,21 @@ test("the readers of a database that is being converted see version 14 with rows
   assert.deepEqual(migrationState(reader), { kind: "done" });
 });
 
+test("the notices a conversation showed before it was converted are marked as shown, so that a Harness started again after the upgrade does not show them twice", t => {
+  const fixture = loadV13Fixture("tools"), { root, db } = v13Root(t, [fixture]);
+  const expected = fixture.sessions.flatMap(row => {
+    const notices = liveParse(row.snapshot).runs.flatMap(run => run.notices ?? []);
+    return [...new Set(notices.map(notice => noticePrint(notice)))].map(print => row.id + " " + print);
+  }).sort();
+  assert.ok(expected.length >= 3, "the fixture has notices of every severity");
+  assert.equal(migrateToV14(db, { root }).stopped, null);
+  assert.deepEqual(db.prepare("SELECT session_id, print FROM notice_prints").all().map(row => row.session_id + " " + row.print).sort(), expected);
+  // A conversation that showed none has none.
+  const quiet = v13Root(t, [loadV13Fixture("switches")]);
+  migrateToV14(quiet.db, { root: quiet.root });
+  assert.equal(count(quiet.db, "SELECT COUNT(*) AS n FROM notice_prints"), 0);
+});
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 // The backup and the space
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -745,19 +804,18 @@ test("the backup of an older version is named by that version and replaced by an
   assert.throws(() => backupBeforeV14(db, 14, { root }), codeOf("INVALID_INPUT"));
 });
 
-test("the store's rotation of its own migration backups does not take this one", t => {
-  // The live store (still v13's) trims the backups of its migrations to the newest two; the backup of this migration is not among those it recognizes.
+test("the store trims no backup: those of the migrations before stay, and this one is kept besides", t => {
+  // The store of v13 trimmed the backups of its migrations to the newest two; the store of tables makes none of them, and so rotates none: they are their owner's.
   const directory = temporary(t), root = join(directory, "data");
   writeV12Root(root, [loadV12Fixture("d1")]);
   const folder = join(root, "backups");
   mkdirSync(folder, { mode: 0o700 });
-  const mine = join(folder, BACKUP);
-  writeFileSync(mine, "the v13 backup of an earlier attempt"); chmodSync(mine, 0o600);
   const old = ["20260101T000000Z-aaaaaaaa", "20260102T000000Z-bbbbbbbb", "20260103T000000Z-cccccccc"].map(stamp => join(folder, "gateway-v11-" + stamp + ".sqlite"));
   for (const path of old) { writeFileSync(path, "an old backup"); chmodSync(path, 0o600); }
-  new SqliteSessionStore(root, { now: () => new Date("2026-11-13T00:00:00.000Z") }).close();
-  assert.ok(existsSync(mine), "the backup of the v14 migration is still there");
-  assert.deepEqual(old.map(path => existsSync(path)), [false, false, true], "the store trimmed its own backups to make room for the one it took, and no more");
+  appStore(root, { now: () => new Date("2026-11-13T00:00:00.000Z") }).close();
+  assert.ok(existsSync(join(folder, "gateway-v12-before-v14.sqlite")), "the backup of the v14 migration is there, at the version the database was");
+  assert.deepEqual(old.map(path => existsSync(path)), [true, true, true], "the backups of the earlier migrations are as they were");
+  assert.ok(statSync(join(folder, "gateway-v12-before-v14.sqlite")).size > "an old backup".length, "and the new one is a copy of the database");
 });
 
 test("a backup that cannot be made means no migration: the database is as it was, version and rows", t => {

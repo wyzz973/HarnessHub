@@ -9,7 +9,7 @@ import type { Socket } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { type SessionEvent, type SessionId } from "../../src/contracts/session.js";
-import { SqliteSessionReader } from "../../src/infrastructure/session/sqlite-store.js";
+import { SqliteSessionReader } from "../../src/infrastructure/session/session-reader.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { guardTest, snapshot, standaloneHeader, type SuiteEvidence } from "./guard.js";
 
@@ -176,7 +176,7 @@ test("real Codex preserves public history across two turns and a new formal chat
     let id: SessionId;
     const reader = new SqliteSessionReader(data);
     try {
-      const list = reader.list(); assert.equal(list.length, 1); const state = list[0]!; id = state.id;
+      const list = reader.list(10); assert.equal(list.length, 1); const state = reader.get(list[0]!.id); id = state.id;
       assert.equal(state.status, "open"); assert.equal(state.runs.length, 2); assert.ok(state.runs.every(run => run.status === "completed" && run.cleanup?.closed));
       assert.deepEqual(state.messages.map(message => message.text), [PROMPTS[0], ANSWERS[0], PROMPTS[1], ANSWERS[1]]);
       assert.ok(!JSON.stringify(state).includes(DUMMY_KEY), "synthetic Provider key was persisted in public state");

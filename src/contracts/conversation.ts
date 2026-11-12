@@ -1,6 +1,6 @@
 import type { ContextEffect } from "./control.js";
 import type { ItemStatus, ItemType, ProtocolItem } from "./protocol.js";
-import type { DeliveryRecord, ExecutedOn, RelayPacket, RelayRecovery, RelayRows } from "./relay.js";
+import type { DeliveryRecord, ExecutedOn, RelayPacket, RelayRecoveredDelivery, RelayRows } from "./relay.js";
 import type {
   CommandId, CommandRecord, EventDraft, ForkedMessage, HarnessSelection, PublicMessage, NativeSessionBinding, PublicRun, PublicSwitch, RetainedProcess, RunId,
   RunStatus, SessionConfiguration, SessionEvent, SessionId, SessionSnapshot, SwitchId,
@@ -224,6 +224,14 @@ export interface ConversationRun extends Omit<PublicRun, "thinking" | "tools" | 
   readonly settledEffect?: ContextEffect;
   readonly acknowledgedBy?: SwitchId;
   readonly legacyOrder?: true;
+  /**
+   * Where a Run made before v13 ran: its row's `executed_*` columns, which the migration filled from the relay's index because the Run has no `relay` of its
+   * own. Present only for such a Run (a Run with a `relay` says where it ran in `relay.executedOn`); it is here so that the row a Run is written back as is the row
+   * it was read from (a terminal Run whose acknowledgement is written must not lose a column), and so that the relay's facts need no index.
+   */
+  readonly executedOn?: ExecutedOn;
+  /** The lists the old Run held and that were empty (`RunFacts.emptyLists`), kept so that the Run's `run_json` is written back as it was read. */
+  readonly emptyLists?: RunFacts["emptyLists"];
   readonly items?: readonly HeldItem[];
 }
 
@@ -428,8 +436,10 @@ export interface StartupSample { readonly harnessId: string; readonly controlId:
  * transaction that claims the owner generation); null when nothing changes. Given to the store, not imported by it: the store knows no rule of the domain.
  */
 export type RecoverConversation = (current: Conversation) => ConversationMutation | null;
-/** The relay's part of that recovery (`RecoverRelay` over the new shape): called for each conversation the recovery changes, in a savepoint of its own. */
-export type RecoverConversationRelay = (current: Conversation, deliveries: readonly DeliveryRecord[], packets?: readonly RelayPacket[]) => RelayRecovery | null;
+/** What the relay's part of recovery changes: the conversation with its bindings' relay states recovered, and the deliveries to decide. */
+export interface ConversationRelayRecovery { readonly next: Conversation; readonly deliveries: readonly RelayRecoveredDelivery[] }
+/** The relay's part of that recovery: given a conversation as `RecoverConversation` left it and its delivery rows, the conversation with its bindings' relay state recovered and the deliveries to decide; null when nothing changes. Pure and synchronous; called for each conversation the recovery changes, in a savepoint of its own (`packets` are the conversation's packet manifests: the range of a packet that was in flight comes from its manifest). */
+export type RecoverConversationRelay = (current: Conversation, deliveries: readonly DeliveryRecord[], packets?: readonly RelayPacket[]) => ConversationRelayRecovery | null;
 /**
  * What the store of stage 1 is opened with. Opening a data root converts what is not converted yet (ADR-057 3.6: backup first, conversation by conversation,
  * each checked; a conversation that does not pass stops the start and nothing runs on a store half trusted), then recovers. `verify` is the whole-conversation

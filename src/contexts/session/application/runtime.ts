@@ -1,14 +1,19 @@
 import { createHash } from "node:crypto";
 import { parseProviderTarget } from "../../../contracts/provider.js";
-import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeToolDetail, type NativeUsage } from "../../../contracts/control.js";
-import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
+import { listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeUsage } from "../../../contracts/control.js";
+import { MAX_RUN_ATTACHMENTS, type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
+import { CONVERSATION_FORMAT, type Conversation, type ConversationCommit, type ConversationMutation, type ConversationRun, type ConversationStore, type HeldItem } from "../../../contracts/conversation.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, STOP_GRACE_MS, STREAM_WINDOW_BYTES, STREAM_WINDOW_MS,
   type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type OutsideEvidence, type OutsideProcess, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
-  type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
-  type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
+  type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionConfiguration,
+  type SessionId, type SessionEvent, type SessionRuntimeOptions, type SessionSnapshot, type SwitchReceipt,
 } from "../../../contracts/session.js";
 import { buildPublicContext, type PublicContext, type PublicContextOptions } from "../domain/context.js";
+import { assertConversationTransition, inputOf, runIn, settledItems, updatedRun, userItemOf, withItems } from "../domain/conversation-state.js";
+import { itemsOf, openTurn, place, takeDetails, type ActiveTurn, type PlaceInput, type Placed, type StoreRequest, type TerminalStatus } from "../domain/items-place.js";
+import { runRowOf } from "../domain/run-row.js";
+import { originToRows } from "../domain/store-conversion.js";
 import { parseToolDetail, type RelayToolDetail } from "../domain/relay/narration.js";
 import { toolFamily } from "../domain/protocol/index.js";
 import { commandEffect, commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
@@ -27,7 +32,7 @@ import {
   rangeOf, recordedStep, relayDeclaration, relaySettings, renderView, runRelayOf, runRelayRequest, settleTurn, undeclaredReading,
   type RelayChoices, type RelayDeclaration, type RelaySettings, type SettledTurn, type TurnDecision,
 } from "./relay-coordinator.js";
-import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_PLAN_ENTRIES, MAX_RUNS, MAX_RUN_ACTIVITIES, MAX_RUN_NOTICES, MAX_RUN_TOOLS, assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
+import { MAX_OUTPUT_BYTES, assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
 
 interface ActiveExecution {
   readonly sessionId: SessionId;
@@ -38,9 +43,11 @@ interface ActiveExecution {
   backendSettled: boolean;
   stop: Promise<void> | null;
   earlyClose: Promise<CleanupEvidence> | null;
-  /** Latest bounded native tool details, kept in memory until stored as content. */
-  readonly details: Map<string, NativeToolDetail>;
-  readonly dirty: Set<string>;
+  /**
+   * The Turn in progress (items-place.ts): the items it has written so far, in the order its Harness reported them, with the details of its calls that wait to be stored
+   * as content. Opened from the Run's own items the first time it is needed; advanced by `place`, and only once the commit that wrote what it placed stood.
+   */
+  turn: ActiveTurn | null;
   /** Sequential content writes owned by this Turn; drained before its binding closes. */
   writes: Promise<void>;
   writeFailure: unknown;
@@ -60,9 +67,9 @@ interface ActiveExecution {
   /**
    * What the program streamed and this Turn has not committed yet (ADR-047): one window of reply text or thinking, the UTF-8
    * bytes of that kind as they stand once the window is committed (`committedBytes` of them were committed before it; `last`
-   * is the final UTF-16 code unit, so a pair split between chunks is counted once), and the window's timer, owned by the Turn.
+   * is the final UTF-16 code unit, so a pair split between chunks is counted once), the time its first chunk arrived, and the window's timer, owned by the Turn.
    */
-  readonly stream: { kind: "text" | "thinking" | null; text: string; committedBytes: number; bytes: number; last: string; cancel: (() => void) | null };
+  readonly stream: { kind: "text" | "thinking" | null; text: string; committedBytes: number; bytes: number; last: string; at: number; cancel: (() => void) | null };
   /** A window refused outside a driver callback (by its timer, a stop or a close); reported as the Turn's failure. */
   streamFailure: unknown;
   /** The Turn's relay (ADR-055 §6.1, §7; G068 phase two): what it checked, sent and saw recorded, until its end commits it. */
@@ -100,27 +107,8 @@ function sameSelection(left: HarnessSelection, right: HarnessSelection): boolean
   return left.harnessId === right.harnessId && left.controlId === right.controlId && JSON.stringify(left.provider ?? null) === JSON.stringify(right.provider ?? null)
     && (left.nativeModel ?? null) === (right.nativeModel ?? null) && JSON.stringify(Object.entries(left.nativeOptions ?? {}).sort()) === JSON.stringify(Object.entries(right.nativeOptions ?? {}).sort());
 }
-const TERMINAL_TOOL = new Set(["completed", "failed", "declined", "cancelled", "interrupted", "error"]);
 /** Run statuses of a Turn not yet settled: it is queued, waits for a slot or workspace, or runs. */
 const OPEN_RUN = new Set<PublicRun["status"]>(["queued", "preparing", "running", "settling"]);
-/** Byte-bounded UTF-8 text; the tail is kept for streams whose end carries the result. */
-function bounded(value: string, maximum: number, tail = false): { readonly text: string; readonly cut: boolean } {
-  const bytes = Buffer.from(value, "utf8");
-  if (bytes.length <= maximum) return { text: value, cut: false };
-  const slice = tail ? bytes.subarray(bytes.length - maximum) : bytes.subarray(0, maximum);
-  return { text: new TextDecoder("utf-8", { fatal: false }).decode(slice).replace(/^\uFFFD|\uFFFD$/gu, ""), cut: true };
-}
-function mergeDetail(prior: NativeToolDetail | undefined, next: NativeToolDetail): NativeToolDetail {
-  let cut = prior?.truncated === true || next.truncated === true;
-  const field = (value: string | undefined, fallback: string | undefined, maximum: number, tail = false): string | undefined => {
-    if (value === undefined) return fallback; const result = bounded(value, maximum, tail); cut ||= result.cut; return result.text;
-  };
-  const input = field(next.input, prior?.input, TOOL_INPUT_BYTES), output = field(next.output, prior?.output, TOOL_OUTPUT_BYTES, true), diff = field(next.diff, prior?.diff, TOOL_DIFF_BYTES);
-  const locations = (next.locations ?? prior?.locations)?.slice(0, 16).map(path => bounded(path, 1024).text);
-  const kind = next.kind ?? prior?.kind, name = next.name ?? prior?.name, parentId = next.parentId ?? prior?.parentId, exitCode = next.exitCode ?? prior?.exitCode;
-  return { ...(kind === undefined ? {} : { kind: kind.slice(0, 64) }), ...(name === undefined ? {} : { name: name.slice(0, 256) }), ...(input === undefined ? {} : { input }), ...(output === undefined ? {} : { output }),
-    ...(diff === undefined ? {} : { diff }), ...(locations === undefined ? {} : { locations }), ...(exitCode === undefined ? {} : { exitCode }), ...(parentId === undefined ? {} : { parentId: parentId.slice(0, 512) }), ...(cut ? { truncated: true } : {}) };
-}
 /** Event-log form of a native event: summaries only, never stored bytes or large previews. */
 function logged(value: ControlEvent): ControlEvent | Readonly<Record<string, unknown>> {
   if (value.type === "tool") { const { detail, ...summary } = value; return detail === undefined ? summary : { ...summary, ...(detail.kind === undefined ? {} : { kind: detail.kind }), ...(detail.name === undefined ? {} : { name: detail.name }), ...(detail.exitCode === undefined ? {} : { exitCode: detail.exitCode }), ...(detail.parentId === undefined ? {} : { parentId: detail.parentId }) }; }
@@ -147,8 +135,6 @@ function requested(value: SelectionRequest): SelectionRequest {
     ...(value.provider === undefined ? {} : { provider: value.provider === null ? null : parseProviderTarget(value.provider) }),
     ...(value.nativeModel === undefined ? {} : { nativeModel: value.nativeModel }), ...(value.nativeOptions === undefined ? {} : { nativeOptions: parseNativeOptions(value.nativeOptions) }) };
 }
-/** Quoted native history of a continued session: well inside the 1 MiB public context, so its branches still fit. */
-const MAX_IMPORTED_MESSAGES = 200, MAX_IMPORTED_BYTES = 512 * 1024;
 function fault(error: unknown): { readonly code: string; readonly message: string } {
   if (error instanceof SessionError) return { code: error.code.slice(0, 128), message: error.message.slice(0, 512) };
   const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.slice(0, 128) : "CONTROL_FAILED";
@@ -156,9 +142,19 @@ function fault(error: unknown): { readonly code: string; readonly message: strin
 }
 /** How much of a Turn's stderr is kept for its diagnostics, and for how many Turns. */
 const RUN_DIAGNOSTIC_BYTES = 4096, MAX_RUN_DIAGNOSTICS = 64;
-/** A commit's failure that fails only what asked for it (INV-35: a relay error; a bound), never the Runtime. */
-function expectedFailure(error: unknown): boolean {
-  return error instanceof RelayError || error instanceof SessionError && ["OUTPUT_LIMIT", "QUEUE_FULL", "COMMAND_LIMIT", "RUN_LIMIT", "SESSION_LIMIT", "EVENT_LIMIT"].includes(error.code);
+/**
+ * The failures that say the store cannot be trusted (ADR-057 1.5): the storage itself (a broken or changed file, a closed store, any error of the database that
+ * is not a rule of the rows), who owns the store (another process, a lost owner generation), and the version of the conversation (a write that lost its race).
+ * Only these fail the Runtime. A check that fails on the rows a commit wrote (INVALID_DATA, INVALID_TRANSITION), a relay error and a bound (`*_LIMIT`) are the
+ * request's or the Turn's own: they end that one Turn or that one request, told in the conversation, and the Runtime goes on.
+ */
+const UNTRUSTED_STORE = new Set(["STORAGE_UNAVAILABLE", "STORAGE_CHANGED", "INVALID_STORAGE", "STORAGE_BACKUP_FAILED", "STORE_CLOSED", "OWNER_LOST", "OWNER_BUSY", "OWNER_UNCONFIRMED", "OWNERSHIP_LOST",
+  "WORKSPACE_OWNERSHIP_LOST", "VERSION_CONFLICT", "PUBLICATION_FAILED"]);
+function storeUntrusted(error: unknown): boolean {
+  if (error instanceof RelayError) return false;
+  if (error instanceof SessionError) return UNTRUSTED_STORE.has(error.code);
+  // Anything else is not a rule of ours: a raw error of the database, or of this code. It is not known to be harmless.
+  return true;
 }
 /** Why a switch fails when the Turn it waited for ended without confirmed settlement (ADR-055 §9, RT2-04). */
 const STRANDED_SWITCH = { code: "SWITCH_SOURCE_UNKNOWN", message: "the Turn this switch waited for ended without confirmed settlement; the switch was not applied" } as const;
@@ -213,18 +209,18 @@ function after(ms: number, fn: () => void): () => void {
 /** The marks of a Turn's working time at which it says it goes on (10 min, 30 min, 1 h, 2 h, 4 h, 8 h, then again every 8 h), and how long its Harness may be quiet before the hint says so. */
 const WORKING_HINTS_MS: readonly number[] = [10, 30, 60, 120, 240, 480].map(minutes => minutes * 60_000);
 const QUIET_NOTE_MS = 5 * 60_000;
-/** Adds a notice of the Hub itself to a Run, within the Run's notice budget. */
-function withNotice(state: SessionSnapshot, id: string, notice: PublicNotice): SessionSnapshot {
-  const run = state.runs.find(item => item.id === id);
-  if (run === undefined || (run.notices ?? []).length >= MAX_RUN_NOTICES) return state;
-  return updatedRun(state, id, { notices: [...(run.notices ?? []), notice] });
+/** The Runs of a conversation with each unknown one that the switch `by` covers acknowledged by it (once: one that has been is left as it is). */
+function acknowledged(state: Conversation, by: string): readonly ConversationRun[] {
+  const covers = new Set(state.switches.find(entry => entry.id === by)?.sourceRunIds ?? []);
+  return state.runs.map(run => run.status === "unknown" && run.acknowledgedBy === undefined && covers.has(run.id) ? { ...run, acknowledgedBy: switchId(by) } : run);
 }
-function updatedRun(state: SessionSnapshot, id: string, patch: Partial<PublicRun>): SessionSnapshot {
-  const prior = state.runs.find(run => run.id === id);
-  if (!prior) throw new SessionError("IDENTITY_MISMATCH", "Run is not owned by this Session");
-  const next = { ...prior, ...patch };
-  return { ...state, runs: state.runs.map(run => run.id === id ? next : run),
-    messages: state.messages.map(message => message.runId === id ? { ...message, status: next.status } : message) };
+/** A notice of the Hub itself as the placement takes it (not a Harness's, so it is not kept out as a repeat). */
+function hubNotice(notice: PublicNotice, at: number): PlaceInput {
+  return { kind: "notice", severity: notice.severity === "warning" ? "warning" : "info", title: notice.title, ...(notice.detail === undefined ? {} : { detail: notice.detail }), at };
+}
+/** Whether a placement wrote any row (an item, text, a content reference or a notice fingerprint): when it did not, there is nothing to commit for it. */
+function wroteRows(changes: Placed["changes"]): boolean {
+  return (changes.items?.length ?? 0) > 0 || (changes.text?.length ?? 0) > 0 || (changes.contentRefs?.length ?? 0) > 0 || (changes.noticePrints?.length ?? 0) > 0;
 }
 function event(type: string, data: Readonly<Record<string, unknown>>): EventDraft { return { type, data }; }
 /** Native events that the user sees in the conversation; the first of them marks the Run's first output. */
@@ -233,8 +229,8 @@ const VISIBLE_OUTPUT = new Set<ControlEvent["type"]>(["text", "thinking", "tool"
  * The Run patch that records one more phase at `now`, never before a phase already recorded (a clock that steps back keeps
  * the order). A Run without timing (accepted before Session v10) and a phase already recorded stay as they are.
  */
-function phase(state: SessionSnapshot, id: PublicRun["id"], name: Exclude<keyof RunTiming, "acceptedAt">, now: number): Partial<PublicRun> {
-  const timing = state.runs.find(run => run.id === id)?.timing;
+function phase(state: Conversation, id: PublicRun["id"], name: Exclude<keyof RunTiming, "acceptedAt">, now: number): Partial<ConversationRun> {
+  const timing = runIn(state, id)?.timing;
   if (timing === undefined || timing[name] !== undefined) return {};
   return { timing: { ...timing, [name]: Math.max(now, ...Object.values(timing).filter((value): value is number => typeof value === "number")) } };
 }
@@ -262,6 +258,8 @@ export class SessionRuntime {
   private readonly closingSessions = new Set<SessionId>();
   private readonly managedSessions = new Set<SessionId>();
   private readonly creating = new Set<Promise<SessionSnapshot>>();
+  /** Whether a conversation started from quoted history (a branch's, an import's), read once per process for an import: what a binding is owed besides the Turns. */
+  private readonly quoted = new Map<SessionId, boolean>();
   /** Conversations with work their worker has not taken yet (ADR-036). */
   private readonly work = new Set<SessionId>();
   /** Callers of `wait` whose conversation's work is not taken yet; woken after every scheduling pass. */
@@ -293,10 +291,13 @@ export class SessionRuntime {
     const command=commandId(key);
     if (!/^permission-[A-Za-z0-9-]{1,96}$/u.test(permission) || typeof option!=="string" || !option || option.length>1024 || /[\0\r\n]/u.test(option)) throw new SessionError("INVALID_INPUT","invalid native permission decision");
     if (input !== undefined && (typeof input !== "string" || input.includes("\0"))) throw new SessionError("INVALID_INPUT", "invalid native input response");
-    const state = this.load(id), fingerprint=this.fingerprint({kind:"permission",permission,option,...(input===undefined?{}:{input})}), prior=replayCommand(state,command,"permission",fingerprint);
+    const state = this.load(id), pending = this.permissions.get(permission);
+    // A secret the user typed is kept nowhere: not in the item, not in the event, and not in the command's fingerprint, which is a bare digest of the request that a
+    // guess could be checked against. The fingerprint of a secret answer is the decision's alone; a replay of the same key finds it so.
+    const secret = pending?.request.input?.kind === "secret", bare = this.fingerprint({kind:"permission",permission,option}), full = input === undefined ? bare : this.fingerprint({kind:"permission",permission,option,input});
+    const recorded = state.commands.find(entry => entry.id === command);
+    const fingerprint = recorded !== undefined && recorded.fingerprint === bare ? bare : secret ? bare : full, prior=replayCommand(state,command,"permission",fingerprint);
     if (prior) return {replayed:true};
-    this.commandBudget(state);
-    const pending = this.permissions.get(permission);
     if (!pending || pending.execution.sessionId !== id || !pending.request.options.some(value => value.id === option)) throw new SessionError("PERMISSION_UNAVAILABLE", "native permission or option is no longer pending");
     if(input!==undefined&&(!pending.request.input||input.includes("\0")))throw new SessionError("INVALID_INPUT","invalid native input response");
     if (pending.option !== null) { if (pending.option === option && pending.command === key) return { replayed: true }; throw new SessionError("PERMISSION_CONFLICT", "native permission has already been decided"); }
@@ -304,7 +305,10 @@ export class SessionRuntime {
     const control = pending.execution.binding?.control;
     if (!control?.decidePermission) throw new SessionError("UNSUPPORTED_PERMISSION", "native approval is unavailable");
     pending.option = option; pending.command = key; pending.request = { ...pending.request, decided: true };
-    try { this.commit(id, current => ({ next: { ...current, commands:[...current.commands,{id:command,kind:"permission",fingerprint,resultId:pending.execution.runId}] }, events: [event("permission.decided", { permissionId: permission, runId: pending.execution.runId, optionId: option, commandId: key })] })); }
+    // The decision is written in the item that waited (who decided, and what), with the command and the event, in one commit.
+    try { this.placed(pending.execution, { kind: "decided", id: pending.nativeId, option, ...(input === undefined || secret ? {} : { input }), by: "user", at: this.options.now().getTime() },
+      [event("permission.decided", { permissionId: permission, runId: pending.execution.runId, optionId: option, commandId: key })],
+      { patch: current => ({ ...current, commands: [...current.commands, { id: command, kind: "permission", fingerprint, resultId: pending.execution.runId }] }), always: true }); }
     catch(error) { pending.option=null;pending.command=null;pending.request={...pending.request,decided:false};throw error; }
     this.leaveWait(pending.execution);
     await control.decidePermission(pending.nativeId, option, input); this.owned(pending.execution);
@@ -319,8 +323,8 @@ export class SessionRuntime {
   private recordingBlock = false;
   private shutdown: Promise<void> | null = null;
 
-  /** The facts each conversation's events place (ADR-055 §2), read incrementally by this owner. */
-  private readonly ledger: RelayLedger;
+  /** The public facts a conversation's Runs place (ADR-055 §2; ADR-057 3.3): read from the Runs' rows. */
+  private readonly ledger = new RelayLedger();
   /**
    * The keyed digests of delivery rows and of a request's relay options (ADR-055 §10.2): the installation's relay key the
    * composition gives (relay-keys.ts), else one this owner keeps in memory only (UnkeptRelayKeys, rows named EPHEMERAL_KEY_ID).
@@ -332,8 +336,7 @@ export class SessionRuntime {
    * reads them (G068 fix batch, R8): an ordinary Turn reads no event for them. A Turn accepted by an earlier owner reads its event.
    */
   private readonly acceptedRelay = new Map<string, RelayChoices>();
-  constructor(private readonly store: SessionStore, private readonly factory: SessionBindingFactory, private readonly options: SessionRuntimeOptions) {
-    this.ledger = new RelayLedger((id, after, limit) => this.store.events(id, after, limit));
+  constructor(private readonly store: ConversationStore, private readonly factory: SessionBindingFactory, private readonly options: SessionRuntimeOptions) {
     this.relayKeys = options.relayKeys ?? new UnkeptRelayKeys();
   }
 
@@ -351,22 +354,23 @@ export class SessionRuntime {
     const config = parseConfiguration(configuration), request = requested(selection), command = commandId(key);
     const fingerprint = this.fingerprint({ kind: "create", configuration: config, selection: request });
     const prior = this.store.findByCreateKey(command);
-    if (prior) { replayCommand(prior, command, "create", fingerprint); return prior; }
+    if (prior) { replayCommand(prior, command, "create", fingerprint); return this.snapshotOf(prior.id); }
     const validated = await this.factory.validate(request, config);
     this.admit();
     // Validation has an await boundary; another create may have committed the same command in the meantime.
     const concurrent = this.store.findByCreateKey(command);
-    if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return concurrent; }
+    if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return this.snapshotOf(concurrent.id); }
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 13, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const state: Conversation = { id, version: 0, lastSeq: 0, format: CONVERSATION_FORMAT, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
-      runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
+      runs: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
     try {
       const committed = this.store.create(state, [event("session.created", { selection: validated, continuity: "public_context_rehydrate" })]);
-      this.managedSessions.add(committed.session.id);
-      return this.publish(committed).session;
+      this.managedSessions.add(committed.conversation.id);
+      this.publish(committed);
+      return this.snapshotOf(id);
     }
-    catch (error) { this.fail(error, id); throw error; }
+    catch (error) { if (storeUntrusted(error)) this.fail(error, id); throw error; }
   }
 
   /**
@@ -390,7 +394,7 @@ export class SessionRuntime {
     if (request.provider != null) throw new SessionError("INVALID_INPUT", "a native session continues with its own Harness, not a managed Provider");
     const fingerprint = this.fingerprint({ kind: "import", configuration: config, selection: request, nativeId });
     const replay = () => { const prior = this.store.findByCreateKey(command); if (prior) replayCommand(prior, command, "create", fingerprint); return prior; };
-    const prior = replay(); if (prior) return prior;
+    const prior = replay(); if (prior) return this.snapshotOf(prior.id);
     const validated = await this.factory.validate(request, config);
     this.admit();
     if (validated.provider !== undefined) throw new SessionError("INVALID_INPUT", "a native session continues with its own Harness, not a managed Provider");
@@ -402,31 +406,26 @@ export class SessionRuntime {
     held(nativeId);
     const read = await this.factory.readNativeSession(validated, config, nativeId);
     this.admit();
-    const concurrent = replay(); if (concurrent) return concurrent;
+    const concurrent = replay(); if (concurrent) return this.snapshotOf(concurrent.id);
     const checkpoint = read.checkpoint;
     if (typeof checkpoint !== "string" || !checkpoint || Buffer.byteLength(checkpoint) > 8192 || /[\0\r\n]/u.test(checkpoint)) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "invalid original Harness recovery reference");
     held(checkpoint);
-    // The newest messages are quoted within a budget that leaves room for this conversation's own branches.
-    const quoted: ForkedMessage[] = []; let bytes = 2, omitted = Number.isSafeInteger(read.omitted) && read.omitted > 0 ? read.omitted : 0;
-    const history = read.historyRead ? read.history : [];
-    for (let index = history.length - 1; index >= 0; index--) {
-      const entry = history[index]!, message: ForkedMessage = { role: entry.role, text: entry.text, status: "completed", ...(entry.role === "assistant" ? { harnessId: validated.harnessId } : {}) };
-      const size = utf8Bytes(JSON.stringify(message)) + 1;
-      if (quoted.length >= MAX_IMPORTED_MESSAGES || bytes + size > MAX_IMPORTED_BYTES) { omitted += index + 1; break; }
-      quoted.unshift(message); bytes += size;
-    }
+    // Every message the native session returned is quoted: the Hub holds no count or size of it (what the Driver could not read is `omitted`, told as it is).
+    const omitted = Number.isSafeInteger(read.omitted) && read.omitted > 0 ? read.omitted : 0;
+    const quoted: ForkedMessage[] = (read.historyRead ? read.history : []).map(entry => ({ role: entry.role, text: entry.text, status: "completed" as const, ...(entry.role === "assistant" ? { harnessId: validated.harnessId } : {}) }));
     const title = typeof read.title === "string" && read.title.trim() ? read.title.replace(/[\0-\x1f\x7f]+/gu, " ").trim().slice(0, 200) : null;
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 13, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: config, selection: validated,
-      activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
-      origin: { kind: "import", harnessId: validated.harnessId, title, omitted, complete: read.historyRead === true && read.complete === true, historyRead: read.historyRead === true, history: quoted },
+    const parts = originToRows(id, { kind: "import", harnessId: validated.harnessId, title, omitted, complete: read.historyRead === true && read.complete === true, historyRead: read.historyRead === true, history: quoted }, 0);
+    const state: Conversation = { id, version: 0, lastSeq: 0, format: CONVERSATION_FORMAT, epoch: 1, status: "open", configuration: config, selection: validated,
+      activeRunId: null, pendingSwitchId: null, runs: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }], origin: parts.stored,
       nativeBindings: [{ harnessId: validated.harnessId, controlId: validated.controlId, checkpoint, throughRunId: null, status: "ready", relay: initialBindingRelay([], validated.harnessId, validated.controlId, "import") }] };
     try {
       const committed = this.store.create(state, [event("session.created", { selection: validated, continuity: "native_import",
-        origin: { harnessId: validated.harnessId, messages: quoted.length, omitted, historyRead: read.historyRead === true } })]);
+        origin: { harnessId: validated.harnessId, messages: quoted.length, omitted, historyRead: read.historyRead === true } })], parts.rows);
       this.managedSessions.add(id);
-      return this.publish(committed).session;
-    } catch (error) { this.fail(error, id); throw error; }
+      this.publish(committed);
+      return this.snapshotOf(id);
+    } catch (error) { if (storeUntrusted(error)) this.fail(error, id); throw error; }
   }
 
   /**
@@ -445,35 +444,36 @@ export class SessionRuntime {
     const command = commandId(key), fingerprint = this.fingerprint({ ...(attachmentIds.length ? { kind: "send", text, attachments: attachmentIds } : { kind: "send", text }), ...(choices === undefined ? {} : { relay: choices }) }), state = this.load(id);
     const prior = replayCommand(state, command, "send", fingerprint);
     if (prior) return { sessionId: id, runId: runId(prior.resultId), replayed: true };
-    this.open(state); this.commandBudget(state);
+    this.open(state);
     let attachments: readonly ContentRef[] = [];
     if (attachmentIds.length) {
       if (this.options.content === undefined) throw new SessionError("ATTACHMENT_UNAVAILABLE", "this Gateway has no content storage for attachments");
       attachments = this.options.content.resolve(attachmentIds, state.configuration.workspace);
     }
-    if (state.runs.length >= MAX_RUNS) throw new SessionError("RUN_LIMIT", "Session Run budget exhausted");
     // A key that cannot be used never stops an input (one sent alone included): its choice is then fingerprinted under a key
     // kept in memory only (EPHEMERAL_KEY_ID, not checkable), and any packet it would carry fails at its own preparation.
     let relayRequest: ReturnType<typeof runRelayRequest>;
     try { relayRequest = runRelayRequest(id, choices, this.relayKeys); }
     catch (error) { if (!(error instanceof RelayError)) throw error; relayRequest = runRelayRequest(id, choices, this.unkeptKeys); }
     const nextId = runId("run-" + this.options.id()), userId = messageId("message-" + this.options.id()), assistantId = messageId("message-" + this.options.id());
-    const run: PublicRun = { id: nextId, commandId: command, input: text, userMessageId: userId, assistantMessageId: assistantId,
-      selection: state.selection, epoch: state.epoch, status: "queued", cancelRequested: false, contextThroughSeq: 0,
-      sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: state.pendingSwitchId, ...(attachments.length ? { attachments } : {}),
-      timing: { acceptedAt: this.options.now().getTime() }, ...(relayRequest === undefined ? {} : { relayRequest }) };
+    const acceptedAt = this.options.now().getTime();
     // What this owner found of a process kept under the previous one is shown until the conversation's next Turn.
     this.lost.delete(id); this.outside.delete(id); this.upgraded.delete(id);
-    this.commit(id, current => ({ next: { ...current, runs: [...current.runs, run],
-      messages: [...current.messages, { id: userId, runId: nextId, role: "user", text, seq: current.lastSeq + 1, status: "queued" }],
-      commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] },
-      events: [event("message.accepted", { runId: nextId, messageId: userId, role: "user", text, ...(attachments.length ? { attachments } : {}), ...(choices === undefined ? {} : { relay: choices }), ...(relayRequest === undefined ? {} : { relayRequest }) })] }));
+    this.commit(id, current => {
+      // The input is the Run's first item (its `user` message); the Run's ordinal is its place among the Runs, and its input is the first event of the commit.
+      const run: ConversationRun = { id: nextId, commandId: command, userMessageId: userId, assistantMessageId: assistantId,
+        selection: current.selection, epoch: current.epoch, status: "queued", cancelRequested: false, contextThroughSeq: 0,
+        sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: current.pendingSwitchId, ...(attachments.length ? { attachments } : {}),
+        timing: { acceptedAt }, ...(relayRequest === undefined ? {} : { relayRequest }), ordinal: current.runs.length, userSeq: current.lastSeq + 1, isCommand: false, items: [userItemOf({ id: nextId, userMessageId: userId }, text, acceptedAt)] };
+      return { next: { ...current, runs: [...current.runs, run], commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] },
+        events: [event("message.accepted", { runId: nextId, messageId: userId, role: "user", text, ...(attachments.length ? { attachments } : {}), ...(choices === undefined ? {} : { relay: choices }), ...(relayRequest === undefined ? {} : { relayRequest }) })] };
+    });
     this.acceptedRelay.set(nextId, choices ?? {});
     // Inputs cancelled before they run never read theirs: the oldest go first, so this stays bounded.
     if (this.acceptedRelay.size > 4096) this.acceptedRelay.delete(this.acceptedRelay.keys().next().value!);
     this.schedule(id); return { sessionId: id, runId: nextId, replayed: false };
   }
-  /** The installation's handoff log and preference of a Store that keeps them (SqliteSessionStore); none otherwise. */
+  /** The installation's handoff log and preference of a Store that keeps them (SqliteConversationStore); none otherwise. */
   private relayLog(): Partial<RelayLogPort> | null {
     const store = this.store as Partial<RelayLogPort>;
     return typeof store.relayPrefs === "function" ? store : null;
@@ -497,7 +497,6 @@ export class SessionRuntime {
     const state = this.load(id), prior = replayCommand(state, command, "switch", fingerprint);
     if (prior) return { sessionId: id, switchId: switchId(prior.resultId), replayed: true };
     if (recovery) this.recoverable(state, acknowledgeUnknown); else this.open(state);
-    this.commandBudget(state);
     if (state.pendingSwitchId !== null) throw new SessionError("SWITCH_PENDING", "one switch request is already pending");
     const nextId = switchId("switch-" + this.options.id());
     this.commit(id, current => ({ next: { ...(recovery ? this.cancelPending(current) : current), pendingSwitchId: nextId,
@@ -517,7 +516,8 @@ export class SessionRuntime {
   cancel(id: SessionId, key: string, target?: string): CancelReceipt {
     this.admit(); return this.cancelInternal(id, commandId(key), target === undefined ? undefined : runId(target));
   }
-  read(id: SessionId): SessionSnapshot { return this.load(id); }
+  /** The conversation in the shape the readers that have not moved to items read it in (the store's adapter over the rows, ADR-057 3.3). */
+  read(id: SessionId): SessionSnapshot { this.load(id); return this.snapshotOf(id); }
   /**
    * What each of the conversation's native bindings asks the user to look at now (the read behind the `attention` of `GET …/relay`):
    * worked out from the state the conversation is in at this moment — whether a packet was sent and nothing confirmed it, and whether
@@ -526,8 +526,8 @@ export class SessionRuntime {
    * `attention` null. Never a block: the next input goes whatever this says.
    */
   relayAttention(id: SessionId): readonly { readonly harnessId: string; readonly controlId: string; readonly attention: RelayAttention | null }[] {
-    const state = this.load(id), originHistory = (state.origin?.history.length ?? 0) > 0;
-    const originTurns = Math.max(1, (state.origin?.history ?? []).filter(row => row.role === "user").length);
+    const state = this.load(id), originHistory = this.quotedHistory(state);
+    const originTurns = Math.max(1, !originHistory ? 0 : (this.snapshotOf(id).origin?.history ?? []).filter(row => row.role === "user").length);
     return (state.nativeBindings ?? []).filter(binding => binding.status !== "archived" && binding.relay !== undefined).map(binding => {
       const relay = binding.relay!, h = binding.harnessId, c = binding.controlId;
       const facts = this.relayFacts(state, { harnessId: h, controlId: c, nativeEpoch: relay.epoch });
@@ -551,8 +551,7 @@ export class SessionRuntime {
   resetNative(id: SessionId, key: string, epoch: number): SessionSnapshot {
     this.admit(); const state = this.load(id), command = commandId(key);
     const fingerprint = this.fingerprint({ kind: "native-reset", epoch });
-    if (replayCommand(state, command, "native-reset", fingerprint)) return state;
-    this.commandBudget(state);
+    if (replayCommand(state, command, "native-reset", fingerprint)) return this.snapshotOf(id);
     if (state.status === "closed" || state.activeRunId !== null || state.pendingSwitchId !== null || state.runs.some(run => !terminal(run.status))) throw new SessionError("NATIVE_SESSION_BUSY", "native state can be branched only while idle");
     if (epoch !== state.epoch || state.selection.provider !== undefined) throw new SessionError("NATIVE_SELECTION_CONFLICT", "the selected native Harness changed");
     if (state.runs.some(run => run.status === "unknown" && run.cleanup?.closed !== true)) throw new SessionError("RECOVERY_CLEANUP_REQUIRED", "native resources must be confirmed before branching");
@@ -563,7 +562,7 @@ export class SessionRuntime {
     }, events: [event("native.branch_requested", { harnessId: current.selection.harnessId, controlId: current.selection.controlId, historyPreserved: true, previousBindingPreserved: true })] }));
     // The kept process runs the archived native session; it is closed before the next Turn opens a new one (ADR-030).
     if (this.kept.has(id)) void this.requestRelease(id, "native_reset");
-    return committed.session;
+    return this.snapshotOf(committed.conversation.id);
   }
   /**
    * Branches a Session after a finished Run. The branch quotes the public history through that Run and starts with the
@@ -572,43 +571,45 @@ export class SessionRuntime {
    */
   fork(sourceId: SessionId, key: string, throughRunId?: string): SessionSnapshot {
     this.admit();
-    const source = this.load(sourceId), command = commandId(key);
+    const loaded = this.load(sourceId), command = commandId(key);
     if (throughRunId !== undefined && (typeof throughRunId !== "string" || !/^run-[A-Za-z0-9-]{1,128}$/u.test(throughRunId))) throw new SessionError("INVALID_INPUT", "invalid branch point");
-    const through = throughRunId === undefined ? [...source.runs].reverse().find(run => terminal(run.status)) : source.runs.find(run => run.id === throughRunId);
+    const through = throughRunId === undefined ? [...loaded.runs].reverse().find(run => terminal(run.status)) : loaded.runs.find(run => run.id === throughRunId);
     const fingerprint = this.fingerprint({ kind: "fork", source: sourceId, through: through?.id ?? null });
     const prior = this.store.findByCreateKey(command);
-    if (prior) { replayCommand(prior, command, "create", fingerprint); return prior; }
+    if (prior) { replayCommand(prior, command, "create", fingerprint); return this.snapshotOf(prior.id); }
     if (!through || !terminal(through.status)) throw new SessionError("FORK_UNAVAILABLE", "a branch starts after a finished reply");
-    if (source.activeRunId !== null || source.pendingSwitchId !== null) throw new SessionError("NATIVE_SESSION_BUSY", "wait for the current reply or switch to finish before branching");
-    const last = source.runs.findIndex(run => run.id === through.id), included = new Set(source.runs.slice(0, last + 1).filter(run => terminal(run.status)).map(run => run.id));
+    if (loaded.activeRunId !== null || loaded.pendingSwitchId !== null) throw new SessionError("NATIVE_SESSION_BUSY", "wait for the current reply or switch to finish before branching");
+    // The branch quotes the public history through that Run: its words are read from the rows, in the old shape the quoting was always made from.
+    const source = this.snapshotOf(sourceId), last = source.runs.findIndex(run => run.id === through.id), included = new Set(source.runs.slice(0, last + 1).filter(run => terminal(run.status)).map(run => run.id));
     const history: ForkedMessage[] = [...(source.origin?.history ?? []), ...[...source.messages].filter(message => included.has(message.runId)).sort((a, b) => a.seq - b.seq).map(message => {
       const run = source.runs.find(row => row.id === message.runId)!;
       return { role: message.role, text: message.text, status: run.status, ...(message.role === "assistant" ? { harnessId: run.selection.harnessId } : {}), ...(message.role === "user" && run.attachments?.length ? { attachments: run.attachments } : {}) };
     })];
-    const native = source.selection.provider === undefined ? source.nativeBindings?.find(binding => binding.harnessId === source.selection.harnessId && binding.controlId === source.selection.controlId && binding.status === "ready") : undefined;
+    const native = loaded.selection.provider === undefined ? loaded.nativeBindings?.find(binding => binding.harnessId === loaded.selection.harnessId && binding.controlId === loaded.selection.controlId && binding.status === "ready") : undefined;
     // The native session is exactly at `through` only when no later Turn was dispatched to it, `through` ran in its current
     // native epoch, and the binding is synced with nothing owed up to `through` (ADR-055 §7.5): its native position follows
     // dispatch, so these say that the native session holds the conversation through `through` and nothing else.
-    const nativeFork = native !== undefined && native.throughRunId === through.id && !source.runs.slice(last + 1).some(run =>
-      run.selection.provider === undefined && run.selection.harnessId === native.harnessId && run.selection.controlId === native.controlId && dispatched(run)) && this.exactAt(source, native, through);
+    const nativeFork = native !== undefined && native.throughRunId === through.id && !loaded.runs.slice(last + 1).some(run =>
+      run.selection.provider === undefined && run.selection.harnessId === native.harnessId && run.selection.controlId === native.controlId && dispatched(run)) && this.exactAt(loaded, native, through);
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 13, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: source.configuration, selection: source.selection,
-      activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
-      origin: { kind: "fork", sessionId: sourceId, throughRunId: through.id, history },
+    const parts = originToRows(id, { kind: "fork", sessionId: sourceId, throughRunId: through.id, history }, last);
+    const state: Conversation = { id, version: 0, lastSeq: 0, format: CONVERSATION_FORMAT, epoch: 1, status: "open", configuration: loaded.configuration, selection: loaded.selection,
+      activeRunId: null, pendingSwitchId: null, runs: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
+      origin: parts.stored,
       ...(nativeFork ? { nativeBindings: [{ harnessId: native.harnessId, controlId: native.controlId, checkpoint: native.checkpoint, throughRunId: null, status: "fork-pending" as const,
         relay: initialBindingRelay([], native.harnessId, native.controlId, "fork") }] } : {}) };
     try {
-      const committed = this.store.create(state, [event("session.created", { selection: state.selection, continuity: nativeFork ? "native_fork" : "public_context_rehydrate", origin: { sessionId: sourceId, throughRunId: through.id, messages: history.length, nativeFork } })]);
+      const committed = this.store.create(state, [event("session.created", { selection: state.selection, continuity: nativeFork ? "native_fork" : "public_context_rehydrate", origin: { sessionId: sourceId, throughRunId: through.id, messages: history.length, nativeFork } })], parts.rows);
       this.managedSessions.add(id); this.publish(committed);
       // The source's kept process holds the native session the branch forks; it is closed first (ADR-030).
       if (this.kept.has(sourceId)) void this.requestRelease(sourceId, "branched");
       if (nativeFork) this.schedule(id);
-      return committed.session;
-    } catch (error) { this.fail(error, id); throw error; }
+      return this.snapshotOf(id);
+    } catch (error) { if (storeUntrusted(error)) this.fail(error, id); throw error; }
   }
   /** Whether a binding's native session holds exactly the conversation through `through` (relay-coordinator nativeExactAt). */
-  private exactAt(state: SessionSnapshot, binding: NativeSessionBinding, through: PublicRun): boolean {
-    return nativeExactAt(state, binding, through, () => this.ledger.endedSeq(state, through.id), on => this.relayFacts(state, on));
+  private exactAt(state: Conversation, binding: NativeSessionBinding, through: ConversationRun): boolean {
+    return nativeExactAt({ originHistory: this.quotedHistory(state) }, binding, through, () => through.endedSeq, on => this.relayFacts(state, on));
   }
   async wait(id: SessionId): Promise<void> {
     this.load(id);
@@ -630,26 +631,24 @@ export class SessionRuntime {
    */
   setRetention(id: SessionId, enabled: boolean, key: string): SessionSnapshot {
     this.admit(); const state = this.load(id), command = commandId(key), fingerprint = this.fingerprint({ kind: "retention", enabled });
-    if (replayCommand(state, command, "retention", fingerprint)) return state;
-    this.commandBudget(state);
+    if (replayCommand(state, command, "retention", fingerprint)) return this.snapshotOf(id);
     if (state.status === "closed") throw new SessionError("SESSION_CLOSED", "a closed Session keeps no native process");
     const committed = this.commit(id, current => {
       const { retainNative, ...rest } = current;
       return { next: { ...rest, ...(enabled ? { retainNative: true as const } : {}), commands: [...current.commands, { id: command, kind: "retention", fingerprint, resultId: id }] },
         events: [event("session.retention_changed", { enabled })] };
-    }).session;
+    });
     if (!enabled && this.kept.has(id)) void this.requestRelease(id, "disabled");
-    return committed;
+    return this.snapshotOf(committed.conversation.id);
   }
   /** Closes this conversation's kept process at the user's request, with the normal stop chain; resolves once it is recorded. */
   async endKept(id: SessionId, key: string): Promise<SessionSnapshot> {
     this.admit(); const state = this.load(id), command = commandId(key), fingerprint = this.fingerprint({ kind: "native-close" });
     if (!replayCommand(state, command, "native-close", fingerprint)) {
-      this.commandBudget(state);
       this.commit(id, current => ({ next: { ...current, commands: [...current.commands, { id: command, kind: "native-close", fingerprint, resultId: id }] }, events: [event("native.process_close_requested", {})] }));
     }
     if (this.kept.has(id) || this.releasing.has(id)) await this.requestRelease(id, "ended_by_user");
-    return this.load(id);
+    return this.snapshotOf(id);
   }
   /** This conversation's kept process as the chat shows it; null when it keeps none. */
   keptProcess(id: SessionId): { readonly harnessId: string; readonly controlId: string; readonly since: number; readonly lastUsedAt: number; readonly idleEndsAt: number; readonly backgroundUpdates: number } | null {
@@ -664,7 +663,7 @@ export class SessionRuntime {
   programUsers(harnessId: string): readonly { readonly sessionId: SessionId; readonly busy: boolean }[] {
     const users = new Map<SessionId, boolean>();
     for (const id of new Set([...this.actives.keys(), ...this.work, ...this.workers.keys()])) {
-      let state: SessionSnapshot;
+      let state: Conversation;
       try { state = this.load(id); } catch { continue; }
       if (state.runs.some(run => OPEN_RUN.has(run.status) && run.selection.harnessId === harnessId)) users.set(id, true);
     }
@@ -730,8 +729,8 @@ export class SessionRuntime {
    */
   async reapKept(): Promise<readonly { readonly sessionId: SessionId; readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean }[]> {
     const outcomes: { readonly sessionId: SessionId; readonly outcome: "terminated" | "gone" | "unconfirmed"; readonly leaseReleased: boolean }[] = [];
-    for (const state of this.store.listKept()) {
-      const retained = state.retained;
+    for (const kept of this.store.listKept()) {
+      const state = this.load(kept), retained = state.retained;
       if (retained === undefined || this.kept.has(state.id)) continue;
       let outcome: "terminated" | "gone" | "unconfirmed" = "unconfirmed";
       const found = await this.outsideBefore(retained.process);
@@ -807,8 +806,8 @@ export class SessionRuntime {
   async closeSession(id: SessionId, key: string): Promise<SessionSnapshot> {
     this.admit(); const command = commandId(key), fingerprint = this.fingerprint({ kind: "close" });
     const state = this.load(id), prior = replayCommand(state, command, "close", fingerprint);
-    if (prior) { await this.wait(id); return this.load(id); }
-    this.commandBudget(state); this.closingSessions.add(id);
+    if (prior) { await this.wait(id); return this.snapshotOf(id); }
+    this.closingSessions.add(id);
     try {
       // Text the active Turn streamed before the close is committed first, so the close never precedes it in the log (ADR-047).
       const active = this.actives.get(id); if (active) this.flushStreamQuietly(active);
@@ -821,7 +820,8 @@ export class SessionRuntime {
       this.stopSwitch(id); this.drive();
       if (this.kept.has(id)) void this.requestRelease(id, "conversation_closed");
       await this.wait(id);
-      return this.commit(id, current => ({ next: { ...current, status: "closed" }, events: [event("session.closed", {})] })).session;
+      this.commit(id, current => ({ next: { ...current, status: "closed" }, events: [event("session.closed", {})] }));
+      return this.snapshotOf(id);
     } finally { this.closingSessions.delete(id); }
   }
 
@@ -866,12 +866,12 @@ export class SessionRuntime {
     if (this.fatal) throw this.fatal;
   }
 
-  private cancelPending(state: SessionSnapshot): SessionSnapshot {
+  private cancelPending(state: Conversation): Conversation {
     const closedAt = this.options.now().getTime();
     const runs = state.runs.map(run => run.status === "queued" ? { ...run, status: "cancelled" as const, cancelRequested: true, ...phase(state, run.id, "endedAt", closedAt) }
       : terminal(run.status) ? run : { ...run, cancelRequested: true });
     const sourceStillActive = state.activeRunId !== null && state.switches.some(sw => sw.id === state.pendingSwitchId && sw.sourceRunIds.includes(state.activeRunId!));
-    return { ...state, runs, messages: state.messages.map(message => ({ ...message, status: runs.find(run => run.id === message.runId)!.status })),
+    return { ...state, runs,
       pendingSwitchId: sourceStillActive ? state.pendingSwitchId : null, switches: state.switches.map(sw => sw.id === state.pendingSwitchId
         ? { ...sw, ...(sourceStillActive ? {} : { status: "failed" as const }), error: { code: "CANCELLED", message: "switch cancelled by close" } } : sw) };
   }
@@ -879,9 +879,9 @@ export class SessionRuntime {
     const state = this.load(id), fingerprint = this.fingerprint({ kind: "cancel", target: target ?? null });
     const prior = replayCommand(state, command, "cancel", fingerprint);
     if (prior) return { sessionId: id, target: prior.resultId === "none" ? null : runId(prior.resultId), replayed: true };
-    this.open(state); this.commandBudget(state);
+    this.open(state);
     const selected = target === undefined ? state.activeRunId : target;
-    const run = selected === null ? undefined : state.runs.find(run => run.id === selected);
+    const run = selected === null ? undefined : runIn(state, selected);
     if (selected !== null && !run) throw new SessionError("NOT_FOUND", "Run does not belong to this Session");
     // Text the Turn streamed before the user's stop is committed first, so the stop never precedes it in the log (ADR-047).
     const active = this.actives.get(id), stopping = active !== undefined && active.runId === selected ? active : null;
@@ -904,16 +904,16 @@ export class SessionRuntime {
     if (!this.accepting) throw new SessionError("RUNTIME_CLOSED", "runtime is not accepting commands");
     if (this.fatal) throw this.fatal;
   }
-  private open(state: SessionSnapshot): void {
+  private open(state: Conversation): void {
     if (state.status !== "open" || this.closingSessions.has(state.id)) throw new SessionError("SESSION_UNAVAILABLE", "Session is closed or blocked; new dispatch is disabled for this Session");
   }
-  private recoverySwitch(state: SessionSnapshot): boolean {
+  private recoverySwitch(state: Conversation): boolean {
     const pending = state.switches.find(sw => sw.id === state.pendingSwitchId);
     if (!pending) return false;
     const request = this.store.events(state.id, pending.requestedSeq - 1, 1)[0];
     return request?.type === "switch.requested" && request.data.switchId === pending.id && request.data.recovery === true;
   }
-  private recoverable(state: SessionSnapshot, acknowledgeUnknown: boolean): void {
+  private recoverable(state: Conversation, acknowledgeUnknown: boolean): void {
     if (state.status !== "blocked" || state.activeRunId !== null || state.pendingSwitchId !== null || this.closingSessions.has(state.id))
       throw new SessionError("RECOVERY_UNAVAILABLE", "当前对话无法执行恢复检查，请等待当前操作结束。");
     const unknown = state.runs.filter(run => run.status === "unknown");
@@ -947,9 +947,6 @@ export class SessionRuntime {
         throw new SessionError("RECOVERY_UNSAFE", "失败切换缺少资源关闭证据，无法恢复同一工作区的执行。");
     }
   }
-  private commandBudget(state: SessionSnapshot): void {
-    if (state.commands.length >= MAX_COMMANDS) throw new SessionError("COMMAND_LIMIT", "Session command budget exhausted");
-  }
   private fingerprint(value: unknown): string { return this.options.fingerprint(JSON.stringify(value)); }
   /**
    * The version of each Session as this runtime last read or committed it: commit() names it for the Store's
@@ -957,33 +954,81 @@ export class SessionRuntime {
    * makes it stale; the Store then refuses before the mutation runs, and commit() reads the Session first, as it used to.
    */
   private readonly versions = new Map<SessionId, number>();
-  private load(id: SessionId): SessionSnapshot {
+  private load(id: SessionId): Conversation {
     try { const state = this.store.get(id); this.versions.set(id, state.version); return state; }
     catch (error) {
       if (!(error instanceof SessionError) || error.code !== "SESSION_NOT_FOUND") this.fail(error, id);
       throw error;
     }
   }
+  /** The conversation in the old shape (the store's adapter over the rows): for what is made of the words of the earlier Turns, which the rows hold and the light rows of `load` do not. */
+  private snapshotOf(id: SessionId): SessionSnapshot {
+    try { return this.store.snapshot(id); }
+    catch (error) {
+      if (!(error instanceof SessionError) || error.code !== "SESSION_NOT_FOUND") this.fail(error, id);
+      throw error;
+    }
+  }
+  /** Whether the conversation started from quoted history (a branch's, an import's): what a binding is owed beside the Turns. */
+  private quotedHistory(state: Conversation): boolean {
+    const origin = state.origin;
+    if (origin === undefined) return false;
+    // A branch quotes at least the finished Turn it was made after; an import quotes what its native session returned, which may be nothing.
+    if (origin.kind === "fork") return true;
+    if (!origin.historyRead) return false;
+    let found = this.quoted.get(state.id);
+    if (found === undefined) { found = (this.snapshotOf(state.id).origin?.history.length ?? 0) > 0; this.quoted.set(state.id, found); }
+    return found;
+  }
   /**
-   * One Store transaction of `id`, published. A failure fails the Runtime (fatal) unless it is an expected one, or `quiet`
-   * says the caller decides: a commit whose relay part the Store may refuse retries without it (R6, relayRefusal).
+   * One Store transaction of `id`, published. A failure fails the Runtime (fatal) only when it says the store cannot be trusted (storage, who owns it, the
+   * version: `storeUntrusted`); any other ends the request or the Turn it belonged to, which the caller tells in the conversation. `quiet` says the caller decides:
+   * a commit whose relay part the Store may refuse retries without it (R6, relayRefusal).
    */
-  private commit(id: SessionId, mutate: (state: SessionSnapshot) => SessionMutation, quiet = false): SessionCommit {
+  private commit(id: SessionId, mutate: (state: Conversation) => ConversationMutation, quiet = false): ConversationCommit {
     try {
       this.store.assertOwner();
       const known = this.versions.get(id);
-      let ran = false, committed: SessionCommit;
-      const once = (state: SessionSnapshot): SessionMutation => { ran = true; return mutate(state); };
+      let ran = false, committed: ConversationCommit;
+      // What a commit may do to the rows it changes is checked as the mutation is made, before the store writes anything.
+      const once = (state: Conversation): ConversationMutation => { ran = true; const made = mutate(state); assertConversationTransition(state, made.next, made.events); return made; };
       try { committed = this.store.transact(id, known ?? this.load(id).version, once); }
       catch (error) {
         if (known === undefined || ran || !(error instanceof SessionError && error.code === "VERSION_CONFLICT")) throw error;
         committed = this.store.transact(id, this.load(id).version, once);
       }
-      this.versions.set(id, committed.session.version);
+      this.versions.set(id, committed.conversation.version);
       return this.publish(committed);
     }
-    // An expected relay failure (a RelayError from the Store's checks or the relay's own) fails only its Run (INV-35).
-    catch (error) { if (!quiet && !expectedFailure(error)) this.fail(error, id); throw error; }
+    catch (error) { if (!quiet && storeUntrusted(error)) this.fail(error, id); throw error; }
+  }
+  /**
+   * Places one input in the Turn in progress and commits what it changed, with the events the caller logs and the caller's own change to the conversation
+   * (`patch`: the Run's timing, a command…), in one transaction. The Turn is advanced only once that commit stood, so a commit the store refused leaves the Turn as
+   * it was. A placement that wrote no row and has no event, no patch and no `always` commits nothing (the same call was reported again, or a detail that waits was
+   * merged); with `always` the commit is made for its events, as every report of a Harness is logged. Returns what `place` returned, for the details to store.
+   * `input` null commits the patch and the events alone.
+   */
+  private placed(execution: ActiveExecution, input: PlaceInput | null, events: readonly EventDraft[], options: { readonly patch?: (current: Conversation) => Conversation; readonly always?: boolean; readonly relay?: ConversationMutation["relay"] } = {}): Placed {
+    const turn = this.turnOf(execution), id = execution.sessionId;
+    const placed: Placed = input === null ? { turn, changes: {}, store: [] }
+      : place(turn, input, { noticeShown: print => this.store.noticeShown?.(id, print) === true, eventIndex: 0 });
+    const rows = wroteRows(placed.changes);
+    if (!rows && options.patch === undefined && options.always !== true && options.relay === undefined) { execution.turn = placed.turn; return placed; }
+    this.commit(id, current => {
+      const patched = options.patch === undefined ? current : options.patch(current);
+      return { next: rows ? withItems(patched, execution.runId, itemsOf(placed.turn)) : patched, events, ...(options.relay === undefined ? {} : { relay: options.relay }),
+        ...(placed.changes.noticePrints === undefined ? {} : { noticePrints: placed.changes.noticePrints }), createdBy: () => 0 };
+    });
+    execution.turn = placed.turn;
+    return placed;
+  }
+  /** The Turn of an execution, opened from the items its Run holds the first time it is needed. */
+  private turnOf(execution: ActiveExecution): ActiveTurn {
+    if (execution.turn !== null) return execution.turn;
+    const run = runIn(this.load(execution.sessionId), execution.runId);
+    if (run === undefined) throw new SessionError("IDENTITY_MISMATCH", "Run is not owned by this Session");
+    return execution.turn = openTurn(runRowOf(execution.sessionId, run), run.items ?? []);
   }
   /**
    * Whether a failed commit was the Store refusing what it was asked to write — a relay error, a row or transition it found
@@ -994,10 +1039,10 @@ export class SessionRuntime {
     if (!(error instanceof RelayError) && !(error instanceof SessionError && (error.code === "INVALID_DATA" || error.code === "INVALID_TRANSITION"))) return false;
     try { this.store.assertOwner(); return this.fatal === null; } catch { return false; }
   }
-  private publish(commit: SessionCommit): SessionCommit {
+  private publish(commit: ConversationCommit): ConversationCommit {
     if (this.publicationFailed) return commit;
     try { for (const value of commit.events) this.options.publish(value); }
-    catch { this.publicationFailed = true; const error = new SessionError("PUBLICATION_FAILED", "committed event publication failed; execution stopped"); this.fail(error, commit.session.id); throw error; }
+    catch { this.publicationFailed = true; const error = new SessionError("PUBLICATION_FAILED", "committed event publication failed; execution stopped"); this.fail(error, commit.conversation.id); throw error; }
     return commit;
   }
   private fail(error: unknown, id?: SessionId): void {
@@ -1012,7 +1057,7 @@ export class SessionRuntime {
         if (state.status === "open") {
           const committed = this.store.transact(affected, state.version, current => ({ next: { ...current, status: "blocked" },
             events: [event("session.blocked", { error: fault(error), reason: "runtime stopped after a failure" })] }));
-          this.versions.set(affected, committed.session.version);
+          this.versions.set(affected, committed.conversation.version);
           this.publish(committed);
         }
       } catch (recordingError) {
@@ -1131,7 +1176,7 @@ export class SessionRuntime {
         if (state.nativeBindings?.some(binding => binding.status === "fork-pending")) { await this.forkNative(id); state = this.load(id); }
         if (state.pendingSwitchId !== null) {
           const pending = state.switches.find(sw => sw.id === state.pendingSwitchId)!;
-          const beforeSwitch = state.runs.find(run => run.status === "queued" && state.messages.some(message => message.id === run.userMessageId && message.seq < pending.requestedSeq));
+          const beforeSwitch = state.runs.find(run => run.status === "queued" && run.userSeq < pending.requestedSeq);
           if (beforeSwitch) await this.execute(id, beforeSwitch.id);
           else await this.applySwitch(id, state.pendingSwitchId);
         }
@@ -1148,17 +1193,17 @@ export class SessionRuntime {
     }
   }
 
-  private owned(execution: ActiveExecution): SessionSnapshot {
+  private owned(execution: ActiveExecution): Conversation {
     this.store.assertOwner(); execution.binding?.assertOwned();
     const state = this.load(execution.sessionId);
     if (this.actives.get(execution.sessionId) !== execution || state.activeRunId !== execution.runId) throw new SessionError("OWNERSHIP_LOST", "active Run ownership changed");
-    const run = state.runs.find(run => run.id === execution.runId);
+    const run = runIn(state, execution.runId);
     if (!run || run.epoch !== state.epoch || JSON.stringify(run.selection) !== JSON.stringify(state.selection))
       throw new SessionError("OWNERSHIP_LOST", "active Run epoch or selection no longer belongs to its Session");
     return state;
   }
-  private continue(execution: ActiveExecution): PublicRun {
-    const state = this.owned(execution), run = state.runs.find(run => run.id === execution.runId)!;
+  private continue(execution: ActiveExecution): ConversationRun {
+    const state = this.owned(execution), run = runIn(state, execution.runId)!;
     if (this.fatal) throw this.fatal;
     if (run.cancelRequested || !this.accepting || this.closingSessions.has(state.id)) throw new SessionError("CANCELLED", "Run cancelled before dispatch");
     if (run.epoch !== state.epoch || JSON.stringify(run.selection) !== JSON.stringify(state.selection))
@@ -1243,10 +1288,10 @@ export class SessionRuntime {
     clock.hinted += 1;
     // Text streamed before the hint is committed first, so the hint never precedes it in the log (ADR-047).
     this.flushStreamQuietly(execution);
-    // A hint that cannot be recorded (the conversation reached a limit of the Store) is not worth a failure; commit fails the Runtime itself when it must.
+    // A hint that cannot be recorded (the store refused the rows) is not worth a failure; commit fails the Runtime itself when it must.
     try {
-      this.commit(execution.sessionId, current => ({ next: withNotice(current, execution.runId, workingNotice(mark, quietNote ? quiet : null)),
-        events: [event("run.still_working", { runId: execution.runId, workedMs: mark, ...(quietNote ? { quietMs: Math.round(quiet) } : {}) })] }));
+      this.placed(execution, hubNotice(workingNotice(mark, quietNote ? quiet : null), this.options.now().getTime()),
+        [event("run.still_working", { runId: execution.runId, workedMs: mark, ...(quietNote ? { quietMs: Math.round(quiet) } : {}) })], { always: true });
     } catch { /* see above */ }
     this.armHint(execution);
   }
@@ -1287,8 +1332,13 @@ export class SessionRuntime {
       const waiting = [...this.permissions.entries()].filter(([, value]) => value.execution === execution && value.option === null).map(([permissionId]) => permissionId);
       for (const permissionId of waiting) this.permissions.delete(permissionId);
       const budgetMs = (kind === "wait" ? this.options.waitBudgetMs : this.options.executionBudgetMs) ?? 0;
-      this.commit(execution.sessionId, current => ({ next: withNotice(current, execution.runId, budgetNotice(kind, budgetMs)),
-        events: [...waiting.map(permissionId => event("permission.closed", { permissionId, runId: execution.runId, reason: "expired" })), event("run.budget_expired", { runId: execution.runId, kind, budgetMs })] }));
+      // What waited for the user is closed in its items as timed out, and the conversation says why the Turn is stopped.
+      const at = this.options.now().getTime();
+      const closed = place(this.turnOf(execution), { kind: "expired", at });
+      const said = place(closed.turn, hubNotice(budgetNotice(kind, budgetMs), at));
+      this.commit(execution.sessionId, current => ({ next: withItems(current, execution.runId, itemsOf(said.turn)),
+        events: [...waiting.map(permissionId => event("permission.closed", { permissionId, runId: execution.runId, reason: "expired" })), event("run.budget_expired", { runId: execution.runId, kind, budgetMs })], createdBy: () => 0 }));
+      execution.turn = said.turn;
       // The wait ends with its requests, so it is recorded like any other end of a wait.
       this.leaveWait(execution);
     } catch (error) { this.fail(error, execution.sessionId); }
@@ -1309,68 +1359,50 @@ export class SessionRuntime {
     if (value.type === "text" || value.type === "thinking") { this.streamChunk(execution, value); return; }
     if (value.type === "input_recorded") { this.inputRecorded(execution, value.packetId, "recorded_event"); return; }
     this.flushStream(execution);
-    const state = this.owned(execution), run = state.runs.find(run => run.id === execution.runId)!;
+    const state = this.owned(execution), run = runIn(state, execution.runId)!;
     if (run.status !== "running") throw new SessionError("STALE_EVENT", "output arrived outside its active Run");
     if (VISIBLE_OUTPUT.has(value.type)) this.firstOutput(state, run);
+    const at = this.options.now().getTime();
     if (value.type === "permission_requested") {
       // The Turn now waits for the user: its working time stops. A request expires only at the deadline its own Harness announced
       // (it withdraws the request itself then) or, when an operator set a wait budget, at the end of that budget: the earlier of the two (ADR-035).
       // With neither it waits for the user as long as it takes.
-      const requestedAt = this.options.now().getTime(), hubLeft = this.enterWait(execution, run.id), wait = value.expiresInMs;
+      const requestedAt = at, hubLeft = this.enterWait(execution, run.id), wait = value.expiresInMs;
       const native = value.expiresBy === "native" && wait !== undefined && Number.isSafeInteger(wait) && wait >= 0 ? wait : null;
       const expires = native !== null && (hubLeft === null || native <= Math.round(hubLeft)) ? { expiresAt: requestedAt + native, expiresBy: "native" as const }
         : hubLeft !== null ? { expiresAt: requestedAt + Math.round(hubLeft), expiresBy: "turn" as const } : {};
       const id = "permission-" + this.options.id(), request: PermissionRequest = { id, runId: run.id, title: value.title, options: value.options, ...(value.detail===undefined?{}:{detail:value.detail}),...(value.input===undefined?{}:{input:value.input}), decided: false, requestedAt, ...expires, ...(value.kind === "question" ? { kind: "question" as const } : {}) };
       this.permissions.set(id, { request, nativeId: value.id, execution, option: null, command: null, harnessId: run.selection.harnessId });
-      try { this.commit(state.id, current => ({ next: current, events: [event("permission.requested", { permissionId: id, runId: run.id, title: value.title, options: value.options, ...expires })] })); } catch (error) { this.permissions.delete(id); throw error; } return;
+      // The request is an item that waits, written with the event that tells it.
+      try { this.placed(execution, { kind: "event", event: value, at }, [event("permission.requested", { permissionId: id, runId: run.id, title: value.title, options: value.options, ...expires })], { always: true }); } catch (error) { this.permissions.delete(id); throw error; } return;
     }
     if (value.type === "permission") {
       // The Harness withdrew a question it had asked (for example its own dialog deadline): the public request closes too.
       const pending = [...this.permissions.entries()].find(([, item]) => item.execution === execution && item.nativeId === value.id && item.option === null);
       if (pending) {
         this.permissions.delete(pending[0]);
-        this.commit(state.id, current => ({ next: current, events: [event("permission.closed", { permissionId: pending[0], runId: run.id, reason: value.decision })] }));
+        this.placed(execution, { kind: "event", event: value, at }, [event("permission.closed", { permissionId: pending[0], runId: run.id, reason: value.decision })], { always: true });
         this.leaveWait(execution);
         return;
       }
     }
-    if (value.type === "output") { this.nativeOutput(execution, state, run, value.output); return; }
+    if (value.type === "output") { this.nativeOutput(execution, run, value.output); return; }
     if (value.type === "tool") {
-      // The public summary keeps a bounded set of tools; a long native turn must not fail or block the Runtime because of it.
-      const tools = [...(run.tools ?? [])], index = tools.findIndex(tool => tool.id === value.id);
-      if (index < 0 && tools.length >= MAX_RUN_TOOLS) return;
-      const detail = value.detail === undefined ? execution.details.get(value.id) : mergeDetail(execution.details.get(value.id), value.detail);
-      if (value.detail !== undefined && detail !== undefined) { execution.details.set(value.id, detail); execution.dirty.add(value.id); }
-      const prior = index < 0 ? undefined : tools[index];
-      const tool = { id: value.id, title: value.title, status: value.status, ...(detail?.kind === undefined ? {} : { kind: detail.kind }), ...(detail?.name === undefined ? {} : { name: detail.name }),
-        ...(detail?.parentId === undefined ? {} : { parentId: detail.parentId }), ...(detail?.exitCode === undefined ? {} : { exitCode: detail.exitCode }), ...(prior?.detail === undefined ? {} : { detail: prior.detail }) };
-      // Refinements that only change the private detail create no public fact until the detail is stored.
-      if (prior === undefined || JSON.stringify(prior) !== JSON.stringify(tool)) {
-        if (index >= 0) tools[index] = tool; else tools.push(tool);
-        this.commit(state.id, current => ({ next: updatedRun(current, run.id, { tools }), events: [event("run.output", { runId: run.id, event: logged(value) })] }));
-      }
-      if (TERMINAL_TOOL.has(value.status) && execution.dirty.has(value.id)) this.storeDetail(execution, value.id);
+      // Every call is written, whatever their number; a report that only refines the private detail changes no row, so nothing is committed for it until the detail is stored.
+      const placed = this.placed(execution, { kind: "event", event: value, at }, [event("run.output", { runId: run.id, event: logged(value) })]);
+      for (const request of placed.store) this.storeDetail(execution, request);
       return;
     }
-    if (value.type === "notice" && (run.notices ?? []).length >= MAX_RUN_NOTICES) return;
-    if (value.type === "activity" && !(run.activities ?? []).some(item => item.id === value.id) && (run.activities ?? []).length >= MAX_RUN_ACTIVITIES) return;
-    this.commit(state.id, current => {
-      let next = current;
-      if (value.type === "plan") next = updatedRun(current, run.id, { plan: { entries: value.entries.slice(0, MAX_PLAN_ENTRIES).map(entry => ({ ...entry, content: bounded(entry.content, 4096).text || "…" })), ...(value.explanation ? { explanation: bounded(value.explanation, 4096).text } : {}) } });
-      if (value.type === "usage") next = updatedRun(current, run.id, { usage: { ...run.usage, ...(value.usage.turn === undefined ? {} : { turn: { ...run.usage?.turn, ...value.usage.turn } }), ...(value.usage.context === undefined ? {} : { context: value.usage.context }), ...(value.usage.cost === undefined ? {} : { cost: value.usage.cost }) } satisfies NativeUsage });
-      if (value.type === "notice") {
-        // Harnesses restarted per Turn repeat their startup warnings; a notice already shown in this conversation stays in the log only.
-        const notice = { severity: value.severity, title: bounded(value.title, 1024).text || "提示", ...(value.detail ? { detail: bounded(value.detail, 4096).text } : {}) }, same = JSON.stringify(notice);
-        if (!current.runs.some(item => item.notices?.some(prior => JSON.stringify(prior) === same))) next = updatedRun(current, run.id, { notices: [...(run.notices ?? []), notice] });
-      }
-      if (value.type === "activity") {
-        const activities = [...(run.activities ?? [])], index = activities.findIndex(item => item.id === value.id);
-        const activity = { id: bounded(value.id, 512).text, kind: value.kind, title: bounded(value.title, 1024).text || value.kind, status: value.status, ...(value.detail ? { detail: bounded(value.detail, 4096).text } : {}) };
-        if (index >= 0) activities[index] = activity; else activities.push(activity);
-        next = updatedRun(current, run.id, { activities });
-      }
-      return { next, events: [event("run.output", { runId: run.id, event: logged(value) })] };
-    });
+    const events = [event("run.output", { runId: run.id, event: logged(value) })];
+    if (value.type === "usage") {
+      this.placed(execution, null, events, { always: true, patch: current => {
+        const held = runIn(current, run.id)!;
+        return updatedRun(current, run.id, { usage: { ...held.usage, ...(value.usage.turn === undefined ? {} : { turn: { ...held.usage?.turn, ...value.usage.turn } }), ...(value.usage.context === undefined ? {} : { context: value.usage.context }), ...(value.usage.cost === undefined ? {} : { cost: value.usage.cost }) } satisfies NativeUsage });
+      } });
+      return;
+    }
+    // A plan, a notice (one this conversation already showed is not shown again), an activity, a diagnostic: written as reported and logged.
+    this.placed(execution, { kind: "event", event: value, at }, events, { always: true });
   }
   /**
    * E1 (ADR-055 §7.1, §14.2): the native side recorded this Turn's input. For a Turn carrying a packet the text window open
@@ -1387,10 +1419,10 @@ export class SessionRuntime {
     if (relay.recorded || relay.e1Refused || turn.kind !== "carry") return;
     if (packetId !== undefined && packetId !== turn.packet.id) return;
     this.flushStream(execution);
-    const state = this.owned(execution), run = state.runs.find(row => row.id === execution.runId)!;
+    const state = this.owned(execution), run = runIn(state, execution.runId)!;
     if (run.status !== "running") return;
     const recordedAt = this.options.now().getTime();
-    const ownOf = (current: SessionSnapshot) => current.nativeBindings?.find(row => row.harnessId === run.selection.harnessId && row.controlId === run.selection.controlId && row.status !== "archived");
+    const ownOf = (current: Conversation) => current.nativeBindings?.find(row => row.harnessId === run.selection.harnessId && row.controlId === run.selection.controlId && row.status !== "archived");
     if (ownOf(state)?.relay === undefined) return;
     let committed = false;
     try {
@@ -1405,13 +1437,13 @@ export class SessionRuntime {
       }, true);
       committed = true;
     } catch (error) {
-      if (!this.relayRefusal(error)) { if (!expectedFailure(error)) this.fail(error, state.id); throw error; }
+      if (!this.relayRefusal(error)) { if (storeUntrusted(error)) this.fail(error, state.id); throw error; }
       relay.e1Refused = true;
     }
     if (committed) relay.recorded = true;
   }
   /** Records the Run's first visible output at the clock's reading now, once, as its own committed fact (never held in a window). */
-  private firstOutput(state: SessionSnapshot, run: PublicRun): void {
+  private firstOutput(state: Conversation, run: ConversationRun): void {
     if (run.timing === undefined || run.timing.firstOutputAt !== undefined) return;
     this.commit(state.id, current => ({ next: updatedRun(current, run.id, phase(current, run.id, "firstOutputAt", this.options.now().getTime())), events: [event("run.first_output", { runId: run.id })] }));
   }
@@ -1428,11 +1460,10 @@ export class SessionRuntime {
     let { committedBytes, bytes, last } = stream;
     if (stream.kind === null) {
       // A window opens on the Run's facts as committed: ownership, status, first output, and the bytes of its kind so far.
-      const state = this.owned(execution), run = state.runs.find(run => run.id === execution.runId)!;
+      const state = this.owned(execution), run = runIn(state, execution.runId)!;
       if (run.status !== "running") throw new SessionError("STALE_EVENT", "output arrived outside its active Run");
       this.firstOutput(state, run);
-      const committed = value.type === "text" ? state.messages.find(message => message.id === run.assistantMessageId)?.text ?? "" : run.thinking ?? "";
-      committedBytes = bytes = utf8Bytes(committed); last = committed.slice(-1);
+      committedBytes = bytes = this.kindBytes(execution, value.type); last = "";
     }
     const joined = joinedBytes(bytes, last, value.text);
     if (joined > MAX_OUTPUT_BYTES) {
@@ -1440,37 +1471,35 @@ export class SessionRuntime {
       this.flushStream(execution);
       throw new SessionError("OUTPUT_LIMIT", value.type === "text" ? "Run public output byte budget exhausted" : "native thinking exceeded its budget");
     }
-    if (stream.kind === null) { stream.kind = value.type; stream.text = ""; stream.committedBytes = committedBytes; }
+    if (stream.kind === null) { stream.kind = value.type; stream.text = ""; stream.committedBytes = committedBytes; stream.at = this.options.now().getTime(); }
     stream.text += value.text; stream.bytes = joined; stream.last = value.text ? value.text.slice(-1) : last;
     if (stream.bytes - stream.committedBytes >= STREAM_WINDOW_BYTES) { this.flushStream(execution); return; }
     stream.cancel ??= this.timer(() => this.windowExpired(execution), STREAM_WINDOW_MS);
   }
+  /** The bytes of reply text, or of reasoning, the Turn has committed so far: its segments of that kind (what the output budget counts). */
+  private kindBytes(execution: ActiveExecution, kind: "text" | "thinking"): number {
+    const type = kind === "text" ? "assistant_message" : "reasoning";
+    let bytes = 0;
+    for (const item of itemsOf(this.turnOf(execution))) if (item.type === type) bytes += item.textBytes;
+    return bytes;
+  }
   /**
    * Commits the open window as one run.output event of its kind, with the window's text (ADR-047); no open window is nothing
    * to do. The window is taken before the commit, so a refused commit loses that window only and never commits it twice;
-   * ownership and the Run's running status are checked as for any output.
+   * ownership and the Run's running status are checked as for any output. The window is one chunk of the segment it belongs to (or the first of a new
+   * one), written among the Turn's items in the order it arrived.
    */
   private flushStream(execution: ActiveExecution): void {
     const stream = execution.stream;
     if (stream.kind === null) return;
-    const kind = stream.kind, text = stream.text;
+    const kind = stream.kind, text = stream.text, since = stream.at;
     this.discardStream(execution);
-    const state = this.owned(execution), run = state.runs.find(run => run.id === execution.runId)!;
+    const state = this.owned(execution), run = runIn(state, execution.runId)!;
     if (run.status !== "running") throw new SessionError("STALE_EVENT", "output arrived outside its active Run");
-    this.commit(state.id, current => {
-      let next: SessionSnapshot;
-      if (kind === "thinking") {
-        const thinking = (current.runs.find(item => item.id === run.id)?.thinking ?? "") + text;
-        if (utf8Bytes(thinking) > MAX_OUTPUT_BYTES) throw new SessionError("OUTPUT_LIMIT", "native thinking exceeded its budget");
-        next = updatedRun(current, run.id, { thinking });
-      } else {
-        const message = current.messages.find(message => message.id === run.assistantMessageId), merged = (message?.text ?? "") + text;
-        if (utf8Bytes(merged) > MAX_OUTPUT_BYTES) throw new SessionError("OUTPUT_LIMIT", "Run public output byte budget exhausted");
-        next = { ...current, messages: message ? current.messages.map(item => item.id === message.id ? { ...item, text: merged } : item)
-          : [...current.messages, { id: run.assistantMessageId, runId: run.id, role: "assistant", text: merged, seq: current.lastSeq + 1, status: run.status }] };
-      }
-      return { next, events: [event("run.output", { runId: run.id, event: { type: kind, text } })] };
-    });
+    const taken = place(this.turnOf(execution), { kind: "event", event: { type: kind, text }, at: since }), flushed = place(taken.turn, { kind: "flush", at: this.options.now().getTime() });
+    const rows = wroteRows(taken.changes) || wroteRows(flushed.changes);
+    this.commit(state.id, current => ({ next: rows ? withItems(current, run.id, itemsOf(flushed.turn)) : current, events: [event("run.output", { runId: run.id, event: { type: kind, text } })], createdBy: () => 0 }));
+    execution.turn = flushed.turn;
   }
   /**
    * Commits the open window from outside a driver callback (its timer, a stop, a close): a refused commit is kept as the
@@ -1497,37 +1526,34 @@ export class SessionRuntime {
     const handle = setTimeout(fn, ms); handle.unref?.();
     return () => clearTimeout(handle);
   }
-  /** Stores one tool's latest bounded detail and publishes its reference. Storage trouble is reported, not hidden. */
-  private storeDetail(execution: ActiveExecution, toolId: string): void {
+  /** Stores one call's detail whole (what the Harness reported of its input, output and changes) and writes its reference in the call's item. Storage trouble is reported, not hidden. */
+  private storeDetail(execution: ActiveExecution, request: StoreRequest): void {
     const content = this.options.content; if (content === undefined) return;
     this.enqueue(execution, async () => {
-      const detail = execution.details.get(toolId); if (detail === undefined || !execution.dirty.delete(toolId)) return;
       const state = this.owned(execution);
       let ref;
-      try { ref = await content.storeOutput({ workspace: state.configuration.workspace, name: "tool-" + safeName(toolId) + ".json", mediaType: "application/json", data: new TextEncoder().encode(JSON.stringify({ toolId, ...detail })) }); }
+      try { ref = await content.storeOutput({ workspace: state.configuration.workspace, name: "tool-" + safeName(request.toolId) + ".json", mediaType: "application/json", data: new TextEncoder().encode(JSON.stringify({ toolId: request.toolId, ...request.detail })) }); }
       catch (error) { this.commit(state.id, current => ({ next: current, events: [event("run.output", { runId: execution.runId, event: { type: "diagnostic", message: "tool detail was not stored (" + fault(error).code + ")" } })] })); return; }
-      const after = this.owned(execution), run = after.runs.find(row => row.id === execution.runId)!;
-      if (!run.tools?.some(tool => tool.id === toolId)) return;
-      this.commit(after.id, current => ({ next: updatedRun(current, run.id, { tools: run.tools!.map(tool => tool.id === toolId ? { ...tool, detail: ref } : tool) }), events: [event("run.tool_detail", { runId: run.id, toolId, content: ref })] }));
+      this.owned(execution);
+      this.placed(execution, { kind: "detail", toolId: request.toolId, ref, at: this.options.now().getTime() }, [event("run.tool_detail", { runId: execution.runId, toolId: request.toolId, content: ref })]);
     });
   }
   /** Non-text native output: links are recorded as given; bytes go to the content owner first. */
-  private nativeOutput(execution: ActiveExecution, state: SessionSnapshot, run: PublicRun, output: Extract<ControlEvent, { type: "output" }>["output"]): void {
-    if ((run.outputs ?? []).length >= MAX_RUN_OUTPUTS) return;
+  private nativeOutput(execution: ActiveExecution, run: ConversationRun, output: Extract<ControlEvent, { type: "output" }>["output"]): void {
+    const at = this.options.now().getTime();
     if (output.kind === "link") {
-      this.commit(state.id, current => ({ next: updatedRun(current, run.id, { outputs: [...(run.outputs ?? []), { kind: "link", uri: bounded(output.uri, 4096).text, name: bounded(output.name, 1024).text || "链接", ...(output.title ? { title: bounded(output.title, 1024).text } : {}), ...(output.mediaType ? { mediaType: output.mediaType.slice(0, 255) } : {}) }] }),
-        events: [event("run.output", { runId: run.id, event: logged({ type: "output", output }) })] }));
+      this.placed(execution, { kind: "event", event: { type: "output", output }, at }, [event("run.output", { runId: run.id, event: logged({ type: "output", output }) })], { always: true });
       return;
     }
     const content = this.options.content;
-    if (content === undefined) { this.commit(state.id, current => ({ next: current, events: [event("run.output", { runId: run.id, event: { type: "diagnostic", message: "native " + output.mediaType + " output was not kept (no content storage)" } })] })); return; }
+    if (content === undefined) { this.commit(execution.sessionId, current => ({ next: current, events: [event("run.output", { runId: run.id, event: { type: "diagnostic", message: "native " + output.mediaType + " output was not kept (no content storage)" } })] })); return; }
     this.enqueue(execution, async () => {
+      const state = this.owned(execution);
       let ref;
       try { ref = await content.storeOutput({ workspace: state.configuration.workspace, name: output.name, mediaType: output.mediaType, data: output.data }); }
-      catch (error) { const owned = this.owned(execution); this.commit(owned.id, current => ({ next: current, events: [event("run.output", { runId: run.id, event: { type: "diagnostic", message: "native output was not stored (" + fault(error).code + ")" } })] })); return; }
-      const after = this.owned(execution), current = after.runs.find(row => row.id === execution.runId)!;
-      if ((current.outputs ?? []).length >= MAX_RUN_OUTPUTS) return;
-      this.commit(after.id, snapshot => ({ next: updatedRun(snapshot, current.id, { outputs: [...(current.outputs ?? []), { kind: "content", content: ref }] }), events: [event("run.output", { runId: current.id, event: logged({ type: "output", output }) })] }));
+      catch (error) { this.commit(state.id, current => ({ next: current, events: [event("run.output", { runId: run.id, event: { type: "diagnostic", message: "native output was not stored (" + fault(error).code + ")" } })] })); return; }
+      this.owned(execution);
+      this.placed(execution, { kind: "event", event: { type: "output", output }, at: this.options.now().getTime(), stored: ref }, [event("run.output", { runId: run.id, event: logged({ type: "output", output }) })], { always: true });
     });
   }
   /** Keeps the write chain alive; an ownership or Store failure is retained for the Turn owner to report. */
@@ -1536,7 +1562,8 @@ export class SessionRuntime {
   }
   /** Drains this Turn's content writes while its binding is still owned; called before cleanup. */
   private async flushNative(execution: ActiveExecution): Promise<void> {
-    for (const toolId of [...execution.dirty]) this.storeDetail(execution, toolId);
+    // The details of calls that never ended wait for the Turn's settlement, which comes after the program is closed: they are taken now, while it is still owned.
+    if (execution.turn !== null) { const taken = takeDetails(execution.turn); execution.turn = taken.turn; for (const request of taken.store) this.storeDetail(execution, request); }
     await execution.writes;
     if (execution.writeFailure !== null) throw execution.writeFailure;
   }
@@ -1554,10 +1581,10 @@ export class SessionRuntime {
     if (waitedSwitch && waitedSwitch.status !== "effective") return;
     const pinned = waitedSwitch?.target ?? queued.selection;
     const execution: ActiveExecution = { sessionId: id, runId: target, binding: null, run: null, dispatched: false,
-      backendSettled: false, stop: null, earlyClose: null, details: new Map(), dirty: new Set(), writes: Promise.resolve(), writeFailure: null, diagnosticMark: null,
+      backendSettled: false, stop: null, earlyClose: null, turn: null, writes: Promise.resolve(), writeFailure: null, diagnosticMark: null,
       clock: { workedMs: 0, since: performance.now(), waiting: false, executionLeftMs: this.options.executionBudgetMs ?? null, waitLeftMs: this.options.waitBudgetMs ?? null, budget: null, hint: null, hinted: 0, lastEventAt: performance.now() },
       stopReason: null, grace: null,
-      stream: { kind: null, text: "", committedBytes: 0, bytes: 0, last: "", cancel: null }, streamFailure: null,
+      stream: { kind: null, text: "", committedBytes: 0, bytes: 0, last: "", at: 0, cancel: null }, streamFailure: null,
       relay: { declaration: relayDeclaration(null), turn: { kind: "none" }, recorded: false, e1Refused: false } };
     if (this.actives.has(id)) throw new SessionError("OWNERSHIP_LOST", "another Turn of this conversation is active");
     this.actives.set(id, execution);
@@ -1584,12 +1611,11 @@ export class SessionRuntime {
     try {
       // Conversations that came to this workspace before this one and still work in it: this Turn does not wait for them, it says they are there.
       const company = this.coworkers(id, state.configuration.workspace);
-      this.commit(id, current => {
-        const next: SessionSnapshot = { ...updatedRun(current, target, { status: "preparing", selection: pinned, epoch: waitedSwitch ? current.epoch : queued.epoch, ...phase(current, target, "preparingAt", this.options.now().getTime()) }), activeRunId: target };
-        return { next: company.length === 0 ? next : withNotice(next, target, sharedNotice(company.length)),
-          events: [event("run.preparing", { runId: target, selection: state.selection, epoch: state.epoch }), ...(company.length === 0 ? [] : [event("run.workspace_shared", { runId: target, otherSessionIds: company })])] };
-      });
-      const current = this.owned(execution), run = this.continue(execution);
+      // The Turn is opened from the Run's own items (its input), and a conversation working in the same directory is told as a notice among them.
+      this.placed(execution, company.length === 0 ? null : hubNotice(sharedNotice(company.length), this.options.now().getTime()),
+        [event("run.preparing", { runId: target, selection: state.selection, epoch: state.epoch }), ...(company.length === 0 ? [] : [event("run.workspace_shared", { runId: target, otherSessionIds: company })])],
+        { always: true, patch: current => ({ ...updatedRun(current, target, { status: "preparing", selection: pinned, epoch: waitedSwitch ? current.epoch : queued.epoch, ...phase(current, target, "preparingAt", this.options.now().getTime()) }), activeRunId: target }) });
+      const current = this.owned(execution), run = this.continue(execution), typed = inputOf(run);
       previousNative = run.selection.provider === undefined ? current.nativeBindings?.find(binding => binding.harnessId === run.selection.harnessId && binding.controlId === run.selection.controlId && binding.status !== "archived") : undefined;
       if (previousNative !== undefined && previousNative.status !== "ready") throw new SessionError("NATIVE_STATE_UNCONFIRMED", "原生会话状态尚未确认；可以切换其他 Harness，或明确建立新的原生分支。公共历史会保留。");
       // A process the conversation kept takes the Turn when it still runs this selection; any other kept process is closed first
@@ -1607,7 +1633,7 @@ export class SessionRuntime {
       } else await this.startProgram(execution, run, current, id, target);
       let control = execution.binding!.control;
       const declaration = execution.relay.declaration = relayDeclaration(control.relayCapabilities);
-      const kinds = run.attachments?.map(file => file.kind) ?? [], reading = this.classify(control, run.input, null, kinds);
+      const kinds = run.attachments?.map(file => file.kind) ?? [], reading = this.classify(control, typed, null, kinds);
       // The relay packet (ADR-055 §5): what this binding's program and this Gateway hold as secrets never leaves in it, and an
       // input read as a possible command never opens it, so the packet cannot become a command's argument.
       // The secrets are the whole Session's (M1): the target binding's own, and those of every Harness whose history it carries.
@@ -1646,7 +1672,7 @@ export class SessionRuntime {
       }
       opened = native;
       // The Session as the binding's preparation committed it: what the relay reads below (the binding's relay state, the facts).
-      let prepared: SessionSnapshot = current;
+      let prepared: Conversation = current;
       if (run.selection.provider === undefined && control.checkpoint) {
         checkpoint = await control.checkpoint(); this.continue(execution);
         if (checkpoint !== null && (typeof checkpoint !== "string" || !checkpoint || Buffer.byteLength(checkpoint) > 8192 || /[\0\r\n]/u.test(checkpoint))) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "invalid original Harness recovery reference");
@@ -1668,7 +1694,7 @@ export class SessionRuntime {
                 ...(previousNative !== undefined && openedNew ? { nativeSession: "new" } : {}) }),
                 ...(replacedEmpty === null ? [] : [event("native.binding_replaced", { runId: target, harnessId: reference.harnessId, controlId: reference.controlId, reason: "empty_session_unresumable",
                   nativeEpoch: bound.relay!.epoch, floor: bound.relay!.floor, ...(refusedCleanup === null ? {} : { cleanup: refusedCleanup }) })])] };
-          }).session;
+          }).conversation;
           checkpointStored = true;
         }
       }
@@ -1676,15 +1702,16 @@ export class SessionRuntime {
       // typed and carries nothing, whatever it owes. A reading that is or may be a command is settled against the catalog
       // (its effect, and the commands the driver itself offers there).
       let classified = reading;
-      if (classified.kind !== "content" && control.models) { const catalog = await control.models(); this.continue(execution); classified = this.classify(control, run.input, catalog, kinds); }
+      if (classified.kind !== "content" && control.models) { const catalog = await control.models(); this.continue(execution); classified = this.classify(control, typed, catalog, kinds); }
       // A Driver that declares nothing and reads nothing of its own cannot say what its native side takes for a command: a slash
       // first is one of unknown effect, whatever its catalog lists or whether it has one (G072 review I3).
-      if (classified.kind !== "command" && control.relayCapabilities === undefined && control.classify === undefined && run.selection.provider === undefined) classified = undeclaredReading(run.input) ?? classified;
+      if (classified.kind !== "command" && control.relayCapabilities === undefined && control.classify === undefined && run.selection.provider === undefined) classified = undeclaredReading(typed) ?? classified;
       // A command whose arguments the native side submits as a prompt (acceptsRelay: Codex `/skill:…`, Hermes `/queue`, `/steer`)
       // is a content Turn to the relay: it may carry a packet, which its Driver places.
       if (classified.kind === "command" && classified.acceptsRelay !== true) {
         const named = classified; command = named;
-        prepared = this.commit(id, current => ({ next: current, events: [event("run.native_command", { runId: target, name: named.name, publicContextInjected: false, contextEffect: named.effect })] })).session;
+        // The Run is a native command (not the same as having an effect), and the effect it was read with is on its row: the relay's facts read them there.
+        prepared = this.commit(id, current => ({ next: updatedRun(current, target, { isCommand: true, commandEffect: named.effect }), events: [event("run.native_command", { runId: target, name: named.name, publicContextInjected: false, contextEffect: named.effect })] })).conversation;
       }
       // What the Turn sends (ADR-055 §7.2, slim.md): a command goes as typed and carries nothing, whatever it owes; a content input
       // goes as typed when nothing is owed, alone when the user chose so, or with a packet of what is owed (a pending packet sent
@@ -1699,9 +1726,9 @@ export class SessionRuntime {
       let window: ResolvedWindow | null = null, clamped: readonly ("window" | "input_limit")[] = [], packetSecrets: readonly string[] = [], handoff: { readonly logSeq: number; readonly first: boolean } | null = null;
       // Sends the Turn as typed instead of with its packet, for a reason that concerns the packet only (set where the decision is made).
       let aloneInstead: ((found: NonNullable<ReturnType<typeof policyAloneOf>>) => void) | null = null;
-      let turnText: TurnText = run.input, packet: { readonly manifest: RelayPacket; readonly body: string; readonly record: PublicContext["relay"]; readonly runs: readonly PublicRun["id"][] } | null = null;
+      let turnText: TurnText = typed, packet: { readonly manifest: RelayPacket; readonly body: string; readonly record: PublicContext["relay"]; readonly runs: readonly PublicRun["id"][] } | null = null;
       if (command === null) {
-        const originHistory = (prepared.origin?.history.length ?? 0) > 0;
+        const originHistory = this.quotedHistory(prepared);
         // A Driver that keeps no native session (no binding) is owed everything every Turn.
         working ??= initialBindingRelay(prepared.nativeBindings ?? [], h, c, "new");
         const facts = this.relayFacts(prepared, { harnessId: h, controlId: c, nativeEpoch: working.epoch });
@@ -1716,35 +1743,37 @@ export class SessionRuntime {
         // What the preparation of the packet found that concerns the packet only: the input goes as typed.
         const asAlone = (found: NonNullable<ReturnType<typeof policyAloneOf>>): void => {
           decision = aloneFor(found.cause, found.reason);
-          window = null; clamped = []; packet = null; turnText = run.input; packetSecrets = []; handoff = null;
+          window = null; clamped = []; packet = null; turnText = typed; packetSecrets = []; handoff = null;
         };
         aloneInstead = asAlone;
         if (decision.kind === "carry") {
           const carrying = decision;
           try {
-            const runs = needRuns(prepared, run, carrying.need);
+            // What a packet is made of is the earlier Turns' words, which the rows hold: they are read in the old shape the renderer reads.
+            const snapshot = this.snapshotOf(id), asked = snapshot.runs.find(row => row.id === target)!;
+            const runs = needRuns(snapshot, asked, carrying.need);
             // The window the packet is budgeted against, and what the channel leaves it. The history is left out whole to fit; the renderer
             // never fails, and when even its least packet is over the cap (below) the input goes as typed.
-            const resolved = resolveWindow(prepared, run), limit = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(run.input, kinds) ?? [...run.input].length;
-            const cap = hardCap(resolved, estimateTokens(run.input), limit, size);
+            const resolved = resolveWindow(snapshot, asked), limit = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(typed, kinds) ?? [...typed].length;
+            const cap = hardCap(resolved, estimateTokens(typed), limit, size);
             const budget: RelayBudget = packetBudget(resolved, cap), standard = packetBudget(resolved, Number.POSITIVE_INFINITY);
             window = resolved;
-            if (budget.cap < standard.cap) clamped = [limit !== null && hardCap(resolved, estimateTokens(run.input), null, size) >= standard.cap ? "input_limit" : "window"];
+            if (budget.cap < standard.cap) clamped = [limit !== null && hardCap(resolved, estimateTokens(typed), null, size) >= standard.cap ? "input_limit" : "window"];
             // The renderer sees the binding as a native session that holds nothing when the packet must be a whole one: it carries
             // everything again, or the native session holds no part of the conversation (no mark).
-            const options = await relayFor(prepared, runs, carrying.need.origin);
+            const options = await relayFor(snapshot, runs, carrying.need.origin);
             packetSecrets = options.secrets ?? [];
-            const context = buildPublicContext(renderView(prepared, h, c, carrying.whole || working.mark < 0), run, runs, { ...options, budget, ...(carrying.repeat ? { repeat: true } : {}) });
+            const context = buildPublicContext(renderView(snapshot, h, c, carrying.whole || working.mark < 0), asked, runs, { ...options, budget, ...(carrying.repeat ? { repeat: true } : {}) });
             this.continue(execution);
             // The least packet there is (the title line, the sentences, the ledger, the end line) is over the cap: the history cannot be carried at all.
             if (context.relay.tokens > context.relay.budget.cap) throw inputLimit(run.selection);
-            if (!context.text.endsWith("\n" + run.input)) throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render" }, "没能准备交接单：交接单与这条消息拼接不一致，这条消息没有发出。");
-            const body = context.text.slice(0, context.text.length - run.input.length - 1), range = rangeOf(prepared, carrying.need, runs);
-            const manifest = packetManifest({ state: prepared, run, relay: working, record: context.relay, body, range, runs, attachOverride: carrying.by === "user",
+            if (!context.text.endsWith("\n" + typed)) throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render" }, "没能准备交接单：交接单与这条消息拼接不一致，这条消息没有发出。");
+            const body = context.text.slice(0, context.text.length - typed.length - 1), range = rangeOf(snapshot, carrying.need, runs);
+            const manifest = packetManifest({ state: snapshot, run: asked, relay: working, record: context.relay, body, range, runs, attachOverride: carrying.by === "user",
               supersedes: carrying.resend !== null && working.pending !== null ? working.pending.packetId : null,
               firstLineOmitted: context.relay.firstLine ? null : reading.kind === "content" ? "secret_hit" : "slash", clamped });
             packet = { manifest, body, record: context.relay, runs };
-            turnText = { user: run.input, relay: { packetId: manifest.id, body, firstLine: context.relay.firstLine } };
+            turnText = { user: typed, relay: { packetId: manifest.id, body, firstLine: context.relay.firstLine } };
             // The placed Turn measured as its Driver will place it; over the Driver's bound it goes as typed, the Driver's own refusal staying the backstop.
             if (limit !== null && declaration.capabilities!.placement.measure(turnText, kinds) > limit.limit) throw inputLimit(run.selection);
           } catch (error) {
@@ -1767,7 +1796,7 @@ export class SessionRuntime {
         const packets: { readonly runId: PublicRun["id"]; readonly packet: RelayPacket; readonly body: string }[] = [];
         if (packet !== null && decision?.kind === "carry") {
           packets.push({ runId: target, packet: packet.manifest, body: packet.body });
-          if (relay !== null) deliveries.push({ kind: "insert", record: deliveryRow({ runId: target, packetId: packet.manifest.id, declaration, autoResend: decision.resend === "auto", inputHmac: this.relayKeys.inputHmac(id, run.input),
+          if (relay !== null) deliveries.push({ kind: "insert", record: deliveryRow({ runId: target, packetId: packet.manifest.id, declaration, autoResend: decision.resend === "auto", inputHmac: this.relayKeys.inputHmac(id, typed),
             setTag: this.relayKeys.setTag(id, packetSecrets), rulesVersion: packet.record.policyVersion, keyId: this.relayKeys.keyId, handoffLogSeq: handoff?.logSeq ?? null }) });
         }
         const executedOn = bound !== undefined && relay !== null ? { harnessId: h, controlId: c, nativeEpoch: relay.epoch } : null;
@@ -1813,7 +1842,7 @@ export class SessionRuntime {
       // once the Turn that carries the packet is committed — a Turn that goes alone after all names nothing — and before it is
       // dispatched, with a name that hides what the packet hid, the known secrets of every Harness of the conversation.
       if (decision?.kind === "carry" && packet !== null && openedNew && declaration.capabilities?.title === "set" && control.setTitle !== undefined) {
-        const result = await this.titleFor(control, native, prepared, packetSecrets); this.continue(execution);
+        const result = await this.titleFor(control, native, this.snapshotOf(id), packetSecrets); this.continue(execution);
         this.commit(id, current => ({ next: current, events: [event("relay.title_set", { runId: target, harnessId: h, controlId: c, result })] }));
       }
       control.enablePermissions?.();
@@ -1934,20 +1963,22 @@ export class SessionRuntime {
         const effect = command === null ? null : clearReport ? "clear" as const : commandEffect(command.effect, commandOutcome(execution.dispatched, backend?.status ?? null, input, noop));
         // What the end did with the relay, for a retry without it (R6).
         const tried = { relayed: false, replaced: false };
-        const ended = (withRelay: boolean) => (current: SessionSnapshot): SessionMutation => {
-          let next: SessionSnapshot = { ...updatedRun(current, target, { status, backend, cleanup: closed,
-            error: failure, ...phase(current, target, "endedAt", endedAt), ...(keep.keep ? { retained: true as const } : {}) }), activeRunId: null, status: unsafe ? "blocked" : current.status,
+        // The Turn's items are closed with its end, before the Run is: what was open is told as what it was left as (items-place.ts), and a Turn that asked to keep
+        // its process and could not says so among its items. All of it is one commit with the Run's end, so the two never disagree.
+        const settling = this.turnOf(execution), noted = keep.skipped === undefined ? settling : place(settling, hubNotice(keptSkippedNotice(this.options.keptLimit ?? this.kept.size), endedAt)).turn;
+        const closing = place(noted, { kind: "settled", status, at: endedAt });
+        const ended = (withRelay: boolean) => (current: Conversation): ConversationMutation => {
+          let next: Conversation = { ...updatedRun(current, target, { status, backend, cleanup: closed,
+            error: failure, ...phase(current, target, "endedAt", endedAt), ...(keep.keep ? { retained: true as const } : {}), ...(effect === null ? {} : { settledEffect: effect }), items: itemsOf(closing.turn) }), activeRunId: null, status: unsafe ? "blocked" : current.status,
             ...(keep.keep ? { retained: { harnessId: pinned.harnessId, controlId: pinned.controlId, runId: target, since: reusing?.since ?? endedAt, ...(identity === undefined ? {} : { process: identity }) } } : {}) };
-          // The user asked to keep this conversation's process and the operator's limit on kept processes is reached: the Turn says it was not kept.
-          if (keep.skipped !== undefined) next = withNotice(next, target, keptSkippedNotice(this.options.keptLimit ?? this.kept.size));
           // A Turn that failed on the relay before it ran says so in its relay (§12.2: blocked, with the code).
-          const latestRun = next.runs.find(row => row.id === target)!;
+          const latestRun = runIn(next, target)!;
           if (latestRun.relay === undefined && failure !== null && (BLOCKED_CODES as readonly string[]).includes(failure.code))
             next = updatedRun(next, target, { relay: runRelayOf(null, { kind: "blocked", code: failure.code as typeof BLOCKED_CODES[number] }, null) });
           // The relay part of the end (ADR-055 §6.1, §7.2): the Turn's own delivery and the binding's relay state as committed now,
           // a command's effect, a clear the Driver reported and an unknown Turn continued; the delivery rows decided with it.
           const own = next.nativeBindings?.find(row => row.harnessId === pinned.harnessId && row.controlId === pinned.controlId && row.status !== "archived");
-          const relayed = withRelay && checkpointStored && own?.relay !== undefined ? settleTurn({ relay: own.relay, runId: target, turn: this.settledTurn(execution, next),
+          const relayed = withRelay && checkpointStored && own?.relay !== undefined ? settleTurn({ relay: own.relay, runId: target, turn: this.settledTurn(execution),
             dispatched: execution.dispatched, status: backend?.status ?? null, input: evidence ?? undefined, noop, cleared: clearReport,
             declaration: execution.relay.declaration, unknownTurn: continued, endedSeq: current.lastSeq + 1, time: endedAt }) : null;
           if (withRelay) { tried.relayed = relayed !== null; tried.replaced = relayed?.replaced === true; }
@@ -2003,15 +2034,28 @@ export class SessionRuntime {
             ...(stranded === null ? [] : [event("switch.failed", { switchId: stranded, error: STRANDED_SWITCH, reason: "the Turn it waited for ended without confirmed settlement" }),
               ...waiting.map(queuedId => event("run.ended", { runId: queuedId, status: "failed", error: { code: "SWITCH_NOT_EFFECTIVE" }, neverDispatched: true }))]),
             ...(unsafe ? [event("session.blocked", { runId: target, reason: "execution or cleanup could not be safely confirmed" })] : [])],
-            ...(relayed !== null && relayed.deliveries.length ? { relay: { deliveries: relayed.deliveries } } : {}) };
+            ...(relayed !== null && relayed.deliveries.length ? { relay: { deliveries: relayed.deliveries } } : {}), createdBy: () => 0 };
+        };
+        // The last resort: what the commit above was refused for is not the store's trust but its rows (a check of the rows, a relay row). The Turn is then
+        // ended as what it is, a Turn whose end could not be recorded in full: unknown, the reason told, the conversation blocked until the user resumes it, and
+        // nothing else in the commit. The Runtime goes on; a failure of the store itself fails it, as it always did.
+        const unrecorded = (reason: unknown) => (current: Conversation): ConversationMutation => {
+          const why = fault(reason);
+          const next = { ...updatedRun(current, target, { status: "unknown" as const, backend, cleanup: closed, error: why, ...phase(current, target, "endedAt", endedAt) }), activeRunId: null, status: "blocked" as const };
+          return { next, events: [event("run.ended", { runId: target, status: "unknown", backend, cleanup: closed, error: why, input, unrecorded: true }), event("session.blocked", { runId: target, reason: "the end of the Turn could not be recorded" })] };
         };
         try { this.commit(id, ended(true), true); }
         catch (error) {
           // The Store refused the relay part of the end (its rows, the binding's relay state): the public facts are committed
           // without it, once, and the conversation is marked (R6). A replaced native session is not split from its relay state;
           // a Store that failed, or anything else, fails the Runtime as before.
-          if (!tried.relayed || tried.replaced || !this.relayRefusal(error)) throw error;
-          this.commit(id, ended(false));
+          if (!tried.relayed || tried.replaced || !this.relayRefusal(error)) {
+            if (storeUntrusted(error) || !this.relayRefusal(error)) throw error;
+            this.commit(id, unrecorded(error));
+          } else {
+            try { this.commit(id, ended(false), true); }
+            catch (second) { if (storeUntrusted(second) || !this.relayRefusal(second)) throw second; this.commit(id, unrecorded(second)); }
+          }
         }
         handed = keep.keep;
       } catch (error) { this.fail(error); }
@@ -2029,17 +2073,18 @@ export class SessionRuntime {
     }
   }
   /** What a Turn was authorized to send, as its settlement reads it now (a carrying Turn: whether E1 recorded it already). */
-  private settledTurn(execution: ActiveExecution, state: SessionSnapshot): SettledTurn {
+  private settledTurn(execution: ActiveExecution): SettledTurn {
     const turn = execution.relay.turn;
     if (turn.kind === "carry") return { ...turn, recorded: execution.relay.recorded };
     if (turn.kind !== "plain") return turn;
-    const run = state.runs.find(row => row.id === execution.runId), reply = run === undefined ? undefined : state.messages.find(message => message.id === run.assistantMessageId);
-    return { ...turn, agentOutput: (reply?.text ?? "") !== "" || (run?.thinking ?? "") !== "" || (run?.tools?.length ?? 0) > 0 };
+    // The agent answered when anything of its own is written: a reply or reasoning with words in it, or a call.
+    const items = execution.turn === null ? [] : itemsOf(execution.turn);
+    return { ...turn, agentOutput: items.some(item => item.textBytes > 0 && (item.type === "assistant_message" || item.type === "reasoning") || item.itemId.startsWith("tool:")) };
   }
   /**
    * Starts the Turn's program (its binding), with the installation it resolved.
    */
-  private async startProgram(execution: ActiveExecution, run: PublicRun, current: SessionSnapshot, id: SessionId, target: PublicRun["id"]): Promise<void> {
+  private async startProgram(execution: ActiveExecution, run: ConversationRun, current: Conversation, id: SessionId, target: PublicRun["id"]): Promise<void> {
     // The conversations of this Gateway share a workspace's lease (a kept process of another conversation included), so a refusal here is
     // another Gateway holding it: WORKSPACE_BUSY, as the lease says.
     execution.binding = await this.factory.prepare(run.selection, current.configuration, id, target); execution.diagnosticMark = execution.binding.control.diagnosticMark?.() ?? null;
@@ -2053,7 +2098,7 @@ export class SessionRuntime {
    * session. A close that does not confirm the program ended keeps that binding for the Turn's end to account for, and the Turn
    * fails with the refusal, as it would without the replacement. Returns the new control and how the refused one was closed.
    */
-  private async restartProgram(execution: ActiveExecution, run: PublicRun, current: SessionSnapshot, id: SessionId, target: PublicRun["id"], refusal: unknown): Promise<{ readonly control: HarnessControl; readonly closed: CleanupEvidence }> {
+  private async restartProgram(execution: ActiveExecution, run: ConversationRun, current: Conversation, id: SessionId, target: PublicRun["id"], refusal: unknown): Promise<{ readonly control: HarnessControl; readonly closed: CleanupEvidence }> {
     const refused = execution.binding!;
     execution.earlyClose ??= refused.close();
     const closed = await execution.earlyClose.catch(() => null);
@@ -2069,7 +2114,7 @@ export class SessionRuntime {
    * The Harness control a relay recovery failure names (§9 S15; G068 fix batch 2, M-5): a Turn's end committed without its relay
    * part (R6) names its Run's; a recovery's names none (its relay part covered every binding). Read from the event it records.
    */
-  private recoveryFailureOn(state: SessionSnapshot): { readonly harnessId: string; readonly controlId: string } | null {
+  private recoveryFailureOn(state: Conversation): { readonly harnessId: string; readonly controlId: string } | null {
     const seq = state.relayRecoveryFailed;
     if (seq === undefined) return null;
     const recorded = this.store.events(state.id, seq - 1, 1)[0];
@@ -2127,7 +2172,7 @@ export class SessionRuntime {
       if (current.pendingSwitchId !== targetId || this.closingSessions.has(id) || !this.accepting) return;
       // Validation fixes the switch's sources and watermark and renders nothing (ADR-055 R0a): no history is budgeted here,
       // so a long conversation can still switch and recover; the first input on the target carries what it is owed.
-      const sources = current.runs.filter(run => terminal(run.status) && current.messages.some(message => message.id === run.userMessageId && message.seq < pending.requestedSeq)).map(run => run.id);
+      const sources = current.runs.filter(run => terminal(run.status) && run.userSeq < pending.requestedSeq).map(run => run.id);
       const throughSeq = current.lastSeq;
       this.commit(id, current => ({ next: { ...current, switches: current.switches.map(sw => sw.id === targetId
         ? { ...sw, target, status: "validated", throughSeq, sourceRunIds: sources } : sw) },
@@ -2161,8 +2206,11 @@ export class SessionRuntime {
     }
     const target = current.switches.find(sw => sw.id === targetId)!.target;
     if (target === null) throw new SessionError("INVALID_DATA", "validated switch has no target");
+    // A recovery switch that becomes effective is what acknowledges the unknown Runs it covers: the conversation is open again with none left unacknowledged, which each of
+    // them says on its own row (`acknowledgedBy`, written once), so that no reader has to work it out from the switches.
     this.commit(id, state => ({ next: { ...state, pendingSwitchId: null, selection: target, epoch: state.epoch + 1, ...(recovery ? { status: "open" as const } : {}),
-      switches: state.switches.map(sw => sw.id === targetId ? { ...sw, status: "effective", throughSeq: state.lastSeq } : sw) },
+      switches: state.switches.map(sw => sw.id === targetId ? { ...sw, status: "effective", throughSeq: state.lastSeq } : sw),
+      ...(recovery ? { runs: acknowledged(state, targetId) } : {}) },
       events: [event("switch.effective", { switchId: targetId, target, epoch: state.epoch + 1, throughSeq: state.lastSeq,
         sourceRunIds: state.switches.find(sw => sw.id === targetId)!.sourceRunIds, cleanup, continuity: "public_context_rehydrate", ...(recovery ? { recovered: true } : {}) })] }));
   }
@@ -2205,7 +2253,7 @@ export class SessionRuntime {
    * a configuration it could not read with RELAY_PREPARE_FAILED; ownership and cancellation keep their codes); any other
    * failure is the relay's too (N3), never the target Harness's: the Turn fails undispatched and what it owes stays owed.
    */
-  private async relaySecretsOf(state: SessionSnapshot, run: PublicRun, sources: readonly PublicRun["id"][], origin: boolean): Promise<readonly string[]> {
+  private async relaySecretsOf(state: SessionSnapshot, run: Pick<PublicRun, "selection">, sources: readonly PublicRun["id"][], origin: boolean): Promise<readonly string[]> {
     if (this.factory.relaySecrets === undefined) return [];
     try { return await this.factory.relaySecrets(state.configuration, this.relayHarnesses(state, run, sources, origin)); }
     catch (error) {
@@ -2217,7 +2265,7 @@ export class SessionRuntime {
    * The Harnesses whose history a packet carries (ADR-055 §10.2, review M1): the owed Runs' and, when the Session's own
    * starting history is owed, its messages' (an import's Harness included), with the target's own.
    */
-  private relayHarnesses(state: SessionSnapshot, run: PublicRun, sources: readonly PublicRun["id"][], origin: boolean): readonly string[] {
+  private relayHarnesses(state: SessionSnapshot, run: Pick<PublicRun, "selection">, sources: readonly PublicRun["id"][], origin: boolean): readonly string[] {
     const ids = new Set<string>([run.selection.harnessId]);
     for (const source of state.runs) if (sources.includes(source.id)) ids.add(source.selection.harnessId);
     if (origin && state.origin !== undefined) {
@@ -2253,34 +2301,23 @@ export class SessionRuntime {
     }
     return details;
   }
-  /** The relay reads of a Store that keeps relay rows (SqliteSessionStore); none for one that keeps none. */
-  private relayReads(): Pick<RelayStorePort, "relayDeliveries" | "relayPackets" | "relayIndex"> | null {
-    const store = this.store as Partial<RelayStorePort>;
-    return typeof store.relayDeliveries === "function" && typeof store.relayPackets === "function" && typeof store.relayIndex === "function" ? store as RelayStorePort : null;
-  }
-  /** The conversation's public facts foreign to a binding (ADR-055 §2), with their fact seqs and where they ran. */
-  private relayFacts(state: SessionSnapshot, binding: { readonly harnessId: string; readonly controlId: string; readonly nativeEpoch: number }): readonly RelayFact[] {
-    let index: readonly RelayIndexRow[] = [];
-    // The migration's index rows place a v12 Run (where it ran); a Session without migrated Runs needs none of them.
-    if (state.runs.some(run => run.relay === undefined && terminal(run.status) && dispatched(run))) {
-      try { index = this.relayReads()?.relayIndex(state.id) ?? []; } catch (error) { if (!(error instanceof SessionError) || error.code !== "INVALID_DATA") throw error; }
-    }
-    return this.ledger.facts(state, index, binding);
+  /** The conversation's public facts foreign to a binding (ADR-055 §2), with their fact seqs and where they ran: read from its Runs' rows. */
+  private relayFacts(state: Conversation, binding: { readonly harnessId: string; readonly controlId: string; readonly nativeEpoch: number }): readonly RelayFact[] {
+    return this.ledger.facts(state, binding);
   }
   /**
    * The relay choices this input was accepted with, as its acceptance event records them; none without a record. Those this
    * owner accepted it kept (acceptedRelay), so it reads the event only for an input an earlier owner accepted.
    */
-  private choicesOf(state: SessionSnapshot, run: PublicRun): RelayChoices {
+  private choicesOf(state: Conversation, run: ConversationRun): RelayChoices {
     const kept = this.acceptedRelay.get(run.id);
     if (kept !== undefined) return kept;
-    const message = state.messages.find(row => row.id === run.userMessageId);
-    const accepted = message === undefined ? undefined : this.store.events(state.id, message.seq - 1, 1)[0];
+    const accepted = this.store.events(state.id, run.userSeq - 1, 1)[0];
     return accepted?.type === "message.accepted" && accepted.data.runId === run.id ? acceptedChoices(accepted.data) : {};
   }
   /** The pending switch fails as stranded, and each input waiting for it ends as not dispatched (SWITCH_NOT_EFFECTIVE). */
-  private strandSwitch(state: SessionSnapshot, switchId: string, waiting: readonly PublicRun["id"][], endedAt: number): SessionSnapshot {
-    let next: SessionSnapshot = { ...state, pendingSwitchId: null, switches: state.switches.map(sw => sw.id === switchId ? { ...sw, status: "failed" as const, error: STRANDED_SWITCH } : sw) };
+  private strandSwitch(state: Conversation, switchId: string, waiting: readonly PublicRun["id"][], endedAt: number): Conversation {
+    let next: Conversation = { ...state, pendingSwitchId: null, switches: state.switches.map(sw => sw.id === switchId ? { ...sw, status: "failed" as const, error: STRANDED_SWITCH } : sw) };
     for (const queued of waiting) next = updatedRun(next, queued, { status: "failed", error: { code: "SWITCH_NOT_EFFECTIVE", message: "requested Harness switch failed; this input was not dispatched" }, ...phase(next, queued, "endedAt", endedAt) });
     return next;
   }

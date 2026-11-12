@@ -96,7 +96,7 @@ export function sound(value: string): { readonly text: string; readonly marks: r
   return { text: text + value.slice(from), marks };
 }
 /** The text of an item as it was: its chunks joined, the lone surrogates it carries put back. A mark that does not fit the text is left alone, never thrown at. */
-function restored(item: HeldItem): string {
+export function restored(item: HeldItem): string {
   const joined = item.text.length === 1 ? item.text[0]! : item.text.join(""), marks = item.fields.native?.surrogates;
   if (marks === undefined || marks.length === 0) return joined;
   let text = "", from = 0;

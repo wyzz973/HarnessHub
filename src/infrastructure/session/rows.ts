@@ -45,12 +45,6 @@ export function canonicalJson(value: unknown): string {
 }
 export function utf8Length(text: string): number { return Buffer.byteLength(text, "utf8"); }
 const bit = (value: boolean): 0 | 1 => value ? 1 : 0;
-/** The object with only its defined properties among `keys` (the contract's optional properties have no place for an undefined). */
-function pick<T extends object, K extends keyof T>(source: T, keys: readonly K[]): Pick<T, K> {
-  const out: Partial<Pick<T, K>> = {};
-  for (const key of keys) if (source[key] !== undefined) out[key] = source[key];
-  return out as Pick<T, K>;
-}
 /** Whether a text holds no lone surrogate: what SQLite would keep as it is. (A lone one is stored as U+FFFD, so a text with one would not read back as it was written.) */
 export function wellFormed(text: string): boolean { return !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(text); }
 /** Whether a text ends in the first half of a surrogate pair: a chunk that does goes with the next one (ADR-057 3.2). */
@@ -117,10 +111,6 @@ export const RUN_COLUMNS = ["session_id", "ordinal", "run_id", "command_id", "st
   "legacy_order", "run_json"] as const;
 /** The columns that name a Run and never change: an UPDATE leaves them out. */
 export const RUN_IDENTITY = ["session_id", "ordinal", "run_id", "command_id", "user_seq"] as const;
-/** The properties of a PublicRun that `run_json` holds (the others are columns, items, or the display's). */
-export const RUN_FACT_KEYS = ["userMessageId", "assistantMessageId", "selection", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "usage", "attachments", "timing", "retained",
-  "reused", "relay", "relayRequest", "awaitingSwitchId"] as const satisfies readonly (keyof RunFacts)[];
-
 export function runColumns(row: RunRow): Columns {
   const on = row.executedOn;
   return { session_id: row.sessionId, ordinal: row.ordinal, run_id: row.runId, command_id: row.commandId, status: row.status, epoch: row.epoch, harness_id: row.harnessId, control_id: row.controlId,
@@ -141,28 +131,8 @@ export function runRowFrom(row: Rec): RunRow {
     acknowledgedBy: textOrNull("runs", row, "acknowledged_by") as SwitchId | null, cancelRequested: flag("runs", row, "cancel_requested"), stopRequested: flag("runs", row, "stop_requested"),
     legacyOrder: flag("runs", row, "legacy_order"), facts: jsonObject("runs", row, "run_json") as unknown as RunFacts };
 }
-/**
- * Whether a Run was handed to its Harness: the rule of relay/advance.ts `dispatched`, over the properties a ConversationRun has. A Run from
- * before Session v10 has no times and counts as dispatched when its Harness settled it or it ended unknown.
- */
-export function isDispatched(run: Pick<PublicRun, "timing" | "backend" | "status">): boolean {
-  return run.timing === undefined ? run.backend !== null || run.status === "unknown" : run.timing.dispatchedAt !== undefined;
-}
-/** The row of a Run as the conversation holds it. `ordinal` and the seqs are the Run's own; the store writes over the seqs a Mutation takes from events. */
-export function runRowOf(sessionId: SessionId, run: ConversationRun): RunRow {
-  return { sessionId, ordinal: run.ordinal, runId: run.id, commandId: run.commandId, status: run.status, epoch: run.epoch, harnessId: run.selection.harnessId, controlId: run.selection.controlId,
-    managed: run.selection.provider !== undefined, acceptedAt: run.timing?.acceptedAt ?? null, preparingAt: run.timing?.preparingAt ?? null, readyAt: run.timing?.readyAt ?? null, reused: run.reused === true,
-    userSeq: run.userSeq, endedSeq: run.endedSeq ?? null, dispatched: isDispatched(run), executedOn: run.relay?.executedOn ?? null, isCommand: run.isCommand, commandEffect: run.commandEffect ?? null,
-    settledEffect: run.settledEffect ?? null, acknowledgedBy: run.acknowledgedBy ?? null, cancelRequested: run.cancelRequested, stopRequested: run.stopRequested, legacyOrder: run.legacyOrder === true,
-    facts: pick(run, RUN_FACT_KEYS) as RunFacts };
-}
-/** The Run the Runtime reduces, from its row; `items` only for a Run that is not finished. */
-export function conversationRunOf(row: RunRow, items?: readonly HeldItem[]): ConversationRun {
-  return { id: row.runId, commandId: row.commandId, epoch: row.epoch, status: row.status, cancelRequested: row.cancelRequested, stopRequested: row.stopRequested, ...row.facts,
-    ordinal: row.ordinal, userSeq: row.userSeq, ...(row.endedSeq === null ? {} : { endedSeq: row.endedSeq }), isCommand: row.isCommand,
-    ...(row.commandEffect === null ? {} : { commandEffect: row.commandEffect }), ...(row.settledEffect === null ? {} : { settledEffect: row.settledEffect }),
-    ...(row.acknowledgedBy === null ? {} : { acknowledgedBy: row.acknowledgedBy }), ...(row.legacyOrder ? { legacyOrder: true as const } : {}), ...(items === undefined ? {} : { items }) };
-}
+// The Run as the Runtime holds it and as its row: the domain's pair (run-row.ts), re-exported here with the rest of the objects <-> rows.
+export { RUN_FACT_KEYS, conversationRunOf, isDispatched, runRowOf } from "../../contexts/session/domain/run-row.js";
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Items and their text

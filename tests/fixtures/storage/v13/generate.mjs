@@ -1,3 +1,5 @@
+// NOTE (the cut, ADR-057 step 2): this generator loads `src/infrastructure/session/sqlite-store.js`, the store of snapshots, which was removed when the runtime moved to rows. It runs only
+// against a build from before the cut (26d4907 or earlier); on a later build it fails at that import. The files it wrote are the fixtures, frozen; the tests never run it.
 // Generates the frozen Session v13 fixtures of the new storage (ADR-057, step 1, task T1): one business database per scenario, written by the
 // real Session v13 runtime and SQLite store of the build given as the first argument, with the in-process fake Harnesses below, then dumped
 // as JSON next to this file. See README.md for when and how to run it; the files it writes are the fixtures, and the tests never run it.

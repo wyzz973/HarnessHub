@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { RELAY_INDEX_BYTES, RELAY_MANIFEST_BYTES, RELAY_MAX_SEQ, packRunIndexes, parseBindingRelayState, parseRelayPacket, relayPacketId, type RelayIndexRow, type RelayPacket } from "../../src/contracts/relay.js";
 import { SessionError, type PublicRun, type SessionSnapshot } from "../../src/contracts/session.js";
-import { RelayLedger, packetManifest } from "../../src/contexts/session/application/relay-coordinator.js";
-import { migrateSession, type MigrationEvent } from "../../src/contexts/session/domain/relay/migrate.js";
-import { checkQuoted } from "../../src/infrastructure/session/relay-tables.js";
+import { EventRelayLedger, packetManifest } from "../../src/contexts/session/application/relay-coordinator.js";
+import { migrateSession, type MigrationEvent } from "../../src/infrastructure/session/legacy/migrate.js";
 
 // The relay's parsers and its packet manifest on conversations past what the Session once held (16,384 events, 256 Turns): the
 // relay's numbers have no bound of a conversation's size (decided 2026-11-12). The Store still holds a conversation to its own
@@ -55,7 +54,7 @@ test("PR-06 a v12 conversation of 300 Turns and 20,000 events migrates: every st
 test("PR-07 the ledger reads a migration's index at any seq: a Turn's fact keeps the seq its events gave it past 16,384", () => {
   const { state, events } = longConversation(TURNS, STRIDE), migrated = migrateSession(state, events);
   // No event is read (the page reader gives none), so each fact's seq is the index row's if the ledger accepts it, else the Session's last seq.
-  const ledger = new RelayLedger(() => []);
+  const ledger = new EventRelayLedger(() => []);
   const index: RelayIndexRow[] = migrated.runs.map(row => ({ runId: row.runId, index: row as unknown as Readonly<Record<string, unknown>> }));
   const facts = ledger.facts(state, index, { harnessId: "alpha", controlId: "alpha-acp", nativeEpoch: 99 });
   assert.equal(facts.length, TURNS, "with another epoch every Turn is foreign to the binding");
@@ -63,7 +62,7 @@ test("PR-07 the ledger reads a migration's index at any seq: a Turn's fact keeps
   assert.ok(facts.filter(fact => fact.seq > 16_384).length >= 50, "the last Turns of the conversation lie past the old bound");
 });
 
-test("PR-08 a packet quoting all 300 Turns is a few bytes of spans, a quoted-Turn check walks them, and one that quotes what it must not is refused", () => {
+test("PR-08 a packet quoting all 300 Turns is a few bytes of spans, and the coordinator's own manifest names every one of them", () => {
   const { state } = longConversation(TURNS, STRIDE);
   // The current input: a 301st Turn, queued, whose user message came after the others.
   const current = { ...state.runs[0]!, id: "run-current", userMessageId: "message-current-user", assistantMessageId: "message-current-reply", status: "running" } as PublicRun;
@@ -76,15 +75,11 @@ test("PR-08 a packet quoting all 300 Turns is a few bytes of spans, a quoted-Tur
   const all = manifest(packRunIndexes(indexes));
   assert.deepEqual(all.runs, [[0, TURNS - 1]]);
   assert.ok(Buffer.byteLength(JSON.stringify(all)) < RELAY_MANIFEST_BYTES / 20, "a manifest quoting every Turn is small");
-  assert.doesNotThrow(() => checkQuoted(snapshot, current, all));
   // The coordinator's own manifest does not cut the list at 256: every quoted Turn is named (the old `slice(0, 256)` named the first 256 only).
   const built = packetManifest({ state: snapshot, run: current, relay: { epoch: 1, mark: -1, floor: -1, pending: null, resendAll: false }, runs: runs.slice(0, TURNS).map(run => run.id), range: all.range,
     body: "a packet", attachOverride: false, supersedes: null, firstLineOmitted: null,
     record: { packetId: "relay-" + "a".repeat(20), kind: "packet", tier: "brief", language: "en", repeat: false, redactions: 0, tokens: 3, budget: { cap: 8000, window: 128_000, windowSource: "assumed" }, items: { userMessages: { omitted: 0 }, replies: { omitted: 0 }, outputs: { omitted: 0 }, changes: { omitted: 0 }, calls: { omitted: 0 } }, complete: false } as never });
   assert.equal(built.runs.length === 1 && Array.isArray(built.runs[0]) ? built.runs[0][1] - built.runs[0][0] + 1 : built.runs.length, TURNS, "the manifest names all 300 Turns");
-  // What it must not quote: a span reaching the Turn that is running now, a span past the last Turn, a Turn accepted after the input.
-  assert.throws(() => checkQuoted(snapshot, current, manifest([[0, TURNS]])), (error: unknown) => error instanceof SessionError && /not finished/u.test(error.message), "a span through the running Turn");
-  assert.throws(() => checkQuoted(snapshot, current, manifest([[0, 9_999_999_999]])), (error: unknown) => error instanceof SessionError && /not finished/u.test(error.message), "a span past the last Turn is refused before it is walked");
-  const earlier = { ...snapshot, messages: messages.map(message => message.runId === "run-7" ? { ...message, seq: 99_999 } : message) } as unknown as SessionSnapshot;
-  assert.throws(() => checkQuoted(earlier, current, all), (error: unknown) => error instanceof SessionError && /accepted after the current input/u.test(error.message));
+  // What a packet must not quote (a span reaching the Turn that is running, a span past the last Turn, a Turn accepted after the input) is checked against the Runs' rows by the store
+  // (tests/integration/conversation-store-relay.test.ts), where the Turns are.
 });

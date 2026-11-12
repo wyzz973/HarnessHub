@@ -5,8 +5,8 @@ import { utf8Length } from "./rows.js";
 
 /*
  * What a store of conversations stands on besides its tables: the data root and its ownership marker, the identity of the files the OS lock and the database live
- * in, and the owner row. A copy of what the first store (sqlite-store.ts) did, with the same checks, so that the store that replaces it opens a root the same way
- * and refuses the same things. Nothing here reads a conversation.
+ * in, and the owner row. A copy of what the first store (the store of snapshots, sqlite-store.ts, gone since the cut) did, with the same checks, so that the store that replaced it
+ * opens a root the same way and refuses the same things. Nothing here reads a conversation.
  */
 
 export interface FileIdentity { readonly dev: string; readonly ino: string }

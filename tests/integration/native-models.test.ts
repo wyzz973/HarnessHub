@@ -8,7 +8,8 @@ import { createHash } from "node:crypto";
 import { DirectorySessionBindingFactory, prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
 import { captureNativeEnvironment, referencedNativeValues, nativeDescriptorValues } from "../../src/infrastructure/session/native-environment.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { startWebServer } from "../../src/web/server.js";
 import { application } from "../../src/cli/session-application.js";
@@ -66,7 +67,7 @@ test("real Codex/ACP protocol probes enumerate native models without prompts and
   assert.equal(codex.defaultModel, "native-model-a"); assert.equal(codex.authentication, "ready"); assert.deepEqual(codex.models.map(m => m.id), ["native-model-a", "native-model-b"]);
   assert.equal(JSON.stringify(codex).includes("private-account"), false); assert.equal(JSON.stringify(codex).includes("synthetic-never-public"), false);
   const acp = await factory.discoverModels({ harnessId: "native-acp" }, f.config, new AbortController().signal); assert.equal(acp.canSelect, true);
-  const store = new SqliteSessionStore(join(f.root, "data")); let id = 0;
+  const store = appStore(join(f.root, "data")); let id = 0;
   const runtime = new SessionRuntime(store, factory, { id: () => String(++id), now: () => new Date(), publish: () => {}, fingerprint: text => createHash("sha256").update(text).digest("hex") });
   f.close.push(async () => { await runtime.close(); store.close(); });
   const session = await runtime.create(f.config, { harnessId: "native-codex", nativeModel: "native-model-b" }, "create");
@@ -156,7 +157,7 @@ test("a Codex thread keeps the collaboration mode it last confirmed while the co
   await writeFile(manifest, JSON.stringify({ version: 2, definitions, overrides: { "native-plan": { executable: process.execPath } } }));
   const config = await prepareConfiguration({ workspace: f.workspace, manifestPath: manifest, pathOnly: true });
   const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(f.root, "locks")), () => {}, "any", undefined, undefined, f.environment);
-  const store = new SqliteSessionStore(join(f.root, "data")); let id = 0;
+  const store = appStore(join(f.root, "data")); let id = 0;
   const runtime = new SessionRuntime(store, factory, { id: () => String(++id), now: () => new Date(), publish: () => {}, fingerprint: text => createHash("sha256").update(text).digest("hex") });
   f.close.push(async () => { await runtime.close(); store.close(); });
   const observed = (session: Parameters<typeof runtime.read>[0]) => runtime.read(session).nativeBindings?.find(binding => binding.harnessId === "native-plan")?.observed?.options.collaboration_mode;

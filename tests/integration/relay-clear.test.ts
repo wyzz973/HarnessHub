@@ -7,7 +7,7 @@ import { decisionOf, relayOf, turn, to, world } from "../fixtures/relay-fakes.js
 import { driver, gatewayOf, peerRoot, prompts, type Harness, type Peer } from "../fixtures/relay-drivers.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 
-// A clear on each of the six Drivers, through the formal Runtime and a real SqliteSessionStore (slim.md: "clearing is the Hub's"):
+// A clear on each of the six Drivers, through the formal Runtime and a real SqliteConversationStore (slim.md: "clearing is the Hub's"):
 // the Drivers are the production ones, each on the relay peer as a real child process (tests/fixtures/relay-control-peer.mjs), so
 // that what reached the native side is read from the peer's own trace. The conversation goes to the Harness under test with a
 // packet, the user clears it, and the Runtime must read the clear as a command — it carries nothing, whatever it owes — and the

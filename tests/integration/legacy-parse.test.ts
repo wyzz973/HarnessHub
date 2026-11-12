@@ -6,71 +6,48 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { test, type TestContext } from "node:test";
 import { SessionError, type SessionSnapshot } from "../../src/contracts/session.js";
-import { migrateSession as liveMigrate, type MigrationEvent } from "../../src/contexts/session/domain/relay/migrate.js";
-import { parseSession as liveParse } from "../../src/contexts/session/domain/state.js";
-import { RELAY_MAX_RUNS as LIVE_MAX_RUNS, RELAY_MAX_SEQ as LIVE_MAX_SEQ } from "../../src/contracts/relay.js";
-import { migrateSession as legacyMigrate } from "../../src/infrastructure/session/legacy/migrate.js";
+import { migrateSession as legacyMigrate, type MigrationEvent } from "../../src/infrastructure/session/legacy/migrate.js";
 import { RELAY_MAX_RUNS, RELAY_MAX_SEQ, parseBindingRelayState, parseRunRelay, parseSourceRange } from "../../src/infrastructure/session/legacy/relay-contract.js";
 import { parseSession as legacyParse } from "../../src/infrastructure/session/legacy/state.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
-import { V12_FIXTURES, loadV12Fixture, writeV12Root } from "../fixtures/relay/v12/database.js";
+import { V12_FIXTURES, loadV12Fixture } from "../fixtures/relay/v12/database.js";
+import { loadV13Fixture, type V13FixtureName } from "../fixtures/storage/v13/database.js";
 
-// The frozen copy of the whole-snapshot parse (src/infrastructure/session/legacy/, ADR-057 3.6): taken from the live code with its bounds
-// as they were, so that a v13 database is read the same way whatever the live code becomes. Held here to the live code on the repository's own
-// fixtures (the seven frozen v12 databases, and what the live store makes of them: v13), to its old bounds, and to its own imports.
+// The frozen copy of the whole-snapshot parse (src/infrastructure/session/legacy/, ADR-057 3.6): taken from the code that read a v13 database with its bounds as they were,
+// and the only one there is since the cut: the migration climbs the old ladder with it, and the read-only tools read an unconverted conversation with it. Held here to the
+// repository's own fixtures (the seven frozen v12 databases and what this build made of them: the v13 fixtures `from-v12-*`), to its old bounds, and to its own imports.
 
 function temporary(t: TestContext): string { const root = mkdtempSync(join(tmpdir(), "harness-legacy-")); t.after(() => rmSync(root, { recursive: true, force: true })); return root; }
-/** The same value parsed by both, or the same failure. */
-function bothParse(value: unknown): SessionSnapshot {
-  const legacy = attempt(() => legacyParse(value)), live = attempt(() => liveParse(value));
-  assert.deepEqual(legacy, live);
-  if (legacy instanceof Error) throw legacy;
-  return legacy;
-}
 function attempt<T>(run: () => T): T | { readonly code: string; readonly message: string } & Error {
   try { return run(); } catch (error) { assert.ok(error instanceof SessionError); return Object.assign(new Error(error.message), { code: error.code }) as never; }
 }
 const MIGRATION_EVENT_TYPES = ["session.created", "session.recovered", "message.accepted", "run.context_prepared", "run.native_command", "run.ended", "native.binding_prepared", "native.branch_requested", "native.fork_failed"];
 
-test("the frozen parse reads every snapshot of the seven v12 fixtures as the live parse does", () => {
+test("the frozen parse reads every snapshot of the seven v12 fixtures", () => {
   let snapshots = 0;
   for (const name of V12_FIXTURES) for (const session of loadV12Fixture(name).sessions) {
-    const parsed = bothParse(session.snapshot);
+    const parsed = legacyParse(session.snapshot);
     assert.equal(parsed.schemaVersion, 12); assert.equal(parsed.id, session.id);
     snapshots++;
   }
   assert.ok(snapshots >= 8);
 });
 
-test("the frozen parse reads every snapshot the live store makes of them (v13) as the live parse does, and the frozen v12 to v13 inference gives what the live one gives", t => {
-  const root = temporary(t);
-  const fixtures = V12_FIXTURES.map(name => loadV12Fixture(name));
-  // Each fixture is its own data root (the fixtures share identities), opened by the live store to migrate it; then read straight from the database.
-  let converted = 0;
-  for (const [index, fixture] of fixtures.entries()) {
-    const data = join(root, "root-" + index);
-    writeV12Root(data, [fixture]);
-    // The v12 side: the frozen inference and the live one over the same snapshot and events.
-    for (const session of fixture.sessions) {
+test("the frozen v12 to v13 inference gives each fixture the relay state its v13 fixture holds, and the frozen parse reads the v13 snapshots", () => {
+  let migrated = 0;
+  for (const name of V12_FIXTURES) {
+    const v12 = loadV12Fixture(name), v13 = loadV13Fixture(("from-v12-" + name) as V13FixtureName);
+    for (const session of v12.sessions) {
       const events: MigrationEvent[] = session.events.filter(event => MIGRATION_EVENT_TYPES.includes(event.type)).map(event => ({ seq: event.seq, type: event.type, data: event.data }));
-      const state12 = liveParse(session.snapshot);
-      assert.deepEqual(legacyMigrate(legacyParse(session.snapshot), events), liveMigrate(state12, events));
+      const inferred = legacyMigrate(legacyParse(session.snapshot), events), expected = legacyParse(v13.sessions.find(row => row.id === session.id)!.snapshot);
+      assert.equal(expected.schemaVersion, 13);
+      assert.deepEqual(inferred.bindings, (expected.nativeBindings ?? []).map(binding => binding.relay), name + " " + session.id);
+      migrated++;
     }
-    new SqliteSessionStore(data, { now: () => new Date("2026-11-09T12:00:00Z") }).close();
-    const database = new DatabaseSync(join(data, "gateway.sqlite"), { readOnly: true });
-    try {
-      assert.equal(database.prepare("PRAGMA user_version").get()?.user_version, 13);
-      for (const row of database.prepare("SELECT id, snapshot FROM sessions ORDER BY rowid").all()) {
-        const parsed = bothParse(JSON.parse(String(row.snapshot)));
-        assert.equal(parsed.schemaVersion, 13);
-        converted++;
-      }
-    } finally { database.close(); }
   }
-  assert.ok(converted >= 8);
+  assert.ok(migrated >= 8);
 });
 
-test("the two parses refuse the same malformed snapshots in the same words", () => {
+test("the frozen parse refuses malformed snapshots, each in words of its own", () => {
   const good = loadV12Fixture("d1").sessions[0]!.snapshot as Record<string, unknown> & { runs: Record<string, unknown>[]; messages: Record<string, unknown>[] };
   const copy = (): typeof good => JSON.parse(JSON.stringify(good)) as typeof good;
   const broken: Record<string, (value: typeof good) => unknown> = {
@@ -83,12 +60,7 @@ test("the two parses refuse the same malformed snapshots in the same words", () 
     "a NUL in an input": value => ({ ...value, runs: [{ ...value.runs[0], input: "a\0b" }, ...value.runs.slice(1)] }),
     "a schema version from the future": value => ({ ...value, schemaVersion: 14 }),
   };
-  for (const [name, change] of Object.entries(broken)) {
-    const mutated = change(copy());
-    const legacy = attempt(() => legacyParse(mutated)), live = attempt(() => liveParse(mutated));
-    assert.ok(legacy instanceof Error, name + " is refused by the frozen parse");
-    assert.deepEqual(legacy, live, name);
-  }
+  for (const [name, change] of Object.entries(broken)) assert.ok(attempt(() => legacyParse(change(copy()))) instanceof Error, name + " is refused by the frozen parse");
 });
 
 test("the frozen parsers keep v13's bounds: 16384 events and 256 Runs, whatever the live contract becomes", () => {
@@ -99,8 +71,7 @@ test("the frozen parsers keep v13's bounds: 16384 events and 256 Runs, whatever 
   assert.deepEqual(parseSourceRange({ fromSeq: 1, throughSeq: 2, fromRun: 0, throughRun: RELAY_MAX_RUNS - 1 }), { fromSeq: 1, throughSeq: 2, fromRun: 0, throughRun: RELAY_MAX_RUNS - 1 });
   assert.throws(() => parseSourceRange({ fromSeq: 1, throughSeq: 2, fromRun: 0, throughRun: RELAY_MAX_RUNS }), /source range|range throughRun/u);
   assert.throws(() => parseRunRelay({ packetId: null, kind: null, continuity: { kind: "native_resume_delta", tier: "full", runs: RELAY_MAX_RUNS + 1 }, executedOn: null }), /continuity runs/u);
-  // The live contract is today the same; T7 (the bounds opened to the safe integers) is the change that makes this comparison the reason the copy exists.
-  void LIVE_MAX_SEQ; void LIVE_MAX_RUNS;
+  // The live contract no longer has these bounds (T7 opened them to the safe integers): that is the reason the copy exists.
 });
 
 test("nothing in the frozen folder reads a live parser: the values it imports are its own files and the contract's identities", () => {

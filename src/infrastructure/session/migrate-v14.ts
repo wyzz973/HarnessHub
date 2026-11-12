@@ -4,6 +4,7 @@ import type { ContextEffect } from "../../contracts/control.js";
 import type { ExecutedOn, RelayIndexRow } from "../../contracts/relay.js";
 import { SessionError, type PublicRun, type SessionEvent, type SessionId, type SessionSnapshot } from "../../contracts/session.js";
 import { conversationTitle } from "../../contracts/web.js";
+import { noticePrint } from "../../contexts/session/domain/items-place.js";
 import { originToRows, storageConversion } from "../../contexts/session/domain/store-conversion.js";
 import type { RelayFact } from "../../contexts/session/domain/relay/delivery.js";
 import { applyMutation } from "./apply.js";
@@ -279,7 +280,7 @@ interface Prepared { readonly mutation: Mutation; readonly contexts: readonly Ru
 function prepare(db: DatabaseSync, state: SessionSnapshot, version: number, conversion: StorageConversion): Prepared {
   const id = state.id, events = scanEvents(db, id), { facts: index } = indexRows(db, id);
   const messages = new Map(state.messages.map(message => [message.id as string, message]));
-  const mutation: { -readonly [K in keyof Mutation]: Mutation[K] } = { events: [] };
+  const mutation: { -readonly [K in keyof Mutation]: Mutation[K] } = { events: [] }, prints = new Set<string>();
   const contexts: RunContext[] = [], runs: NonNullable<Mutation["runs"]>[number][] = [], items: NonNullable<Mutation["items"]>[number][] = [], text: NonNullable<Mutation["text"]>[number][] = [], refs: ContentRefRow[] = [];
   state.runs.forEach((run: PublicRun, ordinal) => {
     const user = messages.get(run.userMessageId), assistant = messages.get(run.assistantMessageId);
@@ -304,7 +305,10 @@ function prepare(db: DatabaseSync, state: SessionSnapshot, version: number, conv
       item.text.forEach((chunk, at) => { text.push({ runId: run.id, itemSeq: item.seq, chunk: at, text: chunk, byteOffset: offset }); offset += utf8Length(chunk); });
     }
     refs.push(...converted.contentRefs);
+    // A notice this Run showed is one shown in the conversation: a Harness started again after the upgrade repeats its start-up warnings, and the old code showed a notice once per conversation.
+    for (const notice of run.notices ?? []) prints.add(noticePrint(notice));
   });
+  if (prints.size > 0) mutation.noticePrints = [...prints];
   const head: HeadJson = { configuration: state.configuration, selection: state.selection, ...(state.retainNative === undefined ? {} : { retainNative: state.retainNative }), ...(state.retained === undefined ? {} : { retained: state.retained }),
     ...(state.relayRecoveryFailed === undefined ? {} : { relayRecoveryFailed: state.relayRecoveryFailed }) };
   let headJson = head;

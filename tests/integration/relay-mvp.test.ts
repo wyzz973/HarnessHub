@@ -13,19 +13,20 @@ import { SessionError, type HarnessSelection, type PreparedSessionBinding, type 
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { RELAY_POLICY_VERSION } from "../../src/contexts/session/domain/relay/budget.js";
 import type { RelayRecord } from "../../src/contexts/session/domain/relay/packet.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 
-// G070 MVP through the formal Runtime and a real SqliteSessionStore (ADR-055 §5, §7.6 on Session v12): the packet a Turn
+// G070 MVP through the formal Runtime and a real SqliteConversationStore (ADR-055 §5, §7.6 on Session v12): the packet a Turn
 // sends, what run.context_prepared records of it, zero injection, the A→B→A delta and known secrets. Harnesses are
 // in-process fakes in a temporary directory; nothing here runs a Harness.
 
 const clean: CleanupEvidence = { closed: true, exitCode: 0, signal: null, protocolFailure: null };
 const SECRET = "corp-llm-token/0123456789+abcdef";
-interface World { readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly configuration: SessionConfiguration; runtime(factory: SessionBindingFactory, options?: Partial<SessionRuntimeOptions>): SessionRuntime }
+interface World { readonly store: SqliteConversationStore; readonly content: LocalContentStore; readonly configuration: SessionConfiguration; runtime(factory: SessionBindingFactory, options?: Partial<SessionRuntimeOptions>): SessionRuntime }
 async function world(t: test.TestContext): Promise<World> {
   const root = await mkdtemp(join(tmpdir(), "relay-mvp-")), workspace = join(root, "workspace"); await mkdir(workspace);
-  const store = new SqliteSessionStore(join(root, "data")), content = new LocalContentStore(join(root, "data"), () => store.assertOwner()), runtimes: SessionRuntime[] = [];
+  const store = appStore(join(root, "data")), content = new LocalContentStore(join(root, "data"), () => store.assertOwner()), runtimes: SessionRuntime[] = [];
   t.after(async () => {
     for (const app of runtimes) await app.close();
     try { store.close(); } finally { await rm(root, { recursive: true, force: true }); }
@@ -38,11 +39,11 @@ async function world(t: test.TestContext): Promise<World> {
       runtimes.push(app); return app;
     } };
 }
-function events(store: SqliteSessionStore, id: SessionId): readonly SessionEvent[] {
+function events(store: SqliteConversationStore, id: SessionId): readonly SessionEvent[] {
   const all: SessionEvent[] = [];
   for (let after = 0; ;) { const page = store.events(id, after, 100); if (!page.length) return all; all.push(...page); after = page.at(-1)!.seq; }
 }
-function prepared(store: SqliteSessionStore, id: SessionId, run: string): Readonly<Record<string, unknown>> {
+function prepared(store: SqliteConversationStore, id: SessionId, run: string): Readonly<Record<string, unknown>> {
   const found = events(store, id).find(row => row.type === "run.context_prepared" && row.data.runId === run);
   assert.ok(found, "run.context_prepared of " + run); return found.data;
 }

@@ -292,6 +292,10 @@ function readinessViews(observed: readonly NativeReadiness[], snapshots: readonl
   }
   return views;
 }
+/** The newest conversations as the page still reads them, in the old shape (the runtime's adapter over the rows): at most `limit`, newest first. */
+function recentSnapshots(app: { readonly store: { list(query: { readonly limit: number }): { readonly rows: readonly { readonly id: SessionSnapshot["id"] }[] } }; readonly runtime: { read(id: SessionSnapshot["id"]): SessionSnapshot } }, limit: number): SessionSnapshot[] {
+  return app.store.list({ limit }).rows.map(row => app.runtime.read(row.id));
+}
 function summary(snapshot: SessionSnapshot): SessionSummary {
   // A branch or a continued native session without its own input yet is named after where it came from.
   return { id: snapshot.id, title: conversationTitle(snapshot), status: snapshot.status, workspace: snapshot.configuration.workspace,
@@ -633,7 +637,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     // Both answer with the last completed scan (ADR-050): reading them starts no discovery, and a scan still running is
     // not waited for. The startup scan ends before the listener opens, so there always is one.
     if (path === "/api/v1/state" && method === "GET") {
-      queries(url, []); const snapshots = app.store.list(100);
+      queries(url, []); const snapshots = recentSnapshots(app, 100);
       const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses, harnessesScannedAt: scannedAt,
         sessions: snapshots.map(summary), jobs: app.management.listJobs(50), readiness: readinessViews(nativeModels.readiness(), snapshots), installationPolicy: app.factory.installations,
         // This Gateway has the relay API (ADR-055 §12.4): the page asks for the relay of a Gateway that says so and of none else.
@@ -836,7 +840,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       privateJson(response, await capabilityChanges.restore(text(input.fingerprint, "confirmation", 128), command(input.commandId))); return;
     }
     // Read-only: what the latest catalog reads and Runs showed; nothing is started.
-    if (path === "/api/v1/harnesses/readiness" && method === "GET") { queries(url, []); json(response, 200, { readiness: readinessViews(nativeModels.readiness(), app.store.list(100)) }); return; }
+    if (path === "/api/v1/harnesses/readiness" && method === "GET") { queries(url, []); json(response, 200, { readiness: readinessViews(nativeModels.readiness(), recentSnapshots(app, 100)) }); return; }
     if (path === "/api/v1/attachments" && method === "POST") {
       // Raw bytes, not JSON: the declared type is checked against the bytes and the upload is bound to this workspace.
       queries(url, ["name", "commandId"]);
@@ -1058,7 +1062,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       return;
     }
     if (path === "/api/v1/sessions") {
-      if (method === "GET") { queries(url, ["limit"]); json(response, 200, app.store.list(cursor(url.searchParams.get("limit"), 100, 1, 100)).map(summary)); return; }
+      if (method === "GET") { queries(url, ["limit"]); json(response, 200, recentSnapshots(app, cursor(url.searchParams.get("limit"), 100, 1, 100)).map(summary)); return; }
       if (method === "POST") {
         queries(url, []); const input = record(await body(request), ["workspace", "selection", "commandId"], ["selection", "commandId"]);
         const configuration = input.workspace === undefined ? options.configuration : await prepareConfiguration({ workspace: text(input.workspace, "workspace"),

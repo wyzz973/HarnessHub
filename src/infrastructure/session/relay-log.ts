@@ -6,7 +6,7 @@ import { SessionError } from "../../contracts/session.js";
  * The installation's handoff log and preference (slim.md) in the business database. The log is append-only and has one row per
  * Harness: the first time a conversation hands its history to a Harness, the row is written before the packet leaves (the packet's
  * delivery names it), and the interface shows its one-time explanation for a Harness that has a row and none before it. The
- * preference table holds the one setting. Called only by SqliteSessionStore, inside its transactions.
+ * preference table holds the one setting. Called only by SqliteConversationStore, inside its transactions.
  */
 
 function recordOf(row: Readonly<Record<string, unknown>>): HandoffRecord {

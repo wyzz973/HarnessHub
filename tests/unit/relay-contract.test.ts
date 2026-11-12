@@ -6,7 +6,9 @@ import {
   parseRunRelay, parseRunRelayRequest, parseSourceRange, parseSwitchTiming, spanOf, type DeliveryStatus,
 } from "../../src/contracts/relay.js";
 import { SessionError, type SessionSnapshot } from "../../src/contracts/session.js";
-import { assertSessionTransition, parseSession } from "../../src/contexts/session/domain/state.js";
+import type { Conversation, ConversationRun } from "../../src/contracts/conversation.js";
+import { assertConversationTransition } from "../../src/contexts/session/domain/conversation-state.js";
+import { parseSession } from "../../src/infrastructure/session/legacy/state.js";
 
 // The relay contract's parsers and bounds (ADR-055 §4, §14.3; slim.md), and the v13 rules of assertSessionTransition, each
 // with an invalid sample. Pure: nothing here opens a store or runs a Harness.
@@ -38,10 +40,16 @@ function state(options: { busy?: boolean; bindings?: Plain[]; runs?: Plain[]; ex
     ...options.extra };
 }
 const parsed = (value: Plain): SessionSnapshot => parseSession(value);
-function rejects(before: Plain, after: Plain, pattern: RegExp, events: readonly { type: string; data: Plain }[] = []): void {
-  assert.throws(() => assertSessionTransition(parsed(before), parsed(after), events), (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION" && pattern.test(error.message));
+/** The conversation a snapshot is in the Runtime's memory: the head and a light row for each Run (what the transition rules read). */
+function conversationOf(snapshot: SessionSnapshot): Conversation {
+  const { schemaVersion: _version, runs, messages, origin: _origin, ...head } = snapshot;
+  return { ...head, format: 14, runs: runs.map(({ input: _input, thinking: _thinking, tools: _tools, plan: _plan, notices: _notices, activities: _activities, outputs: _outputs, protocol: _protocol, protocolProblem: _problem, ...light }, ordinal): ConversationRun =>
+    ({ ...light, ordinal, userSeq: messages.find(message => message.id === light.userMessageId)?.seq ?? 0, isCommand: false })) };
 }
-function accepts(before: Plain, after: Plain, events: readonly { type: string; data: Plain }[] = []): void { assertSessionTransition(parsed(before), parsed(after), events); }
+function rejects(before: Plain, after: Plain, pattern: RegExp, events: readonly { type: string; data: Plain }[] = []): void {
+  assert.throws(() => assertConversationTransition(conversationOf(parsed(before)), conversationOf(parsed(after)), events), (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION" && pattern.test(error.message));
+}
+function accepts(before: Plain, after: Plain, events: readonly { type: string; data: Plain }[] = []): void { assertConversationTransition(conversationOf(parsed(before)), conversationOf(parsed(after)), events); }
 function withBinding(value: Plain, index: number, patch: Plain): Plain {
   const bindings = [...(value.nativeBindings as Plain[])]; bindings[index] = { ...bindings[index], ...patch };
   return { ...value, nativeBindings: bindings };
@@ -234,19 +242,14 @@ test("an archived binding's relay state is frozen, and a native reset archives i
   rejects(idle, { ...withBinding(withRelay(idle, 0, { resendAll: true }), 0, { status: "archived" }), commands: [...(idle.commands as Plain[]), reset] }, /without its original Run owner/u);
 });
 
-test("a Run's relay fields are fixed once it runs, and its relay request once accepted", () => {
+test("a Run moves from preparing to running with its relay fields", () => {
   const executed = { packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: { ...alpha, nativeEpoch: 1 } };
   const runs = (relayField: Plain | undefined, timing: Plain, status = "running", request?: Plain) => [run("one", 2),
     run("two", 4, alpha, { status, backend: null, cleanup: null, timing, ...(relayField === undefined ? {} : { relay: relayField }), ...(request === undefined ? {} : { relayRequest: request }) })];
   const preparing = state({ busy: true, runs: runs(undefined, { acceptedAt: 10, preparingAt: 11 }, "preparing") });
   const running = state({ busy: true, runs: runs(executed, { acceptedAt: 10, preparingAt: 11, contextReadyAt: 12, readyAt: 13 }) });
   accepts(preparing, running);
-  rejects(running, state({ busy: true, runs: runs({ ...executed, continuity: { kind: "rehydrate", tier: "full", complete: true } }, { acceptedAt: 10, preparingAt: 11, contextReadyAt: 12, readyAt: 13 }) }), /dispatched context cannot change/u);
-  rejects(running, state({ busy: true, runs: runs(executed, { acceptedAt: 10, preparingAt: 11, contextReadyAt: 13, readyAt: 13 }) }), /dispatched context cannot change/u);
-  const request = { attach: "none", fingerprint: hex("c") };
-  const queued = (relayRequest: Plain) => state({ runs: [run("one", 2), run("two", 4, alpha, { status: "queued", backend: null, cleanup: null, contextThroughSeq: 0, timing: { acceptedAt: 10 }, relayRequest })],
-    bindings: [{ ...alpha, checkpoint: "native-alpha", throughRunId: "run-one", status: "ready", relay: relay() }] });
-  rejects(queued(request), queued({ ...request, attach: "full" }), /input and identities are immutable/u);
+  // (What a dispatched Run was given, and a request once accepted, are fixed by the tables' own triggers: tests/integration/schema-v14.test.ts.)
 });
 
 test("a writer Run archives its binding for a new one of the same Harness only when its end reports native.cleared", () => {

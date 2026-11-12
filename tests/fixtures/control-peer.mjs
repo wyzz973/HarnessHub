@@ -4,6 +4,13 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+/*
+ * A native session of this fixture is named by FIXTURE_SESSION_ID (an ACP session) and FIXTURE_THREAD_ID (a Codex thread) when a test runs several conversations against it: one
+ * native session has one holder in the store. FIXTURE_UNIQUE_SESSIONS=1 gives each process names of its own: for a test whose conversations each start the program and none of
+ * them resumes a session in another process (a Turn resumed by a new process must find the name it left).
+ */
+const own = process.env.FIXTURE_UNIQUE_SESSIONS === "1" ? "-" + process.pid : "";
+const SESSION = process.env.FIXTURE_SESSION_ID ?? "session-fixture" + own, THREAD = process.env.FIXTURE_THREAD_ID ?? "thread-fixture" + own;
 const protocol = process.argv[2], scenario = process.argv[3] ?? "basic";
 if (process.env.FIXTURE_PID) writeFileSync(process.env.FIXTURE_PID, String(process.pid));
 if (scenario === "resist") {
@@ -135,7 +142,7 @@ function withdrawLater(requestId) {
     setTimeout(() => { acpOutput(); finish(); }, 100);
   }, 300);
 }
-function acpOutput(sessionId = "session-fixture") {
+function acpOutput(sessionId = SESSION) {
   if(scenario==="native-experience") {
     notification("session/update",{sessionId,update:{sessionUpdate:"agent_thought_chunk",content:{type:"text",text:"Observed fixture thinking"}}});
     notification("session/update",{sessionId,update:{sessionUpdate:"tool_call",toolCallId:"native-tool",title:"Read fixture",status:"in_progress"}});
@@ -147,7 +154,7 @@ function acpOutput(sessionId = "session-fixture") {
   }
   notification("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "你好 fixture" } } });
 }
-function codexOutput(turnId = `turn-${turn}`, threadId = "thread-fixture") {
+function codexOutput(turnId = `turn-${turn}`, threadId = THREAD) {
   if (scenario === "chunks") {
     for (const value of ["first ", "second"]) notification("item/agentMessage/delta", { threadId, turnId, itemId: `message-${turn}`, delta: value });
     return;
@@ -156,7 +163,7 @@ function codexOutput(turnId = `turn-${turn}`, threadId = "thread-fixture") {
 }
 function finish(cancelled = false) {
   if (protocol === "acp-v1") answer(promptId, { stopReason: cancelled ? "cancelled" : (scenario === "refusal" ? "refusal" : "end_turn") });
-  else notification("turn/completed", { threadId: "thread-fixture", turn: { id: `turn-${turn}`, status: cancelled ? "interrupted" : (scenario === "failed" ? "failed" : "completed") } });
+  else notification("turn/completed", { threadId: THREAD, turn: { id: `turn-${turn}`, status: cancelled ? "interrupted" : (scenario === "failed" ? "failed" : "completed") } });
 }
 lines.on("line", line => {
   const message = JSON.parse(line);
@@ -241,44 +248,44 @@ lines.on("line", line => {
   if (scenario === "hermes" && message.method === "session/new") {
     if (process.env.FIXTURE_SESSION_ERROR) { hermesRefusal(message.id, process.env.FIXTURE_SESSION_ERROR); return; }
     if (typeof message.params?.cwd === "string") sessionCwd = message.params.cwd;
-    answer(message.id, { sessionId: "session-fixture", models: hermesModels() }); return;
+    answer(message.id, { sessionId: SESSION, models: hermesModels() }); return;
   }
   // An ACP agent that needs its own sign-in before it opens a session (ACP auth_required).
   if (scenario === "auth-session" && message.method === "session/new") { emit({ id: message.id, error: { code: -32000, message: "Authentication required" } }); return; }
   // claude-agent-acp sends the session response, then its sign-in report (FIXTURE_AUTH_KIND, unless the report already came
   // with initialize), then its commands. A catalog read that waits for the commands has therefore read the report.
   if (scenario === "claude-auth" && message.method === "session/new") {
-    answer(message.id, { sessionId: "session-fixture" });
+    answer(message.id, { sessionId: SESSION });
     if (process.env.FIXTURE_AUTH_AT !== "initialize") notification("_auth/status_update", claudeAuthStatus(process.env.FIXTURE_AUTH_KIND));
-    notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "compact", description: "Clear conversation history but keep a summary in context" }] } });
+    notification("session/update", { sessionId: SESSION, update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "compact", description: "Clear conversation history but keep a summary in context" }] } });
     return;
   }
   // claude-agent-acp 0.94.0 answers session/new and then lists its commands, its own /remote-control among them (0.93.0 and
   // later); it lists and continues the sessions of the workspace, and resumes one without replaying it.
   if (scenario === "claude" && message.method === "session/new") {
-    answer(message.id, { sessionId: "session-fixture" });
-    notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "compact", description: "Clear conversation history but keep a summary in context" }, { name: "remote-control", description: "Connect this session to claude.ai" }] } });
+    answer(message.id, { sessionId: SESSION });
+    notification("session/update", { sessionId: SESSION, update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "compact", description: "Clear conversation history but keep a summary in context" }, { name: "remote-control", description: "Connect this session to claude.ai" }] } });
     return;
   }
-  if (scenario === "claude" && message.method === "session/list") { answer(message.id, { sessions: [{ sessionId: "session-fixture", cwd: message.params.cwd, title: "Claude work", updatedAt: "2026-10-22T10:00:00Z" }] }); return; }
+  if (scenario === "claude" && message.method === "session/list") { answer(message.id, { sessions: [{ sessionId: SESSION, cwd: message.params.cwd, title: "Claude work", updatedAt: "2026-10-22T10:00:00Z" }] }); return; }
   if (scenario === "claude" && message.method === "session/resume") { answer(message.id, {}); return; }
   // OpenCode 1.16–1.19 sends the session response and then its commands (setTimeout 0). `compact` is not among them, unless
   // FIXTURE_COMPACT_LISTED stands in for a version that lists it.
   if (scenario === "opencode-compact" && message.method === "session/new") {
-    answer(message.id, { sessionId: "session-fixture" });
-    notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "init", description: "create/update AGENTS.md" }, { name: "review", description: "review changes [commit|branch|pr], defaults to uncommitted" },
+    answer(message.id, { sessionId: SESSION });
+    notification("session/update", { sessionId: SESSION, update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "init", description: "create/update AGENTS.md" }, { name: "review", description: "review changes [commit|branch|pr], defaults to uncommitted" },
       ...(process.env.FIXTURE_COMPACT_LISTED ? [{ name: "compact", description: "OpenCode's own compact" }] : [])] } });
     return;
   }
   if (message.method === "session/new" && scenario === "attachments") {
-    answer(message.id, { sessionId: "session-fixture", configOptions: [{ id: "model", category: "model", type: "select", currentValue: "native/model-a", options: [{ value: "native/model-a", name: "Model A" }, { value: "native/model-b", name: "Model B" }] }] }); return;
+    answer(message.id, { sessionId: SESSION, configOptions: [{ id: "model", category: "model", type: "select", currentValue: "native/model-a", options: [{ value: "native/model-a", name: "Model A" }, { value: "native/model-b", name: "Model B" }] }] }); return;
   }
   if (message.method === "session/set_config_option" && scenario === "attachments") {
     answer(message.id, { configOptions: [{ id: "model", category: "model", type: "select", currentValue: message.params.value, options: [{ value: "native/model-a", name: "Model A" }, { value: "native/model-b", name: "Model B" }] }] }); return;
   }
   if (message.method === "session/new" && (scenario === "native-experience" || scenario === "native-config")) {
-    notification("session/update",{sessionId:"session-fixture",update:{sessionUpdate:"available_commands_update",availableCommands:[{name:"native-help",description:"Native fixture help"},...(scenario==="native-config"?[{name:"native-fast",description:"Turns fast mode on or off"}]:[])]}});
-    answer(message.id,{sessionId:"session-fixture",configOptions:nativeConfiguration()});return;
+    notification("session/update",{sessionId:SESSION,update:{sessionUpdate:"available_commands_update",availableCommands:[{name:"native-help",description:"Native fixture help"},...(scenario==="native-config"?[{name:"native-fast",description:"Turns fast mode on or off"}]:[])]}});
+    answer(message.id,{sessionId:SESSION,configOptions:nativeConfiguration()});return;
   }
   // An agent's own session catalogue (two pages) and a load that replays the history before answering.
   if (scenario === "session-list" && message.method === "session/list") {
@@ -296,7 +303,7 @@ lines.on("line", line => {
   // Like many agents, the mode change is acknowledged without echoing a current_mode_update.
   if (message.method === "session/set_mode" && scenario === "openclaw-settings") { answer(message.id, {}); return; }
   if ((message.method === "session/new" || message.method === "session/load") && scenario === "openclaw-settings") {
-    answer(message.id, { ...(message.method === "session/new" ? { sessionId: "session-fixture" } : {}), ...openclawPresentation() }); return;
+    answer(message.id, { ...(message.method === "session/new" ? { sessionId: SESSION } : {}), ...openclawPresentation() }); return;
   }
   // A restored native-config session reports its options; a new process starts from the defaults until the client applies them.
   if (message.method === "session/load" && scenario === "native-config") {
@@ -307,15 +314,15 @@ lines.on("line", line => {
   if (message.method === "session/new") {
     if (scenario === "unsupported-client") { emit({ id: message.id, error: { code: -32000, message: "This client is no longer supported for Gemini Code Assist. private-synthetic-key" } }); return; }
     if (["opening-metadata", "opening-wrong-identity", "opening-flood", "opening-text"].includes(scenario)) {
-      const sessionId = scenario === "opening-wrong-identity" ? "wrong-session" : "session-fixture";
+      const sessionId = scenario === "opening-wrong-identity" ? "wrong-session" : SESSION;
       for (let i = 0; i < (scenario === "opening-flood" ? 129 : 1); i++) notification("session/update", { sessionId, update: { sessionUpdate: "session_info_update", title: "new session" } });
       notification("session/update", { sessionId, update: { sessionUpdate: "available_commands_update", availableCommands: [] } });
       if (scenario === "opening-text") acpOutput();
     }
     // Real agents announce their commands just after the session/new response.
-    if (scenario === "late-commands") setTimeout(() => notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "late", description: "arrives after session creation" }] } }), 200);
-    if (scenario === "unlisted-model") { answer(message.id, { sessionId: "session-fixture", configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: "resumed-unlisted", options: [{ value: "native-model-a", name: "Native A" }] }] }); return; }
-    answer(message.id, { sessionId: "session-fixture", ...(scenario === "native-models" ? { configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: selectedModel, options: [{ value: "native-model-a", name: "Native A" }, { value: "native-model-b", name: "Native B" }] }] } : {}),
+    if (scenario === "late-commands") setTimeout(() => notification("session/update", { sessionId: SESSION, update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "late", description: "arrives after session creation" }] } }), 200);
+    if (scenario === "unlisted-model") { answer(message.id, { sessionId: SESSION, configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: "resumed-unlisted", options: [{ value: "native-model-a", name: "Native A" }] }] }); return; }
+    answer(message.id, { sessionId: SESSION, ...(scenario === "native-models" ? { configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: selectedModel, options: [{ value: "native-model-a", name: "Native A" }, { value: "native-model-b", name: "Native B" }] }] } : {}),
     ...(["legacy-configured-model", "duplicate-models"].includes(scenario) ? { models: { currentModelId: "configured-model", availableModels: [{ modelId: "suggested-model", name: "Suggested" }, ...(scenario === "duplicate-models" ? [{ modelId: "suggested-model", name: "Duplicate" }] : [])] } } : {}) }); return; }
   if (scenario === "hermes" && message.method === "session/load") {
     if (process.env.FIXTURE_LOAD_ERROR) { hermesRefusal(message.id, process.env.FIXTURE_LOAD_ERROR); return; }
@@ -328,7 +335,7 @@ lines.on("line", line => {
     }, 300);
     return;
   }
-  if (scenario === "hermes" && message.method === "session/list") { answer(message.id, { sessions: [{ sessionId: "session-fixture", cwd: message.params.cwd, title: "Hermes work", updatedAt: "2026-10-11T10:00:00Z" }] }); return; }
+  if (scenario === "hermes" && message.method === "session/list") { answer(message.id, { sessions: [{ sessionId: SESSION, cwd: message.params.cwd, title: "Hermes work", updatedAt: "2026-10-11T10:00:00Z" }] }); return; }
   // Hermes starts a new session for an unknown identity without saying so; a client must not rely on it.
   // Hermes 0.12 answers resume with nothing; FIXTURE_RESUME_MODELS stands in for an agent that reports its models there too.
   if (scenario === "hermes" && message.method === "session/resume") { answer(message.id, process.env.FIXTURE_RESUME_MODELS ? { models: hermesModels() } : {}); return; }
@@ -369,7 +376,7 @@ lines.on("line", line => {
   if (message.method === "thread/start" || message.method === "thread/resume") {
     resumedThread = message.method === "thread/resume";
     if (!initialized) { emit({ id: message.id, error: { code: -32600, message: "Not initialized" } }); return; }
-    const id = scenario === "resume-wrong-identity" && message.method === "thread/resume" ? "thread-replacement" : "thread-fixture";
+    const id = scenario === "resume-wrong-identity" && message.method === "thread/resume" ? "thread-replacement" : THREAD;
     notification("thread/started", { thread: { id } });
     // The thread reports the policy it runs with: requested overrides apply unless the scenario refuses them.
     const sandboxType = { "read-only": "readOnly", "workspace-write": "workspaceWrite", "danger-full-access": "dangerFullAccess" }[message.params.sandbox ?? "danger-full-access"];
@@ -408,11 +415,11 @@ lines.on("line", line => {
   if (message.method === "thread/compact/start") {
     // Codex runs compaction as its own turn: the receipt is empty and the turn identity arrives by notification.
     answer(message.id, {}); turn += 1;
-    const base = { threadId: "thread-fixture", turnId: `turn-${turn}` };
-    notification("turn/started", { threadId: "thread-fixture", turn: { id: base.turnId, status: "inProgress" } });
+    const base = { threadId: THREAD, turnId: `turn-${turn}` };
+    notification("turn/started", { threadId: THREAD, turn: { id: base.turnId, status: "inProgress" } });
     notification("item/started", { ...base, item: { type: "contextCompaction", id: "compact-item" } });
     notification("item/completed", { ...base, item: { type: "contextCompaction", id: "compact-item" } });
-    notification("turn/completed", { threadId: "thread-fixture", turn: { id: base.turnId, status: "completed" } }); return;
+    notification("turn/completed", { threadId: THREAD, turn: { id: base.turnId, status: "completed" } }); return;
   }
   if (message.method === "turn/start" && message.params?.collaborationMode !== undefined && !experimental) {
     emit({ id: message.id, error: { code: -32600, message: "turn/start.collaborationMode requires experimentalApi capability" } }); return;
@@ -452,15 +459,15 @@ lines.on("line", line => {
       answer(message.id, { turn: { id: `turn-${current}`, status: "inProgress" } });
       setTimeout(() => {
         hooksStarted = current;
-        notification("turn/started", { threadId: "thread-fixture", turn: { id: `turn-${current}`, status: "inProgress" } });
+        notification("turn/started", { threadId: THREAD, turn: { id: `turn-${current}`, status: "inProgress" } });
         codexOutput(`turn-${current}`);
         if (JSON.stringify(message.params.input).includes("finish")) { hooksEnded = current; finish(); }
       }, Number(process.env.FIXTURE_START_MS ?? 120));
       return;
     }
     if (protocol === "codex-app-server") {
-      if (resumedThread) notification("thread/tokenUsage/updated", { threadId: "thread-fixture", turnId: "previous-native-turn", tokenUsage: {} });
-      notification("turn/started", { threadId: "thread-fixture", turn: { id: `turn-${turn}`, status: "inProgress" } });
+      if (resumedThread) notification("thread/tokenUsage/updated", { threadId: THREAD, turnId: "previous-native-turn", tokenUsage: {} });
+      notification("turn/started", { threadId: THREAD, turn: { id: `turn-${turn}`, status: "inProgress" } });
       if (scenario !== "early-complete" && scenario !== "slow-start") answer(message.id, { turn: { id: `turn-${turn}`, status: "inProgress" } });
     }
     if (scenario === "wrong-identity") {
@@ -471,10 +478,10 @@ lines.on("line", line => {
     // A sub-agent thread spawned for this turn runs a command and reports back; an unrelated thread works at the same time.
     if (protocol === "codex-app-server" && scenario === "child-tools") {
       const child = { threadId: "thread-child", turnId: "child-turn" };
-      notification("thread/started", { thread: { id: "thread-child", parentThreadId: "thread-fixture", agentNickname: "Researcher" } });
+      notification("thread/started", { thread: { id: "thread-child", parentThreadId: THREAD, agentNickname: "Researcher" } });
       notification("thread/started", { thread: { id: "thread-grandchild", parentThreadId: "thread-child" } });
       // Installed Codex announces a spawned agent only through the parent's subAgentActivity item.
-      notification("item/started", { threadId: "thread-fixture", turnId: `turn-${turn}`, item: { type: "subAgentActivity", id: "spawn-1", agentPath: "/root/helper", agentThreadId: "thread-helper", kind: "started" } });
+      notification("item/started", { threadId: THREAD, turnId: `turn-${turn}`, item: { type: "subAgentActivity", id: "spawn-1", agentPath: "/root/helper", agentThreadId: "thread-helper", kind: "started" } });
       notification("item/completed", { threadId: "thread-helper", turnId: "helper-turn", item: { type: "commandExecution", id: "cmd-4", command: "pwd", cwd: "/w", status: "completed", aggregatedOutput: "/w", exitCode: 0 } });
       notification("thread/started", { thread: { id: "thread-unrelated" } });
       notification("turn/started", { threadId: "thread-child", turn: { id: "child-turn", status: "inProgress" } });
@@ -487,7 +494,7 @@ lines.on("line", line => {
       codexOutput(); setTimeout(() => finish(), 30); return;
     }
     if (protocol === "codex-app-server" && scenario === "foreign-thread") {
-      notification("thread/started", { thread: { id: "thread-child", parentThreadId: "thread-fixture" } });
+      notification("thread/started", { thread: { id: "thread-child", parentThreadId: THREAD } });
       notification("thread/started", { thread: { id: "thread-unrelated" } });
       notification("item/agentMessage/delta", { threadId: "thread-child", turnId: "child-turn", itemId: "child-message", delta: "child output" });
       notification("turn/completed", { threadId: "thread-unrelated", turn: { id: "unrelated-turn", status: "completed" } });
@@ -496,8 +503,8 @@ lines.on("line", line => {
       codexOutput(); setTimeout(() => finish(), 30); return;
     }
     if (protocol === "codex-app-server" && scenario === "native-activity") {
-      const base = { threadId: "thread-fixture", turnId: `turn-${turn}` };
-      notification("thread/tokenUsage/updated", { threadId: "thread-fixture", turnId: "older-turn", tokenUsage: { total: { totalTokens: 1000, inputTokens: 800, cachedInputTokens: 100, outputTokens: 200, reasoningOutputTokens: 0 }, last: { totalTokens: 1000, inputTokens: 800, cachedInputTokens: 100, outputTokens: 200, reasoningOutputTokens: 0 }, modelContextWindow: 100000 } });
+      const base = { threadId: THREAD, turnId: `turn-${turn}` };
+      notification("thread/tokenUsage/updated", { threadId: THREAD, turnId: "older-turn", tokenUsage: { total: { totalTokens: 1000, inputTokens: 800, cachedInputTokens: 100, outputTokens: 200, reasoningOutputTokens: 0 }, last: { totalTokens: 1000, inputTokens: 800, cachedInputTokens: 100, outputTokens: 200, reasoningOutputTokens: 0 }, modelContextWindow: 100000 } });
       notification("item/started", { ...base, item: { type: "commandExecution", id: "cmd-1", command: "printf 'a'\nprintf 'b'", cwd: "/w", status: "inProgress" } });
       notification("item/commandExecution/outputDelta", { ...base, itemId: "cmd-1", delta: "a" });
       notification("item/commandExecution/outputDelta", { ...base, itemId: "cmd-1", delta: "b" });
@@ -520,20 +527,20 @@ lines.on("line", line => {
     // Plan mode answers with a proposed plan item; its deltas may differ from the completed item, which is authoritative. A
     // connection that declared the experimental API also hears the thread's read state change before the turn completes.
     if (protocol === "codex-app-server" && scenario === "plan-mode") {
-      const base = { threadId: "thread-fixture", turnId: `turn-${turn}` };
+      const base = { threadId: THREAD, turnId: `turn-${turn}` };
       if (message.params.collaborationMode?.mode === "plan") {
         notification("item/plan/delta", { ...base, itemId: "plan-1", delta: "1. 读" });
         notification("item/plan/delta", { ...base, itemId: "plan-1", delta: "代码（草稿）" });
         notification("item/completed", { ...base, item: { type: "plan", id: "plan-1", text: "1. 读代码\n2. 改实现" } });
       } else codexOutput();
-      if (experimental) notification("thread/readState/changed", { threadId: "thread-fixture", readState: { lastReadTurnId: base.turnId } });
+      if (experimental) notification("thread/readState/changed", { threadId: THREAD, readState: { lastReadTurnId: base.turnId } });
       finish(); return;
     }
     if (protocol === "codex-app-server" && scenario === "typed-failure") {
-      notification("turn/completed", { threadId: "thread-fixture", turn: { id: `turn-${turn}`, status: "failed", error: { message: "provider said something unhelpful", codexErrorInfo: "usageLimitExceeded" } } }); return;
+      notification("turn/completed", { threadId: THREAD, turn: { id: `turn-${turn}`, status: "failed", error: { message: "provider said something unhelpful", codexErrorInfo: "usageLimitExceeded" } } }); return;
     }
     if (protocol === "acp-v1" && scenario === "native-activity") {
-      const sessionId = "session-fixture", update = value => notification("session/update", { sessionId, update: value });
+      const sessionId = SESSION, update = value => notification("session/update", { sessionId, update: value });
       update({ sessionUpdate: "plan", entries: [{ content: "Read", status: "completed", priority: "high" }, { content: "Edit", status: "in_progress", priority: "medium" }] });
       update({ sessionUpdate: "tool_call", toolCallId: "shell-1", title: "ls -la", kind: "execute", status: "pending", rawInput: { command: "ls -la" } });
       update({ sessionUpdate: "tool_call", toolCallId: "edit-1", title: "Edit a.txt", kind: "edit", status: "pending", name: "Edit", rawInput: { file_path: "/w/a.txt" }, _meta: { claudeCode: { toolName: "Edit", parentToolUseId: "parent-task" } } });
@@ -551,7 +558,7 @@ lines.on("line", line => {
     // DeepSeek Harness's `bash` and `read` (kind other, the title only the tool's name), Claude Code's command and the Hub's own MCP tool, an edit with
     // its diff, Hermes's `terminal: …` title, and a call no rule knows.
     if (protocol === "acp-v1" && scenario === "protocol-trial") {
-      const sessionId = "session-fixture", update = value => notification("session/update", { sessionId, update: value });
+      const sessionId = SESSION, update = value => notification("session/update", { sessionId, update: value });
       const text = value => [{ type: "content", content: { type: "text", text: value } }];
       update({ sessionUpdate: "tool_call", toolCallId: "d-bash", title: "bash", kind: "other", status: "in_progress", rawInput: { command: "pwd && ls -la" } });
       update({ sessionUpdate: "tool_call_update", toolCallId: "d-bash", status: "completed", content: text("/w") });
@@ -569,7 +576,7 @@ lines.on("line", line => {
       acpOutput(); finish(); return;
     }
     if (protocol === "acp-v1" && scenario === "tool-merge") {
-      const sessionId = "session-fixture";
+      const sessionId = SESSION;
       notification("session/update", { sessionId, update: { sessionUpdate: "tool_call", toolCallId: "merged", title: "printf 'a'\nprintf 'b'", status: "pending" } });
       notification("session/update", { sessionId, update: { sessionUpdate: "tool_call", toolCallId: "merged", title: "printf 'a'\nprintf 'b'", status: "pending" } });
       notification("session/update", { sessionId, update: { sessionUpdate: "tool_call_update", toolCallId: "late-announced", status: "completed" } });
@@ -579,8 +586,8 @@ lines.on("line", line => {
     if (protocol === "acp-v1" && scenario === "late-output") {
       acpOutput(); finish();
       setTimeout(() => {
-        notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "autonomous follow-up" } } });
-        emit({ id: "late-permission", method: "session/request_permission", params: { sessionId: "session-fixture", toolCall: { toolCallId: "late-tool" }, options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }] } });
+        notification("session/update", { sessionId: SESSION, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "autonomous follow-up" } } });
+        emit({ id: "late-permission", method: "session/request_permission", params: { sessionId: SESSION, toolCall: { toolCallId: "late-tool" }, options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }] } });
       }, 10);
       return;
     }
@@ -625,8 +632,8 @@ lines.on("line", line => {
     if (scenario === "passive") notification("fixture/passive", { privateSecret: "must-not-leak" });
     if (scenario === "native-question") {
       pendingPermission = true;
-      notification("item/reasoning/summaryTextDelta", { threadId: "thread-fixture", turnId: `turn-${turn}`, itemId: "native-reasoning", summaryIndex: 0, delta: "native reasoning summary" });
-      emit({ id: "native-question", method: "item/tool/requestUserInput", params: { threadId: "thread-fixture", turnId: `turn-${turn}`, itemId: "native-question-tool", isBlocking: true, questions: [
+      notification("item/reasoning/summaryTextDelta", { threadId: THREAD, turnId: `turn-${turn}`, itemId: "native-reasoning", summaryIndex: 0, delta: "native reasoning summary" });
+      emit({ id: "native-question", method: "item/tool/requestUserInput", params: { threadId: THREAD, turnId: `turn-${turn}`, itemId: "native-question-tool", isBlocking: true, questions: [
         { id: "native-choice", header: "Native choice", question: "选择原生计划", options: [{ label: "First", description: "native first" }, { label: "Second", description: "native second" }] },
         { id: "native-text", header: "Native input", question: "输入原生问题答案", isSecret: true, options: null },
       ] } }); return;
@@ -640,11 +647,11 @@ lines.on("line", line => {
     if (scenario === "permission" || scenario === "duplicate-permission") {
       pendingPermission = true;
       const permission = protocol === "acp-v1"
-        ? { id: "permission-1", method: "session/request_permission", params: { sessionId: "session-fixture", toolCall: { toolCallId: "tool-1",
+        ? { id: "permission-1", method: "session/request_permission", params: { sessionId: SESSION, toolCall: { toolCallId: "tool-1",
           // The proposed change travels with the request, as Claude and OpenCode send it for an edit.
           ...(scenario === "duplicate-permission" ? {} : { title: "Edit notes.txt", kind: "edit", content: [{ type: "diff", path: "/w/notes.txt", oldText: "alpha\nbravo\n", newText: "alpha\ndelta\n" }], locations: [{ path: "/w/notes.txt" }] }) },
           options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }, { optionId: "reject", kind: "reject_once", name: "Reject" }] } }
-        : { id: "permission-1", method: "item/commandExecution/requestApproval", params: { threadId: "thread-fixture", turnId: `turn-${turn}`, itemId: "tool-1" } };
+        : { id: "permission-1", method: "item/commandExecution/requestApproval", params: { threadId: THREAD, turnId: `turn-${turn}`, itemId: "tool-1" } };
       emit(permission); if (scenario === "duplicate-permission") emit(permission); return;
     }
     // Claude's AskUserQuestion form: a single select with its "Other" companion and a multi-select; or a form with a number field.
@@ -675,7 +682,7 @@ lines.on("line", line => {
     }
     if (scenario === "duplicate-complete") {
       const terminal = protocol === "acp-v1" ? { id: promptId, result: { stopReason: "end_turn" } }
-        : { method: "turn/completed", params: { threadId: "thread-fixture", turn: { id: `turn-${turn}`, status: "completed" } } };
+        : { method: "turn/completed", params: { threadId: THREAD, turn: { id: `turn-${turn}`, status: "completed" } } };
       emitAtomicBatch([terminal, terminal]); return;
     }
     if (!pendingPermission) finish();
@@ -695,16 +702,16 @@ lines.on("line", line => {
     if (scenario === "complete-on-cancel") { setTimeout(() => finish(false), 50); return; }
     if (scenario === "stop-permission") {
       emit(protocol === "acp-v1"
-        ? { id: "permission-after-stop", method: "session/request_permission", params: { sessionId: "session-fixture", toolCall: { toolCallId: "tool-1" }, options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }] } }
-        : { id: "permission-after-stop", method: "item/fileChange/requestApproval", params: { threadId: "thread-fixture", turnId: `turn-${turn}`, itemId: "tool-1" } });
+        ? { id: "permission-after-stop", method: "session/request_permission", params: { sessionId: SESSION, toolCall: { toolCallId: "tool-1" }, options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }] } }
+        : { id: "permission-after-stop", method: "item/fileChange/requestApproval", params: { threadId: THREAD, turnId: `turn-${turn}`, itemId: "tool-1" } });
     }
     setTimeout(() => finish(true), 50); return;
   }
   if (scenario.endsWith("-withdrawn") && (message.id === 41 || message.id === "elicit-1")) return;
-  if (message.id === "hermes-permission") { notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "permission " + JSON.stringify(message.result) } } }); finish(); return; }
-  if (message.id === "hermes-permission-blocked") { hermesBlocked("session-fixture"); finish(); return; }
+  if (message.id === "hermes-permission") { notification("session/update", { sessionId: SESSION, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "permission " + JSON.stringify(message.result) } } }); finish(); return; }
+  if (message.id === "hermes-permission-blocked") { hermesBlocked(SESSION); finish(); return; }
   if (message.id === "hermes-permission-step") {
-    const update = value => notification("session/update", { sessionId: "session-fixture", update: value });
+    const update = value => notification("session/update", { sessionId: SESSION, update: value });
     if (message.result?.outcome?.optionId !== "allow_once") {
       update({ sessionUpdate: "tool_call_update", toolCallId: "step-ask", status: "failed" });
       if (stepFails) hermesRefusal(promptId, "the refused step was needed"); else finish();
@@ -715,12 +722,12 @@ lines.on("line", line => {
       if (!existsSync(go)) return;
       clearInterval(hold); rmSync(go, { force: true });
       update({ sessionUpdate: "tool_call_update", toolCallId: "step-ask", status: "completed", content: [{ type: "content", content: { type: "text", text: "removed build" } }] });
-      notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "构建目录已清理。" } } });
+      notification("session/update", { sessionId: SESSION, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "构建目录已清理。" } } });
       finish();
     }, 50);
     return;
   }
-  if (message.id === "elicit-1") { notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "form " + JSON.stringify(message.result) } } }); finish(); return; }
+  if (message.id === "elicit-1") { notification("session/update", { sessionId: SESSION, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "form " + JSON.stringify(message.result) } } }); finish(); return; }
   if (message.id === "late-permission" || message.id === "child-approval" || message.id === "unrelated-approval") return;
   if (message.id === "permission-1" || message.id === "unsupported" || message.id === "native-question") {
     if (protocol === "acp-v1") acpOutput(); else codexOutput();

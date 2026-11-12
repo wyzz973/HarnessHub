@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import test from "node:test";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { LocalHarnessManagement } from "../../src/infrastructure/management/service.js";
 import { LocalProviderService } from "../../src/infrastructure/provider/service.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
@@ -41,7 +42,7 @@ test("real npm installs and upgrades private Codex versions, then the gateway ex
   // Everything here is private to the test; the user's Codex configuration is snapshotted first and compared after the cleanup.
   const before = await snapshot(["codex"], environment);
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-real-managed-"))), workspace = join(root, "workspace"), data = join(root, "data"); await mkdir(workspace);
-  const store = new SqliteSessionStore(data), providers = new LocalProviderService(data, () => store.assertOwner());
+  const store = appStore(data), providers = new LocalProviderService(data, () => store.assertOwner());
   let desired = "0.160.0";
   const metadata: ManagementMetadataPort = { resolve: async (recipe, signal) => {
     assert.equal(recipe.packageName, "@openai/codex");

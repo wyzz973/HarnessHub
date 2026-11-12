@@ -3,9 +3,9 @@ import { SqliteWorkspaceLeaseProvider } from "../../dist/src/infrastructure/sess
 import { dirname, join } from "node:path";
 import { inventory } from "../../dist/src/infrastructure/catalog/inventory-composition.js";
 import { LocalHarnessManagement } from "../../dist/src/infrastructure/management/service.js";
-import { SqliteSessionStore } from "../../dist/src/infrastructure/session/sqlite-store.js";
+import { SqliteConversationStore } from "../../dist/src/infrastructure/session/conversation-store.js";
 const [root, manifest, validate] = process.argv.slice(2);
-const store = new SqliteSessionStore(root);
+const store = new SqliteConversationStore(root);
 const management = new LocalHarnessManagement(root, { installationMode: "private-fixture", assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration });
 try {
   const observed = await inventory({ ...(manifest ? { manifest } : {}), searchDirs: [], packageRoots: [], pathOnly: true, installations: "any", managedResolver: management });

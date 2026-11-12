@@ -10,8 +10,9 @@ import { SessionError, type SelectionRequest, type SessionEvent, type TurnLimits
 import { HostTmpdirs, defaultHostTmpdirRoot } from "../infrastructure/session/host-tmpdir.js";
 import { RelayKeys, insideByIdentity } from "../infrastructure/session/relay-keys.js";
 import { SessionRuntime } from "../contexts/session/application/runtime.js";
-import { SqliteSessionStore } from "../infrastructure/session/sqlite-store.js";
-import { recoverRelay } from "../contexts/session/domain/relay/recover.js";
+import { SqliteConversationStore } from "../infrastructure/session/conversation-store.js";
+import { recoverConversation } from "../contexts/session/domain/conversation-state.js";
+import { recoverConversationRelay } from "../contexts/session/domain/relay/recover.js";
 import { SqliteWorkspaceLeaseProvider } from "../infrastructure/session/workspace-lease.js";
 import { PosixProcessGroups } from "../infrastructure/control/process-group.js";
 import { DirectorySessionBindingFactory } from "../infrastructure/session/binding-factory.js";
@@ -35,6 +36,22 @@ export function builtinHarnessName(): (harnessId: string) => string | null {
     if (names === undefined) { try { names = new Map(loadBuiltinCatalog(catalogTarget()).map(definition => [definition.id, definition.name])); } catch { names = new Map(); } }
     return names.get(harnessId) ?? null;
   };
+}
+/**
+ * The content collector, behind the gate of the upgrade (ADR-057 3.6, review M2): it is the one deletion a backup of the database cannot bring back (the content store is
+ * not in it). It runs only when no conversation is waiting to be converted and the references of the converted ones were compared and found equal to what the old code
+ * kept; the first start after an upgrade only reports what it would collect and deletes nothing; a database that never had an upgrade collects as it always did.
+ */
+export function collectContent(store: Pick<SqliteConversationStore, "collectionGate" | "contentReferences" | "acknowledgeFirstStart">, content: Pick<LocalContentStore, "collect" | "wouldCollect">, report: (line: string) => void = line => { process.stderr.write(line + "\n"); }): void {
+  const gate = store.collectionGate();
+  if (gate.allowed) { content.collect(store.contentReferences()); return; }
+  if (gate.reportOnly) {
+    const found = content.wouldCollect(store.contentReferences());
+    report("HarnessGateway: CONTENT_COLLECTION (the first start after the upgrade only reports: " + found.records + " stored items, " + found.blobs + " blobs, " + found.files + " files and " + found.partial + " partial uploads would be collected; nothing was deleted)");
+    store.acknowledgeFirstStart();
+    return;
+  }
+  report("HarnessGateway: CONTENT_COLLECTION (nothing is collected: " + (gate.reason ?? "the upgrade is not finished") + ")");
 }
 export function dataRoot(value: string | undefined): string {
   const path = value === undefined ? resolve("data") : resolve(value);
@@ -113,9 +130,11 @@ export function application(root: string, publish: (event: SessionEvent) => void
   /** The context table's tokens (src/contracts/table.ts): the instance whoever starts native processes mints from and the web server resolves with; a private in-memory one when not given. */
   readonly tableGrants?: TableGrants;
   /** The context table's mount (docs/decisions/LOG.md, 2026-11-11): the native processes the Sessions start carry its address and a token each. None: they carry neither. */
-  readonly table?: TableMount } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime; readonly grants: TableGrants } {
-  // Recovery decides the relay deliveries a previous owner left in flight, per Session in its own SAVEPOINT (ADR-055 §9 S15).
-  const store = new SqliteSessionStore(root, { recoverRelay });
+  readonly table?: TableMount } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteConversationStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime; readonly grants: TableGrants } {
+  // Opening the root brings it to the tables (a backup first, each conversation converted and checked, none started on a store half trusted: a conversation that
+  // cannot be converted ends the start), then recovers what a previous owner left unfinished with the domain's recovery; the relay deliveries it left in flight are
+  // decided per conversation in a SAVEPOINT of its own (ADR-055 §9 S15; ADR-057 3.6).
+  const store = new SqliteConversationStore(root, { recover: recoverConversation, recoverRelay: recoverConversationRelay });
   let providers: LocalProviderService | undefined;
   let management: LocalHarnessManagement | undefined;
   try {
@@ -137,7 +156,7 @@ export function application(root: string, publish: (event: SessionEvent) => void
       { budgets: hostBudgets, tmpdirs, ...(options.table === undefined ? {} : { table: options.table }) });
     // The owner is exclusive and quiescent here, so unreferenced content from earlier owners can be collected safely.
     const content = new LocalContentStore(root, () => store.assertOwner());
-    content.collect(store.contentReferences());
+    collectContent(store, content);
     // Kept process groups are recognized across restarts on POSIX only; elsewhere a previous owner's kept process stays
     // unconfirmed and its workspace quarantined (ADR-030).
     // The relay names a Harness by its catalog name (ADR-055 §5.4); the built-in catalog is read once, at the first packet.

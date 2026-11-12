@@ -6,7 +6,8 @@ import test from "node:test";
 import { LocalHarnessManagement } from "../../src/infrastructure/management/service.js";
 import { NativeManagement } from "../../src/infrastructure/management/native.js";
 import { NativeInstallationLocks } from "../../src/infrastructure/management/native-lock.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { ManagementError, type ManagementMetadataPort, type ManagementRecipe, type NativeProgramUsers } from "../../src/contracts/management.js";
 import { systemProgramHost, type ProgramHost } from "../../src/infrastructure/management/program-usage.js";
 import { compareReleases, isolatedSandboxProfile, isPrerelease, upgradeHops } from "../../src/infrastructure/management/native.js";
@@ -85,7 +86,7 @@ async function fixture(t: test.TestContext, attack = false, beforeCleanup?: () =
   let version = "2.0.0", binNames = [recipe.binName], engines: (release: string) => Record<string, string> = () => ({});
   const metadata: ManagementMetadataPort = { resolve: async original => { const resolved = original.referenceVersion === "latest" ? version : original.referenceVersion; return { recipe: original, version: resolved, artifactUrl: null, integrity: null, engines: engines(resolved), binNames, dependencies: [] }; } };
   const environment = { home, values: { HOME: home, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } };
-  const native = new NativeManagement(npm, null, process.execPath, environment, metadata, fakeHost(packageRoot, extra.launchd)), store = new SqliteSessionStore(data), locks = new NativeInstallationLocks(join(root, "locks"));
+  const native = new NativeManagement(npm, null, process.execPath, environment, metadata, fakeHost(packageRoot, extra.launchd)), store = appStore(data), locks = new NativeInstallationLocks(join(root, "locks"));
   const manager = new LocalHarnessManagement(data, { assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration, recipes: [extra.recipe ?? recipe], native, nativeLocks: locks });
   if (extra.users) manager.attachProgramUsers(extra.users);
   manager.setSystemObservations([{ harnessId: recipe.harnessId, controlId: recipe.controlId, command: { executable: entry, args: [], env: {} }, packageVersion: installed }]);

@@ -12,8 +12,10 @@ import { nativeConversationId, singleText, type BackendResult, type CleanupEvide
 import { SessionError, STREAM_WINDOW_MS, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { MAX_OUTPUT_BYTES } from "../../src/contexts/session/domain/state.js";
+import { verify } from "../../src/contexts/session/domain/conversation-verify.js";
 import { initialBindingRelay } from "../../src/contexts/session/domain/relay/delivery.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
@@ -26,11 +28,11 @@ class Gate<T> {
   reject!: (error: unknown) => void;
   constructor() { this.promise = new Promise((resolve, reject) => { this.resolve = resolve; this.reject = reject; }); }
 }
-interface Fixture { readonly root: string; readonly store: SqliteSessionStore; readonly stores: SqliteSessionStore[]; readonly configuration: SessionConfiguration; readonly runtimes: SessionRuntime[] }
+interface Fixture { readonly root: string; readonly store: SqliteConversationStore; readonly stores: SqliteConversationStore[]; readonly configuration: SessionConfiguration; readonly runtimes: SessionRuntime[] }
 async function fixture(t: test.TestContext): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), "harness-session-runtime-"));
   const workspace = join(root, "workspace"); await mkdir(workspace);
-  const store = new SqliteSessionStore(join(root, "data"));
+  const store = appStore(join(root, "data"));
   const stores = [store];
   const runtimes: SessionRuntime[] = [];
   t.after(async () => {
@@ -130,6 +132,25 @@ class ControlledFactory implements SessionBindingFactory {
 async function trace(path: string): Promise<readonly Record<string, unknown>[]> {
   return (await readFile(path, "utf8")).trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
 }
+/**
+ * The rows are the only record (ADR-057 step 2): what the Runtime wrote of the Turns it ran holds none of the fields of the old display shape, neither in a Run's row nor in a
+ * conversation's head. The words, the tools, the plan, the notices, the activities and the outputs are items.
+ */
+function assertRowsAreTheOnlyRecord(f: Fixture): void {
+  const db = new DatabaseSync(join(f.root, "data", "gateway.sqlite"), { readOnly: true });
+  try {
+    const runs = db.prepare("SELECT run_id, run_json FROM runs").all(), items = Number(db.prepare("SELECT COUNT(*) AS n FROM items").get()!.n);
+    assert.ok(runs.length > 0 && items > 0, "something was written");
+    for (const row of runs) {
+      const facts = JSON.parse(String(row.run_json)) as Record<string, unknown>;
+      for (const key of ["input", "tools", "thinking", "notices", "activities", "outputs", "plan", "protocol", "protocolProblem"]) assert.equal(key in facts, false, String(row.run_id) + ": a Run's row keeps no `" + key + "`");
+    }
+    for (const row of db.prepare("SELECT id, head FROM sessions").all()) {
+      const head = JSON.parse(String(row.head)) as Record<string, unknown>;
+      for (const key of ["messages", "runs", "schemaVersion"]) assert.equal(key in head, false, String(row.id) + ": a conversation's head keeps no `" + key + "`");
+    }
+  } finally { db.close(); }
+}
 
 test("cancelling during native command discovery never dispatches the command", async t => {
   const f = await fixture(t), peer = controlled(), factory = new ControlledFactory([peer]);
@@ -187,6 +208,11 @@ test("real SQLite and ACP/Codex IPC retain one public Session through A to B to 
   assert.match(prompts[3]!, /first public question/); assert.match(prompts[3]!, /third public question/);
   assert.deepEqual(final.runs[3]?.sourceRunIds, final.runs.slice(0, 3).map(run => run.id));
   assert.equal(final.lastSeq, published.length);
+  // The rows a whole run wrote (four Turns, a switch each way, the bindings) are a conversation the store's checker has nothing to say about.
+  assert.deepEqual(verify(f.store.get(state.id), f.store), []);
+  assertRowsAreTheOnlyRecord(f);
+  // And what the old readers are given of it is what the rows say: the user's words and the answers, in the order of the Turns.
+  assert.deepEqual(f.store.snapshot(state.id).runs.map(run => run.userMessageId), final.runs.map(run => run.userMessageId));
 });
 
 test("each Run records when it was accepted, prepared, ready, dispatched, first answered and ended, in that order", async t => {
@@ -330,13 +356,13 @@ test("real SQLite write failure does not publish output or dispatch later queued
   t.after(async () => { try { await app.close(); } catch {} });
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   const db = new DatabaseSync(join(f.root, "data", "gateway.sqlite"));
-  db.exec("CREATE TRIGGER fail_output BEFORE INSERT ON events WHEN json_extract(NEW.event_json,'$.type')='run.output' BEGIN SELECT RAISE(FAIL,'synthetic disk write rejection'); END");
+  // A write the database cannot do at all (not a rule of the rows refusing it): a trigger that reads a JSON that is not one fails the statement with SQLite's own error, not a constraint's.
+  db.exec("CREATE TRIGGER fail_output BEFORE INSERT ON events WHEN json_extract(NEW.event_json,'$.type')='run.output' BEGIN SELECT json_extract('synthetic disk write rejection','$'); END");
   app.send(state.id, "write failure input", "first"); app.send(state.id, "never replay this queued input", "second");
   await assert.rejects(() => app.wait(state.id), /SQLite operation failed/);
   assert.ok(!published.some(value => value.type === "run.output")); assert.equal(factory.prepared.length, 1); assert.equal(factory.prepared[0]?.peer.closeCount, 1);
-  const row = db.prepare("SELECT snapshot FROM sessions WHERE id=?").get(state.id); assert.ok(row && typeof row.snapshot === "string");
-  const persisted = JSON.parse(row.snapshot) as { runs: readonly { status: string }[]; messages: readonly { role: string }[] };
-  assert.equal(persisted.runs[0]?.status, "running"); assert.ok(!persisted.messages.some(message => message.role === "assistant"));
+  const runs = db.prepare("SELECT status FROM runs WHERE session_id=? ORDER BY ordinal").all(state.id);
+  assert.equal(runs[0]?.status, "running"); assert.equal(db.prepare("SELECT COUNT(*) AS n FROM items i JOIN runs r ON r.run_id=i.run_id WHERE r.session_id=? AND i.type='assistant_message'").get(state.id)?.n, 0, "no reply was committed");
   assert.throws(() => app.send(state.id, "retry", "retry"), /SQLite operation failed/); db.close();
 });
 
@@ -359,8 +385,8 @@ test("completed public history survives Store reopen with no automatic dispatch"
   const f = await fixture(t), factory = new ControlledFactory([]), app = runtime(f, factory);
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"); app.send(state.id, "durable history", "send"); await app.wait(state.id); await app.close();
   f.store.close();
-  const reopened = new SqliteSessionStore(join(f.root, "data")); t.after(() => reopened.close());
-  assert.equal(reopened.get(state.id).runs[0]?.status, "completed"); assert.equal(reopened.get(state.id).messages[0]?.text, "durable history");
+  const reopened = appStore(join(f.root, "data")); t.after(() => reopened.close());
+  assert.equal(reopened.get(state.id).runs[0]?.status, "completed"); assert.equal(reopened.snapshot(state.id).messages[0]?.text, "durable history");
   assert.equal(factory.prepared.length, 1); assert.ok(reopened.ownerGeneration > f.store.ownerGeneration);
   reopened.close();
 });
@@ -465,10 +491,10 @@ test("runtime shutdown waits for in-flight creation validation to release its re
   await validating.promise;
   let finished = false; const closing = app.close().then(() => { finished = true; });
   await Promise.resolve(); assert.equal(finished, false); assert.ok((await readdir(f.root)).includes("validation-resource"));
-  f.store.assertOwner(); assert.equal(f.store.list().length, 0);
+  f.store.assertOwner(); assert.equal(f.store.list().rows.length, 0);
   release.resolve(); await Promise.all([closing, creationFailure]);
   assert.equal(finished, true); assert.ok(!(await readdir(f.root)).includes("validation-resource"));
-  f.store.assertOwner(); assert.equal(f.store.list().length, 0);
+  f.store.assertOwner(); assert.equal(f.store.list().rows.length, 0);
 });
 
 test("creations are not limited in number: twenty-four hold validation resources at once, and closing the runtime ends every one of them", async (t) => {
@@ -485,16 +511,18 @@ test("creations are not limited in number: twenty-four hold validation resources
   await allReady.promise;
   assert.equal(calls, 24); assert.equal((await readdir(f.root)).filter(name => name.startsWith("validation-")).length, 24);
   const closing = app.close(); f.store.assertOwner(); release.resolve(); await Promise.all([closing, ...failures]);
-  assert.equal((await readdir(f.root)).filter(name => name.startsWith("validation-")).length, 0); assert.equal(f.store.list().length, 0);
+  assert.equal((await readdir(f.root)).filter(name => name.startsWith("validation-")).length, 0); assert.equal(f.store.list().rows.length, 0);
 });
 
 test("a failed Store create never registers a nonexistent Session for shutdown", async (t) => {
   const f = await fixture(t), app = new SessionRuntime(f.store, new ControlledFactory([]), {
-    id: () => "failed-create", now: () => new Date(), publish: () => {}, fingerprint: () => "invalid-fingerprint",
+    id: () => "failed-create", now: () => new Date(), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"),
   });
-  await assert.rejects(() => app.create(f.configuration, { harnessId: "alpha" }, "create"), (error: unknown) => error instanceof SessionError && error.code === "INVALID_DATA");
-  await assert.rejects(() => app.close(), (error: unknown) => error instanceof SessionError && error.code === "INVALID_DATA");
-  f.store.assertOwner(); assert.deepEqual(f.store.list(), []);
+  // The store refuses the new conversation's head (a rule of the rows): that ends this request, it does not stop the Runtime, and nothing is registered for shutdown.
+  const db = new DatabaseSync(join(f.root, "data", "gateway.sqlite")); db.exec("CREATE TRIGGER no_new_head BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT,'synthetic refusal'); END"); db.close();
+  await assert.rejects(() => app.create(f.configuration, { harnessId: "alpha" }, "create"), (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION");
+  await app.close();
+  f.store.assertOwner(); assert.deepEqual(f.store.list().rows, []);
 });
 
 test("shutdown owns one Promise before committed-event callbacks can reenter close", async (t) => {
@@ -577,6 +605,11 @@ test("explicit recovery preserves unknown facts, cancels queued inputs and start
   app.send(state.id, "new explicit input", "new"); await app.wait(state.id);
   assert.equal(factory.prepared.length, 3); assert.equal(app.read(state.id).runs[2]!.status, "completed");
   assert.equal(app.read(state.id).runs[0]!.status, "unknown");
+  // The recovery switch took the unknown Turn over: the rows say which switch did (the open conversation holds no unknown Turn nobody acknowledged), and the checker agrees.
+  const held = f.store.get(state.id);
+  assert.equal(held.runs[0]!.status, "unknown"); assert.equal(held.runs[0]!.acknowledgedBy, receipt.switchId, "the unknown Turn is acknowledged by the recovery switch");
+  assert.equal(held.runs[1]!.acknowledgedBy, undefined, "a cancelled one is not an unknown one");
+  assert.deepEqual(verify(held, f.store), []);
 });
 
 test("legacy falsely blocked switch resumes with the same Session and immutable failed-switch evidence", async t => {
@@ -629,7 +662,7 @@ test("native bindings survive process owners, A to B to A sends only unseen publ
   assert.deepEqual(resumes, [undefined, "private-native-alpha", undefined, "private-native-alpha"]);
   const saved = app.read(session.id); assert.equal(saved.nativeBindings?.length, 2);
   await app.close(); f.store.close();
-  const reopened = new SqliteSessionStore(join(f.root, "data")); f.stores.push(reopened);
+  const reopened = appStore(join(f.root, "data")); f.stores.push(reopened);
   const next = runtime({ ...f, store: reopened }, factory, () => {}, "restart-");
   next.send(session.id, "after owner restart", "five"); await next.wait(session.id);
   assert.equal(await peers[4]!.started.promise, "after owner restart"); assert.equal(resumes.at(-1), "private-native-alpha");
@@ -709,23 +742,55 @@ test("a question the Harness withdraws closes its public request and refuses a l
   assert.equal(app.read(session.id).runs[0]?.status, "completed");
 });
 
-test("a long native turn beyond the public tool budget completes without blocking the Runtime", { timeout: 10000 }, async t => {
-  const f = await fixture(t), peer = controlled(), factory = new ControlledFactory([peer]), prepare = factory.prepare.bind(factory);
+test("a long native turn with any number of calls completes, and every call it made stays (nothing is dropped at a count)", { timeout: 20000 }, async t => {
+  const f = await fixture(t), peer = controlled(), factory = new ControlledFactory([peer]), prepare = factory.prepare.bind(factory), calls = 500;
   factory.prepare = async (...args) => {
     const binding = await prepare(...args);
     return { ...binding, control: { ...binding.control, startText: async (id: NativeConversationId, text: TurnText, output: (event: ControlEvent) => void) => {
-      for (let index = 0; index < 140; index++) output({ type: "tool", id: "tool-" + index, title: "step " + index, status: "completed" });
+      for (let index = 0; index < calls; index++) output({ type: "tool", id: "tool-" + index, title: "step " + index, status: "completed" });
       return binding.control.startText(id, text, output);
     } } };
   };
   const app = runtime(f, factory), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   app.send(session.id, "many tools", "one"); await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!;
-  assert.equal(run.status, "completed"); assert.equal(run.tools?.length, 128);
+  const run = app.read(session.id).runs[0]!, expected = Array.from({ length: calls }, (_, index) => "tool-" + index);
+  assert.equal(run.status, "completed"); assert.equal(run.tools?.length, calls); assert.deepEqual(run.tools?.map(tool => tool.id), expected, "in the order they were reported");
+  // They are rows, one item each, in the order of the Turn, and the checker has nothing to say about them.
+  const turn = f.store.turnAt(session.id, 0, { inlineBytes: Infinity })!;
+  assert.deepEqual(turn.items.filter(item => item.type === "tool").map(item => item.itemId), expected.map(id => "tool:" + id));
+  assert.deepEqual(verify(f.store.get(session.id), f.store), []);
+  assertRowsAreTheOnlyRecord(f);
   app.send(session.id, "still usable", "two"); await app.wait(session.id); assert.equal(app.read(session.id).runs[1]?.status, "completed");
 });
 
-test("native activity becomes bounded public facts and tool detail content before the binding closes", { timeout: 10000 }, async t => {
+test("a tool whose title has a NUL, multibyte text, half a character or more than 4096 bytes is kept as the Harness reported it (a NUL removed and half a character mended, both told in the item) and the Turn runs on", { timeout: 10000 }, async t => {
+  const f = await fixture(t), peer = controlled(), factory = new ControlledFactory([peer]), prepare = factory.prepare.bind(factory);
+  const long = "长".repeat(2000) + " end", odd = "编译 🚀 项目 — ünïcödé";
+  assert.ok(Buffer.byteLength(long) > 4096);
+  factory.prepare = async (...args) => {
+    const binding = await prepare(...args);
+    return { ...binding, control: { ...binding.control, startText: async (id: NativeConversationId, text: TurnText, output: (event: ControlEvent) => void) => {
+      output({ type: "tool", id: "nul", title: "run\0 tests", status: "completed" });
+      output({ type: "tool", id: "wide", title: odd, status: "completed" });
+      output({ type: "tool", id: "long", title: long, status: "completed" });
+      output({ type: "tool", id: "half", title: "half \ud83d pair", status: "completed" });
+      return binding.control.startText(id, text, output);
+    } } };
+  };
+  const app = runtime(f, factory), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(session.id, "odd titles", "one"); await app.wait(session.id);
+  const run = app.read(session.id).runs[0]!;
+  assert.equal(run.status, "completed", "no title ended the Turn");
+  assert.deepEqual(run.tools?.map(tool => tool.title), ["run tests", odd, long, "half \ufffd pair"]);
+  const turn = f.store.turnAt(session.id, 0, { inlineBytes: Infinity })!;
+  const told = (id: string): readonly string[] | undefined => (turn.items.find(item => item.itemId === "tool:" + id)?.fields as { readonly native?: { readonly clipped?: readonly string[] } }).native?.clipped;
+  assert.deepEqual(told("nul"), ["title:nul"]); assert.deepEqual(told("half"), ["title:surrogate"]);
+  assert.equal(told("wide"), undefined, "nothing was changed in a title that was only multibyte"); assert.equal(told("long"), undefined, "and none was cut for its length");
+  assert.deepEqual(verify(f.store.get(session.id), f.store), []);
+  app.send(session.id, "still usable", "two"); await app.wait(session.id); assert.equal(app.read(session.id).runs[1]?.status, "completed", "the runtime goes on");
+});
+
+test("native activity becomes public facts, and each call's detail is stored whole as content before the binding closes", { timeout: 10000 }, async t => {
   const f = await fixture(t), peer = controlled({ holdResult: true }), later = controlled({ holdResult: true }), factory = new ControlledFactory([peer, later]), prepare = factory.prepare.bind(factory);
   const content = new LocalContentStore(join(f.root, "data"), () => f.store.assertOwner());
   let emit: ((event: ControlEvent) => void) | null = null;
@@ -758,7 +823,7 @@ test("native activity becomes bounded public facts and tool detail content befor
   const shell = run.tools?.find(tool => tool.id === "shell"), edit = run.tools?.find(tool => tool.id === "edit");
   assert.deepEqual([shell?.kind, shell?.name, shell?.exitCode], ["execute", "Bash", 0]); assert.ok(shell?.detail);
   const stored = JSON.parse(await readFile(content.read(shell.detail.id).path, "utf8")) as Record<string, unknown>;
-  assert.equal(stored.input, "ls"); assert.equal(stored.truncated, true); assert.equal(Buffer.byteLength(String(stored.output)), 64 * 1024);
+  assert.equal(stored.input, "ls"); assert.equal(stored.truncated, undefined, "the Hub cuts nothing of a call's detail"); assert.equal(Buffer.byteLength(String(stored.output)), 200 * 1024, "what the Harness reported is stored whole");
   assert.ok(edit?.detail, "a tool still running at settlement is flushed before cleanup");
   assert.deepEqual(run.plan, { entries: [{ content: "Read", status: "completed" }, { content: "Edit", status: "in_progress", priority: "high" }] });
   assert.deepEqual(run.usage, { context: { used: 10, size: 100 }, cost: { amount: 0.5, currency: "USD", scope: "session" }, turn: { input: 7, output: 3 } });
@@ -777,6 +842,7 @@ test("native activity becomes bounded public facts and tool detail content befor
   emit!({ type: "notice", severity: "info", title: "new" });
   later.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
   assert.deepEqual(app.read(session.id).runs[1]!.notices, [{ severity: "info", title: "new" }]);
+  assertRowsAreTheOnlyRecord(f);
   assert.equal(f.store.events(session.id, 0, 100).filter(row => row.type === "run.output" && JSON.stringify(row.data).includes('"title":"fallback"')).length, 3);
 });
 
@@ -822,12 +888,13 @@ test("attachments are admitted with the input, checked and copied before dispatc
 test("a branch quotes public history, forks the native session at its latest Turn, and falls back to public context otherwise", { timeout: 10000 }, async t => {
   const f = await fixture(t), peers = Array.from({ length: 8 }, () => controlled()), factory = new ControlledFactory(peers);
   const prepare = factory.prepare.bind(factory), opens: (string | undefined)[] = [], forks: string[] = [];
-  let refuse = false;
+  let refuse = false, fresh = 0;
   factory.prepare = async (...args) => {
-    const binding = await prepare(...args), original = binding.control.open;
+    // The native session this connection opened: the one it was asked to resume, else a new one of its own (a native session has one holder in the whole store).
+    const binding = await prepare(...args), original = binding.control.open; let held: string | undefined;
     return { ...binding, control: { ...binding.control,
-      open: async (cwd, model, options, checkpoint) => { opens.push(checkpoint); return original(cwd, model, options, checkpoint); },
-      checkpoint: async () => opens.at(-1) ?? "native-source",
+      open: async (cwd, model, options, checkpoint) => { opens.push(checkpoint); held = checkpoint ?? (fresh++ === 0 ? "native-source" : "native-new-" + fresh); return original(cwd, model, options, checkpoint); },
+      checkpoint: async () => held ?? "native-source",
       fork: async (checkpoint: string) => { forks.push(checkpoint); if (refuse) throw new SessionError("NATIVE_FORK_UNAVAILABLE", "refused"); return checkpoint + "-copy-" + forks.length; },
     } };
   };
@@ -907,9 +974,9 @@ test("a native session continues as a new conversation that quotes its recent hi
   };
   const app = runtime(f, factory), imported = await app.importNative(f.configuration, { harnessId: "alpha" }, "native-a", "import-one");
   const origin = imported.origin!; assert.equal(origin.kind, "import"); if (origin.kind !== "import") return;
-  // The newest 200 messages are quoted; the five older ones join the four the Harness already left out.
-  assert.equal(origin.title, "Earlier work"); assert.equal(origin.history.length, 200); assert.equal(origin.omitted, 9); assert.equal(origin.complete, false);
-  assert.deepEqual([origin.history[0]!.text, origin.history.at(-1)!.text, origin.history.at(-2)!.harnessId], ["message 5", "message 204", "alpha"]);
+  // Every message the Harness returned is quoted (the Hub holds no count of them); the four it left out itself are all that is omitted.
+  assert.equal(origin.title, "Earlier work"); assert.equal(origin.history.length, 205); assert.equal(origin.omitted, 4); assert.equal(origin.complete, false);
+  assert.deepEqual([origin.history[0]!.text, origin.history.at(-1)!.text, origin.history.at(-2)!.harnessId], ["message 0", "message 204", "alpha"]);
   assert.deepEqual(imported.nativeBindings, [{ harnessId: "alpha", controlId: "alpha-acp", checkpoint: "private-native-a", throughRunId: null, status: "ready", relay: initialBindingRelay([], "alpha", "alpha-acp", "import") }]);
   assert.equal((await app.importNative(f.configuration, { harnessId: "alpha" }, "native-a", "import-one")).id, imported.id); assert.equal(reads.length, 1, "a replayed command reads nothing");
   await assert.rejects(app.importNative(f.configuration, { harnessId: "alpha" }, "native-b", "import-one"), (error: unknown) => error instanceof SessionError && error.code === "IDEMPOTENCY_CONFLICT");
@@ -1179,9 +1246,9 @@ test("INV-06/INV-28 ADR-047: a window its timer commits is published after its c
   try {
     const count = db.prepare("SELECT COUNT(*) AS n FROM events WHERE session_id=? AND json_extract(event_json,'$.type')='run.output'").get(session.id);
     assert.equal(count?.n, 1, "nothing was committed after the owner was lost");
-    const row = db.prepare("SELECT snapshot FROM sessions WHERE id=?").get(session.id); assert.ok(row && typeof row.snapshot === "string");
-    const persisted = JSON.parse(row.snapshot) as { messages: readonly { role: string; text: string }[] };
-    assert.equal(persisted.messages.find(message => message.role === "assistant")?.text, "w1");
+    // The reply that stands is the one chunk that was committed: the segment's text in its rows.
+    const chunks = db.prepare("SELECT t.text AS text FROM item_text t JOIN items i ON i.run_id=t.run_id AND i.seq=t.item_seq JOIN runs r ON r.run_id=i.run_id WHERE r.session_id=? AND i.type='assistant_message' ORDER BY i.seq, t.chunk").all(session.id);
+    assert.deepEqual(chunks.map(row => row.text), ["w1"]);
   } finally { db.close(); }
   assert.equal(timers.pending, 0);
 });

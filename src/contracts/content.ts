@@ -9,7 +9,6 @@ export const MAX_CONTENT_BYTES = 20 * 1024 * 1024;
 /** User attachments admitted with one input. */
 export const MAX_RUN_ATTACHMENTS = 8;
 export const MAX_RUN_ATTACHMENT_BYTES = 32 * 1024 * 1024;
-export const MAX_RUN_OUTPUTS = 32;
 export const MAX_CONTENT_NAME_BYTES = 255;
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const AUDIO_TYPES = new Set(["audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/aac", "audio/ogg", "audio/webm", "audio/flac"]);

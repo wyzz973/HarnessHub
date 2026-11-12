@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { sessionId, SessionError } from "../contracts/session.js";
-import { SqliteSessionReader } from "../infrastructure/session/sqlite-store.js";
+import { SqliteSessionReader } from "../infrastructure/session/session-reader.js";
 import { application, dataRoot, errorRecord, newCommand, selection } from "./session-application.js";
 import { boundedWrite } from "./bounded-streams.js";
 
@@ -38,7 +38,10 @@ export async function main(args: readonly string[]): Promise<number> {
       output = await app.runtime.closeSession(sessionId(values.session), values["command-id"] ?? newCommand("close"));
     } else {
       reader = new SqliteSessionReader(root);
-      output = action === "list" ? reader.list(limit).map(item => ({ id: item.id, status: item.status, epoch: item.epoch, selection: item.selection, runs: item.runs.length, lastSeq: item.lastSeq }))
+      // A database whose upgrade to the tables has not finished holds conversations of both kinds: each is read as it is, and the tool says the rest are not converted yet.
+      const upgrade = reader.upgrade();
+      if (upgrade.kind === "converting") process.stderr.write("HarnessGateway: UPGRADE_UNDER_WAY — " + upgrade.message + "\n");
+      output = action === "list" ? reader.list(limit)
         : action === "show" ? reader.get(sessionId(values.session))
         : reader.events(sessionId(values.session), integer(values["after-seq"], 0, 0, Number.MAX_SAFE_INTEGER), limit);
     }

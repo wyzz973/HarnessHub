@@ -11,7 +11,8 @@ import { PiControl } from "../../src/adapters/control/pi.js";
 import type { CleanupEvidence } from "../../src/contracts/control.js";
 import { SessionError, STREAM_WINDOW_MS, resolveTurnBudgets, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionId } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url));
@@ -28,7 +29,7 @@ class CountingFactory implements SessionBindingFactory {
     return { harnessId: "alpha", controlId: "alpha-acp" };
   }
   async prepare(_selected: HarnessSelection, configuration: SessionConfiguration, session: SessionId, run: string): Promise<PreparedSessionBinding> {
-    const lease = this.lease.acquire(configuration.workspace, session, run), env = { LANG: "C.UTF-8", FIXTURE_RESUME_MODELS: "1" };
+    const lease = this.lease.acquire(configuration.workspace, session, run), env = { LANG: "C.UTF-8", FIXTURE_RESUME_MODELS: "1", FIXTURE_SESSION_ID: "session-fixture-" + session, FIXTURE_THREAD_ID: "thread-fixture-" + session };
     this.started.push(session);
     // "codex:<scenario>" and "pi:<scenario>" run the other two drivers against their fixtures; anything else is ACP.
     const scenario = this.scenario(session), options = { cwd: configuration.workspace, env, requestTimeoutMs: 2000, runTimeoutMs: 20_000, maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 4096, closeGraceMs: 120 };
@@ -57,7 +58,7 @@ class ManualTimers {
 async function setup(t: test.TestContext, maxParallel?: number, limits: { readonly executionBudgetMs?: number; readonly waitBudgetMs?: number; readonly stopGraceMs?: number; readonly schedule?: (fn: () => void, ms: number) => () => void;
     readonly pacing?: { readonly hintsMs?: readonly number[]; readonly quietMs?: number } } = {},
   scenario?: (session: SessionId) => string) {
-  const root = await mkdtemp(join(tmpdir(), "harness-parallel-")), store = new SqliteSessionStore(join(root, "data")), factory = new CountingFactory(root, scenario);
+  const root = await mkdtemp(join(tmpdir(), "harness-parallel-")), store = appStore(join(root, "data")), factory = new CountingFactory(root, scenario);
   let id = 0, clock = 1_791_000_000_000;
   const app = new SessionRuntime(store, factory, { id: () => "par-" + String(++id), now: () => new Date(clock += 1), publish: () => {},
     fingerprint: value => createHash("sha256").update(value).digest("hex"), ...(maxParallel === undefined ? {} : { maxParallel }), ...limits });

@@ -13,7 +13,8 @@ import type { CleanupEvidence } from "../../src/contracts/control.js";
 import { SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionId } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { PosixProcessGroups } from "../../src/infrastructure/control/process-group.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url));
@@ -36,7 +37,7 @@ class KeptFactory implements SessionBindingFactory {
     const index = this.prepared.length, trace = join(this.root, "trace-" + index + ".ndjson"), pid = join(this.root, "peer-" + index + ".pid");
     const outsider = this.outsiders ? join(this.root, "outsider-" + index + ".pid") : null;
     const entry = { run, trace, pid, outsider, closed: false }; this.prepared.push(entry);
-    const env = { FIXTURE_TRACE: trace, FIXTURE_PID: pid, FIXTURE_RESUME_MODELS: "1", LANG: "C.UTF-8", ...(outsider === null ? {} : { FIXTURE_OUTSIDER: outsider }) };
+    const env = { FIXTURE_TRACE: trace, FIXTURE_PID: pid, FIXTURE_SESSION_ID: "session-fixture-" + session, FIXTURE_THREAD_ID: "thread-fixture-" + session, FIXTURE_RESUME_MODELS: "1", LANG: "C.UTF-8", ...(outsider === null ? {} : { FIXTURE_OUTSIDER: outsider }) };
     // The Hermes-like ACP fixture declares session/resume and load, and every Codex thread can be resumed, so the native
     // session is confirmed after every Turn.
     const options = { cwd: configuration.workspace, env, requestTimeoutMs: 2000, runTimeoutMs: 5000, maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 4096, closeGraceMs: 120 };
@@ -51,7 +52,7 @@ class KeptFactory implements SessionBindingFactory {
   releaseAbandonedLease(configuration: SessionConfiguration, session: SessionId): boolean { return this.lease.releaseAbandoned(configuration.workspace, session); }
 }
 async function setup(t: test.TestContext, keptIdleMs?: number, protocol: "acp-v1" | "codex-app-server" = "acp-v1", keptLimit?: number) {
-  const root = await mkdtemp(join(tmpdir(), "harness-kept-process-")), store = new SqliteSessionStore(join(root, "data")), factory = new KeptFactory(root, protocol);
+  const root = await mkdtemp(join(tmpdir(), "harness-kept-process-")), store = appStore(join(root, "data")), factory = new KeptFactory(root, protocol);
   let id = 0;
   const app = new SessionRuntime(store, factory, { id: () => String(++id), now: () => NOW, publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"),
     ...(keptIdleMs === undefined ? {} : { keptIdleMs }), ...(keptLimit === undefined ? {} : { keptLimit }) });
@@ -249,7 +250,7 @@ async function crashedOwner(root: string, workspace: string, identify: boolean, 
 }
 /** The owner that starts after a crashed one, on the same data and lease roots. */
 function nextOwner(t: test.TestContext, root: string, cleanup: () => void) {
-  const store = new SqliteSessionStore(join(root, "data")), factory = new KeptFactory(root);
+  const store = appStore(join(root, "data")), factory = new KeptFactory(root);
   let id = 0;
   const app = new SessionRuntime(store, factory, { id: () => "next-" + String(++id), now: () => NOW, publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"),
     processes: new PosixProcessGroups() });
@@ -340,7 +341,7 @@ test("a taken-over program that still runs: what left its group is recorded, lef
 
 test("closing a kept program records the background task that left its group, leaves it running and says so once", posixOnly, async t => {
   const root = await mkdtemp(join(tmpdir(), "harness-kept-outside-")), workspace = join(root, "outside"); await mkdir(workspace);
-  const store = new SqliteSessionStore(join(root, "data")), factory = new KeptFactory(root, "acp-v1", true);
+  const store = appStore(join(root, "data")), factory = new KeptFactory(root, "acp-v1", true);
   let id = 0;
   const app = new SessionRuntime(store, factory, { id: () => "outside-" + String(++id), now: () => NOW, publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"), processes: new PosixProcessGroups() });
   t.after(async () => {

@@ -16,6 +16,7 @@ import type { HermesGatewayPreflight } from "../../src/adapters/control/hermes-g
 import { OpenClawControl, openClawRelayCapabilities } from "../../src/adapters/control/openclaw.js";
 import { OpenCodeControl, openCodeRelayCapabilities } from "../../src/adapters/control/opencode.js";
 import { nativeReading, relayEntries, type RelayCatalog } from "../../src/adapters/control/relay-classify.js";
+import { appStore } from "../fixtures/runtime-store.js";
 
 // G069-D01, G069-D02: the declaration check (ADR-055 §8.1, INV-16): the six Drivers' static relay declarations, cell by cell, against the
 // table written out below as data. Plain cells are compared whole; the command cell, which is a function, is compared on the
@@ -207,8 +208,7 @@ test("G069-D03 a catalog served from the native catalog cache reads as the one m
 test("G069-D04 dsh on the generic driver reads every input but the Hub's clear as content through the Runtime (one reading with its declaration), while another Harness on the generic driver keeps the shared reading", { timeout: 60000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), "g069-runtime-")), workspace = join(root, "workspace"); await mkdir(workspace);
   const { SessionRuntime } = await import("../../src/contexts/session/application/runtime.js");
-  const { SqliteSessionStore } = await import("../../src/infrastructure/session/sqlite-store.js");
-  const store = new SqliteSessionStore(join(root, "data")), traces = new Map<string, string>();
+  const store = appStore(join(root, "data")), traces = new Map<string, string>();
   const factory: SessionBindingFactory = {
     async validate(request: SelectionRequest): Promise<HarnessSelection> { return { harnessId: request.harnessId, controlId: request.harnessId + "-native" }; },
     async prepare(selected: HarnessSelection, configuration: SessionConfiguration): Promise<PreparedSessionBinding> {
@@ -240,8 +240,7 @@ test("G069-D04 dsh on the generic driver reads every input but the Hub's clear a
 test("G069-D04 the Hub's clear on dsh is a command through the Runtime and is never sent to dsh", { timeout: 60000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), "g069-clear-")), workspace = join(root, "workspace"); await mkdir(workspace);
   const { SessionRuntime } = await import("../../src/contexts/session/application/runtime.js");
-  const { SqliteSessionStore } = await import("../../src/infrastructure/session/sqlite-store.js");
-  const store = new SqliteSessionStore(join(root, "data")); let trace = "";
+  const store = appStore(join(root, "data")); let trace = "";
   const factory: SessionBindingFactory = {
     async validate(request: SelectionRequest): Promise<HarnessSelection> { return { harnessId: request.harnessId, controlId: request.harnessId + "-native" }; },
     async prepare(selected: HarnessSelection, configuration: SessionConfiguration): Promise<PreparedSessionBinding> {

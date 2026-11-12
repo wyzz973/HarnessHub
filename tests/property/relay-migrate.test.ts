@@ -10,13 +10,14 @@ import type { ContentPort } from "../../src/contracts/content.js";
 import type { BindingRelayState, RelayBehindIndex } from "../../src/contracts/relay.js";
 import { SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type SessionSnapshot } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
-import { migrateSession, type MigrationEvent } from "../../src/contexts/session/domain/relay/migrate.js";
-import { parseSession } from "../../src/contexts/session/domain/state.js";
-import { RELAY_TABLES } from "../../src/infrastructure/session/relay-tables.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { migrateSession, type MigrationEvent } from "../../src/infrastructure/session/legacy/migrate.js";
+import { parseSession } from "../../src/infrastructure/session/legacy/state.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import { writeV12Root } from "../fixtures/relay/v12/database.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 
 // Random v12 conversations (ADR-055 §14.4): random v12 conversations migrated to v13. The conversations are made by the formal
-// SessionRuntime and a real SqliteSessionStore with an in-process model Harness that keeps the ground truth of every native
+// SessionRuntime and a real SqliteConversationStore with an in-process model Harness that keeps the ground truth of every native
 // session: which public Turns it ever received in a packet. The store's v13 relay fields are then taken away again, which
 // gives exactly the v12 data the v12 runtime wrote (G066 changed the runtime only there), optionally with the event fields
 // G067 added also taken away (the data of older v12 builds). Every case names its seed; nothing here runs a Harness.
@@ -44,8 +45,8 @@ class ModelHarnesses implements SessionBindingFactory {
   readonly truth = new Map<string, Truth>();
   readonly sent: { readonly session: string; readonly input: string; readonly text: string }[] = [];
   private opened = 0;
-  constructor(private store: SqliteSessionStore, private readonly decide: (run: string, command: boolean) => Ending, private readonly legacy = false) {}
-  use(store: SqliteSessionStore): void { this.store = store; }
+  constructor(private store: SqliteConversationStore, private readonly decide: (run: string, command: boolean) => Ending, private readonly legacy = false) {}
+  use(store: SqliteConversationStore): void { this.store = store; }
   async validate(request: SelectionRequest): Promise<HarnessSelection> {
     if (!(HARNESSES as readonly string[]).includes(request.harnessId)) throw new SessionError("HARNESS_UNAVAILABLE", "unknown model Harness");
     return { harnessId: request.harnessId, controlId: request.harnessId + "-acp" };
@@ -71,14 +72,14 @@ class ModelHarnesses implements SessionBindingFactory {
       startText: async (_id, text: string, output) => {
         const events = all(this.store, session), prepared = events.findLast(event => event.type === "run.context_prepared" && event.data.runId === run);
         const command = events.some(event => event.type === "run.native_command" && event.data.runId === run);
-        const input = this.store.get(session).runs.find(row => row.id === run)!.input;
+        const input = this.store.snapshot(session).runs.find(row => row.id === run)!.input;
         this.sent.push({ session, input, text });
         const truth = this.truth.get(current!)!, ending = this.decide(run, command);
         const sources = (prepared?.data.sourceRunIds as readonly string[] | undefined) ?? [];
         const inserted = ending === "recorded" || ending === "failed_after_insert" || ending === "no_evidence" || ending === "lost" && this.decide(run + ":inserted", command) === "recorded";
         // A packet carried the starting history when its range starts at it (the v13 Runtime says so by the range, as a v12 build did by carriedOrigin);
         // a build before G067 repeated that history in every packet.
-        const range = prepared?.data.range as { readonly fromSeq?: number } | undefined, origin = (this.store.get(session).origin?.history.length ?? 0) > 0;
+        const range = prepared?.data.range as { readonly fromSeq?: number } | undefined, origin = (this.store.snapshot(session).origin?.history.length ?? 0) > 0;
         const carriedOrigin = prepared?.data.carriedOrigin === true || range?.fromSeq === 0 || this.legacy && origin && sources.length > 0;
         if (inserted) { for (const source of sources) truth.delivered.add(source); if (carriedOrigin) truth.knowsOrigin = true; }
         if (ending !== "lost") output({ type: "text", text: "reply" });
@@ -93,7 +94,7 @@ class ModelHarnesses implements SessionBindingFactory {
     return { control, workspace: configuration.workspace, assertOwned: () => {}, close: () => control.close() };
   }
 }
-function all(store: SqliteSessionStore, id: SessionId): readonly SessionEvent[] {
+function all(store: SqliteConversationStore, id: SessionId): readonly SessionEvent[] {
   const events: SessionEvent[] = [];
   for (let after = 0; ;) { const page = store.events(id, after, 100); if (!page.length) return events; events.push(...page); after = page.at(-1)!.seq; }
 }
@@ -103,10 +104,10 @@ const content: ContentPort = {
   resolve: ids => ids.map(id => ({ id: id as never, name: "photo.png", mediaType: "image/png", kind: "image", bytes: 8, sha256: "0".repeat(64) })),
   materialize: async () => { throw new Error("refused before copied"); },
 };
-interface World { readonly root: string; readonly data: string; readonly workspace: string; store: SqliteSessionStore; readonly harness: ModelHarnesses; runtime: SessionRuntime; readonly next: () => string }
+interface World { readonly root: string; readonly data: string; readonly workspace: string; store: SqliteConversationStore; readonly harness: ModelHarnesses; runtime: SessionRuntime; readonly next: () => string }
 function world(t: TestContext, seed: number, outcomes: { readonly rejected: number; readonly lost: number }, legacy = false): World {
   const root = mkdtempSync(join(tmpdir(), "g066-property-")); t.after(() => rmSync(root, { recursive: true, force: true }));
-  const data = join(root, "data"), workspace = root, store = new SqliteSessionStore(data);
+  const data = join(root, "data"), workspace = root, store = appStore(data);
   const unit = (key: string) => createHash("sha256").update(seed + ":" + key).digest()[0]! / 256;
   const harness = new ModelHarnesses(store, (run, command) => {
     const draw = unit(run);
@@ -192,19 +193,22 @@ function preG067Positions(state: SessionSnapshot, events: readonly MigrationEven
     return last > at ? { ...binding, throughRunId: state.runs[last]!.id } : binding;
   }) });
 }
-/** Takes a closed v13 data root back to v12, as a v12 build would have left it. */
-function downgrade(data: string): void {
-  const db = new DatabaseSync(join(data, "gateway.sqlite"));
-  try {
-    db.exec("BEGIN");
-    for (const row of db.prepare("SELECT id,snapshot FROM sessions").all()) db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify(v12(parseSession(JSON.parse(String(row.snapshot))))), String(row.id));
-    for (const row of db.prepare("SELECT session_id,seq,event_json FROM events WHERE json_extract(event_json,'$.type')='run.context_prepared'").all()) {
-      const event = JSON.parse(String(row.event_json)) as MigrationEvent, changed = v12Event(event);
-      if (changed !== event) db.prepare("UPDATE events SET event_json=? WHERE session_id=? AND seq=?").run(JSON.stringify(changed), String(row.session_id), Number(row.seq));
-    }
-    for (const table of RELAY_TABLES) db.exec("DROP TABLE " + table);
-    db.exec("COMMIT"); db.exec("PRAGMA user_version=12");
-  } finally { db.close(); }
+/**
+ * A data root a v12 build would have left: the conversations (taken back to v12 as `v12` does, with the events as a v12 build wrote them) in a v12 database of their own
+ * (tests/fixtures/relay/v12/database.ts), which a store then climbs to the tables.
+ */
+let rootsMade = 0;
+/** A v12 root of the conversations `ids` of a world (its store still open): the data a v12 build would have left of them. */
+function downgrade(w: World, ids: readonly SessionId[]): string {
+  const data = join(w.root, "v12-data-" + ++rootsMade);
+  v12Root(data, ids.map(id => ({ state: v12(w.store.snapshot(id)), events: all(w.store, id) })));
+  return data;
+}
+function v12Root(root: string, states: readonly { readonly state: SessionSnapshot; readonly events: readonly SessionEvent[] }[]): void {
+  writeV12Root(root, [{ fixture: "model", describe: "conversations of the model Harnesses taken back to v12", userVersion: 12, ownerGeneration: 1,
+    sessions: states.map(({ state, events }) => ({ id: state.id, version: state.version, lastSeq: state.lastSeq, snapshot: state as unknown as Record<string, unknown>,
+      events: events.map(event => ({ ...event, data: v12Event({ seq: event.seq, type: event.type, data: event.data }).data })) })),
+    createKeys: states.map(({ state }) => { const create = state.commands.find(command => command.kind === "create")!; return { commandId: create.id, sessionId: state.id, fingerprint: create.fingerprint }; }) }]);
 }
 /** Checks the migration's result for one v12 conversation against the model Harnesses' ground truth (C02's properties). */
 function check(label: string, state: SessionSnapshot, bindings: readonly BindingRelayState[], runs: readonly RelayBehindIndex[], truth: ReadonlyMap<string, Truth>): void {
@@ -247,7 +251,8 @@ for (const [seed, legacy] of [[1, false], [2, false], [3, true], [4, false], [5,
       await play(w, session.id, random, 12 + Math.floor(random() * 8), harnesses);
     }
     await w.runtime.close();
-    const states = sessions.map(id => ({ state: v12(w.store.get(id)), events: all(w.store, id).map(event => v12Event({ seq: event.seq, type: event.type, data: event.data })) }));
+    const logged = sessions.map(id => all(w.store, id));
+    const states = sessions.map((id, index) => ({ state: v12(w.store.snapshot(id)), events: logged[index]!.map(event => v12Event({ seq: event.seq, type: event.type, data: event.data })) }));
     w.store.close();
     let bindings = 0;
     for (const [index, { state, events }] of states.entries()) {
@@ -259,9 +264,10 @@ for (const [seed, legacy] of [[1, false], [2, false], [3, true], [4, false], [5,
     }
     // The Store migrates the same database to the same relay state (the G067 fields kept, as a v12 database holds them).
     if (!legacy) {
-      downgrade(w.data);
-      const store = new SqliteSessionStore(w.data);
-      try { for (const [index, id] of sessions.entries()) assert.deepEqual(store.get(id).nativeBindings?.map(row => row.relay), migrateSession(states[index]!.state, states[index]!.events).bindings, "seed " + seed + " session " + index); }
+      const data = join(w.root, "v12-data");
+      v12Root(data, states.map(({ state }, index) => ({ state, events: logged[index]! })));
+      const store = appStore(data);
+      try { for (const [index, id] of sessions.entries()) assert.deepEqual(store.snapshot(id).nativeBindings?.map(row => row.relay), migrateSession(states[index]!.state, states[index]!.events).bindings, "seed " + seed + " session " + index); }
       finally { store.close(); }
     }
     t.diagnostic("seed " + seed + ": " + sessions.length + " conversations, " + bindings + " bindings, " + states.reduce((total, row) => total + row.state.runs.length, 0) + " Turns");
@@ -278,12 +284,12 @@ test("G066-C02 a v12 conversation on one Harness, migrated, sends its next 20 in
       try { w.runtime.send(session.id, text, "key-" + step, text.endsWith("photo") ? ["content-photo"] : [], text.endsWith("alone") ? { attach: "none" } : undefined); } catch (error) { if (!(error instanceof SessionError)) throw error; }
       await w.runtime.wait(session.id);
     }
-    await w.runtime.close(); w.store.close();
-    downgrade(w.data);
-    w.store = new SqliteSessionStore(w.data); w.harness.use(w.store);
+    await w.runtime.close();
+    const v12data = downgrade(w, [session.id]); w.store.close();
+    w.store = appStore(v12data); w.harness.use(w.store);
     // A command or a refusal that may have changed the native session sets resendAll whether or not anything is owed (the migration, like v13);
     // with no other Harness there is nothing foreign for that flag to send, so the inputs below still go as typed.
-    const relay = w.store.get(session.id).nativeBindings![0]!.relay!;
+    const relay = w.store.snapshot(session.id).nativeBindings![0]!.relay!;
     assert.equal(relay.pending, null, "seed " + seed + ": no packet waits for its only binding");
     w.runtime = new SessionRuntime(w.store, w.harness, { id: w.next, now: () => new Date(Date.UTC(2026, 10, 10)), publish: () => {}, content, fingerprint: value => createHash("sha256").update(value).digest("hex") });
     const before = w.harness.sent.length;
@@ -305,11 +311,10 @@ test("G066-C02 before G067 a command moved the position past what it owed: the n
   // A build before G067 moved alpha's position to the command, past bravo's two Turns it never sent there (R4 D1).
   const command = app.read(id).runs.at(-1)!;
   const db = new DatabaseSync(join(w.data, "gateway.sqlite"));
-  const stored = JSON.parse(String(db.prepare("SELECT snapshot FROM sessions WHERE id=?").get(id)?.snapshot)) as SessionSnapshot;
-  db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...stored, nativeBindings: stored.nativeBindings!.map(binding => binding.harnessId === "alpha" ? { ...binding, throughRunId: command.id } : binding) }), id);
+  db.prepare("UPDATE bindings SET through_run_id=?, binding_json=json_set(binding_json,'$.throughRunId',?) WHERE session_id=? AND harness_id='alpha' AND status<>'archived'").run(command.id, command.id, id);
   db.close();
   await to("bravo", "to-b2"); await send("b3", "b3"); await to("alpha", "to-a2"); await send("a4", "a4");
-  const state = v12(w.store.get(id)), runs = state.runs, a4 = runs.at(-1)!, b3 = runs.find(run => run.input === "b3")!.id;
+  const state = v12(w.store.snapshot(id)), runs = state.runs, a4 = runs.at(-1)!, b3 = runs.find(run => run.input === "b3")!.id;
   // The v13 Runtime (G068 phase two) owes by the watermark, not the position, so its a4 carried bravo's three Turns; the build
   // before G067 carried only what came after the command, which its events say: a4's run.context_prepared is written as it was.
   assert.deepEqual(a4.sourceRunIds, ["b1", "b2", "b3"].map(input => runs.find(run => run.input === input)!.id), "v13 carries what alpha is owed");
@@ -339,7 +344,8 @@ test("G066-C02 a binding a command may have rewound or changed is sent everythin
     await send("a1", "a1"); await to("bravo", "to-b"); await send("b1", "b1"); await to("alpha", "to-a"); await send("a2", "a2");
     if (command !== "") await send(command, "command");
     await app.close();
-    const state = v12(w.store.get(id)), events = all(w.store, id).map(event => v12Event({ seq: event.seq, type: event.type, data: event.data })), runs = state.runs;
+    const state = v12(w.store.snapshot(id)), events = all(w.store, id).map(event => v12Event({ seq: event.seq, type: event.type, data: event.data })), runs = state.runs;
+    const v12data = downgrade(w, [id]);
     w.store.close();
     assert.deepEqual(runs.find(run => run.input === "a2")!.sourceRunIds, [runs.find(run => run.input === "b1")!.id], label + ": alpha was given bravo's Turn");
     const migrated = migrateSession(state, events), at = (harnessId: string) => migrated.bindings[state.nativeBindings!.findIndex(binding => binding.harnessId === harnessId)]!;
@@ -348,9 +354,8 @@ test("G066-C02 a binding a command may have rewound or changed is sent everythin
     assert.equal(at("alpha").resendAll, resendAll, label + ": alpha");
     assert.equal(at("bravo").resendAll, false, label + ": the command ran on alpha only");
     // The Store migrates the same database to the same relay state.
-    downgrade(w.data);
-    const store = new SqliteSessionStore(w.data);
-    try { assert.deepEqual(store.get(id).nativeBindings?.map(row => row.relay), migrated.bindings, label + ": the Store's migration"); }
+    const store = appStore(v12data);
+    try { assert.deepEqual(store.snapshot(id).nativeBindings?.map(row => row.relay), migrated.bindings, label + ": the Store's migration"); }
     finally { store.close(); }
   }
 });
@@ -363,15 +368,15 @@ test("G066-C02 a v12 command that entered the context like a message (effect kee
   const send = async (text: string, key: string) => { w.runtime.send(id, text, key); await w.runtime.wait(id); };
   await send("a1", "a1"); await send("/skill review the diff", "skill");
   for (const [index, words] of ["/compact", "/model model-a", "/undo", "/mystery", "/clear"].entries()) await send(words, "other-" + index);
-  await w.runtime.close(); w.store.close();
-  downgrade(w.data);
-  w.store = new SqliteSessionStore(w.data); w.harness.use(w.store);
+  await w.runtime.close();
+  const v12data = downgrade(w, [id]); w.store.close();
+  w.store = appStore(v12data); w.harness.use(w.store);
   w.runtime = new SessionRuntime(w.store, w.harness, { id: w.next, now: () => new Date(Date.UTC(2026, 10, 10)), publish: () => {}, content, fingerprint: value => createHash("sha256").update(value).digest("hex") });
-  const runs = w.store.get(id).runs, ofInput = (input: string) => runs.find(run => run.input === input)!;
+  const runs = w.store.snapshot(id).runs, ofInput = (input: string) => runs.find(run => run.input === input)!;
   assert.deepEqual(w.store.relayIndex(id).filter(row => row.index.commandEffect === "keep").map(row => row.runId), [ofInput("/skill review the diff").id], "the migration placed the skill as a command that kept");
   w.runtime.switch(id, { harnessId: "bravo" }, "to-b"); await w.runtime.wait(id);
   await send("b1", "b1");
-  const prepared = all(w.store, id).findLast(event => event.type === "run.context_prepared" && event.data.runId === w.store.get(id).runs.find(run => run.input === "b1")!.id);
+  const prepared = all(w.store, id).findLast(event => event.type === "run.context_prepared" && event.data.runId === w.store.snapshot(id).runs.find(run => run.input === "b1")!.id);
   assert.deepEqual(prepared?.data.sourceRunIds, [ofInput("a1").id, ofInput("/skill review the diff").id], "alpha's Turn and its skill, and none of the other commands");
   await w.runtime.close(); w.store.close();
 });

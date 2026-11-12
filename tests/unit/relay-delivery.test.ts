@@ -4,7 +4,8 @@ import type { BindingRelayState, DeliveryRecord, ExecutedOn, RelayPacket, RelayP
 import { relayPacketId } from "../../src/contracts/relay.js";
 import type { NativeSessionBinding, RunId, SessionSnapshot } from "../../src/contracts/session.js";
 import { commandTurnEvent, foreignTo, fromOf, initialBindingRelay, nothingOwed, owed, plan, settledOutcome, step, throughOf, type PacketRef, type RelayFact } from "../../src/contexts/session/domain/relay/delivery.js";
-import { recoverRelay } from "../../src/contexts/session/domain/relay/recover.js";
+import { recoverConversationRelay as recoverRelay } from "../../src/contexts/session/domain/relay/recover.js";
+import type { Conversation } from "../../src/contracts/conversation.js";
 
 // The relay's state machine and the rules around it (slim.md): pure, so every case is a table of states and events. Nothing here
 // opens a store or a process; the properties over random conversations are tests/property/relay-delivery.test.ts's.
@@ -132,7 +133,7 @@ test("recovery decides what a previous owner left in flight, and changes a bindi
   const run = (id: string, dispatchedAt: number | undefined) => ({ id, selection: { harnessId: "bravo", controlId: "bravo-acp" }, status: "unknown", relay: { packetId: null, kind: null, continuity: { kind: "native_resume" }, executedOn: on("bravo") },
     timing: { acceptedAt: 5, ...(dispatchedAt === undefined ? {} : { dispatchedAt }) } });
   const manifest = (id: RelayPacketId, fromSeq: number, throughSeq: number): RelayPacket => ({ id, range: { fromSeq, throughSeq, fromRun: 0, throughRun: 0 } }) as unknown as RelayPacket;
-  const snapshot = (relay: BindingRelayState, runs: unknown[]): SessionSnapshot => ({ lastSeq: 30, runs, nativeBindings: [{ harnessId: "bravo", controlId: "bravo-acp", checkpoint: "n", throughRunId: null, status: "ready", relay }] }) as unknown as SessionSnapshot;
+  const snapshot = (relay: BindingRelayState, runs: unknown[]): Conversation => ({ lastSeq: 30, runs, nativeBindings: [{ harnessId: "bravo", controlId: "bravo-acp", checkpoint: "n", throughRunId: null, status: "ready", relay }] }) as unknown as Conversation;
   const relayOf = (recovery: ReturnType<typeof recoverRelay>) => recovery!.next.nativeBindings![0]!.relay;
   // Dispatched: unknown (owner_ended), and the binding waits for the packet; the automatic resend counts as one.
   const sent = recoverRelay(snapshot(state({ mark: 1 }), [run("run-1", 10)]), [record("run-1", packet("a"))], [manifest(packet("a"), 2, 6)]);

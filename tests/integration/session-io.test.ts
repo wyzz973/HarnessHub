@@ -10,7 +10,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { boundedWrite, MAX_CLI_INPUT_BYTES, MAX_CLI_OUTPUT_BYTES } from "../../src/cli/bounded-streams.js";
 import { commandId, messageId, runId, sessionId, type SessionId, type SessionSnapshot } from "../../src/contracts/session.js";
-import { SqliteSessionReader, SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { SqliteSessionReader } from "../../src/infrastructure/session/session-reader.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import { Scenario, created, newConversation } from "../fixtures/store-helpers.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 
 const chatCli = fileURLToPath(new URL("../../src/cli/chat.js", import.meta.url));
 interface Fixture { readonly root: string; readonly data: string; readonly temporary: string; readonly home: string; readonly sentinel: string; readonly state: SessionSnapshot; readonly children: Set<ChildProcessWithoutNullStreams> }
@@ -25,20 +28,14 @@ async function fixture(t: test.TestContext, largeHistory: boolean): Promise<Fixt
     source: { repository: "fixture", revision: "test", upstreamId: "io-fixture", url: "https://example.invalid/io-fixture" },
   }] }], overrides: { "io-control": { executable: process.execPath } } });
   await writeFile(manifestPath, manifest, { mode: 0o600 });
-  const store = new SqliteSessionStore(data), id = sessionId("session-io-fixture"), run = runId("run-io-history"), user = messageId("message-io-user"), assistant = messageId("message-io-assistant");
+  const store = appStore(data);
   const configuration = { workspace, manifestPath, manifestSha256: createHash("sha256").update(manifest).digest("hex"), configHome: null, packageRoots: [], searchDirs: [], pathOnly: true };
   const selection = { harnessId: "io-fixture", controlId: "io-control" };
-  const created = store.create({ schemaVersion: 13, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration, selection,
-    activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: commandId("io-create"), kind: "create", fingerprint: "a".repeat(64), resultId: id }] },
-  [{ type: "session.created", data: {} }]);
-  const state = store.transact(id, created.session.version, current => ({ next: { ...current,
-    runs: [{ id: run, commandId: commandId("io-historical-input"), input: "synthetic historical input", userMessageId: user, assistantMessageId: assistant, selection, epoch: 1,
-      status: "completed", cancelRequested: false, contextThroughSeq: 0, sourceRunIds: [], backend: { status: "completed", reason: "fixed historical model fixture" },
-      cleanup: { closed: true, exitCode: 0, signal: null, protocolFailure: null }, error: null, stopRequested: false, awaitingSwitchId: null }],
-    messages: [{ id: user, runId: run, role: "user", text: "synthetic historical input", seq: current.lastSeq + 1, status: "completed" },
-      { id: assistant, runId: run, role: "assistant", text: largeHistory ? "x".repeat(1024 * 1024) : "fixed historical response", seq: current.lastSeq + 2, status: "completed" }],
-    commands: [...current.commands, { id: commandId("io-historical-input"), kind: "send", fingerprint: "b".repeat(64), resultId: run }],
-  }, events: [{ type: "message.accepted", data: { runId: run } }, { type: "run.ended", data: { runId: run, status: "completed", fixtureOnly: true } }] })).session;
+  // One finished Turn of history, written through the store as a Runtime commits a Turn (accepted, started, answered, ended).
+  const conversation = newConversation(workspace, "io-fixture", { configuration, selection });
+  created(store, conversation);
+  new Scenario(store, conversation.id, "run-io").turn("synthetic historical input", largeHistory ? "x".repeat(1024 * 1024) : "fixed historical response", { selection });
+  const state = store.snapshot(conversation.id);
   store.close();
   const children = new Set<ChildProcessWithoutNullStreams>();
   t.after(async () => {
@@ -90,7 +87,7 @@ test("formal chat rejects repeated 1MiB history before a slow stdout creates an 
   assert.ok(bytes <= MAX_CLI_OUTPUT_BYTES + 1024 * 1024, "slow output exceeded its bounded queue by more than an already transmitted record");
   assert.deepEqual(read(f.data, f.state.id), f.state, "history display failure changed durable execution facts");
   assert.equal(existsSync(f.sentinel), false, "a history command launched a native Harness");
-  const nextOwner = new SqliteSessionStore(f.data); nextOwner.assertOwner(); nextOwner.close();
+  const nextOwner = appStore(f.data); nextOwner.assertOwner(); nextOwner.close();
 });
 
 test("formal human chat also rejects repeated history when stdout is not consumed", async t => {
@@ -110,7 +107,7 @@ test("formal chat rejects raw input above 2MiB before newline or EOF without adm
   const ended = await invoked.result;
   assert.notEqual(ended.code, 0); assert.equal(ended.signal, null, "raw input rejection did not exit: " + output + " " + ended.stderr); assert.match(output, /"code":"INPUT_LIMIT"/u);
   assert.deepEqual(read(f.data, f.state.id), f.state); assert.equal(existsSync(f.sentinel), false);
-  const nextOwner = new SqliteSessionStore(f.data); nextOwner.assertOwner(); nextOwner.close();
+  const nextOwner = appStore(f.data); nextOwner.assertOwner(); nextOwner.close();
 });
 
 test("bounded writer counts real Writable pending bytes and rejects an oversized individual record", () => {

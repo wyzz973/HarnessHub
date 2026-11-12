@@ -14,7 +14,8 @@ import { startWebServer, type WebServer } from "../../src/web/server.js";
 import { homePathsIn } from "../../src/web/shown-paths.js";
 import { conversationMarkdown } from "../../src/web/conversation-export.js";
 import type { SessionView } from "../../src/contracts/web.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { commandId, switchId, sessionId } from "../../src/contracts/session.js";
 
@@ -348,10 +349,10 @@ test("authenticated recovery restores a legacy blocked conversation without rewr
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "first" });
   await waitFor(f, id, value => value.runs[0]?.status === "completed");
   await f.gateway.close();
-  const store = new SqliteSessionStore(f.data), snapshot = store.get(sessionId(id)), legacyId=switchId("switch-legacy"), broken=commandId("broken");
+  const store = appStore(f.data), snapshot = store.get(sessionId(id)), legacyId=switchId("switch-legacy"), broken=commandId("broken");
   const error={code:"GATEWAY_AUTH_REQUIRED",message:"synthetic legacy startup failure"};
   store.transact(snapshot.id,snapshot.version,current=>({next:{...current,status:"blocked",switches:[{id:legacyId,commandId:broken,requested:{harnessId:"web-bad"},requestedSeq:current.lastSeq+1,target:{harnessId:"web-bad",controlId:"web-bad-control"},status:"failed",throughSeq:current.lastSeq+3,sourceRunIds:current.runs.map(run=>run.id),error}],commands:[...current.commands,{id:broken,kind:"switch",fingerprint:"0".repeat(64),resultId:legacyId}]},events:[{type:"switch.requested",data:{switchId:legacyId}},{type:"switch.failed",data:{switchId:legacyId,error,cleanup:{closed:true,exitCode:0,signal:null,protocolFailure:null}}},{type:"session.blocked",data:{switchId:legacyId}}]}));
-  const legacy=store.get(snapshot.id); const failed={runs:legacy.runs,messages:legacy.messages,switches:legacy.switches}; store.close();
+  const legacy=store.snapshot(snapshot.id); const failed={runs:legacy.runs,messages:legacy.messages,switches:legacy.switches}; store.close();
   f.gateway = await startWebServer({ installations: "any", root: f.data, configuration: await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks"),
     application: (dataRoot, publish) => application(dataRoot, publish, { installations: "any", workspaceLockRoot: join(f.root, "locks") }) });
   const launch = new URL(f.gateway.url); f.origin = launch.origin; f.token = new URLSearchParams(launch.hash.slice(1)).get("token")!; await auth(f);
@@ -464,9 +465,8 @@ test("a binding that opens a new native session (opensNew) offers no continue co
   await f.gateway.close();
   const db = new DatabaseSync(join(f.data, "gateway.sqlite"));
   try {
-    const stored = JSON.parse(String(db.prepare("SELECT snapshot FROM sessions WHERE id=?").get(id)!.snapshot)) as { nativeBindings: Record<string, unknown>[] };
-    stored.nativeBindings = stored.nativeBindings.map(binding => ({ ...binding, throughRunId: null, opensNew: true }));
-    db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify(stored), id);
+    // The binding is a row: its columns and its JSON say the same thing (no native position, and it opens a new native session).
+    db.prepare("UPDATE bindings SET through_run_id=NULL, opens_new=1, binding_json=json_set(binding_json,'$.throughRunId',NULL,'$.opensNew',json('true')) WHERE session_id=? AND status<>'archived'").run(id);
   } finally { db.close(); }
   const configuration = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true });
   f.gateway = await startWebServer({ installations: "any", root: f.data, configuration, port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks"),

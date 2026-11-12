@@ -8,7 +8,8 @@ import test from "node:test";
 import { ManagementError, type SystemInstallationObservation } from "../../src/contracts/management.js";
 import { observedPackageVersion, probeSystemVersion } from "../../src/infrastructure/management/system-version.js";
 import { LocalHarnessManagement } from "../../src/infrastructure/management/service.js";
-import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { appStore } from "../fixtures/runtime-store.js";
+import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 
 interface Fixture { readonly root: string; readonly path: string; readonly trace: string; readonly node: string; readonly cleanup: (() => Promise<void>)[] }
 async function fixture(t: test.TestContext, mode = "version", output = "Harness Fixture 1.2.3"): Promise<Fixture> {
@@ -103,7 +104,7 @@ test("owner loss during version output closes the child before surfacing the own
 });
 
 test("real manager update check detects an observed system version and preserves managed defaults and job history", async t => {
-  const f = await fixture(t), store = new SqliteSessionStore(join(f.root, "data"));
+  const f = await fixture(t), store = appStore(join(f.root, "data"));
   const manager = new LocalHarnessManagement(join(f.root, "data"), { installationMode: "private-fixture", assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration,
     metadata: { resolve: async (recipe, signal) => { signal.throwIfAborted(); return { recipe, version: "2.0.0", artifactUrl: null, integrity: null, engines: {}, dependencies: [] }; } } });
   f.cleanup.push(async () => { try { await manager.shutdown(); } finally { store.close(); } });
@@ -114,7 +115,7 @@ test("real manager update check detects an observed system version and preserves
 });
 
 test("an adapter entry keeps its own version while the product reports the version of its own command, probed once", async t => {
-  const f = await fixture(t), store = new SqliteSessionStore(join(f.root, "data")), probed: string[] = [];
+  const f = await fixture(t), store = appStore(join(f.root, "data")), probed: string[] = [];
   const manager = new LocalHarnessManagement(join(f.root, "data"), { installationMode: "private-fixture", assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration,
     // Like the real probe, an observed package version answers without running anything.
     systemVersionProbe: async observation => { if (observation.packageVersion) return { version: observation.packageVersion, reason: null };
