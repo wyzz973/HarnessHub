@@ -244,6 +244,8 @@ export interface WebState {
    */
   readonly harnessesScannedAt: string;
   readonly sessions: readonly SessionSummary[];
+  /** The cursor of the list's next page (`GET /api/v1/sessions?after=`); null when `sessions` ends it. */
+  readonly sessionsNext?: string | null;
   readonly jobs: readonly InstallationJobView[];
   readonly readiness: readonly HarnessReadinessView[];
   /** What this Gateway counts as an installation (ADR-044); `any` only for development and tests. */
@@ -456,12 +458,45 @@ export interface TurnWindowView {
   /** The cursor of the page before `turns[0]`; null when `turns[0]` is the conversation's first Turn. */
   readonly older: string | null;
 }
+/**
+ * What the page used to learn by looking at every Turn of the conversation, and now is told: the Gateway works it out from the Runs' light rows (the facts of each Run, never a
+ * Turn's items or words), so that it holds for the whole conversation whichever Turns the page has. Part of every head, and so of every frame that changes it.
+ */
+export interface SessionFacts {
+  /** The Turns whose result is not known (they ended without a result the Gateway can vouch for); `unclosed`: one of them did not close its program. */
+  readonly unknown: { readonly count: number; readonly unclosed: boolean };
+  /** Every Turn is over: none runs, waits for a slot or is being closed. */
+  readonly settled: boolean;
+  /** The latest Turn that completed, failed or was stopped: where a branch can start; null when there is none. */
+  readonly branchable: { readonly runId: string; readonly ordinal: number } | null;
+  /** The Turns that reached a Harness and ended, by the control they ran on: what a hand-over to a control that ran none of them would carry. */
+  readonly ran: readonly { readonly harnessId: string; readonly controlId: string; readonly turns: number }[];
+  /** The file changes of the whole conversation that have a stored detail (where their diff is): the number the details button shows. */
+  readonly changes: number;
+}
 /** What `SessionView` says of a conversation without its history: the head. */
 export interface SessionHeadView extends Omit<SessionView, "messages" | "runs" | "switches"> {
   readonly title: string;
   readonly runCount: number;
-  /** The switch asked for and not yet effective; the page needs its state, not the list of switches (a Turn's `switch` line is read from its Run). */
-  readonly pendingSwitch?: PublicSwitch;
+  /**
+   * The conversation's latest switch, whatever its state: the one asked for and not yet effective (`pendingSwitchId` names it), or the one that failed last, which the page
+   * says. The page needs these two, not the list of switches (a Turn's `switch` line is read from its Run).
+   */
+  readonly lastSwitch?: PublicSwitch;
+  readonly facts: SessionFacts;
+}
+/** One change of the conversation that has a stored detail, with the Turn it was made in. */
+export interface ConversationEdit { readonly runId: string; readonly ordinal: number; readonly harnessId: string; readonly item: WireItem }
+/**
+ * `GET /api/v1/sessions/:id/changes?before=<cursor>&limit=`: the changes of the whole conversation that have a stored detail, newest first, a page at a time; and, on the first page,
+ * the plan of the newest Turn that has one with steps. The page reads the diffs of the changes it shows from their stored details.
+ */
+export interface ConversationChangesView {
+  readonly edits: readonly ConversationEdit[];
+  /** The cursor of the page after this one (older changes); null at the end. */
+  readonly next: string | null;
+  /** The newest Turn's plan with at least one step, as the Harness reported it (a row); only on the first page, and null when no Turn has one. */
+  readonly plan?: { readonly runId: string; readonly ordinal: number; readonly harnessId: string; readonly item: WireItem } | null;
 }
 /** `GET /api/v1/sessions/:id`. */
 export interface SessionViewV14 { readonly head: SessionHeadView; readonly window: TurnWindowView }

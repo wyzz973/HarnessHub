@@ -1,14 +1,15 @@
 import {
-  PAGE, type ConversationReader, type HeadRow, type RunRow, type SessionListCursor, type SessionListPage, type SessionListQuery, type TurnCursor,
+  PAGE, type ConversationCommit, type ConversationReader, type HeadRow, type ItemRow, type RunRow, type SessionListCursor, type SessionListPage, type SessionListQuery, type TurnCursor,
 } from "../contracts/conversation.js";
 import type { HarnessSelection, NativeConfiguration, NativeSessionBinding, PublicSwitch, RunId, SessionId, SessionOrigin } from "../contracts/session.js";
 import { SessionError, sessionId } from "../contracts/session.js";
 import type { NativeOptions } from "../contracts/control.js";
 import type {
-  ItemTextView, ItemView, KeptProcessView, NativeStateView, RunItemsPageView, SessionHeadView, SessionListView, SessionView, SessionViewV14, TurnPageView, TurnWindowView,
+  ConversationChangesView, ConversationEdit, ItemTextView, ItemView, KeptProcessView, NativeStateView, RunItemsPageView, SessionFacts, SessionHeadView, SessionListView, SessionView, SessionViewV14, TurnPageView, TurnWindowView,
 } from "../contracts/web.js";
 import type { FrameViews } from "./commit-frame.js";
-import { TurnView, turnFactsOf, type ConversationFactsPort, type RunRelayReading, type TurnEnv } from "./turn-view.js";
+import { TurnView, isTaskListCall, turnFactsOf, type ConversationFactsPort, type RunRelayReading, type TurnEnv } from "./turn-view.js";
+import { wireItem } from "./commit-frame.js";
 
 /*
  * The reads of a conversation kept as rows, as the web API answers them (ADR-057 3.4; the routes are in the comments of the types in contracts/web.ts):
@@ -36,11 +37,26 @@ export interface HeadLive {
   readonly retention?: { readonly process?: KeptProcessView | null; readonly lost?: NonNullable<SessionView["retention"]>["lost"]; readonly outside?: NonNullable<SessionView["retention"]>["outside"];
     readonly upgraded?: NonNullable<SessionView["retention"]>["upgraded"] };
 }
+/** What the Runs of a conversation say as a whole (`ConversationFacts.runSummary`). */
+export interface RunSummaryPort {
+  readonly open: number;
+  readonly unknown: number;
+  readonly unclosed: boolean;
+  readonly branchable: { readonly runId: RunId; readonly ordinal: number } | null;
+  readonly ran: readonly { readonly harnessId: string; readonly controlId: string; readonly turns: number }[];
+}
+/** An edit of a conversation (a file change with a stored detail) and where it is (`ConversationFacts.edits`). */
+export interface EditPlace { readonly ordinal: number; readonly runId: RunId; readonly harnessId: string; readonly seq: number }
 /** The reads beside the pages that the head and a Turn are made of (`ConversationFacts` in infrastructure/session/facts.ts). */
 export interface ViewFacts extends ConversationFactsPort {
   runById(runId: RunId): RunRow | null;
-  pendingSwitch(id: SessionId): PublicSwitch | null;
+  lastSwitch(id: SessionId): PublicSwitch | null;
   origin(id: SessionId): SessionOrigin | null;
+  runSummary(id: SessionId): RunSummaryPort;
+  plainTools(runId: RunId): readonly ItemRow[];
+  dispatchedBefore(id: SessionId, harnessId: string, controlId: string, ordinal: number): boolean;
+  edits(id: SessionId): readonly EditPlace[];
+  latestPlan(id: SessionId): { readonly ordinal: number; readonly runId: RunId; readonly harnessId: string; readonly row: ItemRow } | null;
 }
 export interface ConversationSource extends ConversationReader { list(query?: SessionListQuery): SessionListPage }
 export interface ConversationRoutesOptions {
@@ -88,10 +104,100 @@ function carriedOf(selection: HarnessSelection, epoch: number, binding: NativeSe
 
 /** How many conversations' origins are kept; an origin never changes once the conversation has it (a trigger refuses a change), and a head is made for every commit. */
 const ORIGINS_KEPT = 16;
+/** How many conversations' totals (what their Runs say as a whole, where their edits are) are kept: a head is made for every commit, and these change far less often than commits come. */
+const TOTALS_KEPT = 16;
+/** The edits of a page of the conversation's changes when a read names no size; like every page size here, a size and not a bound. */
+const EDITS_PAGE = 40;
+/** What is kept of a conversation for its heads: valid for the version it names, moved along by the commits `observe` is told of. */
+interface Kept<T> { version: number; value: T }
+function remember<T>(map: Map<SessionId, Kept<T>>, id: SessionId, kept: Kept<T>): void {
+  map.delete(id); map.set(id, kept);
+  if (map.size > TOTALS_KEPT) map.delete(map.keys().next().value!);
+}
 
 export class ConversationRoutes {
   private readonly origins = new Map<SessionId, SessionOrigin | null>();
+  private readonly summaries = new Map<SessionId, Kept<RunSummaryPort>>();
+  private readonly editLists = new Map<SessionId, Kept<EditPlace[]>>();
+  /** The Runs whose dispatch a commit was already asked about (see `needsSnapshot`). */
+  private readonly dispatched = new Set<RunId>();
   constructor(private readonly options: ConversationRoutesOptions) {}
+
+  /**
+   * Whether a commit is better told as the conversation than as a frame (ADR-057 3.4: what a stream builds equals what a read gives). A frame carries what a commit wrote; some of what a Turn shows is not
+   * a function of the rows one commit wrote:
+   *  - the Harness's task list: a call to it is not a row of the Turn when the Turn has a plan of its own, or the call's stored input reads exactly (then the plan stands for it, at the place of the
+   *    last such call), so the commit that writes such a call, the one that gives the Turn its own plan, and the one that ends a Turn that has such calls change lines a frame does not carry;
+   *  - the model a Turn shows: the one its selection named, else, for the latest Turn of its control, the one the control's binding reported. A commit that writes a binding, or dispatches a Turn on a
+   *    control that ran another before, changes the lines of Turns it does not write.
+   * The hub answers a connection that is told such a commit with the conversation (a snapshot), which is a read. Called for each commit that has a subscriber, once.
+   */
+  needsSnapshot(commit: ConversationCommit): boolean {
+    const changes = commit.changes;
+    for (const write of changes.items ?? []) if ((write.row.itemId === "plan" && write.op === "insert") || isTaskListCall(write.row)) return true;
+    if ((changes.bindings ?? []).length > 0) return true;
+    for (const write of changes.runs ?? []) {
+      const row = write.row;
+      if (row.dispatched && !this.dispatched.has(row.runId)) {
+        this.dispatched.add(row.runId);
+        if (this.dispatched.size > TOTALS_KEPT * 32) this.dispatched.delete(this.dispatched.values().next().value!);
+        if (this.options.facts.dispatchedBefore(row.sessionId, row.harnessId, row.controlId, row.ordinal)) return true;
+      }
+      if (row.status === "completed" || row.status === "failed" || row.status === "cancelled" || row.status === "unknown") {
+        if (this.options.facts.plainTools(row.runId).some(isTaskListCall)) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * A commit was kept: what is held of its conversation moves along with it. The totals of the Runs change only when a Run's row was written; the edits, when an item that is a
+   * file change with a stored detail was. A conversation whose held totals are not of the version before the commit (a commit this was not told of) is read again, not guessed.
+   * Told of every commit before its frame is made; a read that finds the held totals are not of its version reads them again, so a commit this is not told of costs a read and no wrong answer.
+   */
+  observe(commit: ConversationCommit): void {
+    const written = commit.changes.head?.row;
+    if (written === undefined) return;
+    const id = written.id as SessionId, summary = this.summaries.get(id);
+    if (summary !== undefined) {
+      if (summary.version === written.version - 1 && (commit.changes.runs ?? []).length === 0) summary.version = written.version; else this.summaries.delete(id);
+    }
+    const list = this.editLists.get(id);
+    if (list === undefined) return;
+    if (list.version !== written.version - 1) { this.editLists.delete(id); return; }
+    for (const write of commit.changes.items ?? []) {
+      const row = write.row;
+      if (row.type !== "file_change" || (row.fields as { readonly detail?: unknown }).detail === undefined) continue;
+      if (list.value.some(held => held.runId === row.runId && held.seq === row.seq)) continue;
+      const run = this.options.facts.runById(row.runId);
+      if (run === null) { this.editLists.delete(id); return; }
+      const place: EditPlace = { ordinal: run.ordinal, runId: row.runId, harnessId: run.facts.selection.harnessId, seq: row.seq };
+      let at = list.value.length;
+      while (at > 0 && (list.value[at - 1]!.ordinal > place.ordinal || (list.value[at - 1]!.ordinal === place.ordinal && list.value[at - 1]!.seq > place.seq))) at--;
+      list.value.splice(at, 0, place);
+    }
+    list.version = written.version;
+  }
+  private summaryOf(id: SessionId, version: number): RunSummaryPort {
+    const kept = this.summaries.get(id);
+    if (kept !== undefined && kept.version === version) return kept.value;
+    const value = this.options.facts.runSummary(id);
+    remember(this.summaries, id, { version, value });
+    return value;
+  }
+  private editsOf(id: SessionId, version: number): readonly EditPlace[] {
+    const kept = this.editLists.get(id);
+    if (kept !== undefined && kept.version === version) return kept.value;
+    const value = [...this.options.facts.edits(id)];
+    remember(this.editLists, id, { version, value });
+    return value;
+  }
+  /** What the page used to learn from every Turn, for the head of version `version` (see `SessionFacts`). */
+  private factsOf(id: SessionId, version: number): SessionFacts {
+    const summary = this.summaryOf(id, version);
+    return { unknown: { count: summary.unknown, unclosed: summary.unclosed }, settled: summary.open === 0, branchable: summary.branchable === null ? null : { runId: summary.branchable.runId, ordinal: summary.branchable.ordinal },
+      ran: summary.ran.map(entry => ({ harnessId: entry.harnessId, controlId: entry.controlId, turns: entry.turns })), changes: this.editsOf(id, version).length };
+  }
 
   /** The history a conversation started from, read once (it can be a branch's hundreds of quoted messages) and kept for the heads that follow. */
   private originOf(id: SessionId): SessionOrigin | null {
@@ -122,7 +228,7 @@ export class ConversationRoutes {
    */
   headView(row: HeadRow): SessionHeadView {
     const { facts, live: liveOf } = this.options, id = row.id, json = row.head, bindings = facts.bindings(id), live = liveOf?.(id) ?? {};
-    const pending = row.pendingSwitchId === null ? null : facts.pendingSwitch(id), origin = json.origin === undefined ? null : this.originOf(id);
+    const last = facts.lastSwitch(id), origin = json.origin === undefined ? null : this.originOf(id);
     const nativeStates: NativeStateView[] = bindings.flatMap(binding => {
       if (binding.status === "archived") return [];
       const same = binding.harnessId === json.selection.harnessId && binding.controlId === json.selection.controlId;
@@ -136,7 +242,7 @@ export class ConversationRoutes {
       pendingSwitchId: row.pendingSwitchId, permissions: live.permissions ?? [], nativeStates, ...(origin === null ? {} : { origin }), ...(live.queue === undefined ? {} : { queue: live.queue }),
       retention: { enabled: json.retainNative === true, process: kept?.process ?? null, ...(kept?.lost === undefined ? {} : { lost: kept.lost }), ...(kept?.outside === undefined ? {} : { outside: kept.outside }),
         ...(kept?.upgraded === undefined ? {} : { upgraded: kept.upgraded }) },
-      title: row.title, runCount: row.runCount, ...(pending === null ? {} : { pendingSwitch: pending }) };
+      title: row.title, runCount: row.runCount, ...(last === null ? {} : { lastSwitch: last }), facts: this.factsOf(id, row.version) };
   }
   head(id: string): SessionHeadView { return this.headView(this.headRow(id)); }
 
@@ -180,6 +286,30 @@ export class ConversationRoutes {
     const from = whole(query.from, "from", 0) ?? 0, to = whole(query.to, "to", 0);
     if (to !== undefined && to < from) return refuse("the range ends before it starts");
     return this.options.reader.text(run.runId, place, to === undefined ? { from } : { from, to });
+  }
+  /** GET /api/v1/sessions/:id/changes?before=<cursor>&limit= */
+  changes(id: string, query: { readonly before?: string | undefined; readonly limit?: string | number | undefined }): ConversationChangesView {
+    const row = this.headRow(id), limit = whole(query.limit, "limit", 1) ?? EDITS_PAGE, edits = this.editsOf(row.id, row.version);
+    let end = edits.length;
+    if (query.before !== undefined) {
+      const match = /^(0|[1-9][0-9]*):([1-9][0-9]*)$/u.exec(query.before);
+      if (match === null) return refuse("before is the cursor of the changes the page lies before");
+      const ordinal = Number(match[1]), seq = Number(match[2]);
+      end = edits.findIndex(place => place.ordinal > ordinal || (place.ordinal === ordinal && place.seq >= seq));
+      if (end < 0) end = edits.length;
+    }
+    const start = Math.max(0, end - limit), view = this.viewOf(row.id), runs = new Map<string, RunRow>();
+    const page: ConversationEdit[] = [];
+    for (const place of edits.slice(start, end).reverse()) {
+      const run = runs.get(place.runId) ?? this.options.facts.runAt(row.id, place.ordinal), stored = this.options.facts.item(place.runId, place.seq);
+      if (run === null || stored === null) continue;
+      runs.set(place.runId, run);
+      page.push({ runId: place.runId, ordinal: place.ordinal, harnessId: place.harnessId, item: view.item(run, { ...stored, text: [] }) });
+    }
+    const next = start > 0 ? edits[start]!.ordinal + ":" + edits[start]!.seq : null;
+    if (query.before !== undefined) return { edits: page, next };
+    const plan = this.options.facts.latestPlan(row.id);
+    return { edits: page, next, plan: plan === null ? null : { runId: plan.runId, ordinal: plan.ordinal, harnessId: plan.harnessId, item: wireItem(plan.row) } };
   }
   /** GET /api/v1/sessions?after=<cursor>&limit= */
   sessions(query: { readonly after?: string | undefined; readonly limit?: string | number | undefined }): SessionListView {

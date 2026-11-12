@@ -101,7 +101,16 @@ createInterface({ input: process.stdin }).on("line", line => {
     }
     // A program that logs a private path and credentials on stderr while it works (diagnostics must never carry them).
     if (current.includes("noisy")) process.stderr.write("open /Users/someone/private/notes.txt failed\nOPENAI_API_KEY=sk-fixtureSECRET1234567890abcd\nAuthorization: Bearer fixture.token.value123\nINFO Prompt on session native: " + current + "\n");
-    text(`${name}:${current}`);
+    if (scenario === "interleaved" && protocol === "acp-v1") {
+      // A Turn that says something, runs a command, reads a file and then sums up: each in the order it happened, as separate items of the Turn.
+      const update = value => notify("session/update", { sessionId: nativeId, update: value });
+      text("先看一下目录。");
+      update({ sessionUpdate: "tool_call", toolCallId: "interleaved-run", title: "ls -la", kind: "execute", status: "in_progress", rawInput: { command: "ls -la" } });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "interleaved-run", status: "completed", rawOutput: { output: "README.md\n" } });
+      update({ sessionUpdate: "tool_call", toolCallId: "interleaved-read", title: "Read README.md", kind: "read", status: "in_progress", locations: [{ path: "README.md" }], rawInput: { path: "README.md" } });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "interleaved-read", status: "completed" });
+      text(`总结：${current}`);
+    } else text(`${name}:${current}`);
     if (scenario !== "hold") finish();
     return;
   }

@@ -4,7 +4,8 @@ import type { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { builtinHarnessName } from "../../src/cli/session-application.js";
 import { carriedNativeConfiguration } from "../../src/contexts/session/domain/state.js";
-import { PAGE, type Conversation, type ConversationRun, type HeldItem } from "../../src/contracts/conversation.js";
+import type { ContentRef } from "../../src/contracts/content.js";
+import { PAGE, type Conversation, type ConversationCommit, type ConversationRun, type HeldItem } from "../../src/contracts/conversation.js";
 import { SessionError, sessionId, type SessionSnapshot } from "../../src/contracts/session.js";
 import { conversationTitle, type SessionViewV14, type WireItem } from "../../src/contracts/web.js";
 import { ConversationFacts } from "../../src/infrastructure/session/facts.js";
@@ -13,6 +14,7 @@ import { ConversationRoutes, type ConversationRoutesOptions } from "../../src/we
 import { commandId } from "../../src/contracts/session.js";
 import { SESSION, bytes, commit, conversation, event, item, openDatabase, reduce, replyItem, run, seedConverted, sendCommand, toolItem, userItem, type Env } from "../fixtures/conversation-builder.js";
 import { migrated } from "../fixtures/migrated.js";
+import { Scenario, created as storeCreated, newConversation, openStore, rawDatabase } from "../fixtures/store-helpers.js";
 import { V13_FIXTURES } from "../fixtures/storage/v13/database.js";
 import { syntheticFixture } from "../fixtures/synthetic-v13.js";
 
@@ -246,8 +248,8 @@ test("the head of every conversation of every frozen fixture says what the old v
       });
       assert.deepEqual(JSON.parse(JSON.stringify(head.nativeStates)), JSON.parse(JSON.stringify(expected)), name + "/" + snapshot.id);
       if (expected.some(state => "carried" in state)) carried++;
-      assert.deepEqual(head.pendingSwitch, snapshot.pendingSwitchId === null ? undefined : snapshot.switches.find(entry => entry.id === snapshot.pendingSwitchId));
-      if (head.pendingSwitch !== undefined) pending++;
+      assert.deepEqual(head.lastSwitch, snapshot.switches.at(-1));
+      if (snapshot.pendingSwitchId !== null) { pending++; assert.equal(head.lastSwitch?.id, snapshot.pendingSwitchId, "the switch that waits is the latest"); }
       assert.deepEqual(head.origin === undefined ? null : JSON.parse(JSON.stringify(head.origin)), snapshot.origin === undefined ? null : JSON.parse(JSON.stringify(snapshot.origin)), name + "/" + snapshot.id + ": the origin");
       if (head.origin !== undefined) origins++;
       assert.deepEqual(head.retention, { enabled: snapshot.retainNative === true, process: null });
@@ -278,4 +280,77 @@ test("what the native session changed of its configuration since its last Turn i
   assert.deepEqual(expected, { model: "model-b", options: { effort: "high" } });
   assert.deepEqual(head.nativeStates, [{ harnessId: "alpha", controlId: "alpha-acp", status: "ready", observed: binding.observed, carried: expected }]);
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The changes of the whole conversation
+// ---------------------------------------------------------------------------------------------------------------------
+
+const detailRef = (id: string): ContentRef => ({ id: id as ContentRef["id"], name: id + ".json", mediaType: "application/json", kind: "file", bytes: 10, sha256: "a".repeat(64) });
+const place = (entry: { readonly ordinal: number; readonly item: { readonly seq: number } }): string => entry.ordinal + ":" + entry.item.seq;
+
+test("the changes of a whole conversation: the head counts the edits, the route gives them newest first a page at a time with the latest plan on the first, and the count the commits moved along is the count a scan finds", t => {
+  const { root, data, store } = openStore(t), id = storeCreated(store, newConversation(root, "edits")).conversation.id, scenario = new Scenario(store, id, "run-edits", false);
+  const db = rawDatabase(data, true); t.after(() => db.close());
+  // The routes that follow the conversation are told each commit the store makes, as the Gateway's stream tells them; a scan is a new set of routes that were told nothing.
+  const live = routesOf(db), scanned = (): number => routesOf(db).session(id).head.facts.changes;
+  const told: ConversationCommit[] = [], transact = store.transact.bind(store);
+  store.transact = ((...args: Parameters<typeof transact>) => { const done = transact(...args); told.push(done); return done; }) as typeof store.transact;
+  const follow = (): void => { for (const commit of told.splice(0)) live.observe(commit); };
+  const add = (ordinal: number, make: (seq: number) => HeldItem): void => {
+    store.transact(id, store.get(id).version, current => ({ next: { ...current, runs: current.runs.map(entry => entry.ordinal === ordinal
+      ? { ...entry, items: [...(entry.items ?? []), make(Math.max(0, ...(entry.items ?? []).map(held => held.seq)) + 1)] } : entry) }, events: [event("run.output", { runId: "run-edits-" + ordinal })] }));
+    follow();
+  };
+  const expected: { ordinal: number; seq: number }[] = [];
+  const edit = (ordinal: number, seq: number, withDetail: boolean): HeldItem => item("run-edits-" + ordinal, seq, "tool:edit-" + seq, "file_change", "completed",
+    { changes: [{ path: "src/file-" + ordinal + "-" + seq + ".ts", op: "modify", added: 1, removed: 0 }], ...(withDetail ? { detail: detailRef("detail-" + ordinal + "-" + seq) } : {}) });
+  const planned = (ordinal: number, seq: number, steps: number): HeldItem => item("run-edits-" + ordinal, seq, "plan", "plan", "completed", { steps: Array.from({ length: steps }, (_, step) => ({ text: "step " + step, status: step === 0 ? "completed" : "pending" })) });
+  for (let n = 0; n < 60; n++) {
+    scenario.accept("edit " + n); follow(); scenario.start(n); follow(); scenario.say(n, "working on " + n); follow();
+    for (let k = 0; k < n % 4; k++) add(n, seq => { expected.push({ ordinal: n, seq }); return edit(n, seq, true); });
+    // An edit the Harness reported without a stored detail is no change of the conversation to show.
+    if (n % 5 === 0) add(n, seq => edit(n, seq, false));
+    if (n === 10) add(n, seq => planned(n, seq, 2));
+    if (n === 40) add(n, seq => planned(n, seq, 3));
+    scenario.finish(n); follow();
+    if (n % 7 === 0) assert.equal(live.session(id).head.facts.changes, scanned(), "the count moved along by the commits is the scan's, after Turn " + n);
+  }
+  assert.equal(expected.length, 90);
+  assert.deepEqual([live.session(id).head.facts.changes, scanned()], [90, 90]);
+  // The newest edits first, the plan the latest Turn that made one gave.
+  const first = live.changes(id, {});
+  assert.deepEqual(first.edits.map(place), expected.slice(-40).reverse().map(entry => entry.ordinal + ":" + entry.seq));
+  assert.ok(first.next !== null);
+  assert.deepEqual([first.plan?.ordinal, first.plan?.item.type, first.plan?.item.type === "plan" ? first.plan.item.steps.length : null], [40, "plan", 3]);
+  assert.deepEqual(first.edits[0]!.item.type === "file_change" ? first.edits[0]!.item.changes.map(change => change.path) : null, ["src/file-" + expected.at(-1)!.ordinal + "-" + expected.at(-1)!.seq + ".ts"]);
+  assert.equal(first.edits[0]!.harnessId, "alpha");
+  // Back through them by the cursor each page gives: every edit once, newest first, whatever the size of a page; the plan is the first page's alone.
+  for (const limit of [undefined, 1, 7, 90, 500]) {
+    const seen: string[] = [];
+    let page = live.changes(id, limit === undefined ? {} : { limit }), pages = 1;
+    for (;;) {
+      assert.ok(page.edits.length > 0 && page.edits.length <= (limit ?? 40));
+      seen.push(...page.edits.map(place));
+      if (page.next === null) break;
+      page = live.changes(id, { before: page.next, ...(limit === undefined ? {} : { limit: String(limit) }) }); pages++;
+      assert.equal("plan" in page, false, "the plan is the first page's alone");
+    }
+    assert.deepEqual(seen, expected.map(entry => entry.ordinal + ":" + entry.seq).reverse(), "limit " + limit);
+    if (limit === 500) assert.equal(pages, 1);
+    if (limit === 7) assert.equal(pages, Math.ceil(90 / 7));
+  }
+  // What is not a request for a page is refused as such, and a conversation that is not there is not found.
+  for (const before of ["x", "", "1", "1:0", "-1:2", "1:2:3", "01:2", "1: 2"]) assert.throws(() => live.changes(id, { before }), invalid, "before=" + before);
+  for (const limit of ["0", "-1", "x", "1.5", 0, Number.NaN]) assert.throws(() => live.changes(id, { limit }), invalid, "limit=" + String(limit));
+  assert.throws(() => live.changes("session-nowhere", {}), code("SESSION_NOT_FOUND"));
+  // A cursor that names a place with no edit in it is the place the edits before it end at; one before the first edit gives none.
+  assert.deepEqual(live.changes(id, { before: "1:1" }), { edits: [], next: null });
+  assert.deepEqual(live.changes(id, { before: expected[0]!.ordinal + ":" + expected[0]!.seq }), { edits: [], next: null });
+  // A conversation that never edited has none, and no plan.
+  const bare = storeCreated(store, newConversation(root, "bare")).conversation.id, quiet = new Scenario(store, bare, "run-bare", false);
+  quiet.turn("nothing to change", "no change");
+  assert.deepEqual([live.session(bare).head.facts.changes, routesOf(db).session(bare).head.facts.changes], [0, 0]);
+  assert.deepEqual(live.changes(bare, {}), { edits: [], next: null, plan: null });
+});
+
 void commandId;

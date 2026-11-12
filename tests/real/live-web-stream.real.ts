@@ -108,7 +108,7 @@ test("real Codex delivers partial text over authenticated web SSE before model c
     assert.ok(response.ok, await response.clone().text()); return record(await response.json());
   }
   const managed = await request("/providers", { input: { name: "Real live fixture", protocol: "openai-responses", baseUrl: `http://127.0.0.1:${address.port}/v1`, models: [MODEL], defaultModel: MODEL, enabled: true, apiKey: KEY }, commandId: "real-live-provider" });
-  const session = await request("/sessions", { selection: { harnessId: "codex", controlId: "codex-native", provider: { providerId: managed.id, revision: managed.revision, model: MODEL } }, commandId: "real-live-session" }), id = String(session.id);
+  const session = await request("/sessions", { selection: { harnessId: "codex", controlId: "codex-native", provider: { providerId: managed.id, revision: managed.revision, model: MODEL } }, commandId: "real-live-session" }), id = String((session as unknown as { head: { id: string } }).head.id);
   async function connect(after = 0): Promise<FactStream> {
     const abort = new AbortController(), response = await fetch(origin + `/api/v1/sessions/${id}/events/stream?afterSeq=${after}`, { headers: { Cookie: cookie, Origin: origin }, signal: abort.signal }); assert.equal(response.status, 200);
     const stream = new FactStream(response, abort); streams.push(stream); return stream;

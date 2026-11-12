@@ -9,6 +9,7 @@ import { application } from "../../src/cli/session-application.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
+import { readThrough } from "../fixtures/http-conversation.js";
 
 /*
  * The relay from the user's side, end to end (slim.md, 2026-11-11): the real Gateway, with its real store, Runtime and Drivers, and the
@@ -119,8 +120,8 @@ async function start(t: test.TestContext) {
   type Decision = { kind: string; by: string; cause?: string; resend?: string };
   interface Current { id: string; epoch: number; pendingSwitchId: string | null; selection: { harnessId: string }; runs: { status: string; relay?: { packetId: string | null; decision?: Decision; delivery?: { state: string; evidence: string | null } } }[] }
   const current = async (): Promise<Current> => {
-    const list = await (await context.request.get(origin + "/api/v1/sessions")).json() as { id: string }[];
-    return await (await context.request.get(origin + "/api/v1/sessions/" + list[0]!.id)).json();
+    const list = ((await (await context.request.get(origin + "/api/v1/sessions")).json()) as { sessions: { id: string }[] }).sessions;
+    return await readThrough(context, origin, list[0]!.id);
   };
   /** The relay's own view of the conversation (GET …/relay), as the page reads it. */
   const relay = async (): Promise<{ bindings: { harnessId: string; nativeEpoch: number; sync: string; evidence: string | null; cleared: number; attention?: { cause: string; options: string[] } }[]; handedOver: string[] }> => {

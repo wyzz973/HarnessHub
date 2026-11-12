@@ -37,9 +37,6 @@ export interface ProjectionEnv {
   readonly detail: (ref: ContentRef) => ToolDetailInput | null;
 }
 
-/** How much of a Turn's reasoning one Turn of the protocol carries; the rest is in the Run's own `thinking`. */
-export const REASONING_MAX = 64 * 1024;
-
 /** The Harness and control that last dispatched a Run, by Harness and control: only that Run's model is known from what its binding reported at the end. */
 function latestDispatched(runs: readonly WebRun[]): ReadonlyMap<string, string> {
   const latest = new Map<string, string>();
@@ -121,7 +118,7 @@ export function projectTurn(input: ProjectionInput, index: number, env: Projecti
   items.push(user);
   if (run.thinking !== undefined && run.thinking !== "") {
     const reasoning: ReasoningItem = { id: "hh:reasoning", seq: seq(), status: ended || input.messages.some(message => message.id === run.assistantMessageId) ? "completed" : "running", type: "reasoning",
-      text: run.thinking.length > REASONING_MAX ? run.thinking.slice(0, REASONING_MAX) : run.thinking, ...(run.thinking.length > REASONING_MAX ? { truncated: true as const } : {}) };
+      text: run.thinking };
     items.push(reasoning);
   }
 

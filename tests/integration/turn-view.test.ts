@@ -88,8 +88,7 @@ function explained(old: Rec, now: Rec, cause: Cause): string | null {
     case "reasoning":
       // The projection said "completed" for the thinking of any Turn that was over: the rows say how the Turn ended (the closing table of ADR-057 3.2).
       if (same(old, now, "status") && now.status === runItemStatus(run.status) && old.status !== now.status) return "thinking of an unfinished Turn is closed as the Turn ended";
-      // The projection kept the first 64 KiB of a longer thinking and said so; the rows keep it all.
-      if (old.truncated === true && same(old, now, "text", "truncated") && now.text === run.thinking && String(old.text).length < String(now.text).length) return "a long thinking is whole";
+      // (The projection used to keep only the first 64 KiB of a longer thinking and say so; a thought has no length it may not pass any more, so both keep it whole and that class of difference is gone.)
       return null;
     case "subagent": case "notice": case "context_event": {
       // An activity that was running when its Turn ended did not finish: the rows say `unknown` (`cancelled` for a Turn that was stopped), the projection kept the Harness's last word.
@@ -167,7 +166,7 @@ test("every Turn of every frozen fixture reads from its rows as the projection r
   assert.ok(turns > 100, "the fixtures hold " + turns + " Turns");
   // Every class of difference was met; a class that is never met is an explanation that explains nothing.
   assert.deepEqual([...seen.keys()].sort(), [
-    "a long thinking is whole", "a plan step keeps its priority", "an activity left open is closed with its Turn", "an error told as a notice is kept beside the Run's own error",
+    "a plan step keeps its priority", "an activity left open is closed with its Turn", "an error told as a notice is kept beside the Run's own error",
     "an unfinished Turn's reply is not marked final", "thinking of an unfinished Turn is closed as the Turn ended"]);
   assert.deepEqual([...met.keys()].sort(), ["a sub-agent told as a call and as an activity", "a task-list call hidden by the Run's own plan", "a thinking of no words"]);
   console.log("Turns compared: " + turns + " (" + reordered + " with the items made from activities or the Run's error standing elsewhere than the projection put them); differences by class: " + JSON.stringify(Object.fromEntries(seen)));

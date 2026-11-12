@@ -7,11 +7,12 @@ import { application } from "../../src/cli/session-application.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { startWebServer } from "../../src/web/server.js";
-import type { ProtocolItem, ProtocolTurn } from "../../src/contracts/protocol.js";
-import type { SessionStreamFrame, SessionView } from "../../src/contracts/web.js";
+import { WORK_TYPES, type ProtocolItem, type ProtocolTurn } from "../../src/contracts/protocol.js";
+import type { SessionStreamFrameV14, SessionViewV14, WireTurn } from "../../src/contracts/web.js";
 
 // The protocol (hh/1) view through the real service: a real web server, a real SQLite store and content store, a real process
-// speaking ACP in place of the Harness (tests/fixtures/control-peer.mjs). The Hub reads what it stored of each Run as a Turn.
+// speaking ACP in place of the Harness (tests/fixtures/control-peer.mjs). The Hub reads what it stored of each Run as a Turn:
+// `GET /sessions/:id` answers the window of the newest Turns, each a Run with its protocol header (`run.turn`) and its items.
 
 async function fixture(t: test.TestContext, scenario: string) {
   const root = await mkdtemp(join(tmpdir(), "protocol-view-")), home = join(root, "home"), workspace = join(root, "workspace"), peer = join(root, "peer.mjs"), manifest = join(root, "catalog.json");
@@ -29,12 +30,12 @@ async function fixture(t: test.TestContext, scenario: string) {
   const csrf = ((await boot.json()) as { csrfToken: string }).csrfToken, cookie = boot.headers.get("set-cookie")!.split(";", 1)[0]!;
   const headers = { Cookie: cookie, Origin: origin, "Content-Type": "application/json", "X-CSRF-Token": csrf };
   const call = async (path: string, body?: unknown) => { const response = await fetch(origin + "/api/v1" + path, { method: body === undefined ? "GET" : "POST", headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); return { status: response.status, value: await response.json() as Record<string, unknown> }; };
-  const until = async (id: string, predicate: (view: SessionView) => boolean): Promise<SessionView> => {
+  const until = async (id: string, predicate: (view: SessionViewV14) => boolean): Promise<SessionViewV14> => {
     const deadline = Date.now() + 15000;
-    for (;;) { const { value } = await call("/sessions/" + id), view = value as unknown as SessionView; if (predicate(view)) return view; if (Date.now() > deadline) throw new Error("the conversation did not reach the expected state: " + JSON.stringify(view.runs.map(run => run.status))); await new Promise(done => setTimeout(done, 25)); }
+    for (;;) { const { status, value } = await call("/sessions/" + id), view = value as unknown as SessionViewV14; assert.equal(status, 200); if (predicate(view)) return view; if (Date.now() > deadline) throw new Error("the conversation did not reach the expected state: " + JSON.stringify(view.window.turns.map(turn => turn.run.status))); await new Promise(done => setTimeout(done, 25)); }
   };
-  /** The first frame the conversation's live stream sends: the whole view. */
-  const snapshot = async (id: string): Promise<SessionStreamFrame> => {
+  /** The first frame the conversation's live stream sends: the head and the window of Turns. */
+  const snapshot = async (id: string): Promise<SessionStreamFrameV14> => {
     const abort = new AbortController(), response = await fetch(origin + "/api/v1/sessions/" + id + "/events/stream?afterSeq=0", { headers: { Cookie: cookie, Origin: origin }, signal: abort.signal });
     assert.equal(response.status, 200);
     const reader = response.body!.getReader(), decoder = new TextDecoder();
@@ -44,67 +45,78 @@ async function fixture(t: test.TestContext, scenario: string) {
         const next = await reader.read(); if (next.done) throw new Error("the stream ended before its first frame");
         buffer += decoder.decode(next.value, { stream: true });
         const end = buffer.indexOf("\n\n"), data = end < 0 ? undefined : buffer.slice(0, end).split("\n").find(line => line.startsWith("data: "));
-        if (data !== undefined) return JSON.parse(data.slice(6)) as SessionStreamFrame;
+        if (data !== undefined) return JSON.parse(data.slice(6)) as SessionStreamFrameV14;
       }
     } finally { abort.abort(); }
   };
   const start = async (text: string, nativeModel?: string) => {
     const created = await call("/sessions", { selection: { harnessId: "native-alpha", ...(nativeModel === undefined ? {} : { nativeModel }) }, commandId: "create" }); assert.equal(created.status, 201);
-    const id = String(created.value.id); assert.equal((await call("/sessions/" + id + "/messages", { text, commandId: "send" })).status, 202); return id;
+    const id = String((created.value.head as { id: string }).id); assert.equal((await call("/sessions/" + id + "/messages", { text, commandId: "send" })).status, 202); return id;
   };
   return { call, until, snapshot, start, workspace };
 }
-const turnOf = (view: SessionView, index = 0): ProtocolTurn => { const turn = view.runs[index]?.protocol; assert.ok(turn !== undefined, "the Run has no protocol Turn"); return turn as ProtocolTurn; };
+/** The Turn of the window at `index`: the Run (with the protocol's header in `run.turn`) and its items. */
+const wireTurn = (view: SessionViewV14, index = 0): WireTurn => { const turn = view.window.turns[index]; assert.ok(turn !== undefined, "the window holds no such Turn"); return turn; };
+/** The protocol Turn as a page assembles it from what the window carries: the Run's header and the Turn's items. */
+const turnOf = (view: SessionViewV14, index = 0): ProtocolTurn => { const turn = wireTurn(view, index); return { ...turn.run.turn, items: turn.items }; };
+/** The Turn's actions of the Harness (commands, reads, changes, searches, calls), in order. */
+const actions = (turn: WireTurn): readonly ProtocolItem[] => turn.items.filter(item => (WORK_TYPES as readonly string[]).includes(item.type));
 const byType = <T extends ProtocolItem["type"]>(turn: ProtocolTurn, type: T) => turn.items.filter((item): item is Extract<ProtocolItem, { type: T }> => item.type === type);
 
-test("the conversation view and its live stream carry each Run as a protocol Turn: the trial's tool calls, in five Harnesses' spellings, become their types", { timeout: 30000 }, async t => {
+test("the conversation window and its live stream carry each Turn as a protocol Turn: the trial's tool calls, in five Harnesses' spellings, become their types", { timeout: 30000 }, async t => {
   const f = await fixture(t, "protocol-trial"), id = await f.start("tell me about the project");
-  const view = await f.until(id, current => current.runs[0]?.status === "completed" && current.runs[0].tools?.length === 7 && current.runs[0].tools.every(tool => tool.status === "completed" && (tool.detail !== undefined || tool.id === "h-term" || tool.id === "x-odd")));
-  const turn = turnOf(view);
-  assert.equal(turn.version, "hh/1"); assert.equal(turn.n, 1); assert.equal(turn.runId, view.runs[0]!.id); assert.equal(turn.status, "completed"); assert.equal(turn.stopReason, "end_turn");
+  const view = await f.until(id, current => { const first = current.window.turns[0]; return first?.run.status === "completed" && actions(first).length === 7
+    && actions(first).every(item => item.status === "completed" && (item.detail !== undefined || item.id === "tool:h-term" || item.id === "tool:x-odd")); });
+  const turn = turnOf(view), run = wireTurn(view).run;
+  assert.equal(turn.version, "hh/1"); assert.equal(turn.n, 1); assert.equal(turn.runId, run.id); assert.equal(turn.status, "completed"); assert.equal(turn.stopReason, "end_turn");
   // The Harness is named as the Harness list names it (here the fixture manifest's), the built-in catalog's name only for one the scan has not seen.
   assert.deepEqual(turn.executor, { harnessId: "native-alpha", harness: "alpha" });
   assert.deepEqual(turn.items.map(item => item.type), ["user_message", "command", "file_read", "command", "mcp_tool", "file_change", "command", "tool", "assistant_message"]);
+  // The user's words are the first item's text (a Run carries no input of its own on the wire), of the message the Run names.
+  const asked = turn.items[0]; assert.ok(asked?.type === "user_message" && asked.text === "tell me about the project" && asked.messageId === run.userMessageId);
   // DeepSeek Harness's `bash` and `read` have only their names for titles: the Hub reads what they ran and read from their stored details.
   const [bash, read, test, hub, edit, terminal, odd] = turn.items.slice(1, 8);
   assert.ok(bash?.type === "command" && bash.command === "pwd && ls -la" && bash.nativeName === "bash" && bash.status === "completed"); assert.ok(read?.type === "file_read" && read.path === "/w/src/cart.js");
   assert.ok(test?.type === "command" && test.command === "npm test" && test.nativeName === "Bash"); assert.ok(hub?.type === "mcp_tool" && hub.server === "harnesshub" && hub.tool === "hub_turns" && hub.hub === true);
   assert.ok(edit?.type === "file_change" && edit.nativeName === "Edit"); assert.deepEqual(edit.changes, [{ path: "/w/a.txt", op: "modify", added: 1, removed: 1 }]);
   assert.ok(terminal?.type === "command" && terminal.command === "ls -la"); assert.ok(odd?.type === "tool" && odd.name === "Brainstorm");
-  // The stored detail is what the client opens a call for; the Run's own facts are as they were.
+  // The stored detail is what the client opens a call for; the seven calls of the Run are the seven actions of the Turn, and the context the Harness reported is the Turn's usage (a Run carries no usage of its own on the wire).
   for (const item of [bash, read, test, hub, edit]) assert.ok(item?.detail !== undefined);
-  assert.equal(view.runs[0]!.tools!.length, 7); assert.deepEqual(view.runs[0]!.usage?.context, { used: 1200, size: 200000 });
+  assert.equal(actions(wireTurn(view)).length, 7);
   // The reply is the Run's own message; the usage is read in the protocol's one meaning (this Harness reports no tokens a Turn can be told by).
-  assert.deepEqual(byType(turn, "assistant_message").map(item => [item.messageId, item.phase]), [[view.runs[0]!.assistantMessageId, "final"]]);
+  assert.deepEqual(byType(turn, "assistant_message").map(item => [item.messageId, item.phase]), [[run.assistantMessageId, "final"]]);
   assert.deepEqual(turn.usage, { completeness: "unavailable", context: { used: 1200, size: 200000 } });
-  // The stream's first frame is the same view, protocol and all.
+  // The stream's first frame holds the same Turn, header and items and all.
   const frame = await f.snapshot(id);
-  assert.equal(frame.type, "snapshot"); assert.ok(frame.type === "snapshot"); assert.deepEqual(frame.session.runs[0]!.protocol, turn);
+  assert.equal(frame.type, "snapshot"); assert.ok(frame.type === "snapshot"); assert.deepEqual(frame.session.window.turns, view.window.turns);
   // Reading it again is the same Turn: a stored detail never changes.
-  assert.deepEqual(turnOf(await f.until(id, current => current.runs[0]?.status === "completed")), turn);
+  assert.deepEqual(wireTurn(await f.until(id, current => current.window.turns[0]?.run.status === "completed")), wireTurn(view));
 });
 
 test("a Turn that waits for the user's decision is waiting, and ends completed once it is decided", { timeout: 30000 }, async t => {
   const f = await fixture(t, "permission"), id = await f.start("fixture approval");
-  const waiting = await f.until(id, view => (view.permissions ?? []).some(request => !request.decided));
+  const waiting = await f.until(id, view => (view.head.permissions ?? []).some(request => !request.decided));
+  // The Turn waits because an item of it does: the approval, which nothing has decided yet.
   assert.equal(turnOf(waiting).status, "waiting"); assert.equal(turnOf(waiting).stopReason, undefined);
-  const request = waiting.permissions!.find(item => !item.decided)!;
+  assert.deepEqual(byType(turnOf(waiting), "approval").map(item => [item.status, item.decision]), [["waiting", undefined]]);
+  const request = waiting.head.permissions!.find(item => !item.decided)!;
   assert.equal((await f.call(`/sessions/${id}/permissions/${request.id}`, { optionId: "allow", commandId: "decision" })).status, 200);
-  const done = await f.until(id, view => view.runs[0]?.status === "completed");
+  const done = await f.until(id, view => view.window.turns[0]?.run.status === "completed");
   assert.equal(turnOf(done).status, "completed"); assert.equal(turnOf(done).stopReason, "end_turn");
+  assert.deepEqual(byType(turnOf(done), "approval").map(item => [item.status, item.decision?.role, item.decision?.by]), [["completed", "allow_once", "user"]]);
 });
 
 test("a Turn the model refused is failed with its reason, and no error item that has nothing to say", { timeout: 30000 }, async t => {
   const f = await fixture(t, "refusal"), id = await f.start("something refused");
-  const view = await f.until(id, current => current.runs[0]?.status === "failed"), turn = turnOf(view);
-  assert.equal(view.runs[0]!.error, null); assert.equal(turn.status, "failed"); assert.equal(turn.stopReason, "refusal"); assert.deepEqual(byType(turn, "error"), []);
+  const view = await f.until(id, current => current.window.turns[0]?.run.status === "failed"), turn = turnOf(view);
+  assert.equal(wireTurn(view).run.error, null); assert.equal(turn.status, "failed"); assert.equal(turn.stopReason, "refusal"); assert.deepEqual(byType(turn, "error"), []);
 });
 
 test("a model is shown by the name its Harness's catalog gives it once the Hub has read that catalog, and by its native spelling made readable until then", { timeout: 30000 }, async t => {
   const f = await fixture(t, "native-experience"), id = await f.start("which model", "native-model-a");
-  const before = await f.until(id, view => view.runs[0]?.status === "completed");
+  const before = await f.until(id, view => view.window.turns[0]?.run.status === "completed");
   assert.deepEqual(turnOf(before).executor.model, { id: "native-model-a", label: "Native Model A" });
   // The message box's picker reads the catalog; from then on the same Turn names its model as the catalog does.
   assert.equal((await f.call("/harnesses/native-alpha/models?controlId=native-alpha&workspace=" + encodeURIComponent(f.workspace))).status, 200);
-  assert.deepEqual(turnOf(await f.until(id, view => view.runs[0]?.status === "completed")).executor.model, { id: "native-model-a", label: "Native A" });
+  assert.deepEqual(turnOf(await f.until(id, view => view.window.turns[0]?.run.status === "completed")).executor.model, { id: "native-model-a", label: "Native A" });
 });

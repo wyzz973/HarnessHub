@@ -239,6 +239,9 @@ test("a conversation with a quoted history gives it back in the old origin, a br
   assert.deepEqual(store.snapshot(quoted).origin, { kind: "fork", sessionId: "session-source", throughRunId: "run-source-0", history: rows("session-quoted").map(row => row.message) });
   const reference = created(store, newConversation(root, "reference", { origin: { kind: "fork", sessionId: sessionId("session-source"), throughRunId: runId("run-source-0"), throughOrdinal: 0, quoted: false } })).conversation.id;
   assert.equal(store.snapshot(reference).origin, undefined); assert.equal(store.head(reference).title, "新对话");
+  // The page is told where a branch that quotes nothing came from: the source and the point, with no words here (they are the source's Turns).
+  assert.deepEqual(store.origin(reference), { kind: "fork", sessionId: "session-source", throughRunId: "run-source-0", history: [] });
+  assert.deepEqual(store.origin(quoted)?.history.length, 2);
   const native: NativeSessionBinding = { harnessId: "alpha", controlId: "alpha-acp", checkpoint: "native-imported", throughRunId: null, status: "ready", relay: initialBindingRelay([], "alpha", "alpha-acp", "import") };
   const imported = created(store, newConversation(root, "imported", { origin: { kind: "import", harnessId: "alpha", title: "Earlier work", omitted: 3, complete: false, historyRead: true }, nativeBindings: [native] }), [event("session.created")],
     [{ sessionId: sessionId("session-imported"), idx: 0, kind: "import", message: { role: "user", text: "an earlier question", status: "completed" } }]).conversation.id;

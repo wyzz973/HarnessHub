@@ -3,7 +3,9 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "re
 import type { ReactNode, RefObject } from "react";
 import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import type { AttentionItem, PermissionRequest } from "../../../src/contracts/session.js";
-import type { HarnessView, SessionSummary, SessionView } from "../../../src/contracts/web.js";
+import type { HarnessView, SessionSummary } from "../../../src/contracts/web.js";
+import type { ConversationView } from "../lib/conversation.js";
+import type { ClientSessionView } from "../lib/protocol/wire.js";
 import { errorMessage } from "../api.js";
 import { attentionKind, liveItems, mostUrgent, remaining } from "../attention.js";
 import { cn } from "../lib/cn.js";
@@ -36,9 +38,9 @@ export interface InboxSource {
   readonly sessions: readonly SessionSummary[];
   readonly harnesses: readonly HarnessView[];
   /** The open conversation's live view: its requests need no read. */
-  readonly current: SessionView | null;
+  readonly current: ConversationView | null;
   /** Reads another conversation's view, for the title and options of its waiting requests; only while the inbox is shown. */
-  readonly onLoad: (sessionId: string, signal: AbortSignal) => Promise<SessionView>;
+  readonly onLoad: (sessionId: string, signal: AbortSignal) => Promise<ClientSessionView>;
   /** Sends one option of a waiting request; resolves once the Gateway accepted it. */
   readonly onDecide: (item: AttentionItem, optionId: string) => Promise<void>;
   readonly onOpen: (sessionId: string) => void;
@@ -58,6 +60,8 @@ interface SidebarProps {
   /** Set on narrow screens, where the inbox opens as a sheet of its own instead of beside its row. */
   readonly onInbox?: () => void;
   readonly onCollapse: () => void; readonly onClose?: () => void; readonly onPage: (page: Page) => void; readonly onNew: () => void; readonly onSession: (id: string) => void; readonly onPalette: () => void;
+  /** Whether the Gateway has conversations after the ones listed, and the way to read the next page of them; the list asks for it when it is scrolled to its end. */
+  readonly more?: boolean; readonly onMore?: () => void;
 }
 type RowState = "wait" | "run" | "unknown" | "closed" | "fail" | "idle";
 interface Row { readonly session: SessionSummary; readonly items: readonly AttentionItem[]; readonly state: RowState }
@@ -183,6 +187,7 @@ export function Sidebar(props: SidebarProps) {
         {sessions.length === 0 ? <p className="m-0 px-2.5 py-2 text-ui-sm text-fg-3">对话会按项目（工作区）归在这里。</p>
           : groups.map((project, index) => <ProjectGroup key={project.key} project={project} open={isOpen(project, index)} onToggle={open => choose(project.key, open)}
             now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} arrivals={arriving} harness={name} onSession={props.onSession}/>)}
+        {props.more ? <MoreSessions onMore={props.onMore}/> : null}
       </nav>
     </div>
     <div className="flex-none pt-1">
@@ -192,6 +197,19 @@ export function Sidebar(props: SidebarProps) {
       <span className="sr-only" role="status">{props.connected ? "" : "与本机服务的连接中断"}</span>
     </div>
   </aside>;
+}
+
+/** The end of a list that goes on: it reads the next page of conversations as it comes into view, and says so with a button for a reader who cannot scroll to it. */
+function MoreSessions({ onMore }: { readonly onMore: (() => void) | undefined }) {
+  const end = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const element = end.current;
+    if (!element || onMore === undefined || typeof IntersectionObserver === "undefined") return;
+    const watch = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) onMore(); }, { rootMargin: "200px" });
+    watch.observe(element);
+    return () => watch.disconnect();
+  }, [onMore]);
+  return <button ref={end} type="button" className="more-sessions btn btn-ghost btn-sm mx-1 my-1 flex-none" onClick={onMore}>更多对话</button>;
 }
 
 function ProjectGroup({ project, open, onToggle, now, currentId, disabled, arrivals, harness, onSession }: {
@@ -285,7 +303,7 @@ export function InboxList({ items, sessions, harnesses, current, onLoad, onDecid
       reads.current.set(id, entry);
       setRead(map => new Map(map).set(id, { requests: map.get(id)?.requests ?? null, loading: true }));
       onLoad(id, entry.controller.signal).then(view => {
-        if (!entry.controller.signal.aborted) setRead(map => new Map(map).set(id, { requests: view.permissions ?? [], loading: false }));
+        if (!entry.controller.signal.aborted) setRead(map => new Map(map).set(id, { requests: view.head.permissions ?? [], loading: false }));
       }, () => {
         if (entry.controller.signal.aborted) return;
         if (reads.current.get(id) === entry) reads.current.delete(id);

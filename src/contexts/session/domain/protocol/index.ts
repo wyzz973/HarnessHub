@@ -4,7 +4,7 @@
  */
 export { changesFrom, diffFiles, locationOf, type FileChange, type ToolDetailInput } from "./changes.js";
 export { modelLabel } from "./models.js";
-export { projectTurn, projectTurns, REASONING_MAX, type ProjectionEnv, type ProjectionInput } from "./project.js";
+export { projectTurn, projectTurns, type ProjectionEnv, type ProjectionInput } from "./project.js";
 export { unwrapShell, shellWords } from "./shell.js";
 export { errorClass, itemStatus, runEnded, runItemStatus, stopReason, toolOutcome, turnStatus } from "./status.js";
 export { classifyTool, commandTextOf, detailHead, HEAD_INPUT, LABEL_MAX, normalizeTool, plainTool, planFromInput, toolFamily, type Normalized, type ToolClass, type ToolContext, type ToolFacts, type ToolFamily } from "./tools.js";

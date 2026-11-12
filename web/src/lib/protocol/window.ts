@@ -8,8 +8,8 @@ import type { ClientCommitFrame, ClientRun, ClientRunItemsPage, ClientSessionVie
  * It is a value: every function here takes a state and gives the next, and none of them changes the one it was given. What it holds follows the window and not the
  * conversation: opening a conversation of two thousand Turns holds ten, and the older ones come one page at a time (`prependOlder`) when the reader goes up.
  *
- * HOW IT FOLLOWS THE STREAM. A commit is one frame, applied when it is the next: its version is the held version plus one and its watermark is above the held one.
- * A frame at or below the held watermark is one the page already has (ignored). A frame that is not the next (a commit missing before it, or arriving out of
+ * HOW IT FOLLOWS THE STREAM. A commit is one frame, applied when it is the next: its version is the held version plus one (a commit that logged no event keeps the watermark).
+ * A frame at or below the held version is one the page already has (ignored). A frame that is not the next (a commit missing before it, or arriving out of
  * order), a text that does not begin where the held text ends, a Turn or an item that should be held and is not: the page cannot say what it would be, and says so —
  * `resync` — and the caller asks for the conversation again (`replaceWithSnapshot`). It never guesses.
  *
@@ -179,8 +179,10 @@ function append(turn: WindowTurn, add: { readonly itemSeq: number; readonly from
 /** One commit's frame. See the head of this file for when it is applied, ignored, or cannot be followed. */
 export function applyCommit(state: WindowState, frame: ClientCommitFrame): Applied {
   if (frame.sessionId !== state.head.id) return resync("the frame is of another conversation");
-  if (frame.lastSeq <= state.head.lastSeq) return { kind: "ignored", state };
+  // A commit is told by its version: one that logged no event does not move the watermark, and is still the next commit.
+  if (frame.version <= state.head.version) return { kind: "ignored", state };
   if (frame.version !== state.head.version + 1) return resync("a commit is missing: the frame is version " + frame.version + " and the page holds version " + state.head.version);
+  if (frame.lastSeq < state.head.lastSeq) return resync("the frame's watermark is behind the page's");
   const turns = [...state.turns], at = (runId: string): number => turns.findIndex(turn => turn.run.id === runId);
   for (const run of frame.runs ?? []) {
     const index = at(run.id);

@@ -6,7 +6,8 @@ import type { NativeExtensions, NativeModelCatalog } from "../../../src/contract
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import type { AttentionItem, HarnessSelection, PublicRun, SelectionRequest } from "../../../src/contracts/session.js";
-import type { HarnessReadinessView, HarnessView, NativeResumeView, NativeSessionListView, SessionView } from "../../../src/contracts/web.js";
+import type { HarnessReadinessView, HarnessView, NativeResumeView, NativeSessionListView } from "../../../src/contracts/web.js";
+import type { ConversationView } from "../lib/conversation.js";
 import { failureMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { clock, folderName, shortTitle } from "../lib/format.js";
@@ -25,10 +26,10 @@ import { DecisionLine, decisionRole, DockedMarker, dockedRequest, PermissionCard
 import type { AttachmentDraft } from "./Attachments.js";
 import { BranchOrigin } from "./BranchOrigin.js";
 import { Composer, type DockedApproval } from "./Composer.js";
-import { DetailsPanel, type PanelTab } from "./DetailsPanel.js";
+import { DetailsPanel, type ChangesLoader, type PanelTab } from "./DetailsPanel.js";
 import { RelayPacketDialog, type PacketTarget } from "./RelayDetails.js";
 import { RelayCard, RelayInstallation, SEND_ALONE, type RelayNext } from "./RelayCard.js";
-import { ProtocolTurn } from "./ProtocolTurn.js";
+import { ProtocolTurn, type TurnReads } from "./ProtocolTurn.js";
 import { Welcome } from "./Welcome.js";
 
 export interface SelectionDraft { harnessId: string; controlId: string; providerId: string; providerRevision: number | null; model: string; nativeOptions: Readonly<Record<string, string>> }
@@ -86,7 +87,8 @@ export interface QueuedMessage {
 export interface ChatProps {
   nativeModels: NativeModelCatalog | null; nativeModelsLoading: boolean; nativeModelsError: string | null; onRefreshModels: () => void;
   providerManagement?: boolean;
-  session: SessionView | null; sessionRequested: boolean; sessionError: string | null; loading: boolean; draft: SelectionDraft; providers: readonly ProviderView[];
+  /** The part of the conversation the page holds: its head and the Turns from the newest back as far as the reader has gone (lib/conversation.ts). */
+  session: ConversationView | null; sessionRequested: boolean; sessionError: string | null; loading: boolean; draft: SelectionDraft; providers: readonly ProviderView[];
   /** Every Harness, for names, details and history. */
   harnesses: readonly HarnessView[];
   /** The Harnesses the picker and the welcome leave out (ADR-050): frozen ones unless shown, never this conversation's or the draft's. */
@@ -157,6 +159,12 @@ export interface ChatProps {
   conversations: number; onSettings: () => void; onRescan: () => void; scanning: boolean;
   /** The relay (relay-architecture §12): omitted when the page has no relay data layer. */
   relay?: ChatRelay;
+  /** Reads the page of Turns before the first one held; resolves when it is in. The reader goes back a page at a time as the top of the list comes into view. */
+  onLoadOlder?: () => Promise<void>;
+  /** What a Turn reads of itself when shown: the rest of words it holds in part, the middle of a long stretch of work. */
+  reads?: TurnReads;
+  /** Reads a page of the conversation's changes (the details panel's 改动 tab lists the whole conversation's). */
+  onLoadChanges?: ChangesLoader;
   /** Filled by the page for the composer. */
   contextUsage?: number | null; onShowResume?: (() => void) | undefined; onSendDraft?: (text: string) => Promise<void>;
 }
@@ -191,13 +199,13 @@ export function ChatPage(props: ChatProps) {
   const problem = (session !== null && !dirty ? effectiveProviderProblem(session.selection, providers) : null) ?? selectionProblem(draft, harnesses, providers);
   const pending = session?.pendingSwitchId !== null && session?.pendingSwitchId !== undefined;
   const blocked = session !== null && session.status !== "open";
-  const latestSwitch = session?.switches.at(-1);
+  const latestSwitch = session?.lastSwitch;
   const failedSwitch = latestSwitch?.status === "failed" && latestSwitch.id !== dismissedSwitch && !session?.runs.some(run =>
-    run.status === "completed" && session.messages.some(message => message.runId === run.id && message.role === "user" && message.seq > latestSwitch.requestedSeq)) ? latestSwitch : null;
+    run.status === "completed" && run.userSeq > latestSwitch.requestedSeq) ? latestSwitch : null;
   const canRetry = session?.status === "open" && active === null && !dirty && !pending && problem === null && mutation === null;
   const canBranch = session !== null && session.activeRunId === null && session.pendingSwitchId === null && mutation === null;
   const branchedTitle = session?.origin?.history.find(message => message.role === "user")?.text;
-  const title = session?.messages.find(message => message.role === "user")?.text ?? (branchedTitle ? "分支 · " + branchedTitle : props.sessionRequested || props.sessionError ? "打开对话" : "新对话");
+  const title = session !== null ? session.title : branchedTitle ? "分支 · " + branchedTitle : props.sessionRequested || props.sessionError ? "打开对话" : "新对话";
   const runs = useMemo(() => new Map(session?.runs.map(run => [run.id, run])), [session?.runs]);
   const harnessName = (id: string) => harnesses.find(row => row.id === id)?.name ?? id;
   // How long the same Harness took to start in the latest earlier Run of this conversation, shown while a Run starts;
@@ -227,6 +235,32 @@ export function ChatPage(props: ChatProps) {
     previousScrollTop.current = element.scrollTop; previousScrollHeight.current = element.scrollHeight;
   }, []);
   const resumeFollowing = useCallback(() => { following.current = true; setFollowBottom(true); scrollToLatest(); }, [scrollToLatest]);
+  // The Turns before the first one held come a page at a time as the top of the list comes into view; the place the reader is looking at stays where it is while they come in above it.
+  const olderCursor = session?.window.older ?? null, firstOrdinal = session?.runs[0]?.ordinal;
+  const topMark = useRef<HTMLDivElement>(null), loadingOlder = useRef(false), keptPlace = useRef<{ readonly top: number; readonly height: number; readonly first: number | undefined } | null>(null);
+  const firstOrdinalNow = useRef(firstOrdinal); firstOrdinalNow.current = firstOrdinal;
+  const { onLoadOlder } = props;
+  const loadOlder = useCallback(async () => {
+    const element = scroll.current;
+    if (onLoadOlder === undefined || element === null || loadingOlder.current) return;
+    loadingOlder.current = true;
+    keptPlace.current = { top: element.scrollTop, height: element.scrollHeight, first: firstOrdinalNow.current };
+    try { await onLoadOlder(); } finally { loadingOlder.current = false; }
+  }, [onLoadOlder]);
+  useLayoutEffect(() => {
+    const kept = keptPlace.current, element = scroll.current;
+    if (kept === null || element === null || firstOrdinal === kept.first) return;
+    keptPlace.current = null;
+    element.scrollTop = kept.top + (element.scrollHeight - kept.height);
+    previousScrollTop.current = element.scrollTop; previousScrollHeight.current = element.scrollHeight;
+  }, [firstOrdinal]);
+  useEffect(() => {
+    const mark = topMark.current, root = scroll.current;
+    if (!mark || !root || olderCursor === null || typeof IntersectionObserver === "undefined") return;
+    const watch = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) void loadOlder(); }, { root, rootMargin: "400px 0px 0px 0px" });
+    watch.observe(mark);
+    return () => watch.disconnect();
+  }, [olderCursor, loadOlder, firstOrdinal, session?.id]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useLayoutEffect(() => { following.current = true; setFollowBottom(true); if (session) scrollToLatest(); else scroll.current?.scrollTo({ top: 0 }); setTab(null); setPanelRun(null); setOverlay(false); setDecisions(new Map()); setViewing(null); }, [session?.id, scrollToLatest]);
   useLayoutEffect(() => { if (following.current && session) scrollToLatest(); }, [session?.version, followBottom, scrollToLatest, props.queued]);
@@ -277,14 +311,14 @@ export function ChatPage(props: ChatProps) {
   const [firstSend, setFirstSend] = useState<{ readonly id: string | null } | null>(null);
   useEffect(() => {
     if (firstSend === null || session === null) return;
-    if (session.messages.length > 0 || firstSend.id !== null && firstSend.id !== session.id) setFirstSend(null);
+    if (session.runCount > 0 || firstSend.id !== null && firstSend.id !== session.id) setFirstSend(null);
     else if (firstSend.id === null) setFirstSend({ id: session.id });
-  }, [firstSend, session?.id, session?.messages.length]);
+  }, [firstSend, session?.id, session?.runCount]);
   // A retry resends the original input with the attachments it was sent with; a new message takes the composer's.
   const send = async (text: string, retryAttachments?: readonly ContentRef[], relayChoice?: RelayRequest) => {
     // The first message moves the composer from the welcome to the foot of the new conversation; the focus goes with it.
     if (session === null && document.activeElement === textarea.current) refocus.current = true;
-    const first = session === null || session.messages.length === 0;
+    const first = session === null || session.runCount === 0;
     if (first) setFirstSend({ id: session?.id ?? null });
     try { await props.onSend(text, retryAttachments, relayChoice); }
     catch (failure: unknown) { if (first && mounted.current) setFirstSend(null); throw failure; }
@@ -301,7 +335,7 @@ export function ChatPage(props: ChatProps) {
   const relayNow = useMemo(() => session && relay?.fresh ? relayLine(session, relay.view, relay.prefs) : null, [session, relay?.view, relay?.fresh, relay?.prefs]);
   // What a binding asks the user to look at, for the Harness the conversation is on, once the conversation is idle: said once, and a closed one
   // of the same episode (its key, with the conversation and the Harness) does not come back.
-  const idle = session !== null && session.status === "open" && session.activeRunId === null && session.pendingSwitchId === null && session.runs.length > 0 && session.runs.every(run => finished(run.status));
+  const idle = session !== null && session.status === "open" && session.activeRunId === null && session.pendingSwitchId === null && session.runCount > 0 && session.facts.settled;
   const onBinding = session && relay?.view ? relay.view.bindings.find(item => item.harnessId === session.selection.harnessId && item.controlId === session.selection.controlId) : undefined;
   const closedKey = (key: string) => `${session?.id ?? ""}|${session?.selection.harnessId ?? ""}|${key}`;
   const banner = useMemo(() => idle && relay?.fresh && session ? bannerOf(onBinding, harnessName(session.selection.harnessId), key => closed.has(closedKey(key))) : null,
@@ -321,7 +355,7 @@ export function ChatPage(props: ChatProps) {
   const panelOpen = session !== null && (inline ? preferences.panel : overlay);
   // How many changes the conversation made, from the tools' summaries: the button, its 改动 tab and the tab's scopes say this
   // one number, and nothing is read while the panel is closed.
-  const changes = useMemo(() => changeCount(session?.runs ?? []), [session?.runs]);
+  const changes = session?.facts.changes ?? 0;
   // The number comes in as news only (ADR-054 §3): when changes arrive while the conversation is shown. Drawn with the
   // conversation, or back on the button because the panel closed (from the keyboard as well, #37), it is simply there.
   const shownChanges = useRef<{ id: string | null; count: number }>({ id: null, count: 0 });
@@ -385,11 +419,11 @@ export function ChatPage(props: ChatProps) {
    * its reply starts: its status, timer and arc carry on. The Runtime creates the reply's message when its first text is committed;
    * the Turn finds it by the Run's `assistantMessageId`.
    */
-  const transcriptItems = (current: SessionView): ReactNode[] => current.runs.map(run => {
+  const transcriptItems = (current: ConversationView): ReactNode[] => current.runs.map(run => {
     const open = (current.permissions ?? []).filter(request => request.runId === run.id && !request.decided);
     return <ProtocolTurn key={"turn:" + run.id} run={run} message={messageOf} arrived={arrived} detailed={detailed} onEdit={fillDraft}
       onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
-      onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? current.runs.at(-1)?.id) === run.id} onViewPacket={relay ? viewPacket : undefined}
+      onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? current.runs.at(-1)?.id) === run.id} onViewPacket={relay ? viewPacket : undefined} reads={props.reads}
       startupHint={startupHints.get(run.id)} queue={queue?.runId === run.id ? queueNotice : undefined}
       waiting={open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{turnRequests(run.id)}</ProtocolTurn>;
   });
@@ -457,7 +491,7 @@ export function ChatPage(props: ChatProps) {
     : TURN_STATUS_WORDS[stateOf(current)];
   const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史"
     : currentState ?? (pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话");
-  const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} tab={panelTab} onTab={setTab} runId={panelRun} onRun={setPanelRun}
+  const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} loadChanges={props.onLoadChanges} tab={panelTab} onTab={setTab} runId={panelRun} onRun={setPanelRun}
     loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} loadNativeResume={props.onLoadNativeResume} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)}
     relay={relay?.view && relayHasStory(relay.view) ? { view: relay.view, onViewPacket: viewPacket } : undefined}/> : null;
   // #23: the panel opens by widening (300 ms) and pushes the conversation aside; its content follows 60 ms later from 24 px to
@@ -486,7 +520,7 @@ export function ChatPage(props: ChatProps) {
           </button></Tip>
           {changes ? <span id="details-changes" className="sr-only">本对话改动 {changes} 处</span> : null}
           <Menu align="end" trigger={<button type="button" className="icon-btn" aria-label="更多操作" title="更多操作"><MoreHorizontal size={16}/></button>} items={[
-            { label: "从最新回复分支", icon: <GitBranch size={14}/>, disabled: !canBranch || !props.onBranch || !session.runs.some(run => ["completed", "failed", "cancelled"].includes(run.status)), onSelect: () => { const last = [...session.runs].reverse().find(run => ["completed", "failed", "cancelled"].includes(run.status)); if (last) props.onBranch?.(last.id); } },
+            { label: "从最新回复分支", icon: <GitBranch size={14}/>, disabled: !canBranch || !props.onBranch || session.facts.branchable === null, onSelect: () => { const last = session.facts.branchable; if (last !== null) props.onBranch?.(last.runId); } },
             { label: "在原程序中继续的方式", icon: <TerminalSquare size={14}/>, onSelect: showResume },
             { separator: true },
             { label: panelOpen ? "收起详情" : "打开详情", icon: <PanelRight size={14}/>, hint: "⌘\\", onSelect: () => setPanel(!panelOpen) },
@@ -536,9 +570,10 @@ export function ChatPage(props: ChatProps) {
                 textarea.current?.focus();
               }}/>
             : <div className="transcript mx-auto flex max-w-reading flex-col gap-7 pb-4" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
-              {session.origin ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession}/> : null}
+              {olderCursor !== null ? <div ref={topMark} className="older-turns flex justify-center"><button type="button" className="btn btn-ghost btn-sm" onClick={() => void loadOlder()}>加载更早的对话</button></div> : null}
+              {session.origin && olderCursor === null ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession}/> : null}
               {/* A first message sent from the home opens its conversation empty for a moment: it is not shown as ready meanwhile. */}
-              {session.messages.length === 0 && !session.origin && mutation !== "sending" && !(firstSend !== null && (firstSend.id === null || firstSend.id === session.id))
+              {session.runCount === 0 && !session.origin && mutation !== "sending" && !(firstSend !== null && (firstSend.id === null || firstSend.id === session.id))
                 ? <EmptyState title="对话准备好了">发出第一条消息，开始这次协作。</EmptyState> : null}
               {transcriptItems(session)}
               {orphanCards.length ? orphanCards : null}
@@ -585,7 +620,7 @@ function ChangeBadge({ count, news }: { readonly count: number; readonly news: b
  * is amber; a failure is red; a Turn that ended quietly is grey: "已停止", whoever stopped it (the Turn's own line says whose). A Turn
  * waiting in the queue is not the active Run (only a started one is), and is named 排队中 as the Turn names it (ruling N).
  */
-function HeaderState({ session, active, harnessName }: { readonly session: SessionView; readonly active: PublicRun | null; readonly harnessName: (id: string) => string }) {
+function HeaderState({ session, active, harnessName }: { readonly session: ConversationView; readonly active: PublicRun | null; readonly harnessName: (id: string) => string }) {
   const now = useNow(active !== null);
   const latest = active ?? session.runs.at(-1) ?? null;
   // Who works is the Turn's executor; a Run whose Turn could not be read is named by the selection it was sent with.
@@ -622,7 +657,7 @@ function HeaderState({ session, active, harnessName }: { readonly session: Sessi
  * The plan bar above the composer (P01, Motion board #22): how far the task list is and what it works on now; pressing it opens
  * every step, the arrow turning 180°. Shown while a Turn with a task list runs, and while the latest list has steps left.
  */
-function PlanBar({ session, active }: { readonly session: SessionView; readonly active: PublicRun | null }) {
+function PlanBar({ session, active }: { readonly session: ConversationView; readonly active: PublicRun | null }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   const found = latestPlan(session.runs);
@@ -659,7 +694,7 @@ function PlanBar({ session, active }: { readonly session: SessionView; readonly 
  * footer (statusParts) — input tokens when the Hub counted the whole Turn, the context share when the Harness gave its size, the cost under its
  * scope when something was spent. Nothing is estimated; a fact the Turn did not report is left out.
  */
-function StatusLine({ session, active }: { readonly session: SessionView; readonly active: PublicRun | null }) {
+function StatusLine({ session, active }: { readonly session: ConversationView; readonly active: PublicRun | null }) {
   const run = active ?? session.runs.at(-1) ?? null, turn = run?.protocol;
   // A Turn waiting in the queue has not started: as its own line says 排队中 without a timer (ruling N), this line counts no
   // time for it either, until a stop is asked for, when the Turn's line counts again (liveStatus).

@@ -1,7 +1,8 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import { readSseBlocks } from "./attention.js";
-import { decodeProtocolTurn } from "./lib/protocol/decode.js";
-import { createRelayApi, decodeRelayFrame, decodeRelayStreamEvent, decodeRunRelay, relayBody, type RelayApi, type RelayEvent, type RelayReply, type RelayRequest, type RelayTransport } from "./relay.js";
+import { WireError, decodeConversationChanges, decodeItemTextView, decodeItemView, decodeRunItemsPageView, decodeSessionListView, decodeSessionStreamFrameV14, decodeSessionViewV14, decodeTurnPageView,
+  type ClientRunItemsPage, type ClientSessionList, type ClientSessionView, type ClientStreamFrame, type ClientWindow } from "./lib/protocol/wire.js";
+import { createRelayApi, decodeRelayFrame, relayBody, type RelayApi, type RelayEvent, type RelayReply, type RelayRequest, type RelayTransport } from "./relay.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState } from "../../src/contracts/web.js";
 import { HARNESS_TIERS } from "../../src/contracts/web.js";
@@ -346,64 +347,11 @@ function decodeSummary(value: unknown): SessionSummary {
   return { id: text(row.id), title: text(row.title), status: choice(row.status, SESSION_STATES), workspace: text(row.workspace),
     selection: selection(row.selection), updatedSeq: number(row.updatedSeq), activeRunId: nullableText(row.activeRunId) };
 }
-function decodeMessage(value: unknown): PublicMessage {
-  const row = record(value);
-  return { id: messageId(row.id), runId: runId(row.runId), role: choice(row.role, ["user", "assistant"]), text: text(row.text), seq: number(row.seq), status: choice(row.status, RUN_STATES) };
-}
 function contentRef(value: unknown): ContentRef { try { return parseContentRef(value); } catch { return invalid(); } }
 function nativeInputs(value: unknown): NativeInputs { const row = record(value); return { image: bool(row.image), audio: bool(row.audio), file: bool(row.file) }; }
 /** Marks a request body that is sent as raw bytes with its own media type instead of JSON. */
 class RawBody { constructor(readonly blob: Blob) {} }
 function optionalNumber(value: unknown): number | undefined { return value === undefined ? undefined : number(value); }
-/** When the Run reached its phases; each present phase is a finite number, as the Gateway recorded it. */
-function decodeTiming(value: unknown): NonNullable<PublicRun["timing"]> {
-  const row = record(value), at = (raw: unknown) => { const time = number(raw); return time; };
-  return { acceptedAt: at(row.acceptedAt), ...(["preparingAt", "readyAt", "dispatchedAt", "firstOutputAt", "endedAt"] as const).reduce((phases, name) => row[name] === undefined ? phases : { ...phases, [name]: at(row[name]) }, {}) };
-}
-function decodeRun(value: unknown): PublicRun {
-  const row = record(value);
-  const backend = row.backend === null ? null : record(row.backend);
-  const cleanup = row.cleanup === null ? null : record(row.cleanup);
-  if (cleanup !== null && cleanup.closed !== true) return invalid();
-  return { id: runId(row.id), commandId: commandId(row.commandId), input: text(row.input), userMessageId: messageId(row.userMessageId),
-    assistantMessageId: messageId(row.assistantMessageId), selection: selection(row.selection), epoch: number(row.epoch),
-    status: choice(row.status, RUN_STATES), cancelRequested: bool(row.cancelRequested), contextThroughSeq: number(row.contextThroughSeq),
-    sourceRunIds: list(row.sourceRunIds, runId, 256), backend: backend === null ? null : { status: choice(backend.status, ["completed", "cancelled", "failed"]), reason: text(backend.reason),
-      ...(backend.error === undefined ? {} : { error: publicError(backend.error) ?? invalid() }) },
-    cleanup: cleanup === null ? null : { closed: true, exitCode: nullableNumber(cleanup.exitCode), signal: nullableText(cleanup.signal), protocolFailure: publicError(cleanup.protocolFailure) },
-    error: publicError(row.error),
-    ...(row.attachments === undefined ? {} : { attachments: list(row.attachments, contentRef, 8) }), ...(row.timing === undefined ? {} : { timing: decodeTiming(row.timing) }),
-    ...(row.retained === undefined ? {} : { retained: row.retained === true ? true as const : invalid() }), ...(row.reused === undefined ? {} : { reused: row.reused === true ? true as const : invalid() }),
-    ...relayField(row.relay), ...protocolField(row.protocol), stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
-}
-/**
- * The relay facts a Turn carries (which packet, how its context continued, where it ran, and the delivery a newer Gateway
- * adds). They are read leniently: a Gateway without them, or with a member this page does not know, gives a Turn without
- * relay facts, never an invalid response (the page then shows no relay information for that Turn).
- */
-function relayField(value: unknown): Pick<PublicRun, "relay"> {
-  const relay = value === undefined ? null : decodeRunRelay(value);
-  return relay === null ? {} : { relay };
-}
-/**
- * The Run as the protocol (hh/1) tells it: the one record the page draws a Run from. A Gateway that gives none, or one whose Turn this
- * page cannot read (decodeProtocolTurn), gives a Run with the reason instead, which the page says where the Turn would be; an item
- * of a type the page does not know is kept as one line saying so, never an invalid response.
- */
-function protocolField(value: unknown): Pick<PublicRun, "protocol" | "protocolProblem"> {
-  const read = decodeProtocolTurn(value);
-  return "turn" in read ? { protocol: read.turn } : { protocolProblem: read.problem };
-}
-function decodeSwitch(value: unknown): PublicSwitch {
-  const row = record(value);
-  return { id: switchId(row.id), commandId: commandId(row.commandId), requested: requestedSelection(row.requested), requestedSeq: number(row.requestedSeq),
-    target: row.target === null ? null : selection(row.target), status: choice(row.status, ["requested", "validated", "effective", "failed"]),
-    throughSeq: number(row.throughSeq), sourceRunIds: list(row.sourceRunIds, runId, 256), error: publicError(row.error) };
-}
-function decodeKeptProcess(value: unknown): KeptProcessView {
-  const row = record(value);
-  return { harnessId: text(row.harnessId), controlId: text(row.controlId), since: number(row.since), lastUsedAt: number(row.lastUsedAt), idleEndsAt: number(row.idleEndsAt), backgroundUpdates: number(row.backgroundUpdates) };
-}
 /** One frame of waiting approvals and questions (ADR-035); at most 32 items, each checked field by field. */
 export function decodeAttentionFrame(value: unknown): AttentionFrame {
   const row = record(value);
@@ -415,48 +363,6 @@ export function decodeAttentionFrame(value: unknown): AttentionFrame {
     return decoded;
   }, 32) };
 }
-export function decodeSession(value: unknown): SessionView {
-  const row = record(value);
-  return { id: text(row.id), version: number(row.version), lastSeq: number(row.lastSeq), epoch: number(row.epoch), status: choice(row.status, SESSION_STATES),
-    workspace: text(row.workspace), selection: selection(row.selection), activeRunId: nullableText(row.activeRunId), pendingSwitchId: nullableText(row.pendingSwitchId),
-    ...(row.retention === undefined ? {} : { retention: (() => { const retention = record(row.retention); return { enabled: bool(retention.enabled), process: retention.process === null ? null : decodeKeptProcess(retention.process),
-      ...(retention.lost === undefined ? {} : { lost: (() => { const lost = record(retention.lost); return { outcome: choice(lost.outcome, ["terminated", "gone", "unconfirmed"]), leaseReleased: bool(lost.leaseReleased), at: number(lost.at) }; })() }),
-      ...(retention.outside === undefined ? {} : { outside: (() => { const outside = record(retention.outside); return { count: number(outside.count), at: number(outside.at) }; })() }),
-      ...(retention.upgraded === undefined ? {} : { upgraded: (() => { const upgraded = record(retention.upgraded); return { harnessId: text(upgraded.harnessId), at: number(upgraded.at) }; })() }) }; })() }),
-    ...(row.queue === undefined ? {} : { queue: (() => { const queue = record(row.queue), kind = choice(queue.kind, ["slot"]);
-      return { kind, runId: text(queue.runId), running: number(queue.running), limit: number(queue.limit), since: number(queue.since) }; })() }),
-    ...(row.nativeStates === undefined ? {} : { nativeStates: list(row.nativeStates, value => { const state = record(value);
-      return { harnessId: text(state.harnessId), controlId: text(state.controlId), status: choice(state.status, ["ready", "unconfirmed", "forking"]),
-        ...(state.observed === undefined ? {} : { observed: (() => { const observed = record(state.observed); return { model: observed.model === null ? null : text(observed.model), options: parseNativeOptions(observed.options) }; })() }),
-        ...(state.carried === undefined ? {} : { carried: (() => { const carried = record(state.carried);
-          return { ...(carried.model === undefined ? {} : { model: text(carried.model) }), ...(carried.options === undefined ? {} : { options: parseNativeOptions(carried.options) }) }; })() }) }; }, 256) }),
-    ...(row.origin === undefined ? {} : { origin: (() => { const origin = record(row.origin);
-      const history = list(origin.history, value => { const message = record(value);
-        return { role: choice(message.role, ["user", "assistant"]), text: text(message.text), status: choice(message.status, RUN_STATES), ...(message.harnessId === undefined ? {} : { harnessId: text(message.harnessId) }), ...(message.attachments === undefined ? {} : { attachments: list(message.attachments, contentRef, 8) }) }; }, 512);
-      if (origin.kind === "import") return { kind: "import" as const, harnessId: text(origin.harnessId), title: nullableText(origin.title), omitted: number(origin.omitted), complete: bool(origin.complete), historyRead: bool(origin.historyRead), history };
-      if (origin.kind !== "fork") return invalid();
-      return { kind: "fork" as const, sessionId: sessionId(origin.sessionId), throughRunId: runId(origin.throughRunId), history }; })() }),
-    ...(row.permissions===undefined?{}:{permissions:list(row.permissions, value => { const request=record(value);return {id:text(request.id),runId:text(request.runId),title:text(request.title),decided:bool(request.decided),requestedAt:number(request.requestedAt),
-      ...(request.expiresAt===undefined?{}:{expiresAt:number(request.expiresAt),expiresBy:choice(request.expiresBy,["native","turn"])}),...(request.kind===undefined?{}:{kind:choice(request.kind,["question"])}), ...(request.detail===undefined?{}:{detail:text(request.detail)}),...(request.input===undefined?{}:{input:(()=>{const value=record(request.input);return {kind:choice(value.kind,["text","editor","secret"]),value:text(value.value)};})()}),options:list(request.options,value=>{const option=record(value);return {id:text(option.id),name:text(option.name)};},128)};},32)}), messages: list(row.messages, decodeMessage, 1024), runs: list(row.runs, decodeRun, 256), switches: list(row.switches, decodeSwitch, 1024) };
-}
-/** Decodes only canonical public facts; stream framing and projection validate their watermarks. */
-export function decodeSessionStreamFrame(value: unknown): SessionStreamFrame {
-  const row = record(value);
-  const keys = row.type === "snapshot" ? ["type", "session"] : row.type === "run" ? ["type", "sessionId", "version", "lastSeq", "run"] : row.type === "relay" ? ["type", "sessionId", "version", "lastSeq", "event"] : ["type", "sessionId", "version", "lastSeq", "message"];
-  if (Object.keys(row).some(key => !keys.includes(key)) || keys.some(key => !(key in row))) return invalid();
-  if (row.type === "snapshot") return { type: "snapshot", session: decodeSession(row.session) };
-  if (row.type === "relay") {
-    // A notice of a relay event: the facts it follows are already here (same watermark), so it is read for its event and takes nothing.
-    const version = number(row.version), lastSeq = number(row.lastSeq), event = decodeRelayStreamEvent(row.event);
-    if (version < 1 || lastSeq < 0 || event === null) return invalid();
-    return { type: "relay", sessionId: text(row.sessionId), version, lastSeq, event };
-  }
-  if (row.type === "run") { const version = number(row.version), lastSeq = number(row.lastSeq); if (version < 1 || lastSeq < 0) return invalid(); return { type: "run", sessionId: text(row.sessionId), version, lastSeq, run: decodeRun(row.run) }; }
-  if (row.type !== "message") return invalid();
-  const version = number(row.version), lastSeq = number(row.lastSeq), message = decodeMessage(row.message);
-  if (version < 1 || lastSeq < 0 || message.role !== "assistant" || message.seq < 0 || message.seq > lastSeq) return invalid();
-  return { type: "message", sessionId: text(row.sessionId), version, lastSeq, message };
-}
 function decodeReadiness(value: unknown): HarnessReadinessView {
   const row = record(value), state = choice(row.state, ["ready", "signed_out", "failed", "unchecked"]);
   return { harnessId: text(row.harnessId), controlId: text(row.controlId), state, checkedAt: nullableNumber(row.checkedAt),
@@ -466,7 +372,7 @@ function decodeReadiness(value: unknown): HarnessReadinessView {
 function decodeState(value: unknown): WebState {
   const row = record(value);
   return { ...(row.providerManagement === undefined ? {} : { providerManagement: bool(row.providerManagement) }), workspace: text(row.workspace), providers: list(row.providers, decodeProvider, 256), harnesses: list(row.harnesses, decodeHarness, 256),
-    harnessesScannedAt: isoTime(row.harnessesScannedAt), sessions: list(row.sessions, decodeSummary, 1000), jobs: list(row.jobs, decodeInstallationJob, 100),
+    harnessesScannedAt: isoTime(row.harnessesScannedAt), sessions: list(row.sessions, decodeSummary, Infinity), ...(row.sessionsNext === undefined ? {} : { sessionsNext: nullableText(row.sessionsNext) }), jobs: list(row.jobs, decodeInstallationJob, 100),
     readiness: list(row.readiness, decodeReadiness, 512), installationPolicy: choice(row.installationPolicy, ["official", "any"]) };
 }
 function decodeAuth(value: unknown): AuthSession { return { csrfToken: text(record(value).csrfToken) }; }
@@ -591,8 +497,8 @@ export class GatewayApi {
     }, signal);
   }
   /** Continues one listed native session as a new conversation; nothing is sent until the next message. */
-  importNativeSession(workspace: string, selection: SelectionRequest, nativeId: string, key: string): Promise<SessionView> {
-    return this.request("/sessions/import", "POST", { workspace, selection, nativeId, commandId: key }, decodeSession);
+  importNativeSession(workspace: string, selection: SelectionRequest, nativeId: string, key: string): Promise<ClientSessionView> {
+    return this.request("/sessions/import", "POST", { workspace, selection, nativeId, commandId: key }, decodeSessionViewV14);
   }
   /** What every installed Harness reads besides its model (ADR-045 step 1); read from the user's files, nothing is written. */
   capabilities(signal?: AbortSignal): Promise<CapabilitiesView> { return this.request("/capabilities", "GET", undefined, decodeCapabilities, signal); }
@@ -684,7 +590,34 @@ export class GatewayApi {
     }, signal);
   }
   decidePermission(id: string, permission: string, optionId: string, key: string, input?: string): Promise<{ replayed: boolean }> { return this.request(`/sessions/${encodeURIComponent(id)}/permissions/${encodeURIComponent(permission)}`, "POST", { optionId, commandId: key, ...(input===undefined?{}:{input}) }, value => { const row=record(value);return { replayed:bool(row.replayed) }; }); }
-  session(id: string, signal?: AbortSignal): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}`, "GET", undefined, decodeSession, signal); }
+  /** A conversation as a page opens it: its head and its newest Turns (ADR-057 3.4); the rest is read by the routes below as the reader goes to it. */
+  session(id: string, signal?: AbortSignal): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}`, "GET", undefined, decodeSessionViewV14, signal); }
+  /** The page of Turns before a cursor (the `older` of the Turns held); `limit` is a page size, not a bound on the conversation. */
+  turns(id: string, before: string, limit?: number, signal?: AbortSignal): Promise<ClientWindow> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/turns?before=${encodeURIComponent(before)}${limit === undefined ? "" : "&limit=" + limit}`, "GET", undefined, decodeTurnPageView, signal);
+  }
+  /** The items of one Turn from a place on (the middle of a long stretch of work a window left out). */
+  runItems(id: string, ordinal: number, after: number, limit?: number, signal?: AbortSignal): Promise<ClientRunItemsPage> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/runs/${ordinal}/items?after=${after}${limit === undefined ? "" : "&limit=" + limit}`, "GET", undefined, decodeRunItemsPageView, signal);
+  }
+  /** One item whole (its fields were left out of the Turn for their size). */
+  item(id: string, ordinal: number, seq: number, signal?: AbortSignal) {
+    return this.request(`/sessions/${encodeURIComponent(id)}/runs/${ordinal}/items/${seq}`, "GET", undefined, decodeItemView, signal);
+  }
+  /** A byte range of an item's text, on code point boundaries (the words a Turn left out for their size). */
+  itemText(id: string, ordinal: number, seq: number, from: number, to: number, signal?: AbortSignal) {
+    return this.request(`/sessions/${encodeURIComponent(id)}/runs/${ordinal}/items/${seq}/text?from=${from}&to=${to}`, "GET", undefined, decodeItemTextView, signal);
+  }
+  /** The changes of the whole conversation that have a stored detail, newest first, a page at a time; the first page also names the newest plan. */
+  changes(id: string, before?: string, limit?: number, signal?: AbortSignal) {
+    const query = [before === undefined ? "" : "before=" + encodeURIComponent(before), limit === undefined ? "" : "limit=" + limit].filter(Boolean).join("&");
+    return this.request(`/sessions/${encodeURIComponent(id)}/changes${query ? "?" + query : ""}`, "GET", undefined, decodeConversationChanges, signal);
+  }
+  /** The conversations, newest first, a page at a time; the cursor is the `next` of the page before. */
+  sessions(after?: string, limit?: number, signal?: AbortSignal): Promise<ClientSessionList> {
+    const query = [after === undefined ? "" : "after=" + encodeURIComponent(after), limit === undefined ? "" : "limit=" + limit].filter(Boolean).join("&");
+    return this.request(`/sessions${query ? "?" + query : ""}`, "GET", undefined, decodeSessionListView, signal);
+  }
   /** Stored native tool detail; the JSON shape is display data and is validated field by field. */
   toolDetail(content: ContentRef, signal?: AbortSignal): Promise<ToolDetailView> {
     return this.request(`/content/${encodeURIComponent(content.id)}`, "GET", undefined, value => {
@@ -694,7 +627,7 @@ export class GatewayApi {
     }, signal);
   }
   /** Owns one cancellable fact stream; reconnecting never submits a conversation command. */
-  async streamSession(id: string, afterSeq: number, signal: AbortSignal, onFrame: (frame: SessionStreamFrame) => void, onAttention?: (frame: AttentionFrame) => void, onRelay?: (event: RelayEvent) => void): Promise<void> {
+  async streamSession(id: string, afterSeq: number, signal: AbortSignal, onFrame: (frame: ClientStreamFrame) => void, onAttention?: (frame: AttentionFrame) => void, onRelay?: (event: RelayEvent) => void): Promise<void> {
     const deadline = new AbortController();
     const timeout = setTimeout(() => deadline.abort(new DOMException("Session stream deadline exceeded", "TimeoutError")), 75_000);
     const attempt = AbortSignal.any([signal, deadline.signal]);
@@ -717,7 +650,7 @@ export class GatewayApi {
       }
       let opened = false;
       // Relay events say only that the relay changed; one that cannot be read is dropped, and never ends the stream.
-      await consumeSessionEventStream(response.body, { signal: attempt, decode: decodeSessionStreamFrame, maxFrameBytes: 8 * 1024 * 1024,
+      await consumeSessionEventStream(response.body, { signal: attempt, decode: value => { try { return decodeSessionStreamFrameV14(value); } catch (error: unknown) { if (error instanceof WireError) return invalid(); throw error; } },
         ...(onAttention === undefined ? {} : { onAttention: (value: unknown) => onAttention(decodeAttentionFrame(value)) }),
         ...(onRelay === undefined ? {} : { onRelay: (value: unknown) => { const event = decodeRelayFrame(value); if (event !== null) onRelay(event); } }), onFrame: frame => {
         if (!opened && frame.type !== "snapshot") throw new ApiError("STREAM_PROTOCOL", "实时连接缺少起始会话事实。");
@@ -759,8 +692,8 @@ export class GatewayApi {
       });
     } finally { clearTimeout(timeout); }
   }
-  createSession(workspace: string, selection: SelectionRequest, key: string): Promise<SessionView> {
-    return this.request("/sessions", "POST", { workspace, selection, commandId: key }, decodeSession);
+  createSession(workspace: string, selection: SelectionRequest, key: string): Promise<ClientSessionView> {
+    return this.request("/sessions", "POST", { workspace, selection, commandId: key }, decodeSessionViewV14);
   }
   /**
    * Sends one message. `relay` is what the user chose about the history for this message (stage3 §3); a message that
@@ -771,8 +704,8 @@ export class GatewayApi {
     await this.request(`/sessions/${encodeURIComponent(id)}/messages`, "POST", { text: value, commandId: key, ...(attachments.length ? { attachments } : {}), ...(choices === null ? {} : { relay: choices }) }, value => acknowledge(value, id, "runId"));
   }
   /** Branches a conversation after a finished reply; the server answers with the new conversation. */
-  forkSession(id: string, key: string, throughRunId?: string): Promise<SessionView> {
-    return this.request(`/sessions/${encodeURIComponent(id)}/fork`, "POST", { commandId: key, ...(throughRunId === undefined ? {} : { throughRunId }) }, decodeSession);
+  forkSession(id: string, key: string, throughRunId?: string): Promise<ClientSessionView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/fork`, "POST", { commandId: key, ...(throughRunId === undefined ? {} : { throughRunId }) }, decodeSessionViewV14);
   }
   /** Sends one file as raw bytes; the server checks the declared type against the bytes and binds it to this workspace. */
   uploadAttachment(file: Blob, name: string, key: string, signal?: AbortSignal): Promise<ContentRef> {
@@ -789,16 +722,16 @@ export class GatewayApi {
   async cancel(id: string, key: string): Promise<void> { await this.request(`/sessions/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key }, value => acknowledge(value, id, "target")); }
   /** Cancels one named Turn, such as one still waiting for its workspace (ADR-036). */
   async cancelRun(id: string, run: string, key: string): Promise<void> { await this.request(`/sessions/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key, runId: run }, value => acknowledge(value, id, "target")); }
-  closeSession(id: string, key: string): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/close`, "POST", { commandId: key }, decodeSession); }
+  closeSession(id: string, key: string): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/close`, "POST", { commandId: key }, decodeSessionViewV14); }
   /** Keeps this conversation's native process between Turns, or stops keeping it (which closes a kept process). */
-  setRetention(id: string, enabled: boolean, key: string): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/retention`, "POST", { enabled, commandId: key }, decodeSession); }
+  setRetention(id: string, enabled: boolean, key: string): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/retention`, "POST", { enabled, commandId: key }, decodeSessionViewV14); }
   /** Ends the conversation's kept native process; resolves once its close is recorded. */
-  endKeptProcess(id: string, key: string): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/end-process`, "POST", { commandId: key }, decodeSession); }
+  endKeptProcess(id: string, key: string): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/end-process`, "POST", { commandId: key }, decodeSessionViewV14); }
   /** Conversations that keep a native process, with the workspace each holds. */
   keptProcesses(signal?: AbortSignal): Promise<readonly { readonly sessionId: string; readonly workspace: string; readonly harnessId: string }[]> {
     return this.request("/kept-processes", "GET", undefined, value => list(record(value).processes, value => { const row = record(value); return { sessionId: text(row.sessionId), workspace: text(row.workspace), harnessId: text(row.harnessId) }; }, 16), signal);
   }
-  branchNative(id: string, epoch: number, key: string): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/native-branch`, "POST", { epoch, commandId: key }, decodeSession); }
+  branchNative(id: string, epoch: number, key: string): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/native-branch`, "POST", { epoch, commandId: key }, decodeSessionViewV14); }
   writeProvider(input: ProviderWriteInput, key: string, current?: ProviderView): Promise<ProviderView> {
     return this.request(current ? `/providers/${encodeURIComponent(current.id)}` : "/providers", current ? "PATCH" : "POST",
       { input, commandId: key, ...(current ? { expectedRevision: current.revision } : {}) }, decodeProvider);
@@ -850,7 +783,8 @@ export class GatewayApi {
         const error = publicError(payload);
         throw new ApiError(error?.code ?? "REQUEST_FAILED", error?.message ?? "请求未能完成。", response.status);
       }
-      return decode(payload);
+      // An answer the page cannot read is an answer it cannot read, not a lost connection.
+      try { return decode(payload); } catch (error: unknown) { if (error instanceof WireError) return invalid(); throw error; }
     } catch (error: unknown) {
       if (signal?.aborted || error instanceof ApiError) throw error;
       if (deadline.signal.aborted) throw new ApiError("REQUEST_TIMEOUT", "请求响应超时，请确认已接收的结果后重试。");
@@ -878,6 +812,7 @@ async function readBoundedText(response: Response, limit: number): Promise<strin
   let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { return null; }
 }
+/** The body as JSON. No size stops it: every read of a conversation is a page whose size the Gateway chose, and a body that is not JSON is an unreadable answer. */
 async function readBoundedJson(response: Response): Promise<unknown> {
   if (!response.body) return invalid();
   const reader = response.body.getReader();
@@ -887,7 +822,6 @@ async function readBoundedJson(response: Response): Promise<unknown> {
     for (;;) {
       const part = await reader.read(); if (part.done) break;
       length += part.value.byteLength;
-      if (length > 16 * 1024 * 1024) { await reader.cancel(); return invalid(); }
       chunks.push(part.value);
     }
   } finally { reader.releaseLock(); }

@@ -1,5 +1,14 @@
+import type { ConversationCommit } from "../contracts/conversation.js";
 import { SessionError, type SessionEvent, type SessionId } from "../contracts/session.js";
-import { RELAY_STREAM_EVENTS, type AttentionFrame, type RelayStreamEvent, type RelayStreamEventType, type RelayStreamFrame, type SessionStreamFrame, type SessionView } from "../contracts/web.js";
+import { RELAY_STREAM_EVENTS, type AttentionFrame, type RelayStreamEvent, type RelayStreamEventType, type RelayStreamFrame, type SessionCommitFrame, type SessionStreamFrameV14, type SessionViewV14 } from "../contracts/web.js";
+
+/*
+ * The stream of a conversation (ADR-057 3.4): a connection starts with the conversation as a page opens it (a `snapshot`: the head and the newest Turns), and then tells it
+ * one thing for each commit — ONE `commit` frame, whatever the commit changed (src/web/commit-frame.ts). A page applies a frame when its version is the one after the version
+ * it holds, so a frame is neither split nor repeated; a connection that cannot be told a commit (it fell behind, or it missed one) is told the conversation again instead of
+ * the frames it missed. There is no replay of events, and no frame is too large to send: a frame holds a window's worth at most because of what it carries, not because
+ * a larger one closes the connection.
+ */
 
 export class SessionStreamError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); this.name = "SessionStreamError"; }
@@ -13,10 +22,18 @@ export interface SessionStreamSink {
   on(event: "close" | "error" | "drain", listener: () => void): unknown;
   off(event: "close" | "error" | "drain", listener: () => void): unknown;
 }
+/** What the stream is made of: the conversation as it is now, and the frame of one commit. */
+export interface SessionStreamSource {
+  /** The head and the newest Turns of a conversation (`ConversationRoutes.session`). */
+  readonly snapshot: (id: SessionId) => SessionViewV14;
+  /** The one frame of a commit, made from what the commit wrote (`commitFrame`); asked for once for each commit that has a subscriber. */
+  readonly frame: (commit: ConversationCommit) => SessionCommitFrame;
+  /** Whether a commit is better told as the conversation than as a frame (what it means is not a function of the rows it wrote); asked once for each commit that has a subscriber. */
+  readonly stale?: (commit: ConversationCommit) => boolean;
+}
 /** Production defaults are fixed by ADR-013; smaller test limits exercise the same rejection paths. */
 export interface SessionStreamLimits {
   readonly maxConnections?: number;
-  readonly maxFrameBytes?: number;
   readonly heartbeatMs?: number;
   readonly connectionTtlMs?: number;
   readonly drainTimeoutMs?: number;
@@ -27,7 +44,6 @@ function limit(value: number | undefined, fallback: number): number {
   const chosen = value ?? fallback;
   if (!Number.isSafeInteger(chosen) || chosen < 1) throw new Error("invalid session stream limit"); return chosen;
 }
-function water(frame: SessionStreamFrame): number { return frame.type === "snapshot" ? frame.session.lastSeq : frame.lastSeq; }
 
 const RELAY_EVENTS: ReadonlySet<string> = new Set(RELAY_STREAM_EVENTS);
 const RUN_IDENTITY = /^run-[A-Za-z0-9-]{1,96}$/u, PACKET_IDENTITY = /^relay-[0-9a-hjkmnp-tv-z]{20}$/u;
@@ -52,7 +68,6 @@ export class SessionStreamHub {
   private firstReadFailure: SessionStreamReadFailure | null = null;
   private reporterFailure: unknown = null;
   private readonly maxConnections: number;
-  readonly maxFrameBytes: number;
   readonly heartbeatMs: number;
   readonly connectionTtlMs: number;
   readonly drainTimeoutMs: number;
@@ -61,9 +76,9 @@ export class SessionStreamHub {
    * `attention`, when given, is the current list of waiting approvals and questions (ADR-035): every subscription carries it
    * as `event: attention` frames without an event id, so a page with a conversation open needs no second long-lived connection.
    */
-  constructor(private readonly read: (id: SessionId) => SessionView, options: SessionStreamLimits = {}, private readonly reportReadFailure?: (failure: SessionStreamReadFailure) => void,
+  constructor(private readonly source: SessionStreamSource, options: SessionStreamLimits = {}, private readonly reportReadFailure?: (failure: SessionStreamReadFailure) => void,
     private readonly attention?: () => AttentionFrame) {
-    this.maxConnections = limit(options.maxConnections, 256); this.maxFrameBytes = limit(options.maxFrameBytes, 8 * 1024 * 1024);
+    this.maxConnections = limit(options.maxConnections, 256);
     this.heartbeatMs = limit(options.heartbeatMs, 15000); this.connectionTtlMs = limit(options.connectionTtlMs, 60000);
     this.drainTimeoutMs = limit(options.drainTimeoutMs, 10000); this.now = options.now ?? Date.now;
   }
@@ -87,37 +102,44 @@ export class SessionStreamHub {
     let started = false;
     try {
       const snapshot = this.snapshot(id);
-      if (cursor > snapshot.lastSeq) throw new SessionStreamError(409, "CURSOR_CONFLICT", "Session stream cursor is ahead of committed facts");
+      // A page that says it has seen more than the Gateway has committed was talking to a Gateway whose data went back: it cannot be followed from there.
+      if (cursor > snapshot.head.lastSeq) throw new SessionStreamError(409, "CURSOR_CONFLICT", "Session stream cursor is ahead of committed facts");
       const ttl = Math.min(openedAt + this.connectionTtlMs, loginExpires) - this.now();
       if (ttl <= 0) throw new SessionStreamError(401, "AUTH_REQUIRED", "Session subscription login expired before its initial facts were ready");
       ready(); started = true; client.start(ttl); client.send({ type: "snapshot", session: snapshot });
       if (this.attention) client.attention(this.attention());
     } catch (error) { client.close(started); throw error; }
   }
-  snapshot(id: SessionId): SessionView {
-    const snapshot = this.read(id);
-    if (snapshot.id !== id || !Number.isSafeInteger(snapshot.lastSeq) || snapshot.lastSeq < 0) throw new SessionError("INVALID_DATA", "session stream read has inconsistent identity or watermark");
+  snapshot(id: SessionId): SessionViewV14 {
+    const snapshot = this.source.snapshot(id);
+    if (snapshot.head.id !== id || !Number.isSafeInteger(snapshot.head.lastSeq) || snapshot.head.lastSeq < 0 || !Number.isSafeInteger(snapshot.head.version)) throw new SessionError("INVALID_DATA", "session stream read has inconsistent identity or watermark");
     return snapshot;
   }
-  /** Authoritative reads may fail closed; every transport write/error is isolated within its subscription. */
-  publish(event: SessionEvent): void {
-    // A relay event is also announced to a subscription that already holds its facts: several events of one commit are
-    // published one by one, and the first one's snapshot already carried the commit's latest facts.
-    const announced = relayStreamEvent(event);
-    const clients = [...this.clients].filter(client => client.id === event.sessionId && (client.lastSeq < event.seq || announced !== undefined));
+  /**
+   * One commit, told once to every subscription of its conversation that holds the version before it. A subscription that is behind (backed up, or it missed a commit) is
+   * told the conversation again when it can be; the relay's events are announced after the facts they follow. Authoritative reads may fail closed: a frame that cannot be made is
+   * the publication that failed, and the application owner stops (a transport failure never is).
+   */
+  publish(commit: ConversationCommit): void {
+    const written = commit.changes.head?.row;
+    if (written === undefined) return;
+    const id = written.id as SessionId, clients = [...this.clients].filter(client => client.id === id && client.version < written.version);
     if (!clients.length) return;
-    const session = this.snapshot(event.sessionId);
-    if (session.lastSeq < event.seq) throw new SessionError("INVALID_DATA", "publication is ahead of committed session facts");
-    const output = event.type === "run.output" && event.data.event !== null && typeof event.data.event === "object" &&
-      "type" in event.data.event && event.data.event.type === "text" && typeof event.data.runId === "string";
-    const message = output && session.lastSeq === event.seq ? session.messages.find(item => item.role === "assistant" && item.runId === event.data.runId) : undefined;
-    // Non-text activity of the active Run replaces that Run only; everything else stays a canonical snapshot.
-    const activity = !output && (event.type === "run.output" || event.type === "run.tool_detail") && typeof event.data.runId === "string" && session.lastSeq === event.seq && session.activeRunId === event.data.runId
-      ? session.runs.find(item => item.id === event.data.runId) : undefined;
-    const frame: SessionStreamFrame = message !== undefined ? { type: "message", sessionId: session.id, version: session.version, lastSeq: session.lastSeq, message }
-      : activity !== undefined ? { type: "run", sessionId: session.id, version: session.version, lastSeq: session.lastSeq, run: activity } : { type: "snapshot", session };
-    const notice: RelayStreamFrame | undefined = announced === undefined ? undefined : { type: "relay", sessionId: session.id, version: session.version, lastSeq: session.lastSeq, event: announced };
-    for (const client of clients) { client.send(frame); if (notice !== undefined) client.notice(notice); }
+    let frame: SessionCommitFrame | undefined;
+    const asRead = this.source.stale?.(commit) === true;
+    const announced = commit.events.flatMap(event => { const notice = relayStreamEvent(event); return notice === undefined ? [] : [notice]; });
+    for (const client of clients) {
+      // Only the very next commit can be applied; anything else (a commit this connection was not told) is told as the conversation. The relay's events are announced after the facts
+      // they follow all the same: a connection that was told the conversation holds those facts, and a notice is only written under the watermark the connection holds.
+      if (asRead || client.version + 1 !== written.version) {
+        client.stale();
+        for (const notice of announced) client.notice({ type: "relay", sessionId: id, version: written.version, lastSeq: written.lastSeq, event: notice });
+        continue;
+      }
+      frame ??= this.source.frame(commit);
+      if (!client.send(frame)) continue;
+      for (const notice of announced) client.notice({ type: "relay", sessionId: id, version: frame.version, lastSeq: frame.lastSeq, event: notice });
+    }
   }
   /** A newer list of waiting approvals and questions for every subscription; never throws. */
   attentionChanged(frame: AttentionFrame): void { for (const client of [...this.clients]) client.attention(frame); }
@@ -125,6 +147,8 @@ export class SessionStreamHub {
 }
 
 class StreamClient {
+  /** The version and the watermark of the conversation this connection has been told. */
+  version = -1;
   lastSeq = -1;
   private closed = false;
   private paused = false;
@@ -154,13 +178,26 @@ class StreamClient {
     this.ttl = setTimeout(this.gone, ttlMs); this.ttl.unref();
     this.heartbeat = setInterval(() => { if (!this.closed && !this.paused) this.write(": heartbeat\n\n"); }, this.hub.heartbeatMs); this.heartbeat.unref();
   }
-  send(frame: SessionStreamFrame): void {
-    if (this.closed || water(frame) <= this.lastSeq) return;
-    if (this.paused) { this.dirty = true; return; }
-    const text = "id: " + water(frame) + "\nevent: session\ndata: " + JSON.stringify(frame) + "\n\n";
-    if (Buffer.byteLength(text, "utf8") > this.hub.maxFrameBytes) { this.close(); return; }
+  /** Whether the frame was written (it is not into a connection that is backed up: that one is told the conversation when it drains). */
+  send(frame: Exclude<SessionStreamFrameV14, RelayStreamFrame>): boolean {
+    if (this.closed) return false;
+    const head = frame.type === "snapshot" ? frame.session.head : frame;
+    // What the connection has been told is not told again.
+    if (head.version <= this.version) return false;
+    if (this.paused) { this.dirty = true; return false; }
     // write(false) still accepted this frame; subsequent output is replaced by one dirty snapshot marker.
-    this.lastSeq = water(frame); this.write(text);
+    this.version = head.version; this.lastSeq = head.lastSeq;
+    this.write("id: " + head.lastSeq + "\nevent: session\ndata: " + JSON.stringify(frame) + "\n\n");
+    return true;
+  }
+  /** This connection is not at the version before a commit: it is told the conversation, now or when it can be written to. */
+  stale(): void {
+    if (this.closed) return;
+    this.dirty = true;
+    if (this.paused) return;
+    this.dirty = false;
+    try { this.send({ type: "snapshot", session: this.hub.snapshot(this.id) }); }
+    catch (error) { this.hub.recordReadFailure(this.id, error); this.close(); }
   }
   /**
    * The notice of a relay event: only straight after the facts it follows (same watermark) and never into a backed-up

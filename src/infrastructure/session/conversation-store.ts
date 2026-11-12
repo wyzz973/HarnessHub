@@ -4,14 +4,14 @@ import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   CONVERSATION_FORMAT,
-  type ContentRefRow, type Conversation, type ConversationCommit, type ConversationMutation, type ConversationReader, type ConversationStore, type ConversationStoreOptions, type HeadRow, type ItemPage,
-  type Mutation, type OriginHistoryRow, type ReadOptions, type RunFacts, type SearchHit, type SessionListPage, type SessionListQuery, type StartupSample, type TextRange, type TurnCursor, type TurnItems, type TurnWindow,
+  type ContentRefRow, type Conversation, type ConversationCommit, type ConversationMutation, type ConversationReader, type ConversationStore, type ConversationStoreOptions, type HeadRow, type ItemPage, type ItemRow,
+  type Mutation, type OriginHistoryRow, type ReadOptions, type RunFacts, type RunRow, type SearchHit, type SessionListPage, type SessionListQuery, type StartupSample, type TextRange, type TurnCursor, type TurnItems, type TurnWindow,
 } from "../../contracts/conversation.js";
 import type { HandoffRecord, RelayIndexRow, RelayLogPort, RelayPacket, RelayPrefKey, RelayRecoveredDelivery, RelayStorePort, DeliveryRecord } from "../../contracts/relay.js";
 import { RELAY_SESSION_BODY_BYTES } from "../../contracts/relay.js";
 import {
   SessionError, commandId, sessionId,
-  type CommandId, type EventDraft, type PublicMessage, type PublicRun, type RunId, type SessionEvent, type SessionId, type SessionSnapshot,
+  type CommandId, type EventDraft, type NativeSessionBinding, type PublicMessage, type PublicRun, type PublicSwitch, type RunId, type SessionEvent, type SessionId, type SessionOrigin, type SessionSnapshot,
 } from "../../contracts/session.js";
 import { conversationTitle } from "../../contracts/web.js";
 import { verify as verifyConversation } from "../../contexts/session/domain/conversation-verify.js";
@@ -24,6 +24,7 @@ import { WHOLE, loadConversation, readItems } from "./load.js";
 import {
   acknowledgeFirstStart, collectionGate, migrateToV14, upgradeUnderWay, type CollectionGate, type MigrationOptions, type MigrationReport,
 } from "./migrate-v14.js";
+import { ConversationFacts, type EditRef, type RunSummary } from "./facts.js";
 import { ConversationTables } from "./read.js";
 import { readDeliveriesV14, checkPacketReferencesV14, writeRelayRowsV14 } from "./relay-rows-v14.js";
 import { handoffNamed, handoffRows, logHandoff, readPrefs, writePref } from "./relay-log.js";
@@ -155,6 +156,7 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
   private readonly owner: DatabaseSync;
   private readonly database: DatabaseSync;
   private readonly tables: ConversationTables;
+  private readonly facts: ConversationFacts;
   private readonly token = randomUUID();
   private readonly clock: () => Date;
   private readonly options: SqliteConversationStoreOptions;
@@ -204,6 +206,7 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
       this.database = database;
       database.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON");
       this.tables = new ConversationTables(database);
+      this.facts = new ConversationFacts(database);
       this.migration = this.start();
     } catch (error) {
       // A start that failed after it claimed the generation leaves the owner marked as gone, so that the next start (in this process or another) is not told an owner may be alive.
@@ -532,6 +535,21 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
   listKept(): readonly SessionId[] { this.assertOwner(); return this.read(() => this.tables.listKept()); }
   unfinished(): readonly SessionId[] { this.assertOwner(); return this.read(() => this.tables.unfinished()); }
   nativeOwners(harnessId: string, controlId: string): ReadonlyMap<string, SessionId> { this.assertOwner(); return this.read(() => this.tables.nativeOwners(harnessId, controlId)); }
+  // The small reads a conversation's view is made with besides its pages (facts.ts): a Run by its place or its identity, the last one a control ran, the native bindings, the switch that
+  // waits, the history a branch quotes, one item whole, the item that answers a Turn, and the conversation-wide edits and plan.
+  runAt(id: SessionId, ordinal: number): RunRow | null { this.assertOwner(); sessionId(id); return this.read(() => this.facts.runAt(id, ordinal)); }
+  runById(runId: RunId): RunRow | null { this.assertOwner(); return this.read(() => this.facts.runById(runId)); }
+  lastDispatched(id: SessionId, harnessId: string, controlId: string, options?: { readonly native?: boolean }): RunRow | null { this.assertOwner(); sessionId(id); return this.read(() => this.facts.lastDispatched(id, harnessId, controlId, options)); }
+  dispatchedBefore(id: SessionId, harnessId: string, controlId: string, ordinal: number): boolean { this.assertOwner(); sessionId(id); return this.read(() => this.facts.dispatchedBefore(id, harnessId, controlId, ordinal)); }
+  bindings(id: SessionId): readonly NativeSessionBinding[] { this.assertOwner(); sessionId(id); return this.read(() => this.facts.bindings(id)); }
+  lastSwitch(id: SessionId): PublicSwitch | null { this.assertOwner(); sessionId(id); return this.read(() => this.facts.lastSwitch(id)); }
+  origin(id: SessionId): SessionOrigin | null { this.assertOwner(); sessionId(id); return this.read(() => this.facts.origin(id)); }
+  item(runId: RunId, seq: number): ItemRow | null { this.assertOwner(); return this.read(() => this.facts.item(runId, seq)); }
+  finalSeq(runId: RunId): number | null { this.assertOwner(); return this.read(() => this.facts.finalSeq(runId)); }
+  plainTools(runId: RunId): readonly ItemRow[] { this.assertOwner(); return this.read(() => this.facts.plainTools(runId)); }
+  runSummary(id: SessionId): RunSummary { this.assertOwner(); sessionId(id); return this.read(() => this.facts.runSummary(id)); }
+  edits(id: SessionId): readonly EditRef[] { this.assertOwner(); sessionId(id); return this.read(() => this.facts.edits(id)); }
+  latestPlan(id: SessionId): ReturnType<ConversationFacts["latestPlan"]> { this.assertOwner(); sessionId(id); return this.read(() => this.facts.latestPlan(id)); }
   noticeShown(id: SessionId, print: string): boolean {
     this.assertOwner(); sessionId(id);
     return this.read(() => one(this.database, "SELECT 1 AS found FROM notice_prints WHERE session_id=? AND print=?", id, print) !== undefined);

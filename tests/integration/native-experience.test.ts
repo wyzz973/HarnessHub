@@ -8,6 +8,8 @@ import { application } from "../../src/cli/session-application.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { parseNativeOptions } from "../../src/contracts/session.js";
+import { WORK_TYPES } from "../../src/contracts/protocol.js";
+import { readWhole, type ReadConversation } from "../fixtures/http-conversation.js";
 
 async function fixture(t: test.TestContext, scenario = "native-experience") {
   const root = await mkdtemp(join(tmpdir(), "native-experience-")), home = join(root,"home"), workspace=join(root,"workspace"), peer=join(root,"original-peer.mjs"), trace=join(root,"trace"), manifest=join(root,"catalog.json");
@@ -24,8 +26,10 @@ async function fixture(t: test.TestContext, scenario = "native-experience") {
   const headers={Cookie:boot.headers.get("set-cookie")!.split(";",1)[0]!,Origin:origin,"Content-Type":"application/json","X-CSRF-Token":auth.csrfToken};
   const call=async(path:string,body?:unknown)=>{const response=await fetch(origin+"/api/v1"+path,{method:body===undefined?"GET":"POST",headers,...(body===undefined?{}:{body:JSON.stringify(body)})});return {status:response.status,value:await response.json() as Record<string,unknown>};};
   const wire=async()=>{try{return (await readFile(trace,"utf8")).trim().split("\n").map(line=>JSON.parse(line) as Record<string,unknown>);}catch(error){if(error!==null&&typeof error==="object"&&"code"in error&&error.code==="ENOENT")return [];throw error;}};
-  const until=async(path:string,predicate:(row:Record<string,unknown>)=>boolean)=>{const deadline=Date.now()+10000;for(;;){const {value}=await call(path);if(predicate(value))return value;if(Date.now()>deadline)throw Error("native fixture did not reach its required public state");await new Promise<void>(done=>setTimeout(done,10));}};
-  return {root,home,workspace,peer,trace,call,wire,until};
+  // A conversation as a page reads it: its head and every Turn, through the paged routes. `until` waits for it to reach a state.
+  const read=(id:string)=>readWhole(async path=>{const {status,value}=await call(path.replace(/^\/api\/v1/u,""));assert.equal(status,200,JSON.stringify(value));return value;},id);
+  const until=async(id:string,predicate:(view:ReadConversation)=>boolean)=>{const deadline=Date.now()+10000;for(;;){const view=await read(id);if(predicate(view))return view;if(Date.now()>deadline)throw Error("native fixture did not reach its required public state");await new Promise<void>(done=>setTimeout(done,10));}};
+  return {root,home,workspace,peer,trace,call,wire,read,until};
 }
 
 test("native enum parsing rejects arbitrary objects, unsafe keys, oversized inputs and sorts valid keys",()=>{
@@ -44,39 +48,40 @@ test("formal native catalog caches successful results, refreshes explicitly and 
 });
 
 test("formal switches create no native process, original settings reach ACP and thinking/tools stay committed",{timeout:20000},async t=>{
-  const f=await fixture(t);const created=await f.call("/sessions",{selection:{harnessId:"native-alpha"},commandId:"create"}),id=String(created.value.id);
+  const f=await fixture(t);const created=await f.call("/sessions",{selection:{harnessId:"native-alpha"},commandId:"create"}),id=String((created.value.head as {id:string}).id);
   assert.equal(created.status,201);assert.equal((await f.wire()).length,0);
   const options={"native-thinking":"max","native-fast":"on"};
   assert.equal((await f.call(`/sessions/${id}/switches`,{selection:{harnessId:"native-bravo",nativeModel:"native-model-b",nativeOptions:options},commandId:"switch"})).status,202);
-  await f.until(`/sessions/${id}`,row=>row.pendingSwitchId===null);assert.equal((await f.wire()).length,0,"selector must not perform native initialize/open/close");
+  await f.until(id,view=>view.pendingSwitchId===null);assert.equal((await f.wire()).length,0,"selector must not perform native initialize/open/close");
   assert.equal((await f.call(`/sessions/${id}/messages`,{text:"native settings reply",commandId:"send"})).status,202);
-  const finished=await f.until(`/sessions/${id}`,row=>Array.isArray(row.runs)&&(row.runs.at(-1) as {status:string})?.status==="completed");
-  const run=(finished.runs as {thinking:string;tools:{status:string}[];selection:{nativeOptions:unknown}}[]).at(-1)!;
-  assert.equal(run.thinking,"Observed fixture thinking");assert.equal(run.tools[0]!.status,"completed");assert.deepEqual(run.selection.nativeOptions,options);
+  const finished=await f.until(id,view=>view.runs.at(-1)?.status==="completed");
+  // The thinking and the tool call stay committed as the Turn's items (a reasoning line and a call); the Run keeps the selection it ran with.
+  const turn=finished.turns.at(-1)!,reasoning=turn.items.filter(item=>item.type==="reasoning").map(item=>(item as {text:string}).text),calls=turn.items.filter(item=>(WORK_TYPES as readonly string[]).includes(item.type));
+  assert.deepEqual(reasoning,["Observed fixture thinking"]);assert.equal(calls[0]!.status,"completed");assert.deepEqual(turn.run.selection.nativeOptions,options);
   const wire=await f.wire();for(const [configId,value]of Object.entries(options))assert.ok(wire.some(row=>row.method==="session/set_config_option"&&(row.params as Record<string,unknown>).configId===configId&&(row.params as Record<string,unknown>).value===value));
   await f.call(`/sessions/${id}/messages`,{text:"/native-help fixture",commandId:"native-command"});
-  await f.until(`/sessions/${id}`,row=>Array.isArray(row.runs)&&row.runs.length===2&&(row.runs.at(-1) as {status:string}).status==="completed");
+  await f.until(id,view=>view.runs.length===2&&view.runs.at(-1)?.status==="completed");
   const commandWire=await f.wire(), nativePrompt=commandWire.filter(row=>row.method==="session/prompt").at(-1)!;
   assert.deepEqual((nativePrompt.params as {prompt:unknown}).prompt,[{type:"text",text:"/native-help fixture"}]);
   const commandEvents=await f.call(`/sessions/${id}/events?afterSeq=0&limit=100`);
   assert.ok((commandEvents.value.events as {type:string;data:{publicContextInjected?:boolean}}[]).some(event=>event.type==="run.native_command"&&event.data.publicContextInjected===false));
   assert.equal((await f.call(`/sessions/${id}/switches`,{selection:{harnessId:"native-alpha",nativeOptions:{"native-thinking":"invented"}},commandId:"bad-option"})).status,202);
-  await f.until(`/sessions/${id}`,row=>row.pendingSwitchId===null);await f.call(`/sessions/${id}/messages`,{text:"invalid native choice",commandId:"bad-input"});
-  const failed=await f.until(`/sessions/${id}`,row=>Array.isArray(row.runs)&&(row.runs.at(-1) as {status:string})?.status==="failed");
-  assert.equal((failed.runs as {error:{code:string}}[]).at(-1)!.error.code,"NATIVE_OPTION_UNAVAILABLE");assert.equal(failed.status,"open");
+  await f.until(id,view=>view.pendingSwitchId===null);await f.call(`/sessions/${id}/messages`,{text:"invalid native choice",commandId:"bad-input"});
+  const failed=await f.until(id,view=>view.runs.at(-1)?.status==="failed");
+  assert.equal(failed.runs.at(-1)!.error!.code,"NATIVE_OPTION_UNAVAILABLE");assert.equal(failed.status,"open");
 });
 
 test("native approvals round-trip actual option IDs after durable decisions and replay without another response",{timeout:20000},async t=>{
-  const f=await fixture(t,"permission"),created=await f.call("/sessions",{selection:{harnessId:"native-alpha"},commandId:"create"}),id=String(created.value.id);
+  const f=await fixture(t,"permission"),created=await f.call("/sessions",{selection:{harnessId:"native-alpha"},commandId:"create"}),id=String((created.value.head as {id:string}).id);
   await f.call(`/sessions/${id}/messages`,{text:"fixture approval",commandId:"send"});
-  const waiting=await f.until(`/sessions/${id}`,row=>Array.isArray(row.permissions)&&row.permissions.length===1),permission=(waiting.permissions as {id:string;options:{id:string}[]}[])[0]!;
+  const waiting=await f.until(id,view=>view.permissions?.length===1),permission=waiting.permissions![0]!;
   assert.ok(permission.options.some(option=>option.id==="allow"));
   // The approval shows what it would allow: the proposed diff from the request's tool call.
   const shown=permission as unknown as {title:string;detail?:string};assert.equal(shown.title,"Edit notes.txt");assert.match(String(shown.detail),/-bravo\n\+delta/u);
   assert.equal((await f.call(`/sessions/${id}/permissions/${permission.id}`,{optionId:"fabricated",commandId:"bad-decision"})).status,409);
   assert.equal((await f.wire()).filter(row=>row.id==="permission-1"&&row.result!==undefined).length,0);
   const input={optionId:"allow",commandId:"decision"};assert.equal((await f.call(`/sessions/${id}/permissions/${permission.id}`,input)).status,200);
-  await f.until(`/sessions/${id}`,row=>row.activeRunId===null);
+  await f.until(id,view=>view.activeRunId===null);
   const replay=await f.call(`/sessions/${id}/permissions/${permission.id}`,input);assert.equal(replay.status,200);assert.equal(replay.value.replayed,true);
   assert.equal((await f.call(`/sessions/${id}/permissions/${permission.id}`,{optionId:"reject",commandId:"decision"})).status,409);
   assert.equal((await f.wire()).filter(row=>row.id==="permission-1"&&row.result!==undefined).length,1);
@@ -102,13 +107,13 @@ test("Darwin exited-group evidence rejects any live member, malformed inventory 
 
 test("a setting the native session changed itself is applied as it is on the next Turn and shown, until an explicit switch applies the selection again",{timeout:30000},async t=>{
   const f=await fixture(t,"native-config");
-  const created=await f.call("/sessions",{selection:{harnessId:"native-alpha",nativeOptions:{"native-fast":"off"}},commandId:"create"}),id=String(created.value.id);
+  const created=await f.call("/sessions",{selection:{harnessId:"native-alpha",nativeOptions:{"native-fast":"off"}},commandId:"create"}),id=String((created.value.head as {id:string}).id);
   assert.equal(created.status,201);
   const send=async(text:string,key:string,count:number)=>{assert.equal((await f.call(`/sessions/${id}/messages`,{text,commandId:key})).status,202);
-    return f.until(`/sessions/${id}`,row=>Array.isArray(row.runs)&&row.runs.length===count&&row.activeRunId===null&&(row.runs.at(-1) as {status:string}).status==="completed");};
+    return f.until(id,view=>view.runs.length===count&&view.activeRunId===null&&view.runs.at(-1)?.status==="completed");};
   const applied=async()=>(await f.wire()).filter(row=>row.method==="session/set_config_option"&&(row.params as {configId:string}).configId==="native-fast").map(row=>(row.params as {value:string}).value);
   type NativeState={status:string;observed?:{model:string|null;options:Record<string,string>};carried?:{model?:string;options?:Record<string,string>}};
-  const native=(row:Record<string,unknown>)=>(row.nativeStates as NativeState[])[0]!;
+  const native=(view:ReadConversation)=>(view.nativeStates as unknown as NativeState[])[0]!;
   let view=await send("first turn","one",1);
   assert.deepEqual(native(view),{harnessId:"native-alpha",controlId:"native-alpha",status:"ready",observed:{model:"native-model-a",options:{"native-fast":"off","native-thinking":"low"}}});
   view=await send("/native-fast on","two",2);
@@ -116,14 +121,14 @@ test("a setting the native session changed itself is applied as it is on the nex
   view=await send("third turn","three",3);
   // A value the restored session already runs is not requested again: only the carried native value is applied.
   assert.deepEqual(await applied(),["on"],"the next Turn applies the native value instead of reverting it");
-  const third=(view.runs as {id:string}[])[2]!.id,events:{type:string;data:Record<string,unknown>}[]=[];
+  const third=view.runs[2]!.id,events:{type:string;data:Record<string,unknown>}[]=[];
   for(let after=0;;){const page=(await f.call(`/sessions/${id}/events?afterSeq=${after}&limit=100`)).value as {events:{type:string;data:Record<string,unknown>}[];nextSeq:number;hasMore:boolean};events.push(...page.events);if(!page.hasMore)break;after=page.nextSeq;}
   assert.deepEqual(events.filter(row=>row.type==="native.config_carried").map(row=>row.data),[{runId:third,options:{"native-fast":"on"}}]);
   assert.deepEqual(native(view).carried,{options:{"native-fast":"on"}},"the native value stays in effect for this selection");
   assert.ok(!JSON.stringify(view).includes("session-fixture"),"the private native session reference stays out of the view");
   // Choosing the same selection again is an explicit switch: the next Turn applies the selection.
   assert.equal((await f.call(`/sessions/${id}/switches`,{selection:{harnessId:"native-alpha",nativeOptions:{"native-fast":"off"}},commandId:"reassert"})).status,202);
-  view=await f.until(`/sessions/${id}`,row=>row.pendingSwitchId===null&&row.epoch===2);
+  view=await f.until(id,view=>view.pendingSwitchId===null&&view.epoch===2);
   assert.equal(native(view).carried,undefined);
   view=await send("fourth turn","four",4);
   // This fixture restores sessions at their defaults, so the selection (off) is already in effect and the session reports it.
@@ -135,22 +140,22 @@ test("a native session of the workspace is listed, continued as a conversation a
   const first=await list();
   assert.equal(first.status,200);assert.deepEqual(first.value,{sessions:[{id:"native-a",title:"Earlier work",updatedAt:Date.parse("2026-10-01T10:00:00Z")}],nextCursor:"p2"});
   assert.deepEqual((await list("p2")).value.sessions,[{id:"native-b",title:null,updatedAt:Date.parse("2026-10-01T09:00:00Z")}]);
-  const imported=await f.call("/sessions/import",{workspace:f.workspace,selection:{harnessId:"native-alpha"},nativeId:"native-a",commandId:"import"}),id=String(imported.value.id);
+  const imported=await f.call("/sessions/import",{workspace:f.workspace,selection:{harnessId:"native-alpha"},nativeId:"native-a",commandId:"import"}),head=imported.value.head as Record<string,unknown>,id=String(head.id);
   assert.equal(imported.status,201);
-  assert.deepEqual(imported.value.origin,{kind:"import",harnessId:"native-alpha",title:"Earlier work",omitted:0,complete:true,historyRead:true,history:[
+  assert.deepEqual(head.origin,{kind:"import",harnessId:"native-alpha",title:"Earlier work",omitted:0,complete:true,historyRead:true,history:[
     {role:"user",text:"first question",status:"completed"},{role:"assistant",text:"first answer",status:"completed",harnessId:"native-alpha"},
     {role:"user",text:"second question",status:"completed"},{role:"assistant",text:"second answer",status:"completed",harnessId:"native-alpha"}]});
-  assert.deepEqual(imported.value.nativeStates,[{harnessId:"native-alpha",controlId:"native-alpha",status:"ready"}]);
+  assert.deepEqual(head.nativeStates,[{harnessId:"native-alpha",controlId:"native-alpha",status:"ready"}]);
   assert.ok(!JSON.stringify(imported.value).includes("native-a\""),"the native reference stays private");
   assert.deepEqual((await list()).value.sessions,[{id:"native-a",title:"Earlier work",updatedAt:Date.parse("2026-10-01T10:00:00Z"),conversationId:id}]);
   const again=await f.call("/sessions/import",{workspace:f.workspace,selection:{harnessId:"native-alpha"},nativeId:"native-a",commandId:"import-again"});
   assert.equal(again.status,409);assert.equal((again.value as {code:string}).code,"NATIVE_SESSION_CONFLICT");
   const elsewhere=await f.call("/sessions/import",{workspace:f.workspace,selection:{harnessId:"native-alpha"},nativeId:"native-x",commandId:"import-elsewhere"});
   assert.equal(elsewhere.status,404);assert.equal((elsewhere.value as {code:string}).code,"NATIVE_SESSION_NOT_FOUND");
-  const sessions=(await f.call("/sessions")).value as unknown as {id:string;title:string}[];
-  assert.equal(sessions.find(row=>row.id===id)?.title,"接续 · Earlier work");
+  const sessions=(await f.call("/sessions")).value.sessions as {id:string;title:string}[];
+  assert.equal(sessions.find(row=>row.id===id)?.title,"接续 · Earlier work");assert.equal(head.title,"接续 · Earlier work");
   assert.equal((await f.call(`/sessions/${id}/messages`,{text:"what did I ask first?",commandId:"send"})).status,202);
-  await f.until(`/sessions/${id}`,row=>Array.isArray(row.runs)&&row.runs.length===1&&(row.runs[0] as {status:string}).status==="completed");
+  await f.until(id,view=>view.runs.length===1&&view.runs[0]!.status==="completed");
   const wire=await f.wire(),load=wire.filter(row=>row.method==="session/load").at(-1)!,prompt=wire.filter(row=>row.method==="session/prompt").at(-1)!;
   assert.equal((load.params as {sessionId:string}).sessionId,"native-a","the conversation continues the native session itself");
   assert.deepEqual((prompt.params as {prompt:unknown}).prompt,[{type:"text",text:"what did I ask first?"}],"the native session gets the input without a public context");

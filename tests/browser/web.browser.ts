@@ -12,6 +12,7 @@ import { runManagementProcess } from "../../src/infrastructure/management/proces
 import type { ManagementMetadataPort, ManagementInstallerPort } from "../../src/contracts/management.js";
 import { startWebServer } from "../../src/web/server.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+import { readThrough } from "../fixtures/http-conversation.js";
 
 /**
  * A browser context that answers any request for Google Fonts locally and empty. The page asks for none since ADR-054 §2
@@ -274,10 +275,10 @@ test("real browser validates Provider management, public chat switching, cancell
   catch (failure) {
     await page.screenshot({ path: join(artifact, "stream-failure.png"), fullPage: true, animations: "disabled" });
     const base = new URL(fixture.gateway.url).origin;
-    const list: unknown = await (await context.request.get(base + "/api/v1/sessions")).json();
+    const list: unknown = ((await (await context.request.get(base + "/api/v1/sessions")).json()) as { sessions: unknown }).sessions;
     const observations: unknown[] = [];
     if (Array.isArray(list)) for (const item of list) {
-      if (item !== null && typeof item === "object" && "id" in item && typeof item.id === "string") observations.push(await (await context.request.get(base + "/api/v1/sessions/" + item.id)).json());
+      if (item !== null && typeof item === "object" && "id" in item && typeof item.id === "string") observations.push(await (await readThrough(context, base, item.id)));
     }
     await writeFile(join(artifact, "stream-failure.json"), JSON.stringify({ errors, body: (await page.locator("body").innerText()).slice(0, 4000), observations }));
     throw failure;
@@ -285,9 +286,9 @@ test("real browser validates Provider management, public chat switching, cancell
   await expect(log).toContainText("凭据过滤验证：[redacted]");
   const origin = new URL(fixture.gateway.url).origin;
   async function snapshot() {
-    const list = await (await context.request.get(origin + "/api/v1/sessions")).json() as { id: string }[];
+    const list = ((await (await context.request.get(origin + "/api/v1/sessions")).json()) as { sessions: { id: string }[] }).sessions;
     assert.equal(list.length, 1);
-    return await (await context.request.get(origin + "/api/v1/sessions/" + list[0]!.id)).json() as { id: string; selection: { provider: { revision: number; model: string } }; runs: { status: string; selection: { provider: { revision: number; model: string } } }[]; epoch: number };
+    return await (await readThrough(context, origin, list[0]!.id)) as { id: string; selection: { provider: { revision: number; model: string } }; runs: { status: string; selection: { provider: { revision: number; model: string } } }[]; epoch: number };
   }
   const first = await snapshot(); assert.equal(first.selection.provider.model, "model-a");
   // Lose a committed switch response while read delivery is delayed. Only transport is fault-injected;
@@ -485,9 +486,9 @@ test("live chat renders committed partial Markdown before completion, respects r
   await expect(log.locator("pre")).toContainText('const answer = "par');
   assert.ok(streamRequests.length >= 1, "partial output is transported on the live session stream");
   async function current() {
-    const list: unknown = await (await context.request.get(origin + "/api/v1/sessions")).json(); assert.ok(Array.isArray(list) && list.length === 1);
+    const list: unknown = ((await (await context.request.get(origin + "/api/v1/sessions")).json()) as { sessions: unknown }).sessions; assert.ok(Array.isArray(list) && list.length === 1);
     const id = object(list[0]).id; assert.equal(typeof id, "string");
-    const snapshot = object(await (await context.request.get(origin + "/api/v1/sessions/" + String(id))).json());
+    const snapshot = object(await readThrough(context, origin, String(id)));
     assert.ok(Array.isArray(snapshot.runs)); assert.ok(Array.isArray(snapshot.messages));
     return { id: String(id), snapshot, runs: snapshot.runs.map(object), messages: snapshot.messages.map(object) };
   }
@@ -616,7 +617,7 @@ test("unavailable native authentication keeps the same conversation usable, show
   const agent = async (name: string) => { await pick("选择 Harness", name); await expect(page.getByRole("button", { name: "选择模型", exact: true })).not.toHaveText(/读取/u); };
   const current = async () => {
     const id = new URL(page.url()).hash.slice(1).split("session=")[1]; assert.ok(id);
-    const response = await context.request.get(origin + "/api/v1/sessions/" + id); assert.equal(response.status(), 200); return await response.json();
+    return await readThrough(context, origin, id);
   };
   await agent("Codex"); await pick("选择 Provider", "可用模型连接");
   await composer.fill("FIRST_CONVERSATION"); await composer.press("Enter"); await expect(log).toContainText("已由");
@@ -632,13 +633,13 @@ test("unavailable native authentication keeps the same conversation usable, show
   await page.keyboard.press("Escape");
   await expect(composer).toBeEnabled(); await expect(composer).toHaveValue("选择失败也要保留这条草稿");
   const failed = await current(); assert.equal(failed.id, first.id); assert.equal(failed.status, "open"); assert.equal(failed.runs.length, 1);
-  assert.equal(failed.selection.harnessId,"openclaw"); assert.equal(failed.switches.at(-1).status,"effective");
+  assert.equal(failed.selection.harnessId,"openclaw"); assert.equal(failed.lastSwitch.status,"effective");
   await page.screenshot({ path: join(artifact, "harness-selection-failed.png"), fullPage: true, animations: "disabled" });
   const modelReload = page.waitForResponse(response => response.url().includes("/harnesses/openclaw/models"));
   await page.reload(); await modelReload;
   await expect(page.getByText(/本机认证尚未就绪/)).toBeVisible();
   await expect(composer).toHaveValue("选择失败也要保留这条草稿");
-  assert.equal((await current()).switches.length, failed.switches.length, "refresh must not retry an already failed selection");
+  assert.equal((await current()).lastSwitch.id, failed.lastSwitch.id, "refresh must not retry an already failed selection");
   await agent("Codex"); await pick("选择 Provider","可用模型连接");
   await expect(page.getByRole("button", { name: "选择 Harness", exact: true })).toContainText("Codex");
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled();
@@ -671,7 +672,7 @@ test("unavailable native authentication keeps the same conversation usable, show
     const value = JSON.parse(entry[1]); value.unrecognizedCredential = "synthetic-untrusted-cache-value"; sessionStorage.setItem(entry[0], JSON.stringify(value));
   });
   await page.reload(); await expect(composer).toHaveValue("");
-  const unchanged = await (await context.request.get(origin + "/api/v1/sessions")).json(); assert.equal(unchanged.length, 2, "invalid cached drafts cannot create or submit a conversation");
+  const unchanged = (await (await context.request.get(origin + "/api/v1/sessions")).json()).sessions; assert.equal(unchanged.length, 2, "invalid cached drafts cannot create or submit a conversation");
   assert.deepEqual(errors, []);
 });
 
@@ -688,7 +689,7 @@ test("native settings switch without Apply and approvals survive refresh or canc
   await pick("选择模型", "Native B"); await expect(page.getByRole("button",{name:"思考强度",exact:true})).toBeEnabled(); await pick("思考强度","高"); await composer.fill("NATIVE_FIRST：沿用本机配置"); await composer.press("Enter");
   await expect(page.getByRole("log", { name: "对话历史" })).toContainText("已由 native-b 处理");
   const origin = new URL(fixture.gateway.url).origin;
-  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await readThrough(context, origin, id)); };
   await expect.poll(async () => (await current()).runs[0].status).toBe("completed"); const first = await current(); assert.equal(first.selection.nativeModel, "native-b"); assert.equal(first.runs[0].selection.nativeOptions.reasoning_effort,"high");
   await composer.fill("切换期间保留这个草稿");
   await pick("选择模型", "Native A"); await pick("选择模型", "Native B");
@@ -932,7 +933,7 @@ test("a setting a native command changed is kept, shown in the composer and can 
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   const origin = new URL(fixture.gateway.url).origin;
-  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await readThrough(context, origin, id)); };
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Native Settings", exact: true }).click();
   await openAdvanced(page);
   await page.getByRole("button", { name: "Native fast", exact: true }).click();
@@ -1084,7 +1085,7 @@ test("Codex plan mode answers with its plan, and a thread that follows the nativ
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), note = page.locator("#composer-notice");
   const origin = new URL(fixture.gateway.url).origin;
-  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await readThrough(context, origin, id)); };
   const mode = async (label: string) => {
     await page.getByRole("button", { name: "协作模式", exact: true }).click(); await page.getByRole("option", { name: label, exact: true }).click();
   };
@@ -1121,7 +1122,7 @@ test("a conversation keeps its native process between Turns, shows it, and ends 
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   const origin = new URL(fixture.gateway.url).origin;
-  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await readThrough(context, origin, id)); };
   const reply = async (text: string, count: number) => {
     await composer.fill(text); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
     await expect.poll(async () => { if (!new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session")) return null; const value = await current(); return value.runs.length === count && value.activeRunId === null && value.runs.at(-1).status; }, { timeout: 15000 }).toBe("completed");
@@ -1325,7 +1326,7 @@ test("a Turn the Runtime cancelled when its wait budget ran out says 已停止 w
   const notices = () => page.evaluate(() => (window as unknown as { __notices: { title: string; body: string; silent: boolean }[] }).__notices);
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), origin = new URL(fixture.gateway.url).origin;
-  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await readThrough(context, origin, id)); };
   const ask = async () => {
     await composer.fill("approve this"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
     await expect(page.getByRole("region", { name: "工具审批", exact: true })).toContainText("rm -rf build", { timeout: 15000 });
@@ -1389,7 +1390,7 @@ test("a Turn waiting for a slot, when an operator limited the conversations runn
     const workspace = join(fixture.root, "busy-" + index); await mkdir(workspace);
     const created = await write("/api/v1/sessions", { workspace, selection: { harnessId: "native-acp", controlId: "native-acp" }, commandId: "create-busy-" + index });
     assert.equal(created.status(), 201);
-    assert.equal((await write("/api/v1/sessions/" + String((await created.json()).id) + "/messages", { text: "approve this", commandId: "send-busy-" + index })).status(), 202);
+    assert.equal((await write("/api/v1/sessions/" + String((await created.json()).head.id) + "/messages", { text: "approve this", commandId: "send-busy-" + index })).status(), 202);
   }
   await expect(page.locator(".attention-count")).toHaveText("4", { timeout: 15000 });
   // A fifth conversation, in another workspace, waits for one of them to end.
@@ -1652,7 +1653,7 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   // no tool detail while the panel is closed.
   const panel = page.getByRole("complementary", { name: "详情栏" });
   const origin = new URL(fixture.gateway.url).origin, id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session");
-  const details = ((await (await context.request.get(origin + "/api/v1/sessions/" + id)).json()).runs as { protocol?: { items?: { detail?: { id: string } }[] } }[]).flatMap(run => (run.protocol?.items ?? []).flatMap(item => item.detail ? [item.detail.id] : []));
+  const details = ((await readThrough(context, origin, id!)).runs as { protocol?: { items?: { detail?: { id: string } }[] } }[]).flatMap(run => (run.protocol?.items ?? []).flatMap(item => item.detail ? [item.detail.id] : []));
   assert.ok(details.length > 0, "the fixture's actions carry stored detail");
   const reads: string[] = [];
   page.on("request", request => { if (details.some(content => request.url().includes("/api/v1/content/" + encodeURIComponent(content)))) reads.push(request.url()); });
@@ -1707,7 +1708,7 @@ test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is 
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), origin = new URL(fixture.gateway.url).origin;
-  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await readThrough(context, origin, id)); };
   const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
   await pick("选择 Harness", "Codex"); await expect(page.getByRole("button", { name: "选择模型", exact: true })).toBeEnabled();
   await pick("选择模型", "Native B"); await expect(page.getByRole("button", { name: "思考强度", exact: true })).toBeEnabled(); await pick("思考强度", "高");
@@ -1786,7 +1787,7 @@ test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is 
   await expect(log.locator(".assistant-message").last().locator(".turn-footer")).toContainText("Native A");
   // The conversation keeps its identity across the hand-over: one conversation, both Turns in it.
   const after = await current(); assert.equal(after.runs.length, 2); assert.equal(after.runs[0].selection.nativeModel, "native-b"); assert.equal(after.runs[1].selection.nativeModel, "native-a");
-  assert.equal((await (await context.request.get(origin + "/api/v1/sessions")).json()).length, 1);
+  assert.equal((await (await context.request.get(origin + "/api/v1/sessions")).json()).sessions.length, 1);
   await expect(log.locator(".assistant-message").last()).toHaveAttribute("data-run-status", "completed");
   // The latest Turn changed nothing: "本轮" says so, "整个对话" still lists the file; 过程 lists both Turns, oldest first.
   await panel.getByRole("radio", { name: "本轮 0", exact: true }).click(); await expect(panel).toContainText("这一轮没有改动文件。");
@@ -1817,7 +1818,7 @@ test("G054-DL7 a running Turn shows the arc, the swept words and a timer every s
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" }), origin = new URL(fixture.gateway.url).origin;
-  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await readThrough(context, origin, id)); };
   async function step(stage: string) {
     const pending = join(fixture.root, "workspace", "next-stream-control.json"), target = join(fixture.root, "workspace", "stream-control.json");
     await writeFile(pending, JSON.stringify({ stage })); await rename(pending, target);
@@ -2042,7 +2043,7 @@ test("G054-FR4 a message written while a reply runs is sent once after a complet
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const origin = new URL(fixture.gateway.url).origin, composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await readThrough(context, origin, id)); };
   const step = async (stage: string) => { const pending = join(fixture.root, "workspace", "next-stream-control.json"); await writeFile(pending, JSON.stringify({ stage })); await rename(pending, join(fixture.root, "workspace", "stream-control.json")); };
   const held = page.locator(".queued-message"), notice = (text: string) => page.getByRole("status").filter({ hasText: text });
   const opened = () => new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session") !== null;
@@ -2686,7 +2687,7 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   };
   await page.goto(fixture.gateway.url);
   const origin = new URL(fixture.gateway.url).origin, composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await readThrough(context, origin, id)); };
   const step = async (stage: string) => { const pending = join(fixture.root, "workspace", "next-stream-control.json"); await writeFile(pending, JSON.stringify({ stage })); await rename(pending, join(fixture.root, "workspace", "stream-control.json")); };
   // The motions this page plays are logged as they start: the send key's glyph (#16, #17) and the plan bar's parts (#22).
   await page.evaluate(() => {
@@ -2758,7 +2759,7 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const origin = new URL(fixture.gateway.url).origin, composer = page.getByRole("textbox", { name: "发送消息", exact: true });
-  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await readThrough(context, origin, id)); };
   const search = page.getByRole("combobox", { name: "搜索 Harness", exact: true }), trigger = page.getByRole("button", { name: "选择 Harness", exact: true });
   // ⌘J: the Agent list with its search; composition never opens it.
   await composer.focus(); await composer.dispatchEvent("keydown", { key: "j", code: "KeyJ", metaKey: true, ctrlKey: true, isComposing: true, bubbles: true });
@@ -2993,7 +2994,7 @@ test("G054-DL2 the sidebar groups conversations by project with a state dot each
   const write = (path: string, data: unknown) => context.request.post(origin + path, { headers: { Origin: origin, "X-CSRF-Token": csrf }, data });
   const other = join(fixture.root, "second-project"); await mkdir(other);
   const created = await write("/api/v1/sessions", { workspace: other, selection: { harnessId: "codex", controlId: "codex-native" }, commandId: "dl2-create-running" }); assert.equal(created.status(), 201);
-  const running = String((await created.json()).id);
+  const running = String((await created.json()).head.id);
   assert.equal((await write("/api/v1/sessions/" + running + "/messages", { text: "等待取消 长任务", commandId: "dl2-send-running" })).status(), 202);
   // The page reads the state again when it comes back into view (ADR-050), and so learns of it.
   await page.evaluate(() => { window.dispatchEvent(new Event("focus")); });
@@ -3191,7 +3192,7 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   for (const name of ["first", "second"]) {
     const workspace = join(fixture.root, "wait-" + name); await mkdir(workspace);
     const created = await write("/api/v1/sessions", { workspace, selection: { harnessId: "native-acp", controlId: "native-acp" }, commandId: "dl9-create-" + name }); assert.equal(created.status(), 201);
-    const id = String((await created.json()).id); ids.push(id);
+    const id = String((await created.json()).head.id); ids.push(id);
     assert.equal((await write("/api/v1/sessions/" + id + "/messages", { text: "approve " + name, commandId: "dl9-send-" + name })).status(), 202);
     await expect(navigation.locator(".attention-count")).toHaveText(String(ids.length), { timeout: 15000 });
   }
@@ -3567,7 +3568,7 @@ test("G054-UP2 a conversation whose kept process an upgrade closed says so until
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), origin = new URL(fixture.gateway.url).origin;
-  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await readThrough(context, origin, id)); };
   const reply = async (text: string, count: number) => {
     await composer.fill(text); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
     await expect.poll(async () => { if (!new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session")) return null; const value = await current(); return value.runs.length === count && value.activeRunId === null && value.runs.at(-1).status; }, { timeout: 15000 }).toBe("completed");
@@ -5796,7 +5797,7 @@ test("G054-DL10 the home on first use and on return, a finished Turn with its st
   const context = await isolatedContext(browser, { viewport: DL10_SIZES[0] }), page = await context.newPage(), errors = dl10Errors(page);
   await page.goto(fixture.gateway.url);
   const origin = new URL(fixture.gateway.url).origin, composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
-  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await readThrough(context, origin, id)); };
   const pick = async (name: string) => { await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name, exact: true }).click(); };
   const greeting = page.getByRole("heading", { name: "今天想让哪个 Harness 做什么？", exact: true }), navigation = page.getByRole("complementary", { name: "主导航" });
   // H06: the first time, the home walks through its three steps.
@@ -5930,7 +5931,7 @@ test("G054-DL10 with reduced motion a Turn, the palette, the details, an Agent's
   await page.goto(fixture.gateway.url);
   const origin = new URL(fixture.gateway.url).origin, composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
   const navigation = page.getByRole("complementary", { name: "主导航" }), go = (name: string) => navigation.getByRole("button", { name, exact: true }).click();
-  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await readThrough(context, origin, id)); };
   await expect(page.getByRole("heading", { name: "今天想让哪个 Harness 做什么？", exact: true })).toBeVisible();
   await dl10Still(page, "the home as it opens");
   // The palette: opened with the pointer it fades in (so the record is known to catch a fade) and fades out when the scrim beside it is

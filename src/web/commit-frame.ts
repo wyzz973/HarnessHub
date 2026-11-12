@@ -37,6 +37,8 @@ export interface FrameViews {
 }
 
 const TEXT_REQUIRED: ReadonlySet<string> = new Set(["reasoning", "notice"]);
+/** A notice's label is `native.title` and not its first chunk: the title of a retry or a review told as an activity may change while it runs, and a chunk is never changed (turn-view.ts `item`). */
+const labelOf = (row: ItemRow): string | undefined => row.type === "notice" ? row.fields.native?.title : undefined;
 const utf8 = (text: string): number => Buffer.byteLength(text, "utf8");
 
 /**
@@ -71,13 +73,14 @@ export function commitFrame(changes: Mutation, head: SessionHeadView, views: Fra
   const key = (runId: string, seq: number): string => runId + "\u0000" + seq;
 
   // Items that are new or changed. An item whose JSON is longer than a frame carries goes without it, and so does every item once the frame already holds a window's worth.
-  const upserts: WireItemUpsert[] = [], position = new Map<string, number>(), rows = new Map<string, ItemRow>();
+  const upserts: WireItemUpsert[] = [], position = new Map<string, number>(), rows = new Map<string, ItemRow>(), labeled = new Set<string>();
   let held = 0;
   for (const write of changes.items ?? []) {
-    const row = write.row, size = utf8(JSON.stringify(row.fields)), long = size > PAGE.itemInlineBytes || held >= PAGE.windowBytes;
+    const row = write.row, size = utf8(JSON.stringify(row.fields)), long = size > PAGE.itemInlineBytes || held >= PAGE.windowBytes, label = long ? undefined : labelOf(row);
     if (!long) held += size;
     position.set(key(row.runId, row.seq), upserts.length); rows.set(key(row.runId, row.seq), row);
-    upserts.push({ runId: row.runId, item: wireItem(row, long ? { stub: true, bodyOmitted: true, ...(row.textBytes > 0 ? { textBytes: row.textBytes } : {}) } : {}) });
+    if (label !== undefined) labeled.add(key(row.runId, row.seq));
+    upserts.push({ runId: row.runId, item: wireItem(row, long ? { stub: true, bodyOmitted: true, ...(row.textBytes > 0 ? { textBytes: row.textBytes } : {}) } : label !== undefined ? { text: label } : {}) });
   }
 
   // Text appended: each chunk where it starts, up to the first one longer than a frame carries; from there the item says it left text out.
@@ -85,6 +88,8 @@ export function commitFrame(changes: Mutation, head: SessionHeadView, views: Fra
   for (const append of changes.text ?? []) {
     if (append.byteOffset === undefined) throw new SessionError("INVALID_DATA", "a chunk of text is framed from the commit as it was written, which has its offset");
     const id = key(append.runId, append.itemSeq), size = utf8(append.text), omitting = left.get(id);
+    // The words of a notice are its label, which the item carries whole.
+    if (labeled.has(id)) continue;
     if (omitting === undefined && size <= PAGE.itemInlineBytes && held < PAGE.windowBytes) { held += size; texts.push({ runId: append.runId, itemSeq: append.itemSeq, from: append.byteOffset, text: append.text }); continue; }
     if (omitting === undefined) left.set(id, { runId: append.runId, itemSeq: append.itemSeq, from: append.byteOffset, bytes: size });
     else omitting.bytes += size;

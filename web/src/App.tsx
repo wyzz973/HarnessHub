@@ -6,11 +6,15 @@ import type { TurnStatus } from "../../src/contracts/protocol.js";
 import type { AttentionItem, PublicRun, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import { parseProviderTarget } from "../../src/contracts/provider.js";
-import { conversationTitle, type AttentionFrame, type HarnessView, type InstallationView, type SessionView, type WebState } from "../../src/contracts/web.js";
+import type { AttentionFrame, HarnessView, InstallationView, SessionSummary, WebState } from "../../src/contracts/web.js";
 import type { NativeModelCatalog } from "../../src/contracts/control.js";
 import type { InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import { parseNativeOptions, sessionId as validateSessionId } from "../../src/contracts/session.js";
-import { applySessionStreamFrame } from "./session-stream.js";
+import { applyStreamFrame } from "./session-stream.js";
+import { conversationOf, type ConversationView } from "./lib/conversation.js";
+import { fillDeferred, fillItem, fillText, incomplete, prependOlder, replaceWithSnapshot, type Incomplete, type WindowState } from "./lib/protocol/window.js";
+import type { ClientSessionView } from "./lib/protocol/wire.js";
+import type { TurnReads } from "./components/ProtocolTurn.js";
 import { liveItems, notifyWaiting } from "./attention.js";
 import { ApiError, errorMessage, GatewayApi, requestKey } from "./api.js";
 import { ChatPage, effectiveProviderProblem, EMPTY_SELECTION, selectionDraft, selectionProblem, selectionRequest } from "./components/ChatPage.js";
@@ -144,6 +148,8 @@ interface PendingProviderWrite { input: ProviderWriteInput; key: string; current
  * for another (ADR-050). Nothing scans on a timer, and a page that keeps gaining focus scans at most once in this time.
  */
 const RETURN_SCAN_MS = 60_000;
+/** The sizes the page reads a long text in. A text left to read this much of or less is read at once; longer ones by the page, when the reader asks. Page sizes, not limits on what a reply may be. */
+const TEXT_RANGE_BYTES = 256 * 1024, AUTO_READ_BYTES = 1024 * 1024, MORE_READ_BYTES = 1024 * 1024;
 /** While a management task runs, how often the page reads the Gateway's state, which scans nothing, and how often when hidden. */
 const TASK_READ_MS = 800, HIDDEN_TASK_READ_MS = 10_000;
 /**
@@ -211,7 +217,7 @@ export function App() {
   const openFromNotice = useRef<(id: string) => void>(() => {});
   // Sees the open conversation's views as its stream delivers them, so a Turn that ends while the page is hidden is
   // announced at once: the page's own render waits for an animation frame, which a hidden page does not get.
-  const watchTurn = useRef<(view: SessionView) => void>(() => {});
+  const watchTurn = useRef<(view: ConversationView) => void>(() => {});
   const acceptAttention = useCallback((frame: AttentionFrame) => {
     setAttention(current => current !== null && current.revision > frame.revision ? current : frame);
     const names = new Map((liveState.current?.harnesses ?? []).map(harness => [harness.id, harness.name]));
@@ -244,7 +250,9 @@ export function App() {
   const [queued, setQueued] = useState<QueuedMessage | null>(null);
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(initialRoute.id);
-  const [session, setSession] = useState<SessionView | null>(null);
+  // The part of the open conversation this page holds: its head and the Turns from the newest back as far as the reader has gone (lib/protocol/window.ts).
+  const [held, setHeld] = useState<WindowState | null>(null);
+  const session = useMemo(() => held === null ? null : conversationOf(held), [held]);
   const [sessionLoading, setSessionLoading] = useState(initialRoute.id !== null);
   const [sessionError, setSessionError] = useState<string | null>(initialRoute.error);
   const [chatKey, setChatKey] = useState(0);
@@ -289,7 +297,9 @@ export function App() {
   const viewGeneration = useRef(0);
   const liveState = useRef<WebState | null>(null); liveState.current = state;
   const sessionIdRef = useRef<string | null>(initialRoute.id);
-  const liveSession = useRef<SessionView | null>(null);
+  const liveWindow = useRef<WindowState | null>(null);
+  /** The conversation as the stream and the reads have left it, which the state follows on the next animation frame. */
+  const liveView = (): ConversationView | null => liveWindow.current === null ? null : conversationOf(liveWindow.current);
   const operation = useRef(false);
   const pendingMessage = useRef<PendingMessage | null>(null);
   // A new conversation's choice to keep its native process, applied when its first message creates it.
@@ -303,12 +313,30 @@ export function App() {
   const observedVersion = useRef<{ id: string; version: number } | null>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  // The conversations listed after the state's first page, which the reader scrolled to: a new reading of the state keeps them, and the cursor of the page after them.
+  const listed = useRef<{ extra: readonly SessionSummary[]; next: string | null | undefined }>({ extra: [], next: undefined });
+  const withListed = (value: WebState): WebState => listed.current.next === undefined ? value
+    : { ...value, sessions: [...value.sessions, ...listed.current.extra.filter(row => !value.sessions.some(first => first.id === row.id))], sessionsNext: listed.current.next };
   /** Reads the Gateway's state, which scans nothing (ADR-050), and keeps it unless this page changed something meanwhile. */
   const readState = useCallback(async (signal?: AbortSignal): Promise<WebState | null> => {
     const generation = viewGeneration.current;
     const value = await api.state(signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000));
     if (!mounted.current || generation !== viewGeneration.current) return null;
-    setState(value); return value;
+    const shown = withListed(value);
+    setState(shown); return shown;
+  }, [api]);
+  /** The next page of conversations, when the list is scrolled to its end. */
+  const loadingSessions = useRef(false);
+  const loadMoreSessions = useCallback(async (): Promise<void> => {
+    const cursor = liveState.current?.sessionsNext;
+    if (cursor === undefined || cursor === null || loadingSessions.current) return;
+    loadingSessions.current = true;
+    try {
+      const page = await api.sessions(cursor);
+      listed.current = { extra: [...listed.current.extra, ...page.sessions], next: page.next };
+      setState(current => current ? { ...current, sessions: [...current.sessions, ...page.sessions.filter(row => !current.sessions.some(known => known.id === row.id))], sessionsNext: page.next } : current);
+    } catch (failure: unknown) { if (mounted.current) setError(errorMessage(failure)); }
+    finally { loadingSessions.current = false; }
   }, [api]);
   /** Asks the Gateway to scan this computer's Harnesses again; with `after`, for a scan that began after that time. */
   const scanHarnesses = useCallback(async (signal?: AbortSignal, after?: string): Promise<void> => {
@@ -347,24 +375,27 @@ export function App() {
   }, [api, bootAttempt]);
 
   const refreshState = useCallback(async () => { await readState(); }, [readState]);
-  const acceptSession = useCallback((value: SessionView) => {
+  /**
+   * The conversation the page holds is `liveWindow`, which the stream, the reads and the fetches of what a window left out all move; the state follows it on the next animation
+   * frame, so that a reply that streams word by word draws once for each frame and not once for each word.
+   */
+  const acceptWindow = useCallback((next: WindowState) => {
+    const value = conversationOf(next);
     if (!mounted.current || sessionIdRef.current !== value.id) return;
-    const live = liveSession.current;
-    if (live?.id === value.id && (live.version > value.version || live.lastSeq > value.lastSeq)) return;
-    liveSession.current = value;
+    liveWindow.current = next;
     if (observedVersion.current?.id === value.id && observedVersion.current.version > value.version) return;
     observedVersion.current = { id: value.id, version: value.version };
-    setSession(current => current && current.id === value.id && current.version > value.version ? current : value);
+    setHeld(current => current && current.head.id === value.id && current.head.version > value.version ? current : next);
     setSessionLoading(false);
     const intent = pendingSwitchWrite.current;
-    if (intent?.sessionId === value.id && value.switches.some(item => item.commandId === intent.key)) pendingSwitchWrite.current = null;
+    if (intent?.sessionId === value.id && value.lastSwitch?.commandId === intent.key) pendingSwitchWrite.current = null;
     const key = `${value.id}:${value.epoch}`;
     if (observedSelection.current !== key) {
       observedSelection.current = key;
       const saved = chatDrafts.current.get(value.id);
       const wish = selectionWish.current;
       const restored = wish?.id === value.id ? wish.draft : saved?.epoch === value.epoch ? saved.selection : selectionDraft(value.selection);
-      const latest = value.switches.at(-1);
+      const latest = value.lastSwitch;
       if (saved && latest?.status === "failed" && JSON.stringify(selectionRequest(restored)) === JSON.stringify(latest.requested))
         lastAutoSelection.current = JSON.stringify({ id: value.id, selection: latest.requested });
       if (wish?.id === value.id) {
@@ -376,21 +407,29 @@ export function App() {
     setState(current => {
       if (!current) return current;
       // Titled as the Gateway titles it: nothing reads the state again to correct it (ADR-050).
-      const summary = { id: value.id, title: conversationTitle(value),
+      const summary = { id: value.id, title: value.title,
         status: value.status, workspace: value.workspace, selection: value.selection, updatedSeq: value.lastSeq, activeRunId: value.activeRunId };
       return { ...current, sessions: current.sessions.some(item => item.id === value.id)
-        ? current.sessions.map(item => item.id === value.id ? summary : item) : [summary, ...current.sessions].slice(0, 1000) };
+        ? current.sessions.map(item => item.id === value.id ? summary : item) : [summary, ...current.sessions] };
     });
   }, []);
+  /** A read of the conversation (a reply to a request, or the first one) joins what the page holds: a read older than it is not used, and the Turns the reader went back to stay. */
+  const acceptSession = useCallback((view: ClientSessionView) => {
+    if (!mounted.current || sessionIdRef.current !== view.head.id) return;
+    acceptWindow(replaceWithSnapshot(liveWindow.current?.head.id === view.head.id ? liveWindow.current : null, view));
+  }, [acceptWindow]);
+  const frameRequest = useRef<number | null>(null);
+  const showLive = useCallback(() => { frameRequest.current = null; const next = liveWindow.current; if (next !== null) acceptWindow(next); }, [acceptWindow]);
+  /** The conversation moved on (a frame, a fetched page of words): it is shown at the next animation frame. */
+  const moveLive = useCallback((next: WindowState) => {
+    liveWindow.current = next;
+    if (frameRequest.current === null) frameRequest.current = requestAnimationFrame(showLive);
+  }, [showLive]);
+  useEffect(() => () => { if (frameRequest.current !== null) cancelAnimationFrame(frameRequest.current); frameRequest.current = null; }, []);
   useEffect(() => {
     if (!sessionId || !state) return;
-    let stopped = false, failures = 0, animation: number | null = null, pending: SessionView | null = null;
+    let stopped = false, failures = 0, resyncs = 0;
     const controller = new AbortController();
-    const flush = () => { animation = null; const value = pending; pending = null; if (!stopped && sessionIdRef.current === sessionId && value) acceptSession(value); };
-    const stage = (value: SessionView) => {
-      liveSession.current = value; pending = value;
-      if (animation === null) animation = requestAnimationFrame(flush);
-    };
     const wait = (ms: number): Promise<void> => new Promise(resolve => {
       const finish = () => { clearTimeout(timer); controller.signal.removeEventListener("abort", finish); resolve(); };
       const timer = setTimeout(finish, ms); controller.signal.addEventListener("abort", finish, { once: true });
@@ -399,14 +438,17 @@ export function App() {
     void (async () => {
       while (!stopped) {
         try {
-          const current = liveSession.current, started = performance.now();
-          await api.streamSession(sessionId, current?.id === sessionId ? current.lastSeq : 0, controller.signal, frame => {
+          const current = liveWindow.current, started = performance.now();
+          await api.streamSession(sessionId, current?.head.id === sessionId ? current.head.lastSeq : 0, controller.signal, frame => {
             if (stopped || sessionIdRef.current !== sessionId) return;
-            const base = liveSession.current?.id === sessionId ? liveSession.current : null;
-            // A notice that the relay changed says to read the relay again; it carries no facts, so what follows leaves the Session as it is.
+            const base = liveWindow.current?.head.id === sessionId ? liveWindow.current : null;
+            // A notice that the relay changed says to read the relay again; it carries no facts, so what follows leaves the conversation as it is.
             if (frame.type === "relay") { setRelayPushed(value => value + 1); learnRelay(); }
-            const next = applySessionStreamFrame(base, frame, sessionId);
-            setConnectionError(null); stage(next); watchTurn.current(next);
+            const step = applyStreamFrame(base, frame, sessionId);
+            // A commit the page cannot place (one missing before it, words that do not begin where the held ones end): the connection ends and the next one begins with the conversation.
+            if (step.kind === "resync") throw new ApiError("STREAM_RESYNC", step.reason);
+            if (frame.type === "commit") resyncs = 0;
+            setConnectionError(null); moveLive(step.state); if (frame.type !== "relay") watchTurn.current(conversationOf(step.state));
           }, frame => { if (!stopped) acceptAttention(frame); }, () => { if (!stopped) { setRelayPushed(value => value + 1); learnRelay(); } });
           if (!stopped) {
             if (performance.now() - started < 45_000) throw new ApiError("STREAM_EARLY_EOF", "实时连接提前结束。");
@@ -414,6 +456,7 @@ export function App() {
           }
         } catch (failure: unknown) {
           if (stopped || sessionIdRef.current !== sessionId) return;
+          if (failure instanceof ApiError && failure.code === "STREAM_RESYNC" && resyncs++ < 3) continue;
           if (failure instanceof ApiError && failure.code.includes("NOT_FOUND")) {
             setSessionError(errorMessage(failure)); setSessionLoading(false); setConnectionError(null); return;
           }
@@ -425,8 +468,60 @@ export function App() {
         }
       }
     })();
-    return () => { stopped = true; controller.abort(); if (animation !== null) cancelAnimationFrame(animation); pending = null; };
-  }, [api, sessionId, state !== null, streamAttempt, acceptSession, acceptAttention]);
+    return () => { stopped = true; controller.abort(); };
+  }, [api, sessionId, state !== null, streamAttempt, acceptWindow, moveLive, acceptAttention]);
+  /**
+   * What a window left out is read when it is shown (ADR-057 3.4): the Turns before the held ones one page at a time as the reader goes up, the words of a text too long for a frame by
+   * byte range, an item whose body was too large to send, and the middle of a long stretch of work. A text that is left to read a little of is read at once; a long one by the page, when the reader asks.
+   */
+  const reading = useRef(new Set<string>());
+  const readOlder = useCallback(async (): Promise<void> => {
+    const state = liveWindow.current, key = "older";
+    if (state === null || state.older === null || reading.current.has(key)) return;
+    reading.current.add(key);
+    try {
+      const page = await api.turns(state.head.id, state.older);
+      const now = liveWindow.current;
+      if (now !== null && now.head.id === state.head.id) moveLive(prependOlder(now, page));
+    } catch (failure: unknown) { if (mounted.current) setError(errorMessage(failure)); }
+    finally { reading.current.delete(key); }
+  }, [api, moveLive]);
+  const readMore = useCallback(async (need: Incomplete, bytes = TEXT_RANGE_BYTES): Promise<void> => {
+    const id = liveWindow.current?.head.id, key = need.runId + "/" + need.seq + "/" + need.kind;
+    if (id === undefined || reading.current.has(key)) return;
+    reading.current.add(key);
+    try {
+      const apply = (change: (state: WindowState) => WindowState) => { const now = liveWindow.current; if (now !== null && now.head.id === id) moveLive(change(now)); };
+      if (need.kind === "item") { const read = await api.item(id, need.ordinal, need.seq); apply(now => fillItem(now, need.runId, read.item)); }
+      else { const range = await api.itemText(id, need.ordinal, need.seq, need.from, Math.min(need.total, need.from + bytes)); apply(now => fillText(now, { runId: need.runId, seq: need.seq }, range)); }
+    } catch (failure: unknown) { if (mounted.current && liveWindow.current?.head.id === id) setError(errorMessage(failure)); }
+    finally { reading.current.delete(key); }
+  }, [api, moveLive]);
+  const expandWork = useCallback(async (ordinal: number): Promise<void> => {
+    const id = liveWindow.current?.head.id, key = "work/" + ordinal;
+    if (id === undefined || reading.current.has(key)) return;
+    reading.current.add(key);
+    try {
+      for (;;) {
+        const now = liveWindow.current, gap = now?.turns.find(turn => turn.run.ordinal === ordinal)?.deferred;
+        if (now === null || now.head.id !== id || gap === undefined) break;
+        const page = await api.runItems(id, ordinal, gap.fromSeq - 1);
+        const after = liveWindow.current;
+        if (after === null || after.head.id !== id) break;
+        const next = fillDeferred(after, ordinal, page);
+        moveLive(next);
+        if (next === after || page.next === null || page.next > gap.toSeq) break;
+      }
+    } catch (failure: unknown) { if (mounted.current && liveWindow.current?.head.id === id) setError(errorMessage(failure)); }
+    finally { reading.current.delete(key); }
+  }, [api, moveLive]);
+  // The words and bodies a window left out are read as soon as they are held in part and not long: the reader sees a reply whole that was only a little past a frame.
+  useEffect(() => {
+    if (held === null) return;
+    for (const need of incomplete(held)) if (need.kind === "item" || need.total - need.from <= AUTO_READ_BYTES) void readMore(need);
+  }, [held, readMore]);
+  const turnReads = useMemo<TurnReads>(() => ({ more: (runId, seq) => { const need = liveWindow.current === null ? undefined : incomplete(liveWindow.current).find(row => row.runId === runId && row.seq === seq); if (need !== undefined) void readMore(need, MORE_READ_BYTES); },
+    expand: ordinal => { void expandWork(ordinal); } }), [readMore, expandWork]);
   // This computer's Harnesses are read on demand, never on a timer (ADR-050). While a management task runs the page follows
   // it by reading the state; otherwise it sends nothing until it is opened again, comes back into view, or the user asks.
   const tasksRunning = state?.jobs.some(installationActive) ?? false;
@@ -549,9 +644,9 @@ export function App() {
   const newChat = () => leave(() => {
     selectionWish.current = null; lastAutoSelection.current = null;
     saveChatDraft(); const saved = chatDrafts.current.get("new"); pendingSwitchWrite.current = saved?.selectionIntent ?? null;
-    sessionIdRef.current = null; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(false);
+    sessionIdRef.current = null; liveWindow.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(false);
     pendingMessage.current = saved?.messageIntent ?? null; setQueued(null); setQueueNotice(null);
-    writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null); setDraft(saved?.selection ?? { ...EMPTY_SELECTION }); setMessageDraft(saved?.message ?? ""); setAttachments(draftAttachments(saved?.attachments)); setChatKey(value => value + 1);
+    writeSessionRoute(null); setSessionId(null); setHeld(null); setSessionLoading(false); setSessionError(null); setDraft(saved?.selection ?? { ...EMPTY_SELECTION }); setMessageDraft(saved?.message ?? ""); setAttachments(draftAttachments(saved?.attachments)); setChatKey(value => value + 1);
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
   /**
@@ -567,9 +662,9 @@ export function App() {
       if (saved) chatDrafts.current.set(id, saved);
       setQueued(null); setQueueNotice(restored ? "离开对话时暂存的消息已放回输入框，没有发出。" : null);
       selectionWish.current = saved ? { id, draft: saved.selection } : null; lastAutoSelection.current = null;
-      sessionIdRef.current = id; liveSession.current = null; observedSelection.current = "";
+      sessionIdRef.current = id; liveWindow.current = null; observedSelection.current = "";
       pendingMessage.current = saved?.messageIntent ?? null; pendingSwitchWrite.current = saved?.selectionIntent ?? null;
-      writeSessionRoute(id); setSessionId(id); setSession(null); setSessionLoading(true); setSessionError(null);
+      writeSessionRoute(id); setSessionId(id); setHeld(null); setSessionLoading(true); setSessionError(null);
       setMessageDraft(saved?.message ?? ""); setAttachments(draftAttachments(saved?.attachments)); if (saved) setDraft(saved.selection); setChatKey(value => value + 1);
     }
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
@@ -579,9 +674,9 @@ export function App() {
     selectionWish.current = null; lastAutoSelection.current = null;
     const control = harness.controls.find(row => row.id === harness.defaultControlId && row.available) ?? harness.controls.find(row => row.available); if (!control) return;
     saveChatDraft(); pendingSwitchWrite.current = null; setQueued(null); setQueueNotice(null);
-    sessionIdRef.current = null; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(false);
+    sessionIdRef.current = null; liveWindow.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(false);
     const remembered = rememberedChoice(harness.id), entry = remembered && harness.controls.some(row => row.id === remembered.controlId && row.available) ? remembered : null;
-    writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null);
+    writeSessionRoute(null); setSessionId(null); setHeld(null); setSessionLoading(false); setSessionError(null);
     setDraft({ ...EMPTY_SELECTION, harnessId: harness.id, controlId: entry?.controlId ?? control.id, model: entry?.nativeModel ?? "", nativeOptions: entry?.nativeOptions ?? {} }); setMessageDraft(""); setAttachments([]);
     setChatKey(value => value + 1); setPage("chat"); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
@@ -672,7 +767,7 @@ export function App() {
       let id = request.sessionId;
       if (id === null) {
         const created = await api.createSession(workspace, selectionRequest(draft), request.createKey);
-        id = created.id; request.sessionId = id; chatDrafts.current.delete("new");
+        id = created.head.id; request.sessionId = id; chatDrafts.current.delete("new");
         try { sessionStorage.removeItem(draftStorageKey(state.workspace, "new")); } catch { /* The owned in-memory draft remains available. */ }
         sessionIdRef.current = id; writeSessionRoute(id); setSessionId(id); acceptSession(created);
       }
@@ -689,7 +784,7 @@ export function App() {
         if (mounted.current && sessionIdRef.current === id) setConnectionError("消息已接收，正在恢复实时回复连接。历史和草稿已保留。");
       });
     } catch (failure: unknown) {
-      const pending = pendingMessage.current, live = liveSession.current;
+      const pending = pendingMessage.current, live = liveView();
       if (failure instanceof ApiError && ["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT"].includes(failure.code) && pending !== null && live !== null && pending.sessionId === live.id &&
           live.runs.some(run => run.commandId === pending.sendKey && run.input === pending.text)) {
         pendingMessage.current = null; setError(null); return;
@@ -705,7 +800,7 @@ export function App() {
    * selection change waits; otherwise it goes back into the composer unsent. Only this tab sends it.
    */
   const queueMessage = () => {
-    const live = liveSession.current, run = live?.runs.find(item => item.id === live.activeRunId);
+    const live = liveView(), run = live?.runs.find(item => item.id === live.activeRunId);
     if (!live || !run || queued !== null || !messageDraft.trim() || attachments.some(item => item.status !== "ready")) return;
     setQueued({ text: messageDraft, attachments: readyAttachments(attachments), afterRunId: run.id, selection: JSON.stringify(selectionDraft(live.selection)) });
     setMessageDraft(""); setAttachments([]); setQueueNotice(null);
@@ -772,21 +867,21 @@ export function App() {
   const importNative = (nativeId: string) => {
     if (!startOperation("importing")) return;
     const target = { harnessId: draft.harnessId, controlId: draft.controlId };
-    void api.importNativeSession(session?.workspace ?? workspace, target, nativeId, requestKey()).then(async created => { await refreshState().catch(() => {}); endOperation(); openFromPage(created.id); },
+    void api.importNativeSession(session?.workspace ?? workspace, target, nativeId, requestKey()).then(async created => { await refreshState().catch(() => {}); endOperation(); openFromPage(created.head.id); },
       failure => { setError(errorMessage(failure)); endOperation(); });
   };
   /** Creates the branch, then opens it; the new conversation keeps the same Harness selection. */
   const branch = (runId: string) => {
     if (!sessionId || !startOperation("branching")) return;
     // Navigation waits for the operation to end; leaving a chat is refused while an operation is in flight.
-    void api.forkSession(sessionId, requestKey(), runId).then(async created => { await refreshState().catch(() => {}); endOperation(); openFromPage(created.id); }, failure => { setError(errorMessage(failure)); endOperation(); });
+    void api.forkSession(sessionId, requestKey(), runId).then(async created => { await refreshState().catch(() => {}); endOperation(); openFromPage(created.head.id); }, failure => { setError(errorMessage(failure)); endOperation(); });
   };
   const applySelection = async () => {
     if (!sessionId || !startOperation("switching")) return;
     let submittedKey: string | null = null;
     try {
       const target = selectionRequest(draft), previous = pendingSwitchWrite.current;
-      const recovery = session?.status === "blocked", acknowledgeUnknown = recovery && session.runs.some(run => run.status === "unknown");
+      const recovery = session?.status === "blocked", acknowledgeUnknown = recovery && session.facts.unknown.count > 0;
       const request = previous?.sessionId === sessionId ? previous : { sessionId, selection: target, key: requestKey(), recovery, acknowledgeUnknown };
       pendingSwitchWrite.current = request; submittedKey = request.key;
       lastAutoSelection.current = JSON.stringify({ id: sessionId, selection: request.selection });
@@ -797,8 +892,8 @@ export function App() {
       acceptSession(await api.session(sessionId, AbortSignal.timeout(15_000)));
     }
     catch (failure: unknown) {
-      if (failure instanceof ApiError && ["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT"].includes(failure.code) && liveSession.current?.id === sessionId &&
-          liveSession.current.switches.some(item => item.commandId === submittedKey)) {
+      if (failure instanceof ApiError && ["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT"].includes(failure.code) && liveWindow.current?.head.id === sessionId &&
+          liveWindow.current.head.lastSwitch?.commandId === submittedKey) {
         pendingSwitchWrite.current = null; setError(null); return;
       }
       if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT", "UNCONFIRMED_REQUEST"].includes(failure.code)) pendingSwitchWrite.current = null;
@@ -958,7 +1053,7 @@ export function App() {
   // failed or cancelled by the Runtime silently (ruling K), an unknown result with the sound; one the user stopped is not.
   // Each Turn once. Without notifications chosen, the first such Turn leads to one offer when the page is back.
   const hiddenSince = useRef<number | null>(document.visibilityState === "hidden" ? Date.now() : null), announced = useRef(new Set<string>()), offerNotifications = useRef<TurnStatus | null>(null);
-  watchTurn.current = (view: SessionView) => {
+  watchTurn.current = (view: ConversationView) => {
     const run: PublicRun | undefined = view.runs.at(-1), turn = run?.protocol, ended = turn === undefined ? undefined : endedAt(turn), since = hiddenSince.current;
     if (!run || turn === undefined || since === null || document.visibilityState !== "hidden" || !over(turn) || userStopped(run) || ended === undefined || ended < since || announced.current.has(run.id)) return;
     announced.current.add(run.id);
@@ -1043,7 +1138,7 @@ export function App() {
   const sidebar = <Sidebar providerManagement={state.providerManagement !== false} page={shown} sessions={state.sessions} harnesses={state.harnesses} currentId={sessionId}
     interactionBusy={mutation !== null} activeJobs={state.jobs.filter(installationActive).length} updates={state.harnesses.filter(harness => !hidden.has(harness.id) && hasUpdate(harness)).length}
     failed={failed} connected={connectionError === null && managementConnectionError === null && !attentionDown} inbox={inbox} inboxOpen={inboxOpen && !narrow} onInboxOpenChange={setInboxOpen}
-    onCollapse={() => showSidebar(false)} {...(narrow ? { onClose: () => setSidebarOpen(false), onInbox: openInbox } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => openLayer(() => setPalette(true))}/>;
+    more={state.sessionsNext != null} onMore={() => void loadMoreSessions()} onCollapse={() => showSidebar(false)} {...(narrow ? { onClose: () => setSidebarOpen(false), onInbox: openInbox } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => openLayer(() => setPalette(true))}/>;
   const shell = { onMenu: () => setSidebarOpen(value => !value), sidebarHidden: !preferences.sidebar, onExpandSidebar: () => showSidebar(true), onChat: () => navigate("chat") };
   return <TipProvider delay={500}><div className="app-shell flex h-dvh overflow-hidden bg-app text-fg" data-page={shown}>
     <WaitingTitle items={attentionItems}/>
@@ -1061,7 +1156,7 @@ export function App() {
           catch(failure){ setError(errorMessage(failure)); } }} onPermission={(permission,option,input)=>{ if(!sessionId||!startOperation("permission"))return; void api.decidePermission(sessionId,permission,option,requestKey(),input).then(()=>api.session(sessionId)).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={refreshNativeModels} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft}
         messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} hiddenHarnesses={hidden} readiness={state.readiness} rememberedChoice={rememberedChoice} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError}
-        onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onOpenSession={openFromPage}
+        onRetryConnection={() => setStreamAttempt(value => value + 1)} onLoadOlder={readOlder} reads={turnReads} {...(sessionId === null ? {} : { onLoadChanges: (before: string | undefined, signal: AbortSignal) => api.changes(sessionId, before, undefined, signal) })} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onOpenSession={openFromPage}
         sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued} onLoadNativeResume={session ? signal => api.nativeResume(session.id, signal) : undefined}
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
         onImportNative={importNative} focusOnOpen={sessionId !== null && openedFromPage === sessionId} onOpenFocused={() => setOpenedFromPage(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}

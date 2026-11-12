@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { SessionView } from "../../../src/contracts/web.js";
+import type { ConversationView } from "./conversation.js";
 import type { RelayApi, RelayPrefs, RelayView } from "../relay.js";
 import { relaySignature } from "./relay-state.js";
 
@@ -38,11 +38,11 @@ export function useRelayPresence(): { readonly known: boolean; readonly learn: (
  * conversation is in now: between a Turn ending and its read coming back the view is the one of before the Turn, good for the lines
  * where earlier Turns were handed over and wrong about what is owed and asked now, so what the line above the box says waits for it.
  */
-export function useRelayView(api: RelayApi, session: SessionView | null, pushed: number, known: boolean, gone: () => void): { readonly view: RelayView | null; readonly fresh: boolean } {
+export function useRelayView(api: RelayApi, session: ConversationView | null, pushed: number, known: boolean, gone: () => void): { readonly view: RelayView | null; readonly fresh: boolean } {
   const [read, setRead] = useState<{ readonly sessionId: string; readonly view: RelayView | null; readonly signature: string } | null>(null);
-  const id = session?.id ?? null, turns = session?.runs.length ?? 0;
+  const id = session?.id ?? null, turns = session?.runCount ?? 0;
   // What the view depends on is worked out when the conversation's Turns, selection or state change, not on every frame of a reply.
-  const signature = useMemo(() => relaySignature(session), [session?.id, session?.runs, session?.selection, session?.status, session?.pendingSwitchId]);
+  const signature = useMemo(() => relaySignature(session), [session?.id, session?.runs, session?.runCount, session?.selection, session?.status, session?.pendingSwitchId]);
   useEffect(() => {
     if (!known || id === null || turns === 0) return;
     const controller = new AbortController();

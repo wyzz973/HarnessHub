@@ -11,6 +11,14 @@ import type { PublicMessage } from "../../../../src/contracts/session.js";
  */
 
 export function isWork(item: ReadItem): item is WorkItem { return (WORK_TYPES as readonly string[]).includes(item.type); }
+/**
+ * Where a window left out the middle of a long stretch of work (a Turn of thousands of actions holds its first and last few): a row of that stretch that says how many items it stands for
+ * and reads them when asked. It is made by `assemble` and is no item of the conversation; it counts as no action.
+ */
+export const GAP_ID = "hh:gap", GAP_TYPE = "gap";
+export interface GapRow { readonly id: typeof GAP_ID; readonly seq: number; readonly type: typeof GAP_TYPE; readonly count: number; readonly fromSeq: number; readonly toSeq: number; readonly ordinal: number }
+export function gapOf(item: { readonly type: string }): GapRow | undefined { return item.type === GAP_TYPE ? item as unknown as GapRow : undefined; }
+export const isGap = (item: { readonly type: string }): boolean => item.type === GAP_TYPE;
 /** The turn's states that are over: an action not ended by then will not end. */
 const OVER: ReadonlySet<string> = new Set(["completed", "failed", "cancelled", "unknown"]);
 export function turnOver(turn: Pick<ReadTurn, "status">): boolean { return OVER.has(turn.status); }
@@ -271,7 +279,7 @@ const ELSEWHERE: ReadonlySet<string> = new Set(["plan"]);
  * with them.
  */
 export function lay(items: readonly ReadItem[]): readonly Block[] {
-  const top = items.filter(item => !ELSEWHERE.has(item.type)), blocks: Block[] = [], stands = (item: ReadItem) => isWork(item) || item.type === "reasoning";
+  const top = items.filter(item => !ELSEWHERE.has(item.type)), blocks: Block[] = [], stands = (item: ReadItem) => isWork(item) || item.type === "reasoning" || isGap(item);
   for (let at = 0; at < top.length;) {
     if (!stands(top[at]!)) { blocks.push({ kind: "item", item: top[at]! }); at++; continue; }
     let end = at;

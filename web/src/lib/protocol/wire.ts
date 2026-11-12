@@ -7,7 +7,7 @@ import type { ReadItem } from "../../../../src/contracts/protocol-read.js";
 import type { DeferredWork, TextRange } from "../../../../src/contracts/conversation.js";
 import type { HarnessSelection, NativeConfiguration, PublicSwitch, RunStatus, SelectionRequest } from "../../../../src/contracts/session.js";
 import type {
-  NativeStateView, RelayStreamFrame, SessionHeadView, SessionSummary, SessionView, WireRun, WireTurnHeader, WireTextAppend,
+  NativeStateView, RelayStreamFrame, SessionFacts, SessionHeadView, SessionSummary, SessionView, WireRun, WireTurnHeader, WireTextAppend,
 } from "../../../../src/contracts/web.js";
 import { decodeRelayStreamEvent, decodeRunRelay } from "../../relay.js";
 
@@ -26,7 +26,8 @@ import { decodeRelayStreamEvent, decodeRunRelay } from "../../relay.js";
 
 /** The wire was not what the contract says. */
 export class WireError extends Error {
-  constructor(message: string) { super(message); this.name = "WireError"; }
+  /** `told`: the message is a sentence for the reader as it is (a protocol version this page does not read), not a place in the data. */
+  constructor(message: string, readonly told = false) { super(message); this.name = "WireError"; }
 }
 function fail(what: string): never { throw new WireError(what); }
 
@@ -191,7 +192,7 @@ function timing(value: unknown): NonNullable<WireRun["timing"]> {
 export type ClientRun = Omit<WireRun, "turn"> & { readonly turn?: WireTurnHeader; readonly protocolProblem?: string };
 function header(value: unknown): WireTurnHeader {
   const row = rec(value, "a Turn");
-  if (row.version !== PROTOCOL_VERSION) return fail("the protocol version is " + (typeof row.version === "string" ? row.version : "unknown") + " and this page reads " + PROTOCOL_VERSION);
+  if (row.version !== PROTOCOL_VERSION) throw new WireError("协议版本 " + (typeof row.version === "string" ? row.version : "未知") + "，这个页面只认 " + PROTOCOL_VERSION, true);
   const stopReason = maybe(row.stopReason, item => typeof item === "string" && (STOP_REASONS as readonly string[]).includes(item) ? item as typeof STOP_REASONS[number] : "unknown" as const);
   const startedAt = maybe(row.startedAt, item => amount(item, "startedAt")), durationMs = maybe(row.durationMs, item => amount(item, "durationMs")), legacyOrder = maybe(row.legacyOrder, item => flag(item, "legacyOrder"));
   let reading: TurnUsage;
@@ -207,7 +208,7 @@ export function decodeWireRun(value: unknown): ClientRun {
   const relay = row.relay === undefined || row.relay === null ? undefined : decodeRunRelay(row.relay) ?? undefined;
   let turn: WireTurnHeader | undefined, problem: string | undefined;
   if (row.turn === undefined || row.turn === null) problem = "服务没有给出这一轮的协议数据";
-  else { try { turn = header(row.turn); } catch (error) { problem = error instanceof WireError ? "这一轮的协议数据读不出来：" + error.message : "这一轮的协议数据读不出来"; } }
+  else { try { turn = header(row.turn); } catch (error) { problem = error instanceof WireError ? error.told ? error.message : "这一轮的协议数据读不出来：" + error.message : "这一轮的协议数据读不出来"; } }
   return { id: str(row.id, "a Run id") as never, commandId: str(row.commandId, "a command id") as never, userMessageId: str(row.userMessageId, "a message id") as never, assistantMessageId: str(row.assistantMessageId, "a message id") as never,
     selection: selection(row.selection), epoch: nat(row.epoch, "an epoch"), status: pick(row.status, RUN_STATES, "a Run's state"), cancelRequested: bool(row.cancelRequested, "cancelRequested"),
     contextThroughSeq: nat(row.contextThroughSeq, "contextThroughSeq"), sourceRunIds: words(row.sourceRunIds, "a source Run") as never[], backend, cleanup, error: fault(row.error),
@@ -233,11 +234,18 @@ function decodeWindow(value: unknown): ClientWindow {
 // The head
 // ---------------------------------------------------------------------------------------------------------------------
 
-function pendingSwitch(value: unknown): PublicSwitch {
+function lastSwitch(value: unknown): PublicSwitch {
   const row = rec(value, "a switch");
+  const mode = maybe(row.mode, item => pick(item, ["wait_current", "cancel_current"] as const, "a switch's mode"));
+  const timing = maybe(row.timing, item => {
+    const made = rec(item, "a switch's times"), validatedAt = maybe(made.validatedAt, time => amount(time, "validatedAt")), effectiveAt = maybe(made.effectiveAt, time => amount(time, "effectiveAt"));
+    return { requestedAt: amount(made.requestedAt, "requestedAt"), ...(validatedAt === undefined ? {} : { validatedAt }), ...(effectiveAt === undefined ? {} : { effectiveAt }) };
+  });
+  const acknowledged = maybe(row.acknowledgedUnknown, list => words(list, "an acknowledged Run") as never[]);
   return { id: str(row.id, "a switch id") as never, commandId: str(row.commandId, "a command id") as never, requested: requested(row.requested), requestedSeq: nat(row.requestedSeq, "requestedSeq"),
     target: nullable(row.target, selection), status: pick(row.status, ["requested", "validated", "effective", "failed"] as const, "a switch's state"), throughSeq: nat(row.throughSeq, "throughSeq"),
-    sourceRunIds: words(row.sourceRunIds, "a source Run") as never[], error: fault(row.error) };
+    sourceRunIds: words(row.sourceRunIds, "a source Run") as never[], error: fault(row.error), ...(mode === undefined ? {} : { mode }), ...(timing === undefined ? {} : { timing }),
+    ...(acknowledged === undefined ? {} : { acknowledgedUnknown: acknowledged }) };
 }
 function origin(value: unknown): NonNullable<SessionView["origin"]> {
   const row = rec(value, "an origin");
@@ -261,6 +269,12 @@ function nativeState(value: unknown): NativeStateView {
   const carried = maybe(state.carried, item => { const made = rec(item, "a carried configuration"), model = maybe(made.model, word => str(word, "a model")), kept = maybe(made.options, options); return { ...(model === undefined ? {} : { model }), ...(kept === undefined ? {} : { options: kept }) }; });
   return { harnessId: str(state.harnessId, "a Harness"), controlId: str(state.controlId, "a control"), status: pick(state.status, ["ready", "unconfirmed", "forking"] as const, "a native state"), ...(observed === undefined ? {} : { observed }), ...(carried === undefined ? {} : { carried }) };
 }
+function sessionFacts(value: unknown): SessionFacts {
+  const row = rec(value, "the facts of a conversation"), unknown = rec(row.unknown, "the unknown Turns");
+  const branchable = nullable(row.branchable, item => { const made = rec(item, "a Turn a branch starts from"); return { runId: str(made.runId, "a Run"), ordinal: nat(made.ordinal, "ordinal") }; });
+  return { unknown: { count: nat(unknown.count, "count"), unclosed: bool(unknown.unclosed, "unclosed") }, settled: bool(row.settled, "settled"), branchable,
+    ran: many(row.ran, item => { const made = rec(item, "a control's Turns"); return { harnessId: str(made.harnessId, "a Harness"), controlId: str(made.controlId, "a control"), turns: nat(made.turns, "turns") }; }, "ran"), changes: nat(row.changes, "changes") };
+}
 export function decodeHead(value: unknown): SessionHeadView {
   const row = rec(value, "a head");
   const permissions = maybe(row.permissions, list => many(list, permission, "permissions")), states = maybe(row.nativeStates, list => many(list, nativeState, "native states")), quoted = maybe(row.origin, origin);
@@ -272,11 +286,11 @@ export function decodeHead(value: unknown): SessionHeadView {
     const upgraded = maybe(kept.upgraded, entry => { const made = rec(entry, "an upgrade"); return { harnessId: str(made.harnessId, "a Harness"), at: amount(made.at, "at") }; });
     return { enabled: bool(kept.enabled, "enabled"), process, ...(lost === undefined ? {} : { lost }), ...(outside === undefined ? {} : { outside }), ...(upgraded === undefined ? {} : { upgraded }) };
   });
-  const pending = maybe(row.pendingSwitch, pendingSwitch);
+  const last = maybe(row.lastSwitch, lastSwitch);
   return { id: str(row.id, "a conversation id"), version: nat(row.version, "version"), lastSeq: nat(row.lastSeq, "lastSeq"), epoch: nat(row.epoch, "epoch"), status: pick(row.status, ["open", "closed", "blocked"] as const, "a conversation's state"),
     workspace: str(row.workspace, "a workspace"), selection: selection(row.selection), activeRunId: nullable(row.activeRunId, item => str(item, "a Run")), pendingSwitchId: nullable(row.pendingSwitchId, item => str(item, "a switch")),
     ...(permissions === undefined ? {} : { permissions }), ...(states === undefined ? {} : { nativeStates: states }), ...(quoted === undefined ? {} : { origin: quoted }), ...(queue === undefined ? {} : { queue }), ...(retention === undefined ? {} : { retention }),
-    title: str(row.title, "a title"), runCount: nat(row.runCount, "runCount"), ...(pending === undefined ? {} : { pendingSwitch: pending }) };
+    title: str(row.title, "a title"), runCount: nat(row.runCount, "runCount"), ...(last === undefined ? {} : { lastSwitch: last }), facts: sessionFacts(row.facts) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -305,6 +319,20 @@ export function decodeSessionListView(value: unknown): ClientSessionList {
   const row = rec(value, "a list of conversations");
   return { sessions: many(row.sessions, item => { const made = rec(item, "a conversation"); return { id: str(made.id, "an id"), title: str(made.title, "a title"), status: pick(made.status, ["open", "closed", "blocked"] as const, "a state"), workspace: str(made.workspace, "a workspace"),
     selection: selection(made.selection), updatedSeq: nat(made.updatedSeq, "updatedSeq"), activeRunId: nullable(made.activeRunId, entry => str(entry, "a Run")) }; }, "conversations"), next: nullable(row.next, item => str(item, "a cursor")) };
+}
+
+/** `GET …/changes?before=&limit=`: the changes of the whole conversation that have a stored detail, newest first; the first page also names the newest plan. */
+export interface ClientConversationEdit { readonly runId: string; readonly ordinal: number; readonly harnessId: string; readonly item: ReadItem }
+export interface ClientConversationChanges {
+  readonly edits: readonly ClientConversationEdit[];
+  readonly next: string | null;
+  readonly plan?: { readonly runId: string; readonly ordinal: number; readonly harnessId: string; readonly item: ReadItem } | null;
+}
+export function decodeConversationChanges(value: unknown): ClientConversationChanges {
+  const row = rec(value, "the changes of a conversation");
+  const plan = maybe(row.plan, item => nullable(item, made => { const entry = rec(made, "a plan"); return { runId: str(entry.runId, "a Run"), ordinal: nat(entry.ordinal, "ordinal"), harnessId: str(entry.harnessId, "a Harness"), item: decodeItem(entry.item) }; }));
+  return { edits: many(row.edits, entry => { const made = rec(entry, "a change"); return { runId: str(made.runId, "a Run"), ordinal: nat(made.ordinal, "ordinal"), harnessId: str(made.harnessId, "a Harness"), item: decodeItem(made.item) }; }, "changes"),
+    next: nullable(row.next, item => str(item, "a cursor")), ...(plan === undefined ? {} : { plan }) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -58,7 +58,7 @@ export interface AssistantMessageItem extends ItemBase {
   /** ADR-057: the segment's text, carried by the item (see `UserMessageItem.text`). */
   readonly text?: string;
 }
-/** `truncated`: the text is the first part of a longer one (the Hub caps what one Turn carries here); the whole stays in the Run's own `thinking`. */
+/** The thought is whole, however long it is. (`truncated`: written by Gateways before 2026-11-12 that cut it at 64 KiB; the page reads it and says nothing of it.) */
 export interface ReasoningItem extends ItemBase { readonly type: "reasoning"; readonly text: string; readonly durationMs?: number; readonly truncated?: true }
 
 /**

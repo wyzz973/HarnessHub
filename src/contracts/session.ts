@@ -3,6 +3,7 @@ import type { BackendResult, CleanupEvidence, ControlEvent, HarnessControl, Nati
 import type { ContentPort, ContentRef } from "./content.js";
 import type { BindingRelayState, RelayRows, RunRelay, RunRelayRequest, SwitchMode, SwitchTiming } from "./relay.js";
 import type { ReadTurn } from "./protocol-read.js";
+import type { ConversationCommit } from "./conversation.js";
 
 declare const sessionBrand: unique symbol;
 declare const runBrand: unique symbol;
@@ -449,7 +450,11 @@ export function resolveTurnBudgets(input: { readonly executionSeconds?: string |
 export interface SessionRuntimeOptions {
   readonly id: () => string;
   readonly now: () => Date;
-  readonly publish: (event: SessionEvent) => void;
+  /**
+   * Called once for each commit, after it is kept and before anything else is done with its conversation: the commit carries its events (what was logged) and the rows it
+   * changed (what a stream of the conversation tells a page). One call for one commit, never one for each event: a page applies a frame by its commit.
+   */
+  readonly publish: (commit: ConversationCommit) => void;
   readonly fingerprint: (value: string) => string;
   /** Stores native outputs and tool details; without it those facts stay summaries/diagnostics. */
   readonly content?: ContentPort;

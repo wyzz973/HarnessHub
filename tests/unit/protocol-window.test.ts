@@ -23,7 +23,8 @@ const user = (ordinal: number, text?: string): ReadItem => ({ id: "user", seq: 1
 const reply = (ordinal: number, seq = 2, text?: string, status = "completed", n = 1): ReadItem => ({ id: "text:" + n, seq, status, type: "assistant_message", messageId: "message-reply-" + ordinal, phase: "commentary", ...(text === undefined ? {} : { text }) } as ReadItem);
 const command = (seq: number, status: string, exitCode?: number): ReadItem => ({ id: "tool:t" + seq, seq, status, type: "command", command: "echo " + seq, ...(exitCode === undefined ? {} : { exitCode }) } as ReadItem);
 const simple = (ordinal: number): ClientTurn => ({ run: run(ordinal), items: [user(ordinal, "question " + ordinal), reply(ordinal, 2, "answer " + ordinal)] });
-const head = (version: number, lastSeq: number, runCount: number) => ({ id: SESSION, version, lastSeq, epoch: 1, status: "open" as const, workspace: "/work", selection, activeRunId: null, pendingSwitchId: null, title: "t", runCount });
+const head = (version: number, lastSeq: number, runCount: number) => ({ id: SESSION, version, lastSeq, epoch: 1, status: "open" as const, workspace: "/work", selection, activeRunId: null, pendingSwitchId: null, title: "t", runCount,
+  facts: { unknown: { count: 0, unclosed: false }, settled: true, branchable: null, ran: [] as { harnessId: string; controlId: string; turns: number }[], changes: 0 } });
 const view = (turns: readonly ClientTurn[], older: string | null = null, version = 5, lastSeq = 20, runCount = turns.length): ClientSessionView => ({ head: head(version, lastSeq, runCount), window: { turns, older } });
 function commit(version: number, lastSeq: number, over: Partial<ClientCommitFrame> = {}): ClientCommitFrame {
   return { type: "commit", sessionId: SESSION, version, lastSeq, head: head(version, lastSeq, 0), ...over };

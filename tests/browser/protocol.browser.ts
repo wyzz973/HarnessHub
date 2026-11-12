@@ -5,6 +5,7 @@ import { extname, join, resolve, sep } from "node:path";
 import test, { after, before } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium, expect, type Browser, type BrowserContext, type Locator, type Page } from "@playwright/test";
+import { textRange, turnsBefore, v14 } from "./v14.js";
 
 /*
  * A Turn drawn from the protocol's items (docs/proposals/protocol/hub-protocol.html §13), in a real browser: the same lines for every
@@ -80,6 +81,8 @@ const ref = (id: string): Json => ({ id, name: id + ".json", mediaType: "applica
 
 class FakeGateway {
   readonly clients = new Set<ServerResponse>();
+  /** How many times a page connected to the conversation's stream, and read the conversation by its own request. */
+  streams = 0; reads = 0;
   private readonly others = new Set<ServerResponse>();
   private readonly server: Server;
   url = "";
@@ -96,7 +99,9 @@ class FakeGateway {
     this.server.closeAllConnections();
     await new Promise<void>(done => this.server.close(() => done()));
   }
-  private frame(): string { return `event: session\nid: ${this.session.lastSeq}\ndata: ${JSON.stringify({ type: "snapshot", session: this.session })}\n\n`; }
+  private frame(): string { return `event: session\nid: ${this.session.lastSeq}\ndata: ${JSON.stringify({ type: "snapshot", session: v14(this.session as unknown as Record<string, unknown>) })}\n\n`; }
+  /** One commit of the conversation: every open stream gets that commit's frame and not the conversation (`version` and `lastSeq` are the frame's). */
+  publishCommit(frame: Json): void { this.session.version = Number(frame.version); this.session.lastSeq = Number(frame.lastSeq); for (const client of this.clients) client.write(`event: session\nid: ${frame.lastSeq}\ndata: ${JSON.stringify(frame)}\n\n`); }
   /** The conversation changed: every open stream gets the new view of it, one fact further on. */
   publish(): void { this.session.version += 1; this.session.lastSeq += 1; for (const client of this.clients) client.write(this.frame()); }
   private json(response: ServerResponse, status: number, body: unknown): void { response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }); response.end(JSON.stringify(body)); }
@@ -127,10 +132,14 @@ class FakeGateway {
     const match = /^\/sessions\/([^/]+)(?:\/(.*))?$/u.exec(api);
     if (match === null || match[1] !== this.session.id) return this.missing(response);
     const action = match[2] ?? "";
-    if (action === "" && method === "GET") return this.json(response, 200, this.session);
+    if (action === "" && method === "GET") { this.reads++; return this.json(response, 200, v14(this.session as unknown as Record<string, unknown>)); }
+    const before = /^turns$/u.test(action) ? url.searchParams.get("before") : null;
+    if (before !== null && method === "GET") return this.json(response, 200, turnsBefore(this.session as unknown as Record<string, unknown>, before, Number(url.searchParams.get("limit") ?? 20)));
+    const range = /^runs\/(\d+)\/items\/(\d+)\/text$/u.exec(action);
+    if (range !== null && method === "GET") { const found = textRange(this.session as unknown as Record<string, unknown>, Number(range[1]), Number(range[2]), Number(url.searchParams.get("from") ?? 0), Number(url.searchParams.get("to") ?? 0)); return found === null ? this.missing(response) : this.json(response, 200, found); }
     if (action === "events/stream") {
       response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });
-      this.clients.add(response); response.on("close", () => this.clients.delete(response)); response.write(this.frame()); return;
+      this.streams++; this.clients.add(response); response.on("close", () => this.clients.delete(response)); response.write(this.frame()); return;
     }
     if (action === "relay" && method === "GET") return this.json(response, 200, { handedOver: ["codex"], bindings: [], packets: [] });
     if (action === "relay/" + PACKET && method === "GET") { response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", ETag: `"${"a1b2c3d4".repeat(8)}"`, "Cache-Control": "no-store" }); response.end(PACKET_TEXT); return; }
@@ -360,12 +369,13 @@ test("a Run whose protocol Turn the page cannot read says so with the reason bes
   Object.assign(newer, { tools: [{ id: "tool-1", title: "ls", kind: "execute", status: "completed" }], thinking: "旧的思考" });
   const none = run({ n: 2, harness: "codex", input: "没有协议的", status: "completed", durationMs: 1000, items: [user(2), reply(2)] });
   delete none.protocol;
+  // A Turn whose header is not one at all (a Gateway that sends what it likes): the Run stays, with the reason.
   const broken = run({ n: 3, harness: "claude", input: "条目坏了的", status: "completed", durationMs: 1000, items: [user(3), reply(3)] });
-  (broken.protocol as Json).items = "nope";
+  (broken.protocol as Json).executor = null;
   const good = run({ n: 4, harness: "codex", input: "好好的一轮", status: "completed", durationMs: 2000, stopReason: "end_turn", items: [user(4), reply(4)] });
   const { page, log, errors } = await open(t, conversation([newer, none, broken, good], { 1: "第一轮的话", 2: "第二轮的话", 3: "第三轮的话", 4: "第四轮的话" }));
   const lines = log.locator(".unreadable-turn .quiet-line");
-  await expect(lines).toHaveText(["这一轮无法显示：协议版本 hh/9，这个页面只认 hh/1", "这一轮无法显示：服务没有给出这一轮的协议数据", "这一轮无法显示：这一轮的协议数据里，条目不是一个列表"]);
+  await expect(lines).toHaveText(["这一轮无法显示：协议版本 hh/9，这个页面只认 hh/1", "这一轮无法显示：服务没有给出这一轮的协议数据", /^这一轮无法显示：这一轮的协议数据读不出来：/u]);
   // Your message stays where it was, and so do the reply's own words, which are a message of the conversation; the rest of the Turn is not drawn.
   await expect(log.locator(".user-message")).toHaveText(["你：版本不认识的", "你：没有协议的", "你：条目坏了的", "你：好好的一轮"]);
   await expect(log).toContainText("第一轮的话"); await expect(log).toContainText("第三轮的话");
@@ -429,5 +439,31 @@ test("what happens inside a delegated task hangs under the task and opens with i
   const nested = turn.getByRole("group", { name: /子任务里的动作/u });
   await nested.getByRole("button", { name: "运行了 1 条命令，读取了 tax.js", exact: true }).click();
   await expect(nested.locator(".action-row")).toHaveText(["读取了 tax.js", "运行了 rg taxFor"]);
+  assert.deepEqual(errors, []);
+});
+
+test("the page follows a Turn by the commit frames it is sent: words added at the offset it holds are shown without the conversation being read, and a frame that does not follow what it holds makes it read the conversation again", async t => {
+  sequence = 0;
+  const answered = reply(1, "running");
+  const session = conversation([run({ n: 1, harness: "codex", input: "修好测试", status: "running", items: [user(1), answered], usage: { completeness: "unavailable" } })], { 1: "测试跑完了" }, "run-1");
+  const { gateway, log, errors } = await open(t, session);
+  const turn = log.locator("article.assistant-message").nth(0);
+  await expect(turn.locator(".markdown")).toContainText("测试跑完了");
+  assert.deepEqual([gateway.streams, gateway.reads], [1, 0], "the conversation came with the stream, as its first frame");
+  // A commit that appended words at the end of what the page holds: shown, and the page asked for nothing.
+  const reply1 = session.messages.find(row => row.role === "assistant")!, frame = (add: number, from: number, text: string): Json => ({ type: "commit", sessionId: SESSION, version: session.version + add, lastSeq: session.lastSeq + add,
+    texts: [{ runId: "run-1", itemSeq: answered.seq, from, text }] });
+  const first = frame(1, Buffer.byteLength("测试跑完了"), "，三个失败。");
+  reply1.text = "测试跑完了，三个失败。"; gateway.publishCommit(first);
+  await expect(turn.locator(".markdown")).toContainText("测试跑完了，三个失败。");
+  gateway.publishCommit(frame(1, Buffer.byteLength("测试跑完了，三个失败。"), "先看第一个。")); reply1.text = "测试跑完了，三个失败。先看第一个。";
+  await expect(turn.locator(".markdown")).toContainText("测试跑完了，三个失败。先看第一个。");
+  assert.deepEqual([gateway.streams, gateway.reads], [1, 0], "two commits were followed by their frames alone");
+  // A frame whose offset is not the end of what the page holds: it missed a commit, and it does not guess; it connects again and is given the conversation as it is.
+  reply1.text = "测试跑完了，三个失败。先看第一个。再补一句。";
+  gateway.publishCommit(frame(1, 3, "错位的字"));
+  await expect.poll(() => gateway.streams, { timeout: 15_000 }).toBe(2);
+  await expect(turn.locator(".markdown")).toContainText("测试跑完了，三个失败。先看第一个。再补一句。");
+  await expect(turn.locator(".markdown")).not.toContainText("错位的字");
   assert.deepEqual(errors, []);
 });

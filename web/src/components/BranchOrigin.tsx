@@ -1,7 +1,8 @@
 import { ArrowUpRight, ChevronRight, GitBranch, History } from "lucide-react";
 import { useId, useState } from "react";
 import type { SessionOrigin } from "../../../src/contracts/session.js";
-import type { HarnessView, SessionView } from "../../../src/contracts/web.js";
+import type { HarnessView } from "../../../src/contracts/web.js";
+import type { ConversationView } from "../lib/conversation.js";
 import { cn } from "../lib/cn.js";
 import { Collapsible } from "../ui/motion.js";
 import { MessageAttachments } from "./Attachments.js";
@@ -9,7 +10,7 @@ import { BrandIcon } from "./BrandIcon.js";
 import { StreamingMarkdown } from "./StreamingMarkdown.js";
 
 /** How the conversation continues natively, stated from the committed native state rather than assumed. */
-function nativeNote(session: SessionView, origin: SessionOrigin): string {
+function nativeNote(session: ConversationView, origin: SessionOrigin): string {
   const state = session.nativeStates?.find(item => item.harnessId === session.selection.harnessId && item.controlId === session.selection.controlId);
   if (origin.kind === "import") {
     if (state?.status === "ready") return "新消息直接发给这个本机会话，它记得自己的全部历史；请不要同时在原程序中继续它。";
@@ -26,7 +27,7 @@ function nativeNote(session: SessionView, origin: SessionOrigin): string {
  * The quoted history a branch started from, shown before its own messages and never sent again as new input: a quiet card
  * that says where the conversation came from and how it continues natively, with the history behind one disclosure.
  */
-export function BranchOrigin({ origin, session, harnesses, onOpenSource }: { origin: SessionOrigin; session: SessionView; harnesses: readonly HarnessView[]; onOpenSource: ((id: string) => void) | undefined }) {
+export function BranchOrigin({ origin, session, harnesses, onOpenSource }: { origin: SessionOrigin; session: ConversationView; harnesses: readonly HarnessView[]; onOpenSource: ((id: string) => void) | undefined }) {
   const [open, setOpen] = useState(false);
   const history = useId();
   const name = (id: string | undefined) => harnesses.find(row => row.id === id)?.name ?? id ?? "Harness";
@@ -36,7 +37,7 @@ export function BranchOrigin({ origin, session, harnesses, onOpenSource }: { ori
     <header className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-ui-sm">
       <span className="flex text-fg-3">{imported ? <BrandIcon brand={imported.harnessId} name={name(imported.harnessId)} size={18}/> : <GitBranch size={16} aria-hidden="true"/>}</span>
       <strong className="min-w-0 font-semibold text-fg">{imported ? "接续本机 " + name(imported.harnessId) + " 会话" + (imported.title ? "「" + imported.title + "」" : "") : "分支自之前的对话"}</strong>
-      <small className="text-caption text-fg-3">{origin.history.length} 条消息{earlier ? " · " + earlier : ""}</small>
+      <small className="text-caption text-fg-3">{origin.kind === "fork" && origin.history.length === 0 ? "分支前的对话在原对话里" : origin.history.length + " 条消息"}{earlier ? " · " + earlier : ""}</small>
       <span className="flex-1"/>
       {origin.kind === "fork" && onOpenSource ? <button type="button" className="link-btn inline-flex items-center gap-1 text-caption" onClick={() => onOpenSource(origin.sessionId)}>打开原对话 <ArrowUpRight size={12} aria-hidden="true"/></button> : null}
     </header>

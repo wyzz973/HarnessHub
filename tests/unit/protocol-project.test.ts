@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { builtinHarnessName } from "../../src/cli/session-application.js";
-import { REASONING_MAX, projectTurn, projectTurns, type ProjectionEnv, type ProjectionInput } from "../../src/contexts/session/domain/protocol/index.js";
+import { projectTurn, projectTurns, type ProjectionEnv, type ProjectionInput } from "../../src/contexts/session/domain/protocol/index.js";
 import { ITEM_TYPES, PROTOCOL_VERSION, type ProtocolItem, type ProtocolTurn, type SwitchItem } from "../../src/contracts/protocol.js";
 import { contentId } from "../../src/contracts/content.js";
 import { messageId, type NativeSessionBinding, type PublicMessage, type PublicTool, type RunId } from "../../src/contracts/session.js";
@@ -158,9 +158,9 @@ test("the model a Run ran with: the one it named, a Hub Provider's first, else w
   assert.equal(label(runs.slice(0, 2), 1, [binding("opus")], (harnessId, native) => harnessId === "claude" && native === "opus" ? "Opus 5.5" : null), "Opus 5.5");
 });
 
-test("a long reasoning is cut for the protocol and says so; the Run keeps the whole of it", () => {
-  const long = "t".repeat(REASONING_MAX + 10), run = webRun(1, "claude", { thinking: long }), item = projectTurn(read([run]), 0, env()).items[1]!;
-  assert.ok(item.type === "reasoning"); assert.equal(item.text.length, REASONING_MAX); assert.equal(item.truncated, true); assert.equal(run.thinking!.length, REASONING_MAX + 10);
+test("a long reasoning is carried whole: no length cuts it, and nothing says it was cut", () => {
+  const long = "t".repeat(3 * 1024 * 1024), run = webRun(1, "claude", { thinking: long }), item = projectTurn(read([run]), 0, env()).items[1]!;
+  assert.ok(item.type === "reasoning"); assert.equal(item.text.length, long.length); assert.equal(item.truncated, undefined); assert.equal(run.thinking!.length, long.length);
   const short = projectTurn(read([webRun(1, "claude", { thinking: "short" })]), 0, env()).items[1]!; assert.ok(short.type === "reasoning"); assert.equal(short.truncated, undefined);
   // Reasoning with no reply yet, in a Turn still going, is still going.
   const going = webRun(1, "claude", { thinking: "hmm", status: "running", backend: null }), early = projectTurn(read([going], messagesOf(going, false)), 0, env()).items[1]!; assert.equal(early.status, "running");

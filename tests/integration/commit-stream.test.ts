@@ -7,7 +7,7 @@ import { ConversationFacts } from "../../src/infrastructure/session/facts.js";
 import { ConversationTables } from "../../src/infrastructure/session/read.js";
 import { ConversationRoutes, type ConversationRoutesOptions } from "../../src/web/conversation-routes.js";
 import { commitFrame } from "../../src/web/commit-frame.js";
-import { applyCommit, fillText, incomplete, openWindow, viewOf, type WindowState } from "../../web/src/lib/protocol/window.js";
+import { applyCommit, fillText, incomplete, openWindow, replaceWithSnapshot, viewOf, type WindowState } from "../../web/src/lib/protocol/window.js";
 import { assemble } from "../../web/src/lib/protocol/assemble.js";
 import { decodeSessionStreamFrameV14, decodeSessionViewV14, decodeTurnPageView } from "../../web/src/lib/protocol/wire.js";
 import {
@@ -26,10 +26,10 @@ const completed = { backend: { status: "completed" as const, reason: "end_turn" 
 const timing = { acceptedAt: NOW, preparingAt: NOW + 1, readyAt: NOW + 2, dispatchedAt: NOW + 3 };
 
 /** The page and the Gateway for one conversation: the page's state, the commit that moves both, and the check that they agree. */
-function harness(t: import("node:test").TestContext, over: { relay?: ConversationRoutesOptions["relay"] } = {}) {
+function harness(t: import("node:test").TestContext, over: { relay?: ConversationRoutesOptions["relay"]; detail?: ConversationRoutesOptions["env"]["detail"] } = {}) {
   const env: Env = openDatabase(t), tables = new ConversationTables(env.db);
-  const routes = new ConversationRoutes({ reader: tables, facts: new ConversationFacts(env.db), relay: over.relay ?? (() => () => ({})), env: { harnessName } });
-  const state: { page: WindowState | null; conversation: Conversation | null; resyncs: string[]; frames: number } = { page: null, conversation: null, resyncs: [], frames: 0 };
+  const routes = new ConversationRoutes({ reader: tables, facts: new ConversationFacts(env.db), relay: over.relay ?? (() => () => ({})), env: { harnessName, ...(over.detail === undefined ? {} : { detail: over.detail }) } });
+  const state: { page: WindowState | null; conversation: Conversation | null; resyncs: string[]; frames: number; snapshots: number } = { page: null, conversation: null, resyncs: [], frames: 0, snapshots: 0 };
   /** What the Gateway reads of the conversation now, as the page reads it. */
   const read = () => decodeSessionViewV14(plain(routes.session(SESSION)));
   /** The page opens the conversation (a snapshot). */
@@ -40,10 +40,15 @@ function harness(t: import("node:test").TestContext, over: { relay?: Conversatio
     const committed = commit(env, before, after, events);
     state.conversation = committed.conversation;
     const frame = commitFrame(committed.applied.changes, routes.headView(committed.applied.changes.head!.row), routes.frameViews(SESSION));
+    // A commit the Gateway tells as the conversation (what it means is not a function of the rows it wrote) is a read, as the stream's hub does it.
+    const asRead = routes.needsSnapshot({ conversation: committed.conversation, events: [], changes: committed.applied.changes });
     if (state.page !== null) {
-      const result = applyCommit(state.page, decodeSessionStreamFrameV14(plain(frame)) as never);
-      state.frames++;
-      if (result.kind === "resync") state.resyncs.push(result.reason); else state.page = result.state;
+      if (asRead) { state.page = replaceWithSnapshot(state.page, read()); state.snapshots++; }
+      else {
+        const result = applyCommit(state.page, decodeSessionStreamFrameV14(plain(frame)) as never);
+        state.frames++;
+        if (result.kind === "resync") state.resyncs.push(result.reason); else state.page = result.state;
+      }
     }
     return committed;
   };
@@ -106,7 +111,7 @@ test("a Turn that begins, speaks, thinks, works, speaks again and ends, framed c
   const drawn = assemble(h.state.page!);
   assert.equal(drawn.runs[1]!.input, "你好 hi"); assert.deepEqual(drawn.runs[1]!.protocol!.items.map(entry => entry.id), ["user", "think:1", "text:1", "tool:t1", "text:2"]);
   assert.deepEqual(drawn.messages.filter(message => message.runId === "run-1").map(message => [message.id, message.text]), [["message-user-run-1", "你好 hi"], ["message-reply-run-1", "Looking at the 文件 now. "], ["message-reply-run-1~5", "All done. 😀"]]);
-  assert.equal(h.state.frames, 11);
+  assert.equal(h.state.frames + h.state.snapshots, 11); assert.equal(h.state.snapshots, 1, "the second Turn is dispatched on a control that ran one before, which changes the first Turn's header: that commit is a read; the rest of two Turns of text and a command are frames");
 });
 
 test("the next Turn is on another Harness and fails; a third is stopped: the hand-over line is there when the Turn begins, the error when it fails, and each is what a read gives", t => {
@@ -201,6 +206,83 @@ test("a Turn's delivery that changes after it began is told in a frame of its ow
   h.state.page = (result as { state: WindowState }).state;
   assert.deepEqual([line().delivery, line().status], ["confirmed", "completed"]);
   assert.equal((h.state.page.turns.at(-1)!.run.relay as { delivery?: { state: string } }).delivery?.state, "recorded");
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// What a frame cannot say by itself: the Harness's task list, a notice's label, the model of a Turn that is no longer the latest of its control
+// ---------------------------------------------------------------------------------------------------------------------
+
+const planRef = (id: string) => ({ id: "content-" + id, name: id + ".json", mediaType: "application/json", kind: "file", bytes: 90, sha256: "a".repeat(64) });
+const todo = (text: string, status = "pending") => ({ content: text, status });
+/** A call to the Harness's task list: a plain tool that the protocol reads as the Turn's plan, with its stored input when it has one. */
+const todoCall = (seq: number, id: string, status: "running" | "completed", detail = false): HeldItem => item("run-0", seq, "tool:" + id, "tool", status,
+  { name: "todo_write", ...(detail ? { detail: planRef(id) } : {}), native: { title: "todo_write", name: "todo_write", status } });
+const planOf = (page: WindowState) => page.turns.at(-1)!.items.map(entry => entry.item).filter(row => row.type === "plan");
+
+test("the Harness's task list: a call to it is told with the conversation, not as a frame, and the page then holds the plan where a read puts it and the call where a read hides it", t => {
+  // A stored detail never changes: each call has its own.
+  const inputs: Record<string, string> = { "content-td1": JSON.stringify({ todos: [todo("write the test"), todo("run it")] }), "content-td2": JSON.stringify({ todos: [todo("write the test", "completed"), todo("run it", "in_progress")] }) };
+  const h = harness(t, { detail: ref => inputs[ref.id] === undefined ? null : { input: inputs[ref.id]! } });
+  h.step(() => ({}), [event("session.created")]);
+  h.step(current => queue(current, 0, "plan it")); h.step(current => start(current, 0));
+  h.open(); h.agree("opened");
+  // A call whose stored input is not there yet is told as the call it is, in the conversation a read gives (it cannot be read as a plan).
+  h.step(current => withItems(current, 0, items => [...items, todoCall(2, "td1", "running")])); h.agree("the call begins");
+  assert.equal(h.state.snapshots, 1, "the commit that wrote the call was a read"); assert.equal(planOf(h.state.page!).length, 0); assert.equal(h.state.page!.turns.at(-1)!.items.some(entry => entry.item.id === "tool:td1"), true, "a call that cannot be read as a plan stays a row");
+  // Its input arrives (the item changes: it has a stored detail): from now on the plan stands for it.
+  h.step(current => withItems(current, 0, items => items.map(row => row.seq === 2 ? todoCall(2, "td1", "completed", true) : row))); h.agree("the input is stored");
+  assert.deepEqual(planOf(h.state.page!).map(row => [row.id, row.seq, row.status]), [["hh:plan", 2, "running"]]); assert.equal(h.state.page!.turns.at(-1)!.items.some(entry => entry.item.id === "tool:td1"), false);
+  // The list is written again, later in the Turn: the plan moves to the last call, and the earlier one is gone from where it stood.
+  h.step(current => withItems(current, 0, items => [...items, segment("run-0", 3, 1, "running", ["working. "])])); h.agree("speaking");
+  h.step(current => withItems(current, 0, items => [...items, todoCall(4, "td2", "completed", true)])); h.agree("the list is written again");
+  assert.deepEqual(planOf(h.state.page!).map(row => [row.seq, (row as unknown as { steps: { status: string }[] }).steps.map(step => step.status)]), [[4, ["completed", "in_progress"]]]);
+  // The Turn ends: the plan is over with it, as a read of it says.
+  h.step(current => finish(current, 0, "completed"), [event("run.ended")]); h.agree("ended");
+  assert.deepEqual(planOf(h.state.page!).map(row => row.status), ["completed"]);
+  assert.deepEqual(h.state.resyncs, []);
+});
+
+test("a Turn that has a plan of its own hides its calls to the task list: the commit that gives it the plan is told with the conversation, and the calls that come after are told the same", t => {
+  const h = harness(t);
+  h.step(() => ({}), [event("session.created")]);
+  h.step(current => queue(current, 0, "plan it")); h.step(current => start(current, 0));
+  h.open();
+  h.step(current => withItems(current, 0, items => [...items, todoCall(2, "td1", "running")])); h.agree("the call comes before the plan");
+  const planRow = item("run-0", 3, "plan", "plan", "running", { steps: [{ text: "one", status: "pending" }] });
+  h.step(current => withItems(current, 0, items => [...items, planRow])); h.agree("the plan is its own");
+  assert.equal(h.state.page!.turns.at(-1)!.items.some(entry => entry.item.id === "tool:td1"), false, "the Harness's own plan stands for the call");
+  h.step(current => withItems(current, 0, items => [...items, todoCall(4, "td2", "running")])); h.agree("a later call");
+  h.step(current => withItems(current, 0, items => items.map(row => row.seq === 3 ? { ...row, fields: { ...row.fields, steps: [{ text: "one", status: "completed" }] } as typeof row.fields } : row))); h.agree("the plan is updated");
+  assert.equal(h.state.snapshots >= 3, true); assert.deepEqual(h.state.resyncs, []);
+});
+
+test("a notice's label may change while the Turn goes on: the page holds the label a read gives, not the first one", t => {
+  const h = harness(t);
+  h.step(() => ({}), [event("session.created")]);
+  h.step(current => queue(current, 0, "go")); h.step(current => start(current, 0));
+  h.open();
+  const notice = (title: string, chunks: readonly string[]): HeldItem => item("run-0", 2, "notice:1", "notice", "running", { severity: "warning", native: { title } }, chunks);
+  h.step(current => withItems(current, 0, items => [...items, notice("重试 1/3", ["重试 1/3"])])); h.agree("the notice begins");
+  assert.equal((h.state.page!.turns.at(-1)!.items.find(entry => entry.item.seq === 2)!.item as { text: string }).text, "重试 1/3");
+  h.step(current => withItems(current, 0, items => items.map(row => row.seq === 2 ? notice("重试 2/3", ["重试 1/3"]) : row))); h.agree("the label changes");
+  assert.equal((h.state.page!.turns.at(-1)!.items.find(entry => entry.item.seq === 2)!.item as { text: string }).text, "重试 2/3");
+  assert.deepEqual(h.state.resyncs, []);
+});
+
+test("the model a Turn shows follows its control: the Turn that is no longer the latest of its control loses the model its binding reported, in the page as in a read", t => {
+  const h = harness(t);
+  const binding = { harnessId: "alpha", controlId: "alpha-acp", checkpoint: "native-1", throughRunId: null, status: "ready" as const, observed: { model: "opus", options: {} },
+    relay: { epoch: 1, mark: -1, floor: -1, pending: null, resendAll: false } };
+  h.step(() => ({}), [event("session.created")]);
+  h.step(current => queue(current, 0, "first")); h.step(current => start(current, 0)); h.step(current => finish(current, 0, "completed"));
+  h.step(() => ({ nativeBindings: [binding] }));
+  h.open(); h.agree("opened");
+  const model = (ordinal: number): unknown => (h.state.page!.turns.find(turn => turn.run.ordinal === ordinal)!.run.turn!.executor as { model?: { label: string } }).model?.label;
+  assert.equal(model(0) !== undefined, true, "the latest Turn of its control shows the model the binding reported");
+  h.step(current => queue(current, 1, "second")); h.agree("queued");
+  h.step(current => start(current, 1)); h.agree("dispatched on the same control");
+  assert.equal(model(0), undefined, "the first Turn is no longer the latest of its control"); assert.equal(model(1) !== undefined, true);
+  assert.equal(h.state.snapshots >= 1, true); assert.deepEqual(h.state.resyncs, []);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------

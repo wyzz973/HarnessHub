@@ -8,9 +8,10 @@ import { fileURLToPath } from "node:url";
 import { application as composeApplication, builtinHarnessName } from "../cli/session-application.js";
 import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
-import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionSnapshot, type TurnLimits } from "../contracts/session.js";
+import type { ConversationCommit, StartupSample } from "../contracts/conversation.js";
+import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type TurnLimits } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
-import { conversationTitle, type EventPage, type HarnessReadinessView, type HarnessView, type InstallationLogPage, type InstallationUpgradeCheckView, type KeptProcessView, type MaintenanceView, type NativeSessionListView, type SessionSummary, type SessionView, type UninstallCheckView, type InstallCheckView, type WebState } from "../contracts/web.js";
+import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, MaintenanceView, NativeSessionListView, UninstallCheckView, InstallCheckView, WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
@@ -21,11 +22,14 @@ import { harnessTier } from "../adapters/catalog.js";
 import type { InstallationJobView } from "../contracts/management.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
-import { carriedNativeConfiguration } from "../contexts/session/domain/state.js";
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
 import { RelayApi, parseSendRelay } from "./relay-routes.js";
-import { DetailHeads, ProtocolView } from "./protocol-view.js";
+import { ConversationRoutes, type HeadLive } from "./conversation-routes.js";
+import { commitFrame } from "./commit-frame.js";
+import { DetailHeads } from "./detail-heads.js";
+import { exportView } from "./export-view.js";
+import { RunRelayReader } from "./run-relay.js";
 import { TableApi } from "./table-routes.js";
 import type { TableGrants } from "../contracts/table.js";
 import { AttentionStreamHub } from "./attention-stream.js";
@@ -46,7 +50,6 @@ import type { ClaudeRunner } from "../infrastructure/capabilities/claude-mcp.js"
 const MAX_BODY_BYTES = 128 * 1024;
 /** What the answer to a question a Harness asked may take (a pasted file can be one): the request body bound of that route alone. */
 const MAX_ANSWER_BODY_BYTES = 16 * 1024 * 1024;
-const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_ASSET_BYTES = 4 * 1024 * 1024;
 /**
  * Requests in progress at once, and connections open at once (streams included): guards against a client that opens them without end,
@@ -78,7 +81,7 @@ export interface WebServerOptions {
   readonly configuration: SessionConfiguration;
   readonly port?: number;
   readonly assetsDirectory?: string;
-  readonly application?: (root: string, publish: (event: SessionEvent) => void) => Omit<ReturnType<typeof composeApplication>, "grants"> & { readonly grants?: TableGrants };
+  readonly application?: (root: string, publish: (commit: ConversationCommit) => void) => Omit<ReturnType<typeof composeApplication>, "grants"> & { readonly grants?: TableGrants };
   /** The operator's optional limits (the execution and wait budgets, conversations at once), resolved by `resolveTurnBudgets`; none otherwise. */
   readonly budgets?: TurnLimits;
   /** How long a login lasts without a request, and how often its cookie is sent again (8 hours and 1 minute by default); for tests that cannot wait for hours. */
@@ -221,7 +224,6 @@ function headers(response: ServerResponse): void {
 function json(response: ServerResponse, status: number, value: unknown): void {
   if (response.destroyed || response.writableEnded) return;
   const bytes = Buffer.from(JSON.stringify(value));
-  if (bytes.length > MAX_RESPONSE_BYTES) throw new HttpError(413, "RESPONSE_LIMIT", "Response exceeds its byte budget");
   headers(response); response.statusCode = status;
   response.setHeader("Content-Type", "application/json; charset=utf-8"); response.setHeader("Content-Length", bytes.length);
   response.end(bytes);
@@ -268,52 +270,28 @@ function watchIdle(request: IncomingMessage, idleMs: number): void {
 /** How many of an entry's latest Runs set its usual startup time. */
 const STARTUP_SAMPLES = 5;
 /**
- * Each Harness entry's latest catalog read, with its usual startup: the median time from starting the program to its open
- * native session over its latest Runs in these Sessions. An entry with Runs but no read is unchecked.
+ * Each Harness entry's latest catalog read, with its usual startup: the median time from starting the program to its open native session over its latest Runs
+ * (`startupSamples`: the latest few of every entry, from the Runs' columns). An entry with Runs but no read is unchecked.
  */
-function readinessViews(observed: readonly NativeReadiness[], snapshots: readonly SessionSnapshot[]): HarnessReadinessView[] {
-  const samples = new Map<string, { readonly at: number; readonly ms: number }[]>();
-  for (const snapshot of snapshots) for (const run of snapshot.runs) {
-    const timing = run.timing;
-    // A Turn on a kept process did not start the program, so it says nothing about startup (ADR-030).
-    if (run.reused === true || timing?.preparingAt === undefined || timing.readyAt === undefined || timing.readyAt < timing.preparingAt) continue;
-    const key = run.selection.harnessId + "\0" + run.selection.controlId;
-    samples.set(key, [...samples.get(key) ?? [], { at: timing.preparingAt, ms: timing.readyAt - timing.preparingAt }]);
+function readinessViews(observed: readonly NativeReadiness[], samples: readonly StartupSample[]): HarnessReadinessView[] {
+  // A Turn on a kept process did not start the program, so it says nothing about startup (ADR-030): the samples hold only Turns that started it.
+  const times = new Map<string, number[]>();
+  for (const sample of samples) {
+    if (sample.readyAt < sample.preparingAt) continue;
+    const key = sample.harnessId + "\0" + sample.controlId;
+    times.set(key, [...times.get(key) ?? [], sample.readyAt - sample.preparingAt]);
   }
   const startup = (key: string) => {
-    const latest = [...samples.get(key) ?? []].sort((a, b) => b.at - a.at).slice(0, STARTUP_SAMPLES).map(sample => sample.ms).sort((a, b) => a - b);
+    const latest = [...times.get(key) ?? []].sort((a, b) => a - b);
     return latest.length ? { startupMs: latest[Math.floor(latest.length / 2)]! } : {};
   };
   const views: HarnessReadinessView[] = observed.map(item => ({ harnessId: item.harnessId, controlId: item.controlId, state: item.state, checkedAt: item.checkedAt,
     ...(item.signedIn === undefined ? {} : { signedIn: item.signedIn }), ...(item.failureCode === undefined ? {} : { failureCode: item.failureCode }), ...startup(item.harnessId + "\0" + item.controlId) }));
-  for (const key of samples.keys()) {
+  for (const key of times.keys()) {
     const [harnessId, controlId] = key.split("\0") as [string, string];
     if (!views.some(view => view.harnessId === harnessId && view.controlId === controlId)) views.push({ harnessId, controlId, state: "unchecked", checkedAt: null, ...startup(key) });
   }
   return views;
-}
-/** The newest conversations as the page still reads them, in the old shape (the runtime's adapter over the rows): at most `limit`, newest first. */
-function recentSnapshots(app: { readonly store: { list(query: { readonly limit: number }): { readonly rows: readonly { readonly id: SessionSnapshot["id"] }[] } }; readonly runtime: { read(id: SessionSnapshot["id"]): SessionSnapshot } }, limit: number): SessionSnapshot[] {
-  return app.store.list({ limit }).rows.map(row => app.runtime.read(row.id));
-}
-function summary(snapshot: SessionSnapshot): SessionSummary {
-  // A branch or a continued native session without its own input yet is named after where it came from.
-  return { id: snapshot.id, title: conversationTitle(snapshot), status: snapshot.status, workspace: snapshot.configuration.workspace,
-    selection: snapshot.selection, updatedSeq: snapshot.lastSeq, activeRunId: snapshot.activeRunId };
-}
-function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = [], kept: KeptProcessView | null = null, lost: NonNullable<SessionView["retention"]>["lost"] | null = null,
-  queue: SessionView["queue"] | null = null, outside: NonNullable<SessionView["retention"]>["outside"] | null = null,
-  upgraded: NonNullable<SessionView["retention"]>["upgraded"] | null = null): SessionView {
-  return { id: snapshot.id, version: snapshot.version, lastSeq: snapshot.lastSeq, epoch: snapshot.epoch, status: snapshot.status,
-    workspace: snapshot.configuration.workspace, selection: snapshot.selection, activeRunId: snapshot.activeRunId, pendingSwitchId: snapshot.pendingSwitchId,
-    permissions, nativeStates: snapshot.nativeBindings?.flatMap(binding => {
-      if (binding.status === "archived") return [];
-      const carried = binding.harnessId === snapshot.selection.harnessId && binding.controlId === snapshot.selection.controlId ? carriedNativeConfiguration(snapshot, snapshot.selection, snapshot.epoch) : null;
-      return [{ harnessId: binding.harnessId, controlId: binding.controlId, status: binding.status === "fork-pending" || binding.status === "forking" ? "forking" as const : binding.status,
-        ...(binding.observed === undefined ? {} : { observed: binding.observed }), ...(carried === null ? {} : { carried }) }];
-    }) ?? [],
-    ...(snapshot.origin === undefined ? {} : { origin: snapshot.origin }), ...(queue === null ? {} : { queue }),
-    ...(snapshot.schemaVersion < 11 ? {} : { retention: { enabled: snapshot.retainNative === true, process: kept, ...(lost === null ? {} : { lost }), ...(outside === null ? {} : { outside }), ...(upgraded === null ? {} : { upgraded }) } }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
 /**
  * The status, code and message a failure answers with. The domain errors keep their code and message, with every
@@ -325,7 +303,7 @@ function publicFailure(error: unknown, homes: readonly string[]): { readonly sta
   if (error instanceof HttpError || error instanceof SessionStreamError) return error;
   if (error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError || error instanceof CapabilityError) {
     const code = error.code;
-    const status = code.includes("NOT_FOUND") ? 404 : code === "INVALID_INPUT" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
+    const status = code.includes("NOT_FOUND") ? 404 : code === "INVALID_INPUT" || code === "INVALID_CURSOR" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
       : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code.endsWith("_CHANGED") || code.includes("REFUSED") || code.endsWith("_EXPIRED") || code.includes("INCOMPATIBLE") || code.endsWith("_REQUIRED") ? 409 : 502;
     // Write ~ before cutting: every whole spelling of the home is replaced first, so a home that crosses the 512th
     // character can no longer leave its first half in the answer; the cut then only shortens text that already says ~.
@@ -419,32 +397,27 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // The relay's API (ADR-055 §12.4): its routes, the delivery state of the Runs it shows and the bodies of the errors it explains.
   let relayApi: RelayApi;
   // A Turn waits for a slot only when an operator limited the conversations running at once; conversations sharing a workspace do not wait.
-  const queueOf = (id: SessionSnapshot["id"]): NonNullable<SessionView["queue"]> | null => {
+  const queueOf = (id: SessionId): NonNullable<HeadLive["queue"]> | null => {
     const slot = app.runtime.slotWait(id);
     return slot !== null ? { kind: "slot", ...slot } : null;
   };
-  // The protocol (hh/1) reading of each Run of a view (src/contracts/protocol.ts); made once the Gateway's parts it reads from exist, below.
-  let protocolView: ProtocolView | undefined;
-  // A conversation's view with the live state of the native process it keeps (ADR-030).
-  const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => {
-    // Each Run that carried a packet with its delivery state, which can still change after the Run ended.
-    const runs = relayApi.runViews(snapshot);
-    return { ...view(snapshot, permissions, app.runtime.keptProcess(snapshot.id), app.runtime.keptLoss(snapshot.id),
-      queueOf(snapshot.id), app.runtime.keptOutside(snapshot.id), app.runtime.keptUpgrade(snapshot.id)),
-      runs: protocolView === undefined ? runs : protocolView.attach(snapshot, runs, new Set(permissions.flatMap(request => request.decided ? [] : [request.runId]))) };
-  };
-  const streams = new SessionStreamHub(id => sessionView(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
+  // The reads of a conversation kept as rows, as the API answers them (src/web/conversation-routes.ts); made once the Gateway's parts they read from exist, below.
+  let conversations: ConversationRoutes | undefined;
+  const streams = new SessionStreamHub({ snapshot: id => conversations!.session(id),
+    frame: commit => { const id = commit.changes.head!.row.id as SessionId; return commitFrame(commit.changes, conversations!.headView(commit.changes.head!.row), conversations!.frameViews(id)); },
+    stale: commit => conversations!.needsSnapshot(commit) }, {}, failure => {
     const fault = publicFailure(failure.error, homeForms());
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
   }, () => attention.frame());
-  // Waiting approvals and questions of every conversation, refreshed after each published event (ADR-035). A page with a
+  // Waiting approvals and questions of every conversation, refreshed after each published commit (ADR-035). A page with a
   // conversation open gets them on that conversation's stream; a page without one subscribes to them alone.
   const attention = new AttentionStreamHub(() => app.runtime.attention(), {}, frame => streams.attentionChanged(frame));
   const made = (options.application ?? ((root, publish) => composeApplication(root, publish, { ...(options.budgets === undefined ? {} : { budgets: options.budgets }),
     ...(options.workspaceLockRoot === undefined ? {} : { workspaceLockRoot: options.workspaceLockRoot }),
     ...(options.installations === undefined ? {} : { installations: options.installations }), ...(options.relayKeyFile === undefined ? {} : { relayKeyFile: options.relayKeyFile }),
-    table, tableGrants: table.grants })))(options.root, event => {
-    try { streams.publish(event); } finally { if (app !== undefined) attention.changed(); }
+    table, tableGrants: table.grants })))(options.root, commit => {
+    // What the head tells besides the commit's rows (the totals of the Runs, the edits) moves along with it before the frame is made; the frame is one for the commit.
+    try { conversations?.observe(commit); streams.publish(commit); } finally { if (app !== undefined) attention.changed(); }
   });
   // An application put together by hand may bring no tokens for the context table: it then has a table nobody can enter.
   app = { ...made, grants: made.grants ?? table.grants };
@@ -462,11 +435,22 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // the build that read them (every compiled Gateway file), since its drivers decide what a catalog contains.
   const nativeModels = new HarnessModels(app.factory, new NativeCatalogCache(realpathSync(options.root), { assertOwner: () => app.store.assertOwner(),
     report: problem => process.stderr.write("HarnessGateway: NATIVE_CATALOG_CACHE_UNAVAILABLE (" + problem + ")\n"), revision }));
-  // Each Run's protocol Turn: Harnesses named as the relay names them, models as the catalogs read so far name them, tool details as the content store reads them back.
+  // Each Turn as the wire tells it: Harnesses named as the relay names them, models as the catalogs read so far name them, tool details as the content store reads them back.
   let scannedNames: ReadonlyMap<string, string> = new Map();
   // A Harness is named as the Harness list names it (the catalog of the last scan), the built-in catalog's name when the scan has not seen it: the page shows one name for it everywhere.
   const builtinName = builtinHarnessName();
-  protocolView = new ProtocolView({ heads: new DetailHeads(app.content), harnessName: harnessId => scannedNames.get(harnessId) ?? builtinName(harnessId), modelName: (harnessId, nativeModel) => nativeModels.modelName(harnessId, nativeModel) });
+  const detailHeads = new DetailHeads(app.content);
+  const runRelay = new RunRelayReader({ relayDeliveries: id => app.store.relayDeliveries(id), events: (id, after, limit) => app.store.events(id, after, limit), get: id => app.store.get(id) });
+  conversations = new ConversationRoutes({ reader: app.store, facts: app.store, relay: id => runRelay.of(id),
+    env: { harnessName: harnessId => scannedNames.get(harnessId) ?? builtinName(harnessId), modelName: (harnessId, nativeModel) => nativeModels.modelName(harnessId, nativeModel), detail: ref => detailHeads.read(ref) },
+    // What only the running service knows of a conversation: the requests that wait for the user, the slot it waits for, the process it keeps.
+    live: id => {
+      const lost = app.runtime.keptLoss(id), outside = app.runtime.keptOutside(id), upgraded = app.runtime.keptUpgrade(id), queue = queueOf(id);
+      return { permissions: app.runtime.permissionRequests(id), ...(queue === null ? {} : { queue }),
+        retention: { process: app.runtime.keptProcess(id), ...(lost === null ? {} : { lost }), ...(outside === null ? {} : { outside }), ...(upgraded === null ? {} : { upgraded }) } };
+    } });
+  /** A conversation's title for the lists of conversations a maintenance step names; the generic name for one that is gone. */
+  const titleOf = (id: string): string => { try { const row = app.store.head(sessionId(id)); return row.deletedAt === null ? row.title : "对话"; } catch { return "对话"; } };
   // Directories the user took from the login shell's PATH (G(ii)) extend discovery and new conversations until removed.
   const loginShells = new LoginShellStore(realpathSync(options.root));
   // What each installed Harness reads besides its model (ADR-045 step 1), from the user's own files; read-only.
@@ -637,9 +621,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     // Both answer with the last completed scan (ADR-050): reading them starts no discovery, and a scan still running is
     // not waited for. The startup scan ends before the listener opens, so there always is one.
     if (path === "/api/v1/state" && method === "GET") {
-      queries(url, []); const snapshots = recentSnapshots(app, 100);
+      queries(url, []); const listed = conversations!.sessions({});
       const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses, harnessesScannedAt: scannedAt,
-        sessions: snapshots.map(summary), jobs: app.management.listJobs(50), readiness: readinessViews(nativeModels.readiness(), snapshots), installationPolicy: app.factory.installations,
+        sessions: listed.sessions, sessionsNext: listed.next, jobs: app.management.listJobs(50), readiness: readinessViews(nativeModels.readiness(), app.store.startupSamples(STARTUP_SAMPLES)), installationPolicy: app.factory.installations,
         // This Gateway has the relay API (ADR-055 §12.4): the page asks for the relay of a Gateway that says so and of none else.
         relay: true };
       json(response, 200, output); return;
@@ -840,7 +824,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       privateJson(response, await capabilityChanges.restore(text(input.fingerprint, "confirmation", 128), command(input.commandId))); return;
     }
     // Read-only: what the latest catalog reads and Runs showed; nothing is started.
-    if (path === "/api/v1/harnesses/readiness" && method === "GET") { queries(url, []); json(response, 200, { readiness: readinessViews(nativeModels.readiness(), recentSnapshots(app, 100)) }); return; }
+    if (path === "/api/v1/harnesses/readiness" && method === "GET") { queries(url, []); json(response, 200, { readiness: readinessViews(nativeModels.readiness(), app.store.startupSamples(STARTUP_SAMPLES)) }); return; }
     if (path === "/api/v1/attachments" && method === "POST") {
       // Raw bytes, not JSON: the declared type is checked against the bytes and the upload is bound to this workspace.
       queries(url, ["name", "commandId"]);
@@ -869,7 +853,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (nativeBranch && method === "POST") {
       queries(url, []); const input = record(await body(request), ["epoch", "commandId"], ["epoch", "commandId"]);
       if (typeof input.epoch !== "number" || !Number.isSafeInteger(input.epoch) || input.epoch < 1) throw new HttpError(400, "INVALID_INPUT", "invalid native branch epoch");
-      json(response, 200, sessionView(app.runtime.resetNative(sessionId(nativeBranch[1]), text(input.commandId, "commandId", 128), input.epoch))); return;
+      json(response, 200, conversations!.session(app.runtime.resetNative(sessionId(nativeBranch[1]), text(input.commandId, "commandId", 128), input.epoch).id)); return;
     }
     if (permissionRoute && method === "POST") { queries(url, []); const input = record(await body(request, MAX_ANSWER_BODY_BYTES), ["optionId", "commandId", "input"], ["optionId", "commandId"]); const id = sessionId(permissionRoute[1]); json(response, 200, await app.runtime.decidePermission(id, permissionRoute[2]!, text(input.optionId, "optionId", 512), text(input.commandId, "commandId", 128), input.input===undefined?undefined:(typeof input.input==="string"&&!input.input.includes("\0")?input.input:(()=>{throw new HttpError(400,"INVALID_INPUT","invalid native UI input")})()))); return; }
     const nativeSessionsRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/native-sessions$/u.exec(path);
@@ -932,9 +916,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       queries(url, []); await rescan();
       const check = await app.management.maintenance(maintenanceRoute[1]!);
       const output: MaintenanceView = { ...check, conversations: check.conversations.map(item => {
-        let title = "对话";
-        try { title = summary(app.runtime.read(sessionId(item.sessionId))).title; } catch { /* a conversation closed meanwhile keeps the generic name */ }
-        return { ...item, title };
+        return { ...item, title: titleOf(item.sessionId) };
       }) };
       json(response, 200, output); return;
     }
@@ -952,9 +934,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       queries(url, []); await rescan();
       const check = await app.management.uninstallCheck(uninstallRoute[1]!, uninstallRoute[2]!);
       const output: UninstallCheckView = { ...check, conversations: check.conversations.map(item => {
-        let title = "对话";
-        try { title = summary(app.runtime.read(sessionId(item.sessionId))).title; } catch { /* a conversation closed meanwhile keeps the generic name */ }
-        return { ...item, title };
+        return { ...item, title: titleOf(item.sessionId) };
       }) };
       // The confirmation may name the removed program paths with ~ only; an absolute home path is refused, not sent (ADR-044).
       if (homePathsIn(output, homeForms()).length) throw new HttpError(500, "PRIVACY_GUARD", "卸载检查的结果含有未隐去的本机路径，已拦截。");
@@ -966,9 +946,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       queries(url, []); await rescan();
       const check = await app.management.upgradeCheck(upgradeRoute[1]!, upgradeRoute[2]!);
       const output: InstallationUpgradeCheckView = { ...check, conversations: check.conversations.map(item => {
-        let title = "对话";
-        try { title = summary(app.runtime.read(sessionId(item.sessionId))).title; } catch { /* a conversation closed meanwhile keeps the generic name */ }
-        return { ...item, title };
+        return { ...item, title: titleOf(item.sessionId) };
       }) };
       if (homePathsIn(output, homeForms()).length) throw new HttpError(500, "PRIVACY_GUARD", "升级检查的结果含有未隐去的本机路径，已拦截。");
       json(response, 200, output); return;
@@ -1057,19 +1035,19 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (path === "/api/v1/sessions/import" && method === "POST") {
       queries(url, []); const input = record(await body(request), ["workspace", "selection", "nativeId", "commandId"], ["selection", "nativeId", "commandId"]);
       const configuration = input.workspace === undefined ? options.configuration : await workspaceConfiguration(text(input.workspace, "workspace"));
-      try { json(response, 201, sessionView(await app.runtime.importNative(configuration, select(input.selection), text(input.nativeId, "native session", 1024), command(input.commandId)))); }
+      try { json(response, 201, conversations!.session((await app.runtime.importNative(configuration, select(input.selection), text(input.nativeId, "native session", 1024), command(input.commandId))).id)); }
       catch (error) { throw importFailure(error); }
       return;
     }
     if (path === "/api/v1/sessions") {
-      if (method === "GET") { queries(url, ["limit"]); json(response, 200, recentSnapshots(app, cursor(url.searchParams.get("limit"), 100, 1, 100)).map(summary)); return; }
+      if (method === "GET") { queries(url, ["after", "limit"]); json(response, 200, conversations!.sessions({ after: url.searchParams.get("after") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
       if (method === "POST") {
         queries(url, []); const input = record(await body(request), ["workspace", "selection", "commandId"], ["selection", "commandId"]);
         const configuration = input.workspace === undefined ? options.configuration : await prepareConfiguration({ workspace: text(input.workspace, "workspace"),
           ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
           ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
           packageRoots: options.configuration.packageRoots, searchDirs: searchDirs(), pathOnly: options.configuration.pathOnly });
-        json(response, 201, sessionView(await app.runtime.create(configuration, select(input.selection), command(input.commandId)))); return;
+        json(response, 201, conversations!.session((await app.runtime.create(configuration, select(input.selection), command(input.commandId))).id)); return;
       }
     }
     const streamRoute = /^\/api\/v1\/sessions\/([^/]+)\/events\/stream$/u.exec(path);
@@ -1126,21 +1104,36 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     // The relay's reads and preferences (ADR-055 §12.4): a conversation's bindings and packets, a packet's stored text, and the
     // installation's relay preferences. A write here has passed the same Origin and CSRF checks as every other.
     if (await relayApi.handle(request, response, url, method)) return;
+    // A conversation kept as rows is read in pages (ADR-057 3.4): its head and newest Turns, the Turns before a cursor, a Turn's items from a place on, one item whole, a byte range of an
+    // item's text, and the changes of the whole conversation. Each read is of one moment; a conversation that was deleted is not found by any of them.
+    const turnsRoute = /^\/api\/v1\/sessions\/([^/]+)\/turns$/u.exec(path);
+    if (turnsRoute && method === "GET") { queries(url, ["before", "limit"]); json(response, 200, conversations!.turns(turnsRoute[1]!, { before: url.searchParams.get("before") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
+    const itemsRoute = /^\/api\/v1\/sessions\/([^/]+)\/runs\/([^/]+)\/items$/u.exec(path);
+    if (itemsRoute && method === "GET") { queries(url, ["after", "limit"]); json(response, 200, conversations!.runItems(itemsRoute[1]!, itemsRoute[2]!, { after: url.searchParams.get("after") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
+    const itemRoute = /^\/api\/v1\/sessions\/([^/]+)\/runs\/([^/]+)\/items\/([^/]+)$/u.exec(path);
+    if (itemRoute && method === "GET") { queries(url, []); json(response, 200, conversations!.item(itemRoute[1]!, itemRoute[2]!, itemRoute[3]!)); return; }
+    const textRoute = /^\/api\/v1\/sessions\/([^/]+)\/runs\/([^/]+)\/items\/([^/]+)\/text$/u.exec(path);
+    if (textRoute && method === "GET") { queries(url, ["from", "to"]); json(response, 200, conversations!.itemText(textRoute[1]!, textRoute[2]!, textRoute[3]!, { from: url.searchParams.get("from") ?? undefined, to: url.searchParams.get("to") ?? undefined })); return; }
+    const changesRoute = /^\/api\/v1\/sessions\/([^/]+)\/changes$/u.exec(path);
+    if (changesRoute && method === "GET") { queries(url, ["before", "limit"]); json(response, 200, conversations!.changes(changesRoute[1]!, { before: url.searchParams.get("before") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
     const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|retention|end-process|native-resume))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
-      if (action === undefined && method === "GET") { queries(url, []); json(response, 200, sessionView(app.runtime.read(id), app.runtime.permissionRequests(id))); return; }
+      if (action === undefined && method === "GET") { queries(url, []); json(response, 200, conversations!.session(id)); return; }
       if (action === "export" && method === "GET") {
         // A download of the public conversation; private native state and stored bytes stay out.
         queries(url, ["format"]); const format = url.searchParams.get("format") ?? "markdown";
         if (format !== "markdown" && format !== "json") throw new HttpError(400, "INVALID_INPUT", "export format must be markdown or json");
         // Names come from the catalog, the same in every scan: the last one is enough.
         // The JSON is the conversation as it is stored: the protocol Turn is derived from it (and reads a command's text from the stored details),
-        // so the Runs go as they were. The Markdown is worded from the protocol Turns, as the page words them.
-        const current = sessionView(app.runtime.read(id)), now = new Date(), names = new Map(harnesses.map(harness => [harness.id, harness.name]));
+        // so the Runs go as they were. The Markdown is worded from the protocol Turns, as the page words them. The whole conversation, in the old shape: the one place the
+        // server still reads it so (`exportView`), until the export is made from the rows. No size stops it.
+        const snapshot = app.runtime.read(id), now = new Date(), names = new Map(harnesses.map(harness => [harness.id, harness.name]));
+        const lost = app.runtime.keptLoss(id), outside = app.runtime.keptOutside(id), upgraded = app.runtime.keptUpgrade(id), queue = queueOf(id);
+        const current = exportView(snapshot, relayApi.runViews(snapshot), { kept: app.runtime.keptProcess(id), lost, queue, outside, upgraded },
+          { harnessName: harnessId => scannedNames.get(harnessId) ?? builtinName(harnessId), modelName: (harnessId, nativeModel) => nativeModels.modelName(harnessId, nativeModel), detail: ref => detailHeads.read(ref) });
         const exported = { ...current, runs: current.runs.map(({ protocol: _derived, ...run }) => run) };
         const bytes = Buffer.from(format === "json" ? JSON.stringify({ application: "HarnessHub", exportedAt: now.toISOString(), session: exported }, null, 2) + "\n" : conversationMarkdown(current, harnessId => names.get(harnessId) ?? harnessId, now));
-        if (bytes.length > MAX_RESPONSE_BYTES) throw new HttpError(413, "RESPONSE_LIMIT", "Conversation export exceeds its byte budget");
         if (response.destroyed || response.writableEnded) return;
         headers(response); response.statusCode = 200;
         response.setHeader("Content-Type", format === "json" ? "application/json; charset=utf-8" : "text/markdown; charset=utf-8"); response.setHeader("Content-Length", bytes.length);
@@ -1149,7 +1142,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       }
       // How to continue the current native session in the Harness's own program (ADR-039); read on demand, never exported.
       if (action === "native-resume" && method === "GET") {
-        queries(url, []); const snapshot = app.runtime.read(id), selection = snapshot.selection;
+        queries(url, []); const snapshot = app.store.get(id), selection = snapshot.selection;
         // A binding that opens a new native session (opensNew) names the one it gave up: there is none to continue yet.
         const binding = selection.provider === undefined ? snapshot.nativeBindings?.find(item => item.harnessId === selection.harnessId && item.controlId === selection.controlId && item.status === "ready" && item.opensNew !== true) : undefined;
         // The commands do not depend on the installed version, so this read scans nothing (ADR-050 item 30 as ADR-053 changed it).
@@ -1160,7 +1153,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (action === "events" && method === "GET") {
         queries(url, ["afterSeq", "limit"]); const after = cursor(url.searchParams.get("afterSeq"), 0, 0, Number.MAX_SAFE_INTEGER), limit = cursor(url.searchParams.get("limit"), 50, 1, 100);
         const events = app.store.events(id, after, limit).map(item => relayApi.publicEvent(item)), nextSeq = events.at(-1)?.seq ?? after;
-        const output: EventPage = { events, nextSeq, hasMore: app.runtime.read(id).lastSeq > nextSeq }; json(response, 200, output); return;
+        const output: EventPage = { events, nextSeq, hasMore: app.store.head(id).lastSeq > nextSeq }; json(response, 200, output); return;
       }
       if (method === "POST") {
         queries(url, []);
@@ -1178,7 +1171,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
           const input = record(await body(request), ["commandId", "throughRunId"], ["commandId"]);
           if (input.throughRunId !== undefined && typeof input.throughRunId !== "string") throw new HttpError(400, "INVALID_INPUT", "Invalid branch point");
           const branch = app.runtime.fork(id, command(input.commandId), input.throughRunId as string | undefined);
-          json(response, 201, sessionView(branch, app.runtime.permissionRequests(branch.id))); return;
+          json(response, 201, conversations!.session(branch.id)); return;
         }
         if (action === "resume") {
           const input = record(await body(request), ["selection", "commandId", "acknowledgeUnknown"], ["selection", "commandId"]);
@@ -1186,14 +1179,14 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
           json(response, 202, app.runtime.resume(id, select(input.selection), command(input.commandId), input.acknowledgeUnknown === true)); return;
         }
         if (action === "cancel") { const input = record(await body(request), ["runId", "commandId"], ["commandId"]); json(response, 202, app.runtime.cancel(id, command(input.commandId), input.runId === undefined ? undefined : text(input.runId, "Run identity", 128))); return; }
-        if (action === "close") { const input = record(await body(request), ["commandId"], ["commandId"]); json(response, 200, sessionView(await app.runtime.closeSession(id, command(input.commandId)))); return; }
+        if (action === "close") { const input = record(await body(request), ["commandId"], ["commandId"]); json(response, 200, conversations!.session((await app.runtime.closeSession(id, command(input.commandId))).id)); return; }
         if (action === "retention") {
           const input = record(await body(request), ["enabled", "commandId"], ["enabled", "commandId"]);
           if (typeof input.enabled !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Expected whether to keep the native process");
-          json(response, 200, sessionView(app.runtime.setRetention(id, input.enabled, command(input.commandId)), app.runtime.permissionRequests(id))); return;
+          json(response, 200, conversations!.session(app.runtime.setRetention(id, input.enabled, command(input.commandId)).id)); return;
         }
         // Ends the kept process with the normal stop chain; answers once its close is recorded.
-        if (action === "end-process") { const input = record(await body(request), ["commandId"], ["commandId"]); json(response, 200, sessionView(await app.runtime.endKept(id, command(input.commandId)), app.runtime.permissionRequests(id))); return; }
+        if (action === "end-process") { const input = record(await body(request), ["commandId"], ["commandId"]); json(response, 200, conversations!.session((await app.runtime.endKept(id, command(input.commandId))).id)); return; }
       }
     }
     throw new HttpError(404, "NOT_FOUND", "API route not found");

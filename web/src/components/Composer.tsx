@@ -145,12 +145,13 @@ export function Composer(props: ComposerProps) {
   const canQueue = active !== null && !active.cancelRequested && props.queued === null && props.onQueue !== undefined && !readonly && !blocked && props.messageDraft.trim() !== "" && bytes <= 64 * 1024 && !attachmentBlocked;
   const attach = (files: FileList | readonly File[] | null) => { if (files && files.length) props.onAttach([...files]); };
   const canAttach = !readonly && props.attachments.length < 8;
-  const unknown = session?.runs.filter(run => run.status === "unknown") ?? [];
-  const lastSwitch = session?.switches.at(-1);
+  // The Turns whose result is unknown are counted by the Gateway for the whole conversation, whichever Turns this page holds.
+  const unknown = session?.facts.unknown ?? { count: 0, unclosed: false };
+  const lastSwitch = session?.lastSwitch;
   const selectionFailed = props.error !== null || lastSwitch?.status === "failed" && JSON.stringify(lastSwitch.requested) === JSON.stringify({ harnessId: draft.harnessId, controlId: draft.controlId,
     provider: draft.providerId && draft.providerRevision !== null ? { providerId: draft.providerId, revision: draft.providerRevision, model: draft.model } : null,
     ...(!draft.providerId && draft.model ? { nativeModel: draft.model } : {}) });
-  const resourcesUnconfirmed = unknown.some(run => run.cleanup?.closed !== true);
+  const resourcesUnconfirmed = unknown.unclosed;
   const outdated = provider !== undefined && draft.providerRevision !== null && provider.revision !== draft.providerRevision;
   const docked = approval !== null;
 
@@ -336,7 +337,7 @@ export function Composer(props: ComposerProps) {
   };
 
   // A switch the Gateway holds until the reply ends is named by what it switches to, even if the picker has moved on since.
-  const pendingTarget = pending ? session?.switches.find(change => change.id === session.pendingSwitchId)?.requested : undefined;
+  const pendingTarget = pending && session !== null && session.lastSwitch?.id === session.pendingSwitchId ? session.lastSwitch.requested : undefined;
   const nextHarness = harnesses.find(row => row.id === (pendingTarget?.harnessId ?? draft.harnessId));
   const takeOver = nextHarness ? session && session.selection.harnessId !== nextHarness.id ? `由 ${nextHarness.name} 接手` : "改用新的模型与设置" : "改用新的选择";
   const placeholder = readonly ? "对话已关闭，历史仍可查看" : blocked ? "先写下想继续的内容，恢复后发送…" : active ? "回复进行中，可以先写下一条…" : session ? "继续这段对话…"
@@ -351,7 +352,7 @@ export function Composer(props: ComposerProps) {
   const popSide: "top" | "bottom" = session ? "top" : "bottom";
   const pickAgent = (value: string) => {
     if (value === draft.harnessId) return;
-    const next = harnesses.find(row => row.id === value), previous = [...(session?.switches ?? [])].reverse().find(change => change.status === "effective" && change.target?.harnessId === value)?.target ?? [...(session?.runs ?? [])].reverse().find(run => run.selection.harnessId === value)?.selection ?? props.rememberedChoice?.(value) ?? undefined;
+    const next = harnesses.find(row => row.id === value), previous = [...(session?.runs ?? [])].reverse().find(run => run.selection.harnessId === value)?.selection ?? props.rememberedChoice?.(value) ?? undefined;
     const control = previous && next?.controls.some(row => row.id === previous.controlId && row.available) ? previous.controlId : next?.controls.find(row => row.id === next.defaultControlId && row.available)?.id ?? next?.controls.find(row => row.available)?.id ?? "";
     props.onDraft({ ...draft, harnessId: value, controlId: control, model: draft.providerId ? draft.model : previous?.nativeModel ?? "", nativeOptions: draft.providerId ? {} : previous?.nativeOptions ?? {} });
   };
@@ -412,8 +413,8 @@ export function Composer(props: ComposerProps) {
         : <span className="inline-flex h-[30px] items-center gap-2 px-1 text-caption text-fg-2"><Spinner size={13} label=""/><span id={stripNotice ? "composer-notice" : undefined}>正在保存选择</span></span>}
     </div> : null}
     {carried && !readonly && !docked ? <div className="composer-change native-carried motion-fade-in flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-caption text-fg-2" role="status"><span>原生命令已改为 {carried}；下一回合沿用，不改回所选。</span><button type="button" className="link-btn" onClick={props.onApply} disabled={disabled || props.mutation !== null}>改用所选设置</button></div> : null}
-    {blocked && !readonly ? <ComposerNotice id="composer-notice" title="执行已暂停，对话历史和草稿仍保留。" action={<button type="button" className="btn btn-sm" onClick={props.onApply} disabled={disabled || pending || props.mutation !== null || problem !== null || resourcesUnconfirmed}><RefreshCw size={12}/>{unknown.length ? "确认保留未知结果并继续" : "检查连接并恢复对话"}</button>}>
-      {unknown.length ? "上一轮结果未知，不会自动重发。" : ""}{note}</ComposerNotice> : null}
+    {blocked && !readonly ? <ComposerNotice id="composer-notice" title="执行已暂停，对话历史和草稿仍保留。" action={<button type="button" className="btn btn-sm" onClick={props.onApply} disabled={disabled || pending || props.mutation !== null || problem !== null || resourcesUnconfirmed}><RefreshCw size={12}/>{unknown.count ? "确认保留未知结果并继续" : "检查连接并恢复对话"}</button>}>
+      {unknown.count ? "上一轮结果未知，不会自动重发。" : ""}{note}</ComposerNotice> : null}
     {noteShown ? noteDanger || noteIsAuth ? <ComposerNotice id="composer-notice" title={noteIsAuth ? authTitle : undefined} action={noteIsAuth || noteIsProblem ? <>
         {noteIsAuth ? <button type="button" className="btn btn-sm" onClick={props.onRefreshModels}>刷新本机模型</button>
           : <button type="button" className="btn btn-sm" onClick={draft.providerId ? props.onProviders : props.onHarnesses}>查看原因</button>}

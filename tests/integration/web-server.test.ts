@@ -13,7 +13,9 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 import { startWebServer, type WebServer } from "../../src/web/server.js";
 import { homePathsIn } from "../../src/web/shown-paths.js";
 import { conversationMarkdown } from "../../src/web/conversation-export.js";
-import type { SessionView } from "../../src/contracts/web.js";
+import type { PublicRun } from "../../src/contracts/session.js";
+import type { SessionView, SessionViewV14 } from "../../src/contracts/web.js";
+import { readWhole, type ReadConversation } from "../fixtures/http-conversation.js";
 import { appStore } from "../fixtures/runtime-store.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
@@ -70,20 +72,32 @@ async function raw(f: Fixture, path: string, input: unknown, extra: Record<strin
 }
 async function create(f: Fixture, commandId = "create-web"): Promise<string> {
   const response = await call(f, "/api/v1/sessions", "POST", { selection: { harnessId: "web-a" }, commandId }); assert.equal(response.status, 201, response.text);
-  return String(row(response.data).id);
+  return String(row(row(response.data).head).id);
 }
-async function state(f: Fixture, id: string): Promise<SessionView> {
-  const response = await call(f, "/api/v1/sessions/" + id); assert.equal(response.status, 200, response.text);
-  assertView(response.data); assert.equal(response.data.id, id); return response.data;
+/** The conversation as a page reads it: `GET /sessions/:id` (its head and the newest Turns) and then the Turns before them, a page at a time; the first answer must be the v14 shape. */
+async function state(f: Fixture, id: string): Promise<ReadConversation> {
+  let first: unknown;
+  const view = await readWhole(async path => { const response = await call(f, path); assert.equal(response.status, 200, response.text); first ??= response.data; return response.data; }, id);
+  assertView(first); assert.equal(first.head.id, id); assert.equal(view.id, id); return view;
 }
-function assertView(value: unknown): asserts value is SessionView {
+/** `GET /sessions/:id` answers a head and a window of Turns (v14), not the conversation whole: no list of Runs, of messages or of switches beside them. */
+function assertView(value: unknown): asserts value is SessionViewV14 {
+  const item = row(value), head = row(item.head), window = row(item.window);
+  for (const key of ["id", "status", "workspace", "title"]) assert.equal(typeof head[key], "string");
+  for (const key of ["version", "lastSeq", "epoch", "runCount"]) assert.equal(typeof head[key], "number");
+  assert.ok(head.selection !== null && typeof head.selection === "object"); assert.ok(head.facts !== null && typeof head.facts === "object");
+  assert.ok(Array.isArray(window.turns)); assert.ok(window.older === null || typeof window.older === "string");
+  for (const key of ["runs", "messages", "switches"]) assert.equal(key in item || key in head, false, key + " is no member of the conversation's answer");
+}
+/** The conversation of an export, which is still whole and in the shape of the old view (the Runs without their protocol Turn). */
+function assertExported(value: unknown): asserts value is SessionView {
   const item = row(value);
   for (const key of ["id", "status", "workspace"]) assert.equal(typeof item[key], "string");
   for (const key of ["version", "lastSeq", "epoch"]) assert.equal(typeof item[key], "number");
   for (const key of ["runs", "messages", "switches"]) assert.ok(Array.isArray(item[key]));
   assert.ok(item.selection !== null && typeof item.selection === "object");
 }
-async function waitFor(f: Fixture, id: string, predicate: (value: SessionView) => boolean): Promise<SessionView> {
+async function waitFor(f: Fixture, id: string, predicate: (value: ReadConversation) => boolean): Promise<ReadConversation> {
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline) { const snapshot = await state(f, id); if (predicate(snapshot)) return snapshot; await delay(20); }
   throw new Error("HTTP Session did not reach expected state: " + JSON.stringify(await state(f, id)));
@@ -132,6 +146,9 @@ test("real HTTP and SQLite preserve A→B→A public history and idempotent acce
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "third", commandId: "third" }); const final = await waitFor(f, id, value => value.runs[2]?.status === "completed");
   assert.deepEqual(final.messages.map(message => message.text), ["first", "a:first", "second", "b:second", "third", "a:third"]);
   assert.ok(final.runs.every(run => run.cleanup?.closed === true)); assert.equal("configuration" in final, false); assert.equal("commands" in final, false);
+  // Three Turns, each on the Harness that was selected for it; the list of switches is gone, and the head says where the conversation stands after the two (the latest, back to web-a, took effect).
+  assert.deepEqual(final.runs.map(run => run.selection.harnessId), ["web-a", "web-b", "web-a"]); assert.equal(final.runCount, 3);
+  assert.deepEqual([final.lastSwitch?.status, final.lastSwitch?.requested.harnessId, final.pendingSwitchId], ["effective", "web-a", null]);
   assert.equal((await trace(f)).filter(item => item.kind === "prompt").length, 3);
 });
 
@@ -158,7 +175,7 @@ test("failed switch does not dispatch later messages on the old Harness", async 
   await call(f, `/api/v1/sessions/${id}/switches`, "POST", { selection: { harnessId: "web-unavailable" }, commandId: "bad-switch" });
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "second", commandId: "second" });
   await call(f, `/api/v1/sessions/${id}/cancel`, "POST", { commandId: "cancel-first" });
-  const ended = await waitFor(f, id, value => value.runs[1]?.status === "failed"); assert.equal(ended.switches[0]?.status, "failed");
+  const ended = await waitFor(f, id, value => value.runs[1]?.status === "failed"); assert.equal(ended.lastSwitch?.status, "failed");
   assert.equal(ended.selection.harnessId, "web-a"); assert.equal(ended.runs[1]?.error?.code, "SWITCH_NOT_EFFECTIVE");
   assert.equal((await trace(f)).filter(item => item.kind === "prompt").length, 1);
 });
@@ -169,7 +186,7 @@ test("target startup failure preserves the conversation and never dispatches wai
   await call(f, `/api/v1/sessions/${id}/switches`, "POST", { selection: { harnessId: "web-bad" }, commandId: "bad-switch" });
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "second", commandId: "second" });
   await call(f, `/api/v1/sessions/${id}/cancel`, "POST", { commandId: "cancel-first" });
-  const ended = await waitFor(f, id, value => value.runs[1]?.status === "failed"); assert.equal(ended.switches[0]?.status, "effective");
+  const ended = await waitFor(f, id, value => value.runs[1]?.status === "failed"); assert.equal(ended.lastSwitch?.status, "effective");
   assert.equal(ended.status, "open");
   assert.equal(ended.runs[1]?.backend, null); assert.equal(ended.runs[1]?.cleanup?.closed, true); assert.equal(ended.selection.harnessId, "web-bad");
   assert.equal((await trace(f)).filter(item => item.kind === "prompt").length, 1);
@@ -188,7 +205,7 @@ test("Provider HTTP create and revision update redact keys and preserve optimist
   const listed = await call(f, "/api/v1/providers"); assert.equal(listed.text.includes(input.apiKey), false); assert.equal((await call(f, "/api/v1/state")).text.includes(input.apiKey), false);
   const id = await create(f);
   const unsupported = await call(f, `/api/v1/sessions/${id}/switches`, "POST", { selection: { harnessId: "web-a", provider: { providerId: provider.id, revision: 2, model: "model-a" } }, commandId: "unsupported" }); assert.equal(unsupported.status, 202);
-  const failed = await waitFor(f, id, value => value.switches[0]?.status === "failed"); assert.equal(failed.switches[0]?.error?.code, "UNSUPPORTED_PROVIDER");
+  const failed = await waitFor(f, id, value => value.lastSwitch?.status === "failed"); assert.equal(failed.lastSwitch?.error?.code, "UNSUPPORTED_PROVIDER");
 });
 
 test("Provider probe runs an actual local models endpoint and never returns endpoint diagnostics or keys", async t => {
@@ -205,7 +222,7 @@ test("Provider probe runs an actual local models endpoint and never returns endp
 test("closed Session retains history and denies new messages; server reopen preserves the same identity", async t => {
   const f = await fixture(t); await auth(f); const id = await create(f);
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "first" }); await waitFor(f, id, value => value.runs[0]?.status === "completed");
-  const closed = await call(f, `/api/v1/sessions/${id}/close`, "POST", { commandId: "close" }); assert.equal(closed.status, 200); assert.equal(row(closed.data).status, "closed");
+  const closed = await call(f, `/api/v1/sessions/${id}/close`, "POST", { commandId: "close" }); assert.equal(closed.status, 200); assert.equal(row(row(closed.data).head).status, "closed");
   assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "second", commandId: "second" })).status, 409);
   await f.gateway.close();
   const configuration = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true });
@@ -222,7 +239,7 @@ test("cross-site writes, invalid Host, missing Origin, CSRF and wrong content ty
     const rejected = await raw(f, "/api/v1/sessions", input, extra); assert.equal(rejected.status, expected, JSON.stringify(extra) + ": " + rejected.text);
   }
   const noOrigin = await fetch(f.origin + "/api/v1/sessions", { method: "POST", headers: { Cookie: f.cookie, "X-CSRF-Token": f.csrf, "Content-Type": "application/json" }, body: JSON.stringify(input) }); assert.equal(noOrigin.status, 403);
-  assert.deepEqual((await call(f, "/api/v1/sessions")).data, []);
+  assert.deepEqual((await call(f, "/api/v1/sessions")).data, { sessions: [], next: null });
 });
 
 test("web input rejects malformed JSON, UTF-8, unknown fields, over-limit bodies and unsafe cursors", async t => {
@@ -237,11 +254,17 @@ test("web input rejects malformed JSON, UTF-8, unknown fields, over-limit bodies
   const big = await answer(3 * 1024 * 1024); assert.notEqual(big.status, 413, "a 3 MiB answer is not refused for its size"); assert.equal((row(await big.json())).code, "SESSION_NOT_FOUND");
   const huge = await answer(17 * 1024 * 1024); assert.equal(huge.status, 413, "the route still has a bound against a runaway body"); await huge.text();
   assert.equal((await call(f, "/api/v1/sessions", "POST", { selection: { harnessId: "web-a" }, commandId: "unknown", configHome: f.root })).status, 400);
-  assert.equal((await call(f, "/api/v1/sessions?limit=101")).status, 400);
-  assert.equal((await call(f, "/api/v1/sessions?limit=1&limit=2")).status, 400);
+  // A page size is a size and not a bound (the list has no ceiling of 100 any more): 101 is read. What is refused is a value that is no whole number from 1, a cursor that is none, a query repeated or unknown.
+  assert.equal((await call(f, "/api/v1/sessions?limit=101")).status, 200);
+  for (const query of ["limit=0", "limit=-1", "limit=1.5", "limit=x", "after=not-a-cursor", "unexpected=1", "limit=1&limit=2"]) assert.equal((await call(f, "/api/v1/sessions?" + query)).status, 400, query);
   const id = await create(f);
   for (const query of ["afterSeq=-1", "afterSeq=1.5", "limit=0", "unexpected=1"]) assert.equal((await call(f, `/api/v1/sessions/${id}/events?${query}`)).status, 400);
+  // The Turns before a cursor need one, and the cursor must be one; the changes of the conversation take a limit from 1 and a cursor of their own shape.
+  for (const path of [`/turns`, `/turns?before=not-a-cursor`, `/turns?before=not-a-cursor&limit=0`, `/changes?limit=0`, `/changes?before=not-a-cursor`, `/changes?unexpected=1`]) {
+    const refused = await call(f, `/api/v1/sessions/${id}${path}`); assert.equal(refused.status, 400, path + ": " + refused.text); assert.equal(row(refused.data).code, "INVALID_INPUT", path);
+  }
   assert.equal((await call(f, "/api/v1/sessions/session-absent")).status, 404);
+  for (const path of ["/turns?before=0", "/changes", "/runs/0/items", "/runs/0/items/1", "/runs/0/items/1/text"]) assert.equal((await call(f, "/api/v1/sessions/session-absent" + path)).status, 404, "an absent conversation has no " + path);
 });
 
 test("static requests cannot escape the asset root or read a symlinked private file", async t => {
@@ -273,7 +296,7 @@ test("HTTP concurrent unfinished bodies are bounded at 256 requests in progress,
     assert.equal(status, 429);
   }
   finally { for (const req of requests) req.destroy(); }
-  await delay(300); assert.deepEqual((await call(f, "/api/v1/sessions")).data, []);
+  await delay(300); assert.deepEqual((await call(f, "/api/v1/sessions")).data, { sessions: [], next: null });
   assert.equal((await call(f, "/api/v1/state")).status, 200, "the cap is a count of requests in progress, not of requests made");
 });
 
@@ -356,18 +379,32 @@ test("authenticated recovery restores a legacy blocked conversation without rewr
   f.gateway = await startWebServer({ installations: "any", root: f.data, configuration: await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks"),
     application: (dataRoot, publish) => application(dataRoot, publish, { installations: "any", workspaceLockRoot: join(f.root, "locks") }) });
   const launch = new URL(f.gateway.url); f.origin = launch.origin; f.token = new URLSearchParams(launch.hash.slice(1)).get("token")!; await auth(f);
+  // The restarted Gateway tells the conversation blocked, and the failed switch the store holds as its latest one.
+  const blocked = await state(f, id); assert.equal(blocked.status, "blocked"); assert.deepEqual(blocked.lastSwitch, failed.switches[0]);
   const count = (await trace(f)).filter(item => item.kind === "prompt").length;
   const input = { selection: { harnessId: "web-b" }, commandId: "resume" };
   assert.equal((await call(f, `/api/v1/sessions/${id}/resume`, "POST", { ...input, acknowledgeUnknown: "yes" })).status, 400);
   const accepted = await call(f, `/api/v1/sessions/${id}/resume`, "POST", input); assert.equal(accepted.status, 202, accepted.text);
   const resumed = await waitFor(f, id, value => value.status === "open");
-  assert.equal(resumed.id, id); assert.deepEqual(resumed.runs.map(({ protocol: derived, ...rest }) => { assert.equal(derived?.version, "hh/1"); return rest; }), failed.runs); assert.deepEqual(resumed.messages, failed.messages);
-  assert.deepEqual(resumed.switches[0], failed.switches[0]); assert.equal(resumed.selection.harnessId, "web-b");
+  assert.equal(resumed.id, id);
+  // The Runs are the stored ones: every fact of a Run is as it was (what a Run said and did is its Turn's items, compared below), and each Turn is a protocol Turn.
+  const facts = ({ input: _input, thinking: _thinking, tools: _tools, plan: _plan, usage: _usage, notices: _notices, activities: _activities, outputs: _outputs, relayRequest: _request, protocol: _protocol, protocolProblem: _problem, ...kept }: PublicRun) => kept;
+  assert.deepEqual(resumed.runs.map(({ ordinal: _ordinal, userSeq: _seq, turn, input: _input, protocol: _protocol, ...rest }) => { assert.equal(turn.version, "hh/1"); return rest; }), failed.runs.map(facts));
+  // The messages are the user's and the reply items of the Turns, as they were stored: the same identities, words and states, in the same order; the user's message stands where the event that accepted it did (`userSeq`).
+  const said = resumed.turns.flatMap(turn => turn.items.flatMap(item => item.type === "user_message" || item.type === "assistant_message"
+    ? [{ id: item.messageId, runId: turn.run.id, role: item.type === "user_message" ? "user" : "assistant", text: item.text, status: item.status, ...(item.type === "user_message" ? { seq: turn.run.userSeq } : {}) }] : []));
+  assert.deepEqual(said, failed.messages.map(({ id: messageId, runId, role, text, status, seq }) => ({ id: messageId, runId, role, text, status, ...(role === "user" ? { seq } : {}) })));
+  // The recovery is a switch of its own, the conversation's latest; the failed one is not the head's to tell any more, and the store (read below, once the Gateway has stopped) still holds it as it was.
+  assert.notEqual(resumed.lastSwitch?.id, failed.switches[0]!.id); assert.deepEqual([resumed.lastSwitch?.status, resumed.lastSwitch?.requested.harnessId], ["effective", "web-b"]); assert.equal(resumed.selection.harnessId, "web-b");
   assert.equal((await trace(f)).filter(item => item.kind === "prompt").length, count);
   const replay = await call(f, `/api/v1/sessions/${id}/resume`, "POST", input); assert.equal(replay.status, 202); assert.equal(row(replay.data).replayed, true);
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "second", commandId: "second" });
   await waitFor(f, id, value => value.runs[1]?.status === "completed");
   const incompatible = await call(f, `/api/v1/sessions/${id}/resume`, "POST", { selection: { harnessId: "web-a" }, commandId: "already-open" }); assert.equal(incompatible.status, 409);
+  // History was not rewritten: the failed switch is still the first of the conversation's switches, exactly as it was stored, and the recovery came after it.
+  await f.gateway.close();
+  const kept = appStore(f.data);
+  try { const switches = kept.snapshot(sessionId(id)).switches; assert.deepEqual(switches[0], failed.switches[0]); assert.deepEqual(switches.map(item => item.id), [failed.switches[0]!.id, resumed.lastSwitch!.id]); } finally { kept.close(); }
 });
 
 test("stored native content is served only to the authenticated page and never renders active documents", async t => {
@@ -432,7 +469,7 @@ test("a conversation's native session is offered for continuing in its own progr
   await auth(f);
   // A Codex-protocol entry always keeps its native thread.
   const created = await call(f, "/api/v1/sessions", "POST", { selection: { harnessId: "web-b" }, commandId: "create-native-resume" }); assert.equal(created.status, 201, created.text);
-  const id = String(row(created.data).id);
+  const id = String(row(row(created.data).head).id);
   assert.deepEqual((await call(f, `/api/v1/sessions/${id}/native-resume`)).data, { resume: null }, "nothing before a native session exists");
   assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "hello", commandId: "native-resume-send" })).status, 202);
   await waitFor(f, id, value => value.runs[0]?.status === "completed");
@@ -456,7 +493,7 @@ test("a conversation's native session is offered for continuing in its own progr
 test("a binding that opens a new native session (opensNew) offers no continue command: its checkpoint names the session it gave up (G068 fix batch 2, M-4)", async t => {
   const f = await fixture(t); await auth(f);
   const created = await call(f, "/api/v1/sessions", "POST", { selection: { harnessId: "web-b" }, commandId: "create-opens-new" }); assert.equal(created.status, 201, created.text);
-  const id = String(row(created.data).id);
+  const id = String(row(row(created.data).head).id);
   assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "hello", commandId: "opens-new-send" })).status, 202);
   await waitFor(f, id, value => value.runs[0]?.status === "completed");
   assert.notEqual(row((await call(f, `/api/v1/sessions/${id}/native-resume`)).data).resume, null, "a session to continue");
@@ -487,12 +524,16 @@ test("the public conversation exports as Markdown or JSON without private native
   assert.match(text, /^# first ``` quoted/u); assert.ok(text.includes("## 你\n\n```text\nfirst\n ```\nquoted\n```"), "a fence inside the user text cannot close the quote");
   assert.ok(text.includes("## Web a · 已完成")); assert.equal(text.includes("checkpoint"), false);
   const json = await fetch(f.origin + `/api/v1/sessions/${id}/export?format=json`, { headers: { Cookie: f.cookie } });
-  const exported = row(await json.json()); assert.equal(exported.application, "HarnessHub"); assertView(exported.session);
+  const exported = row(await json.json()); assert.equal(exported.application, "HarnessHub"); assertExported(exported.session);
   assert.equal(JSON.stringify(exported).includes("nativeBindings"), false, "private native bindings are not exported");
   assert.equal(JSON.stringify(exported).includes("\"protocol\""), false, "the protocol view reads stored tool details, which an export leaves out");
   // The Markdown is worded from the protocol Turns, as the page words them: the Turn's model and numbers, and a Turn the Hub stopped with why it ended (ADR-036).
   assert.match(text, /^统计：用时 [0-9.]+ 秒/mu, "the Turn's time is written as the page writes it");
-  const live = row((await call(f, `/api/v1/sessions/${id}`)).data) as unknown as SessionView, ended = (stopReason: "budget" | "user_stopped" | "cleared") => conversationMarkdown({ ...live,
+  // The export is still the conversation whole, in the shape of the old view; the Turns its Markdown is worded from are the ones a page reads (each Turn's header and items), put to the Runs.
+  const turns = (await state(f, id)).turns, whole = exported.session as SessionView;
+  const live: SessionView = { ...whole, runs: whole.runs.map((run, index) => ({ ...run, protocol: { ...turns[index]!.run.turn, items: turns[index]!.items } })) };
+  assert.ok(conversationMarkdown(live, () => "Web a", new Date(0)).includes("## Web a · 已完成"), "the Turn a page reads is worded as the exported one is");
+  const ended = (stopReason: "budget" | "user_stopped" | "cleared") => conversationMarkdown({ ...live,
     runs: live.runs.map(run => ({ ...run, status: "cancelled" as const, protocol: { ...run.protocol!, status: "cancelled" as const, stopReason } })),
     messages: live.messages.map(message => ({ ...message, status: "cancelled" as const })) }, () => "Web a", new Date(0));
   assert.ok(ended("budget").includes("## Web a · 已停止 · 超过了这一轮的时间上限")); assert.ok(ended("user_stopped").includes("## Web a · 已停止 · 你停止了这一轮"));
@@ -507,9 +548,9 @@ test("branching over HTTP returns the new conversation with its quoted history a
   assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "fork-first" })).status, 202);
   await waitFor(f, id, value => value.runs[0]?.status === "completed");
   const created = await call(f, `/api/v1/sessions/${id}/fork`, "POST", { commandId: "fork-one" }); assert.equal(created.status, 201, created.text);
-  assertView(created.data); const branch = created.data;
-  assert.notEqual(branch.id, id); assert.deepEqual(branch.origin?.history.map(row => row.text), ["first", "a:first"]); assert.equal(branch.messages.length, 0);
-  assert.equal(row((await call(f, `/api/v1/sessions/${id}/fork`, "POST", { commandId: "fork-one" })).data).id, branch.id, "the same command returns the same branch");
+  assertView(created.data); const branch = created.data.head;
+  assert.notEqual(branch.id, id); assert.deepEqual(branch.origin?.history.map(row => row.text), ["first", "a:first"]); assert.deepEqual([created.data.window.turns.length, branch.runCount], [0, 0], "a branch has no Turn of its own yet");
+  assert.equal(row(row((await call(f, `/api/v1/sessions/${id}/fork`, "POST", { commandId: "fork-one" })).data).head).id, branch.id, "the same command returns the same branch");
   assert.equal((await call(f, `/api/v1/sessions/${id}/fork`, "POST", { commandId: "fork-bad", throughRunId: 7 })).status, 400);
   const listed = row((await call(f, "/api/v1/state")).data).sessions as { id: string; title: string }[];
   assert.equal(listed.find(item => item.id === branch.id)?.title, "分支 · first");

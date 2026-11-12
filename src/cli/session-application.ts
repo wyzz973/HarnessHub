@@ -6,7 +6,8 @@ import { lstatSync, mkdirSync } from "node:fs";
 import { totalmem } from "node:os";
 import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { resolveHostBudgets } from "../contracts/native-host.js";
-import { SessionError, type SelectionRequest, type SessionEvent, type TurnLimits } from "../contracts/session.js";
+import type { ConversationCommit } from "../contracts/conversation.js";
+import { SessionError, type SelectionRequest, type TurnLimits } from "../contracts/session.js";
 import { HostTmpdirs, defaultHostTmpdirRoot } from "../infrastructure/session/host-tmpdir.js";
 import { RelayKeys, insideByIdentity } from "../infrastructure/session/relay-keys.js";
 import { SessionRuntime } from "../contexts/session/application/runtime.js";
@@ -140,7 +141,7 @@ export function resolveWorkspaceLockRoot(explicit?: string): string {
 function hostTmpdirRoot(explicit: string | undefined, lockRoot: string): string {
   return explicit === undefined ? defaultHostTmpdirRoot() : join(lockRoot, "hosts");
 }
-export function application(root: string, publish: (event: SessionEvent) => void, options: { readonly management?: Pick<ManagementOptions, "metadata" | "installer" | "recipes" | "installationMode" | "native" | "nativeLocks" | "removal" | "officialInstaller" | "npmRegistry">; readonly nativeEnvironment?: NativeEnvironment;
+export function application(root: string, publish: (commit: ConversationCommit) => void, options: { readonly management?: Pick<ManagementOptions, "metadata" | "installer" | "recipes" | "installationMode" | "native" | "nativeLocks" | "removal" | "officialInstaller" | "npmRegistry">; readonly nativeEnvironment?: NativeEnvironment;
   /** The optional limits this Gateway was configured with (execution and wait budgets, conversations at once); none otherwise. */
   readonly budgets?: TurnLimits;
   /** The workspace lock namespace, resolved by `resolveWorkspaceLockRoot`; the per-user default shared by every Gateway otherwise. */

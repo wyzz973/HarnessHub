@@ -69,13 +69,13 @@ export async function main(args: readonly string[]): Promise<number> {
     for (const value of [values.cwd, values.manifest, values["config-home"], ...(values["package-root"] ?? []), ...(values["search-dir"] ?? [])])
       if (value !== undefined && (!value.trim() || value.length > 4096 || /[\0\r\n]/u.test(value))) throw new SessionError("INVALID_INPUT", "explicit configuration paths must be nonempty and bounded");
     process.on("SIGINT", onSignal); process.on("SIGTERM", onSignal); process.stdout.on("error", onOutputError);
-    app = application(dataRoot(values["data-dir"]), (event: SessionEvent) => {
+    app = application(dataRoot(values["data-dir"]), commit => { for (const event of commit.events) {
       if (json) emit({ type: "event", event });
       else if (event.type === "run.output" && event.data.event !== null && typeof event.data.event === "object" &&
           "type" in event.data.event && event.data.event.type === "text" && "text" in event.data.event && typeof event.data.event.text === "string") writeOutput(event.data.event.text);
       else if (event.type === "run.ended" || event.type === "switch.effective" || event.type === "switch.failed" || event.type === "session.blocked")
         writeOutput("\n[" + event.type + "] " + JSON.stringify(event.data) + "\n");
-    }, { installations: resolveInstallationPolicy(values["allow-unofficial"]), relayKeyFile: defaultRelayKeyPath(process.env.HOME || undefined), ...(values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] }) });
+    } }, { installations: resolveInstallationPolicy(values["allow-unofficial"]), relayKeyFile: defaultRelayKeyPath(process.env.HOME || undefined), ...(values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] }) });
     if (values.session !== undefined) {
       current = chatOf(sessionId(values.session));
       if ([values.cwd, values.manifest, values["config-home"], values["package-root"], values["search-dir"], values["path-only"]].some(value => value !== undefined)) {

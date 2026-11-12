@@ -11,7 +11,8 @@ import { application } from "../../src/cli/session-application.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import type { RelayCapabilities } from "../../src/contracts/relay.js";
 import type { SessionBindingFactory } from "../../src/contracts/session.js";
-import type { RelayView, SessionView } from "../../src/contracts/web.js";
+import type { RelayView, SessionCommitFrame, WireRun } from "../../src/contracts/web.js";
+import { readWhole, type ReadConversation } from "../fixtures/http-conversation.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
 
@@ -100,10 +101,11 @@ const get = (f: Fixture, path: string, headers: Raw["headers"] = {}) => send(f, 
 const write = (f: Fixture, method: string, path: string, value: unknown, headers: Raw["headers"] = {}) => send(f, { method, path, write: true, headers, body: JSON.stringify(value) });
 let sequence = 0;
 async function create(f: Fixture): Promise<string> {
-  const reply = await write(f, "POST", "/api/v1/sessions", { selection: { harnessId: "sec-a" }, commandId: "create-" + ++sequence }); assert.equal(reply.status, 201, reply.text); return String(row(reply.data).id);
+  const reply = await write(f, "POST", "/api/v1/sessions", { selection: { harnessId: "sec-a" }, commandId: "create-" + ++sequence }); assert.equal(reply.status, 201, reply.text); return String(row(row(reply.data).head).id);
 }
-async function view(f: Fixture, id: string): Promise<SessionView> { const reply = await get(f, "/api/v1/sessions/" + id); assert.equal(reply.status, 200, reply.text); return reply.data as SessionView; }
-async function waitRun(f: Fixture, id: string, index: number): Promise<SessionView> {
+/** The conversation as a page reads it: the head and every Turn through the paged routes (the Runs with their relay facts are the Turns' Runs). */
+async function view(f: Fixture, id: string): Promise<ReadConversation> { return readWhole(async path => { const reply = await get(f, path); assert.equal(reply.status, 200, reply.text); return reply.data; }, id); }
+async function waitRun(f: Fixture, id: string, index: number): Promise<ReadConversation> {
   const deadline = Date.now() + 15000;
   for (;;) {
     const current = await view(f, id); if (["completed", "failed", "cancelled", "unknown"].includes(current.runs[index]?.status ?? "")) return current;
@@ -196,9 +198,15 @@ test("AP-01–AP-03: nothing of the history, no native value and no digest leave
   const answers: [string, string][] = [["GET …/relay", JSON.stringify(model)], ["the answer to the fifth message", JSON.stringify(fifth.data)],
     ...live.frames.filter(frame => frame.type === "relay").map((frame, index): [string, string] => ["relay frame " + index, JSON.stringify(frame)]),
     ...conversation.runs.map((run, index): [string, string] => ["Run " + index + " relay member", JSON.stringify(run.relay)]),
-    ...live.frames.flatMap((frame, index): [string, string][] => frame.type === "snapshot" ? (row(frame.session).runs as { relay?: unknown }[]).map((run, at): [string, string] => ["snapshot " + index + " Run " + at + " relay member", JSON.stringify(run.relay ?? null)]) : [])];
+    // A snapshot holds the Runs of its window; a commit frame holds the Runs that began or changed in that commit: the relay member of each, wherever the page is told it.
+    ...live.frames.flatMap((frame, index): [string, string][] => {
+      const runs = frame.type === "snapshot" ? (row(row(frame.session).window).turns as { run: { relay?: unknown } }[]).map(turn => turn.run)
+        : frame.type === "commit" ? ((frame as unknown as SessionCommitFrame).runs ?? []) as readonly WireRun[] : [];
+      return runs.map((run, at): [string, string] => [String(frame.type) + " " + index + " Run " + at + " relay member", JSON.stringify(run.relay ?? null)]);
+    })];
   const kinds = new Set(live.frames.filter(frame => frame.type === "relay").map(frame => row(frame.event).type));
   assert.ok(kinds.has("relay.input_recorded"), "the flow produced the relay frames to look at: " + [...kinds].join());
+  assert.ok(answers.some(([label, wire]) => label.startsWith("commit ") && wire.includes("packetId")), "the flow produced commit frames that tell a Run's relay member (a packet among them) to look at");
   // No keyed or plain digest of anything, nor a mark, whatever its field is called: 64 hex digits appear in none of them.
   for (const [label, wire] of answers) assert.equal(/[0-9a-f]{64}/u.test(wire), false, label + " holds a digest");
   for (const [label, wire] of answers) for (const needle of hidden) assert.equal(wire.includes(needle), false, label + " holds " + needle.slice(0, 24));

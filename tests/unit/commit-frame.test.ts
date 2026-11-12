@@ -17,7 +17,8 @@ const views: FrameViews = {
   },
 };
 const headView = (state: Conversation): SessionHeadView => ({ id: state.id, version: state.version, lastSeq: state.lastSeq, epoch: state.epoch, status: state.status, workspace: state.configuration.workspace, selection: state.selection,
-  activeRunId: state.activeRunId, pendingSwitchId: state.pendingSwitchId, title: "t", runCount: state.runs.length });
+  activeRunId: state.activeRunId, pendingSwitchId: state.pendingSwitchId, title: "t", runCount: state.runs.length,
+  facts: { unknown: { count: 0, unclosed: false }, settled: true, branchable: null, ran: [], changes: 0 } });
 const started = { acceptedAt: NOW, preparingAt: NOW + 1, readyAt: NOW + 2, dispatchedAt: NOW + 3 };
 /** A conversation whose first Turn is running, and the commits made on it. */
 function running(env: Env): Conversation {

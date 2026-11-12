@@ -19,10 +19,12 @@ import {
   SessionError, commandId, messageId, runId, sessionId,
   type NativeSessionBinding, type PublicRun, type SessionBindingFactory, type SessionEvent, type SessionId, type SessionSnapshot,
 } from "../../src/contracts/session.js";
-import type { RelayBindingView, RelayPacketView, RelayStreamFrame, RelayView, SessionView } from "../../src/contracts/web.js";
+import type { ConversationCommit } from "../../src/contracts/conversation.js";
+import type { RelayBindingView, RelayPacketView, RelayStreamFrame, RelayView, SessionCommitFrame, SessionViewV14, WireRun } from "../../src/contracts/web.js";
+import { readWhole, type ReadConversation } from "../fixtures/http-conversation.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { RelayApi, parseSendRelay, type RelayReads } from "../../src/web/relay-routes.js";
-import { SessionStreamHub, relayStreamEvent, type SessionStreamSink } from "../../src/web/session-stream.js";
+import { SessionStreamHub, relayStreamEvent, type SessionStreamSink, type SessionStreamSource } from "../../src/web/session-stream.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
 
 // G073 (backend): the relay's HTTP API over a real Gateway, real HTTP and real SQLite, with fixture Harnesses that are real
@@ -112,12 +114,12 @@ async function call(f: Fixture, path: string, method = "GET", input?: unknown, e
 let sequence = 0;
 async function create(f: Fixture, harnessId = "rapi-a"): Promise<string> {
   const response = await call(f, "/api/v1/sessions", "POST", { selection: { harnessId }, commandId: "create-" + ++sequence }); assert.equal(response.status, 201, response.text);
-  return String(row(response.data).id);
+  return String(row(row(response.data).head).id);
 }
-async function view(f: Fixture, id: string): Promise<SessionView> {
-  const response = await call(f, "/api/v1/sessions/" + id); assert.equal(response.status, 200, response.text); return response.data as SessionView;
+async function view(f: Fixture, id: string): Promise<ReadConversation> {
+  return readWhole(async path => { const response = await call(f, path); assert.equal(response.status, 200, response.text); return response.data; }, id);
 }
-async function waitFor(f: Fixture, id: string, predicate: (value: SessionView) => boolean): Promise<SessionView> {
+async function waitFor(f: Fixture, id: string, predicate: (value: ReadConversation) => boolean): Promise<ReadConversation> {
   const deadline = Date.now() + 15000;
   for (;;) {
     const current = await view(f, id); if (predicate(current)) return current;
@@ -125,7 +127,7 @@ async function waitFor(f: Fixture, id: string, predicate: (value: SessionView) =
     await delay(20);
   }
 }
-const done = (value: SessionView, index: number) => ["completed", "failed", "cancelled", "unknown"].includes(value.runs[index]?.status ?? "");
+const done = (value: ReadConversation, index: number) => ["completed", "failed", "cancelled", "unknown"].includes(value.runs[index]?.status ?? "");
 /** Sends one message and waits for its Run (index `index`) to end; the reply of a refusal is returned without waiting. */
 async function say(f: Fixture, id: string, text: string, key: string, index: number | null, relay?: unknown): Promise<Reply> {
   const reply = await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text, commandId: key, ...(relay === undefined ? {} : { relay }) });
@@ -456,7 +458,10 @@ test("a Harness that says it recorded the entry (E1): the delivery is recorded a
   const conversation = await view(f, id), carried = conversation.runs[1]!;
   assert.equal(frame.event.type, "relay.input_recorded"); assert.equal(frame.event.runId, carried.id); assert.equal(frame.event.packetId, carried.relay?.packetId);
   const facts = live.received[at - 1]!; assert.equal(facts.id, notice.id, "the facts come first, under the same watermark");
-  const during = (facts.frame.session as SessionView).runs[1]!;
+  // The facts are the commit's frame, or the conversation when the commit means more than the rows it wrote say (a binding was written): the Run is in either.
+  const told = facts.frame as unknown as SessionCommitFrame | { readonly type: "snapshot"; readonly session: SessionViewV14 };
+  assert.ok(told.type === "commit" || told.type === "snapshot", "the frame before the notice is " + String(told.type));
+  const during = (told.type === "commit" ? told.runs ?? [] : told.session.window.turns.map(turn => turn.run)).find(item => item.id === carried.id) as WireRun;
   assert.equal(during.status, "running", "announced while the Run is still running"); assert.deepEqual(during.relay?.delivery, { state: "recorded", evidence: "E1" });
   assert.ok(during.timing?.recordedAt !== undefined && during.timing.recordedAt <= frame.event.at + 1000, "the Run records when the native side recorded the entry");
   assert.equal(JSON.stringify(frame).includes("chain"), false);
@@ -478,58 +483,63 @@ function frames(socket: FakeSocket): { readonly id: number; readonly frame: Reco
 }
 const alpha = { harnessId: "alpha", controlId: "alpha-acp" };
 function sessionEvent(session: string, seq: number, type: string, data: Record<string, unknown>): SessionEvent { return { sessionId: sessionId(session), seq, type, data, ownerGeneration: 1, timestamp: "2026-11-10T10:00:00.250Z" }; }
-function viewAt(session: string, lastSeq: number): SessionView {
-  return { id: session, version: lastSeq, lastSeq, epoch: 1, status: "open", workspace: "/workspace", selection: alpha, activeRunId: null, pendingSwitchId: null, messages: [], runs: [], switches: [] };
+/** A source that holds a conversation at a head, and frames a commit as the head it wrote. */
+function sourceAt(session: string, head: { version: number; lastSeq: number }): SessionStreamSource {
+  return { snapshot: () => ({ head: { id: session, version: head.version, lastSeq: head.lastSeq }, window: { turns: [], older: null } }) as never,
+    frame: commit => ({ type: "commit", sessionId: session, version: commit.changes.head!.row.version, lastSeq: commit.changes.head!.row.lastSeq }) as SessionCommitFrame };
+}
+/** A commit that wrote the head `version`/`lastSeq` and logged `events`. */
+function commitOf(session: string, version: number, events: readonly SessionEvent[]): ConversationCommit {
+  const lastSeq = events.at(-1)!.seq;
+  return { conversation: { id: session }, events, changes: { events, head: { row: { id: session, version, lastSeq } } } } as unknown as ConversationCommit;
 }
 const SECRET = { throughSeq: 6, chain: "c".repeat(64), lastPacketId: "relay-0123456789abcdefghjk", evidence: "E1", basis: "evidence" };
 
 test("the hub announces the relay's one event for each Run it names, once each, under the watermark of a commit that holds several", () => {
   const session = "session-hub-relay", packet = "relay-0123456789abcdefghjk", run = "run-hub-one";
-  let head = 10;
-  const hub = new SessionStreamHub(() => viewAt(session, head)), socket = new FakeSocket();
+  const head = { version: 10, lastSeq: 10 };
+  const hub = new SessionStreamHub(sourceAt(session, head)), socket = new FakeSocket();
   hub.open(sessionId(session), 0, Date.now() + 60_000, socket, () => {});
   assert.equal(frames(socket).length, 1);
-  // One commit holds three events; the Runtime publishes them one by one, and the first event's snapshot already holds the head. The title
-  // the relay sets on a native session is no notice: only the input recorded is.
-  head = 13;
-  hub.publish(sessionEvent(session, 11, "relay.input_recorded", { runId: run, packetId: packet, recordedAt: 1_700_000_000_123, mark: SECRET, live: "recorded_event" }));
-  hub.publish(sessionEvent(session, 12, "relay.title_set", { runId: run, harnessId: "alpha", controlId: "alpha-acp", result: "set" }));
-  hub.publish(sessionEvent(session, 13, "relay.input_recorded", { runId: "run-hub-two", packetId: packet, mark: SECRET, live: "agent_output" }));
+  // One commit holds three events and is one frame, with a notice after it for each event that is the relay's. The title the relay sets on a native session is no notice: only the input recorded is.
+  head.version = 11; head.lastSeq = 13;
+  hub.publish(commitOf(session, 11, [
+    sessionEvent(session, 11, "relay.input_recorded", { runId: run, packetId: packet, recordedAt: 1_700_000_000_123, mark: SECRET, live: "recorded_event" }),
+    sessionEvent(session, 12, "relay.title_set", { runId: run, harnessId: "alpha", controlId: "alpha-acp", result: "set" }),
+    sessionEvent(session, 13, "relay.input_recorded", { runId: "run-hub-two", packetId: packet, mark: SECRET, live: "agent_output" })]));
   const got = frames(socket).slice(1);
-  assert.deepEqual(got.map(item => [item.id, item.frame.type]), [[13, "snapshot"], [13, "relay"], [13, "relay"]], "one snapshot, then a notice per event, all at the head");
+  assert.deepEqual(got.map(item => [item.id, item.frame.type]), [[13, "commit"], [13, "relay"], [13, "relay"]], "one frame for the commit, then a notice per event, all at the head");
   const events = got.slice(1).map(item => item.frame as unknown as RelayStreamFrame);
   assert.deepEqual(events.map(item => item.event.type), ["relay.input_recorded", "relay.input_recorded"]);
-  assert.deepEqual(events.map(item => [item.sessionId, item.version, item.lastSeq]), [[session, 13, 13], [session, 13, 13]]);
+  assert.deepEqual(events.map(item => [item.sessionId, item.version, item.lastSeq]), [[session, 11, 13], [session, 11, 13]]);
   assert.deepEqual(events.map(item => [item.event.runId, item.event.packetId]), [[run, packet], ["run-hub-two", packet]]);
   assert.ok(events.every(item => item.event.at === Date.parse("2026-11-10T10:00:00.250Z")));
   // The marks the events hold (what a binding holds) are not in what is announced.
   const wire = got.slice(1).map(item => JSON.stringify(item.frame)).join("\n");
   for (const secret of ["c".repeat(64), "mark", "chain", "throughSeq", "\"recorded\"", "\"floor\"", "alpha-acp", "\"live\""]) assert.equal(wire.includes(secret), false, secret + " was announced");
-  // An event of another kind is only the facts, as before; an event already announced is not announced twice by a later one.
-  head = 14; hub.publish(sessionEvent(session, 14, "run.ended", { runId: "run-hub-two" }));
-  assert.deepEqual(frames(socket).slice(1 + got.length).map(item => [item.id, item.frame.type]), [[14, "snapshot"]]);
+  // A commit of another kind is only the facts, as before; an event already announced is not announced twice by a later commit.
+  head.version = 12; head.lastSeq = 14; hub.publish(commitOf(session, 12, [sessionEvent(session, 14, "run.ended", { runId: "run-hub-two" })]));
+  assert.deepEqual(frames(socket).slice(1 + got.length).map(item => [item.id, item.frame.type]), [[14, "commit"]]);
   hub.close();
 });
 
-test("a Run's frame carries its delivery like the snapshot does", () => {
-  const session = "session-hub-run", active = "run-hub-active";
-  const run = { ...runAt(0, "alpha", "running", { packetId: packetIdOf("hub"), kind: "packet", continuity: { kind: "rehydrate", tier: "full", complete: true }, executedOn: null }) };
-  const at = (lastSeq: number): SessionView => ({ ...viewAt(session, lastSeq), activeRunId: runId(active), runs: [{ ...run, id: runId(active), relay: { ...run.relay!, delivery: { state: "recorded", evidence: "E1" } } }] });
-  let head = 4;
-  const hub = new SessionStreamHub(() => at(head)), socket = new FakeSocket();
+test("a commit told as the conversation (what it means is not in the rows it wrote) is still followed by the relay's event, under the watermark the connection was given", () => {
+  const session = "session-hub-as-read", head = { version: 10, lastSeq: 10 }, source = { ...sourceAt(session, head), stale: () => true };
+  const hub = new SessionStreamHub(source), socket = new FakeSocket();
   hub.open(sessionId(session), 0, Date.now() + 60_000, socket, () => {});
-  head = 5; hub.publish(sessionEvent(session, 5, "run.output", { runId: active, event: { type: "tool" } }));
-  const [, activity] = frames(socket);
-  assert.equal(activity!.frame.type, "run"); assert.deepEqual(row(row(activity!.frame.run).relay).delivery, { state: "recorded", evidence: "E1" });
+  head.version = 11; head.lastSeq = 11;
+  hub.publish(commitOf(session, 11, [sessionEvent(session, 11, "relay.input_recorded", { runId: "run-as-read", packetId: "relay-0123456789abcdefghjk" })]));
+  assert.deepEqual(frames(socket).map(item => [item.id, item.frame.type]), [[10, "snapshot"], [11, "snapshot"], [11, "relay"]], "the conversation, then the notice that follows its facts");
+  const notice = frames(socket)[2]!.frame as unknown as RelayStreamFrame;
+  assert.deepEqual([notice.sessionId, notice.version, notice.lastSeq, notice.event.runId], [session, 11, 11, "run-as-read"]);
   hub.close();
 });
 
 test("a subscription that is backed up gets the facts later and no notice", () => {
-  const session = "session-hub-slow";
-  let head = 5;
-  const hub = new SessionStreamHub(() => viewAt(session, head)), slow = new FakeSocket(); slow.blocked = true;
+  const session = "session-hub-slow", head = { version: 5, lastSeq: 5 };
+  const hub = new SessionStreamHub(sourceAt(session, head)), slow = new FakeSocket(); slow.blocked = true;
   hub.open(sessionId(session), 0, Date.now() + 60_000, slow, () => {});
-  head = 6; hub.publish(sessionEvent(session, 6, "relay.input_recorded", { runId: "run-slow" }));
+  head.version = 6; head.lastSeq = 6; hub.publish(commitOf(session, 6, [sessionEvent(session, 6, "relay.input_recorded", { runId: "run-slow" })]));
   assert.deepEqual(frames(slow).map(item => item.frame.type), ["snapshot"], "nothing queued behind the first write");
   slow.blocked = false; slow.emit("drain");
   assert.deepEqual(frames(slow).map(item => [item.id, item.frame.type]), [[5, "snapshot"], [6, "snapshot"]], "the facts arrive whole");

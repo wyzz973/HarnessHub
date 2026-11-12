@@ -9,7 +9,8 @@ const selection = { harnessId: "alpha", controlId: "alpha-acp" };
 const header = (n: number, over: Record<string, unknown> = {}) => ({ version: "hh/1", runId: "run-" + n, n, status: "completed", stopReason: "end_turn", executor: { harnessId: "alpha", harness: "alpha" }, usage: { completeness: "unavailable" }, ...over });
 const run = (ordinal: number, over: Record<string, unknown> = {}) => ({ id: "run-" + ordinal, commandId: "command-" + ordinal, userMessageId: "message-user-" + ordinal, assistantMessageId: "message-reply-" + ordinal, selection, epoch: 1, status: "completed",
   cancelRequested: false, contextThroughSeq: 0, sourceRunIds: [], backend: { status: "completed", reason: "end_turn" }, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: null, ordinal, userSeq: 2 + ordinal, turn: header(ordinal + 1), ...over });
-const head = (over: Record<string, unknown> = {}) => ({ id: "session-x", version: 3, lastSeq: 9, epoch: 1, status: "open", workspace: "/work", selection, activeRunId: null, pendingSwitchId: null, title: "hello", runCount: 1, ...over });
+const head = (over: Record<string, unknown> = {}) => ({ id: "session-x", version: 3, lastSeq: 9, epoch: 1, status: "open", workspace: "/work", selection, activeRunId: null, pendingSwitchId: null, title: "hello", runCount: 1,
+  facts: { unknown: { count: 0, unclosed: false }, settled: true, branchable: null, ran: [], changes: 0 }, ...over });
 const user = { id: "user", seq: 1, status: "completed", type: "user_message", messageId: "message-user-0", text: "你好" };
 const view = (turns: unknown[], older: string | null = null, over: Record<string, unknown> = {}) => ({ head: head(over), window: { turns, older } });
 
@@ -18,8 +19,8 @@ test("a conversation read as its head and a window of Turns is read whole: the h
     { origin: { kind: "import", harnessId: "alpha", title: null, omitted: 2, complete: false, historyRead: true, history: [{ role: "user", text: "q", status: "completed" }] },
       nativeStates: [{ harnessId: "alpha", controlId: "alpha-acp", status: "ready", observed: { model: "m", options: { a: "b" } }, carried: { model: "n" } }], queue: { kind: "slot", runId: "run-9", running: 1, limit: 1, since: 4 },
       retention: { enabled: true, process: null, outside: { count: 2, at: 5 } }, permissions: [{ id: "p", runId: "run-0", title: "t", decided: false, requestedAt: 1, options: [{ id: "y", name: "Yes" }] }],
-      pendingSwitch: { id: "switch-1", commandId: "command-s", requested: { harnessId: "bravo", nativeModel: "x" }, requestedSeq: 4, target: null, status: "requested", throughSeq: 0, sourceRunIds: ["run-0"], error: null } }));
-  assert.equal(read.head.title, "hello"); assert.equal(read.head.nativeStates![0]!.carried!.model, "n"); assert.equal(read.head.origin!.kind, "import"); assert.equal(read.head.pendingSwitch!.requested.harnessId, "bravo");
+      lastSwitch: { id: "switch-1", commandId: "command-s", requested: { harnessId: "bravo", nativeModel: "x" }, requestedSeq: 4, target: null, status: "requested", throughSeq: 0, sourceRunIds: ["run-0"], error: null } }));
+  assert.equal(read.head.title, "hello"); assert.equal(read.head.nativeStates![0]!.carried!.model, "n"); assert.equal(read.head.origin!.kind, "import"); assert.equal(read.head.lastSwitch!.requested.harnessId, "bravo");
   assert.equal(read.window.older, "abc");
   const turn = read.window.turns[0]!;
   assert.equal(turn.run.ordinal, 0); assert.equal(turn.run.turn!.n, 1); assert.equal(turn.run.protocolProblem, undefined);

@@ -106,6 +106,15 @@ function callOf(item: ItemRow): PublicTool {
     ...(native?.exitCode === undefined ? {} : { exitCode: native.exitCode }), ...(detail === undefined ? {} : { detail }) };
 }
 
+/**
+ * Whether a stored item is a call to the Harness's task list: a plain tool call that the protocol reads as the Turn's plan and not as a row (`normalizeTool`). Whether it is then hidden
+ * depends on the Turn (it has a plan of its own, or the call's stored input reads exactly), which is why a frame never tells such a call by itself (`ConversationRoutes.needsSnapshot`).
+ */
+export function isTaskListCall(row: ItemRow): boolean {
+  if (row.type !== "tool" || !row.itemId.startsWith("tool:")) return false;
+  try { return !normalizeTool(callOf(row), { seq: row.seq, detail: null, turn: "going" }).row; } catch { return false; }
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The hand-over line (project.ts `switchOf` and `changed`, over a WireRun)
 // ---------------------------------------------------------------------------------------------------------------------

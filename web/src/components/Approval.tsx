@@ -1,13 +1,13 @@
 import { CircleHelp, ShieldAlert, ShieldCheck, ShieldX, Square } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
-import type { SessionView } from "../../../src/contracts/web.js";
+import type { SessionHeadView } from "../../../src/contracts/web.js";
 import { remaining, secondsLeft } from "../attention.js";
 import { cn } from "../lib/cn.js";
 import { useNow } from "../lib/prefs.js";
 import { Kbd, StatusDot, Tip } from "../ui/primitives.js";
 
-export type PermissionRequestView = NonNullable<SessionView["permissions"]>[number];
+export type PermissionRequestView = NonNullable<SessionHeadView["permissions"]>[number];
 type Request = PermissionRequestView;
 type Option = Request["options"][number];
 /**

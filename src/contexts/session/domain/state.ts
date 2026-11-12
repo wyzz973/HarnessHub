@@ -16,12 +16,6 @@ import { dispatched } from "./relay/advance.js";
 
 /** The longest input a user sends in one message. (Kept in this step: its removal waits for the request body that carries it, ADR-057 3.7.) */
 export const MAX_INPUT_BYTES = 64 * 1024;
-/**
- * The longest reply, and the longest reasoning, of one Turn. (Kept in this step: it goes with the frame the page reads, which holds a conversation's text whole,
- * in the step that makes the page read by window, ADR-057 3.8.)
- */
-export const MAX_OUTPUT_BYTES = 1024 * 1024;
-
 const terminalStatuses: readonly RunStatus[] = ["completed", "cancelled", "failed", "unknown"];
 export function terminal(status: RunStatus): boolean { return terminalStatuses.includes(status); }
 export function utf8Bytes(value: string): number { return new TextEncoder().encode(value).byteLength; }

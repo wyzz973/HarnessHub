@@ -1,10 +1,13 @@
 import { ChevronRight, Clock, File, FileText, ListChecks, X } from "lucide-react";
-import { Fragment, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { ITEM_STATUS_WORDS, TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import type { CommandItem, SubagentItem } from "../../../src/contracts/protocol.js";
+import type { FileChangeItem, PlanItem } from "../../../src/contracts/protocol.js";
 import type { PublicRun } from "../../../src/contracts/session.js";
-import type { HarnessView, NativeResumeView, SessionView } from "../../../src/contracts/web.js";
+import type { HarnessView, NativeResumeView, SessionHeadView } from "../../../src/contracts/web.js";
+import type { ConversationView } from "../lib/conversation.js";
+import type { ClientConversationChanges, ClientConversationEdit } from "../lib/protocol/wire.js";
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import { errorMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
@@ -38,59 +41,108 @@ export interface ChangedFile {
 export interface ConversationChanges {
   /** Files with a diff, merged by path, in the order they were first changed. */
   readonly files: readonly ChangedFile[];
-  /** Edit steps whose detail is read (the latest 40 first, 40 more earlier ones each time `more` is asked for). */
+  /** Edit steps listed (the newest page first, one more earlier page each time `more` is asked for). */
   readonly edits: number;
-  /** How many earlier edit steps the conversation has that are not read yet; 0 when all are. */
+  /** How many earlier edit steps the conversation has that are not listed yet; 0 when all are. */
   readonly unread: number;
-  /** Reads the next 40 earlier edit steps. */
+  /** Lists the next earlier page of edit steps. */
   readonly more: () => void;
   /** Some details are still being read: counts are not final. */
   readonly loading: boolean;
   /** Why details could not be read, one per detail. */
   readonly failures: readonly string[];
 }
+/** Reads a page of the conversation's changes; `before` is the cursor the page before it gave (none for the newest). */
+export type ChangesLoader = (before: string | undefined, signal: AbortSignal) => Promise<ClientConversationChanges>;
+/** The plan of the newest Turn that has one with steps, whichever Turn that is. */
+export interface ConversationPlan { readonly steps: PlanItem["steps"]; readonly explanation: string | undefined; readonly owner: string }
 /**
  * The files the conversation changed, from the diffs its edit steps reported (ADR-042: read-only, nothing here undoes a
- * change). The latest 40 edit details are read once per page, only while the panel is shown, and shared with the steps that
- * show them; the panel offers the next 40 earlier ones as often as asked (every detail is a read of its own, so they are read by the page, not all
- * at once); a detail that could not be read is reported once and not asked for again by this view. The numbers the button,
- * the tab and the scopes show are changeCount()'s, which needs no read.
+ * change). The edits of the whole conversation are listed by the Gateway, newest first, a page at a time: the panel reads the
+ * newest page when it needs the changes (and again when the conversation has more of them) and the next older one each time `more`
+ * is asked for; the edits of the Turns the page holds are known without a read. The diff of each edit is read from its stored detail, once
+ * per page, only while the panel is shown, and shared with the steps that show them (every detail is a read of its own, so they are
+ * read as the pages are, not all at once); a detail that could not be read is reported once and not asked for again by this view.
+ * The numbers the button, the tab and the scopes show are the head's, which needs no read.
  */
-const EDITS_PER_PAGE = 40;
-export function useConversationChanges(runs: readonly PublicRun[], load: ToolDetailLoader | undefined): ConversationChanges {
-  const [pages, setPages] = useState(1);
-  const every = useMemo(() => runs.flatMap(run => run.protocol === undefined ? [] : editsOf(run.protocol).map(item => ({ run, item, harnessId: run.protocol!.executor.harnessId }))), [runs]);
-  const edits = useMemo(() => every.slice(-pages * EDITS_PER_PAGE), [every, pages]);
-  const more = useCallback(() => setPages(value => value + 1), []);
+interface Edit { readonly runId: string; readonly ordinal: number; readonly harnessId: string; readonly item: FileChangeItem }
+const editKey = (edit: { readonly runId: string; readonly item: { readonly seq: number } }): string => edit.runId + "/" + edit.item.seq;
+const sameOrder = (left: Edit, right: Edit): number => left.ordinal - right.ordinal || left.item.seq - right.item.seq;
+const asEdits = (rows: readonly ClientConversationEdit[]): Edit[] => rows.flatMap(row => row.item.type === "file_change" && row.item.detail !== undefined ? [{ runId: row.runId, ordinal: row.ordinal, harnessId: row.harnessId, item: row.item as FileChangeItem }] : []);
+export function useConversationChanges(session: ConversationView, wanted: boolean, load: ToolDetailLoader | undefined, loadChanges: ChangesLoader | undefined): ConversationChanges & { readonly plan: ConversationPlan | null } {
+  const reader = useRef(loadChanges); reader.current = loadChanges;
+  const readable = loadChanges !== undefined, total = session.facts.changes;
+  const [read, setRead] = useState<{ readonly id: string; readonly edits: ReadonlyMap<string, Edit>; readonly cursor: string | null; readonly plan: ClientConversationChanges["plan"] } | null>(null);
+  const [reading, setReading] = useState(false), [problem, setProblem] = useState<string | null>(null);
+  const held = useRef(read); held.current = read;
+  // The newest page, when the panel needs the changes and the conversation has more than were read; with pages between it and what was read before it, those too, so that no change is missed.
+  useEffect(() => {
+    if (!wanted || !readable) return;
+    const controller = new AbortController(), id = session.id;
+    setReading(true);
+    void (async () => {
+      try {
+        const before = held.current?.id === id ? held.current : null, known = before === null ? new Map<string, Edit>() : new Map(before.edits);
+        let page = await reader.current!(undefined, controller.signal);
+        const plan = page.plan, gathered = asEdits(page.edits);
+        while (page.next !== null && known.size > 0 && !page.edits.some(row => known.has(row.runId + "/" + row.item.seq))) { page = await reader.current!(page.next, controller.signal); gathered.push(...asEdits(page.edits)); }
+        if (controller.signal.aborted) return;
+        for (const edit of gathered) known.set(editKey(edit), edit);
+        setRead({ id, edits: known, cursor: before === null ? page.next : before.cursor, plan: plan === undefined ? before?.plan ?? null : plan }); setProblem(null);
+      } catch (failure: unknown) { if (!controller.signal.aborted) setProblem(errorMessage(failure)); }
+      finally { if (!controller.signal.aborted) setReading(false); }
+    })();
+    return () => controller.abort();
+  }, [wanted, readable, session.id, total]);
+  const more = useCallback(() => {
+    const now = held.current;
+    if (now === null || now.cursor === null || reader.current === undefined) return;
+    const id = now.id, cursor = now.cursor;
+    setReading(true);
+    void reader.current(cursor, new AbortController().signal).then(page => {
+      if (held.current?.id !== id) return;
+      setRead(current => { if (current === null || current.id !== id || current.cursor !== cursor) return current; const edits = new Map(current.edits); for (const edit of asEdits(page.edits)) edits.set(editKey(edit), edit); return { ...current, edits, cursor: page.next }; });
+    }, (failure: unknown) => setProblem(errorMessage(failure))).finally(() => setReading(false));
+  }, []);
+  // The edits of the Turns the page holds are known now; the rest come from the pages read.
+  const every = useMemo(() => {
+    const all = new Map<string, Edit>(read?.id === session.id ? read.edits : []);
+    for (const run of session.runs) if (run.protocol !== undefined) for (const item of editsOf(run.protocol)) all.set(editKey({ runId: run.id, item }), { runId: run.id, ordinal: run.ordinal, harnessId: run.protocol.executor.harnessId, item });
+    return [...all.values()].sort(sameOrder);
+  }, [read, session.runs, session.id]);
   const [failures, setFailures] = useState<ReadonlyMap<string, string>>(new Map());
   const [version, setVersion] = useState(0);
   useEffect(() => {
-    if (!load) return;
+    if (!load || !wanted) return;
     let current = true;
-    for (const { item } of edits) {
+    for (const { item } of every) {
       const content = item.detail;
       if (!content || knownToolDetail(content.id) !== undefined || failures.has(content.id)) continue;
       readToolDetail(content, load).then(() => { if (current) setVersion(value => value + 1); },
         (error: unknown) => { if (current) setFailures(previous => new Map(previous).set(content.id, errorMessage(error))); });
     }
     return () => { current = false; };
-  }, [edits, load, failures]);
+  }, [every, load, failures, wanted]);
+  const plan = useMemo((): ConversationPlan | null => {
+    const found = read?.id === session.id ? read.plan : null;
+    return found === null || found === undefined || found.item.type !== "plan" ? null : { steps: (found.item as PlanItem).steps, explanation: (found.item as PlanItem).explanation, owner: found.harnessId };
+  }, [read, session.id]);
   return useMemo(() => {
     const merged = new Map<string, { path: string; add: number; del: number; created: boolean; diffs: DiffFile[]; runIds: Set<string>; harnessIds: string[] }>();
-    for (const { run, item, harnessId } of edits) {
+    for (const { runId, item, harnessId } of every) {
       const detail = item.detail ? knownToolDetail(item.detail.id) : undefined;
       if (!detail?.diff) continue;
       for (const file of parseUnifiedDiff(detail.diff, detail.locations?.[0] ?? item.changes[0]?.path ?? "改动")) {
         const entry = merged.get(file.path) ?? { path: file.path, add: 0, del: 0, created: file.created, diffs: [], runIds: new Set<string>(), harnessIds: [] };
-        entry.add += file.add; entry.del += file.del; entry.diffs.push(file); entry.runIds.add(run.id);
+        entry.add += file.add; entry.del += file.del; entry.diffs.push(file); entry.runIds.add(runId);
         if (!entry.harnessIds.includes(harnessId)) entry.harnessIds.push(harnessId);
         merged.set(file.path, entry);
       }
     }
-    const loading = edits.some(({ item }) => item.detail !== undefined && knownToolDetail(item.detail.id) === undefined && !failures.has(item.detail.id));
-    return { files: [...merged.values()], edits: edits.length, unread: every.length - edits.length, more, loading, failures: [...failures.values()] };
+    const loading = reading || every.some(({ item }) => item.detail !== undefined && knownToolDetail(item.detail.id) === undefined && !failures.has(item.detail.id));
+    return { files: [...merged.values()], edits: every.length, unread: Math.max(0, total - every.length), more, loading, failures: [...failures.values(), ...(problem === null ? [] : [problem])], plan };
     // `version` changes when a detail arrives in the shared store, which this reads.
-  }, [edits, every, more, failures, version]);
+  }, [every, more, failures, version, reading, problem, plan, total]);
 }
 
 /**
@@ -121,7 +173,9 @@ function RunDiagnostics({ runId, load }: { readonly runId: string; readonly load
 }
 
 interface PanelProps {
-  readonly session: SessionView; readonly harnesses: readonly HarnessView[]; readonly providers: readonly ProviderView[];
+  readonly session: ConversationView; readonly harnesses: readonly HarnessView[]; readonly providers: readonly ProviderView[];
+  /** Reads a page of the conversation's changes (the whole conversation's, not the Turns this page holds). */
+  readonly loadChanges?: ChangesLoader | undefined;
   readonly tab: PanelTab; readonly onTab: (tab: PanelTab) => void; readonly runId: string | null; readonly onRun: (id: string) => void;
   readonly loadToolDetail?: ToolDetailLoader | undefined;
   readonly loadDiagnostics?: ((runId: string, includeContent: boolean) => Promise<string>) | undefined;
@@ -141,14 +195,15 @@ export function DetailsPanel(props: PanelProps) {
   const { session, tab } = props;
   const runs = session.runs;
   const selected = runs.find(run => run.id === props.runId) ?? runs.at(-1) ?? null;
-  const changes = useConversationChanges(runs, props.loadToolDetail);
-  const planned = latestPlan(runs);
+  const changes = useConversationChanges(session, tab === "changes" || tab === "plan", props.loadToolDetail, props.loadChanges);
+  const found = latestPlan(runs);
+  const planned = found !== undefined ? { steps: found.plan.steps, explanation: found.plan.explanation, owner: found.run.protocol.executor.harness } : changes.plan === null ? undefined : { ...changes.plan, owner: props.harnesses.find(row => row.id === changes.plan!.owner)?.name ?? changes.plan.owner };
   const kept = session.retention?.process ?? null;
   const background = runs.flatMap(run => run.protocol === undefined ? [] : backgroundOf(run.protocol.items).map(item => ({ run, item })));
   const running = background.filter(row => row.item.status === "running").length + (kept ? 1 : 0);
   const name = (id: string | undefined) => props.harnesses.find(row => row.id === id)?.name ?? id ?? "Harness";
-  // The header button's number, from the same summaries: shown at once, never waiting for a diff to be read.
-  const total = changeCount(runs);
+  // The header button's number, from the head: shown at once, never waiting for a diff to be read.
+  const total = session.facts.changes;
   const tabs = [
     { id: "changes" as const, label: "改动", count: total || null },
     { id: "plan" as const, label: "计划" }, { id: "process" as const, label: "过程" },
@@ -163,7 +218,7 @@ export function DetailsPanel(props: PanelProps) {
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${tab}`}>
       {tab === "changes" ? <Changes changes={changes} counts={{ turn: selected ? changeCount([selected]) : 0, all: total }} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}/>
         : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <Empty>这个对话还没有执行记录。</Empty>
-        : tab === "plan" ? planned ? <div className="px-4 pt-3 pb-4"><PlanView steps={planned.plan.steps} explanation={planned.plan.explanation} owner={planned.run.protocol.executor.harness}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划">Harness 报告计划后会显示在这里。</EmptyState>
+        : tab === "plan" ? planned ? <div className="px-4 pt-3 pb-4"><PlanView steps={planned.steps} explanation={planned.explanation} owner={planned.owner}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划">Harness 报告计划后会显示在这里。</EmptyState>
         : tab === "background" ? <Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/>
         : tab === "relay" && props.relay ? <RelayDetails view={props.relay.view} name={id => name(id)} onViewPacket={props.relay.onViewPacket}/>
         : selected ? <RunFacts {...props} run={selected} runs={runs}/> : <Empty>发出第一条消息后，这里会显示执行者、阶段耗时与用量。</Empty>}
@@ -180,7 +235,7 @@ function Empty({ children }: { readonly children: ReactNode }) { return <p class
  * 等你批准 while an approval waits in the composer's place, 等你回答 while only another request does. Null when nothing
  * waits or the Run has ended.
  */
-function waitingWords(session: SessionView, run: PublicRun): "等你批准" | "等你回答" | null {
+function waitingWords(session: ConversationView, run: PublicRun): "等你批准" | "等你回答" | null {
   if (finished(run.status)) return null;
   const open = (session.permissions ?? []).filter(request => request.runId === run.id && !request.decided);
   return open.length === 0 ? null : open.some(dockedRequest) ? "等你批准" : "等你回答";
@@ -189,7 +244,7 @@ function RunPicker({ runs, run, onRun }: { readonly runs: readonly PublicRun[]; 
   if (runs.length < 2) return null;
   return <label className="flex items-center gap-2 text-caption text-fg-2"><span className="flex-none">回合</span>
     <select className="field h-8 min-w-0 flex-1 py-0 text-caption" value={run.id} onChange={event => onRun(event.target.value)} aria-label="选择回合">
-      {runs.map((item, index) => <option key={item.id} value={item.id}>第 {index + 1} 轮 · {[...item.input].slice(0, 24).join("")}{[...item.input].length > 24 ? "…" : ""}</option>)}
+      {runs.map((item, index) => <option key={item.id} value={item.id}>第 {item.protocol?.n ?? index + 1} 轮 · {[...item.input].slice(0, 24).join("")}{[...item.input].length > 24 ? "…" : ""}</option>)}
     </select></label>;
 }
 
@@ -294,7 +349,7 @@ function Process({ run, runs, onRun, loadToolDetail, name, waiting }: { readonly
       onToggle={() => { if (item.id === run.id) setClosed(closed === item.id ? null : item.id); else { setClosed(null); onRun(item.id); } }}/>)}</ol>
   </div>;
 }
-function Background({ session, kept, items, busy, onEndProcess, name }: { readonly session: SessionView; readonly kept: NonNullable<SessionView["retention"]>["process"] | null; readonly items: readonly { readonly run: PublicRun; readonly item: SubagentItem | CommandItem }[]; readonly busy: boolean; readonly onEndProcess?: (() => void) | undefined; readonly name: (id: string | undefined) => string }) {
+function Background({ session, kept, items, busy, onEndProcess, name }: { readonly session: ConversationView; readonly kept: NonNullable<SessionHeadView["retention"]>["process"] | null; readonly items: readonly { readonly run: PublicRun; readonly item: SubagentItem | CommandItem }[]; readonly busy: boolean; readonly onEndProcess?: (() => void) | undefined; readonly name: (id: string | undefined) => string }) {
   const now = useNow(kept !== null), keeper = kept ? name(kept.harnessId) : "原程序";
   const hint = session.retention?.enabled ? "已开启保持原生进程：下一轮结束后原程序会留在后台。" : "回合结束时原程序随之关闭。需要它在后台继续运行任务时，在 Harness 选择器（⌘J）底部打开“高级配置…”，开启“保持原生进程”。";
   return <div className="flex flex-col gap-3 px-4 pt-3 pb-4">

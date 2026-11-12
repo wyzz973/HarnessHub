@@ -3,7 +3,7 @@ import test from "node:test";
 import type { CommandItem, Executor, FileChange, FileChangeItem, FileReadItem, ItemStatus, McpToolItem, SearchItem, SubagentItem, SwitchItem, ToolItem, TurnUsage, WebItem, WorkItem } from "../../src/contracts/protocol.js";
 import type { ReadItem, ReadTurn } from "../../src/contracts/protocol-read.js";
 import { ITEM_STATUS_WORDS, RUN_STATUS_WORDS, STOP_REASON_WORDS, TURN_STATUS_WORDS } from "../../src/contracts/protocol-words.js";
-import { decodeProtocolTurn } from "../../web/src/lib/protocol/decode.js";
+import { decodeSessionViewV14, type ClientTurn } from "../../web/src/lib/protocol/wire.js";
 import { endLine, moneyText, quietLine, switchLine, turnFooter } from "../../web/src/lib/protocol/lines.js";
 import { arrange, lay, opensByDefault, reasoningLabel, summarizeGroup, thoughtTime, workLabel, type Block, type WorkBlock } from "../../web/src/lib/protocol/work.js";
 
@@ -316,10 +316,22 @@ const wire = (items: readonly unknown[], more: Record<string, unknown> = {}): Re
   usage: { completeness: "complete", input: 10, output: 5 }, startedAt: 1000, durationMs: 31_000, items, ...more,
 });
 const entry = (type: string, more: Record<string, unknown> = {}) => ({ id: "i-" + type, seq: 1, type, status: "completed", ...more });
+// The Turn is read as the page reads it from the Gateway (web/src/lib/protocol/wire.ts): the Run carries the header, and the items stand beside it.
+const selection = { harnessId: "codex", controlId: "codex-native" };
+const head = { id: "session-d", version: 2, lastSeq: 5, epoch: 1, status: "open", workspace: "/w", selection, activeRunId: null, pendingSwitchId: null, title: "t", runCount: 3,
+  facts: { unknown: { count: 0, unclosed: false }, settled: true, branchable: null, ran: [], changes: 0 } };
+const runOf = (turn: unknown) => ({ id: "run-1", commandId: "command-1", userMessageId: "message-user-1", assistantMessageId: "message-reply-1", selection, epoch: 1, status: "completed", cancelRequested: false,
+  contextThroughSeq: 0, sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: null, ordinal: 2, userSeq: 3, ...(turn === undefined ? {} : { turn }) });
+/** What the page makes of a Turn the Gateway sent: the header (anything at all may be sent in its place) and the items beside it. */
+function readTurn(value: unknown): ClientTurn {
+  const row = value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  const { items = [], ...header } = row ?? {};
+  return decodeSessionViewV14({ head, window: { turns: [{ run: runOf(value === undefined ? undefined : row === null ? value : header), items }], older: null } }).window.turns[0]!;
+}
 /** The Turn a read gave; the test fails with the reason if it gave none. */
-function turnOf(value: unknown): ReadTurn { const read = decodeProtocolTurn(value); assert.ok("turn" in read, "problem" in read ? read.problem : "no Turn"); return read.turn; }
+function turnOf(value: unknown): ReadTurn { const read = readTurn(value); assert.ok(read.run.turn !== undefined, read.run.protocolProblem ?? "no Turn"); return { ...read.run.turn, items: read.items } as ReadTurn; }
 /** Why a read gave no Turn; the test fails if it gave one. */
-function problemOf(value: unknown): string { const read = decodeProtocolTurn(value); assert.ok("problem" in read, "a Turn was read where none was to be"); return read.problem; }
+function problemOf(value: unknown): string { const read = readTurn(value); assert.ok(read.run.turn === undefined, "a Turn was read where none was to be"); return read.run.protocolProblem ?? ""; }
 
 test("a Turn is read field by field, and what it holds keeps its type", () => {
   const turn = turnOf(wire([
@@ -339,7 +351,7 @@ test("a Turn is read field by field, and what it holds keeps its type", () => {
 
 test("an item of a type the page does not know, or one it cannot read whole, is kept as a line that says so, never dropped", () => {
   const turn = turnOf(wire([
-    entry("command", { command: "ls" }), entry("hologram", { whatever: 1, nativeName: "Hologram" }), entry("command", { command: 5 }), { not: "an item" }, null, "text",
+    entry("command", { command: "ls" }), entry("hologram", { whatever: 1, nativeName: "Hologram" }), entry("command", { command: 5, id: "bad-command" }), { not: "an item" }, null, "text",
     entry("file_read", { path: "a.js", status: "someday" }),
   ]));
   assert.equal(turn.items.length, 7, "every item is kept");
@@ -353,9 +365,9 @@ test("an item of a type the page does not know, or one it cannot read whole, is 
   assert.equal(new Set(turn.items.map(item => item.id)).size, 7);
 });
 
-test("a field that is absent is absent, an id that repeats is told apart, and an unreadable count of usage is no count", () => {
-  const turn = turnOf(wire([entry("command", { id: "same", command: "a" }), entry("command", { id: "same", command: "b" }), entry("command", { id: "same", command: "c" })], { usage: "nonsense", stopReason: "from-the-future" }));
-  assert.deepEqual(turn.items.map(item => item.id), ["same", "same~2", "same~3"]);
+test("a field that is absent is absent, and an unreadable count of usage is no count", () => {
+  const turn = turnOf(wire([entry("command", { id: "one", command: "a" }), entry("command", { id: "two", command: "b" })], { usage: "nonsense", stopReason: "from-the-future" }));
+  assert.deepEqual(turn.items.map(item => item.id), ["one", "two"]);
   assert.deepEqual(turn.usage, { completeness: "unavailable" });
   assert.equal(turn.stopReason, "unknown", "a reason this page does not know is unknown");
   const plain = turnOf({ ...wire([]), durationMs: undefined, startedAt: undefined });
@@ -368,10 +380,9 @@ test("a field that is absent is absent, an id that repeats is told apart, and an
 
 test("what is not a Turn of this protocol is no Turn and says why, nothing that can arrive makes the decoder throw, and a Turn has no size it cannot be", () => {
   assert.match(problemOf(wire([], { version: "hh/2" })), /hh\/2.*hh\/1/u, "the version it was told and the one it reads");
-  assert.match(problemOf(wire([], { items: "no" })), /不是一个列表/u);
-  for (const broken of [wire([], { executor: null }), wire([], { status: "nearly" }), wire([], { runId: "x" })]) assert.match(problemOf(broken), /缺少必需的内容/u);
+  for (const broken of [wire([], { executor: null }), wire([], { status: "nearly" }), wire([], { n: -1 })]) assert.match(problemOf(broken), /读不出来/u);
   assert.match(problemOf(undefined), /没有给出/u, "a Run the server gave no Turn for says so");
-  for (const junk of [undefined, null, 0, "", "turn", [], [1, 2], {}, { version: "hh/1" }, () => 1, Symbol("x"), 1n]) assert.doesNotThrow(() => decodeProtocolTurn(junk), String(typeof junk));
+  for (const junk of [undefined, null, 0, "", "turn", [], [1, 2], {}, { version: "hh/1" }, () => 1, Symbol("x"), 1n]) assert.doesNotThrow(() => readTurn(junk), String(typeof junk));
   // No count of items is too many: a long Turn is read whole.
   assert.equal(turnOf(wire(Array.from({ length: 5000 }, (_, at) => entry("command", { id: "c" + at, command: "x" })))).items.length, 5000);
 });

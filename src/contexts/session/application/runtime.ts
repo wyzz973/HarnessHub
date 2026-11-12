@@ -36,7 +36,7 @@ import {
   rangeOf, recordedStep, relayDeclaration, relaySettings, renderView, runRelayOf, runRelayRequest, settleTurn, undeclaredReading,
   type RelayChoices, type RelayDeclaration, type RelaySettings, type SettledTurn, type TurnDecision,
 } from "./relay-coordinator.js";
-import { MAX_OUTPUT_BYTES, assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
+import { assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
 
 interface ActiveExecution {
   readonly sessionId: SessionId;
@@ -70,10 +70,10 @@ interface ActiveExecution {
   grace: ReturnType<typeof setTimeout> | null;
   /**
    * What the program streamed and this Turn has not committed yet (ADR-047): one window of reply text or thinking, the UTF-8
-   * bytes of that kind as they stand once the window is committed (`committedBytes` of them were committed before it; `last`
+   * bytes of the window as they stand (only the window's size is counted; `last`
    * is the final UTF-16 code unit, so a pair split between chunks is counted once), the time its first chunk arrived, and the window's timer, owned by the Turn.
    */
-  readonly stream: { kind: "text" | "thinking" | null; text: string; committedBytes: number; bytes: number; last: string; at: number; cancel: (() => void) | null };
+  readonly stream: { kind: "text" | "thinking" | null; text: string; bytes: number; last: string; at: number; cancel: (() => void) | null };
   /** A window refused outside a driver callback (by its timer, a stop or a close); reported as the Turn's failure. */
   streamFailure: unknown;
   /** The Turn's relay (ADR-055 §6.1, §7; G068 phase two): what it checked, sent and saw recorded, until its end commits it. */
@@ -1050,7 +1050,9 @@ export class SessionRuntime {
   }
   private publish(commit: ConversationCommit): ConversationCommit {
     if (this.publicationFailed) return commit;
-    try { for (const value of commit.events) this.options.publish(value); }
+    // A commit that wrote nothing (a create key seen before returns the conversation it made) has nothing to tell.
+    if (commit.changes.head === undefined && commit.events.length === 0) return commit;
+    try { this.options.publish(commit); }
     catch { this.publicationFailed = true; const error = new SessionError("PUBLICATION_FAILED", "committed event publication failed; execution stopped"); this.fail(error, commit.conversation.id); throw error; }
     return commit;
   }
@@ -1469,37 +1471,25 @@ export class SessionRuntime {
    * A chunk of reply text or thinking joins the window open for its kind, or opens one (ADR-047); a window of the other
    * kind is committed first, so the log keeps their order. A window is committed when its timer runs out, when it holds
    * STREAM_WINDOW_BYTES, and before anything else of the Turn is committed. Ownership, the Run's status and its first output
-   * are checked when a window opens, so at least once per window. The output budget is counted exactly per chunk: the chunk
-   * that would exceed it commits the window before it and is refused, as it was refused on its own commit before.
+   * are checked when a window opens, so at least once per window. A reply or a thought has no length it may not pass (ADR-057 3.7): what the Harness says is
+   * kept, a window at a time, each committed by its size or its timer; the bytes counted here are the open window's.
    */
   private streamChunk(execution: ActiveExecution, value: Extract<ControlEvent, { type: "text" | "thinking" }>): void {
     const stream = execution.stream;
     if (stream.kind !== null && stream.kind !== value.type) this.flushStream(execution);
-    let { committedBytes, bytes, last } = stream;
+    let { bytes, last } = stream;
     if (stream.kind === null) {
       // A window opens on the Run's facts as committed: ownership, status, first output, and the bytes of its kind so far.
       const state = this.owned(execution), run = runIn(state, execution.runId)!;
       if (run.status !== "running") throw new SessionError("STALE_EVENT", "output arrived outside its active Run");
       this.firstOutput(state, run);
-      committedBytes = bytes = this.kindBytes(execution, value.type); last = "";
+      bytes = 0; last = "";
     }
     const joined = joinedBytes(bytes, last, value.text);
-    if (joined > MAX_OUTPUT_BYTES) {
-      // A refused chunk opens no window (nothing empty is committed); what was open before it is committed first.
-      this.flushStream(execution);
-      throw new SessionError("OUTPUT_LIMIT", value.type === "text" ? "Run public output byte budget exhausted" : "native thinking exceeded its budget");
-    }
-    if (stream.kind === null) { stream.kind = value.type; stream.text = ""; stream.committedBytes = committedBytes; stream.at = this.options.now().getTime(); }
+    if (stream.kind === null) { stream.kind = value.type; stream.text = ""; stream.at = this.options.now().getTime(); }
     stream.text += value.text; stream.bytes = joined; stream.last = value.text ? value.text.slice(-1) : last;
-    if (stream.bytes - stream.committedBytes >= STREAM_WINDOW_BYTES) { this.flushStream(execution); return; }
+    if (stream.bytes >= STREAM_WINDOW_BYTES) { this.flushStream(execution); return; }
     stream.cancel ??= this.timer(() => this.windowExpired(execution), STREAM_WINDOW_MS);
-  }
-  /** The bytes of reply text, or of reasoning, the Turn has committed so far: its segments of that kind (what the output budget counts). */
-  private kindBytes(execution: ActiveExecution, kind: "text" | "thinking"): number {
-    const type = kind === "text" ? "assistant_message" : "reasoning";
-    let bytes = 0;
-    for (const item of itemsOf(this.turnOf(execution))) if (item.type === type) bytes += item.textBytes;
-    return bytes;
   }
   /**
    * Commits the open window as one run.output event of its kind, with the window's text (ADR-047); no open window is nothing
@@ -1611,7 +1601,7 @@ export class SessionRuntime {
       backendSettled: false, stop: null, earlyClose: null, turn: null, writes: Promise.resolve(), writeFailure: null, diagnosticMark: null,
       clock: { workedMs: 0, since: performance.now(), waiting: false, executionLeftMs: this.options.executionBudgetMs ?? null, waitLeftMs: this.options.waitBudgetMs ?? null, budget: null, hint: null, hinted: 0, lastEventAt: performance.now() },
       stopReason: null, grace: null,
-      stream: { kind: null, text: "", committedBytes: 0, bytes: 0, last: "", at: 0, cancel: null }, streamFailure: null,
+      stream: { kind: null, text: "", bytes: 0, last: "", at: 0, cancel: null }, streamFailure: null,
       relay: { declaration: relayDeclaration(null), turn: { kind: "none" }, recorded: false, e1Refused: false } };
     if (this.actives.has(id)) throw new SessionError("OWNERSHIP_LOST", "another Turn of this conversation is active");
     this.actives.set(id, execution);

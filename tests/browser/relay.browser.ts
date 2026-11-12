@@ -5,12 +5,14 @@ import { extname, join, resolve, sep } from "node:path";
 import test, { after, before } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium, expect, type Browser, type BrowserContext, type Locator, type Page } from "@playwright/test";
-import { decodeSessionStreamFrame } from "../../web/src/api.js";
+import { decodeSessionStreamFrameV14, decodeSessionViewV14 } from "../../web/src/lib/protocol/wire.js";
+import { openWindow } from "../../web/src/lib/protocol/window.js";
+import { conversationOf, type ConversationView } from "../../web/src/lib/conversation.js";
+import { textRange, turnsBefore, v14 } from "./v14.js";
 import { createRelayApi, decodeRelayFrame, decodeRelayPrefs, decodeRelayView, decodeRunRelay, relayBody, RelayReadError, runRelayInfo, type RelayReply, type RelayTransport, type RelayView } from "../../web/src/relay.js";
 import { bannerOf, relayLine, relayRequestFor } from "../../web/src/lib/relay-state.js";
 import { consumeSessionEventStream, SessionStreamError } from "../../web/src/session-stream.js";
 import type { PublicRun } from "../../src/contracts/session.js";
-import type { SessionView } from "../../src/contracts/web.js";
 
 /*
  * The relay in the interface (docs/proposals/relay/slim.md): the hand-over line that says "taken over" only on evidence, the strip
@@ -197,7 +199,8 @@ class FakeGateway {
     await new Promise<void>(done => this.server.close(() => done()));
   }
   /** The conversation as the Gateway's view gives it: each Run carries its protocol Turn, the hand-over line included. */
-  private shown(): unknown { return { ...this.session, runs: this.session.runs.map((run, index) => ({ ...run, protocol: turnOf(this.session, run, index, this.view) })) }; }
+  private old(): Record<string, unknown> { return { ...this.session, runs: this.session.runs.map((run, index) => ({ ...run, protocol: turnOf(this.session, run, index, this.view) })) }; }
+  private shown(): unknown { return v14(this.old()); }
   private frame(): string { return `event: session\nid: ${this.session.lastSeq}\ndata: ${JSON.stringify({ type: "snapshot", session: this.shown() })}\n\n`; }
   /** The conversation changed: every open stream gets the new view of it, one fact further on. */
   publish(): void {
@@ -261,6 +264,10 @@ class FakeGateway {
     if (match === null || match[1] !== this.session.id) return this.missing(response);
     const action = match[2] ?? "";
     if (action === "" && method === "GET") return this.json(response, 200, this.shown());
+    const before = action === "turns" ? url.searchParams.get("before") : null;
+    if (before !== null && method === "GET") return this.json(response, 200, turnsBefore(this.old(), before, Number(url.searchParams.get("limit") ?? 20)));
+    const range = /^runs\/(\d+)\/items\/(\d+)\/text$/u.exec(action);
+    if (range !== null && method === "GET") { const found = textRange(this.old(), Number(range[1]), Number(range[2]), Number(url.searchParams.get("from") ?? 0), Number(url.searchParams.get("to") ?? 0)); return found === null ? this.missing(response) : this.json(response, 200, found); }
     if (action === "events/stream") {
       response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });
       this.clients.add(response); response.on("close", () => this.clients.delete(response)); response.write(this.frame()); return;
@@ -810,7 +817,8 @@ test("every relay line wraps on a narrow screen and nothing runs off it", async 
 // The page's reading of the relay, without a page
 // ---------------------------------------------------------------------------------------------------------------------
 
-const typed = (session: FakeSession): SessionView => session as unknown as SessionView;
+/** The conversation as the page makes it from what a Gateway says of it: the facts the fake holds, read as the page reads a Gateway's answer. */
+const typed = (session: FakeSession): ConversationView => conversationOf(openWindow(decodeSessionViewV14(v14(session as unknown as Record<string, unknown>))));
 const viewOf = (wire: RelayWire | null): RelayView | null => wire === null ? null : decodeRelayView(wire);
 
 test("the reading of the relay never takes an unknown word for a good one, and drops what it cannot read", () => {
@@ -974,11 +982,12 @@ test("the conversation stream carries a relay notice as a frame under the waterm
     "event: relay\ndata: " + JSON.stringify({ type: "relay", event: event("relay.input_recorded", 1) }) + "\n\n",
     "event: relay\ndata: {not json\n\n",
     ": heartbeat\n\n",
-    "event: session\nid: 9\ndata: " + JSON.stringify({ type: "snapshot", session: { id: SESSION, version: 8, lastSeq: 9 } }) + "\n\n",
+    "event: session\nid: 9\ndata: " + JSON.stringify({ type: "snapshot", session: { head: { id: SESSION, version: 8, lastSeq: 9 } } }) + "\n\n",
     // The notice the Gateway sends: a frame, under the watermark of the snapshot before it.
     "event: session\nid: 9\ndata: " + JSON.stringify({ type: "relay", sessionId: SESSION, version: 8, lastSeq: 9, event: event("relay.input_recorded", 2) }) + "\n\n",
   ].join("");
-  const decode = (value: unknown) => (value as { type?: unknown }).type === "relay" ? decodeSessionStreamFrame(value) : ({ type: "snapshot" as const, session: (value as { session: SessionView }).session });
+  // Only the frames the test needs to tell apart are read by the page's decoder; a snapshot is passed as it is, for the stream's own checks of its watermark.
+  const decode = (value: unknown) => (value as { type?: unknown }).type === "relay" ? decodeSessionStreamFrameV14(value) : ({ type: "snapshot" as const, session: (value as { session: never }).session });
   const stream = (text: string) => new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(encoder.encode(text)); controller.close(); } });
   await consumeSessionEventStream(stream(body), { signal: new AbortController().signal, decode, onFrame: frame => { frames.push(frame); }, onRelay: value => { relayEvents.push(value); } });
   assert.deepEqual(relayEvents.map(value => decodeRelayFrame(value)?.type), ["relay.input_recorded"]);

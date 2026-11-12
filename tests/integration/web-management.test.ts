@@ -11,6 +11,7 @@ import { startWebServer, type WebServer, type WebServerOptions } from "../../src
 import { LocalHarnessManagement } from "../../src/infrastructure/management/service.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { appStore } from "../fixtures/runtime-store.js";
+import { readWhole, type ReadConversation } from "../fixtures/http-conversation.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { LocalProviderService } from "../../src/infrastructure/provider/service.js";
 import { DirectorySessionBindingFactory } from "../../src/infrastructure/session/binding-factory.js";
@@ -161,24 +162,26 @@ test("upgrade CAS preserves immutable old installation and only switches the man
 test("upgrade leaves the current actual Harness process on its pinned version and the next Turn uses the new managed version", async t => {
   const external = new ExternalInstallFixture(); external.harnessHold = true; const f = await fixture(t, external.compose());
   const first = await submit(f, "old-version"); await waitJob(f, first, value => value.status === "completed");
-  const created = await call(f, "/api/v1/sessions", "POST", { selection: { harnessId: "codex", controlId: "codex-native" }, commandId: "managed-chat" }); assert.equal(created.status, 201, created.text); const id = String(record(created.data).id);
+  const created = await call(f, "/api/v1/sessions", "POST", { selection: { harnessId: "codex", controlId: "codex-native" }, commandId: "managed-chat" }); assert.equal(created.status, 201, created.text); const id = String(record(record(created.data).head).id);
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "first-turn" });
-  const waitSnapshot = async (predicate: (value: Record<string, unknown>) => boolean) => {
+  // The conversation as a page reads it: its head and its Turns (the user's words and the reply are the Turns' items).
+  const read = (): Promise<ReadConversation> => readWhole(async path => { const reply = await call(f, path); assert.equal(reply.status, 200, reply.text); return reply.data; }, id);
+  const waitSnapshot = async (predicate: (value: ReadConversation) => boolean) => {
     const deadline = Date.now() + 10000;
-    while (Date.now() < deadline) { const value = record((await call(f, "/api/v1/sessions/" + id)).data); if (predicate(value)) return value; await delay(20); }
+    while (Date.now() < deadline) { const value = await read(); if (predicate(value)) return value; await delay(20); }
     throw new Error("managed Session did not reach expected state");
   };
-  await waitSnapshot(value => Array.isArray(value.messages) && value.messages.map(record).some(message => message.text === "1.0.0:first"));
+  await waitSnapshot(value => value.messages.some(message => message.text === "1.0.0:first"));
   const before = external.management?.resolveControl("codex", "codex-native"); assert.ok(before); const entry = before.command.args[0]; assert.ok(entry); const bytes = await readFile(entry);
   external.version = "2.0.0"; external.harnessHold = false;
   const upgraded = await submit(f, "new-version", "upgrade", before.revision); await waitJob(f, upgraded, value => value.status === "completed");
-  const active = record((await call(f, "/api/v1/sessions/" + id)).data); assert.ok(Array.isArray(active.runs)); assert.equal(record(active.runs[0]).status, "running");
+  const active = await read(); assert.equal(active.runs[0]?.status, "running");
   assert.deepEqual(await readFile(entry), bytes);
   assert.equal((await call(f, `/api/v1/sessions/${id}/cancel`, "POST", { commandId: "cancel-old-run" })).status, 202);
-  await waitSnapshot(value => Array.isArray(value.runs) && record(value.runs[0]).status === "cancelled");
+  await waitSnapshot(value => value.runs[0]?.status === "cancelled");
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "second", commandId: "second-turn" });
-  const final = await waitSnapshot(value => Array.isArray(value.runs) && value.runs.length === 2 && record(value.runs[1]).status === "completed");
-  assert.ok(Array.isArray(final.messages)); assert.ok(final.messages.map(record).some(message => message.text === "2.0.0:second"));
+  const final = await waitSnapshot(value => value.runs.length === 2 && value.runs[1]?.status === "completed");
+  assert.ok(final.messages.some(message => message.text === "2.0.0:second"));
 });
 
 test("closing a browser request does not cancel installation, while explicit cancellation settles its actual child process", async t => {

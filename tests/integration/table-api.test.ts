@@ -11,9 +11,9 @@ import test, { after, before } from "node:test";
 import { application } from "../../src/cli/session-application.js";
 import { sessionId } from "../../src/contracts/session.js";
 import { TABLE_ENV, TABLE_NOT_IN_SESSION, TABLE_TOOLS } from "../../src/contracts/table.js";
-import type { SessionView } from "../../src/contracts/web.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { MemoryTableGrants } from "../../src/infrastructure/session/table-grants.js";
+import { readWhole, type ReadConversation } from "../fixtures/http-conversation.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
 
 // The context table over a real Gateway: a real store, a real HTTP server, a Harness fixture that is a real child process
@@ -83,7 +83,8 @@ async function table(path: string, token: string | null = f.token, extra: Record
   const text = await response.text(); let data: unknown = null; try { data = JSON.parse(text); } catch { /* a text answer */ }
   return { status: response.status, data, text, headers: response.headers };
 }
-async function view(id: string): Promise<SessionView> { const reply = await call("/api/v1/sessions/" + id); assert.equal(reply.status, 200, reply.text); return reply.data as SessionView; }
+/** The conversation as a page reads it: its head and every Turn, through the paged routes. */
+async function view(id: string): Promise<ReadConversation> { return readWhole(async path => { const reply = await call(path); assert.equal(reply.status, 200, reply.text); return reply.data; }, id); }
 async function say(id: string, text: string, key: string, index: number): Promise<void> {
   assert.equal((await call(`/api/v1/sessions/${id}/messages`, "POST", { text, commandId: key })).status, 202);
   for (const deadline = Date.now() + 15000; ;) {
@@ -101,7 +102,7 @@ before(async () => {
   f = { root, grants, ...booted, id: "", token: "" };
   const created = await call("/api/v1/sessions", "POST", { selection: { harnessId: "tbl-a" }, commandId: "create-table" });
   assert.equal(created.status, 201, created.text);
-  f.id = String(row(created.data).id);
+  f.id = String(row(row(created.data).head).id);
   await say(f.id, "WORK: run the tests and fix src/a.ts", "send-1", 0);
   await say(f.id, "thanks, now explain needle-17 to me", "send-2", 1);
   f.token = grants.mint({ sessionId: sessionId(f.id), harnessId: "tbl-a", controlId: "tbl-a-control" });
@@ -148,8 +149,9 @@ test("the table is read with the conversation's bearer token and nothing else: n
 });
 
 test("the directory, one Turn and a search over HTTP, from a real conversation with its stored details", async () => {
-  const state = (await view(f.id)).runs;
-  assert.ok(state[0]!.tools?.some(item => item.detail !== undefined), "the Runtime stored the Turn's tool details: " + JSON.stringify(state[0]!.tools));
+  // The Turn's calls are its items; the ones that ran something (a command, a file change) keep the detail the table reads from.
+  const first = (await view(f.id)).turns[0]!, calls = first.items.filter(item => item.type === "command" || item.type === "file_change");
+  assert.ok(calls.length === 2 && calls.every(item => item.detail !== undefined), "the Runtime stored the Turn's tool details: " + JSON.stringify(first.items.map(item => [item.type, item.detail?.id])));
   const directory = await table("/api/table/turns"); assert.equal(directory.status, 200, directory.text);
   const lines = row(directory.data).lines as Record<string, unknown>[];
   assert.deepEqual([row(directory.data).total, row(directory.data).from, row(directory.data).to, lines.length], [2, 1, 2, 2]);
@@ -197,7 +199,7 @@ test("when the known secrets cannot be read the answer says so and still hides w
   failing.secrets = true;
   try {
     const created = await call("/api/v1/sessions", "POST", { selection: { harnessId: "tbl-a" }, commandId: "create-unhidden" }); assert.equal(created.status, 201, created.text);
-    const token = f.grants.mint({ sessionId: sessionId(String(row(created.data).id)), harnessId: "tbl-a", controlId: "tbl-a-control" });
+    const token = f.grants.mint({ sessionId: sessionId(String(row(row(created.data).head).id)), harnessId: "tbl-a", controlId: "tbl-a-control" });
     const reply = await table("/api/table/turns", token); assert.equal(reply.status, 200, reply.text);
     assert.match(String(((row(reply.data).notes) as string[])[0]), /^Hiding the known secrets of the Harnesses was not possible for this answer; only the pattern-based hiding was applied\.$/u);
   } finally { failing.secrets = false; }
@@ -216,7 +218,7 @@ test("a server given its own tokens uses them, and a conversation without Turns 
   const login = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: bootstrap }) });
   const cookie = login.headers.get("set-cookie")!.split(";", 1)[0]!, csrf = String(row(await login.json()).csrfToken);
   const created = await fetch(origin + "/api/v1/sessions", { method: "POST", headers: { Cookie: cookie, Origin: origin, "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify({ selection: { harnessId: "tbl-b" }, commandId: "create-empty" }) });
-  const id = String(row(await created.json()).id), token = grants.mint({ sessionId: sessionId(id), harnessId: "tbl-b", controlId: "tbl-b-control" });
+  const id = String(row(row(await created.json()).head).id), token = grants.mint({ sessionId: sessionId(id), harnessId: "tbl-b", controlId: "tbl-b-control" });
   const reply = await fetch(origin + "/api/table/turns", { headers: { Authorization: "Bearer " + token } });
   assert.equal(reply.status, 200); const body = row(await reply.json());
   assert.deepEqual([body.total, body.from, body.to, body.lines], [0, 1, 0, []]);

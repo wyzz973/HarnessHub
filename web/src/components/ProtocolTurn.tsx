@@ -10,7 +10,8 @@ import { elapsed } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
 import { endLine, quietLine, switchLine, turnFooter } from "../lib/protocol/lines.js";
 import { liveStatus, type QueueNotice } from "../lib/protocol/live.js";
-import { arrange, lay, opensByDefault, reasoningLabel, summarizeGroup, withReply, workLabel, type Block, type WorkBlock } from "../lib/protocol/work.js";
+import { arrange, gapOf, isGap, lay, opensByDefault, reasoningLabel, summarizeGroup, withReply, workLabel, type Block, type GapRow, type WorkBlock } from "../lib/protocol/work.js";
+import { utf8Length } from "../lib/protocol/window.js";
 import { rememberShown, shownSteps } from "../lib/turn.js";
 import { Collapsible, motionStyle, SwapText } from "../ui/motion.js";
 import { Spinner } from "../ui/primitives.js";
@@ -27,8 +28,31 @@ import { ActionButton, LiveIcon, QueuedTurn, UserMessage, useEntrance } from "./
  * says so, with the reason, and is not drawn from anything else.
  */
 
+/** What a Turn can read of itself when it is shown (App.tsx): the rest of words it holds in part, and the middle of a long stretch of work a window left out. */
+export interface TurnReads {
+  /** Reads more of an item's words, or the item itself when its body was left out. */
+  readonly more: (runId: string, seq: number) => void;
+  /** Reads the items of a Turn's folded middle. */
+  readonly expand: (ordinal: number) => void;
+}
+/** The bytes of an item's words the page does not hold: the item says how long they are when it holds only part of them. */
+function leftOut(item: { readonly bodyOmitted?: true; readonly textBytes?: number }, held: string): number {
+  return item.bodyOmitted === true && item.textBytes !== undefined ? Math.max(0, item.textBytes - utf8Length(held)) : 0;
+}
+const megabytes = (bytes: number): string => bytes >= 1024 * 1024 ? (bytes / 1024 / 1024).toFixed(1) + " MB" : Math.max(1, Math.round(bytes / 1024)) + " KB";
+/** The words of an item that the page holds the start of: how much is left, and the way to read more of it. */
+function MoreText({ runId, seq, rest, label }: { readonly runId: string; readonly seq: number; readonly rest: number; readonly label?: string }) {
+  const ctx = useTurn(), [busy, setBusy] = useState(false);
+  useEffect(() => { setBusy(false); }, [rest]);
+  if (ctx.reads === undefined) return null;
+  return <div className="more-text flex min-w-0 items-center gap-2 px-1.5 text-caption text-fg-3">
+    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => { setBusy(true); ctx.reads?.more(runId, seq); }}>{busy ? "正在读取…" : label ?? "显示更多"}</button>
+    <span>还有 {megabytes(rest)} 没有显示</span></div>;
+}
+
 interface TurnContext {
-  readonly turn: ReadTurn; readonly run: PublicRun; readonly over: boolean; readonly cancelling: boolean; readonly detailed: boolean;
+  readonly turn: ReadTurn; readonly run: PublicRun;
+  readonly reads: TurnReads | undefined; readonly over: boolean; readonly cancelling: boolean; readonly detailed: boolean;
   readonly children: ReadonlyMap<string, readonly ReadItem[]>;
   readonly message: (id: string) => PublicMessage | undefined;
   readonly loadDetail: ToolDetailLoader | undefined;
@@ -125,8 +149,19 @@ function ReasoningRow({ item }: { readonly item: ReasoningItem }) {
   </>;
   return <li className={cn("reasoning-row min-w-0", entering && "motion-row-in")} data-state={item.status}>
     {has ? <button type="button" className={cn(ROW, "row border-none bg-transparent hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => setChoice(!open)}>{content}</button> : <div className={ROW}>{content}</div>}
-    {has ? <Collapsible open={open} id={panel}><div className="native-thinking mt-0.5 mb-2 ml-[30px] border-l border-line-strong pl-3 text-ui-sm text-fg-2"><StreamingMarkdown text={item.text} isStreaming={running}/></div></Collapsible> : null}
+    {has ? <Collapsible open={open} id={panel}><div className="native-thinking mt-0.5 mb-2 ml-[30px] border-l border-line-strong pl-3 text-ui-sm text-fg-2"><StreamingMarkdown text={item.text} isStreaming={running}/>
+      {leftOut(item, item.text) > 0 ? <MoreText runId={ctx.run.id} seq={item.seq} rest={leftOut(item, item.text)}/> : null}</div></Collapsible> : null}
   </li>;
+}
+
+/** The middle of a long stretch of work the window left out: one line that says how much, and reads it when asked. */
+function GapRowView({ gap }: { readonly gap: GapRow }) {
+  const ctx = useTurn(), [busy, setBusy] = useState(false);
+  useEffect(() => { setBusy(false); }, [gap.count]);
+  return <li className="gap-row min-w-0" data-gap={gap.count}>
+    <button type="button" className={cn(ROW, "row border-none bg-transparent text-fg-2 hover:bg-subtle")} disabled={busy || ctx.reads === undefined} onClick={() => { setBusy(true); ctx.reads?.expand(gap.ordinal); }}>
+      <span className="flex size-[15px] flex-none items-center justify-center text-fg-3">{busy ? <Spinner size={14} tone="run" label=""/> : <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true"/>}</span>
+      <span className="min-w-0 flex-1">{busy ? "正在读取中间的 " : "展开中间的 "}{gap.count} 项</span></button></li>;
 }
 
 /** Several actions in a row as one summary line ("运行了 6 条命令，读取了 7 个文件"), folded; it opens to each action's line. */
@@ -137,12 +172,13 @@ function ActionGroup({ block }: { readonly block: WorkBlock }) {
   return <div className="action-group min-w-0" data-open={open ? "true" : "false"} data-problems={summary.problems || undefined}>
     <button type="button" className={cn(ROW, "row group/step border-none bg-transparent text-fg hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => setChoice(!open)}>
       {live ? <span className="flex size-[15px] flex-none items-center justify-center"><Spinner size={14} tone="run" label=""/></span> : null}
-      <span className="min-w-0 flex-1 font-medium text-fg">{summary.parts.map((part, index) => <span key={index} className={part.failed ? "text-red-on-tint" : undefined}>{index ? "，" : ""}{part.text}</span>)}</span>
+      <span className="min-w-0 flex-1 font-medium text-fg">{summary.parts.map((part, index) => <span key={index} className={part.failed ? "text-red-on-tint" : undefined}>{index ? "，" : ""}{part.text}</span>)}
+        {block.rows.some(isGap) ? <span className="font-normal text-fg-3">，中间 {block.rows.map(gapOf).find(gap => gap !== undefined)?.count} 项未载入</span> : null}</span>
       <ChevronRight size={12} strokeWidth={2.2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
     </button>
     <Collapsible open={open} id={panel}>
       <ul className="m-0 mt-0.5 mb-1.5 ml-[7px] flex min-w-0 list-none flex-col gap-px border-l border-line-strong p-0 pl-[9px]" aria-label="这一组的动作">
-        {block.rows.map(row => row.type === "reasoning" ? <ReasoningRow key={row.id} item={row}/> : <ActionRow key={row.id} item={row as WorkItem}/>)}
+        {block.rows.map(row => { const gap = gapOf(row); return gap !== undefined ? <GapRowView key={row.id} gap={gap}/> : row.type === "reasoning" ? <ReasoningRow key={row.id} item={row}/> : <ActionRow key={row.id} item={row as WorkItem}/>; })}
       </ul>
     </Collapsible>
   </div>;
@@ -172,8 +208,9 @@ function ItemView({ item }: { readonly item: ReadItem }) {
   switch (item.type) {
     case "reasoning": return <ul className="m-0 list-none p-0"><ReasoningRow item={item}/></ul>;
     case "assistant_message": {
-      const text = ctx.message(item.messageId)?.text ?? "";
-      return text ? <StreamingMarkdown text={text} isStreaming={!ctx.over && !ctx.cancelling && item.status === "running"} caret className="text-reading"/> : null;
+      const text = ctx.message(item.messageId)?.text ?? "", rest = leftOut(item, text);
+      return text || rest > 0 ? <>{text ? <StreamingMarkdown text={text} isStreaming={!ctx.over && !ctx.cancelling && item.status === "running" && rest === 0} caret={rest === 0} className="text-reading"/> : null}
+        {rest > 0 ? <MoreText runId={ctx.run.id} seq={item.seq} rest={rest} label={text ? "显示更多" : "显示这段回复"}/> : null}</> : null;
     }
     case "plan_proposal": return <div className="plan-proposal flex min-w-0 flex-col gap-1"><span className="px-1.5 text-caption text-fg-3">方案</span><StreamingMarkdown text={item.markdown} isStreaming={false} className="text-reading"/></div>;
     case "recap": return <div className="recap flex min-w-0 flex-col gap-1 px-1.5 text-ui-sm text-fg-2"><span>{item.summary}</span>{item.ask ? <strong className="font-semibold text-fg">{item.ask}</strong> : null}</div>;
@@ -320,6 +357,8 @@ export interface ProtocolTurnProps {
   readonly waiting?: "approval" | "question" | undefined;
   /** Waiting approvals and questions of this Turn, drawn at its end. */
   readonly children?: ReactNode;
+  /** What the Turn reads of itself when shown; absent where nothing can be read (the details panel). */
+  readonly reads?: TurnReads | undefined;
 }
 
 /**
@@ -349,7 +388,7 @@ export const ProtocolTurn = memo(function ProtocolTurn(props: ProtocolTurnProps)
   return props.run.protocol === undefined ? <UnreadableTurn run={props.run} message={props.message} arrived={props.arrived} onEdit={props.onEdit}/> : <TurnView {...props} turn={props.run.protocol}/>;
 });
 
-function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onDetails, detailsOpen, onViewPacket, startupHint, queue, waiting, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
+function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onDetails, detailsOpen, onViewPacket, startupHint, queue, waiting, reads, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
   // The reply is a message of the conversation, which arrives on the stream apart from the Turn's other items: its words are shown at once.
   const replyMessage = message(run.assistantMessageId), turn = useMemo(() => withReply(given, replyMessage), [given, replyMessage]);
   const arrangement = useMemo(() => arrange(turn, { asking: waiting === "approval" }), [turn, waiting]), over = arrangement.over, cancelling = run.cancelRequested;
@@ -359,12 +398,12 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
   const [seen] = useState<Set<string>>(() => shownSteps(run.id) ?? new Set(turn.items.map(item => item.id)));
   useLayoutEffect(() => { rememberShown(run.id, seen); }, [run.id, seen]);
   useLayoutEffect(() => { for (const item of turn.items) seen.add(item.id); }, [turn.items, seen]);
-  const context = useMemo<TurnContext>(() => ({ turn, run, over, cancelling, detailed, children: arrangement.children, message, loadDetail: loadToolDetail, seen, onViewPacket }),
-    [turn, run, over, cancelling, detailed, arrangement.children, message, loadToolDetail, seen, onViewPacket]);
+  const context = useMemo<TurnContext>(() => ({ turn, run, reads, over, cancelling, detailed, children: arrangement.children, message, loadDetail: loadToolDetail, seen, onViewPacket }),
+    [turn, run, reads, over, cancelling, detailed, arrangement.children, message, loadToolDetail, seen, onViewPacket]);
   const pieces = useMemo(() => segments(arrangement.blocks), [arrangement.blocks]);
-  // The reply shown last, for copying and for the line that says the Turn is replying.
+  // What the Harness said in this Turn, for copying and for the line that says the Turn is replying: its segments, which stand between its actions, one after another.
   const replies = turn.items.flatMap(item => item.type === "assistant_message" ? [message(item.messageId)?.text ?? ""] : []);
-  const reply = replies.filter(Boolean).at(-1) ?? "";
+  const reply = replies.filter(Boolean).join("\n\n");
   const copy = useCopy(reply);
   const retry = onRetry !== undefined && (turn.status === "failed" || turn.status === "cancelled");
   const quiet = !(copy.state !== "idle" || detailsOpen === true || retry);
@@ -409,7 +448,7 @@ export function TurnSteps({ run, turn, loadDetail, asking }: { readonly run: Pub
   const [seen] = useState<Set<string>>(() => new Set(turn.items.map(item => item.id)));
   useLayoutEffect(() => { for (const item of turn.items) seen.add(item.id); }, [turn.items, seen]);
   const blocks = useMemo(() => arrangement.blocks.filter(block => block.kind === "work" || block.item.type === "reasoning" || block.item.type === "context_event"), [arrangement.blocks]);
-  const context = useMemo<TurnContext>(() => ({ turn, run, over: arrangement.over, cancelling: false, detailed: true, children: arrangement.children, message: () => undefined, loadDetail, seen, onViewPacket: undefined }),
+  const context = useMemo<TurnContext>(() => ({ turn, run, reads: undefined, over: arrangement.over, cancelling: false, detailed: true, children: arrangement.children, message: () => undefined, loadDetail, seen, onViewPacket: undefined }),
     [turn, run, arrangement, loadDetail, seen]);
   if (blocks.length === 0) return null;
   return <Context.Provider value={context}><div className="turn-steps flex min-w-0 flex-col gap-px" role="group" aria-label="这一轮的步骤"><Blocks blocks={blocks}/></div></Context.Provider>;

@@ -6,13 +6,17 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { application } from "../../src/cli/session-application.js";
-import { commandId, messageId, runId, sessionId, type SessionSnapshot } from "../../src/contracts/session.js";
-import type { SessionView } from "../../src/contracts/web.js";
+import type { ConversationCommit } from "../../src/contracts/conversation.js";
+import { SessionError, sessionId, type AttentionItem, type SessionId } from "../../src/contracts/session.js";
+import type { SessionCommitFrame } from "../../src/contracts/web.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+import { ConversationRoutes } from "../../src/web/conversation-routes.js";
+import { commitFrame } from "../../src/web/commit-frame.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
-import { SessionStreamHub, type SessionStreamLimits, type SessionStreamReadFailure, type SessionStreamSink } from "../../src/web/session-stream.js";
+import { SessionStreamHub, type SessionStreamLimits, type SessionStreamReadFailure, type SessionStreamSink, type SessionStreamSource } from "../../src/web/session-stream.js";
 import { AttentionStreamHub } from "../../src/web/attention-stream.js";
-import type { AttentionItem } from "../../src/contracts/session.js";
+import { applyCommit, openWindow, type WindowState } from "../../web/src/lib/protocol/window.js";
+import { decodeSessionStreamFrameV14 } from "../../web/src/lib/protocol/wire.js";
 
 function record(value: unknown): Record<string, unknown> { assert.ok(value !== null && typeof value === "object" && !Array.isArray(value)); return value as Record<string, unknown>; }
 interface Files { readonly root: string; readonly data: string; readonly workspace: string; readonly manifest: string; readonly trace: string; readonly step: string; readonly release: string }
@@ -32,7 +36,6 @@ else if(m.method==='session/cancel'&&active!==null){clearInterval(loop);send({id
   await writeFile(manifest, JSON.stringify({ version: 2, definitions: [definition], overrides: { "stream-control": { executable: process.execPath } } }));
   return { root, data: join(root, "data"), workspace, manifest, trace, step, release };
 }
-function view(snapshot: SessionSnapshot): SessionView { return { id: snapshot.id, version: snapshot.version, lastSeq: snapshot.lastSeq, epoch: snapshot.epoch, status: snapshot.status, workspace: snapshot.configuration.workspace, selection: snapshot.selection, activeRunId: snapshot.activeRunId, pendingSwitchId: snapshot.pendingSwitchId, messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches }; }
 interface HttpFixture extends Files { gateway: WebServer; readonly origin: string; readonly cookie: string; readonly csrf: string; readonly streams: Set<StreamReader> }
 async function httpFixture(t: test.TestContext): Promise<HttpFixture> {
   const f = await files(), configuration = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true });
@@ -44,7 +47,7 @@ async function call(f: HttpFixture, path: string, input?: unknown): Promise<{ re
   const response = await fetch(f.origin + "/api/v1" + path, { method: input === undefined ? "GET" : "POST", headers: { Cookie: f.cookie, Origin: f.origin, ...(input === undefined ? {} : { "Content-Type": "application/json", "X-CSRF-Token": f.csrf }) }, ...(input === undefined ? {} : { body: JSON.stringify(input) }) });
   return { status: response.status, value: await response.json() as unknown };
 }
-async function create(f: HttpFixture): Promise<string> { const response = await call(f, "/sessions", { selection: { harnessId: "stream-peer" }, commandId: "create-stream" }); assert.equal(response.status, 201); return String(record(response.value).id); }
+async function create(f: HttpFixture): Promise<string> { const response = await call(f, "/sessions", { selection: { harnessId: "stream-peer" }, commandId: "create-stream" }); assert.equal(response.status, 201); return String(record(record(response.value).head).id); }
 interface Received { readonly id: number; readonly frame: Record<string, unknown> }
 class StreamReader {
   private readonly reader: ReadableStreamDefaultReader<Uint8Array>;
@@ -79,40 +82,64 @@ async function stream(f: HttpFixture, id: string, cursor = 0, extra: Record<stri
   const abort = new AbortController(), response = await fetch(f.origin + `/api/v1/sessions/${id}/events/stream?afterSeq=${cursor}`, { headers: { Cookie: f.cookie, Origin: f.origin, ...extra }, signal: abort.signal }); assert.equal(response.status, 200); assert.match(response.headers.get("content-type") ?? "", /text\/event-stream/u);
   const reader = new StreamReader(response, abort); f.streams.add(reader); return reader;
 }
-function textFrame(frame: Record<string, unknown>, expected: string): boolean { return frame.type === "message" && record(frame.message).text === expected; }
-function runStatus(frame: Record<string, unknown>, status: string): boolean {
-  if (frame.type !== "snapshot") return false;
-  const session = record(frame.session); return Array.isArray(session.runs) && session.runs.length > 0 && record(session.runs[0]).status === status;
+/** A page that follows a conversation's stream with the page's own reducer (web/src/lib/protocol/window.ts): what it holds after each frame is what the user sees. */
+class Page {
+  state: WindowState | null = null;
+  readonly resyncs: string[] = [];
+  constructor(private readonly reader: StreamReader) {}
+  /** The newest Turn's reply: the words of its reply segments, in order. */
+  reply(): string { const turn = this.state?.turns.at(-1); return (turn?.items ?? []).filter(entry => entry.item.type === "assistant_message").map(entry => String((entry.item as { text?: string }).text ?? "")).join(""); }
+  status(): string | undefined { return this.state?.turns.at(-1)?.run.status; }
+  /** The next frame is applied; the received frame is returned. */
+  async step(): Promise<Received> {
+    const received = await this.reader.next(), frame = decodeSessionStreamFrameV14(received.frame);
+    if (frame.type === "snapshot") this.state = openWindow(frame.session);
+    else if (frame.type === "commit" && this.state !== null) {
+      const result = applyCommit(this.state, frame);
+      if (result.kind === "resync") this.resyncs.push(result.reason); else this.state = result.state;
+    }
+    return received;
+  }
+  async until(done: (page: Page) => boolean): Promise<Received> { for (let at = 0; at < 200; at++) { const received = await this.step(); if (done(this)) return received; } throw new Error("the page never came to hold what was expected"); }
 }
+const follow = (reader: StreamReader): Page => new Page(reader);
 
-test("real HTTP SSE delivers a committed first message before the external Harness may emit more or complete", async t => {
-  const f = await httpFixture(t), id = await create(f), live = await stream(f, id), initial = await live.next(); assert.equal(initial.frame.type, "snapshot"); assert.equal(record(initial.frame.session).id, id);
+test("real HTTP SSE delivers a committed first message before the external Harness may emit more or complete: one commit frame for each commit, and a page that applies them holds what a read gives", async t => {
+  const f = await httpFixture(t), id = await create(f), live = await stream(f, id), page = follow(live), initial = await page.step();
+  assert.equal(initial.frame.type, "snapshot"); assert.equal(record(record(initial.frame.session).head).id, id); assert.equal(initial.id, record(record(initial.frame.session).head).lastSeq);
   const receipt = await call(f, `/sessions/${id}/messages`, { text: "greeting", commandId: "live-message" }); assert.equal(receipt.status, 202);
-  const first = await live.until(frame => textFrame(frame, "FIRST 中文\n")); assert.equal(first.id, first.frame.lastSeq); assert.equal(first.frame.sessionId, id);
-  const current = record((await call(f, `/sessions/${id}`)).value); assert.ok(Array.isArray(current.runs)); assert.equal(record(current.runs[0]).status, "running");
-  await writeFile(f.step, "next"); const second = await live.until(frame => textFrame(frame, "FIRST 中文\nSECOND 🌱\n")); assert.ok(second.id > first.id);
-  await writeFile(f.release, "finish"); const ended = await live.until(frame => runStatus(frame, "completed"));
-  const final = record(ended.frame.session); assert.ok(Array.isArray(final.messages)); assert.equal(record(final.messages.at(-1)).text, "FIRST 中文\nSECOND 🌱\nFINAL");
-  assert.equal(ended.id, final.lastSeq); assert.equal(ended.frame.type, "snapshot"); assert.equal("commands" in final, false); assert.equal("configuration" in final, false);
+  const first = await page.until(held => held.reply() === "FIRST 中文\n"); assert.equal(first.frame.type, "commit"); assert.equal(first.id, first.frame.lastSeq); assert.equal(first.frame.sessionId, id);
+  const current = record((await call(f, `/sessions/${id}`)).value), turns = record(current.window).turns as Record<string, unknown>[]; assert.equal(record(turns[0]!.run).status, "running");
+  await writeFile(f.step, "next"); const second = await page.until(held => held.reply() === "FIRST 中文\nSECOND 🌱\n"); assert.ok(second.id > first.id);
+  await writeFile(f.release, "finish"); const ended = await page.until(held => held.status() === "completed");
+  assert.equal(page.reply(), "FIRST 中文\nSECOND 🌱\nFINAL"); assert.equal(ended.id, record(ended.frame).lastSeq); assert.equal(ended.frame.type, "commit");
+  // The page followed every frame and never had to read the conversation again; and what it holds is what a read of the conversation gives.
+  assert.deepEqual(page.resyncs, []);
+  const read = record((await call(f, `/sessions/${id}`)).value), readTurns = record(read.window).turns as { items: { type: string; text?: string }[] }[];
+  assert.equal(readTurns[0]!.items.filter(item => item.type === "assistant_message").map(item => item.text).join(""), "FIRST 中文\nSECOND 🌱\nFINAL");
+  assert.equal(page.state!.head.lastSeq, record(read.head).lastSeq); assert.equal(page.state!.head.version, record(read.head).version);
+  assert.equal("commands" in read, false); assert.equal("configuration" in read, false);
 });
 
-test("disconnect and reconnect restore canonical facts without cancelling or re-dispatching the public Run", async t => {
-  const f = await httpFixture(t), id = await create(f), first = await stream(f, id); await first.next();
-  await call(f, `/sessions/${id}/messages`, { text: "once", commandId: "once" }); const partial = await first.until(frame => textFrame(frame, "FIRST 中文\n")); await first.close();
-  const current = record((await call(f, `/sessions/${id}`)).value); assert.ok(Array.isArray(current.runs)); assert.equal(record(current.runs[0]).status, "running");
-  const resumed = await stream(f, id, partial.id), canonical = await resumed.next(); assert.equal(canonical.frame.type, "snapshot"); assert.ok(canonical.id >= partial.id);
+test("disconnect and reconnect restore canonical facts without cancelling or re-dispatching the public Run: a connection starts with the conversation, not with the frames it missed", async t => {
+  const f = await httpFixture(t), id = await create(f), first = await stream(f, id), before = follow(first); await before.step();
+  await call(f, `/sessions/${id}/messages`, { text: "once", commandId: "once" }); const partial = await before.until(held => held.reply() === "FIRST 中文\n"); await first.close();
+  const current = record((await call(f, `/sessions/${id}`)).value); assert.equal(record(((record(current.window).turns as unknown[])[0] as Record<string, unknown>).run as Record<string, unknown>).status, "running");
+  const resumed = await stream(f, id, partial.id), page = follow(resumed), canonical = await page.step(); assert.equal(canonical.frame.type, "snapshot"); assert.ok(canonical.id >= partial.id);
+  assert.equal(page.reply(), "FIRST 中文\n", "the snapshot holds what the lost frames carried");
   const replay = await call(f, `/sessions/${id}/messages`, { text: "once", commandId: "once" }); assert.equal(record(replay.value).replayed, true);
-  await writeFile(f.step, "next"); await resumed.until(frame => textFrame(frame, "FIRST 中文\nSECOND 🌱\n")); await writeFile(f.release, "finish");
-  await resumed.until(frame => runStatus(frame, "completed"));
+  await writeFile(f.step, "next"); await page.until(held => held.reply() === "FIRST 中文\nSECOND 🌱\n"); await writeFile(f.release, "finish");
+  await page.until(held => held.status() === "completed");
   assert.equal((await readFile(f.trace, "utf8")).trim().split("\n").length, 1);
+  assert.deepEqual(page.resyncs, []);
 });
 
 test("cancelled Run retains partial text and stream closure does not claim completion", async t => {
-  const f = await httpFixture(t), id = await create(f), live = await stream(f, id); await live.next();
-  await call(f, `/sessions/${id}/messages`, { text: "cancel", commandId: "cancel-input" }); await live.until(frame => textFrame(frame, "FIRST 中文\n"));
+  const f = await httpFixture(t), id = await create(f), live = await stream(f, id), page = follow(live); await page.step();
+  await call(f, `/sessions/${id}/messages`, { text: "cancel", commandId: "cancel-input" }); await page.until(held => held.reply() === "FIRST 中文\n");
   const cancelled = await call(f, `/sessions/${id}/cancel`, { commandId: "stop" }); assert.equal(cancelled.status, 202);
-  const ended = await live.until(frame => runStatus(frame, "cancelled"));
-  const value = record(ended.frame.session); assert.ok(Array.isArray(value.messages)); assert.equal(record(value.messages.at(-1)).text, "FIRST 中文\n");
+  await page.until(held => held.status() === "cancelled");
+  assert.equal(page.reply(), "FIRST 中文\n");
 });
 
 test("stream API rejects future/conflicting cursors, cross-origin callers and invalid input before headers are committed", async t => {
@@ -137,12 +164,19 @@ class FakeSocket extends EventEmitter implements SessionStreamSink {
   end(): void { this.writableEnded = true; this.emit("close"); }
 }
 function frames(socket: FakeSocket): Record<string, unknown>[] { return socket.written.filter(value => value.startsWith("id:")).map(value => record(JSON.parse(value.split("\ndata: ")[1]!.trim()))); }
+/** The stream's source over a conversation store, as the server makes it (src/web/server.ts). */
+function sourceOf(app: ReturnType<typeof application>): { readonly routes: ConversationRoutes; readonly source: SessionStreamSource } {
+  const routes = new ConversationRoutes({ reader: app.store, facts: app.store, relay: () => () => ({}), env: { harnessName: harnessId => harnessId } });
+  return { routes, source: { snapshot: id => routes.session(id), frame: commit => commitFrame(commit.changes, routes.headView(commit.changes.head!.row), routes.frameViews(commit.changes.head!.row.id as SessionId)),
+    stale: commit => routes.needsSnapshot(commit) } };
+}
 async function hubFixture(t: test.TestContext, limits: SessionStreamLimits = {}) {
-  const f = await files(); let hub: SessionStreamHub;
+  const f = await files(); let hub: SessionStreamHub, routes: ConversationRoutes | undefined;
   const reports: SessionStreamReadFailure[] = [];
-  const app = application(f.data, event => hub.publish(event), { installations: "any", workspaceLockRoot: join(f.root, "locks") }); hub = new SessionStreamHub(id => view(app.runtime.read(id)), limits, failure => { reports.push(failure); });
+  const app = application(f.data, commit => { routes?.observe(commit); hub.publish(commit); }, { installations: "any", workspaceLockRoot: join(f.root, "locks") });
+  const made = sourceOf(app); routes = made.routes; hub = new SessionStreamHub(made.source, limits, failure => { reports.push(failure); });
   const config = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), session = await app.runtime.create(config, { harnessId: "stream-peer" }, "hub-session");
-  const result = { ...f, hub, app, reports, id: session.id, ownerLost: false };
+  const result = { ...f, hub, app, reports, id: session.id, ownerLost: false, routes: made.routes, source: made.source };
   t.after(async () => {
     hub.close(); let failure: unknown;
     for (const close of [() => app.runtime.close(), () => app.management.shutdown(), () => app.providers.shutdown(), () => app.store.close()]) {
@@ -151,22 +185,28 @@ async function hubFixture(t: test.TestContext, limits: SessionStreamLimits = {})
     await rm(f.root, { recursive: true, force: true }); if (failure) throw failure;
   }); return result;
 }
+/** The newest Turn's reply in the conversation as a read gives it now. */
+function replyOf(f: Awaited<ReturnType<typeof hubFixture>>): string {
+  const turn = f.routes.session(f.id).window.turns.at(-1);
+  return (turn?.items ?? []).filter(item => item.type === "assistant_message").map(item => String((item as { text?: string }).text ?? "")).join("");
+}
 
 test("backpressure keeps one dirty marker then drains a latest canonical snapshot, rather than queuing token frames", async t => {
   const f = await hubFixture(t), socket = new FakeSocket(); socket.blocked = true; f.hub.open(f.id, 0, Date.now() + 5000, socket, () => {});
   f.app.runtime.send(f.id, "held", "held");
-  const received = () => f.app.runtime.read(f.id).messages.some(message => message.role === "assistant" && message.text === "FIRST 中文\n");
+  const received = () => replyOf(f) === "FIRST 中文\n";
   const deadline = Date.now() + 3000; while (!received() && Date.now() < deadline) await delay(10); assert.ok(received(), "external output did not reach the committed public message");
   assert.equal(frames(socket).length, 1); socket.blocked = false; socket.emit("drain");
-  const canonical = frames(socket).at(-1); assert.ok(canonical); assert.equal(canonical.type, "snapshot"); assert.equal(record(canonical.session).lastSeq, f.app.runtime.read(f.id).lastSeq);
-  const latest = record(canonical.session); assert.ok(Array.isArray(latest.messages)); assert.equal(record(latest.messages.at(-1)).text, "FIRST 中文\n");
+  const canonical = frames(socket).at(-1); assert.ok(canonical); assert.equal(canonical.type, "snapshot");
+  const latest = record(canonical.session), head = record(latest.head); assert.equal(head.lastSeq, f.app.store.head(f.id).lastSeq);
+  const turns = record(latest.window).turns as { items: { type: string; text?: string }[] }[]; assert.equal(turns.at(-1)!.items.filter(item => item.type === "assistant_message").map(item => item.text).join(""), "FIRST 中文\n");
 });
 
 test("socket write failure and slow subscriber timeout release only that subscriber and preserve a running Run", async t => {
   const f = await hubFixture(t, { drainTimeoutMs: 30 }), socket = new FakeSocket(); f.hub.open(f.id, 0, Date.now() + 5000, socket, () => {}); socket.fail = true;
   assert.doesNotThrow(() => f.app.runtime.send(f.id, "running", "running")); assert.equal(f.hub.size, 0);
   const slow = new FakeSocket(); slow.blocked = true; f.hub.open(f.id, 0, Date.now() + 5000, slow, () => {}); await delay(60); assert.equal(f.hub.size, 0); assert.equal(slow.writableEnded, true);
-  const snapshot = f.app.runtime.read(f.id); assert.equal(snapshot.status, "open"); assert.ok(snapshot.runs.some(run => run.status === "running" || run.status === "preparing"));
+  const conversation = f.app.store.get(f.id); assert.equal(conversation.status, "open"); assert.ok(conversation.runs.some(run => run.status === "running" || run.status === "preparing"));
   assert.equal(f.hub.readFailure, null); assert.deepEqual(f.reports, [], "external socket errors were misreported as authoritative storage failures");
 });
 
@@ -174,7 +214,7 @@ test("the cap on subscriptions is a hub's option, 256 by default: a hundred are 
   const f = await hubFixture(t);
   for (let at = 0; at < 100; at++) f.hub.open(f.id, 0, Date.now() + 5000, new FakeSocket(), () => {});
   assert.equal(f.hub.size, 100);
-  const capped = new SessionStreamHub(id => view(f.app.runtime.read(id)), { maxConnections: 2 });
+  const capped = new SessionStreamHub(f.source, { maxConnections: 2 });
   capped.open(f.id, 0, Date.now() + 5000, new FakeSocket(), () => {}); capped.open(f.id, 0, Date.now() + 5000, new FakeSocket(), () => {});
   assert.throws(() => capped.open(f.id, 0, Date.now() + 5000, new FakeSocket(), () => {}), (error: unknown) => record(error).code === "STREAM_LIMIT");
   assert.equal(capped.size, 2); capped.close();
@@ -186,21 +226,19 @@ test("heartbeat, connection TTL and login expiry are owned and removed when a su
   const expiry = new FakeSocket(); f.hub.open(f.id, 0, Date.now() + 15, expiry, () => {}); await delay(30); assert.equal(expiry.writableEnded, true);
   assert.throws(() => f.hub.open(f.id, 0, Date.now() - 1, new FakeSocket(), () => {}), (error: unknown) => record(error).code === "AUTH_REQUIRED");
   let time = 1000, ready = false;
-  const expiredDuringRead = new SessionStreamHub(id => { const current = view(f.app.runtime.read(id)); time += 20; return current; }, { now: () => time });
+  const expiredDuringRead = new SessionStreamHub({ snapshot: id => { const current = f.source.snapshot(id); time += 20; return current; }, frame: f.source.frame }, { now: () => time });
   assert.throws(() => expiredDuringRead.open(f.id, 0, 1010, new FakeSocket(), () => { ready = true; }), (error: unknown) => record(error).code === "AUTH_REQUIRED");
   assert.equal(ready, false); assert.equal(expiredDuringRead.size, 0); expiredDuringRead.close();
 });
 
-test("frame budget rejects an oversize projection without affecting committed facts", async t => {
-  const f = await hubFixture(t, { maxFrameBytes: 64 }), socket = new FakeSocket(); f.hub.open(f.id, 0, Date.now() + 5000, socket, () => {});
-  assert.equal(socket.written.length, 0); assert.equal(socket.writableEnded, true); assert.equal(f.hub.size, 0); assert.equal(f.app.runtime.read(f.id).status, "open");
-});
-
-test("an authoritative owner failure propagates from publication rather than being treated as a socket failure", async t => {
-  const f = await hubFixture(t), socket = new FakeSocket(); socket.blocked = true; f.hub.open(f.id, 0, Date.now() + 5000, socket, () => {});
+test("an authoritative failure to make a frame propagates from publication rather than being treated as a socket failure", async t => {
+  const f = await hubFixture(t), socket = new FakeSocket(); f.hub.open(f.id, 0, Date.now() + 5000, socket, () => {});
+  const hub = new SessionStreamHub({ snapshot: f.source.snapshot, frame: () => { throw new SessionError("OWNER_LOST", "the owner is gone"); } });
+  t.after(() => hub.close());
   f.app.runtime.send(f.id, "owner", "owner"); const committed = f.app.store.events(f.id, 1)[0]; assert.ok(committed);
-  await rename(join(f.data, "owner.sqlite"), join(f.data, "old-owner.sqlite")); await writeFile(join(f.data, "owner.sqlite"), Buffer.alloc(0), { mode: 0o600 }); f.ownerLost = true;
-  assert.throws(() => f.hub.publish(committed), (error: unknown) => record(error).code === "OWNER_LOST");
+  const other = new FakeSocket(); hub.open(f.id, 0, Date.now() + 5000, other, () => {});
+  const head = f.app.store.head(f.id), commit = { conversation: f.app.store.get(f.id), events: [committed], changes: { events: [committed], head: { row: { ...head, version: head.version + 1, lastSeq: head.lastSeq + 1 } } } } as unknown as ConversationCommit;
+  assert.throws(() => hub.publish(commit), (error: unknown) => record(error).code === "OWNER_LOST");
 });
 
 test("async drain retains and reports a real owner failure while closing only its transport callback", async t => {
@@ -214,28 +252,51 @@ test("async drain retains and reports a real owner failure while closing only it
   assert.throws(() => f.app.runtime.send(f.id, "must not dispatch", "after-owner"), (error: unknown) => record(error).code === "OWNER_LOST");
 });
 
-test("native activity of the active Run is published as one run frame, other facts as canonical snapshots", () => {
-  const id = sessionId("session-run-frame"), run = runId("run-active");
-  let current: SessionView = { id, version: 4, lastSeq: 7, epoch: 1, status: "open", workspace: "/w", selection: { harnessId: "a", controlId: "a" }, activeRunId: run, pendingSwitchId: null,
-    messages: [{ id: messageId("message-u"), runId: run, role: "user", text: "q", seq: 2, status: "running" }],
-    runs: [{ id: run, commandId: commandId("send"), input: "q", userMessageId: messageId("message-u"), assistantMessageId: messageId("message-a"), selection: { harnessId: "a", controlId: "a" }, epoch: 1, status: "running", cancelRequested: false, contextThroughSeq: 0, sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: null }], switches: [] };
-  const hub = new SessionStreamHub(() => current), socket = new FakeSocket();
-  hub.open(id, current.lastSeq, Date.now() + 5000, socket, () => {});
-  const advance = (patch: Partial<SessionView["runs"][number]>) => { current = { ...current, version: current.version + 1, lastSeq: current.lastSeq + 1, runs: current.runs.map(item => ({ ...item, ...patch })) }; };
-  advance({ tools: [{ id: "t", title: "ls", status: "completed" }] });
-  hub.publish({ sessionId: id, seq: current.lastSeq, ownerGeneration: 1, timestamp: "2026-10-11T00:00:00Z", type: "run.output", data: { runId: run, event: { type: "tool", id: "t", title: "ls", status: "completed" } } });
-  advance({});
-  hub.publish({ sessionId: id, seq: current.lastSeq, ownerGeneration: 1, timestamp: "2026-10-11T00:00:00Z", type: "permission.requested", data: { runId: run } });
-  const sent = frames(socket);
-  assert.deepEqual(sent.map(frame => frame.type), ["snapshot", "run", "snapshot"]);
-  assert.deepEqual(record(sent[1]!.run).tools, [{ id: "t", title: "ls", status: "completed" }]);
+/** A commit as the hub sees one: the head it wrote, and its events. */
+function commitAt(id: string, version: number, lastSeq: number, events: readonly { readonly type: string; readonly data?: Record<string, unknown> }[] = []): ConversationCommit {
+  const logged = events.map((event, at) => ({ sessionId: sessionId(id), seq: lastSeq - events.length + at + 1, ownerGeneration: 1, timestamp: "2026-11-10T10:00:00.250Z", type: event.type, data: event.data ?? {} }));
+  return { conversation: { id }, events: logged, changes: { events: logged, head: { row: { id, version, lastSeq } } } } as unknown as ConversationCommit;
+}
+/** A source that holds a conversation at a version, and frames a commit as the version it wrote. */
+function fakeSource(id: string): { source: SessionStreamSource; at: { version: number; lastSeq: number } } {
+  const at = { version: 4, lastSeq: 7 };
+  return { at, source: { snapshot: () => ({ head: { id, version: at.version, lastSeq: at.lastSeq }, window: { turns: [], older: null } } as never),
+    frame: commit => ({ type: "commit", sessionId: id, version: commit.changes.head!.row.version, lastSeq: commit.changes.head!.row.lastSeq }) as SessionCommitFrame } };
+}
+
+test("one commit is one frame: a connection is told each commit once and in order, and one that missed a commit is told the conversation instead of the frames it missed", () => {
+  const id = "session-one-frame", made = fakeSource(id), hub = new SessionStreamHub(made.source), socket = new FakeSocket();
+  hub.open(sessionId(id), 7, Date.now() + 5000, socket, () => {});
+  const told = (): string[] => frames(socket).map(frame => frame.type + (frame.type === "commit" ? ":" + frame.version : ":" + record(record(frame.session).head).version));
+  made.at.version = 5; made.at.lastSeq = 9; hub.publish(commitAt(id, 5, 9, [{ type: "run.output" }, { type: "run.output" }]));
+  made.at.version = 6; made.at.lastSeq = 9; hub.publish(commitAt(id, 6, 9));
+  assert.deepEqual(told(), ["snapshot:4", "commit:5", "commit:6"], "two events are one frame, and a commit that logged none is one too");
+  hub.publish(commitAt(id, 6, 9)); hub.publish(commitAt(id, 5, 9));
+  assert.deepEqual(told(), ["snapshot:4", "commit:5", "commit:6"], "a commit already told is not told again");
+  made.at.version = 8; made.at.lastSeq = 12; hub.publish(commitAt(id, 8, 12, [{ type: "run.output" }]));
+  assert.deepEqual(told(), ["snapshot:4", "commit:5", "commit:6", "snapshot:8"], "a commit the connection was not told of is answered by the conversation, not a frame it cannot apply");
+  made.at.version = 9; made.at.lastSeq = 13; hub.publish(commitAt(id, 9, 13, [{ type: "run.output" }]));
+  assert.deepEqual(told().slice(-1), ["commit:9"], "and the frames go on from there");
+  // Other conversations' commits and commits that wrote no head are nobody's.
+  hub.publish(commitAt("session-other", 10, 20)); hub.publish({ ...commitAt(id, 10, 14), changes: { events: [] } } as ConversationCommit);
+  assert.equal(frames(socket).length, 5);
+  hub.close();
+});
+
+test("the frame of a commit is made once however many connections hold the conversation, and not at all when none does", () => {
+  const id = "session-shared", made = fakeSource(id); let made_ = 0;
+  const hub = new SessionStreamHub({ snapshot: made.source.snapshot, frame: commit => { made_++; return made.source.frame(commit); } });
+  hub.publish(commitAt(id, 5, 8)); assert.equal(made_, 0, "nobody to tell");
+  const sockets = [new FakeSocket(), new FakeSocket(), new FakeSocket()]; for (const socket of sockets) hub.open(sessionId(id), 0, Date.now() + 5000, socket, () => {});
+  made.at.version = 5; made.at.lastSeq = 8; hub.publish(commitAt(id, 5, 8));
+  assert.equal(made_, 1); assert.deepEqual(sockets.map(socket => frames(socket).length), [2, 2, 2]);
   hub.close();
 });
 
 test("a session stream carries the newest waiting list without an event id, and a slow subscriber gets only the latest once it drains", async t => {
   const f = await hubFixture(t), frame = (revision: number) => ({ revision, items: [] });
   let current = frame(0);
-  const hub = new SessionStreamHub(id => view(f.app.runtime.read(id)), {}, undefined, () => current); t.after(() => hub.close());
+  const hub = new SessionStreamHub(f.source, {}, undefined, () => current); t.after(() => hub.close());
   const socket = new FakeSocket(); hub.open(f.id, 0, Date.now() + 5000, socket, () => {});
   const attention = () => socket.written.filter(value => value.startsWith("event: attention")).map(value => {
     assert.ok(!value.includes("\nid:") && !value.startsWith("id:"), "it never moves the session cursor");

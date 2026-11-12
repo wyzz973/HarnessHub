@@ -173,7 +173,7 @@ process.stdin.on("end", () => process.exit(0));
     source: { repository: "fixture", revision: "lingering", upstreamId: "host-peer", url: "https://example.invalid/host-peer" } }] };
   await writeFile(manifest, JSON.stringify({ version: 2, definitions: [definition], overrides: { "host-peer-acp": { executable: process.execPath } } }));
   const ended: number[] = [];
-  const app = application(join(directory, "data"), event => { if (event.type === "run.ended") ended.push(Date.now()); }, { installations: "any", workspaceLockRoot: join(directory, "locks") });
+  const app = application(join(directory, "data"), commit => { for (const event of commit.events) if (event.type === "run.ended") ended.push(Date.now()); }, { installations: "any", workspaceLockRoot: join(directory, "locks") });
   t.after(async () => {
     try { await app.runtime.close(); await app.management.shutdown(); await app.providers.shutdown(); app.store.close(); }
     finally {

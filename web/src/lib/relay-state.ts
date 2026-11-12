@@ -1,5 +1,6 @@
 import type { PublicRun } from "../../../src/contracts/session.js";
-import type { SessionView } from "../../../src/contracts/web.js";
+import type { ConversationView } from "./conversation.js";
+import type { SessionFacts } from "../../../src/contracts/web.js";
 import { runRelayInfo, type RelayAttentionCause, type RelayBinding, type RelayDeliveryState, type RelayEvidence, type RelayOption, type RelayPacket, type RelayPrefs, type RelayRequest, type RelayTier, type RelayView } from "../relay.js";
 import { compact } from "./format.js";
 import { finished } from "./turn.js";
@@ -45,21 +46,14 @@ export function deliveryWords(state: RelayDeliveryState | null): string {
 // What is owed to the Harness the conversation is on
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** Whether a Turn reached its Harness: it was handed to the program, or (for a Turn from before the timing was kept) it completed. */
-function dispatched(run: PublicRun): boolean { return run.timing === undefined ? run.status === "completed" : run.timing.dispatchedAt !== undefined; }
-/** Where a Turn ran: the Harness entry its relay facts name, otherwise the one it was selected on. */
-function ranOn(run: PublicRun): { readonly harnessId: string; readonly controlId: string } {
-  return runRelayInfo(run)?.executedOn ?? { harnessId: run.selection.harnessId, controlId: run.selection.controlId };
-}
-/** The Turns (by index) that other Harness entries ran and the target's own session is not known to hold. */
-export function owedRuns(runs: readonly PublicRun[], target: { readonly harnessId: string; readonly controlId: string }, binding: RelayBinding | undefined): readonly number[] {
-  const known = binding?.throughRun ?? -1, owed: number[] = [];
-  runs.forEach((run, index) => {
-    if (index <= known || !finished(run.status) || !dispatched(run)) return;
-    const on = ranOn(run);
-    if (on.harnessId !== target.harnessId || on.controlId !== target.controlId) owed.push(index);
-  });
-  return owed;
+/**
+ * How many Turns other Harness entries ran that the target's own session is not known to hold, when it keeps no binding of its own: every Turn of the conversation that reached its Harness
+ * and ended on another entry. The Gateway counts them from the Runs' columns (`SessionFacts.ran`), for the whole conversation, whichever of its Turns the page holds.
+ */
+export function owedCount(facts: SessionFacts, target: { readonly harnessId: string; readonly controlId: string }): number {
+  let all = 0, here = 0;
+  for (const entry of facts.ran) { all += entry.turns; if (entry.harnessId === target.harnessId && entry.controlId === target.controlId) here += entry.turns; }
+  return all - here;
 }
 
 /**
@@ -76,13 +70,13 @@ export interface RelayLine { readonly kind: "owed"; readonly runs: number; reado
  * Harness here (absent means nothing: its floors and its clears are the Gateway's to know), and the page's own count of the Turns the
  * Harness is not known to hold when it keeps none (the first hand-over to a Harness that never ran in this conversation).
  */
-export function relayLine(session: SessionView, view: RelayView | null, prefs: RelayPrefs | null = null): RelayLine | null {
-  if (view === null || session.status !== "open" || session.activeRunId !== null || session.pendingSwitchId !== null || session.runs.length === 0) return null;
-  if (session.runs.some(run => !finished(run.status))) return null;
+export function relayLine(session: ConversationView, view: RelayView | null, prefs: RelayPrefs | null = null): RelayLine | null {
+  if (view === null || session.status !== "open" || session.activeRunId !== null || session.pendingSwitchId !== null || session.runCount === 0) return null;
+  if (!session.facts.settled) return null;
   const target = { harnessId: session.selection.harnessId, controlId: session.selection.controlId };
   const binding = view.bindings.find(item => item.harnessId === target.harnessId && item.controlId === target.controlId);
   // The Gateway keeps a native session for the Harness: what it says is owed is the word (its floors and clears are not the page's to know).
-  const runs = binding !== undefined ? binding.owed?.runs ?? 0 : owedRuns(session.runs, target, binding).length;
+  const runs = binding !== undefined ? binding.owed?.runs ?? 0 : owedCount(session.facts, target);
   if (runs === 0) return null;
   return { kind: "owed", runs, tokens: binding?.owed?.estTokens ?? null, first: !view.handedOver.includes(target.harnessId), off: prefs?.attach === "off" };
 }
@@ -182,8 +176,8 @@ export function packetFacts(packet: RelayPacket): string {
  * What the relay view depends on, as one string: the conversation, which Turns exist and whether each is over, the packet each
  * carries and its delivery, and the selection. The page reads the view again whenever it changes.
  */
-export function relaySignature(session: SessionView | null): string {
+export function relaySignature(session: ConversationView | null): string {
   if (session === null) return "";
   const turns = session.runs.map(run => { const info = runRelayInfo(run); return `${run.id}:${finished(run.status) ? "x" : "o"}:${info?.packetId ?? ""}:${info?.delivery?.state ?? ""}`; }).join(",");
-  return `${session.id}|${turns}|${session.selection.harnessId}:${session.selection.controlId}|${session.status}:${session.pendingSwitchId ?? ""}`;
+  return `${session.id}|${session.runCount}|${turns}|${session.selection.harnessId}:${session.selection.controlId}|${session.status}:${session.pendingSwitchId ?? ""}`;
 }

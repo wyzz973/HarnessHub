@@ -2,6 +2,7 @@ import type { ItemType } from "../../../../src/contracts/protocol.js";
 import type { ReadItem, ReadTurn } from "../../../../src/contracts/protocol-read.js";
 import type { PublicMessage, PublicRun } from "../../../../src/contracts/session.js";
 import { textOf, type WindowState, type WindowTurn } from "./window.js";
+import { GAP_ID, GAP_TYPE } from "./work.js";
 
 /*
  * The Turns of a window as the page's renderer draws them (web/src/components/ProtocolTurn.tsx): a Run that has its words as `input` and its Turn as `protocol`
@@ -53,6 +54,12 @@ interface Drawn { readonly run: DrawnRun; readonly messages: readonly PublicMess
 /** A Turn drawn once: a Turn the state did not change (the same object) is the same drawing, so that what the renderer keeps for an unchanged Turn (it compares what it is given) is kept. */
 const drawings = new WeakMap<WindowTurn, Drawn>();
 
+/** The place in a Turn's items where a window left out the middle of a long stretch of work: not an item of the conversation but a line that reads the rest (`GAP` in work.ts). */
+function gapIn(items: readonly ReadItem[], gap: NonNullable<WindowTurn["deferred"]>, ordinal: number): readonly ReadItem[] {
+  const at = items.findIndex(item => item.seq > gap.toSeq), line = { id: GAP_ID, seq: gap.fromSeq, status: "completed", type: GAP_TYPE, count: gap.count, fromSeq: gap.fromSeq, toSeq: gap.toSeq, ordinal } as unknown as ReadItem;
+  return at < 0 ? [...items, line] : [...items.slice(0, at), line, ...items.slice(at)];
+}
+
 function draw(turn: WindowTurn): Drawn {
   const kept = drawings.get(turn);
   if (kept !== undefined) return kept;
@@ -61,7 +68,8 @@ function draw(turn: WindowTurn): Drawn {
   const answer = run.status === "completed" && !items.some(item => item.type === "assistant_message" && item.phase === "final") ? answerOf(items) : null;
   const taken = new Set<string>();
   let input = "";
-  const drawn = items.map((item): ReadItem => {
+  const placed = turn.deferred === undefined ? items : gapIn(items, turn.deferred, run.ordinal);
+  const drawn = placed.map((item): ReadItem => {
     if (item.type === "user_message") {
       input += textOf(item) ?? "";
       if (!taken.has(item.messageId)) { taken.add(item.messageId); messages.push({ id: item.messageId, runId: run.id, role: "user", text: textOf(item) ?? "", seq: run.userSeq, status: run.status }); }

@@ -11,7 +11,6 @@ import { CodexControl } from "../../src/adapters/control/codex.js";
 import { nativeConversationId, singleText, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type ProtocolObservation, type TurnText } from "../../src/contracts/control.js";
 import { SessionError, STREAM_WINDOW_MS, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
-import { MAX_OUTPUT_BYTES } from "../../src/contexts/session/domain/state.js";
 import { verify } from "../../src/contexts/session/domain/conversation-verify.js";
 import { initialBindingRelay } from "../../src/contexts/session/domain/relay/delivery.js";
 import { appStore } from "../fixtures/runtime-store.js";
@@ -58,9 +57,11 @@ async function fixture(t: test.TestContext): Promise<Fixture> {
   });
   return { root, store, stores, runtimes, configuration: { workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true } };
 }
+/** What the Runtime publishes is a commit; these tests read the events it logged. */
+const eventsOf = (consume: (event: SessionEvent) => void) => (commit: { readonly events: readonly SessionEvent[] }): void => { for (const event of commit.events) consume(event); };
 function runtime(f: Fixture, factory: SessionBindingFactory, publish: (event: SessionEvent) => void = () => {}, idPrefix = ""): SessionRuntime {
   let id = 0;
-  const app = new SessionRuntime(f.store, factory, { id: () => idPrefix + String(++id), now: () => new Date("2026-10-09T00:00:00Z"), publish,
+  const app = new SessionRuntime(f.store, factory, { id: () => idPrefix + String(++id), now: () => new Date("2026-10-09T00:00:00Z"), publish: eventsOf(publish),
     fingerprint: value => createHash("sha256").update(value).digest("hex") });
   f.runtimes.push(app); return app;
 }
@@ -1140,7 +1141,7 @@ class StreamingFactory implements SessionBindingFactory {
 /** A Runtime whose ADR-047 windows expire only when the test fires its timers; the clock steps a millisecond per reading. */
 function windowed(f: Fixture, factory: SessionBindingFactory, options: { readonly publish?: (event: SessionEvent) => void; readonly executionBudgetMs?: number; readonly waitBudgetMs?: number } = {}): { readonly app: SessionRuntime; readonly timers: ManualTimers } {
   const timers = new ManualTimers(); let id = 0, clock = Date.parse("2026-10-21T00:00:00Z");
-  const app = new SessionRuntime(f.store, factory, { id: () => "window-" + String(++id), now: () => new Date(clock += 1), publish: options.publish ?? (() => {}),
+  const app = new SessionRuntime(f.store, factory, { id: () => "window-" + String(++id), now: () => new Date(clock += 1), publish: eventsOf(options.publish ?? (() => {})),
     fingerprint: value => createHash("sha256").update(value).digest("hex"), schedule: timers.schedule, ...(options.executionBudgetMs === undefined ? {} : { executionBudgetMs: options.executionBudgetMs }),
     ...(options.waitBudgetMs === undefined ? {} : { waitBudgetMs: options.waitBudgetMs }) });
   f.runtimes.push(app); return { app, timers };
@@ -1301,31 +1302,24 @@ test("INV-10 ADR-047: an open window is committed before a budget's end is recor
   assert.equal(run.status, "cancelled"); assert.equal(run.error?.code, "RUN_TIMEOUT"); assert.equal(reply(app, session.id), "z1");
 });
 
-test("INV-20 ADR-047: the output budget is counted per chunk, exactly, across a window: the chunk that would exceed it commits the window before it and is refused", async t => {
+test("INV-20 ADR-057 3.7: a reply and a thought have no length they may not pass: a Turn that says three megabytes keeps all of it, a window at a time, and nothing is refused", async t => {
   const f = await fixture(t), factory = new StreamingFactory(), { app, timers } = windowed(f, factory);
   const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   const first = factory.dispatched(1); app.send(session.id, "fill", "fill"); const turn = await first;
   const text = () => outputs(f, session.id).filter(row => row.startsWith("text:")), bytes = () => Buffer.byteLength(reply(app, session.id) ?? "");
-  // A chunk at or above the window's bytes is committed at once; 1,024,000 bytes then stand, 24,576 short of the budget.
-  turn.emit({ type: "text", text: "a".repeat(600 * 1024) }); turn.emit({ type: "text", text: "b".repeat(400 * 1024) });
-  assert.equal(text().length, 2); assert.equal(bytes(), 1_024_000); assert.equal(timers.pending, 0);
-  // A pair split between two chunks is four bytes, not six; with it the open window holds 104 bytes.
+  // Chunks at or above the window's bytes are committed at once, one window each; three megabytes stand, well past the 1 MiB a reply could not pass before.
+  for (let chunk = 0; chunk < 3; chunk++) turn.emit({ type: "text", text: String.fromCharCode(97 + chunk).repeat(1024 * 1024) });
+  assert.equal(bytes(), 3 * 1024 * 1024); assert.equal(timers.pending, 0);
+  // A pair split between two chunks is four bytes, not six, and the open window goes on from what is committed.
+  const before = text().length;
   turn.emit({ type: "text", text: "c".repeat(100) }); turn.emit({ type: "text", text: "🌱".slice(0, 1) }); turn.emit({ type: "text", text: "🌱".slice(1) });
-  assert.equal(text().length, 2); assert.equal(timers.pending, 1);
-  // One byte over the budget: refused as on its own commit before, with the window before it committed first.
-  assert.throws(() => turn.emit({ type: "text", text: "d".repeat(24_473) }), (error: unknown) => error instanceof SessionError && error.code === "OUTPUT_LIMIT");
-  assert.equal(text().length, 3); assert.equal(bytes(), 1_024_104); assert.equal(reply(app, session.id)?.endsWith("c🌱"), true); assert.equal(timers.pending, 0);
-  // Exactly the budget is accepted (and committed by its size); the byte after it is refused with nothing left to commit.
-  turn.emit({ type: "text", text: "d".repeat(24_472) });
-  assert.equal(text().length, 4); assert.equal(bytes(), MAX_OUTPUT_BYTES);
-  assert.throws(() => turn.emit({ type: "text", text: "e" }), (error: unknown) => error instanceof SessionError && error.code === "OUTPUT_LIMIT");
-  assert.equal(text().length, 4, "a refused chunk opens no window: nothing empty is committed"); assert.equal(bytes(), MAX_OUTPUT_BYTES); assert.equal(timers.pending, 0);
-  // A driver ends its connection with the refusal it was thrown, so the program never settles: the Turn is unknown, as it was
-  // before windows, and the committed reply stays.
-  turn.result.reject(new SessionError("OUTPUT_LIMIT", "Run public output byte budget exhausted"));
-  await assert.rejects(app.wait(session.id), (error: unknown) => error instanceof SessionError && error.code === "SESSION_BLOCKED");
-  const run = app.read(session.id).runs[0]!;
-  assert.equal(run.status, "unknown"); assert.equal(run.error?.code, "OUTPUT_LIMIT"); assert.equal(bytes(), MAX_OUTPUT_BYTES); assert.equal(factory.closes, 1);
+  assert.equal(text().length, before); assert.equal(timers.pending, 1);
+  turn.emit({ type: "text", text: "e" });
+  turn.result.resolve({ status: "completed", reason: "end_turn" });
+  await app.wait(session.id);
+  const run = app.read(session.id).runs[0]!, said = reply(app, session.id) ?? "";
+  assert.equal(run.status, "completed"); assert.equal(run.error, null); assert.equal(Buffer.byteLength(said), 3 * 1024 * 1024 + 100 + 4 + 1); assert.equal(said.endsWith("c".repeat(100) + "🌱e"), true);
+  assert.equal(said.startsWith("a"), true);
 });
 
 test("INV-06/INV-28 ADR-047: a window its timer commits is published after its commit; once the owner is lost, no window is committed or published", async t => {
