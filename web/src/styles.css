@@ -405,6 +405,9 @@
   @starting-style { .floating-bar { opacity: 0; transform: translateY(16px); } }
   .floating-bar[data-state="closing"] { opacity: 0; transform: translateY(16px); transition-duration: var(--dur-base); pointer-events: none; }
 
+  /* The approval in the message box's place is marked by the box's own amber edge; it draws no second ring when the keys are on it. */
+  .approval-dock:focus, .approval-dock:focus-visible { outline: none; }
+
   /* Buttons: blue primary, grey secondary (default), outline, ghost, danger; md 30, sm 26, lg 34. #30 hover 120 ms */
   .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 12px; border: none; border-radius: var(--radius-control);

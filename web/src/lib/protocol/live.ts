@@ -74,7 +74,7 @@ export function liveStatus(input: LiveInput): LiveStatus {
   if (run.cancelRequested) return { ...plain, text: "正在停止并清理资源" };
   if (waiting === "approval") {
     const asking = askingFor(turn.items);
-    return { ...plain, tone: "wait", text: asking === undefined ? "等你批准" : said(asking, "waiting", "想") };
+    return { ...plain, quiet: true, tone: "wait", text: asking === undefined ? "等你批准" : said(asking, "waiting", "想") };
   }
   if (waiting === "question") return running === undefined ? { ...plain, tone: "wait", text: "等你回答" } : { ...plain, text: said(running, "running") };
   // A Turn not started yet reads "排队中" wherever it is named; a longer explanation keeps its reason after it.

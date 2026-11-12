@@ -518,7 +518,7 @@ export function Composer(props: ComposerProps) {
         <div className="px-3.5 py-2 text-caption text-fg-3 hairline-t">Enter 选择 · Esc 保留 @ 作为文字</div>
       </div> : null}
       <div ref={box} className={cn("composer-box relative rounded-composer bg-surface transition-[box-shadow] duration-200 ease-standard",
-        docked ? "shadow-[0_0_0_1.5px_var(--amber-dot),0_0_0_5px_var(--amber-soft),var(--sh-composer)]"
+        docked ? "shadow-[0_0_0_1px_var(--amber-line),0_0_0_4px_var(--amber-soft),var(--sh-composer)]"
           : dragging ? "shadow-focus" : "shadow-composer has-[.composer:focus-within]:shadow-focus")} onFocus={event => { focusedHere.current = event.target; }}>
         <form className={cn("composer flex flex-col rounded-composer pt-4 pr-2.5 pb-2.5 pl-5 ease-standard", session ? "gap-2.5" : "gap-3",
           docked ? "invisible pointer-events-none absolute inset-x-0 bottom-0 -translate-y-1 opacity-0 transition-[opacity,translate,visibility] duration-100"

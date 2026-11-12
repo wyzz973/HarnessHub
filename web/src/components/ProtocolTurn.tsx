@@ -276,6 +276,9 @@ function SwitchView({ item, fresh }: { readonly item: SwitchItem; readonly fresh
 function WorkspaceLine({ turn }: { readonly turn: ReadTurn }) {
   const record = hubRecordOf(turn);
   if (record === undefined || record.changes.length === 0) return null;
+  // Not said twice: when the Harness's own lines already show every changed file with its counts, the Hub's record adds nothing to read.
+  const shown = turn.items.flatMap(item => item.type === "file_change" && item.by !== "hub" ? item.changes.filter(change => change.added !== undefined || change.removed !== undefined).map(change => change.path) : []);
+  if (!record.shared && record.changes.every(change => shown.some(path => path === change.path || path.endsWith("/" + change.path) || change.path.endsWith("/" + path)))) return null;
   const added = record.changes.reduce((sum, change) => sum + (change.added ?? 0), 0), removed = record.changes.reduce((sum, change) => sum + (change.removed ?? 0), 0);
   const counted = added || removed ? " +" + added + " −" + removed : "";
   const files = record.changes.length === 1 ? record.changes[0]!.path : record.changes.length + " 个文件";

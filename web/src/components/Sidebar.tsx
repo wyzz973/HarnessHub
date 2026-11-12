@@ -254,7 +254,7 @@ function SessionRow({ row, now, harness, current, disabled, onOpen }: { readonly
     <span className="flex h-5 w-4 flex-none items-center justify-center">{indicator}</span>
     <span className="flex min-w-0 flex-1 flex-col">
       <span className={cn("session-title trunc", state === "closed" && "text-fg-2")}>{title}</span>
-      {urgent && left ? <span id={lineId} className="attention-line line-clamp-2 text-caption font-normal text-amber-on-tint" title={left.hint}>{attentionKind(urgent)}{items.length > 1 ? `（${items.length} 项）` : ""}{left.source ? " · " + left.source : ""} <span className="whitespace-nowrap">{left.text}</span></span>
+      {urgent && left ? <span id={lineId} className="attention-line line-clamp-2 text-caption font-normal text-amber-on-tint" title={left.hint}>{attentionKind(urgent)}{items.length > 1 ? `（${items.length} 项）` : ""}{urgent.expiresAt === undefined ? null : <>{left.source ? " · " + left.source : ""} <span className="whitespace-nowrap">{left.text}</span></>}</span>
         : <span className="session-meta trunc text-caption font-normal text-fg-3" aria-hidden="true">{harness}{STATE_WORDS[state] ? " · " + STATE_WORDS[state] : ""}</span>}
     </span>
     <span id={metaId} className="sr-only">{harness}{STATE_WORDS[state] ? " · " + STATE_WORDS[state] : ""}</span>

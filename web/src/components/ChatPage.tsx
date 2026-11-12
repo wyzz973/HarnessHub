@@ -22,7 +22,7 @@ import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
 import { Dialog, Menu, useToast } from "../ui/overlay.js";
 import { EmptyState, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
 import type { ToolDetailLoader } from "./Activity.js";
-import { DecisionLine, decisionRole, DockedMarker, dockedRequest, PermissionCard, type Decision, type PermissionRequestView } from "./Approval.js";
+import { decisionRole, dockedRequest, PermissionCard, type Decision, type PermissionRequestView } from "./Approval.js";
 import type { AttachmentDraft } from "./Attachments.js";
 import { BranchOrigin } from "./BranchOrigin.js";
 import { Composer, type DockedApproval } from "./Composer.js";
@@ -411,13 +411,9 @@ export function ChatPage(props: ChatProps) {
   // the composer's place, and its questions in full.
   const turnRequests = (runId: string): ReactNode => {
     const requests = session?.permissions?.filter(request => request.runId === runId) ?? [];
-    const lines = [...decisions.entries()].filter(([id, record]) => record.runId === runId && requests.find(request => request.id === id)?.decided !== false)
-      .map(([id, record]) => <DecisionLine key={"decision:" + id} decision={record}/>);
-    const elsewhere = requests.filter(request => request.decided && dockedRequest(request) && !decisions.has(request.id))
-      .map(request => <DecisionLine key={"decision:" + request.id} decision={{ title: request.title, option: null, harness: requestHarness(request) }}/>);
-    const waiting = requests.some(request => !request.decided && dockedRequest(request)) && session?.status !== "closed";
+    // A decision is written by the Turn itself (the approval item's own line, when it is a refusal or a standing permission), so nothing is added here.
     const cards = requests.filter(request => !dockedRequest(request)).map(request => <PermissionCard key={request.id} request={request} harness={requestHarness(request)} busy={mutation !== null} onDecision={(option, input) => decide(request, option, input)}/>);
-    return lines.length || elsewhere.length || waiting || cards.length ? <>{lines}{elsewhere}{waiting ? <DockedMarker/> : null}{cards}</> : null;
+    return cards.length ? <>{cards}</> : null;
   };
   const orphanCards = (session?.permissions ?? []).filter(request => !runs.has(request.runId as never) && !dockedRequest(request))
     .map(request => <PermissionCard key={request.id} request={request} harness={requestHarness(request)} busy={mutation !== null} onDecision={(option, input) => decide(request, option, input)}/>);

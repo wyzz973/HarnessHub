@@ -84,7 +84,6 @@ export function CommandPalette({ open, onOpenChange, commands, onClosed }: { rea
               {command.shortcut ? <Keys keys={shortcutKeys(command.shortcut)}/> : null}
             </button></Fragment>) : <p className="m-0 px-3 py-8 text-center text-ui-sm text-fg-3">没有匹配的结果</p>}
         </div>
-        <div className="flex flex-none items-center gap-3 hairline-t px-4 py-2 text-caption text-fg-3"><span>↑↓ 选择</span><span>⏎ 打开</span><span>esc 关闭</span><span className="flex-1"/><span>⌘/ 全部快捷键</span></div>
       </BaseDialog.Popup>
     </BaseDialog.Portal>
   </BaseDialog.Root>;

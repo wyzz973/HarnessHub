@@ -147,7 +147,7 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
     // Hidden, the number keeps its room (`decision-key`): a pointer press hides it, and the decision pressed must not move.
     // Pressed, a decision keeps the room it was pressed in under the pointer (`decision`), though it scales to .97 (#31).
     // On a phone the decisions fill the lines they wrap onto, so the primary is never left alone at one end.
-    return <button key={option.id} type="button" aria-label={option.name} disabled={disabled} onClick={() => decide(option, false)}
+    return <button key={option.id} type="button" aria-label={option.name} disabled={disabled} onClick={() => decide(option, false)} {...(lasting.includes(option) ? { title: harness + " 会记住这个决定，之后同类请求可能不再询问" } : {})}
       aria-keyshortcuts={[key >= 0 ? String(key + 1) : "", option === primary ? "Enter" : "", option === refuse ? "Escape" : ""].filter(Boolean).join(" ") || undefined}
       className={cn("decision btn press max-sm:grow", tone === "primary" ? "btn-primary px-3.5" : tone === "ghost" ? "btn-ghost" : "")}>
       {key >= 0 ? <span aria-hidden="true" className="kbd-hint decision-key font-mono">{key + 1}</span> : null}
@@ -159,24 +159,22 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
   // the product's focus ring (2 px, accent text, at once), which follows its 28 px corners; from the pointer it shows none.
   return <section ref={section} id="approval-dock" tabIndex={-1} onKeyDown={onKeyDown} onPointerDown={() => { guard.current = 0; }} aria-label="工具审批" aria-describedby="approval-dock-title"
     className="approval-dock flex flex-col gap-3 rounded-composer pt-4 pr-4 pb-3 pl-[18px]">
-    <div className="flex items-start gap-3">
-      <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-block bg-amber-soft text-amber" aria-hidden="true"><ShieldAlert size={18}/></span>
+    <div className="flex items-center gap-2.5">
+      <span className="flex size-7 flex-none items-center justify-center rounded-row bg-amber-soft text-amber" aria-hidden="true"><ShieldAlert size={16}/></span>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         {/* The state in the words the header and the Turn use (Interaction board: 等你批准). */}
         <strong id="approval-dock-title" className="text-ui font-semibold">{harness} 等你批准</strong>
-        <span className="text-caption text-fg-3">
-          {policy ? <>来自 {harness} 的“{policy}”策略 · </> : null}
-          {left ? <span className={cn("permission-deadline", urgent && "font-medium text-amber")} title={left.hint}>{left.source ? `${left.source} · ` : ""}{left.text}</span> : `${harness} 会一直等你决定`}
-        </span>
+        {left ? <span className="text-caption text-fg-3"><span className={cn("permission-deadline", urgent && "font-medium text-amber")} title={left.hint}>{left.source ? `${left.source} · ` : ""}{left.text}</span></span> : null}
         {left ? <span className="sr-only" aria-live="polite">{left.source ? `${left.source} · ` : ""}{spokenLeft(seconds ?? 0, left.text)}</span> : null}
       </div>
       {waiting > 1 ? <span className="badge badge-amber flex-none" title="这个对话里等你处理的审批，按到达的先后显示">还有 {waiting - 1} 个</span> : null}
     </div>
     <div className="flex flex-col gap-1 rounded-block bg-inset px-3 py-2.5">
       <span className="mono text-[13px] leading-5 break-all whitespace-pre-wrap text-fg">{request.title}</span>
-      {request.detail ? <span className="max-h-[7.5rem] overflow-auto text-caption whitespace-pre-wrap break-words text-fg-3">{request.detail}</span> : null}
+      {request.detail ? <span className="max-h-[7.5rem] overflow-auto text-caption whitespace-pre-wrap break-words text-fg-3">{/^(?:--- |diff |@@ )/mu.test(request.detail)
+        ? request.detail.split("\n").map((line, index) => <span key={index} className={cn("block", /^\+(?!\+\+ )/u.test(line) ? "mono text-add" : /^-(?!-- )/u.test(line) ? "mono text-del" : undefined)}>{line || " "}</span>)
+        : request.detail}</span> : null}
     </div>
-    {lasting.length ? <p className="m-0 text-caption text-fg-3">选{lasting.map(option => `“${option.name}”`).join("或")}后，{harness} 会按它自己的规则记住这个决定，之后同类请求可能不再询问。这类选项不绑快捷键，只能点选。</p> : null}
     {/* The decisions keep to the right, the primary last, also when they wrap on a narrow screen. */}
     <div className="flex flex-wrap items-center justify-end gap-2">
       {onStop ? <Tip label="停止当前回复（⌘.）" side="top"><button type="button" className="btn btn-ghost -ml-1.5 mr-auto px-2.5" aria-label="停止当前回复" disabled={stopDisabled} onClick={onStop}>
