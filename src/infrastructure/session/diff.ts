@@ -6,7 +6,7 @@ import {
 import type { RelayRows } from "../../contracts/relay.js";
 import { SessionError, type EventDraft, type PublicSwitch, type SessionId } from "../../contracts/session.js";
 import type { Applied } from "./apply.js";
-import { bindingRowOf, canonicalJson, commandRowOf, runColumns, runRowOf, switchRowOf, utf8Length } from "./rows.js";
+import { bindingRowOf, canonicalJson, commandRowOf, itemRowOf, runColumns, runRowOf, sourceThroughOrdinal, switchRowOf, utf8Length } from "./rows.js";
 
 /*
  * Stage 1 of ADR-057: the Runtime still reduces a whole `Conversation` and the store finds what changed. `diffConversation` compares the
@@ -65,11 +65,6 @@ function itemRefs(sessionId: SessionId, run: ConversationRun, item: HeldItem, ro
   if (fields.content !== undefined && role === undefined) refs.push({ contentId: fields.content.id, sessionId, runId: run.id, itemSeq: item.seq, role: "output" });
   return refs;
 }
-/** The row of a held item: not its text (the chunks go as appends) and not the marks a page read puts on it. */
-function rowOf(item: HeldItem): ItemRow {
-  const { text: _text, textOmitted: _textOmitted, bodyOmitted: _bodyOmitted, ...row } = item;
-  return row;
-}
 const sameJson = (left: unknown, right: unknown): boolean => left === right || canonicalJson(left) === canonicalJson(right);
 const sameItem = (left: HeldItem, right: HeldItem): boolean => left.type === right.type && left.status === right.status && left.startedAt === right.startedAt && left.endedAt === right.endedAt
   && left.parentId === right.parentId && sameJson(left.fields, right.fields);
@@ -87,7 +82,7 @@ function diffItems(sessionId: SessionId, before: ConversationRun | undefined, af
     const old = i < was.length && was[i]!.seq === item.seq ? was[i++] : undefined;
     if (old === undefined) {
       const created = createdBy(after, item);
-      result.items.push({ op: "insert", row: { ...rowOf(item), textBytes: 0, textChunks: 0 }, ...(created === undefined ? {} : { createdByEvent: created }) });
+      result.items.push({ op: "insert", row: { ...itemRowOf(item), textBytes: 0, textChunks: 0 }, ...(created === undefined ? {} : { createdByEvent: created }) });
       result.refs.push(...itemRefs(sessionId, after, item));
       let offset = 0;
       for (let chunk = 0; chunk < item.text.length; chunk++) { const text = item.text[chunk]!; result.text.push({ runId: after.id, itemSeq: item.seq, chunk, text, byteOffset: offset }); offset += utf8Length(text); }
@@ -96,7 +91,7 @@ function diffItems(sessionId: SessionId, before: ConversationRun | undefined, af
     if (old === item) continue;
     if (old.itemId !== item.itemId) throw transition("an item's place and id never change (" + old.itemId + " at " + item.seq + ")");
     if (!sameItem(old, item)) {
-      result.items.push({ op: "update", row: rowOf(item) });
+      result.items.push({ op: "update", row: itemRowOf(item) });
       // A reference an update brings is written once; the detail an update replaces stays referenced, as the one it superseded.
       const had = new Set(itemRefs(sessionId, after, old).map(ref => ref.contentId + "\u0000" + ref.role));
       for (const ref of itemRefs(sessionId, after, item)) if (!had.has(ref.contentId + "\u0000" + ref.role)) result.refs.push(ref);
@@ -111,14 +106,6 @@ function diffItems(sessionId: SessionId, before: ConversationRun | undefined, af
   }
   if (i < was.length) throw transition("item " + was[i]!.seq + " of " + after.id + " was taken away: items are never removed");
   return result;
-}
-
-/** `through` when the sources of a switch are exactly the Runs 0 to `through`, in order (the switch then says it for showing); otherwise null. */
-function prefixOrdinal(change: PublicSwitch, after: Conversation): number | null {
-  const sources = change.sourceRunIds;
-  if (sources.length === 0) return null;
-  for (let index = 0; index < sources.length; index++) if (after.runs[index]?.id !== sources[index]) return null;
-  return sources.length - 1;
 }
 
 /**
@@ -185,8 +172,8 @@ export function diffConversation(before: Conversation | null, after: Conversatio
   after.switches.forEach((change, index) => {
     const old = switchesBefore[index];
     if (old === change) return;
-    if (old === undefined) switches.push({ op: "insert", row: switchRowOf(session, index, change, prefixOrdinal(change, after)) });
-    else if (!sameJson(old, change)) switches.push({ op: "update", row: switchRowOf(session, index, change, prefixOrdinal(change, after)) });
+    if (old === undefined) switches.push({ op: "insert", row: switchRowOf(session, index, change, sourceThroughOrdinal(change.sourceRunIds, index => after.runs[index]?.id)) });
+    else if (!sameJson(old, change)) switches.push({ op: "update", row: switchRowOf(session, index, change, sourceThroughOrdinal(change.sourceRunIds, index => after.runs[index]?.id)) });
   });
 
   const head = { row: { id: session, version: before?.version ?? 0, lastSeq: (before?.lastSeq ?? 0) + events.length, format: CONVERSATION_FORMAT, status: after.status, epoch: after.epoch,

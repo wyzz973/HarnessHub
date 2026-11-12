@@ -179,6 +179,11 @@ export function itemColumns(row: ItemRow): Columns {
   return { run_id: row.runId, seq: row.seq, item_id: row.itemId, type: row.type, status: row.status, started_at: row.startedAt, ended_at: row.endedAt, parent_id: row.parentId, created_seq: row.createdSeq,
     item_json: JSON.stringify(row.fields) };
 }
+/** The row of a held item: not its text (the chunks go as appends) and not the marks a page read puts on it. */
+export function itemRowOf(item: HeldItem): ItemRow {
+  const { text: _text, textOmitted: _textOmitted, bodyOmitted: _bodyOmitted, ...row } = item;
+  return row;
+}
 /** An item row from its columns and its fields (the `item_json`, or what stands in for it when a page leaves a long one out: load.ts `emptyFields`). */
 export function itemRowFrom(row: Rec, fields: ItemFields): ItemRow {
   return { runId: text("items", row, "run_id") as RunId, seq: integer("items", row, "seq"), itemId: text("items", row, "item_id"), type: text("items", row, "type") as ItemType,
@@ -226,6 +231,15 @@ export function commandRowFrom(row: Rec): CommandRow {
     command: { id: text("commands", row, "command_id") as CommandId, kind: text("commands", row, "kind") as CommandRecord["kind"], fingerprint: text("commands", row, "fingerprint"), resultId: text("commands", row, "result_id") } };
 }
 
+/**
+ * What `SwitchRow.sourceThroughOrdinal` says: `n - 1` when the `n` sources of a switch are exactly the first `n` Runs in order (`runIdAt(i)` is the id of the
+ * Run at ordinal `i`); null for any other set (a Run that queued while the switch was asked for is skipped), which stays in the switch itself.
+ */
+export function sourceThroughOrdinal(sources: readonly string[], runIdAt: (index: number) => string | undefined): number | null {
+  if (sources.length === 0) return null;
+  for (let index = 0; index < sources.length; index++) if (runIdAt(index) !== sources[index]) return null;
+  return sources.length - 1;
+}
 export function switchRowOf(sessionId: SessionId, ordinal: number, change: PublicSwitch, sourceThroughOrdinal: number | null): SwitchRow { return { sessionId, ordinal, sourceThroughOrdinal, switch: change }; }
 export function switchColumns(row: SwitchRow): Columns {
   const change = row.switch;
