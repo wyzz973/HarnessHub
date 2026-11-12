@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -17,7 +17,7 @@ import type { ConvertedRun, StorageConversion } from "../../src/contracts/conver
 import type { RelayIndexRow } from "../../src/contracts/relay.js";
 import { SessionError, sessionId, type SessionEvent, type SessionSnapshot } from "../../src/contracts/session.js";
 import { conversationTitle } from "../../src/contracts/web.js";
-import { backupBeforeV14, databaseBytes } from "../../src/infrastructure/session/backup.js";
+import { BACKUP_BEFORE_V14, backupBeforeV14, databaseBytes } from "../../src/infrastructure/session/backup.js";
 import { climbToV13 } from "../../src/infrastructure/session/legacy/ladder.js";
 import { LegacyRelayLedger } from "../../src/infrastructure/session/legacy/ledger.js";
 import { parseSession as liveParse } from "../../src/infrastructure/session/legacy/state.js";
@@ -845,6 +845,31 @@ test("the backup of an older version is named by that version and replaced by an
   assert.ok(statSync(second).mtimeMs >= stamp);
   assert.deepEqual(readdirSync(join(root, "backups")), ["gateway-v4-before-v14.sqlite"]);
   assert.throws(() => backupBeforeV14(db, 14, { root }), codeOf("INVALID_INPUT"));
+});
+
+test("a backup of that name that is not of the library being backed up is kept under a name of its own, and a retry on the same library keeps no extra copy: nothing is deleted, nothing piles up", t => {
+  const directory = temporary(t), root = join(directory, "data");
+  writeGenerationRoot(root, loadGeneration(4));
+  const db = connect(t, root), folder = join(root, "backups");
+  const first = backupBeforeV14(db, 4, { root }), firstBytes = readFileSync(first);
+  // The library was put back from that backup and used since (another generation, here): the next backup does not take the name from it.
+  db.exec("UPDATE owner_metadata SET owner_generation = owner_generation + 5");
+  const second = backupBeforeV14(db, 4, { root });
+  assert.equal(second, first);
+  const names = readdirSync(folder).sort();
+  assert.equal(names.length, 2, names.join(", "));
+  const kept = names.find(name => /^gateway-v4-before-v14-earlier-\d{8}T\d{6}Z\.sqlite$/u.test(name))!;
+  assert.ok(kept !== undefined && !BACKUP_BEFORE_V14.test(kept), "the earlier one is not taken for the backup of this upgrade");
+  assert.deepEqual(readFileSync(join(folder, kept)), firstBytes, "the earlier backup is the very bytes it was");
+  assert.notDeepEqual(readFileSync(second), firstBytes, "and the name is the new backup's");
+  // A retry on the same library replaces its backup and keeps nothing more; a library that has changed in what the backup is read back against is not the same.
+  backupBeforeV14(db, 4, { root });
+  assert.equal(readdirSync(folder).length, 2);
+  db.exec("DELETE FROM events WHERE rowid = (SELECT MIN(rowid) FROM events)");
+  backupBeforeV14(db, 4, { root });
+  assert.equal(readdirSync(folder).length, 3, "kept again");
+  assert.equal(new Set(readdirSync(folder).map(name => statSync(join(folder, name)).ino)).size, 3, "three different files");
+  for (const name of readdirSync(folder)) { const copy = new DatabaseSync(join(folder, name), { readOnly: true }); try { assert.equal(copy.prepare("PRAGMA quick_check").get()?.quick_check, "ok"); } finally { copy.close(); } }
 });
 
 test("the store trims no backup: those of the migrations before stay, and this one is kept besides", t => {

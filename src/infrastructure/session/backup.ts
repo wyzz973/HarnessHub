@@ -1,5 +1,6 @@
-import { constants, closeSync, existsSync, fchmodSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, renameSync, statfsSync, unlinkSync } from "node:fs";
+import { constants, closeSync, existsSync, fchmodSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, renameSync, statfsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { SessionError } from "../../contracts/session.js";
 
@@ -14,6 +15,10 @@ import { SessionError } from "../../contracts/session.js";
  * when the upgrade has proven itself. There is one per source version: a second attempt (the first did not get through its first transaction, so the database
  * is as it was) replaces it.
  *
+ * A second attempt on the SAME library (the first did not get through its first transaction, so the database is as it was) replaces it. A backup of that name that is not of the
+ * library being backed up (the library was put back from it by `sessions restore-backup` and used since, or the version came back by hand) is not replaced: it is kept under a name
+ * of its own, `gateway-v<from>-before-v14-earlier-<UTC time it was made>.sqlite`, and so is not lost to the next upgrade. Nothing here ever deletes a backup.
+ *
  * Space: the copy is as large as the database, and the conversion writes the rows of every conversation before the snapshots they replace are given back, so
  * the upgrade needs about twice the database free; with less it is refused before anything is written, and says so.
  */
@@ -21,6 +26,21 @@ import { SessionError } from "../../contracts/session.js";
 /** The names of the backups made here (the rotation of the store of v13 recognized only its own pattern, and this is not it). */
 export const BACKUP_BEFORE_V14 = /^gateway-v(\d+)-before-v14\.sqlite$/u;
 const PARTIAL = /^gateway-v\d+-before-v14\.sqlite\.partial$/u;
+const stampOf = (when: Date): string => when.toISOString().replace(/[-:]/gu, "").replace(/\.\d+Z$/u, "Z");
+/**
+ * Whether a backup already in place is of the library being backed up: the same owner generation and the same counts of rows (what a backup is read back against). A library that was
+ * only tried again is unchanged; one that was put back and used has another generation. Anything that cannot be read is taken as not the same: the older file is then kept.
+ */
+function sameLibrary(existing: string, source: DatabaseSync, version: number): boolean {
+  const address = pathToFileURL(existing); address.searchParams.set("mode", "ro"); address.searchParams.set("immutable", "1");
+  let copy: DatabaseSync | null = null;
+  try {
+    copy = new DatabaseSync(address.href, { readOnly: true, allowExtension: false });
+    const generation = (db: DatabaseSync): unknown => db.prepare("SELECT owner_generation AS generation FROM owner_metadata WHERE singleton=1").get()?.generation;
+    return copy.prepare("PRAGMA user_version").get()?.user_version === version && generation(copy) === generation(source) && JSON.stringify(rowCounts(copy, version)) === JSON.stringify(rowCounts(source, version));
+  } catch { return false; }
+  finally { try { copy?.close(); } catch { /* closed */ } }
+}
 /** The relay tables of Session v13, whose rows a backup of a v13 database is read back against. */
 const RELAY_TABLES_V13 = ["relay_deliveries", "relay_packets", "relay_bodies", "relay_index", "relay_log", "relay_prefs"] as const;
 
@@ -92,6 +112,13 @@ export function backupBeforeV14(db: DatabaseSync, from: number, options: BackupO
     } finally { copy.close(); }
     step = "publish the backup";
     syncPath(path);
+    // A backup of that name that is not of this library is kept (a second name for the same file, made before the new one takes the name, so that at no moment is it missing).
+    if (existsSync(target) && lstatSync(target).isFile() && !sameLibrary(target, db, from)) {
+      const base = "gateway-v" + from + "-before-v14-earlier-" + stampOf(lstatSync(target).mtime);
+      let kept = base + ".sqlite";
+      for (let n = 2; existsSync(join(folder, kept)); n++) kept = base + "-" + n + ".sqlite";
+      linkSync(target, join(folder, kept));
+    }
     renameSync(path, target); written = false;
     syncPath(folder); if (created) syncPath(options.root);
     return target;

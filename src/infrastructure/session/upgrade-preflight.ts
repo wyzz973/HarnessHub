@@ -11,6 +11,7 @@ import { databaseBytes, freeBytesOf } from "./backup.js";
 import { convertConversation, migrationState, upgradeSchema } from "./migrate-v14.js";
 import { UnreadableHolders, heldTwice, liveHoldings, recordMoves, resolveSharedSessions, type NativeMove } from "./shared-sessions.js";
 import { all, one } from "./statements.js";
+import { ownerGenerations, type OwnerGenerations } from "./owner-generations.js";
 import { ladderFaults, reasonOf, repeatedRunIds, type UpgradeFault } from "./upgrade-check.js";
 
 /*
@@ -61,6 +62,11 @@ export interface UpgradeCheck {
   /** The conversations with an id (a call's, an activity's, a call's parent, a native session's reference) that holds half of a surrogate pair: the upgrade keeps and restores them. */
   readonly halfPairIds: readonly string[];
   readonly stores: readonly StoreFinding[];
+  /**
+   * The owner generations the data directory remembers: the conversation library's own, the management library's, the capability store's, and the largest. A library put back from
+   * a backup (`sessions restore-backup`) is given the largest, so that the build that takes it over takes one more than any library remembers. Null for one that is not there.
+   */
+  readonly generations: OwnerGenerations;
   /** `seconds`: what the conversion took here, in memory; `upgradeSeconds`: about what the upgrade takes writing to disk; `peakMemoryBytes`: the resident memory at the peak of this check. */
   readonly estimate: { readonly seconds: number; readonly upgradeSeconds: number; readonly peakMemoryBytes: number };
   /** The upgrade under way, when there is one: how many conversations are not converted, and where it stopped. */
@@ -208,9 +214,15 @@ const changed = (): SessionError => new SessionError("DATABASE_CHANGED", "the co
 
 function inspect(root: string, opened: Opened, stores: readonly StoreFinding[], problems: string[], options: CheckOptions): UpgradeCheck {
   const db = opened.db, version = Number(one(db, "PRAGMA user_version")?.user_version);
+  // The generations of the libraries: the conversation library's own row, read through the connection that reads everything else, and the others' as they are on disk.
+  let library: number | null = null;
+  try { if (one(db, "SELECT 1 AS found FROM sqlite_master WHERE type='table' AND name='owner_metadata'") !== undefined) { const row = one(db, "SELECT owner_generation FROM owner_metadata WHERE singleton=1"); library = typeof row?.owner_generation === "number" ? row.owner_generation : null; } } catch { library = null; }
+  let generations: OwnerGenerations = { library, management: null, capabilities: null, largest: library ?? 0 };
+  // A library that is busy for a moment (a service writing in it) is not a finding; one that cannot be read at all is.
+  try { generations = ownerGenerations(root, library); } catch (error) { if (!/locked|busy/iu.test(reasonOf(error))) problems.push(reasonOf(error)); }
   const nothing = { conversations: 0, turns: 0, events: 0, longestConversationTurns: 0, branches: 0, imports: 0, taskListCalls: 0 };
   const base = { version, mode: opened.mode, database: null, counts: nothing, firstStage: { applies: false, checked: 0, failing: [] as UpgradeFault[] }, secondStage: { checked: 0, skipped: 0, failing: [] as UpgradeFault[] },
-    sharedSessions: { groups: 0, conversations: 0, archived: 0, moves: [] as NativeMove[] }, endedSeqPlaced: { runs: 0, conversations: 0 }, halfPairIds: [] as string[], stores,
+    sharedSessions: { groups: 0, conversations: 0, archived: 0, moves: [] as NativeMove[] }, endedSeqPlaced: { runs: 0, conversations: 0 }, halfPairIds: [] as string[], stores, generations,
     estimate: { seconds: 0, upgradeSeconds: 0, peakMemoryBytes: 0 }, underWay: null };
   if (!Number.isSafeInteger(version) || version < 0) throw new SessionError("INVALID_DATA", "the library has no readable schema version");
   if (version === 0) return { ...base, ok: problems.length === 0, state: "empty", problems };
@@ -327,6 +339,9 @@ export function describeCheck(check: UpgradeCheck): string[] {
     lines.push("Estimate: " + check.estimate.seconds.toFixed(1) + " s of conversion in memory here; the upgrade, writing to disk, is " + orderOfTime(check.estimate.upgradeSeconds) + "; memory " + orderOfBytes(check.estimate.peakMemoryBytes)
       + " (" + group(Math.round(check.estimate.peakMemoryBytes / 1048576)) + " MB at the peak of this check).");
   }
+  const g = check.generations;
+  lines.push("Owner generations: conversation library " + (g.library ?? "none") + ", management library " + (g.management ?? "none") + ", capability store " + (g.capabilities ?? "none") + "; the largest is " + g.largest
+    + " (a library put back from a backup with `sessions restore-backup` is given the largest, so that the build that takes it over takes " + (g.largest + 1) + ").");
   for (const finding of check.stores) lines.push("Store " + finding.store + ": " + (finding.present ? (finding.problem === null ? "ok" + (finding.schema === null ? "" : " (schema " + finding.schema + ")") : "WOULD FAIL, " + finding.problem) : "not there yet (a start makes it)") + ".");
   for (const problem of check.problems) if (!check.stores.some(finding => finding.problem !== null && problem === "the " + finding.store + " store: " + finding.problem)) lines.push("Problem: " + problem + ".");
   lines.push(check.ok ? "Verdict: the upgrade would pass." : "Verdict: the upgrade would NOT pass.");

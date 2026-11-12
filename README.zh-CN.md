@@ -138,6 +138,7 @@ pnpm discover                                    # 本机找到的官网安装�
 pnpm chat --harness codex --data-dir data --cwd /path/to/project
 pnpm sessions list --data-dir data --json        # 公共对话
 pnpm sessions check-upgrade --data-dir data      # 升级前：只读地看这次升级会怎样，不写任何东西
+pnpm sessions restore-backup --data-dir data     # 升级后想退回：把备份放回成对话库（先停服务；不删任何东西）
 ```
 
 在 `pnpm chat` 里，`:harness opencode` 切换 Harness，`:cancel` 停止当前回合，`:history` 打印公共历史。全部命令与参数见 [工程现状](docs/engineering/status.md)。

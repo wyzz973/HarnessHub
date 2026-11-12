@@ -188,6 +188,7 @@ pnpm sessions show --session session-ID --data-dir data --json
 pnpm sessions events --session session-ID --data-dir data --after-seq 0 --limit 50 --json
 pnpm sessions close --session session-ID --data-dir data
 pnpm sessions resume --session session-ID --data-dir data --harness codex
+pnpm sessions restore-backup --data-dir data [--backup 文件名] [--json]   # 回退升级：先停服务；备份复制成对话库、在用的库留成 set-aside、代数接上；中途被杀可重跑；见 docs/contracts/storage-events.md
 pnpm sessions check-upgrade --data-dir data [--json]   # 升级前的只读预检：两段各走一遍，说出哪些对话会停；不写文件、不取所有权，服务运行时也能跑；退出码 0 通过、1 有对话/存储不通过、2 没能检查
 ~~~
 

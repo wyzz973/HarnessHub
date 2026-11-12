@@ -8,6 +8,8 @@ import { DatabaseSync } from "node:sqlite";
 import { test, type TestContext } from "node:test";
 import { SessionError } from "../../src/contracts/session.js";
 import { application } from "../../src/cli/session-application.js";
+import { CapabilityStore } from "../../src/infrastructure/capabilities/store.js";
+import { managementStorage } from "../../src/infrastructure/management/storage.js";
 import { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { checkUpgrade, describeCheck, type UpgradeCheck } from "../../src/infrastructure/session/upgrade-preflight.js";
 import { V12_FIXTURES, loadV12Fixture, separate, writeV12Root } from "../fixtures/relay/v12/database.js";
@@ -208,6 +210,24 @@ test("a conversation that cannot be read and holds a native session another hold
   assert.throws(() => new SqliteConversationStore(copy), (error: unknown) => error instanceof SessionError && error.code === "MIGRATION_REFUSED" && error.message.includes("session-tl-1 (" + check.firstStage.failing[0]!.reason + ")"));
   const left = new DatabaseSync(join(copy, "gateway.sqlite"), { readOnly: true });
   try { assert.equal(userVersion(left), 13, "and the library is still version 13"); } finally { left.close(); }
+});
+
+test("the check says which owner generations the data directory remembers, the largest among them, and that a restored library is given it", t => {
+  const data = join(temporary(t), "data");
+  writeV13Root(data, [loadV13Fixture("tools")]);
+  const raw = rawDatabase(data), owner = Number(raw.prepare("SELECT owner_generation FROM owner_metadata").get()!.owner_generation);
+  raw.close();
+  const alone = checkUpgrade(data);
+  assert.deepEqual({ ...alone.generations }, { library: owner, management: null, capabilities: null, largest: owner }, "a data directory with only its conversation library");
+  managementStorage(data, owner + 8).db.close(); CapabilityStore.open(data, owner + 3).close();
+  const before = treeDigest(data), all = checkUpgrade(data);
+  assert.deepEqual(treeDigest(data), before, "reading the generations changes nothing and makes no file");
+  assert.deepEqual({ ...all.generations }, { library: owner, management: owner + 8, capabilities: owner + 3, largest: owner + 8 });
+  assert.match(describeCheck(all).join("\n"), new RegExp("Owner generations: conversation library " + owner + ", management library " + (owner + 8) + ", capability store " + (owner + 3) + "; the largest is " + (owner + 8) + " \\(a library put back from a backup with `sessions restore-backup` is given the largest, so that the build that takes it over takes " + (owner + 9) + "\\)"));
+  // A library that cannot be read at all is a reason the start would fail too.
+  writeFileSync(join(data, "management", "management.sqlite"), "this is not a database, and is long enough to be read as one's header ".repeat(4));
+  const broken = checkUpgrade(data);
+  assert.equal(broken.ok, false); assert.ok(broken.problems.some(problem => /owner generation of the management library could not be read/u.test(problem)));
 });
 
 test("a Run id that two conversations hold cannot be held twice by the tables: the check names both conversations, and the upgrade refuses them before it changes anything", t => {

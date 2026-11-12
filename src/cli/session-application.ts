@@ -67,7 +67,7 @@ export function afterUpgrade(error: unknown, migration: Pick<MigrationReport, "f
   const known = error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError;
   const reason = known ? error.message : error instanceof Error ? "an unexpected " + error.name : "an unexpected failure";
   return Object.assign(new SessionError("START_FAILED_AFTER_UPGRADE", reason + ". The conversation library was upgraded to v14 by this start and the start did not finish; the copy of the library from before the upgrade is backups/gateway-v"
-    + migration.from + "-before-v14.sqlite in the data directory (the build before this one opens that copy, not the upgraded library)"), { cause: error });
+    + migration.from + "-before-v14.sqlite in the data directory (the build before this one opens that copy, not the upgraded library); with the program stopped, `sessions restore-backup --data-dir <the data directory>` puts it back and keeps the upgraded library beside it"), { cause: error });
 }
 export function dataRoot(value: string | undefined): string {
   const path = value === undefined ? resolve("data") : resolve(value);
