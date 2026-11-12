@@ -82,7 +82,11 @@ export interface NativeFacts {
   /** A longer text: an activity's or a notice's detail. */
   readonly more?: string;
   readonly mediaType?: string;
-  /** The fields the writer normalized (NUL removed, a number left out); never because of a size. */
+  /**
+   * What the writer normalized, as `field:why`: `nul` (a NUL removed), `surrogate` (half a surrogate pair replaced by U+FFFD), `empty` (an empty label given
+   * its placeholder), `range` (a number that is not a safe integer left out), `unknown_word` (a status word the protocol does not know, read as `unknown`).
+   * Never because of a size or of what a text says. Added by the placement of items (ADR-057 1.5).
+   */
   readonly clipped?: readonly string[];
   /**
    * The id the Harness gave a call or an activity, kept only when the item's id is not simply `tool:` or `activity:` followed by it: a second
@@ -243,6 +247,12 @@ export interface Violation { readonly rule: string; readonly where: string; read
  * production commit path.
  */
 export type VerifyConversation = (conversation: Conversation, reader: ConversationReader) => readonly Violation[];
+/**
+ * What `VerifyConversation` cannot see in one state: the conversation and the one a commit made of it, with the events the commit wrote
+ * (`assertSessionTransition` over the rows: who may change a binding, that a relay state only goes forward, that what a dispatched Run was
+ * given stays, that a finished Run is not rewritten). Added by T8; the tests run it after every commit.
+ */
+export type VerifyTransition = (before: Conversation, after: Conversation, events?: readonly EventDraft[]) => readonly Violation[];
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The head, the bindings, the commands, the switches

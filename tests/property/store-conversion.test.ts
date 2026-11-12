@@ -151,6 +151,10 @@ test("what the rows hold of a Run: the fixed order and ids, the messages' seqs, 
   assert.deepEqual(sub.fields.native, { title: "Audit subagent", kind: "subagent", status: "completed", more: "done after 3 calls" }, "an activity keeps every field");
   assert.deepEqual(rows.find(item => item.itemId === "output:1")!.fields.native, { name: "report", title: "The report", mediaType: "text/html" }, "a link keeps its name, title and type apart");
   assert.deepEqual(rows.find(item => item.itemId === "notice:2")!.fields.native, { title: "Slow network", more: "latency 2.3 s" });
+  // The label of a notice is its chunk (the item fields leave `text` out) and also native.title: the reader puts `text` back in the wire item from the chunk, and the round trip reads the title.
+  assert.equal(rows.find(item => item.itemId === "notice:2")!.text.join(""), "Slow network", "a notice's label is the text of its item");
+  assert.equal(rows.find(item => item.itemId === "activity:retry-1")!.text.join(""), "Retrying the request", "so is the label of a retry or review told as a notice");
+  assert.ok(rows.filter(item => item.itemId.startsWith("notice:") && item.type === "notice").every(item => item.text.join("") === item.fields.native!.title), "for every notice");
   // An error notice beside the Run's own error is an item whatever the display does with it (the Run of the failed Turn of `tools`).
   const failed = fixtureTurns.find(turn => turn.where.startsWith("tools ") && turn.run.status === "failed" && turn.run.error !== null && turn.run.notices?.some(notice => notice.severity === "error"))!, failedRows = convert(failed).items;
   assert.ok(failedRows.some(item => item.type === "error" && item.itemId.startsWith("notice:") && item.fields.native?.title === "The build failed" && item.fields.native.more === "error TS2304: cannot find name 'x'"));

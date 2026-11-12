@@ -6,7 +6,7 @@ import type { ItemStatus, ProtocolItem } from "../../../contracts/protocol.js";
 import type {
   ForkedMessage, PublicActivity, PublicMessage, PublicNotice, PublicOutput, PublicPlan, PublicRun, PublicTool, RunStatus, SessionId, SessionOrigin,
 } from "../../../contracts/session.js";
-import { itemStatus, normalizeTool, plainTool, runEnded, runItemStatus, type ToolContext } from "./protocol/index.js";
+import { itemStatus, normalizeTool, plainTool, runEnded, runItemStatus, type ToolContext, type ToolDetailInput } from "./protocol/index.js";
 import { dispatched } from "./relay/advance.js";
 
 /*
@@ -36,6 +36,15 @@ import { dispatched } from "./relay/advance.js";
  *   never stored. A list that was there and empty (`tools: []`) is told in `facts.emptyLists`; a thinking that was there and empty is a `think:1`
  *   item without text; a plan without steps is a `plan` item with none.
  *
+ * THE READ SIDE'S DUTIES. The derived values are what the shared normalization gives with no stored detail, so a call whose command or path only
+ *   its stored detail names (a DeepSeek Harness `bash` or `read`, whose title is the tool's name) has an empty command or path here. The reader that has
+ *   the detail's head in hand works them out again from the native facts, as the step-1 projection does; the Turns converted from before v14 can also be
+ *   brought up to date by one rebuildable backfill that does the same over the stored rows (it belongs to a later line and changes no native fact). Nor does a
+ *   row hold the `text` of the protocol items that have one: a user message, a reply and a thinking carry it in their chunks, and so does a notice (the item
+ *   fields leave `text` out, a notice's label included, so the label is the notice's chunk and `native.title` keeps it too); the reader puts `text` back in the
+ *   wire item, which leaves `protocol.ts` as it is — from `native.title` where there is one (the title of a retry or a review told as an activity may change while it
+ *   runs, and a chunk is never changed: it keeps the first title), else from the chunks. `fromItems` reads the label from `native.title`, so the round trip covers it.
+ *
  * ORDER AND IDENTITY (ADR-057 3.2): a Run that kept no order is given the fixed one — `user`, `think:1`, the calls in the order of `tools`
  *   (`tool:<id>`), the activities (`activity:<id>`), `plan`, the notices (`notice:<n>`, n from 1), `text:1` (the reply), the outputs
  *   (`output:<n>`) — and `legacyOrder` is set on the row: the order is a fixed arrangement, not what happened first. `seq` runs from 1 over the
@@ -62,7 +71,7 @@ import { dispatched } from "./relay/advance.js";
 
 /** Everything `toItems` takes beyond the Run and its messages (see above). */
 export type ConversionAt = Parameters<StorageConversion["toItems"]>[2];
-type Turn = ToolContext["turn"];
+export type Turn = ToolContext["turn"];
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Text a UTF-8 column holds
@@ -73,7 +82,7 @@ type Turn = ToolContext["turn"];
  * engine: tests/property/store-conversion.test.ts), so each lone surrogate becomes U+FFFD — one unit for one, so the indexes stay — and `marks`
  * says which unit stood where. A text of well-formed UTF-16 (nearly every text) is returned as it is, with no marks.
  */
-function sound(value: string): { readonly text: string; readonly marks: readonly (readonly [number, number])[] } {
+export function sound(value: string): { readonly text: string; readonly marks: readonly (readonly [number, number])[] } {
   // With the `u` flag a pair is one code point, so the class matches a lone surrogate only: a well-formed text has none.
   if (!/[\ud800-\udfff]/u.test(value)) return { text: value, marks: [] };
   const marks: [number, number][] = [];
@@ -113,11 +122,16 @@ function closing(status: ItemStatus, turn: Turn): ItemStatus {
  * a pair). Only the DERIVED values see the cut: the native title is kept whole.
  */
 const DERIVED_TITLE_UNITS = 16 * 1024;
-/** The protocol's item for a call and its state, with no stored detail read: the same call always gives the same item. */
-function derive(called: PublicTool, turn: Turn): { readonly status: ItemStatus; readonly fields: Record<string, unknown> } {
+/** A call as the normalization reads it: the protocol's state for it and the fields of its type (everything but the item's columns). */
+export interface Derived { readonly status: ItemStatus; readonly fields: Record<string, unknown> }
+/**
+ * The protocol's item for a call and its state. The storage conversion reads no stored detail (`detail` null): the same call always gives the same
+ * item. The placement of items, which has the head of the call's detail in hand, passes it, and so works out the command and the path in full.
+ */
+export function derive(called: PublicTool, turn: Turn, detail: ToolDetailInput | null = null): Derived {
   const cut = DERIVED_TITLE_UNITS - ((called.title.charCodeAt(DERIVED_TITLE_UNITS - 1) & 0xfc00) === 0xd800 ? 1 : 0);
   const tool = called.title.length <= DERIVED_TITLE_UNITS ? called : { ...called, title: called.title.slice(0, cut) };
-  const context: ToolContext = { seq: 0, detail: null, turn };
+  const context: ToolContext = { seq: 0, detail, turn };
   const split = (item: ProtocolItem): { readonly status: ItemStatus; readonly fields: Record<string, unknown> } => {
     const { id: _id, seq: _seq, status, startedAt: _started, endedAt: _ended, parentId: _parent, ...fields } = item;
     return { status, fields };
