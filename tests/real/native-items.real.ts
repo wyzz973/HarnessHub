@@ -182,6 +182,23 @@ test("an installed Harness's Turn is kept as items in the order they happened, w
         };
         proof.third = { status: third.status, error: third.error, asked: askedThird.length > 0, fileLine: last === "charlie" ? "as it was" : last === "echo" ? "edited" : "other", items: thirdTurn.items.map(shape), approvals: askedThird, checks: thirdChecks };
         fail(thirdChecks, "turn 3");
+
+        // Turn 4: a command with a long output (about 350 KiB as the shell writes it). How much of it a Harness reports is the Harness's own matter and is only said in
+        // the evidence; what it reports must be kept whole, readable, and not marked as unsaved.
+        const askedFourth: Record<string, unknown>[] = [];
+        app.runtime.send(id, "用命令行工具运行 `seq 1 60000`，然后只回复输出的最后一行。", "send-" + randomUUID());
+        const fourth = await settle(app, id, allowOnce, askedFourth, Date.now() + 8 * 60 * 1000);
+        const fourthTurn = turn(app, id, 3), commands = fourthTurn.items.filter(item => ACTIONS.has(item.type));
+        const kept = commands.flatMap(item => [...contentIds(item.fields)]).map(content => { try { return app.content.read(content).ref.bytes; } catch { return -1; } });
+        const fourthChecks = {
+          completed: fourth.status === "completed",
+          ...turnChecks(app, id, fourthTurn, replyOf(app, id, fourth)),
+          acted: commands.length > 0 && commands.every(item => item.status === "completed"),
+          detailsReadable: kept.length > 0 && kept.every(bytes => bytes >= 0),
+          nothingUnsaved: commands.every(item => !((item.fields as unknown as { readonly native?: { readonly clipped?: readonly string[] } }).native?.clipped ?? []).includes("detail:not_saved")),
+        };
+        proof.fourth = { status: fourth.status, error: fourth.error, items: fourthTurn.items.map(shape), detailBytes: kept, approvals: askedFourth, checks: fourthChecks };
+        fail(fourthChecks, "turn 4");
       } catch (error) {
         proof.failure = { code: error !== null && typeof error === "object" && "code" in error ? String(error.code) : "ASSERTION", message: error instanceof Error ? error.message.slice(0, 512) : "failed" };
         failures.push(harnessId + ": " + (proof.failure as { code: string }).code);
