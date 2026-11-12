@@ -1,0 +1,995 @@
+{
+ "fixture": "from-v12-clear",
+ "describe": "The frozen v12 database tests/fixtures/relay/v12/clear.json (made by the real v12 build, G066) after this build opened it: migrated to v13, its Runs without relay facts and the index rows (relay_index) that say where they ran",
+ "generator": "tests/fixtures/storage/v13/generate.mjs",
+ "userVersion": 13,
+ "ownerGeneration": 2,
+ "sessions": [
+  {
+   "id": "session-1",
+   "version": 46,
+   "lastSeq": 46,
+   "snapshot": {
+    "schemaVersion": 13,
+    "id": "session-1",
+    "version": 46,
+    "lastSeq": 46,
+    "epoch": 1,
+    "status": "open",
+    "configuration": {
+     "workspace": "/fixtures/g066/workspace",
+     "manifestPath": null,
+     "manifestSha256": null,
+     "configHome": null,
+     "packageRoots": [],
+     "searchDirs": [],
+     "pathOnly": true
+    },
+    "selection": {
+     "harnessId": "alpha",
+     "controlId": "alpha-acp"
+    },
+    "activeRunId": null,
+    "pendingSwitchId": null,
+    "runs": [
+     {
+      "id": "run-2",
+      "commandId": "a1",
+      "input": "a1 on alpha",
+      "userMessageId": "message-3",
+      "assistantMessageId": "message-4",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 3,
+      "sourceRunIds": [],
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "stopRequested": false,
+      "timing": {
+       "acceptedAt": 1794182401000,
+       "preparingAt": 1794182403000,
+       "readyAt": 1794182408000,
+       "dispatchedAt": 1794182410000,
+       "firstOutputAt": 1794182412000,
+       "endedAt": 1794182416000
+      },
+      "awaitingSwitchId": null
+     },
+     {
+      "id": "run-5",
+      "commandId": "a2",
+      "input": "a2 on alpha",
+      "userMessageId": "message-6",
+      "assistantMessageId": "message-7",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 14,
+      "sourceRunIds": [],
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "stopRequested": false,
+      "timing": {
+       "acceptedAt": 1794182418000,
+       "preparingAt": 1794182420000,
+       "readyAt": 1794182425000,
+       "dispatchedAt": 1794182427000,
+       "firstOutputAt": 1794182429000,
+       "endedAt": 1794182433000
+      },
+      "awaitingSwitchId": null
+     },
+     {
+      "id": "run-8",
+      "commandId": "a3",
+      "input": "/clear",
+      "userMessageId": "message-9",
+      "assistantMessageId": "message-10",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 25,
+      "sourceRunIds": [],
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "stopRequested": false,
+      "timing": {
+       "acceptedAt": 1794182435000,
+       "preparingAt": 1794182437000,
+       "readyAt": 1794182443000,
+       "dispatchedAt": 1794182445000,
+       "firstOutputAt": 1794182447000,
+       "endedAt": 1794182451000
+      },
+      "awaitingSwitchId": null
+     },
+     {
+      "id": "run-11",
+      "commandId": "a4",
+      "input": "a4 after the clear",
+      "userMessageId": "message-12",
+      "assistantMessageId": "message-13",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 37,
+      "sourceRunIds": [],
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "stopRequested": false,
+      "timing": {
+       "acceptedAt": 1794182453000,
+       "preparingAt": 1794182455000,
+       "readyAt": 1794182460000,
+       "dispatchedAt": 1794182462000,
+       "firstOutputAt": 1794182464000,
+       "endedAt": 1794182468000
+      },
+      "awaitingSwitchId": null
+     }
+    ],
+    "messages": [
+     {
+      "id": "message-3",
+      "runId": "run-2",
+      "role": "user",
+      "text": "a1 on alpha",
+      "seq": 2,
+      "status": "completed"
+     },
+     {
+      "id": "message-4",
+      "runId": "run-2",
+      "role": "assistant",
+      "text": "reply from alpha",
+      "seq": 10,
+      "status": "completed"
+     },
+     {
+      "id": "message-6",
+      "runId": "run-5",
+      "role": "user",
+      "text": "a2 on alpha",
+      "seq": 13,
+      "status": "completed"
+     },
+     {
+      "id": "message-7",
+      "runId": "run-5",
+      "role": "assistant",
+      "text": "reply from alpha",
+      "seq": 21,
+      "status": "completed"
+     },
+     {
+      "id": "message-9",
+      "runId": "run-8",
+      "role": "user",
+      "text": "/clear",
+      "seq": 24,
+      "status": "completed"
+     },
+     {
+      "id": "message-10",
+      "runId": "run-8",
+      "role": "assistant",
+      "text": "reply from alpha",
+      "seq": 33,
+      "status": "completed"
+     },
+     {
+      "id": "message-12",
+      "runId": "run-11",
+      "role": "user",
+      "text": "a4 after the clear",
+      "seq": 36,
+      "status": "completed"
+     },
+     {
+      "id": "message-13",
+      "runId": "run-11",
+      "role": "assistant",
+      "text": "reply from alpha",
+      "seq": 44,
+      "status": "completed"
+     }
+    ],
+    "switches": [],
+    "commands": [
+     {
+      "id": "create",
+      "kind": "create",
+      "fingerprint": "4498629394e003bcd97d386a36e765be96b5963c154c74e25bf0ba0d1d660dc0",
+      "resultId": "session-1"
+     },
+     {
+      "id": "a1",
+      "kind": "send",
+      "fingerprint": "b6fc8052f4c700f5e4221002ecee10e6709de765a419e7f5601cbb796f84143b",
+      "resultId": "run-2"
+     },
+     {
+      "id": "a2",
+      "kind": "send",
+      "fingerprint": "cc9b5e2917989a96155e6c5c08f9d609f13e43c0fd38c0072492b69d8e48b48e",
+      "resultId": "run-5"
+     },
+     {
+      "id": "a3",
+      "kind": "send",
+      "fingerprint": "90ffc9344c30cc2984ef7e28a27d968b50c00de103e282b489e6e3e48f05e896",
+      "resultId": "run-8"
+     },
+     {
+      "id": "a4",
+      "kind": "send",
+      "fingerprint": "c62c21b08a2fa1636f9f26cfb06de0e7aa0dd0938b7c4aeaa2b2514c77345356",
+      "resultId": "run-11"
+     }
+    ],
+    "nativeBindings": [
+     {
+      "harnessId": "alpha",
+      "controlId": "alpha-acp",
+      "checkpoint": "native-alpha-1",
+      "throughRunId": "run-11",
+      "status": "ready",
+      "observed": {
+       "model": "model-a",
+       "options": {}
+      },
+      "relay": {
+       "epoch": 2,
+       "mark": -1,
+       "floor": 35,
+       "pending": null,
+       "resendAll": false
+      }
+     }
+    ]
+   },
+   "events": [
+    {
+     "type": "session.created",
+     "data": {
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "continuity": "public_context_rehydrate"
+     },
+     "sessionId": "session-1",
+     "seq": 1,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:00.000Z"
+    },
+    {
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-2",
+      "messageId": "message-3",
+      "role": "user",
+      "text": "a1 on alpha"
+     },
+     "sessionId": "session-1",
+     "seq": 2,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:02.000Z"
+    },
+    {
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-2",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1
+     },
+     "sessionId": "session-1",
+     "seq": 3,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:04.000Z"
+    },
+    {
+     "type": "run.protocol",
+     "data": {
+      "runId": "run-2",
+      "observation": {
+       "protocol": "acp-v1",
+       "protocolVersion": 1,
+       "agentName": "fake",
+       "agentVersion": "1",
+       "authenticationMethods": [],
+       "capabilities": {}
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 4,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:05.000Z"
+    },
+    {
+     "type": "native.binding_prepared",
+     "data": {
+      "runId": "run-2",
+      "harnessId": "alpha",
+      "controlId": "alpha-acp",
+      "resumed": false
+     },
+     "sessionId": "session-1",
+     "seq": 5,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:06.000Z"
+    },
+    {
+     "type": "run.context_prepared",
+     "data": {
+      "runId": "run-2",
+      "throughSeq": 3,
+      "sourceRunIds": [],
+      "continuity": "public_context_rehydrate"
+     },
+     "sessionId": "session-1",
+     "seq": 6,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:07.000Z"
+    },
+    {
+     "type": "run.authorized",
+     "data": {
+      "runId": "run-2",
+      "epoch": 1
+     },
+     "sessionId": "session-1",
+     "seq": 7,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:09.000Z"
+    },
+    {
+     "type": "run.dispatched",
+     "data": {
+      "runId": "run-2"
+     },
+     "sessionId": "session-1",
+     "seq": 8,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:11.000Z"
+    },
+    {
+     "type": "run.first_output",
+     "data": {
+      "runId": "run-2"
+     },
+     "sessionId": "session-1",
+     "seq": 9,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:13.000Z"
+    },
+    {
+     "type": "run.output",
+     "data": {
+      "runId": "run-2",
+      "event": {
+       "type": "text",
+       "text": "reply from alpha"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 10,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:14.000Z"
+    },
+    {
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-2",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 11,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:15.000Z"
+    },
+    {
+     "type": "run.ended",
+     "data": {
+      "runId": "run-2",
+      "status": "completed",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "input": "recorded"
+     },
+     "sessionId": "session-1",
+     "seq": 12,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:17.000Z"
+    },
+    {
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-5",
+      "messageId": "message-6",
+      "role": "user",
+      "text": "a2 on alpha"
+     },
+     "sessionId": "session-1",
+     "seq": 13,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:19.000Z"
+    },
+    {
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-5",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1
+     },
+     "sessionId": "session-1",
+     "seq": 14,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:21.000Z"
+    },
+    {
+     "type": "run.protocol",
+     "data": {
+      "runId": "run-5",
+      "observation": {
+       "protocol": "acp-v1",
+       "protocolVersion": 1,
+       "agentName": "fake",
+       "agentVersion": "1",
+       "authenticationMethods": [],
+       "capabilities": {}
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 15,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:22.000Z"
+    },
+    {
+     "type": "native.binding_prepared",
+     "data": {
+      "runId": "run-5",
+      "harnessId": "alpha",
+      "controlId": "alpha-acp",
+      "resumed": true
+     },
+     "sessionId": "session-1",
+     "seq": 16,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:23.000Z"
+    },
+    {
+     "type": "run.context_prepared",
+     "data": {
+      "runId": "run-5",
+      "throughSeq": 14,
+      "sourceRunIds": [],
+      "continuity": "public_context_rehydrate"
+     },
+     "sessionId": "session-1",
+     "seq": 17,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:24.000Z"
+    },
+    {
+     "type": "run.authorized",
+     "data": {
+      "runId": "run-5",
+      "epoch": 1
+     },
+     "sessionId": "session-1",
+     "seq": 18,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:26.000Z"
+    },
+    {
+     "type": "run.dispatched",
+     "data": {
+      "runId": "run-5"
+     },
+     "sessionId": "session-1",
+     "seq": 19,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:28.000Z"
+    },
+    {
+     "type": "run.first_output",
+     "data": {
+      "runId": "run-5"
+     },
+     "sessionId": "session-1",
+     "seq": 20,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:30.000Z"
+    },
+    {
+     "type": "run.output",
+     "data": {
+      "runId": "run-5",
+      "event": {
+       "type": "text",
+       "text": "reply from alpha"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 21,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:31.000Z"
+    },
+    {
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-5",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 22,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:32.000Z"
+    },
+    {
+     "type": "run.ended",
+     "data": {
+      "runId": "run-5",
+      "status": "completed",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "input": "recorded"
+     },
+     "sessionId": "session-1",
+     "seq": 23,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:34.000Z"
+    },
+    {
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-8",
+      "messageId": "message-9",
+      "role": "user",
+      "text": "/clear"
+     },
+     "sessionId": "session-1",
+     "seq": 24,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:36.000Z"
+    },
+    {
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-8",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1
+     },
+     "sessionId": "session-1",
+     "seq": 25,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:38.000Z"
+    },
+    {
+     "type": "run.protocol",
+     "data": {
+      "runId": "run-8",
+      "observation": {
+       "protocol": "acp-v1",
+       "protocolVersion": 1,
+       "agentName": "fake",
+       "agentVersion": "1",
+       "authenticationMethods": [],
+       "capabilities": {}
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 26,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:39.000Z"
+    },
+    {
+     "type": "native.binding_prepared",
+     "data": {
+      "runId": "run-8",
+      "harnessId": "alpha",
+      "controlId": "alpha-acp",
+      "resumed": true
+     },
+     "sessionId": "session-1",
+     "seq": 27,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:40.000Z"
+    },
+    {
+     "type": "run.native_command",
+     "data": {
+      "runId": "run-8",
+      "name": "clear",
+      "publicContextInjected": false,
+      "contextEffect": "clear"
+     },
+     "sessionId": "session-1",
+     "seq": 28,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:41.000Z"
+    },
+    {
+     "type": "run.context_prepared",
+     "data": {
+      "runId": "run-8",
+      "throughSeq": 25,
+      "sourceRunIds": [],
+      "continuity": "public_context_rehydrate"
+     },
+     "sessionId": "session-1",
+     "seq": 29,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:42.000Z"
+    },
+    {
+     "type": "run.authorized",
+     "data": {
+      "runId": "run-8",
+      "epoch": 1
+     },
+     "sessionId": "session-1",
+     "seq": 30,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:44.000Z"
+    },
+    {
+     "type": "run.dispatched",
+     "data": {
+      "runId": "run-8"
+     },
+     "sessionId": "session-1",
+     "seq": 31,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:46.000Z"
+    },
+    {
+     "type": "run.first_output",
+     "data": {
+      "runId": "run-8"
+     },
+     "sessionId": "session-1",
+     "seq": 32,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:48.000Z"
+    },
+    {
+     "type": "run.output",
+     "data": {
+      "runId": "run-8",
+      "event": {
+       "type": "text",
+       "text": "reply from alpha"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 33,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:49.000Z"
+    },
+    {
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-8",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 34,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:50.000Z"
+    },
+    {
+     "type": "run.ended",
+     "data": {
+      "runId": "run-8",
+      "status": "completed",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "input": "unknown",
+      "contextEffect": "clear"
+     },
+     "sessionId": "session-1",
+     "seq": 35,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:52.000Z"
+    },
+    {
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-11",
+      "messageId": "message-12",
+      "role": "user",
+      "text": "a4 after the clear"
+     },
+     "sessionId": "session-1",
+     "seq": 36,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:54.000Z"
+    },
+    {
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-11",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1
+     },
+     "sessionId": "session-1",
+     "seq": 37,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:56.000Z"
+    },
+    {
+     "type": "run.protocol",
+     "data": {
+      "runId": "run-11",
+      "observation": {
+       "protocol": "acp-v1",
+       "protocolVersion": 1,
+       "agentName": "fake",
+       "agentVersion": "1",
+       "authenticationMethods": [],
+       "capabilities": {}
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 38,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:57.000Z"
+    },
+    {
+     "type": "native.binding_prepared",
+     "data": {
+      "runId": "run-11",
+      "harnessId": "alpha",
+      "controlId": "alpha-acp",
+      "resumed": true
+     },
+     "sessionId": "session-1",
+     "seq": 39,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:58.000Z"
+    },
+    {
+     "type": "run.context_prepared",
+     "data": {
+      "runId": "run-11",
+      "throughSeq": 37,
+      "sourceRunIds": [],
+      "continuity": "public_context_rehydrate"
+     },
+     "sessionId": "session-1",
+     "seq": 40,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:00:59.000Z"
+    },
+    {
+     "type": "run.authorized",
+     "data": {
+      "runId": "run-11",
+      "epoch": 1
+     },
+     "sessionId": "session-1",
+     "seq": 41,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:01.000Z"
+    },
+    {
+     "type": "run.dispatched",
+     "data": {
+      "runId": "run-11"
+     },
+     "sessionId": "session-1",
+     "seq": 42,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:03.000Z"
+    },
+    {
+     "type": "run.first_output",
+     "data": {
+      "runId": "run-11"
+     },
+     "sessionId": "session-1",
+     "seq": 43,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:05.000Z"
+    },
+    {
+     "type": "run.output",
+     "data": {
+      "runId": "run-11",
+      "event": {
+       "type": "text",
+       "text": "reply from alpha"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 44,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:06.000Z"
+    },
+    {
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-11",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      }
+     },
+     "sessionId": "session-1",
+     "seq": 45,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:07.000Z"
+    },
+    {
+     "type": "run.ended",
+     "data": {
+      "runId": "run-11",
+      "status": "completed",
+      "backend": {
+       "status": "completed",
+       "reason": "fake"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "input": "recorded"
+     },
+     "sessionId": "session-1",
+     "seq": 46,
+     "ownerGeneration": 1,
+     "timestamp": "2026-11-09T00:01:09.000Z"
+    }
+   ]
+  }
+ ],
+ "createKeys": [
+  {
+   "commandId": "create",
+   "sessionId": "session-1",
+   "fingerprint": "4498629394e003bcd97d386a36e765be96b5963c154c74e25bf0ba0d1d660dc0"
+  }
+ ],
+ "relay": {
+  "bodies": [],
+  "packets": [],
+  "deliveries": [],
+  "index": [
+   {
+    "session_id": "session-1",
+    "run_id": "run-2",
+    "run_index": 0,
+    "index_json": "{\"runId\":\"run-2\",\"index\":0,\"seq\":12,\"executedOn\":{\"harnessId\":\"alpha\",\"controlId\":\"alpha-acp\",\"nativeEpoch\":1},\"dispatched\":true,\"status\":\"completed\",\"input\":\"recorded\",\"commandEffect\":null}"
+   },
+   {
+    "session_id": "session-1",
+    "run_id": "run-5",
+    "run_index": 1,
+    "index_json": "{\"runId\":\"run-5\",\"index\":1,\"seq\":23,\"executedOn\":{\"harnessId\":\"alpha\",\"controlId\":\"alpha-acp\",\"nativeEpoch\":1},\"dispatched\":true,\"status\":\"completed\",\"input\":\"recorded\",\"commandEffect\":null}"
+   },
+   {
+    "session_id": "session-1",
+    "run_id": "run-8",
+    "run_index": 2,
+    "index_json": "{\"runId\":\"run-8\",\"index\":2,\"seq\":35,\"executedOn\":{\"harnessId\":\"alpha\",\"controlId\":\"alpha-acp\",\"nativeEpoch\":1},\"dispatched\":true,\"status\":\"completed\",\"input\":\"unknown\",\"commandEffect\":\"clear\"}"
+   },
+   {
+    "session_id": "session-1",
+    "run_id": "run-11",
+    "run_index": 3,
+    "index_json": "{\"runId\":\"run-11\",\"index\":3,\"seq\":46,\"executedOn\":{\"harnessId\":\"alpha\",\"controlId\":\"alpha-acp\",\"nativeEpoch\":2},\"dispatched\":true,\"status\":\"completed\",\"input\":\"recorded\",\"commandEffect\":null}"
+   }
+  ],
+  "log": [],
+  "prefs": []
+ },
+ "contents": {},
+ "contentReferences": [],
+ "unfinished": false
+}

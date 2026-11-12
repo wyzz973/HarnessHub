@@ -1,0 +1,706 @@
+{
+ "fixture": "v3",
+ "describe": "A synthetic Session v3 database: 1 conversation(s) shaped to what v3 could hold (see generate.mjs, generations)",
+ "userVersion": 3,
+ "ownerGeneration": 1,
+ "sessions": [
+  {
+   "id": "session-gen3",
+   "version": 26,
+   "lastSeq": 26,
+   "snapshot": {
+    "schemaVersion": 3,
+    "id": "session-gen3",
+    "version": 26,
+    "lastSeq": 26,
+    "epoch": 2,
+    "status": "open",
+    "configuration": {
+     "workspace": "/fixtures/storage/v13/workspace",
+     "manifestPath": null,
+     "manifestSha256": null,
+     "configHome": null,
+     "packageRoots": [],
+     "searchDirs": [],
+     "pathOnly": true
+    },
+    "selection": {
+     "harnessId": "alpha",
+     "controlId": "alpha-acp",
+     "provider": {
+      "providerId": "provider-0a1b2c3d-0000-4000-8000-000000000003",
+      "revision": 1,
+      "model": "gpt-x"
+     }
+    },
+    "activeRunId": null,
+    "pendingSwitchId": null,
+    "runs": [
+     {
+      "id": "run-gen3-1",
+      "commandId": "gen3-send-1",
+      "input": "First question, in version 3",
+      "userMessageId": "message-gen3-u1",
+      "assistantMessageId": "message-gen3-a1",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 3,
+      "sourceRunIds": [],
+      "backend": {
+       "status": "completed",
+       "reason": "end_turn"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "stopRequested": false,
+      "awaitingSwitchId": null
+     },
+     {
+      "id": "run-gen3-2",
+      "commandId": "gen3-send-2",
+      "input": "Second question",
+      "userMessageId": "message-gen3-u2",
+      "assistantMessageId": "message-gen3-a2",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 8,
+      "sourceRunIds": [
+       "run-gen3-1"
+      ],
+      "backend": {
+       "status": "completed",
+       "reason": "end_turn"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "stopRequested": false,
+      "awaitingSwitchId": null
+     },
+     {
+      "id": "run-gen3-3",
+      "commandId": "gen3-send-3",
+      "input": "Third question, lost",
+      "userMessageId": "message-gen3-u3",
+      "assistantMessageId": "message-gen3-a3",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1,
+      "status": "unknown",
+      "cancelRequested": false,
+      "contextThroughSeq": 13,
+      "sourceRunIds": [
+       "run-gen3-1",
+       "run-gen3-2"
+      ],
+      "backend": null,
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": {
+       "code": "CONTROL_FAILED",
+       "message": "the connection ended without a result"
+      },
+      "stopRequested": false,
+      "awaitingSwitchId": null
+     },
+     {
+      "id": "run-gen3-4",
+      "commandId": "gen3-send-4",
+      "input": "A question that fails",
+      "userMessageId": "message-gen3-u4",
+      "assistantMessageId": "message-gen3-a4",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1,
+      "status": "failed",
+      "cancelRequested": false,
+      "contextThroughSeq": 17,
+      "sourceRunIds": [],
+      "backend": {
+       "status": "failed",
+       "reason": "model_error"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": {
+       "code": "NATIVE_RATE_LIMITED",
+       "message": "slow down"
+      },
+      "stopRequested": false,
+      "awaitingSwitchId": null
+     },
+     {
+      "id": "run-gen3-5",
+      "commandId": "gen3-send-5",
+      "input": "After the switch",
+      "userMessageId": "message-gen3-u5",
+      "assistantMessageId": "message-gen3-a5",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "provider": {
+        "providerId": "provider-0a1b2c3d-0000-4000-8000-000000000003",
+        "revision": 1,
+        "model": "gpt-x"
+       }
+      },
+      "epoch": 2,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 23,
+      "sourceRunIds": [
+       "run-gen3-1",
+       "run-gen3-2",
+       "run-gen3-3",
+       "run-gen3-4"
+      ],
+      "backend": {
+       "status": "completed",
+       "reason": "end_turn"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "stopRequested": false,
+      "awaitingSwitchId": null
+     }
+    ],
+    "messages": [
+     {
+      "id": "message-gen3-u1",
+      "runId": "run-gen3-1",
+      "role": "user",
+      "text": "First question, in version 3",
+      "seq": 2,
+      "status": "completed"
+     },
+     {
+      "id": "message-gen3-a1",
+      "runId": "run-gen3-1",
+      "role": "assistant",
+      "text": "First answer.",
+      "seq": 4,
+      "status": "completed"
+     },
+     {
+      "id": "message-gen3-u2",
+      "runId": "run-gen3-2",
+      "role": "user",
+      "text": "Second question",
+      "seq": 7,
+      "status": "completed"
+     },
+     {
+      "id": "message-gen3-a2",
+      "runId": "run-gen3-2",
+      "role": "assistant",
+      "text": "Second answer.",
+      "seq": 9,
+      "status": "completed"
+     },
+     {
+      "id": "message-gen3-u3",
+      "runId": "run-gen3-3",
+      "role": "user",
+      "text": "Third question, lost",
+      "seq": 12,
+      "status": "unknown"
+     },
+     {
+      "id": "message-gen3-a3",
+      "runId": "run-gen3-3",
+      "role": "assistant",
+      "text": "Half an answer",
+      "seq": 14,
+      "status": "unknown"
+     },
+     {
+      "id": "message-gen3-u4",
+      "runId": "run-gen3-4",
+      "role": "user",
+      "text": "A question that fails",
+      "seq": 16,
+      "status": "failed"
+     },
+     {
+      "id": "message-gen3-u5",
+      "runId": "run-gen3-5",
+      "role": "user",
+      "text": "After the switch",
+      "seq": 22,
+      "status": "completed"
+     },
+     {
+      "id": "message-gen3-a5",
+      "runId": "run-gen3-5",
+      "role": "assistant",
+      "text": "Answer from the new target.",
+      "seq": 24,
+      "status": "completed"
+     }
+    ],
+    "switches": [
+     {
+      "id": "switch-gen3",
+      "commandId": "gen3-switch",
+      "requested": {
+       "harnessId": "alpha"
+      },
+      "requestedSeq": 20,
+      "target": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "provider": {
+        "providerId": "provider-0a1b2c3d-0000-4000-8000-000000000003",
+        "revision": 1,
+        "model": "gpt-x"
+       }
+      },
+      "status": "effective",
+      "throughSeq": 25,
+      "sourceRunIds": [
+       "run-gen3-1",
+       "run-gen3-2",
+       "run-gen3-3",
+       "run-gen3-4"
+      ],
+      "error": null
+     }
+    ],
+    "commands": [
+     {
+      "id": "gen3-create",
+      "kind": "create",
+      "fingerprint": "0dc8ad2e3daccd9f3f5004c2fb30bcd5c8a8e3e27ce1b90c81721cb279fddae6",
+      "resultId": "session-gen3"
+     },
+     {
+      "id": "gen3-send-1",
+      "kind": "send",
+      "fingerprint": "f98fbc339a667824c8b84591a1afe4f043c4c214dd80460acbce8d3791ce958d",
+      "resultId": "run-gen3-1"
+     },
+     {
+      "id": "gen3-send-2",
+      "kind": "send",
+      "fingerprint": "ebcda0f5d1c6ee5cf491cf7df0ae83d25d582ddc014fb73d5dd8eedbdbf09ae9",
+      "resultId": "run-gen3-2"
+     },
+     {
+      "id": "gen3-send-3",
+      "kind": "send",
+      "fingerprint": "06f2ae887d1b0ba83c40d4a5b3825b9efd99a2c6e78c4c81caad69ebfb402185",
+      "resultId": "run-gen3-3"
+     },
+     {
+      "id": "gen3-send-4",
+      "kind": "send",
+      "fingerprint": "c061d8c8384e5cc021c8efbc304fc8530cc1a83ac885023a8422299704bcafc3",
+      "resultId": "run-gen3-4"
+     },
+     {
+      "id": "gen3-switch",
+      "kind": "switch",
+      "fingerprint": "578ecda6349833ddafc6246e27d2606ea5e9d3ad026c8ff47e7af6b645bd37ec",
+      "resultId": "switch-gen3"
+     },
+     {
+      "id": "gen3-send-5",
+      "kind": "send",
+      "fingerprint": "79731f2ea08b7f57c8afd99ce3876875c7e03de7b19ee79ce901807289f9cc28",
+      "resultId": "run-gen3-5"
+     }
+    ]
+   },
+   "events": [
+    {
+     "sessionId": "session-gen3",
+     "seq": 1,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "session.created",
+     "data": {
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "continuity": "public_context_rehydrate"
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 2,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-gen3-1",
+      "messageId": "message-gen3-u1",
+      "role": "user",
+      "text": "First question, in version 3"
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 3,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-gen3-1",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 4,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.output",
+     "data": {
+      "runId": "run-gen3-1",
+      "event": {
+       "type": "text",
+       "text": "First answer."
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 5,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-gen3-1",
+      "backend": {
+       "status": "completed"
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 6,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.ended",
+     "data": {
+      "runId": "run-gen3-1",
+      "status": "completed"
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 7,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-gen3-2",
+      "messageId": "message-gen3-u2",
+      "role": "user",
+      "text": "Second question"
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 8,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-gen3-2",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 9,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.output",
+     "data": {
+      "runId": "run-gen3-2",
+      "event": {
+       "type": "text",
+       "text": "Second answer."
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 10,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-gen3-2",
+      "backend": {
+       "status": "completed"
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 11,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.ended",
+     "data": {
+      "runId": "run-gen3-2",
+      "status": "completed"
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 12,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-gen3-3",
+      "messageId": "message-gen3-u3",
+      "role": "user",
+      "text": "Third question, lost"
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 13,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-gen3-3",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 14,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.output",
+     "data": {
+      "runId": "run-gen3-3",
+      "event": {
+       "type": "text",
+       "text": "Half an answer"
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 15,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.ended",
+     "data": {
+      "runId": "run-gen3-3",
+      "status": "unknown"
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 16,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-gen3-4",
+      "messageId": "message-gen3-u4",
+      "role": "user",
+      "text": "A question that fails"
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 17,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-gen3-4",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp"
+      },
+      "epoch": 1
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 18,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-gen3-4",
+      "backend": {
+       "status": "failed"
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 19,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.ended",
+     "data": {
+      "runId": "run-gen3-4",
+      "status": "failed"
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 20,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "switch.requested",
+     "data": {
+      "switchId": "switch-gen3",
+      "requested": {
+       "harnessId": "alpha"
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 21,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "switch.effective",
+     "data": {
+      "switchId": "switch-gen3"
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 22,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-gen3-5",
+      "messageId": "message-gen3-u5",
+      "role": "user",
+      "text": "After the switch"
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 23,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-gen3-5",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "provider": {
+        "providerId": "provider-0a1b2c3d-0000-4000-8000-000000000003",
+        "revision": 1,
+        "model": "gpt-x"
+       }
+      },
+      "epoch": 2
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 24,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.output",
+     "data": {
+      "runId": "run-gen3-5",
+      "event": {
+       "type": "text",
+       "text": "Answer from the new target."
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 25,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-gen3-5",
+      "backend": {
+       "status": "completed"
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen3",
+     "seq": 26,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-03T12:00:00.000Z",
+     "type": "run.ended",
+     "data": {
+      "runId": "run-gen3-5",
+      "status": "completed"
+     }
+    }
+   ]
+  }
+ ],
+ "createKeys": [
+  {
+   "commandId": "gen3-create",
+   "sessionId": "session-gen3",
+   "fingerprint": "0dc8ad2e3daccd9f3f5004c2fb30bcd5c8a8e3e27ce1b90c81721cb279fddae6"
+  }
+ ]
+}

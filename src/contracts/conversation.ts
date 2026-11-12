@@ -82,6 +82,19 @@ export interface NativeFacts {
   readonly mediaType?: string;
   /** The fields the writer normalized (NUL removed, a number left out); never because of a size. */
   readonly clipped?: readonly string[];
+  /**
+   * The id the Harness gave a call or an activity, kept only when the item's id is not simply `tool:` or `activity:` followed by it: a second
+   * call or activity of one Run with the id of an earlier one (the Runtime never made two, but what it validated does not forbid them), whose
+   * item then takes the next free id (`tool:abc#2`). Added by the storage conversion (ADR-057 3.6).
+   */
+  readonly id?: string;
+  /**
+   * The lone surrogates of the item's text (a UTF-16 index of the joined text, and the code unit that stood there): a UTF-8 column cannot hold a
+   * half of a pair and SQLite stores it as U+FFFD, so the chunks carry U+FFFD in its place and this says what to put back. Kept by the storage
+   * conversion for text that was already there (a reply cut in the middle of a pair is such text); distinct from `clipped`, which is what a
+   * writer changed for good. Added by the storage conversion (ADR-057 3.6).
+   */
+  readonly surrogates?: readonly (readonly [number, number])[];
 }
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -132,7 +145,13 @@ export interface HeldItem extends ItemRow { readonly text: readonly string[] }
 
 /** What a Run keeps in `run_json`: the facts of the old `PublicRun` that are neither a column nor an item. `usage` is the native value as it was reported. */
 export type RunFacts = Pick<PublicRun, "userMessageId" | "assistantMessageId" | "selection" | "contextThroughSeq" | "sourceRunIds" | "backend" | "cleanup" | "error"
-  | "usage" | "attachments" | "timing" | "retained" | "reused" | "relay" | "relayRequest" | "awaitingSwitchId">;
+  | "usage" | "attachments" | "timing" | "retained" | "reused" | "relay" | "relayRequest" | "awaitingSwitchId"> & {
+  /**
+   * The lists the old Run held and that were empty (`tools: []` is not a Run without `tools`: the old validation allowed both): items cannot say it.
+   * Absent for a Run none of whose lists were empty. Added by the storage conversion (ADR-057 3.6).
+   */
+  readonly emptyLists?: readonly ("tools" | "notices" | "activities" | "outputs")[];
+};
 
 /** One row of `runs`; one property per column of schema-v14.ts, and `facts` is `run_json`. */
 export interface RunRow {

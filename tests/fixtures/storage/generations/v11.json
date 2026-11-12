@@ -1,0 +1,1140 @@
+{
+ "fixture": "v11",
+ "describe": "A synthetic Session v11 database: 3 conversation(s) shaped to what v11 could hold (see generate.mjs, generations)",
+ "userVersion": 11,
+ "ownerGeneration": 1,
+ "sessions": [
+  {
+   "id": "session-gen11",
+   "version": 27,
+   "lastSeq": 27,
+   "snapshot": {
+    "schemaVersion": 11,
+    "id": "session-gen11",
+    "version": 27,
+    "lastSeq": 27,
+    "epoch": 2,
+    "status": "open",
+    "configuration": {
+     "workspace": "/fixtures/storage/v13/workspace",
+     "manifestPath": null,
+     "manifestSha256": null,
+     "configHome": null,
+     "packageRoots": [],
+     "searchDirs": [],
+     "pathOnly": true
+    },
+    "selection": {
+     "harnessId": "alpha",
+     "controlId": "alpha-acp",
+     "provider": {
+      "providerId": "provider-0a1b2c3d-0000-4000-8000-000000000011",
+      "revision": 1,
+      "model": "gpt-x"
+     }
+    },
+    "activeRunId": null,
+    "pendingSwitchId": null,
+    "runs": [
+     {
+      "id": "run-gen11-1",
+      "commandId": "gen11-send-1",
+      "input": "First question, in version 11",
+      "userMessageId": "message-gen11-u1",
+      "assistantMessageId": "message-gen11-a1",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "nativeModel": "model-a",
+       "nativeOptions": {
+        "effort": "high"
+       }
+      },
+      "epoch": 1,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 3,
+      "sourceRunIds": [],
+      "backend": {
+       "status": "completed",
+       "reason": "end_turn"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "stopRequested": false,
+      "awaitingSwitchId": null,
+      "timing": {
+       "acceptedAt": 1800000060000,
+       "preparingAt": 1800000061000,
+       "readyAt": 1800000062000,
+       "dispatchedAt": 1800000063000,
+       "firstOutputAt": 1800000064000,
+       "endedAt": 1800000065000
+      },
+      "thinking": "Let me look.",
+      "tools": [
+       {
+        "id": "tool-1",
+        "title": "ls -la",
+        "status": "completed",
+        "kind": "execute",
+        "name": "Bash",
+        "exitCode": 0,
+        "detail": {
+         "id": "content-gen11x1",
+         "name": "tool-1.json",
+         "mediaType": "application/json",
+         "kind": "file",
+         "bytes": 11,
+         "sha256": "06dd7a58251c42fab6029749aa679f641970aa8120f191c815e52f1f7035f987"
+        }
+       },
+       {
+        "id": "tool-2",
+        "title": "Read a.ts",
+        "status": "completed",
+        "kind": "read",
+        "name": "Read",
+        "parentId": "tool-1"
+       }
+      ],
+      "plan": {
+       "entries": [
+        {
+         "content": "do it",
+         "status": "completed",
+         "priority": "high"
+        },
+        {
+         "content": "check it",
+         "status": "pending"
+        }
+       ],
+       "explanation": "two steps"
+      },
+      "usage": {
+       "turn": {
+        "input": 100,
+        "output": 20,
+        "cachedInput": 50
+       },
+       "context": {
+        "used": 120,
+        "size": 1000
+       },
+       "cost": {
+        "amount": 0.01,
+        "currency": "USD",
+        "scope": "session"
+       }
+      },
+      "notices": [
+       {
+        "severity": "warning",
+        "title": "Slow",
+        "detail": "2 s"
+       }
+      ],
+      "activities": [
+       {
+        "id": "act-1",
+        "kind": "subagent",
+        "title": "Helper",
+        "status": "completed",
+        "detail": "done"
+       }
+      ],
+      "outputs": [
+       {
+        "kind": "link",
+        "uri": "https://example.com/a",
+        "name": "a",
+        "title": "A",
+        "mediaType": "text/html"
+       },
+       {
+        "kind": "content",
+        "content": {
+         "id": "content-gen11x2",
+         "name": "shot.png",
+         "mediaType": "image/png",
+         "kind": "image",
+         "bytes": 12,
+         "sha256": "e4c59b1445697904bc0f152dc526b357d270346fb13dd5d553f0f887328c2aa6"
+        }
+       }
+      ],
+      "attachments": [
+       {
+        "id": "content-gen11x3",
+        "name": "pic.png",
+        "mediaType": "image/png",
+        "kind": "image",
+        "bytes": 13,
+        "sha256": "e2f5f4b1c632b63d136a2189d2c1b17b5d288a20501f08e9ef7d5ecb09b618a8"
+       }
+      ]
+     },
+     {
+      "id": "run-gen11-2",
+      "commandId": "gen11-send-2",
+      "input": "Second question",
+      "userMessageId": "message-gen11-u2",
+      "assistantMessageId": "message-gen11-a2",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "nativeModel": "model-a",
+       "nativeOptions": {
+        "effort": "high"
+       }
+      },
+      "epoch": 1,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 9,
+      "sourceRunIds": [
+       "run-gen11-1"
+      ],
+      "backend": {
+       "status": "completed",
+       "reason": "end_turn"
+      },
+      "cleanup": null,
+      "error": null,
+      "stopRequested": false,
+      "awaitingSwitchId": null,
+      "timing": {
+       "acceptedAt": 1800000120000,
+       "preparingAt": 1800000121000,
+       "readyAt": 1800000122000,
+       "dispatchedAt": 1800000123000,
+       "firstOutputAt": 1800000124000,
+       "endedAt": 1800000125000
+      },
+      "retained": true
+     },
+     {
+      "id": "run-gen11-3",
+      "commandId": "gen11-send-3",
+      "input": "Third question, lost",
+      "userMessageId": "message-gen11-u3",
+      "assistantMessageId": "message-gen11-a3",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "nativeModel": "model-a",
+       "nativeOptions": {
+        "effort": "high"
+       }
+      },
+      "epoch": 1,
+      "status": "unknown",
+      "cancelRequested": false,
+      "contextThroughSeq": 14,
+      "sourceRunIds": [
+       "run-gen11-1",
+       "run-gen11-2"
+      ],
+      "backend": null,
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": {
+       "code": "CONTROL_FAILED",
+       "message": "the connection ended without a result"
+      },
+      "stopRequested": false,
+      "awaitingSwitchId": null,
+      "timing": {
+       "acceptedAt": 1800000180000,
+       "preparingAt": 1800000181000,
+       "readyAt": 1800000182000,
+       "dispatchedAt": 1800000183000,
+       "firstOutputAt": 1800000184000,
+       "endedAt": 1800000185000
+      },
+      "reused": true
+     },
+     {
+      "id": "run-gen11-4",
+      "commandId": "gen11-send-4",
+      "input": "A question that fails",
+      "userMessageId": "message-gen11-u4",
+      "assistantMessageId": "message-gen11-a4",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "nativeModel": "model-a",
+       "nativeOptions": {
+        "effort": "high"
+       }
+      },
+      "epoch": 1,
+      "status": "failed",
+      "cancelRequested": false,
+      "contextThroughSeq": 18,
+      "sourceRunIds": [],
+      "backend": {
+       "status": "failed",
+       "reason": "model_error",
+       "error": {
+        "code": "NATIVE_RATE_LIMITED",
+        "message": "slow down"
+       }
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": {
+       "code": "NATIVE_RATE_LIMITED",
+       "message": "slow down"
+      },
+      "stopRequested": false,
+      "awaitingSwitchId": null,
+      "timing": {
+       "acceptedAt": 1800000240000,
+       "preparingAt": 1800000241000,
+       "readyAt": 1800000242000,
+       "dispatchedAt": 1800000243000,
+       "firstOutputAt": 1800000244000,
+       "endedAt": 1800000245000
+      }
+     },
+     {
+      "id": "run-gen11-5",
+      "commandId": "gen11-send-5",
+      "input": "After the switch",
+      "userMessageId": "message-gen11-u5",
+      "assistantMessageId": "message-gen11-a5",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "provider": {
+        "providerId": "provider-0a1b2c3d-0000-4000-8000-000000000011",
+        "revision": 1,
+        "model": "gpt-x"
+       }
+      },
+      "epoch": 2,
+      "status": "completed",
+      "cancelRequested": false,
+      "contextThroughSeq": 24,
+      "sourceRunIds": [
+       "run-gen11-1",
+       "run-gen11-2",
+       "run-gen11-3",
+       "run-gen11-4"
+      ],
+      "backend": {
+       "status": "completed",
+       "reason": "end_turn"
+      },
+      "cleanup": {
+       "closed": true,
+       "exitCode": 0,
+       "signal": null,
+       "protocolFailure": null
+      },
+      "error": null,
+      "stopRequested": false,
+      "awaitingSwitchId": null,
+      "timing": {
+       "acceptedAt": 1800000300000,
+       "preparingAt": 1800000301000,
+       "readyAt": 1800000302000,
+       "dispatchedAt": 1800000303000,
+       "firstOutputAt": 1800000304000,
+       "endedAt": 1800000305000
+      }
+     }
+    ],
+    "messages": [
+     {
+      "id": "message-gen11-u1",
+      "runId": "run-gen11-1",
+      "role": "user",
+      "text": "First question, in version 11",
+      "seq": 2,
+      "status": "completed"
+     },
+     {
+      "id": "message-gen11-a1",
+      "runId": "run-gen11-1",
+      "role": "assistant",
+      "text": "First answer.",
+      "seq": 5,
+      "status": "completed"
+     },
+     {
+      "id": "message-gen11-u2",
+      "runId": "run-gen11-2",
+      "role": "user",
+      "text": "Second question",
+      "seq": 8,
+      "status": "completed"
+     },
+     {
+      "id": "message-gen11-a2",
+      "runId": "run-gen11-2",
+      "role": "assistant",
+      "text": "Second answer.",
+      "seq": 10,
+      "status": "completed"
+     },
+     {
+      "id": "message-gen11-u3",
+      "runId": "run-gen11-3",
+      "role": "user",
+      "text": "Third question, lost",
+      "seq": 13,
+      "status": "unknown"
+     },
+     {
+      "id": "message-gen11-a3",
+      "runId": "run-gen11-3",
+      "role": "assistant",
+      "text": "Half an answer",
+      "seq": 15,
+      "status": "unknown"
+     },
+     {
+      "id": "message-gen11-u4",
+      "runId": "run-gen11-4",
+      "role": "user",
+      "text": "A question that fails",
+      "seq": 17,
+      "status": "failed"
+     },
+     {
+      "id": "message-gen11-u5",
+      "runId": "run-gen11-5",
+      "role": "user",
+      "text": "After the switch",
+      "seq": 23,
+      "status": "completed"
+     },
+     {
+      "id": "message-gen11-a5",
+      "runId": "run-gen11-5",
+      "role": "assistant",
+      "text": "Answer from the new target.",
+      "seq": 25,
+      "status": "completed"
+     }
+    ],
+    "switches": [
+     {
+      "id": "switch-gen11",
+      "commandId": "gen11-switch",
+      "requested": {
+       "harnessId": "alpha"
+      },
+      "requestedSeq": 21,
+      "target": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "provider": {
+        "providerId": "provider-0a1b2c3d-0000-4000-8000-000000000011",
+        "revision": 1,
+        "model": "gpt-x"
+       }
+      },
+      "status": "effective",
+      "throughSeq": 26,
+      "sourceRunIds": [
+       "run-gen11-1",
+       "run-gen11-2",
+       "run-gen11-3",
+       "run-gen11-4"
+      ],
+      "error": null
+     }
+    ],
+    "commands": [
+     {
+      "id": "gen11-create",
+      "kind": "create",
+      "fingerprint": "9c196dc31f3147fa7bb24c3f9e2444beb7c59685942fd2b99d3200dbbed7b461",
+      "resultId": "session-gen11"
+     },
+     {
+      "id": "gen11-send-1",
+      "kind": "send",
+      "fingerprint": "881a0964d3fe5d01e74f159b2d98b2bf97ac34c0322841b1b25e60975ab18308",
+      "resultId": "run-gen11-1"
+     },
+     {
+      "id": "gen11-permission",
+      "kind": "permission",
+      "fingerprint": "61bd9778f92908b96eb205b47390490d24fb6eba79b24c5c4ae6abbd0b61221a",
+      "resultId": "run-gen11-1"
+     },
+     {
+      "id": "gen11-send-2",
+      "kind": "send",
+      "fingerprint": "1483b705a344b9972c989164dd5283dad5f695eead20e134f23e754e0050d506",
+      "resultId": "run-gen11-2"
+     },
+     {
+      "id": "gen11-retention",
+      "kind": "retention",
+      "fingerprint": "130cf359adc6b25309c2b88a565e0f59868792277205e91afc4af5bd300df24c",
+      "resultId": "session-gen11"
+     },
+     {
+      "id": "gen11-send-3",
+      "kind": "send",
+      "fingerprint": "f1dfea14662b116de16053a1f5dcf8998719300c9bb77b54a0a888a095372a75",
+      "resultId": "run-gen11-3"
+     },
+     {
+      "id": "gen11-send-4",
+      "kind": "send",
+      "fingerprint": "2d1f8fc51fb06fcf4c483c4e079677863b8b64d1abc3d125c9e50403d879dbc5",
+      "resultId": "run-gen11-4"
+     },
+     {
+      "id": "gen11-switch",
+      "kind": "switch",
+      "fingerprint": "b4da182c7c3332c96d24f563e7e3e2581c63e125257538df96dbf97d31044daa",
+      "resultId": "switch-gen11"
+     },
+     {
+      "id": "gen11-send-5",
+      "kind": "send",
+      "fingerprint": "235054495b760eaaf1591eafac45e04ed0b54f92d27a5b886b2fbb5c0866608c",
+      "resultId": "run-gen11-5"
+     }
+    ],
+    "nativeBindings": [
+     {
+      "harnessId": "alpha",
+      "controlId": "alpha-acp",
+      "checkpoint": "native-alpha-gen11",
+      "throughRunId": "run-gen11-2",
+      "status": "ready",
+      "observed": {
+       "model": "model-a",
+       "options": {
+        "effort": "high"
+       }
+      }
+     }
+    ],
+    "retainNative": true,
+    "retained": {
+     "harnessId": "alpha",
+     "controlId": "alpha-acp",
+     "runId": "run-gen11-2",
+     "since": 1800000000000
+    }
+   },
+   "events": [
+    {
+     "sessionId": "session-gen11",
+     "seq": 1,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "session.created",
+     "data": {
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "nativeModel": "model-a",
+       "nativeOptions": {
+        "effort": "high"
+       }
+      },
+      "continuity": "public_context_rehydrate"
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 2,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-gen11-1",
+      "messageId": "message-gen11-u1",
+      "role": "user",
+      "text": "First question, in version 11"
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 3,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-gen11-1",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "nativeModel": "model-a",
+       "nativeOptions": {
+        "effort": "high"
+       }
+      },
+      "epoch": 1
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 4,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "native.binding_prepared",
+     "data": {
+      "runId": "run-gen11-1",
+      "harnessId": "alpha",
+      "controlId": "alpha-acp",
+      "resumed": false
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 5,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.output",
+     "data": {
+      "runId": "run-gen11-1",
+      "event": {
+       "type": "text",
+       "text": "First answer."
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 6,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-gen11-1",
+      "backend": {
+       "status": "completed"
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 7,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.ended",
+     "data": {
+      "runId": "run-gen11-1",
+      "status": "completed"
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 8,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-gen11-2",
+      "messageId": "message-gen11-u2",
+      "role": "user",
+      "text": "Second question"
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 9,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-gen11-2",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "nativeModel": "model-a",
+       "nativeOptions": {
+        "effort": "high"
+       }
+      },
+      "epoch": 1
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 10,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.output",
+     "data": {
+      "runId": "run-gen11-2",
+      "event": {
+       "type": "text",
+       "text": "Second answer."
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 11,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-gen11-2",
+      "backend": {
+       "status": "completed"
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 12,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.ended",
+     "data": {
+      "runId": "run-gen11-2",
+      "status": "completed"
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 13,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-gen11-3",
+      "messageId": "message-gen11-u3",
+      "role": "user",
+      "text": "Third question, lost"
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 14,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-gen11-3",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "nativeModel": "model-a",
+       "nativeOptions": {
+        "effort": "high"
+       }
+      },
+      "epoch": 1
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 15,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.output",
+     "data": {
+      "runId": "run-gen11-3",
+      "event": {
+       "type": "text",
+       "text": "Half an answer"
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 16,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.ended",
+     "data": {
+      "runId": "run-gen11-3",
+      "status": "unknown"
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 17,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-gen11-4",
+      "messageId": "message-gen11-u4",
+      "role": "user",
+      "text": "A question that fails"
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 18,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-gen11-4",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "nativeModel": "model-a",
+       "nativeOptions": {
+        "effort": "high"
+       }
+      },
+      "epoch": 1
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 19,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-gen11-4",
+      "backend": {
+       "status": "failed"
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 20,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.ended",
+     "data": {
+      "runId": "run-gen11-4",
+      "status": "failed"
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 21,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "switch.requested",
+     "data": {
+      "switchId": "switch-gen11",
+      "requested": {
+       "harnessId": "alpha"
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 22,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "switch.effective",
+     "data": {
+      "switchId": "switch-gen11"
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 23,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "message.accepted",
+     "data": {
+      "runId": "run-gen11-5",
+      "messageId": "message-gen11-u5",
+      "role": "user",
+      "text": "After the switch"
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 24,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.preparing",
+     "data": {
+      "runId": "run-gen11-5",
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "provider": {
+        "providerId": "provider-0a1b2c3d-0000-4000-8000-000000000011",
+        "revision": 1,
+        "model": "gpt-x"
+       }
+      },
+      "epoch": 2
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 25,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.output",
+     "data": {
+      "runId": "run-gen11-5",
+      "event": {
+       "type": "text",
+       "text": "Answer from the new target."
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 26,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.backend_settled",
+     "data": {
+      "runId": "run-gen11-5",
+      "backend": {
+       "status": "completed"
+      }
+     }
+    },
+    {
+     "sessionId": "session-gen11",
+     "seq": 27,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "run.ended",
+     "data": {
+      "runId": "run-gen11-5",
+      "status": "completed"
+     }
+    }
+   ]
+  },
+  {
+   "id": "session-gen11-branch",
+   "version": 1,
+   "lastSeq": 1,
+   "snapshot": {
+    "schemaVersion": 11,
+    "id": "session-gen11-branch",
+    "version": 1,
+    "lastSeq": 1,
+    "epoch": 1,
+    "status": "open",
+    "configuration": {
+     "workspace": "/fixtures/storage/v13/workspace",
+     "manifestPath": null,
+     "manifestSha256": null,
+     "configHome": null,
+     "packageRoots": [],
+     "searchDirs": [],
+     "pathOnly": true
+    },
+    "selection": {
+     "harnessId": "alpha",
+     "controlId": "alpha-acp",
+     "nativeModel": "model-a",
+     "nativeOptions": {
+      "effort": "high"
+     }
+    },
+    "activeRunId": null,
+    "pendingSwitchId": null,
+    "runs": [],
+    "messages": [],
+    "switches": [],
+    "commands": [
+     {
+      "id": "gen11-create-branch",
+      "kind": "create",
+      "fingerprint": "8edd9cf45f320556564b3683ca55ae1987c544048dbc732d65cc09027dc34f08",
+      "resultId": "session-gen11-branch"
+     }
+    ],
+    "origin": {
+     "kind": "fork",
+     "sessionId": "session-gen11",
+     "throughRunId": "run-gen11-2",
+     "history": [
+      {
+       "role": "user",
+       "text": "First question, in version 11",
+       "status": "completed",
+       "attachments": [
+        {
+         "id": "content-gen11x3",
+         "name": "pic.png",
+         "mediaType": "image/png",
+         "kind": "image",
+         "bytes": 13,
+         "sha256": "e2f5f4b1c632b63d136a2189d2c1b17b5d288a20501f08e9ef7d5ecb09b618a8"
+        }
+       ]
+      },
+      {
+       "role": "assistant",
+       "text": "First answer.",
+       "status": "completed",
+       "harnessId": "alpha"
+      }
+     ]
+    },
+    "nativeBindings": [
+     {
+      "harnessId": "alpha",
+      "controlId": "alpha-acp",
+      "checkpoint": "native-alpha-gen11",
+      "throughRunId": null,
+      "status": "fork-pending"
+     }
+    ]
+   },
+   "events": [
+    {
+     "sessionId": "session-gen11-branch",
+     "seq": 1,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "session.created",
+     "data": {
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "nativeModel": "model-a",
+       "nativeOptions": {
+        "effort": "high"
+       }
+      },
+      "continuity": "native_fork"
+     }
+    }
+   ]
+  },
+  {
+   "id": "session-gen11-import",
+   "version": 1,
+   "lastSeq": 1,
+   "snapshot": {
+    "schemaVersion": 11,
+    "id": "session-gen11-import",
+    "version": 1,
+    "lastSeq": 1,
+    "epoch": 1,
+    "status": "open",
+    "configuration": {
+     "workspace": "/fixtures/storage/v13/workspace",
+     "manifestPath": null,
+     "manifestSha256": null,
+     "configHome": null,
+     "packageRoots": [],
+     "searchDirs": [],
+     "pathOnly": true
+    },
+    "selection": {
+     "harnessId": "alpha",
+     "controlId": "alpha-acp",
+     "nativeModel": "model-a",
+     "nativeOptions": {
+      "effort": "high"
+     }
+    },
+    "activeRunId": null,
+    "pendingSwitchId": null,
+    "runs": [],
+    "messages": [],
+    "switches": [],
+    "commands": [
+     {
+      "id": "gen11-create-import",
+      "kind": "create",
+      "fingerprint": "9cd4384c880f10a7404b5b11c1bf1d0c3cbd5c7125d3ae849a75649403938ae0",
+      "resultId": "session-gen11-import"
+     }
+    ],
+    "origin": {
+     "kind": "import",
+     "harnessId": "alpha",
+     "title": "an imported conversation",
+     "omitted": 2,
+     "complete": true,
+     "historyRead": true,
+     "history": [
+      {
+       "role": "user",
+       "text": "an earlier question",
+       "status": "completed"
+      },
+      {
+       "role": "assistant",
+       "text": "an earlier answer",
+       "status": "completed",
+       "harnessId": "alpha"
+      }
+     ]
+    },
+    "nativeBindings": [
+     {
+      "harnessId": "alpha",
+      "controlId": "alpha-acp",
+      "checkpoint": "native-imported-gen11",
+      "throughRunId": null,
+      "status": "ready",
+      "observed": {
+       "model": null,
+       "options": {}
+      }
+     }
+    ]
+   },
+   "events": [
+    {
+     "sessionId": "session-gen11-import",
+     "seq": 1,
+     "ownerGeneration": 1,
+     "timestamp": "2026-01-11T12:00:00.000Z",
+     "type": "session.created",
+     "data": {
+      "selection": {
+       "harnessId": "alpha",
+       "controlId": "alpha-acp",
+       "nativeModel": "model-a",
+       "nativeOptions": {
+        "effort": "high"
+       }
+      },
+      "continuity": "native_import"
+     }
+    }
+   ]
+  }
+ ],
+ "createKeys": [
+  {
+   "commandId": "gen11-create",
+   "sessionId": "session-gen11",
+   "fingerprint": "9c196dc31f3147fa7bb24c3f9e2444beb7c59685942fd2b99d3200dbbed7b461"
+  },
+  {
+   "commandId": "gen11-create-branch",
+   "sessionId": "session-gen11-branch",
+   "fingerprint": "8edd9cf45f320556564b3683ca55ae1987c544048dbc732d65cc09027dc34f08"
+  },
+  {
+   "commandId": "gen11-create-import",
+   "sessionId": "session-gen11-import",
+   "fingerprint": "9cd4384c880f10a7404b5b11c1bf1d0c3cbd5c7125d3ae849a75649403938ae0"
+  }
+ ]
+}
