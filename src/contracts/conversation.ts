@@ -450,7 +450,11 @@ export interface ConversationStoreOptions {
 export interface ConversationStore extends ConversationReader {
   readonly ownerGeneration: number;
   assertOwner(): void;
-  create(conversation: Conversation, events: readonly EventDraft[]): ConversationCommit;
+  /**
+   * A new conversation (version 0, cursor 0) and its first events. `originHistory` is the history a branch or an import starts from, which the conversation holds only a summary of
+   * (`origin`): written with it, its attachments kept for it. A create command seen before returns the conversation it made, with no events.
+   */
+  create(conversation: Conversation, events: readonly EventDraft[], originHistory?: readonly OriginHistoryRow[]): ConversationCommit;
   /** The conversation as the Runtime reduces it (stage 1 only; stage 2 reads through `ConversationTx`). */
   get(id: SessionId): Conversation;
   /**
@@ -464,6 +468,11 @@ export interface ConversationStore extends ConversationReader {
   listKept(): readonly SessionId[];
   /** The conversations with a Run not finished or a switch pending: what recovery visits (the partial indexes). */
   unfinished(): readonly SessionId[];
+  /**
+   * Whether a Harness notice with this fingerprint was already shown in the conversation (`notice_prints`): what the placement of items asks (`PlaceEnv.noticeShown`)
+   * so that a notice a restarted Harness repeats is not shown again, without the Turns that are not held in memory. Optional so that a store without it still fits.
+   */
+  noticeShown?(id: SessionId, print: string): boolean;
   nativeOwners(harnessId: string, controlId: string): ReadonlyMap<string, SessionId>;
   /** Every content id any conversation references (`content_refs`, and the references of the conversations not yet converted), for the collector. */
   contentReferences(): ReadonlySet<string>;

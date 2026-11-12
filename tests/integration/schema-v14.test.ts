@@ -307,7 +307,7 @@ test("deleting a conversation lets go of its native sessions; only a deleted con
   assert.throws(() => binding(db, "two", 0, { checkpoint: "held" }), refuses(/UNIQUE/u));
   assert.throws(() => change(db, "DELETE FROM sessions WHERE id='one'"), refuses(/deleted before it is purged/u));
   change(db, "UPDATE sessions SET deleted_at=1 WHERE id='one'");
-  assert.deepEqual(rows(db, "SELECT status FROM bindings WHERE session_id='one'"), [{ status: "archived" }]);
+  assert.deepEqual(rows(db, "SELECT status, json_extract(binding_json,'$.status') AS json FROM bindings WHERE session_id='one'"), [{ status: "archived", json: "archived" }], "archived in its column and in its JSON");
   binding(db, "two", 0, { checkpoint: "held" });
   for (const table of ["item_text WHERE run_id", "items WHERE run_id", "runs WHERE run_id"]) change(db, "DELETE FROM " + table + "=?", a);
   for (const table of ["bindings", "commands", "switches", "content_refs", "origin_history", "notice_prints"]) change(db, `DELETE FROM ${table} WHERE session_id='one'`);
@@ -384,4 +384,12 @@ test("the relay tables, rebuilt inside a transaction, keep their rows and their 
   assert.throws(() => change(db, "UPDATE relay_bodies SET body='y'"), refuses(/relay body is immutable/u));
   assert.throws(() => insert(db, "relay_deliveries", { session_id: "one", run_id: "run-2", packet_id: "relay-cccccccccccccccccccc", channel: "text_block", input_hmac: "h", auto_resend: 0, redaction_rules_version: "1", redaction_key_id: "k", redaction_set_hmac: "s", outcome: "in_flight" }), refuses(/FOREIGN KEY/u), "a delivery still names a packet");
   assert.throws(() => insert(db, "relay_packets", { ...packet, packet_id: "relay-dddddddddddddddddddd", body_sha256: "c".repeat(64) }), refuses(/FOREIGN KEY/u), "a body that is named is there");
+  // The one change a packet row may get: it lets go of its body, and then the body row may go. Nothing else changes with it, and a body does not come back to the row.
+  assert.throws(() => change(db, "UPDATE relay_packets SET body_sha256=NULL, tier='brief' WHERE packet_id=?", packet.packet_id), refuses(/relay packet is immutable/u));
+  assert.throws(() => change(db, "DELETE FROM relay_bodies WHERE sha256=?", sha), refuses(/FOREIGN KEY/u), "a body a packet names stays");
+  change(db, "UPDATE relay_packets SET body_sha256=NULL WHERE packet_id=?", packet.packet_id);
+  change(db, "DELETE FROM relay_bodies WHERE sha256=?", sha);
+  assert.deepEqual(rows(db, "SELECT packet_id, body_sha256, tier FROM relay_packets WHERE packet_id=?", packet.packet_id), [{ packet_id: packet.packet_id, body_sha256: null, tier: "full" }]);
+  assert.throws(() => change(db, "UPDATE relay_packets SET body_sha256=? WHERE packet_id=?", "b".repeat(64), packet.packet_id), refuses(/relay packet is immutable/u));
+  assert.equal(rows(db, "SELECT COUNT(*) AS n FROM relay_deliveries")[0]?.n, 1, "the evidence of its delivery stays");
 });

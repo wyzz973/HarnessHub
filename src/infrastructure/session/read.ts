@@ -33,6 +33,12 @@ function positive(value: number | undefined, fallback: number, label: string): n
   if (typeof chosen !== "number" || Number.isNaN(chosen) || chosen < 1) invalid("INVALID_INPUT", label + " must be at least 1");
   return chosen;
 }
+/** A count a statement is bound to (a LIMIT): a whole number from 1. (A fraction, or Infinity, bound to LIMIT is an error of SQLite, which would pass for a failure of the storage.) */
+function counted(value: number | undefined, fallback: number, label: string): number {
+  const chosen = value ?? fallback;
+  if (typeof chosen !== "number" || !Number.isSafeInteger(chosen) || chosen < 1) invalid("INVALID_INPUT", label + " must be a whole number from 1");
+  return chosen;
+}
 function wholeNumber(value: unknown, label: string, code = "INVALID_INPUT"): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) invalid(code, label + " must be a whole number from 0");
   return value;
@@ -75,14 +81,14 @@ export class ConversationTables implements ConversationReader {
   /** The newest Turns up to `turns` and `bytes` (a Turn that crosses the budget is in; at least one Turn, whatever its size). */
   window(id: SessionId, options: { readonly turns?: number; readonly bytes?: number } = {}): TurnWindow {
     const head = this.head(id);
-    return this.collect(head, head.runCount, positive(options.turns, PAGE.windowTurns, "turns"), positive(options.bytes, PAGE.windowBytes, "bytes"));
+    return this.collect(head, head.runCount, counted(options.turns, PAGE.windowTurns, "turns"), positive(options.bytes, PAGE.windowBytes, "bytes"));
   }
 
   /** The page of Turns before `before`. */
   older(id: SessionId, before: TurnCursor, options: { readonly turns?: number; readonly bytes?: number } = {}): TurnWindow {
     const head = this.head(id), cursor = decodeTurnCursor(before);
     if (cursor.ordinal > head.runCount) return invalid("INVALID_CURSOR", "the cursor names a Turn this conversation does not have");
-    return this.collect(head, cursor.ordinal, positive(options.turns, PAGE.olderTurns, "turns"), positive(options.bytes, PAGE.windowBytes, "bytes"));
+    return this.collect(head, cursor.ordinal, counted(options.turns, PAGE.olderTurns, "turns"), positive(options.bytes, PAGE.windowBytes, "bytes"));
   }
 
   private collect(head: HeadRow, below: number, turns: number, budget: number): TurnWindow {
@@ -137,7 +143,7 @@ export class ConversationTables implements ConversationReader {
   }
 
   items(runId: RunId, afterSeq: number, limit: number, options: ReadOptions = {}): ItemPage {
-    const count = positive(limit, 1, "limit");
+    const count = counted(limit, 1, "limit");
     if (!Number.isSafeInteger(count)) invalid("INVALID_INPUT", "limit must be a whole number");
     const read = readItems(this.db, runId, options.inlineBytes ?? PAGE.itemInlineBytes, { after: wholeNumber(afterSeq, "the place after which items are read"), limit: count + 1 });
     const page = read.items.slice(0, count);
@@ -176,7 +182,7 @@ export class ConversationTables implements ConversationReader {
    * complete) is a scan of the joined text of every finished segment, told in each hit's `via`.
    */
   search(query: string, scope: { readonly sessionId?: SessionId; readonly after?: number; readonly limit: number }): readonly SearchHit[] {
-    const limit = positive(scope.limit, 1, "limit");
+    const limit = counted(scope.limit, 1, "limit");
     const words = String(query).trim();
     if (words === "") return [];
     const states = indexStates(this.db), length = [...words].length;
@@ -212,7 +218,7 @@ export class ConversationTables implements ConversationReader {
 
   /** The conversations newest first, a page at a time: the columns of `sessions`, never a Turn. A deleted conversation, and one not converted yet, are not listed. */
   list(query: SessionListQuery = {}): SessionListPage {
-    const limit = positive(query.limit, PAGE.sessions, "limit");
+    const limit = counted(query.limit, PAGE.sessions, "limit");
     const after = query.after === undefined ? undefined : decodeListCursor(query.after);
     const rows = all(this.db, "SELECT id, title, status, last_seq, updated_at, active_run_id, run_count, json_extract(head,'$.configuration.workspace') AS workspace, json_extract(head,'$.selection') AS selection FROM sessions "
       // The bound on `updated_at` alone is what lets the index be entered at the cursor instead of read from its start; the tie on it is the rest.
@@ -266,7 +272,7 @@ export class ConversationTables implements ConversationReader {
 
   /** The latest `perEntry` startups of every Harness entry (a Run that started its program and was not given a kept one): a seek per entry and a read of its newest few. */
   startupSamples(perEntry: number): readonly StartupSample[] {
-    const count = positive(perEntry, 1, "perEntry");
+    const count = counted(perEntry, 1, "perEntry");
     const samples: StartupSample[] = [];
     let harness = "", control = "";
     for (;;) {

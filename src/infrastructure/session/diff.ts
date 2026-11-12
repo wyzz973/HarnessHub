@@ -144,6 +144,8 @@ export function diffConversation(before: Conversation | null, after: Conversatio
       const changed = Object.keys(now).filter(column => old[column] !== now[column]);
       if (finished(was.status)) {
         if (changed.some(column => column !== "acknowledged_by")) throw transition("terminal Run evidence cannot be rewritten (Run " + run.id + ")");
+        // A finished Run's items are read by Turn and are held no more; a reducer that puts some back means to write them, and nothing would, so it is told.
+        if (run.items !== undefined) throw transition("the items of a finished Run are read by Turn and cannot be added to (Run " + run.id + ")");
         if (changed.length > 0) runs.push({ op: "update", row });
         continue;
       }
@@ -197,8 +199,10 @@ export function settleConversation(after: Conversation, applied: Applied): Conve
   for (const write of applied.changes.runs ?? []) entry(write.row.runId).run = write;
   for (const write of applied.changes.items ?? []) entry(write.row.runId).items.set(write.row.seq, write);
   for (const append of applied.changes.text ?? []) entry(append.runId).grown.set(append.itemSeq, { bytes: append.byteOffset! + utf8Length(append.text), chunks: append.chunk + 1 });
-  // Only the Runs the commit touched are made again, found from the end (the Runs not finished are there): a copy of the array, not a pass over it.
-  const runs = after.runs.slice();
+  // Only the Runs the commit touched are made again, found from the end (the Runs not finished are there): a copy of the array, not a pass over it. A commit that touched no
+  // Run keeps the array it has. (The copy is a spread, not `slice`: `slice` of a frozen array, which the store's conversations are, takes a path 60 times slower.)
+  if (byRun.size === 0) return { ...after, version: head.version, lastSeq: head.lastSeq };
+  const runs = [...after.runs];
   let remaining = byRun.size;
   for (let index = runs.length - 1; index >= 0 && remaining > 0; index--) {
     const run = runs[index]!, touched = byRun.get(run.id);

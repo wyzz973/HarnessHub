@@ -14,7 +14,17 @@ export function conversationTitle(conversation: { readonly messages: readonly { 
   const first = conversation.messages.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
   const origin = conversation.origin, quoted = origin?.history.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
   const inherited = origin?.kind === "import" ? "接续 · " + (origin.title ?? quoted ?? origin.harnessId) : quoted ? "分支 · " + quoted : null;
-  return first ? first.slice(0, 80) : inherited ? inherited.slice(0, 80) : "新对话";
+  return first ? cutTitle(first) : inherited ? cutTitle(inherited) : "新对话";
+}
+/**
+ * At most 80 UTF-16 units, never ending in half a character, and with no half character anywhere: a title is stored in a UTF-8 column that keeps U+FFFD in place of half a pair,
+ * so a title that held one would not read back as it was written.
+ */
+function cutTitle(text: string): string {
+  let head = text.slice(0, 80);
+  const last = head.charCodeAt(head.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) head = head.slice(0, -1);
+  return head.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD");
 }
 
 /**

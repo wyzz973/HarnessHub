@@ -271,8 +271,8 @@ const TRIGGERS: readonly string[] = [
     `OLD.format=14 AND NEW.head IS NOT OLD.head AND json_extract(NEW.head,'$.retained') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.run_id=json_extract(NEW.head,'$.retained.runId')
       AND r.status='completed' AND json_extract(r.run_json,'$.retained')=1)`, "a kept process belongs to the Run that handed it over"),
   refuse("sessions_purge_only", "BEFORE DELETE ON sessions", "OLD.deleted_at IS NULL", "a conversation is deleted before it is purged"),
-  // Deleting a conversation lets go of the native sessions it held.
-  "CREATE TRIGGER sessions_deleted_archives AFTER UPDATE OF deleted_at ON sessions WHEN OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL BEGIN UPDATE bindings SET status='archived' WHERE session_id=NEW.id AND status<>'archived'; END",
+  // Deleting a conversation lets go of the native sessions it held: each live binding is archived, in its column and in its JSON (the two say one thing).
+  "CREATE TRIGGER sessions_deleted_archives AFTER UPDATE OF deleted_at ON sessions WHEN OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL BEGIN UPDATE bindings SET status='archived', binding_json=json_set(binding_json,'$.status','archived') WHERE session_id=NEW.id AND status<>'archived'; END",
 
   // runs. Identity never changes; the selection of a Run that left the queue never changes; its accepted input and what it was started with never change; what a
   // dispatched Run was given never changes; a terminal Run never changes (but an unknown one may be acknowledged, once); cancel and stop are never withdrawn; backend,
@@ -336,6 +336,12 @@ const TRIGGERS: readonly string[] = [
   refuse("switches_purge_only", "BEFORE DELETE ON switches", `NOT ${purgeable("OLD.session_id")}`, "a switch is kept"),
 ];
 
+/** The columns of `relay_packets` but its body: a packet row never changes in any of them. */
+const RELAY_PACKET_FIXED_COLUMNS = ["session_id", "packet_id", "kind", "tier", "target_harness", "target_control", "target_model", "native_epoch", "from_seq", "through_seq",
+  "supersedes_packet_id", "policy_version", "language", "est_tokens", "manifest_json"] as const;
+/** The one change a packet row gets: its body is let go (set null) and nothing else moves. */
+const PACKET_LOSES_ONLY_ITS_BODY = `OLD.body_sha256 IS NOT NULL AND NEW.body_sha256 IS NULL AND ${RELAY_PACKET_FIXED_COLUMNS.map(column => `NEW.${column} IS OLD.${column}`).join(" AND ")}`;
+
 /**
  * The relay tables whose limits the no-limits decision lifts, rebuilt inside the migration's first transaction (SQLite cannot alter a
  * CHECK): a packet's body may be gone (the oldest delivered bodies are evicted past the quota, and the manifest and the delivery rows
@@ -343,6 +349,9 @@ const TRIGGERS: readonly string[] = [
  * are. It follows SQLite's procedure for rebuilding a table other tables point at: `PRAGMA foreign_keys=OFF` BEFORE the transaction
  * begins (it does nothing inside one), these statements, `PRAGMA foreign_key_check` (it must return no rows) before COMMIT, and
  * `PRAGMA foreign_keys=ON` after it. (Deferring the keys does not do: dropping the parent counts every child as a violation for good.)
+ *
+ * A packet row is immutable but for that eviction: the only update the trigger lets through is `body_sha256` going from a digest to null with every other column
+ * unchanged (the body row is then deleted, which the foreign key allows because nothing names it any more); a body, once let go, does not come back to the row.
  */
 export const RELAY_V14_REBUILD: readonly string[] = [
   `CREATE TABLE relay_bodies_v14(session_id TEXT NOT NULL REFERENCES sessions(id), sha256 TEXT NOT NULL, bytes INTEGER NOT NULL CHECK(bytes>=1), body TEXT NOT NULL,
@@ -363,7 +372,7 @@ export const RELAY_V14_REBUILD: readonly string[] = [
   "ALTER TABLE relay_bodies_v14 RENAME TO relay_bodies",
   "ALTER TABLE relay_packets_v14 RENAME TO relay_packets",
   "CREATE TRIGGER relay_bodies_immutable BEFORE UPDATE ON relay_bodies BEGIN SELECT RAISE(ABORT,'relay body is immutable'); END",
-  "CREATE TRIGGER relay_packets_immutable BEFORE UPDATE ON relay_packets BEGIN SELECT RAISE(ABORT,'relay packet is immutable'); END",
+  `CREATE TRIGGER relay_packets_immutable BEFORE UPDATE ON relay_packets WHEN NOT (${PACKET_LOSES_ONLY_ITS_BODY}) BEGIN SELECT RAISE(ABORT,'relay packet is immutable'); END`,
 ];
 
 /** The tables schema-v14.ts adds (not `sessions`), parents first; a purge deletes them last to first. */
