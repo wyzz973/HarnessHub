@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { commandId, messageId, runId, sessionId, type PublicRun, type RunStatus, type SessionSnapshot } from "../../src/contracts/session.js";
-import { buildPublicContext, publicSources } from "../../src/contexts/session/domain/context.js";
+import { buildPublicContext as buildOver, publicSources as sourcesOver } from "../../src/contexts/session/domain/context.js";
 import { estimateTokens } from "../../src/contexts/session/domain/relay/budget.js";
+import { snapshotHistory } from "../fixtures/old-shape.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
+
+/** The functions under test read a conversation as `RelayHistory` tells it; these tests make theirs by hand, in the old whole shape (tests/fixtures/old-shape.ts). */
+const buildPublicContext = (given: SessionSnapshot, ...rest: Parameters<typeof buildOver> extends [unknown, ...infer Rest] ? Rest : never) => buildOver(snapshotHistory(given), ...rest);
+const publicSources = (given: SessionSnapshot, current?: PublicRun) => sourcesOver(snapshotHistory(given), current);
 
 /** A Run in `status`; a settled one was settled by its Harness (dispatched), as a source of public history must be (ADR-055 R0a). */
 function run(index: number, status: RunStatus): PublicRun {

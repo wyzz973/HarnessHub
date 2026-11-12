@@ -152,6 +152,28 @@ test("OpenClaw does not emit a tool call the bridge streamed live again from the
   }
 });
 
+test("OpenClaw reports a call it reads from the transcript whole: its arguments and its result are not cut to a preview, whatever their size", async t => {
+  const arguments_ = { command: "cat big", payload: "p".repeat(1_500_000) }, result = "r".repeat(5_000_000) + "THE END";
+  const earlier = { role: "assistant", content: [{ type: "text", text: "earlier turn" }], __openclaw: { seq: 5 } };
+  const turn = [earlier, { role: "user", content: [{ type: "text", text: "go" }], __openclaw: { seq: 6 } },
+    { role: "assistant", content: [{ type: "toolCall", id: "call-big", name: "exec", arguments: arguments_ }], usage: { input: 10, output: 2, totalTokens: 12 }, stopReason: "toolUse", __openclaw: { seq: 7 } },
+    { role: "toolResult", toolCallId: "call-big", toolName: "exec", content: [{ type: "text", text: result }], isError: false, __openclaw: { seq: 8 } },
+    { role: "assistant", content: [{ type: "text", text: "done" }], usage: { input: 20, output: 3, totalTokens: 23 }, stopReason: "stop", __openclaw: { seq: 9 } }];
+  let reads = 0;
+  const { driver } = await bridge(t, null, async method => method === "agents.list" ? missing() : method === "sessions.get" ? { messages: reads++ === 0 ? [earlier] : turn }
+    : method === "sessions.list" ? { sessions: [] } : method === "chat.history" ? { messages: [] } : unexpected(method, {}));
+  const events: ControlEvent[] = [];
+  try {
+    await driver.initialize(); const id = await driver.open(process.cwd());
+    assert.equal((await (await driver.startText(id, "go", event => events.push(event))).result).status, "completed");
+  } finally { await driver.close(); }
+  const call = events.flatMap(event => event.type === "tool" && event.id === "call-big" ? [event] : []).at(-1);
+  assert.ok(call?.detail, "the call is reported with its detail");
+  assert.equal(call.detail.input, JSON.stringify(arguments_, null, 2), "the arguments are the whole of them");
+  assert.equal(call.detail.output, result, "and the result");
+  assert.equal(call.detail.truncated, undefined, "nothing says it was cut");
+});
+
 test("OpenClaw reads settings back in the bridge's own values: unset fields report what the bridge announced, fast mode auto stays auto, the trace level is reported (ADR-053)", async t => {
   // [the Gateway session row, chat.history's fast mode, the options reported]
   const announced = { thought_level: "adaptive", fast_mode: "off", verbose_level: "off", trace_level: "off", reasoning_level: "off", response_usage: "inherit", elevated_level: "off" };

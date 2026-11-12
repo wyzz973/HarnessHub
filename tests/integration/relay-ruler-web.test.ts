@@ -6,6 +6,7 @@ import test from "node:test";
 import { TABLE_ENV } from "../../src/contracts/table.js";
 import { WatchedMount } from "../real/ruler/mount.js";
 import { openWebHub } from "../real/ruler/web.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 // The ruler's Hub for a run with the context table mounted (HH_REAL_TABLE=1, tests/real/ruler/web.ts) in front of a Harness that is a
 // fixture: the Hub's own web server on a random loopback port, over the application the ruler composes, whose Runtime the ruler drives.
@@ -52,7 +53,7 @@ test("the ruler's web Hub gives a native process the table: its token is good at
   const id = (await hub.runtime.create(hub.configuration, { harnessId: "web-peer" }, "create")).id;
   const sent = Date.now();
   hub.runtime.send(id, "hello from the ruler", "send-1"); await hub.runtime.wait(id);
-  const ended = Date.now(), run = hub.runtime.read(id).runs.at(-1)!;
+  const ended = Date.now(), run = oldShape(hub.runtime, id).runs.at(-1)!;
   assert.equal(run.status, "completed");
   const [seen] = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { url: string; seen: { status?: number; error?: string; body?: { total: number; lines: { n: number; status: string; user: string }[] } } });
   assert.equal(seen!.url, mount.url);

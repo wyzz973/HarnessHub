@@ -7,6 +7,7 @@ import {
   directoryNeeds, directoryRange, pageOf, readTurn, searchNeeds, searchTurns, tableRedaction, turnNeeds, turnsView, type TableToolDetail,
 } from "../../src/contexts/session/domain/table.js";
 import { MemoryTableGrants } from "../../src/infrastructure/session/table-grants.js";
+import { snapshotTable } from "../fixtures/old-shape.js";
 import { conversation, tool } from "../fixtures/relay-scenarios.js";
 
 // The context table's read model (src/contexts/session/domain/table.ts): a directory of the Turns, one Turn in full and in
@@ -42,7 +43,7 @@ function scenario() {
     "run-1/e3": { locations: ["/tmp/relay-fixture/src/b.ts"], diff: diff("src/b.ts", true, 5, 0) },
     "run-1/c1": { input: "cat .env", output: "SECRET_VALUE_" + "1234567890" }, "run-2/s1": { input: "look around", output: "found things", truncated: true },
   }));
-  return { state, details, redaction: tableRedaction([KNOWN]) };
+  return { state: snapshotTable(state), snapshot: state, details, redaction: tableRedaction([KNOWN]) };
 }
 
 test("the directory lists a window of Turns, one line each, without reasoning and with honest counts", () => {
@@ -70,7 +71,7 @@ test("the directory's window: the latest Turns by default, from and limit move i
   assert.equal(turnsView(state, 9, undefined, new Map(), tableRedaction([])).lines.length, 0);
   assert.deepEqual(directoryNeeds(state, 1, 3).map(item => item.runId + "/" + item.toolId), ["run-1/e1", "run-1/e2", "run-1/e3"], "n1 has no stored detail to read");
   const empty = conversation([{ input: "only", harnessId: "claude" }]).state;
-  assert.deepEqual([turnsView({ ...empty, runs: [], messages: [] }, undefined, undefined, new Map(), tableRedaction([])).total, TABLE_LIMITS.turnsDefault], [0, 40]);
+  assert.deepEqual([turnsView(snapshotTable({ ...empty, runs: [], messages: [] }), undefined, undefined, new Map(), tableRedaction([])).total, TABLE_LIMITS.turnsDefault], [0, 40]);
 });
 
 test("one Turn: the overview holds its words, reply, numbered tool calls, files and plan; the pieces are read whole", () => {
@@ -98,8 +99,8 @@ test("one Turn: the overview holds its words, reply, numbered tool calls, files 
 });
 
 test("a long overview piece says where it goes on, and the pages of a part join into the whole of it", () => {
-  const { state, details, redaction } = scenario();
-  const long = { ...state, runs: state.runs.map((run, index) => index === 0 ? { ...run, input: "word ".repeat(3000) } : run), messages: state.messages.map(message => message.runId === state.runs[0]!.id && message.role === "user" ? { ...message, text: "word ".repeat(3000) } : message) };
+  const { state, snapshot, details, redaction } = scenario();
+  const long = snapshotTable({ ...snapshot, runs: snapshot.runs.map((run, index) => index === 0 ? { ...run, input: "word ".repeat(3000) } : run), messages: snapshot.messages.map(message => message.runId === snapshot.runs[0]!.id && message.role === "user" ? { ...message, text: "word ".repeat(3000) } : message) });
   const overview = readTurn(long, 1, {}, details, redaction).text;
   const pointer = /\[continues: part=user offset=(\d+); (\d+) more characters\]/u.exec(overview);
   assert.ok(pointer, overview.slice(0, 3000));
@@ -120,7 +121,7 @@ test("a long overview piece says where it goes on, and the pages of a part join 
 });
 
 test("what leaves is redacted before it is cut, and the output of a call that touches a credential file is withheld", () => {
-  const { state, details, redaction } = scenario();
+  const { state, snapshot, details, redaction } = scenario();
   const output = readTurn(state, 1, { part: "output", tool: 2, limit: TABLE_LIMITS.pageMax }, details, redaction).text;
   assert.ok(output.includes("line 60 of the test run") && output.includes("FAIL tests/a.test.ts"));
   assert.ok(!output.includes(TOKEN) && !output.includes(KNOWN), "neither the shaped token nor the known secret");
@@ -133,7 +134,7 @@ test("what leaves is redacted before it is cut, and the output of a call that to
   assert.match(withheld.text, /^Withheld: this tool call touches a credential file/u);
   assert.ok(!withheld.text.includes("SECRET_VALUE_"));
   assert.equal(readTurn(state, 1, { part: "input", tool: 6 }, details, redaction).text, "cat .env", "the command itself is a fact and is given");
-  const secretInWords = { ...state, runs: state.runs.map((run, index) => index === 0 ? { ...run, input: "use " + TOKEN + " for it" } : run) };
+  const secretInWords = snapshotTable({ ...snapshot, runs: snapshot.runs.map((run, index) => index === 0 ? { ...run, input: "use " + TOKEN + " for it" } : run) });
   assert.equal(readTurn(secretInWords, 1, { part: "user" }, details, redaction).text, "use 〔redacted · GitHub token〕 for it");
   assert.ok(turnsView(secretInWords, undefined, undefined, details, redaction).lines[0]!.user.includes("〔redacted · GitHub token〕"));
   const cut = readTurn(state, 2, { part: "output", tool: 1 }, details, redaction);

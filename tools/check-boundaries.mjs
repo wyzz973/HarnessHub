@@ -18,6 +18,7 @@
 //   isolated     groups: a pattern such as src/contexts/*; a file of one group may not import another group
 //   call-options calls [{ callee, argument, anyOf }]: the argument of that call must visibly carry one of the properties
 //   spawn-flags  entries, spawners, requiredFlag, pairs [{ when, requires }], exemptFlags: flags of the official commands
+//   member-calls members, receivers: a call `<receiver>.<member>(...)` where the receiver is, or ends in, a name of `receivers` (`store.snapshot()`, `app.store.snapshot()`)
 //
 // The analysis is static and per file. It sees import / export ... from / import() / require() / import type, and in tests
 // the options of the `application(` and `startWebServer(` calls and the arguments of the processes that start the official
@@ -104,7 +105,7 @@ function loadRules(file) {
   const scan = objectOf(top.scan, `${file}.scan`, ["roots", "extensions", "skipDirectories"]);
   const rules = [], ids = new Set();
   listOf(top.rules, `${file}.rules`, (entry, at) => {
-    const base = objectOf(entry, at, ["id", "title", "kind", "appliesTo", "exceptions", "node", "packages", "paths", "groups", "calls", "entries", "spawners", "requiredFlag", "pairs", "exemptFlags"]);
+    const base = objectOf(entry, at, ["id", "title", "kind", "appliesTo", "exceptions", "node", "packages", "paths", "groups", "calls", "entries", "spawners", "requiredFlag", "pairs", "exemptFlags", "members", "receivers"]);
     const id = textOf(base.id, `${at}.id`);
     if (!/^B[1-9][0-9]*$/u.test(id) || ids.has(id)) throw new UsageError(`${at}.id: "${id}" is not a unique rule id of the form B<n> (B0 is the check's own integrity rule)`);
     ids.add(id);
@@ -144,6 +145,10 @@ function loadRules(file) {
         return { when: textOf(item.when, `${inner}.when`), requires: textOf(item.requires, `${inner}.requires`) };
       });
       rule.exemptFlags = listOf(base.exemptFlags, `${at}.exemptFlags`);
+    } else if (rule.kind === "member-calls") {
+      only("members", "receivers");
+      rule.members = new Set(listOf(base.members, `${at}.members`, textOf, { nonEmpty: true }));
+      rule.receivers = new Set(listOf(base.receivers, `${at}.receivers`, textOf, { nonEmpty: true }));
     } else throw new UsageError(`${at}.kind: unknown rule kind "${rule.kind}"`);
     rule.exceptions = exceptionsOf(base.exceptions, `${at}.exceptions`, rule.kind);
     rules.push(rule);
@@ -669,6 +674,31 @@ function checkSpawnFlags(rule, sf, scope, file, out) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Member calls
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The name a receiver expression ends in: `store` for `store`, `this.store` and `app.store`; null for anything that is not a name (a call, an index, a literal). */
+function receiverName(node) {
+  const receiver = unwrap(node);
+  if (ts.isIdentifier(receiver)) return receiver.text;
+  if (ts.isPropertyAccessExpression(receiver)) return receiver.name.text;
+  if (ts.isElementAccessExpression(receiver) && ts.isStringLiteralLike(receiver.argumentExpression)) return receiver.argumentExpression.text;
+  return null;
+}
+function checkMemberCalls(rule, sf, file, out) {
+  const visit = node => {
+    if (ts.isCallExpression(node)) {
+      const callee = unwrap(node.expression);
+      const member = ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression) ? callee.argumentExpression.text : null;
+      const receiver = member !== null && rule.members.has(member) ? receiverName(callee.expression) : null;
+      if (member !== null && receiver !== null && rule.receivers.has(receiver)) out.push(violation(file, lineOfNode(sf, node), rule.id, member, `calls ${receiver}.${member}(...) — ${rule.title}`));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // One file
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -690,6 +720,7 @@ function analyzeFile(root, file, rules, out) {
     else importing.push(edge);
   }
   checkImportRules(rules.filter(rule => rule.kind === "imports" || rule.kind === "isolated"), file, importing, out);
+  for (const rule of rules) if (rule.kind === "member-calls" && anyMatch(rule.appliesTo, file)) checkMemberCalls(rule, sf, file, out);
   const calls = rules.filter(rule => (rule.kind === "call-options" || rule.kind === "spawn-flags") && anyMatch(rule.appliesTo, file));
   if (calls.length === 0) return;
   const scope = scopeOf(sf);

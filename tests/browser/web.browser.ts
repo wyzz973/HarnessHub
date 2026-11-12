@@ -241,7 +241,8 @@ test("real browser validates Provider management, public chat switching, cancell
   await search.dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true });
   await expect(search).toBeVisible();
   await search.press("ArrowDown"); await search.press("Enter");
-  await expect(harnessTrigger).toContainText("Codex"); await expect(harnessTrigger).toBeFocused();
+  // A choice made in the list hands the focus to the message box: the keys typed next are the message (left on the trigger, they went nowhere, and the box looked empty).
+  await expect(harnessTrigger).toContainText("Codex"); await expect(page.getByRole("textbox", { name: "发送消息", exact: true })).toBeFocused();
   await harnessTrigger.click();
   await page.screenshot({ path: join(artifact, "harness-picker-desktop.png"), fullPage: true, animations: "disabled" });
   await page.setViewportSize({ width: 320, height: 844 });

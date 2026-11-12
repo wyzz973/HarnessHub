@@ -8,6 +8,7 @@ import { resolveInstallationPolicy } from "../contexts/catalog/domain/catalog.js
 import { MANIFEST_IGNORED } from "../infrastructure/catalog/inventory-composition.js";
 import { startWebServer, type WebServer } from "../web/server.js";
 import { defaultRelayKeyPath } from "../infrastructure/session/relay-keys.js";
+import { reasonOf } from "./startup-failure.js";
 
 /**
  * Whether this Gateway offers reading the login shell's PATH on the user's request (ADR-040), decided once at the entry:
@@ -18,7 +19,7 @@ export function loginShellSetting(input: { readonly off: boolean; readonly env: 
   return input.off || input.env.CI !== undefined || input.platform === "win32" ? false : { shell: input.env.SHELL ?? null, shells: "/etc/shells" };
 }
 /** The codes of a start that could not get through the upgrade of the conversation library (conversation-store.ts, migrate-v14.ts, backup.ts, session-application.ts afterUpgrade). */
-const UPGRADE_CODES: ReadonlySet<string> = new Set(["MIGRATION_REFUSED", "MIGRATION_STOPPED", "START_FAILED_AFTER_UPGRADE", "INSUFFICIENT_SPACE", "STORAGE_BACKUP_FAILED"]);
+const UPGRADE_CODES: ReadonlySet<string> = new Set(["MIGRATION_REFUSED", "MIGRATION_STOPPED", "START_FAILED_AFTER_UPGRADE", "INSUFFICIENT_SPACE", "STORAGE_BACKUP_FAILED", "SCHEMA_MISMATCH"]);
 /** Owns one local web application until SIGINT/SIGTERM; startup URL carries a one-use fragment token. */
 export async function main(args: readonly string[]): Promise<number> {
   let gateway: WebServer | undefined;
@@ -60,7 +61,9 @@ export async function main(args: readonly string[]): Promise<number> {
     // What the upgrade of the conversation library says when it could not begin, stopped, or left a start that did not finish is made of ids, rules and a path inside the data directory, and is
     // what a person needs to know what to do: it is told. Any other failure is told by its code alone.
     const told = error instanceof SessionError && UPGRADE_CODES.has(error.code);
-    process.stderr.write("HarnessGateway: " + (error instanceof SessionError ? error.code : "WEB_FAILED") + " — " + (told ? error.message : "local web application could not run") + "\n"); return 1;
+    // A failure of the storage, and any other, is told with its reason (a table, a column, a rule, the system's own words): a code alone is nothing to act on (startup-failure.ts).
+    const reason = told ? null : reasonOf(error);
+    process.stderr.write("HarnessGateway: " + (error instanceof SessionError ? error.code : "WEB_FAILED") + " — " + (told ? error.message : "local web application could not run" + (reason === null ? "" : ": " + reason)) + "\n"); return 1;
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) process.exitCode = await main(process.argv.slice(2));

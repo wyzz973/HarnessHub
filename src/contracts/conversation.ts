@@ -473,11 +473,6 @@ export interface ConversationStore extends ConversationReader {
   create(conversation: Conversation, events: readonly EventDraft[], originHistory?: readonly OriginHistoryRow[]): ConversationCommit;
   /** The conversation as the Runtime reduces it (stage 1 only; stage 2 reads through `ConversationTx`). */
   get(id: SessionId): Conversation;
-  /**
-   * The conversation in the old shape, made by `fromItems` from the rows: a finished Run once (it never changes) and kept, the Runs not
-   * finished from memory. For the readers that have not moved to items; gone when the last one has (line D).
-   */
-  snapshot(id: SessionId): SessionSnapshot;
   findByCreateKey(key: CommandId): Conversation | null;
   list(query?: SessionListQuery): SessionListPage;
   /** The conversations whose head records a kept native process, whatever their age (`sessions.kept`). */

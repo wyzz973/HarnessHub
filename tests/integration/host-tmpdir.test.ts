@@ -13,6 +13,7 @@ import { resolveHostBudgets } from "../../src/contracts/native-host.js";
 import type { SessionConfiguration, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { HostTmpdirs, measureTree } from "../../src/infrastructure/session/host-tmpdir.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 // Each host class's private TMPDIR (ADR-056 §4.12; G085-C03, G085-C04), through the formal composition: application(), a
 // real store and workspace leases, and an ACP peer that records the TMPDIR it was given and what it held at its start.
@@ -74,7 +75,7 @@ async function fixture(t: test.TestContext): Promise<Fixture> {
 }
 async function turn(app: ReturnType<typeof application>, session: SessionId, text: string) {
   app.runtime.send(session, text, "send-" + text.replace(/[^a-z0-9]+/giu, "-")); await app.runtime.wait(session);
-  return app.runtime.read(session).runs.at(-1)!;
+  return oldShape(app.runtime, session).runs.at(-1)!;
 }
 /** Writes `bytes` of real data, so the file takes that much on disk. */
 async function fill(path: string, bytes: number): Promise<void> {
@@ -130,7 +131,7 @@ test("G085-C03 a class directory made a symbolic link, opened to others or unwri
     const before = (await f.spawns()).length, run = await turn(app, session.id, label);
     assert.equal(run.status, "failed", label); assert.equal(run.error?.code, "HOST_TMPDIR_FAILED", label);
     assert.equal((await f.spawns()).length, before, label + ": no program was started");
-    assert.equal(app.runtime.read(session.id).status, "open", label + ": the conversation goes on");
+    assert.equal(oldShape(app.runtime, session.id).status, "open", label + ": the conversation goes on");
   };
   await rm(directory, { recursive: true }); await symlink(canary, directory);
   await refused("through a link");
@@ -260,7 +261,7 @@ test("G085-C04 a kept host holds its class directory: over 256 MiB it is not emp
   const session = await app.runtime.create(await f.configuration("ws-a"), { harnessId: "host-peer" }, "create");
   app.runtime.setRetention(session.id, true, "keep");
   assert.equal((await turn(app, session.id, "kept")).status, "completed");
-  assert.notEqual(app.runtime.read(session.id).retained, undefined, "the host is kept");
+  assert.notEqual(oldShape(app.runtime, session.id).retained, undefined, "the host is kept");
   const directory = (await f.spawns())[0]!.tmpdir;
   await fill(join(directory, "big.bin"), 257 * MIB); await mkdir(join(directory, "locked")); await writeFile(join(directory, "locked", "inner"), "x"); await chmod(join(directory, "locked"), 0o500);
   const reused = await turn(app, session.id, "reused");

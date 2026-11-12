@@ -14,6 +14,7 @@ import { SessionRuntime } from "../../src/contexts/session/application/runtime.j
 import { appStore } from "../fixtures/runtime-store.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url));
 const piPeer = fileURLToPath(new URL("../../../tests/fixtures/pi-rpc-peer.mjs", import.meta.url));
@@ -82,13 +83,13 @@ test("conversations run at once up to an operator's limit, when there is one, an
   for (const [index, id] of sessions.entries()) app.send(id, "approve this", "send-" + index);
   await until(() => app.attention().length === 2);
   assert.deepEqual(app.attention().map(item => item.sessionId).sort(), sessions.slice(0, 2).sort(), "two run at once; the third waits for a slot");
-  assert.equal(app.read(sessions[2]!).runs[0]!.status, "queued"); assert.deepEqual(factory.started.length, 2);
+  assert.equal(oldShape(app, sessions[2]!).runs[0]!.status, "queued"); assert.deepEqual(factory.started.length, 2);
   assert.deepEqual(app.slotWait(sessions[2]!) && { running: app.slotWait(sessions[2]!)!.running, limit: app.slotWait(sessions[2]!)!.limit }, { running: 2, limit: 2 }, "the third says that two run");
   await decide(app, sessions[0]!, "allow_once", "decide-0"); await app.wait(sessions[0]!);
   await until(() => app.attention().some(item => item.sessionId === sessions[2]));
   await decide(app, sessions[1]!, "deny", "decide-1"); await decide(app, sessions[2]!, "allow_once", "decide-2");
   for (const id of sessions) await app.wait(id);
-  assert.deepEqual(sessions.map(id => app.read(id).runs[0]!.status), ["completed", "completed", "completed"]);
+  assert.deepEqual(sessions.map(id => oldShape(app, id).runs[0]!.status), ["completed", "completed", "completed"]);
 });
 
 test("without a limit every conversation runs at once, however many; none waits for a slot", async t => {
@@ -101,7 +102,7 @@ test("without a limit every conversation runs at once, however many; none waits 
   assert.ok(sessions.every(id => app.slotWait(id) === null), "none waits for a slot");
   for (const [index, id] of sessions.entries()) await decide(app, id, "allow_once", "decide-" + index);
   for (const id of sessions) await app.wait(id);
-  assert.deepEqual(sessions.map(id => app.read(id).runs[0]!.status), Array(7).fill("completed"));
+  assert.deepEqual(sessions.map(id => oldShape(app, id).runs[0]!.status), Array(7).fill("completed"));
 });
 
 test("conversations that share a workspace all run at once: the Turn that comes second does not wait, and says another conversation is there", async t => {
@@ -113,7 +114,7 @@ test("conversations that share a workspace all run at once: the Turn that comes 
   // The holder waits for the user's decision; the other conversation's Turn does not wait for it, in the same directory.
   app.send(other.id, "turn", "other-send");
   await app.wait(other.id);
-  const run = app.read(other.id).runs[0]!;
+  const run = oldShape(app, other.id).runs[0]!;
   assert.equal(run.status, "completed"); assert.equal(run.error, null);
   assert.deepEqual(events(other.id, "run.waiting"), [], "it waited for nothing");
   assert.deepEqual(events(other.id, "run.workspace_shared"), [{ runId: run.id, otherSessionIds: [holder.id] }]);
@@ -121,9 +122,9 @@ test("conversations that share a workspace all run at once: the Turn that comes 
   assert.match(run.notices![0]!.detail!, /没有让这一轮等它/u);
   assert.equal(factory.started.length, 2, "both programs ran in the directory");
   // The one that was there first is not told: it was not joined by anyone when it started.
-  assert.equal(app.read(holder.id).runs[0]!.notices, undefined);
+  assert.equal(oldShape(app, holder.id).runs[0]!.notices, undefined);
   await decide(app, holder.id, "allow_once", "decide-holder"); await app.wait(holder.id);
-  assert.equal(app.read(holder.id).runs[0]!.status, "completed"); assert.equal(app.read(holder.id).runs[0]!.notices, undefined);
+  assert.equal(oldShape(app, holder.id).runs[0]!.status, "completed"); assert.equal(oldShape(app, holder.id).runs[0]!.notices, undefined);
 });
 
 test("conversations in one workspace start in the order their work was accepted, and each later one is told how many others are there", async t => {
@@ -132,15 +133,15 @@ test("conversations in one workspace start in the order their work was accepted,
   for (const name of ["first", "second", "third", "fourth"]) sessions.push((await app.create(shared, { harnessId: "alpha" }, "create-" + name)).id);
   for (const [index, id] of sessions.entries()) { app.send(id, "approve this", "send-" + index); await until(() => app.attention().length === index + 1); }
   assert.deepEqual(factory.started, sessions, "first accepted, first served");
-  const notices = sessions.map(id => app.read(id).runs[0]!.notices?.map(notice => notice.detail) ?? []);
+  const notices = sessions.map(id => oldShape(app, id).runs[0]!.notices?.map(notice => notice.detail) ?? []);
   assert.deepEqual(notices[0], []); assert.match(notices[1]![0]!, /^另一个对话正在/u); assert.match(notices[2]![0]!, /^另外 2 个对话正在/u); assert.match(notices[3]![0]!, /^另外 3 个对话正在/u);
   assert.deepEqual(sessions.map(id => events(id, "run.workspace_shared").map(data => (data.otherSessionIds as string[]).length)), [[], [1], [2], [3]]);
   for (const [index, id] of sessions.entries()) await decide(app, id, "allow_once", "decide-" + index);
   for (const id of sessions) await app.wait(id);
-  assert.deepEqual(sessions.map(id => app.read(id).runs[0]!.status), Array(4).fill("completed"));
+  assert.deepEqual(sessions.map(id => oldShape(app, id).runs[0]!.status), Array(4).fill("completed"));
   // Once they are done, a new Turn of one finds nobody there and is told nothing.
   app.send(sessions[2]!, "turn", "again"); await app.wait(sessions[2]!);
-  assert.equal(app.read(sessions[2]!).runs[1]!.notices, undefined);
+  assert.equal(oldShape(app, sessions[2]!).runs[1]!.notices, undefined);
 });
 
 test("a conversation waiting for a slot goes before another conversation's later Turn, in the order they were accepted", async t => {
@@ -151,7 +152,7 @@ test("a conversation waiting for a slot goes before another conversation's later
   await decide(app, first.id, "allow_once", "decide-a");
   for (const id of [first.id, second.id]) await app.wait(id);
   assert.deepEqual(factory.started, [first.id, second.id, first.id], "the slot goes to the work accepted first, not to the conversation that held it");
-  assert.deepEqual([...app.read(first.id).runs, ...app.read(second.id).runs].map(run => run.status), ["completed", "completed", "completed"]);
+  assert.deepEqual([...oldShape(app, first.id).runs, ...oldShape(app, second.id).runs].map(run => run.status), ["completed", "completed", "completed"]);
 });
 
 test("a Turn waiting for a slot says how many conversations run, can be cancelled, and starts nothing", async t => {
@@ -161,11 +162,11 @@ test("a Turn waiting for a slot says how many conversations run, can be cancelle
   app.send(second.id, "turn", "send-two");
   await until(() => app.slotWait(second.id) !== null);
   const waiting = app.slotWait(second.id)!;
-  assert.equal(waiting.runId, app.read(second.id).runs[0]!.id); assert.equal(waiting.running, 1); assert.equal(waiting.limit, 1);
+  assert.equal(waiting.runId, oldShape(app, second.id).runs[0]!.id); assert.equal(waiting.running, 1); assert.equal(waiting.limit, 1);
   assert.deepEqual(events(second.id, "run.waiting"), [{ runId: waiting.runId, kind: "slot", running: 1 }]);
   app.cancel(second.id, "cancel-two", waiting.runId);
   await until(() => app.slotWait(second.id) === null);
-  assert.equal(app.read(second.id).runs[0]!.status, "cancelled"); assert.equal(events(second.id, "run.waiting_ended")[0]?.kind, "slot");
+  assert.equal(oldShape(app, second.id).runs[0]!.status, "cancelled"); assert.equal(events(second.id, "run.waiting_ended")[0]?.kind, "slot");
   await decide(app, first.id, "allow_once", "decide-one"); await app.wait(first.id); await app.wait(second.id);
   assert.deepEqual(factory.started, [first.id], "the cancelled Turn never started");
 });
@@ -174,10 +175,10 @@ test("a stop the Runtime decided stays its reason when the program completes the
   const { app, workspace } = await setup(t, undefined, { executionBudgetMs: 300 }, () => "complete-on-cancel");
   const session = await app.create(await workspace("late-complete"), { harnessId: "alpha" }, "create");
   app.send(session.id, "complete late", "send"); await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!;
+  const run = oldShape(app, session.id).runs[0]!;
   assert.equal(run.status, "cancelled"); assert.equal(run.error?.code, "RUN_TIMEOUT");
   assert.equal(run.backend?.status, "completed", "what the program said is kept apart from the Turn's status");
-  assert.equal(app.read(session.id).status, "open");
+  assert.equal(oldShape(app, session.id).status, "open");
 });
 
 test("a Turn's execution budget pauses while it waits for the user, and its wait is recorded", async t => {
@@ -189,7 +190,7 @@ test("a Turn's execution budget pauses while it waits for the user, and its wait
   await new Promise(resolve => setTimeout(resolve, 900));
   await decide(app, session.id, "allow_once", "decide");
   await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!;
+  const run = oldShape(app, session.id).runs[0]!;
   assert.equal(run.status, "completed"); assert.equal(run.error, null);
   assert.deepEqual(events(session.id, "run.waiting").map(data => data.kind), ["user"]);
   const ended = events(session.id, "run.waiting_ended"); assert.equal(ended[0]?.kind, "user"); assert.ok(Number(ended[0]?.waitedMs) >= 850);
@@ -199,10 +200,10 @@ test("a Turn that works past its execution budget is stopped with the normal sto
   const { app, workspace, events } = await setup(t, undefined, { executionBudgetMs: 400 }, () => "stop");
   const session = await app.create(await workspace("budget"), { harnessId: "alpha" }, "create");
   app.send(session.id, "work until stopped", "send"); await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!;
+  const run = oldShape(app, session.id).runs[0]!;
   assert.equal(run.status, "cancelled"); assert.equal(run.error?.code, "RUN_TIMEOUT"); assert.equal(run.stopRequested, true);
   assert.equal(run.notices?.at(-1)?.title, "执行期限已到"); assert.deepEqual(events(session.id, "run.budget_expired").map(data => data.kind), ["execution"]);
-  assert.equal(app.read(session.id).status, "open");
+  assert.equal(oldShape(app, session.id).status, "open");
 });
 
 test("a program that does not settle after a stop is ended once the grace has passed, and its Turn is unknown", async t => {
@@ -211,7 +212,7 @@ test("a program that does not settle after a stop is ended once the grace has pa
   const started = Date.now();
   app.send(session.id, "ignore the stop", "send");
   await assert.rejects(app.wait(session.id), { code: "SESSION_BLOCKED" });
-  const run = app.read(session.id).runs[0]!;
+  const run = oldShape(app, session.id).runs[0]!;
   assert.equal(run.status, "unknown"); assert.equal(run.error?.code, "RUN_TIMEOUT"); assert.ok(Date.now() - started < 5000, "ended by the grace, not by the driver's own timeout");
 });
 
@@ -225,7 +226,7 @@ for (const [driver, scenario, decision] of [["Codex", "codex:permission", "accep
     await new Promise(resolve => setTimeout(resolve, 900));
     await decide(app, session.id, decision, "decide");
     await app.wait(session.id);
-    const run = app.read(session.id).runs[0]!;
+    const run = oldShape(app, session.id).runs[0]!;
     assert.equal(run.status, "completed", JSON.stringify(run.error)); assert.equal(run.error, null);
     assert.deepEqual(events(session.id, "run.waiting").map(data => data.kind), ["user"]); assert.equal(events(session.id, "run.waiting_ended").length, 1);
   });
@@ -239,17 +240,17 @@ test("ADR-047: four conversations streaming at once each hold their own window, 
   for (const [index, id] of sessions.entries()) app.send(id, "work until stopped", "send-" + index);
   // Every program streamed its greeting into its own Turn's window; none is committed before its window closes.
   await until(() => timers.pending === 4);
-  assert.ok(sessions.every(id => !app.read(id).messages.some(message => message.role === "assistant")), "an open window is not committed");
+  assert.ok(sessions.every(id => !oldShape(app, id).messages.some(message => message.role === "assistant")), "an open window is not committed");
   assert.deepEqual(sessions.map(id => events(id, "run.output").length), [0, 0, 0, 0]);
   assert.equal(timers.fire(), 4);
   for (const id of sessions) {
-    assert.equal(app.read(id).messages.find(message => message.role === "assistant")?.text, "你好 fixture");
+    assert.equal(oldShape(app, id).messages.find(message => message.role === "assistant")?.text, "你好 fixture");
     assert.deepEqual(events(id, "run.output").map(data => data.event), [{ type: "text", text: "你好 fixture" }], "one window, with this conversation's text only");
   }
   for (const [index, id] of sessions.entries()) app.cancel(id, "cancel-" + index);
   for (const id of sessions) await app.wait(id);
-  assert.deepEqual(sessions.map(id => app.read(id).runs[0]!.status), ["cancelled", "cancelled", "cancelled", "cancelled"]);
-  assert.ok(sessions.every(id => app.read(id).messages.find(message => message.role === "assistant")?.text === "你好 fixture"), "the text survives the stop");
+  assert.deepEqual(sessions.map(id => oldShape(app, id).runs[0]!.status), ["cancelled", "cancelled", "cancelled", "cancelled"]);
+  assert.ok(sessions.every(id => oldShape(app, id).messages.find(message => message.role === "assistant")?.text === "你好 fixture"), "the text survives the stop");
 });
 
 test("the optional limits are whole numbers at least their minimum, none by default and no largest, and anything else fails before the service starts", () => {
@@ -266,8 +267,8 @@ test("a Turn has no time wall: without an operator's budget it works as long as 
   const { app, workspace, until, events } = await setup(t, undefined, { pacing: { hintsMs: [150, 500], quietMs: 100 } }, () => "stop");
   const session = await app.create(await workspace("no-wall"), { harnessId: "alpha" }, "create");
   app.send(session.id, "work until stopped", "send");
-  await until(() => app.read(session.id).runs[0]?.status === "running" && (app.read(session.id).runs[0]?.notices?.length ?? 0) === 2);
-  const run = app.read(session.id).runs[0]!;
+  await until(() => oldShape(app, session.id).runs[0]?.status === "running" && (oldShape(app, session.id).runs[0]?.notices?.length ?? 0) === 2);
+  const run = oldShape(app, session.id).runs[0]!;
   assert.equal(run.status, "running", "the hints stopped nothing"); assert.equal(run.stopRequested, false);
   assert.deepEqual(run.notices?.map(notice => [notice.severity, notice.title]), [["info", "已运行 150 毫秒，仍在工作"], ["info", "已运行 500 毫秒，仍在工作"]]);
   assert.match(run.notices![0]!.detail!, /不给回合设时间上限/u); assert.match(run.notices![0]!.detail!, /随时点停止/u);
@@ -275,8 +276,8 @@ test("a Turn has no time wall: without an operator's budget it works as long as 
   assert.deepEqual(events(session.id, "run.still_working").map(data => data.workedMs), [150, 500]);
   assert.equal(events(session.id, "run.budget_expired").length, 0);
   app.cancel(session.id, "cancel"); await app.wait(session.id);
-  const stopped = app.read(session.id).runs[0]!;
-  assert.equal(stopped.status, "cancelled"); assert.equal(stopped.error, null, "the user's stop is the only reason; no RUN_TIMEOUT"); assert.equal(app.read(session.id).status, "open");
+  const stopped = oldShape(app, session.id).runs[0]!;
+  assert.equal(stopped.status, "cancelled"); assert.equal(stopped.error, null, "the user's stop is the only reason; no RUN_TIMEOUT"); assert.equal(oldShape(app, session.id).status, "open");
 });
 
 test("a Turn's working time does not run while it waits for the user: no hint comes then, and none after a short Turn", async t => {
@@ -286,9 +287,9 @@ test("a Turn's working time does not run while it waits for the user: no hint co
   await until(() => app.attention().length === 1);
   // Waiting for the user for more than twice the mark: that time is not working time.
   await new Promise(resolve => setTimeout(resolve, 2200));
-  assert.equal(app.read(session.id).runs[0]!.notices, undefined); assert.equal(events(session.id, "run.still_working").length, 0);
+  assert.equal(oldShape(app, session.id).runs[0]!.notices, undefined); assert.equal(events(session.id, "run.still_working").length, 0);
   await decide(app, session.id, "allow_once", "decide"); await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!;
+  const run = oldShape(app, session.id).runs[0]!;
   assert.equal(run.status, "completed"); assert.equal(run.notices, undefined, "it worked for well under the mark");
 });
 
@@ -300,10 +301,10 @@ test("an approval has no deadline of the Hub's unless an operator set a wait bud
   const waiting = app.attention()[0]!;
   assert.equal(waiting.expiresAt, undefined); assert.equal(waiting.expiresBy, undefined, "no deadline of the Hub's, none of the program's");
   await new Promise(resolve => setTimeout(resolve, 900));
-  assert.equal(app.read(session.id).runs[0]!.status, "running", "waiting is not working: the execution budget did not run and no wait budget was set");
+  assert.equal(oldShape(app, session.id).runs[0]!.status, "running", "waiting is not working: the execution budget did not run and no wait budget was set");
   assert.equal(events(session.id, "permission.closed").length, 0);
   await decide(app, session.id, "allow_once", "decide"); await app.wait(session.id);
-  assert.equal(app.read(session.id).runs[0]!.status, "completed"); assert.equal(app.read(session.id).runs[0]!.error, null);
+  assert.equal(oldShape(app, session.id).runs[0]!.status, "completed"); assert.equal(oldShape(app, session.id).runs[0]!.error, null);
 });
 
 test("an operator's wait budget expires an approval nobody answered, cancels the Turn, and says so", async t => {
@@ -313,7 +314,7 @@ test("an operator's wait budget expires an approval nobody answered, cancels the
   await until(() => app.attention().length === 1);
   assert.equal(app.attention()[0]!.expiresBy, "turn"); assert.ok(app.attention()[0]!.expiresAt! - app.attention()[0]!.requestedAt <= 400);
   await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!;
+  const run = oldShape(app, session.id).runs[0]!;
   assert.equal(run.status, "cancelled"); assert.equal(run.error?.code, "WAIT_EXPIRED"); assert.equal(run.notices?.at(-1)?.title, "等待期限已到");
   assert.deepEqual(events(session.id, "run.budget_expired").map(data => data.kind), ["wait"]); assert.deepEqual(app.attention(), []);
 });

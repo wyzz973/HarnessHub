@@ -9,6 +9,7 @@ import type { PublicRun } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -57,13 +58,13 @@ test("installed Harness asks the user through its own question tool and acts on 
             if (choices[1]) chosen = choices[1].name;
             await app.runtime.decidePermission(session.id, request.id, option.id, "answer-" + randomUUID());
           }
-          const run = app.runtime.read(session.id).runs.at(-1)!;
+          const run = oldShape(app.runtime, session.id).runs.at(-1)!;
           if (TERMINAL.has(run.status)) break;
           if (Date.now() > deadline) throw new Error("question turn did not settle in time");
           await new Promise(resolve => setTimeout(resolve, 200));
         }
         await app.runtime.wait(session.id);
-        const run = app.runtime.read(session.id).runs.at(-1)!, reply = app.runtime.read(session.id).messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
+        const run = oldShape(app.runtime, session.id).runs.at(-1)!, reply = oldShape(app.runtime, session.id).messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
         proof.run = { status: run.status, error: run.error, cleanup: run.cleanup?.closed ?? null, chosen, matched: chosen !== null && reply.includes(chosen), replyBytes: Buffer.byteLength(reply) };
         if (run.status !== "completed") failures.push(harnessId + ": turn");
         if (chosen === null) failures.push(harnessId + ": no native question");

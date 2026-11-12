@@ -54,6 +54,6 @@ if (mode === "queue") {
 } else {
   app.setRetention(session.id, true, "keep");
   app.send(session.id, "turn", "first"); await app.wait(session.id);
-  process.stdout.write(JSON.stringify({ session: session.id, retained: app.read(session.id).retained ?? null }) + "\n");
+  process.stdout.write(JSON.stringify({ session: session.id, retained: store.get(session.id).retained ?? null }) + "\n");
 }
 setInterval(() => {}, 1000);

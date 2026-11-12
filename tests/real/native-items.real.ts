@@ -11,6 +11,7 @@ import type { PermissionRequest, PublicRun, SessionId } from "../../src/contract
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -50,8 +51,8 @@ async function settle(app: App, id: SessionId, answer: (request: PermissionReque
       if (option === null) throw new Error("no fitting one-time option among the native approval options");
       await app.runtime.decidePermission(id, request.id, option, "decide-" + randomUUID());
     }
-    const run = app.runtime.read(id).runs.at(-1)!;
-    if (TERMINAL.has(run.status)) { await app.runtime.wait(id); return app.runtime.read(id).runs.at(-1)!; }
+    const run = oldShape(app.runtime, id).runs.at(-1)!;
+    if (TERMINAL.has(run.status)) { await app.runtime.wait(id); return oldShape(app.runtime, id).runs.at(-1)!; }
     if (Date.now() > deadline) throw new Error("the native turn did not settle in time");
     await new Promise(resolve => setTimeout(resolve, 200));
   }
@@ -115,7 +116,7 @@ test("an installed Harness's Turn is kept as items in the order they happened, w
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
       const open = (): App => application(data, () => {}, { installations: realInstallations, workspaceLockRoot: join(root, "locks") });
       const fail = (checks: Record<string, boolean>, label: string): void => { for (const [name, passed] of Object.entries(checks)) if (!passed) failures.push(harnessId + ": " + label + " " + name); };
-      const replyOf = (app: App, id: SessionId, run: PublicRun): string => app.runtime.read(id).messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
+      const replyOf = (app: App, id: SessionId, run: PublicRun): string => oldShape(app.runtime, id).messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
       let app = open();
       try {
         header ??= await evidenceHeader(app, harnesses, { configuration });

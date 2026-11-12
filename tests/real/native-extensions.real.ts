@@ -9,6 +9,7 @@ import type { PublicRun } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -55,13 +56,13 @@ test("installed Harness lists its native extensions and runs a workspace skill t
           const session = await app.runtime.create(configuration, { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }) }, "create-" + randomUUID());
           app.runtime.send(session.id, "/" + local.command + " 请按技能说明回复。", "skill-" + randomUUID());
           const deadline = Date.now() + 6 * 60 * 1000;
-          while (!TERMINAL.has(app.runtime.read(session.id).runs.at(-1)!.status)) {
+          while (!TERMINAL.has(oldShape(app.runtime, session.id).runs.at(-1)!.status)) {
             if (Date.now() > deadline) throw new Error("skill turn did not settle in time");
             if (app.runtime.permissionRequests(session.id).length) throw new Error("the skill turn asked for an approval");
             await new Promise(resolve => setTimeout(resolve, 200));
           }
           await app.runtime.wait(session.id);
-          const run = app.runtime.read(session.id).runs.at(-1)!, reply = app.runtime.read(session.id).messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
+          const run = oldShape(app.runtime, session.id).runs.at(-1)!, reply = oldShape(app.runtime, session.id).messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
           const events = app.store.events(session.id, 0, 100).filter(row => row.type === "run.native_command").length;
           proof.skillTurn = { status: run.status, matched: reply.includes("HH-SKILL-OK"), nativeCommand: events > 0, reply: reply.slice(0, 120) };
           if (run.status !== "completed" || !reply.includes("HH-SKILL-OK")) failures.push(harnessId + ": workspace skill");

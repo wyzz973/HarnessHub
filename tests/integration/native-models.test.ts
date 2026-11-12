@@ -13,6 +13,7 @@ import type { SqliteConversationStore } from "../../src/infrastructure/session/c
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { startWebServer } from "../../src/web/server.js";
 import { application } from "../../src/cli/session-application.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url));
 test("native Claude keeps an unset auth-directory override unset and honors an explicit user's override", () => {
@@ -77,17 +78,17 @@ test("real Codex/ACP protocol probes enumerate native models without prompts and
   // none, so a packet to it is refused at admission (RELAY_TARGET_UNVERIFIED{undeclared}); this case is about model selection,
   // so the input goes alone.
   runtime.send(session.id, "native second", "second", [], { attach: "none" }); await runtime.wait(session.id);
-  const current = runtime.read(session.id); assert.equal(current.id, session.id); assert.equal(current.runs[1]!.status, "completed");
+  const current = oldShape(runtime, session.id); assert.equal(current.id, session.id); assert.equal(current.runs[1]!.status, "completed");
   assert.equal(current.runs[1]!.selection.nativeModel, "native-model-b");
   const messages = (await readFile(f.trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
   assert.ok(messages.some(row => row.method === "thread/start" && row.params.model === "native-model-b"));
   assert.ok(messages.some(row => row.method === "session/set_config_option" && row.params.value === "native-model-b"));
   assert.equal(messages.filter(row => row.method === "turn/start" || row.method === "session/prompt").length, 2);
   runtime.switch(session.id, { harnessId: "native-codex", nativeModel: "model-from-another-harness" }, "invalid-model"); await runtime.wait(session.id);
-  assert.equal(runtime.read(session.id).switches.at(-1)!.status, "effective");
+  assert.equal(oldShape(runtime, session.id).switches.at(-1)!.status, "effective");
   // Alone too: Codex's declaration is unprobed (RELAY_TARGET_UNVERIFIED{unprobed} at admission otherwise, G072).
   runtime.send(session.id,"invalid model must not reach a prompt","invalid-model-input", [], { attach: "none" }); await runtime.wait(session.id);
-  assert.equal(runtime.read(session.id).runs.at(-1)!.status,"failed"); assert.equal(runtime.read(session.id).runs.at(-1)!.error?.code,"MODEL_UNAVAILABLE"); assert.equal(runtime.read(session.id).status,"open");
+  assert.equal(oldShape(runtime, session.id).runs.at(-1)!.status,"failed"); assert.equal(oldShape(runtime, session.id).runs.at(-1)!.error?.code,"MODEL_UNAVAILABLE"); assert.equal(oldShape(runtime, session.id).status,"open");
 });
 
 test("authenticated native models endpoint accepts workspace queries, projects no credentials and owns probe shutdown", async t => {
@@ -160,18 +161,18 @@ test("a Codex thread keeps the collaboration mode it last confirmed while the co
   const store = appStore(join(f.root, "data")); let id = 0;
   const runtime = new SessionRuntime(store, factory, { id: () => String(++id), now: () => new Date(), publish: () => {}, fingerprint: text => createHash("sha256").update(text).digest("hex") });
   f.close.push(async () => { await runtime.close(); store.close(); });
-  const observed = (session: Parameters<typeof runtime.read>[0]) => runtime.read(session).nativeBindings?.find(binding => binding.harnessId === "native-plan")?.observed?.options.collaboration_mode;
+  const observed = (session: Parameters<typeof runtime.switch>[0]) => oldShape(runtime, session).nativeBindings?.find(binding => binding.harnessId === "native-plan")?.observed?.options.collaboration_mode;
   const session = await runtime.create(config, { harnessId: "native-plan", nativeOptions: { collaboration_mode: "plan" } }, "create");
   runtime.send(session.id, "plan it", "first"); await runtime.wait(session.id);
-  assert.equal(runtime.read(session.id).runs[0]!.status, "completed"); assert.equal(observed(session.id), "plan");
+  assert.equal(oldShape(runtime, session.id).runs[0]!.status, "completed"); assert.equal(observed(session.id), "plan");
   // Following the native configuration declares nothing and sends no mode; the thread's last confirmed mode is kept.
   runtime.switch(session.id, { harnessId: "native-plan", provider: null }, "follow"); await runtime.wait(session.id);
   runtime.send(session.id, "next", "second"); await runtime.wait(session.id);
-  assert.equal(runtime.read(session.id).runs[1]!.status, "completed"); assert.equal(observed(session.id), "plan");
+  assert.equal(oldShape(runtime, session.id).runs[1]!.status, "completed"); assert.equal(observed(session.id), "plan");
   // Choosing the default mode sends it, and that becomes the thread's value.
   runtime.switch(session.id, { harnessId: "native-plan", provider: null, nativeOptions: { collaboration_mode: "default" } }, "default"); await runtime.wait(session.id);
   runtime.send(session.id, "do it", "third"); await runtime.wait(session.id);
-  assert.equal(runtime.read(session.id).runs[2]!.status, "completed"); assert.equal(observed(session.id), "default");
+  assert.equal(oldShape(runtime, session.id).runs[2]!.status, "completed"); assert.equal(observed(session.id), "default");
   const sent = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
   assert.deepEqual(sent.filter(row => row.method === "initialize").map(row => (row.params!.capabilities as Record<string, unknown>).experimentalApi), [true, false, true]);
   assert.deepEqual(sent.filter(row => row.method === "turn/start").map(row => (row.params!.collaborationMode as { mode?: string } | undefined)?.mode ?? null), ["plan", null, "default"]);

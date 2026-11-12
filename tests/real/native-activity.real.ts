@@ -9,6 +9,7 @@ import type { PermissionRequest, PublicRun, SessionId } from "../../src/contract
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -49,8 +50,8 @@ async function settle(app: App, id: SessionId, permissions: Record<string, unkno
       if (option === null) throw new Error("no one-time allow option among the native approval options");
       await app.runtime.decidePermission(id, request.id, option, "allow-" + randomUUID());
     }
-    const run = app.runtime.read(id).runs.at(-1)!;
-    if (TERMINAL.has(run.status)) { await app.runtime.wait(id); return app.runtime.read(id).runs.at(-1)!; }
+    const run = oldShape(app.runtime, id).runs.at(-1)!;
+    if (TERMINAL.has(run.status)) { await app.runtime.wait(id); return oldShape(app.runtime, id).runs.at(-1)!; }
     if (Date.now() > deadline) throw new Error("native tool turn did not settle in time");
     await new Promise(resolve => setTimeout(resolve, 200));
   }
@@ -88,7 +89,7 @@ test("installed Harness tool activity is committed with stored, readable details
         if (readOnly) app.runtime.send(created.id, "这是一次只读的工具链路验收：用你的命令执行工具运行 `echo HH-TOOL-OK`，不要做其他任何操作，然后只回复命令输出。", "send-" + randomUUID());
         else app.runtime.send(created.id, "这是一次工具链路验收，只在当前工作目录内操作：\n1. 用命令行工具运行 `cat notes.txt`。\n2. 用你的文件编辑工具（不要用 shell 命令）把 notes.txt 里的 bravo 改成 delta。\n" + (askPlan ? "开始前必须先用你的计划/待办工具（例如 update_plan 或 TodoWrite）列出这两步，并在每步完成后更新状态。" : "如果你有计划或待办工具，先用它列出这两步。") + "完成后只回复 notes.txt 第二行的新内容。不要创建或修改其他文件。", "send-" + randomUUID());
         const run = await settle(app, created.id, permissions, Date.now() + 8 * 60 * 1000);
-        const state = app.runtime.read(created.id), reply = state.messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
+        const state = oldShape(app.runtime, created.id), reply = state.messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
         const edited = (await readFile(join(workspace, "notes.txt"), "utf8")).split("\n")[1] ?? "";
         const tools = run.tools ?? [];
         const details = await Promise.all(tools.filter(tool => tool.detail !== undefined).map(async tool => {
@@ -124,7 +125,7 @@ test("installed Harness tool activity is committed with stored, readable details
         for (const [name, passed] of Object.entries(checks)) if (!passed) failures.push(harnessId + ": " + name);
       } catch (error) {
         // The last Run's own outcome explains a blocked Session (for example cleanup that could not be confirmed).
-        try { const last = app.runtime.read(app.store.list({ limit: 10 }).rows[0]!.id).runs.at(-1); if (last) proof.lastRun = { status: last.status, error: last.error, cleanup: last.cleanup ?? null }; } catch { /* the Session itself may be unreadable */ }
+        try { const last = oldShape(app.runtime, app.store.list({ limit: 10 }).rows[0]!.id).runs.at(-1); if (last) proof.lastRun = { status: last.status, error: last.error, cleanup: last.cleanup ?? null }; } catch { /* the Session itself may be unreadable */ }
         proof.failure = { code: error !== null && typeof error === "object" && "code" in error ? String(error.code) : "ASSERTION", message: error instanceof Error ? error.message.slice(0, 512) : "failed" };
         failures.push(harnessId + ": " + (proof.failure as { code: string }).code);
       } finally {

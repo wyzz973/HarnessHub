@@ -120,3 +120,23 @@ test("bounded writer counts real Writable pending bytes and rejects an oversized
   assert.throws(() => boundedWrite(stream, "x".repeat(MAX_CLI_OUTPUT_BYTES + 1)), error => error instanceof Error && "code" in error && error.code === "OUTPUT_LIMIT");
   assert.equal(stream.writableLength, 0); stream.destroy();
 });
+
+test("formal chat --json tells the conversation as its head and the facts of each Run, its history a Turn to a document, and never as the old whole shape", async t => {
+  const f = await fixture(t, false), invoked = start(f);
+  let output = ""; invoked.child.stdout.setEncoding("utf8"); invoked.child.stdout.on("data", (chunk: string) => { output += chunk; });
+  invoked.child.stdin.end(":history\n");
+  const ended = await invoked.result;
+  assert.equal(ended.code, 0, ended.stderr);
+  const documents = output.trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
+  assert.deepEqual(documents.map(document => document.type), ["session", "history", "turn", "snapshot"]);
+  const [opened, history, turn, closed] = documents as [Record<string, Record<string, unknown>>, Record<string, unknown>, Record<string, Record<string, unknown>>, Record<string, Record<string, unknown>>];
+  for (const head of [opened.session!, closed.session!]) {
+    assert.deepEqual([head.id, head.status, head.epoch, head.activeRunId, head.switches], [f.state.id, "open", f.state.epoch, null, []]);
+    assert.deepEqual((head.runs as { status: string; ordinal: number }[]).map(run => [run.ordinal, run.status]), [[0, "completed"]]);
+    for (const old of ["schemaVersion", "messages", "commands", "nativeBindings", "configuration"]) assert.equal(old in head, false, "the head does not carry " + old);
+  }
+  assert.equal(history.turns, 1);
+  assert.deepEqual([turn.run!.input, turn.run!.status, turn.ordinal], ["synthetic historical input", "completed", 0]);
+  assert.deepEqual((turn.messages as unknown as { role: string; text: string }[]).map(message => message.role + ": " + message.text), ["user: synthetic historical input", "assistant: fixed historical response"]);
+  assert.deepEqual(read(f.data, f.state.id), f.state, "reading the history changed nothing");
+});

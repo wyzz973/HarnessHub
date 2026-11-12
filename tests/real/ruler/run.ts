@@ -9,6 +9,7 @@ import type { WatchedMount } from "./mount.js";
 import { MODES, hubCell, outcome, type CellRow, type Mode, type StepRow, type StepTable } from "./table.js";
 import { TASKS, TASK_IDS, type Built, type JudgeContext, type StepJudgement, type TaskId, type Verdict } from "./tasks.js";
 import { classifyTool, hubCalls, summarizeTools, type ToolRecord } from "./tools.js";
+import { oldShape } from "../../fixtures/old-shape.js";
 
 /*
  * The relay ruler's driver (relay-task.real.ts, and the same code against fake Harnesses in the dry run): for each task and way
@@ -112,7 +113,7 @@ async function settle(hub: CellHub, id: SessionId, limitMs: number, approvals: A
       try { await hub.runtime.decidePermission(id, request.id, option, "decide-" + randomUUID()); if (question) approvals.questions++; else approvals.allowed++; }
       catch { approvals.unanswered++; }
     }
-    const run = hub.runtime.read(id).runs.at(-1)!;
+    const run = oldShape(hub.runtime, id).runs.at(-1)!;
     if (TERMINAL.has(run.status)) { await hub.runtime.wait(id); return "settled"; }
     if (Date.now() > deadline) { hub.runtime.cancel(id, "cancel-" + randomUUID()); await hub.runtime.wait(id); return "late"; }
     await delay(200);
@@ -181,7 +182,7 @@ async function runCell(options: RulerOptions, spec: CellSpec, index: number): Pr
       const approvals: Approvals = { allowed: 0, questions: 0, unanswered: 0 }, began = performance.now(), sentAt = Date.now();
       open.runtime.send(id, text, "send-" + randomUUID(), [], relay);
       const ended = await settle(open, id, options.stepLimitMs, approvals), wallMs = Math.round(performance.now() - began), settledAt = Date.now();
-      const state = open.runtime.read(id), run = state.runs.at(-1)!;
+      const state = oldShape(open.runtime, id), run = state.runs.at(-1)!;
       let digest: Record<string, unknown> | null = null;
       try { digest = summary(open, id, state, run); } catch { /* a Turn that failed before it prepared has no record to summarize */ }
       const records = await toolRecords(open, run), facts = records.map(tool => classifyTool(tool, workspace, repo.files)), tools = summarizeTools(facts, earlier);
@@ -215,7 +216,7 @@ async function runCell(options: RulerOptions, spec: CellSpec, index: number): Pr
       if (spec.second !== spec.first) {
         open.runtime.switch(id, options.select(spec.second), "switch-" + randomUUID());
         await within(open.runtime.wait(id), options.stepLimitMs, "the switch to " + spec.second);
-        if (open.runtime.read(id).selection.harnessId !== spec.second) throw new Error("the switch to " + spec.second + " did not take effect");
+        if (oldShape(open.runtime, id).selection.harnessId !== spec.second) throw new Error("the switch to " + spec.second + " did not take effect");
       }
       const two = await step(2, prompts[1], spec.mode === "floor" ? { attach: "none" } : undefined);
       verdict = await task.judgeFinal(context());

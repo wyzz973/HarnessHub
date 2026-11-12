@@ -7,6 +7,7 @@ import { readRelayPrompt } from "../fixtures/relay-packet.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { appStore } from "../fixtures/runtime-store.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 // The relay through the formal Runtime and a real SqliteConversationStore (slim.md): what a Turn sends, what the binding records, and
 // what a restart leaves. The Harnesses are in-process fakes that keep a native history; nothing here runs a Harness.
@@ -20,7 +21,7 @@ test("a conversation on one Harness is never injected: every input, the first on
   assert.equal(fakes.carried("alpha"), 0);
   assert.equal(events(w.store, id).filter(row => row.type === "run.context_prepared" && row.data.relay !== undefined).length, 0, "no relay record at all");
   // A rewind with nothing foreign to send is no reason to send anything.
-  assert.deepEqual(app.read(id).nativeBindings!.map(row => row.relay!.resendAll), [true]);
+  assert.deepEqual(oldShape(app, id).nativeBindings!.map(row => row.relay!.resendAll), [true]);
 });
 
 test("A → B → A: bravo gets a packet of alpha's Turns, back on alpha only bravo's Turns go as an update, and staying put injects nothing", async t => {
@@ -33,7 +34,7 @@ test("A → B → A: bravo gets a packet of alpha's Turns, back on alpha only br
   // The completed Turn proves the packet recorded (E3): the binding holds alpha's Turn and nothing waits.
   const delivery = w.store.relayDeliveries(id).find(row => row.runId === b1.id)!;
   assert.deepEqual([delivery.outcome.kind, delivery.outcome.kind === "recorded" ? delivery.outcome.evidence : null, delivery.autoResend], ["recorded", "E3", false]);
-  const bravo = relayOf(app.read(id), "bravo");
+  const bravo = relayOf(oldShape(app, id), "bravo");
   assert.equal(bravo.pending, null); assert.ok(bravo.mark >= 1, "the mark moved up to the packet's end: " + bravo.mark); assert.equal(bravo.epoch, 1);
   // Staying on bravo: nothing is owed, nothing is injected.
   await turn(app, id, "b2 again", "b2");
@@ -45,9 +46,9 @@ test("A → B → A: bravo gets a packet of alpha's Turns, back on alpha only br
   assert.equal(back.packet, true); assert.equal(back.kind, "delta"); assert.equal(back.currentInput.text, "a2 back on alpha");
   assert.deepEqual(back.history.map(row => row.user.text), ["b1 a question for bravo", "b2 again"]);
   assert.deepEqual(fakes.to("alpha")[0]!.text, "a1 a fact on alpha", "alpha's first input went as typed");
-  assert.deepEqual(kinds(app.read(id)), [null, "packet", null, "delta"]);
+  assert.deepEqual(kinds(oldShape(app, id)), [null, "packet", null, "delta"]);
   assert.equal(a2.relay?.continuity.kind, "native_resume_delta");
-  assert.equal(relayOf(app.read(id), "alpha").pending, null);
+  assert.equal(relayOf(oldShape(app, id), "alpha").pending, null);
 });
 
 test("a packet that nothing confirms is sent again once, then the Turns go alone, until there is a new fact: the new packet carries everything owed", async t => {
@@ -59,7 +60,7 @@ test("a packet that nothing confirms is sent again once, then the Turns go alone
   assert.deepEqual(runs.map(run => decisionOf(w.store, id, run.id)), [{ kind: "carry", by: "need" }, { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" },
     { kind: "alone", by: "policy", cause: "delivery_unconfirmed" }, { kind: "alone", by: "policy", cause: "delivery_unconfirmed" }]);
   assert.equal(fakes.carried("bravo"), 2, "the packet went twice and no more");
-  const pending = relayOf(app.read(id), "bravo").pending!;
+  const pending = relayOf(oldShape(app, id), "bravo").pending!;
   assert.equal(pending.autoResends, 1);
   assert.deepEqual(w.store.relayDeliveries(id).map(row => [row.autoResend, row.outcome.kind]), [[false, "unknown"], [true, "unknown"]]);
   // A new fact for bravo: alpha says something; back on bravo one packet carries a1 (never confirmed) and the new fact, counted from 0 again.
@@ -67,7 +68,7 @@ test("a packet that nothing confirms is sent again once, then the Turns go alone
   const b5 = await turn(app, id, "b5", "k5");
   assert.deepEqual(decisionOf(w.store, id, b5.id), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "grown" });
   assert.deepEqual(readRelayPrompt(fakes.to("bravo").at(-1)!.text).history.map(row => row.user.text), ["a1 a fact on alpha", "a2 a new fact"]);
-  assert.equal(relayOf(app.read(id), "bravo").pending!.autoResends, 0);
+  assert.equal(relayOf(oldShape(app, id), "bravo").pending!.autoResends, 0);
 });
 
 test("a Driver that can never show a delivery sends a packet once: nothing it does confirms an input, so the next Turns go alone", async t => {
@@ -77,7 +78,7 @@ test("a Driver that can never show a delivery sends a packet once: nothing it do
   assert.deepEqual(runs.map(run => decisionOf(w.store, id, run.id)), [{ kind: "carry", by: "need" }, { kind: "alone", by: "policy", cause: "delivery_unconfirmed" }, { kind: "alone", by: "policy", cause: "delivery_unconfirmed" }]);
   assert.equal(fakes.carried("bravo"), 1);
   assert.deepEqual(fakes.to("bravo").slice(1).map(row => row.text), ["b2", "b3"], "the words as typed");
-  assert.equal(relayOf(app.read(id), "bravo").pending?.autoResends, 0, "never sent again by itself");
+  assert.equal(relayOf(oldShape(app, id), "bravo").pending?.autoResends, 0, "never sent again by itself");
 });
 
 test("a Turn stopped right after its packet went: recorded when the Driver reported the entry, sent again once when nothing did", async t => {
@@ -87,9 +88,9 @@ test("a Turn stopped right after its packet went: recorded when the Driver repor
     const receipt = app.send(id, "b1 stopped soon", "k1");
     await fakes.reached("bravo", 1);
     app.cancel(id, "stop"); await app.wait(id);
-    const stopped = app.read(id).runs.find(run => run.id === receipt.runId)!;
+    const stopped = oldShape(app, id).runs.find(run => run.id === receipt.runId)!;
     assert.equal(stopped.status, "cancelled");
-    const delivery = w.store.relayDeliveries(id).find(row => row.runId === stopped.id)!, bravo = relayOf(app.read(id), "bravo");
+    const delivery = w.store.relayDeliveries(id).find(row => row.runId === stopped.id)!, bravo = relayOf(oldShape(app, id), "bravo");
     fakes.script = () => ({});
     const next = await turn(app, id, "b2", "k2");
     if (reported) {
@@ -99,7 +100,7 @@ test("a Turn stopped right after its packet went: recorded when the Driver repor
     } else {
       assert.equal(delivery.outcome.kind, "unknown"); assert.equal(bravo.pending?.autoResends, 0);
       assert.deepEqual(decisionOf(w.store, id, next.id), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" }); assert.equal(fakes.carried("bravo"), 2);
-      assert.equal(relayOf(app.read(id), "bravo").pending, null, "and this time it ended normally: recorded");
+      assert.equal(relayOf(oldShape(app, id), "bravo").pending, null, "and this time it ended normally: recorded");
     }
   }
 });
@@ -107,11 +108,11 @@ test("a Turn stopped right after its packet went: recorded when the Driver repor
 test("a clear opens a new native session and leaves the earlier part behind; the next message carries none of it, and the user may attach it once", async t => {
   const { w, fakes, app, id } = await fromAlpha(t, { bravo: declared() }, "bravo");
   await turn(app, id, "b1 before the clear", "k1");
-  const before = relayOf(app.read(id), "bravo");
+  const before = relayOf(oldShape(app, id), "bravo");
   fakes.script = (_harnessId, input) => input === "/clear" ? { cleared: true } : {};
   const cleared = await turn(app, id, "/clear", "clear");
   assert.equal(cleared.status, "completed"); assert.equal(fakes.to("bravo").at(-1)!.text, "/clear", "a command carries nothing");
-  const state = app.read(id), bravo = relayOf(state, "bravo");
+  const state = oldShape(app, id), bravo = relayOf(state, "bravo");
   assert.deepEqual([bravo.epoch, bravo.mark, bravo.pending, bravo.resendAll], [before.epoch + 1, -1, null, false]);
   assert.equal(bravo.floor, events(w.store, id).find(row => row.type === "run.ended" && row.data.runId === cleared.id)!.seq, "the clear is the floor");
   assert.deepEqual(state.nativeBindings!.filter(row => row.harnessId === "bravo").map(row => row.status), ["archived", "ready"], "the native session was given up for a new one");
@@ -149,24 +150,24 @@ test("a clear the Driver reported is the clear boundary whether or not the progr
   for (const { label, reset, close } of variants) {
     const { w, fakes, app, id } = await fromAlpha(t, { bravo: declared() }, "bravo");
     await turn(app, id, "b1 before the clear", "k1");
-    const before = relayOf(app.read(id), "bravo");
+    const before = relayOf(oldShape(app, id), "bravo");
     fakes.script = (_harnessId, input) => input === "/clear" ? { cleared: true } : {};
     fakes.closing.bravo = close;
     const cleared = await turn(app, id, "/clear", "clear");
     assert.deepEqual([cleared.status, cleared.error?.code], close instanceof Error ? ["unknown", "CLEANUP_FAILED"] : ["failed", failure.code], label + ": the Turn reports what the close found");
     const ended = events(w.store, id).find(row => row.type === "run.ended" && row.data.runId === cleared.id)!;
     assert.equal(ended.data.contextEffect, "clear", label + ": and a clear the Driver reported is a clear all the same");
-    const state = app.read(id), bravo = relayOf(state, "bravo");
+    const state = oldShape(app, id), bravo = relayOf(state, "bravo");
     assert.deepEqual([bravo.epoch, bravo.mark, bravo.pending, bravo.resendAll, bravo.floor], [before.epoch + 1, -1, null, false, ended.seq], label + ": the clear is the boundary, as when the close is clean");
     assert.deepEqual(state.nativeBindings!.filter(row => row.harnessId === "bravo").map(row => row.status), ["archived", "ready"], label + ": the Driver gave the native session up: no binding waits for a confirmation of it");
     if (close instanceof Error) { assert.equal(state.status, "blocked", label + ": the conversation waits for the program to be confirmed gone"); continue; }
     fakes.closing = {}; fakes.script = () => ({});
-    if (reset) assert.equal(app.resetNative(id, "reset", app.read(id).epoch).status, "open");
+    if (reset) assert.equal(app.resetNative(id, "reset", oldShape(app, id).epoch).status, "open");
     const b2 = await turn(app, id, "b2 after the clear", "k2");
     assert.equal(b2.status, "completed", label + ": " + JSON.stringify(b2.error));
     assert.equal(fakes.to("bravo").at(-1)!.text, "b2 after the clear", label + ": as typed, nothing of the earlier part");
     assert.equal(fakes.carried("bravo"), 1, label + ": the first packet is all there ever was"); assert.equal(decisionOf(w.store, id, b2.id), undefined);
-    assert.equal(relayOf(app.read(id), "bravo").floor, ended.seq, label + ": and the boundary stays");
+    assert.equal(relayOf(oldShape(app, id), "bravo").floor, ended.seq, label + ": and the boundary stays");
   }
 });
 
@@ -179,19 +180,19 @@ test("a rewind makes the next packet carry everything again, once", async t => {
   assert.equal(b2.relay?.kind, "delta");
   // A command that took Turns out of bravo's native history: it may hold less than the relay recorded.
   const undone = await turn(app, id, "/undo", "undo");
-  assert.equal(undone.status, "completed"); assert.equal(relayOf(app.read(id), "bravo").resendAll, true);
+  assert.equal(undone.status, "completed"); assert.equal(relayOf(oldShape(app, id), "bravo").resendAll, true);
   assert.equal(fakes.to("bravo").at(-1)!.text, "/undo", "the command goes as typed");
   const b3 = await turn(app, id, "b3", "k3");
   assert.deepEqual(decisionOf(w.store, id, b3.id), { kind: "carry", by: "policy", cause: "history_changed", resend: "all" });
   assert.equal(b3.relay?.kind, "packet", "a complete packet, not an update");
   assert.deepEqual(readRelayPrompt(fakes.to("bravo").at(-1)!.text).history.map(row => row.user.text), ["a1 a fact on alpha", "a2 second fact on alpha"]);
-  const bravo = relayOf(app.read(id), "bravo");
+  const bravo = relayOf(oldShape(app, id), "bravo");
   assert.deepEqual([bravo.resendAll, bravo.pending], [false, null], "sent once, and recorded");
   const b4 = await turn(app, id, "b4", "k4");
   assert.equal(decisionOf(w.store, id, b4.id), undefined, "nothing more to send");
   // A compaction changes nothing.
-  const before = relayOf(app.read(id), "bravo");
-  await turn(app, id, "/compact", "compact"); assert.deepEqual(relayOf(app.read(id), "bravo"), before);
+  const before = relayOf(oldShape(app, id), "bravo");
+  await turn(app, id, "/compact", "compact"); assert.deepEqual(relayOf(oldShape(app, id), "bravo"), before);
 });
 
 // The independent review of 2026-11-11 (persistent format and lost content): a command read as a command that enters the context like a
@@ -215,7 +216,7 @@ test("a command that enters the context like a message (effect keep) is a fact o
   assert.equal(first.packet, true);
   assert.deepEqual(first.history.map(row => row.user.text), ["a1 a fact on alpha", "/skill:review 请修复 X"], "alpha's Turn and its skill, in order, and nothing else");
   // The packet's end is the skill's: the mark covers it, and nothing more is owed.
-  const skillEnded = events(w.store, id).find(row => row.type === "run.ended" && row.data.runId === skill.id)!.seq, bravo = relayOf(app.read(id), "bravo");
+  const skillEnded = events(w.store, id).find(row => row.type === "run.ended" && row.data.runId === skill.id)!.seq, bravo = relayOf(oldShape(app, id), "bravo");
   assert.deepEqual([bravo.mark, bravo.pending], [skillEnded, null]);
   await turn(app, id, "b2", "b2"); assert.equal(fakes.carried("bravo"), 1, "nothing is owed any more");
 });
@@ -225,7 +226,7 @@ test("a command that enters the context carries no packet itself, whatever its H
   const skill = await turn(app, id, "/skill:review 请修复 X", "skill");
   assert.equal(skill.status, "completed"); assert.equal(fakes.to("bravo")[0]!.text, "/skill:review 请修复 X", "as typed: bravo is owed a1, and the command carries nothing");
   assert.equal(fakes.carried("bravo"), 0); assert.equal(decisionOf(w.store, id, skill.id), undefined);
-  assert.equal(relayOf(app.read(id), "bravo").mark, -1, "the command settled nothing owed");
+  assert.equal(relayOf(oldShape(app, id), "bravo").mark, -1, "the command settled nothing owed");
   // The next message carries what bravo is owed: a1 only — its own skill Turn is not foreign to it.
   await turn(app, id, "b1", "b1");
   assert.deepEqual(readRelayPrompt(fakes.to("bravo")[1]!.text).history.map(row => row.user.text), ["a1 a fact on alpha"]);
@@ -239,7 +240,7 @@ test("\"only this message\" sends the words as typed and leaves what is owed owe
   const { w, fakes, app, id } = await fromAlpha(t, { bravo: declared() }, "bravo");
   const alone = await turn(app, id, "b1 alone", "k1", { attach: "none" });
   assert.equal(fakes.to("bravo")[0]!.text, "b1 alone"); assert.deepEqual(decisionOf(w.store, id, alone.id), { kind: "alone", by: "user" });
-  assert.deepEqual([relayOf(app.read(id), "bravo").mark, relayOf(app.read(id), "bravo").pending], [-1, null]);
+  assert.deepEqual([relayOf(oldShape(app, id), "bravo").mark, relayOf(oldShape(app, id), "bravo").pending], [-1, null]);
   const b2 = await turn(app, id, "b2", "k2");
   assert.equal(readRelayPrompt(fakes.to("bravo")[1]!.text).packet, true); assert.equal(b2.relay?.kind, "packet");
   assert.deepEqual(readRelayPrompt(fakes.to("bravo")[1]!.text).history.map(row => row.user.text), ["a1 a fact on alpha"]);
@@ -255,8 +256,8 @@ test("a Turn whose end is unknown, continued on the original session, sends ever
   const { w, fakes, app, id } = await fromAlpha(t, { bravo: declared() }, "bravo");
   fakes.script = harnessId => harnessId === "bravo" ? { result: "lost" } : {};
   const lost = await turn(app, id, "b1 lost", "k1");
-  assert.equal(lost.status, "unknown"); assert.equal(app.read(id).status, "blocked");
-  const bravo = relayOf(app.read(id), "bravo");
+  assert.equal(lost.status, "unknown"); assert.equal(oldShape(app, id).status, "blocked");
+  const bravo = relayOf(oldShape(app, id), "bravo");
   assert.deepEqual([bravo.pending?.autoResends, bravo.resendAll], [0, true], "the packet may have arrived, and the native session may hold more or less: both are said");
   fakes.script = () => ({});
   app.resume(id, { harnessId: "bravo" }, "resume", true); await app.wait(id);
@@ -278,7 +279,7 @@ test("a packet that cannot be prepared goes as the words alone and says why; whe
   fakes.secretsFail = false;
   const b3 = await turn(app, id, "b3", "k3");
   assert.equal(readRelayPrompt(fakes.to("bravo")[1]!.text).packet, true, "what was owed is carried once it can be");
-  assert.equal(b3.status, "completed"); assert.equal(relayOf(app.read(id), "bravo").pending, null);
+  assert.equal(b3.status, "completed"); assert.equal(relayOf(oldShape(app, id), "bravo").pending, null);
 });
 
 test("the installation's setting \"off\" hands nothing over by itself; the user's attach still does", async t => {
@@ -335,14 +336,14 @@ test("after a restart a packet nothing confirmed is still waited for: the next T
   const { w, fakes, app, id } = await fromAlpha(t, { bravo: declared(LIVE) }, "bravo");
   fakes.script = harnessId => harnessId === "bravo" ? { result: "unrecorded" } : {};
   await turn(app, id, "b1", "k1");
-  assert.equal(relayOf(app.read(id), "bravo").pending?.autoResends, 0);
+  assert.equal(relayOf(oldShape(app, id), "bravo").pending?.autoResends, 0);
   await app.close(); w.store.close();
   const next = restarted(t, w.data, { alpha: declared(), bravo: declared(LIVE) });
-  assert.equal(relayOf(next.app.read(id), "bravo").pending?.autoResends, 0, "kept across the restart");
+  assert.equal(relayOf(oldShape(next.app, id), "bravo").pending?.autoResends, 0, "kept across the restart");
   const b2 = await turn(next.app, id, "b2 after the restart", "k2");
   assert.deepEqual(decisionOf(next.store, id, b2.id), { kind: "carry", by: "policy", cause: "delivery_unconfirmed", resend: "auto" });
   assert.deepEqual(readRelayPrompt(next.fakes.to("bravo")[0]!.text).history.map(row => row.user.text), ["a1 a fact on alpha"]);
-  assert.equal(relayOf(next.app.read(id), "bravo").pending, null, "this time it ended normally");
+  assert.equal(relayOf(oldShape(next.app, id), "bravo").pending, null, "this time it ended normally");
 });
 
 test("a packet that was on its way when the Hub went away is waited for by the next owner (it may have arrived, and nothing says so)", async t => {

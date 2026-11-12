@@ -72,7 +72,7 @@ interface ActiveTurn {
   wake: (() => void) | null;
 }
 interface Tokens { readonly totalTokens: number; readonly inputTokens: number; readonly cachedInputTokens: number; readonly cacheWriteInputTokens: number; readonly outputTokens: number; readonly reasoningOutputTokens: number }
-const STREAM_MS = 300, ITEM_OUTPUT_BYTES = 128 * 1024;
+const STREAM_MS = 300;
 /**
  * Codex's refusal of turn/interrupt for a thread that has no active turn (JSON-RPC invalid request, -32600): the answer of a
  * turn it has not begun yet, or one that has already ended. Codex 0.166.0 answers turn/start at once and runs the user's hooks
@@ -88,7 +88,6 @@ function tokens(value: unknown): Tokens | null {
 }
 function line(value: string, maximum = 4096): string { return value.replace(/[\0-\x1f\x7f]+/gu, " ").trim().slice(0, maximum); }
 function json(value: unknown): string | undefined { if (value === undefined || value === null) return undefined; if (typeof value === "string") return value; try { return JSON.stringify(value, null, 2); } catch { return undefined; } }
-function tail(value: string): string { const bytes = Buffer.from(value); return bytes.length <= ITEM_OUTPUT_BYTES ? value : new TextDecoder().decode(bytes.subarray(bytes.length - ITEM_OUTPUT_BYTES)); }
 function fileDiff(change: unknown): string {
   if (change === null || typeof change !== "object") return "";
   const row = change as Record<string, unknown>, path = typeof row.path === "string" ? row.path : "file", diff = typeof row.diff === "string" ? row.diff : "";
@@ -177,11 +176,11 @@ function permissionOptions(configured: Record<string, unknown>): NativeOption[] 
     return [{ id, name: setting.name, category: "permission", currentValue: current, values }];
   });
 }
-/** Public title and bounded detail for a Codex tool-like item; message, reasoning and lifecycle items return null. */
+/** Public title and detail (whole: nothing is cut to a preview here) for a Codex tool-like item; message, reasoning and lifecycle items return null. */
 function itemTool(item: Record<string, unknown>): { title: string; detail: NativeToolDetail } | null {
   switch (item.type) {
     case "commandExecution": { const command = typeof item.command === "string" ? item.command : "";
-      return { title: line(command) || "命令", detail: { kind: "execute", name: "shell", ...(command ? { input: command } : {}), ...(typeof item.aggregatedOutput === "string" ? { output: tail(item.aggregatedOutput) } : {}), ...(typeof item.exitCode === "number" && Number.isSafeInteger(item.exitCode) ? { exitCode: item.exitCode } : {}), ...(typeof item.cwd === "string" ? { locations: [item.cwd] } : {}) } }; }
+      return { title: line(command) || "命令", detail: { kind: "execute", name: "shell", ...(command ? { input: command } : {}), ...(typeof item.aggregatedOutput === "string" ? { output: item.aggregatedOutput } : {}), ...(typeof item.exitCode === "number" && Number.isSafeInteger(item.exitCode) ? { exitCode: item.exitCode } : {}), ...(typeof item.cwd === "string" ? { locations: [item.cwd] } : {}) } }; }
     case "fileChange": { const changes = Array.isArray(item.changes) ? item.changes : [], paths = changes.flatMap(change => change !== null && typeof change === "object" && typeof (change as Record<string, unknown>).path === "string" ? [(change as Record<string, unknown>).path as string] : []);
       return { title: "修改 " + (paths.slice(0, 3).map(path => basename(path)).join(", ") || "文件") + (paths.length > 3 ? " 等 " + paths.length + " 个文件" : ""), detail: { kind: "edit", name: "apply_patch", ...(changes.length ? { diff: changes.map(fileDiff).join("") } : {}), ...(paths.length ? { locations: paths.slice(0, 16) } : {}) } }; }
     case "mcpToolCall": { const name = String(item.server ?? "mcp") + "/" + String(item.tool ?? "tool"), result = item.result !== null && typeof item.result === "object" ? item.result as Record<string, unknown> : null, error = item.error !== null && typeof item.error === "object" ? (item.error as Record<string, unknown>).message : undefined;
@@ -768,7 +767,7 @@ export class CodexControl implements HarnessControl {
     }
     if (method !== "item/started" && method !== "item/completed") return;
     const item = object(params.item, "Codex sub-agent item"), type = string(item.type, "item type"), itemId = string(item.id, "item identity");
-    if (type === "agentMessage") { if (method === "item/completed" && typeof item.text === "string" && item.text.trim()) { agent.detail = { ...agent.detail, output: tail(item.text) }; publish(); } return; }
+    if (type === "agentMessage") { if (method === "item/completed" && typeof item.text === "string" && item.text.trim()) { agent.detail = { ...agent.detail, output: item.text }; publish(); } return; }
     const tool = ["userMessage", "reasoning", "plan", "hookPrompt", "functionCallOutput", "subAgentActivity", "contextCompaction"].includes(type) ? null : itemTool(item);
     if (tool === null) return;
     active.event({ type: "tool", id: (thread.slice(0, 120) + "/" + itemId).slice(0, 256), title: tool.title, status: status(item.status, method === "item/started"), detail: { ...tool.detail, parentId } });
@@ -904,7 +903,7 @@ export class CodexControl implements HarnessControl {
       if (!active) throw new ControlError("INVALID_STATE", "native tool progress arrived without an active turn");
       const entry = active.items.get(string(params.itemId, "tool item identity"));
       if (!entry) return;
-      if (method === "item/commandExecution/outputDelta") entry.detail = { ...entry.detail, output: tail((entry.detail.output ?? "") + text(params.delta, "command output delta")) };
+      if (method === "item/commandExecution/outputDelta") entry.detail = { ...entry.detail, output: (entry.detail.output ?? "") + text(params.delta, "command output delta") };
       else if (method === "item/fileChange/patchUpdated") entry.detail = { ...entry.detail, ...(Array.isArray(params.changes) ? { diff: params.changes.map(fileDiff).join("") } : {}) };
       else entry.detail = { ...entry.detail, output: text(params.message, "tool progress") };
       const itemId = String(params.itemId);
@@ -978,7 +977,9 @@ export class CodexControl implements HarnessControl {
       const files = request.method.includes("fileChange") ? (item?.locations ?? []).map(path => basename(path)).slice(0, 3).join(", ") : "";
       const title = (params.threadId !== this.conversation ? "子 Agent · " : "") + (typeof params.command === "string" ? line(params.command) : request.method.includes("fileChange") ? "Codex 请求修改文件" + (files ? "：" + files : "") : "Codex 请求执行命令");
       const detail = [typeof params.reason === "string" ? line(params.reason) : "", typeof params.cwd === "string" ? "目录：" + params.cwd : "", request.method.includes("fileChange") && item?.diff ? item.diff : ""].filter(Boolean).join("\n").slice(0, 4096);
-      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve, reply: decision => ({ decision }) }); active.event({ type: "permission_requested", id, title, ...(detail ? { detail } : {}), options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })), ...requestExpiry(null) }); });
+      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve, reply: decision => ({ decision }) });
+      // The request names the item it is about (the id Codex gave the item in `item/started`): a refusal is recorded on that call.
+      active.event({ type: "permission_requested", id, forCall: String(params.itemId), title, ...(detail ? { detail } : {}), options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })), ...requestExpiry(null) }); });
     }
     const decision = active.stopping ? "cancel" : "decline";
     active.event({ type: "permission", id: String(request.id), decision: active.stopping ? "cancelled" : "denied" });

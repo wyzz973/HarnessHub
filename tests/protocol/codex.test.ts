@@ -113,6 +113,17 @@ test("Codex approvals default to decline and expose permission evidence", async 
     assert.deepEqual(messages.find(message => message.id === "permission-1").result, { decision: "decline" });
   } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
 });
+test("Codex names the item an approval is about", async () => {
+  const driver = control("permission");
+  try {
+    const id = await ready(driver); driver.enablePermissions();
+    const events: ControlEvent[] = [], run = await driver.startText(id, "hello", event => events.push(event));
+    for (let i = 0; i < 100 && !events.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    const asked = events.find(event => event.type === "permission_requested");
+    assert.ok(asked?.type === "permission_requested"); assert.equal(asked.forCall, "tool-1");
+    await driver.decidePermission(asked.id, "decline"); await run.result;
+  } finally { await driver.close(); }
+});
 test("Codex approvals arriving during interruption return cancel", async () => {
   const driver = control("stop-permission");
   try {
@@ -249,6 +260,17 @@ test("Codex ignores attached foreign threads, surfaces sub-agent approvals and n
     assert.deepEqual(wire.find(row => row.id === "unrelated-approval")?.result, { decision: "decline" });
     assert.deepEqual(wire.find(row => row.id === "child-approval")?.result, { decision: "cancel" });
   } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
+});
+test("Codex reports a command's output whole, however long: nothing is cut to a preview at the driver", async () => {
+  const driver = control("big-output", {}, { maxFrameBytes: 4 * 1024 * 1024, runTimeoutMs: 5000 });
+  try {
+    const events: ControlEvent[] = [], run = await driver.startText(await ready(driver), "go", event => events.push(event));
+    assert.equal((await run.result).status, "completed");
+    const outputs = events.flatMap(event => event.type === "tool" && event.id === "cmd-big" && event.detail?.output !== undefined ? [event.detail.output.length] : []);
+    assert.equal(outputs.at(-1), 4 * 100 * 1024 + 3, "the last report holds the whole output");
+    assert.ok(Math.max(...outputs) === outputs.at(-1) && outputs.every(length => length <= 4 * 100 * 1024 + 3), "and no report holds less than the one before it");
+    assert.equal(events.some(event => event.type === "tool" && event.detail?.truncated === true), false, "nothing says it was cut");
+  } finally { await driver.close(); }
 });
 test("Codex classifies failures by native codexErrorInfo before message text", async () => {
   const driver = control("typed-failure");

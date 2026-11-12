@@ -73,8 +73,13 @@ import { derive, sound } from "./store-conversion.js";
  * call still unsaved when the Turn ends); the content store's reference comes back as a `detail` input. An approval or a question is told by the id its Harness gave
  * it (not the Hub's own `permission-…` id), in `decided`, `expired` and the Harness's own `permission` withdrawal. The Run's row — its usage, its timing, its
  * end — and the events are not placed here: usage and diagnostics change no item. An item's `createdSeq` stays null in what is held and in every write: the store
- * writes it from `createdByEvent` when the item is inserted, and an update must leave it as it is. Not done here: `forItem` of an approval (the Driver does not say which
- * call it is about).
+ * writes it from `createdByEvent` when the item is inserted, and an update must leave it as it is.
+ *
+ * A REFUSED CALL. An approval names the call it is about when its Driver does (`forCall` of the request, `forItem` of the item: `tool:<id>`). When the approval ends declined — the user
+ * refused, or the Harness took the request back as denied — that call is declined, whatever its program reports of it: Codex says `declined`, Claude Code `failed`, and the approval item
+ * alone was right. A call already reported as failed becomes declined when the refusal is recorded; a call reported after it, or reported again, stays declined (the program's own word stays in
+ * `native.status`); a call nobody reported yet is declined when it is. Closing the Turn leaves it (a declined item is not open). An approval that timed out, was closed with the Turn or
+ * was allowed refuses nothing, and a question is about no call.
  */
 
 /** How a Turn ended; the words of a Run's last states. */
@@ -134,6 +139,8 @@ export interface ActiveTurn {
   readonly segment: Segment | null;
   /** How the Turn ended once it has: nothing is placed after that. */
   readonly settled: TerminalStatus | null;
+  /** The items of calls whose approval was declined before the call was reported: the call, when it is, is declined. */
+  readonly refused: ReadonlySet<string>;
 }
 
 /** The Turn of a Run, from the items it holds (at least its `user` item when the Runtime opens it; the items a restart finds when it recovers one). */
@@ -144,7 +151,13 @@ export function openTurn(run: RunRow, items: readonly HeldItem[] = []): ActiveTu
     const counted = /^(text|think|notice|output):(\d+)$/u.exec(item.itemId);
     if (counted !== null) { const key = counted[1] as keyof typeof counts; counts[key] = Math.max(counts[key], Number(counted[2])); }
   });
-  return { run, nextSeq: items.reduce((top, item) => Math.max(top, item.seq), 0) + 1, entries: vecOf(items.map((item): Entry => ({ item }))), ids, counts, prints: new Set(), window: null, hold: null, segment: null, settled: null };
+  // A refusal recorded before its call was reported is in the approval, which names the call: a Turn that is taken up again knows it from the items.
+  const refused = new Set<string>();
+  for (const item of items) {
+    const named = item.type === "approval" && item.status === "declined" ? (item.fields as { readonly forItem?: string }).forItem : undefined;
+    if (named !== undefined && !ids.has(named)) refused.add(named);
+  }
+  return { run, nextSeq: items.reduce((top, item) => Math.max(top, item.seq), 0) + 1, entries: vecOf(items.map((item): Entry => ({ item }))), ids, counts, prints: new Set(), window: null, hold: null, segment: null, settled: null, refused };
 }
 /** The items of the Turn so far, in the order of their `seq`. */
 export function itemsOf(turn: ActiveTurn): readonly HeldItem[] { return vecList(turn.entries).map(entry => entry.item); }
@@ -388,12 +401,14 @@ function placeTool(s: Draft, w: Writes, event: Extract<ControlEvent, { type: "to
   const ref = entry === undefined ? undefined : (entry.item.fields as { readonly detail?: ContentRef }).detail;
   const made = { ...fields, ...(ref === undefined ? {} : { detail: ref }), native } as ItemFields, parentId = parent === undefined ? null : "tool:" + parent;
   const dirty = given !== undefined || entry?.dirty === true;
+  // A call whose approval was declined is declined, whatever its program says of it after (see the top of this file).
+  const status: ItemStatus = entry?.item.status === "declined" || s.refused.has(itemId) ? "declined" : derived.status;
   if (position === undefined || entry === undefined) {
     takePlace(s, w, at);
-    insert(s, w, { itemId, fields: made, status: derived.status, at, endedAt: TERMINAL.has(derived.status) ? at : null, parentId, ...(merged === undefined ? {} : { detail: merged }), dirty });
+    insert(s, w, { itemId, fields: made, status, at, endedAt: TERMINAL.has(status) ? at : null, parentId, ...(merged === undefined ? {} : { detail: merged }), dirty });
   } else {
-    const item = entry.item, ended = item.endedAt ?? (TERMINAL.has(derived.status) ? at : null);
-    const next: HeldItem = { ...item, status: derived.status, endedAt: ended, parentId, type: made.type, fields: made };
+    const item = entry.item, ended = item.endedAt ?? (TERMINAL.has(status) ? at : null);
+    const next: HeldItem = { ...item, status, endedAt: ended, parentId, type: made.type, fields: made };
     const differs = !(item.status === next.status && item.parentId === next.parentId && item.type === next.type && sameJson(item.fields, next.fields));
     if (differs || merged !== entry.detail || dirty !== (entry.dirty === true)) change(s, w, position, differs ? next : item, { ...(merged === undefined ? {} : { detail: merged }), ...(dirty ? { dirty: true as const } : {}) }, differs);
   }
@@ -545,20 +560,34 @@ function placeRequest(s: Draft, w: Writes, event: Extract<ControlEvent, { type: 
   const options = (Array.isArray(event.options) ? event.options : []).filter(candidate => record(candidate) !== undefined).map(option => ({ id: scrub(str(option.id), "options.id", clipped), name: scrub(str(option.name), "options.name", clipped) }));
   const title = label(event.title, "title", question ? "Harness 提问" : "Harness 请求批准", clipped), detailed = event.detail === undefined ? "" : scrub(str(event.detail), "detail", clipped);
   const native = nativeOf(detailed === "" ? {} : { more: detailed }, clipped), secret = event.input?.kind === "secret";
+  // The call this approval is about, as the item of that call is named (a question is about none).
+  const named = typeof event.forCall === "string" && event.forCall !== "" ? "tool:" + scrub(event.forCall, "forCall", clipped) : undefined;
   const fields: ItemFields = question ? { type: "question", title, ...(secret ? { secret: true as const } : {}), ...(Object.keys(native).length === 0 ? {} : { native }) }
-    : { type: "approval", subject: subjectOf(title), title, options: options.map(option => ({ id: option.id, role: approvalRole(option), label: option.name.trim() === "" ? option.id : option.name })), ...(Object.keys(native).length === 0 ? {} : { native }) };
+    : { type: "approval", subject: subjectOf(title), title, options: options.map(option => ({ id: option.id, role: approvalRole(option), label: option.name.trim() === "" ? option.id : option.name })),
+      ...(named === undefined ? {} : { forItem: named }), ...(Object.keys(native).length === 0 ? {} : { native }) };
   const request: Request = { kind: question ? "question" : "approval", options, secret };
   const position = find(s, itemId), entry = position === undefined ? undefined : vecAt(s.entries, position);
   if (position === undefined || entry === undefined) { takePlace(s, w, at); insert(s, w, { itemId, fields, status: "waiting", at, request }); return; }
   // The same request asked again while it waits is the same item; one that was answered stays as it was answered.
   if (entry.item.status === "waiting" && !sameJson(entry.item.fields, fields)) change(s, w, position, { ...entry.item, fields }, { request });
 }
+/** The call an approval that ended declined was about is declined: now, if it is reported, and when it is, if not yet. */
+function refuseCall(s: Draft, w: Writes, approval: HeldItem, at: number): void {
+  const named = approval.type === "approval" ? (approval.fields as { readonly forItem?: string }).forItem : undefined;
+  if (named === undefined) return;
+  const position = find(s, named), entry = position === undefined ? undefined : vecAt(s.entries, position);
+  if (position === undefined || entry === undefined) { s.refused = new Set([...s.refused, named]); return; }
+  if (entry.item.status === "declined") return;
+  change(s, w, position, { ...entry.item, status: "declined", endedAt: entry.item.endedAt ?? at }, entry);
+}
 /** A request that waited ends: the item says how, and the decision when there is one. */
 function endRequest(s: Draft, w: Writes, position: number, status: ItemStatus, at: number, decision: NonNullable<ApprovalItem["decision"]> | null, answer: string | null): void {
   const entry = vecAt(s.entries, position)!, item = entry.item;
   const fields = { ...item.fields, ...(decision === null ? {} : { decision }), ...(answer === null ? {} : { answer }) } as ItemFields;
   const { request: _answered, ...rest } = entry;
-  change(s, w, position, { ...item, status, endedAt: at, fields }, rest);
+  const ended: HeldItem = { ...item, status, endedAt: at, fields };
+  change(s, w, position, ended, rest);
+  if (status === "declined" && decision !== null) refuseCall(s, w, ended, at);
 }
 function decide(s: Draft, w: Writes, id: string, option: string, input: string | undefined, by: "user" | "policy", at: number): void {
   const position = find(s, "permission:" + scrub(str(id), "id", [])), entry = position === undefined ? undefined : vecAt(s.entries, position);

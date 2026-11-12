@@ -22,6 +22,9 @@ import { CONTEXT_EFFECTS } from "../../contracts/relay.js";
  *  - `items.text_bytes` and `items.text_chunks` are kept by the insert trigger of `item_text`; a writer leaves them at their defaults.
  *  - The full-text indexes are derived data: nothing converts into them, `derived` says whether each is complete, and a maintenance
  *    command rebuilds them from the chunks.
+ *  - THIS FILE IS FROZEN. The digest of what `schemaV14Definition` returns is written into every database made or upgraded to v14 (`schema_stamp`, schema-fingerprint.ts) and compared at
+ *    every start: a database written by a build whose statements differ is refused (SCHEMA_MISMATCH) before anything is written to it. Changing a statement here therefore means a
+ *    new version of the store and a migration from this one, not an edit; `derived` once gained a column without either, and a data root written before it failed deep inside a backfill.
  */
 
 const list = (words: readonly string[]): string => words.map(word => "'" + word + "'").join(",");
@@ -386,6 +389,16 @@ export const V14_INDEXES: readonly string[] = INDEXES.map(sql => /^CREATE (?:UNI
 export const V14_TRIGGERS: readonly string[] = TRIGGERS.map(sql => /^CREATE TRIGGER (\w+)/u.exec(sql)![1]!);
 /** The columns of `runs` in table order. */
 export const V14_RUN_COLUMNS: readonly string[] = RUN_COLUMNS;
+
+/**
+ * The statements that DEFINE the structure of a v14 database, as a new database has it: `sessions` as a table made whole, the other tables, the indexes and the triggers. The
+ * derived full-text tables (`SEARCH`) are left out, since they are made again from the rows at any time. A database upgraded from v13 gets the same structure by `ALTER` and
+ * `RELAY_V14_REBUILD`, so this list, not the upgrade's, is what the structure is. It is what the fingerprint of the structure is made of (schema-fingerprint.ts): changing a
+ * statement here changes the fingerprint, and a database written by the build before it is then refused at its start, so the change comes with a version and a migration.
+ */
+export function schemaV14Definition(): readonly string[] {
+  return [SESSIONS, ...TABLES, ...INDEXES, ...TRIGGERS];
+}
 
 /**
  * The statements that make a database v14, in order. `from: "fresh"` is a new database (the caller makes `events`, `create_keys`,

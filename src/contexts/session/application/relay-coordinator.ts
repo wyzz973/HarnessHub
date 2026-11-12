@@ -6,9 +6,9 @@ import {
   type RelayDeliveryWrite, type RelayKeyPort, type RelayPacket, type RelayPacketId, type RelayPrefKey, type RunRelay, type RunRelayRequest, type SourceRange,
 } from "../../../contracts/relay.js";
 import type { ConversationRun } from "../../../contracts/conversation.js";
-import { SessionError, type PublicRun, type RunId, type SessionId, type SessionSnapshot } from "../../../contracts/session.js";
+import { SessionError, type PublicRun, type RunId, type SessionId } from "../../../contracts/session.js";
 import { commandOutcome, dispatched } from "../domain/relay/advance.js";
-import { historyOf, type RelayState } from "../domain/relay/history.js";
+import type { RelayHistory } from "../domain/relay/history.js";
 import { commandTurnEvent, nothingOwed, owed, settledOutcome, step, type PacketRef, type RelayFact, type RelayEvent, type TurnPlan } from "../domain/relay/delivery.js";
 import type { RelayRecord } from "../domain/relay/packet.js";
 import { terminal } from "../domain/state.js";
@@ -246,8 +246,8 @@ export function attentionOf(input: AttentionInput): RelayAttention | null {
   return null;
 }
 /** The Runs of what is owed, in conversation order, each a finished fact whose input came before the current one's. */
-export function needRuns(given: RelayState, current: PublicRun, need: { readonly facts: readonly RelayFact[] }): readonly RunId[] {
-  const state = historyOf(given), seqOf = (run: { readonly userSeq?: number }) => run.userSeq ?? Number.MAX_SAFE_INTEGER;
+export function needRuns(state: RelayHistory, current: PublicRun, need: { readonly facts: readonly RelayFact[] }): readonly RunId[] {
+  const seqOf = (run: { readonly userSeq?: number }) => run.userSeq ?? Number.MAX_SAFE_INTEGER;
   const before = seqOf(state.runs.find(run => run.userMessageId === current.userMessageId) ?? {}), owedRuns = new Set<string>(need.facts.map(fact => fact.runId));
   return state.runs.filter(run => owedRuns.has(run.id) && run.id !== current.id && terminal(run.status) && seqOf(run) < before).map(run => run.id);
 }
@@ -266,7 +266,7 @@ export function packetRef(id: RelayPacketId, range: SourceRange): PacketRef { re
  * position): an update goes only to a native session known to hold part of the conversation, so the position is shown as none when
  * the packet must be a whole one (`whole`: the binding holds nothing, or the packet carries everything again).
  */
-export function renderView<S extends RelayState>(state: S, harnessId: string, controlId: string, whole: boolean): S {
+export function renderView<S extends RelayHistory>(state: S, harnessId: string, controlId: string, whole: boolean): S {
   if (!whole) return state;
   return { ...state, ...(state.nativeBindings === undefined ? {} : { nativeBindings: state.nativeBindings.map(binding =>
     binding.harnessId === harnessId && binding.controlId === controlId && binding.status !== "archived" ? { ...binding, throughRunId: null } : binding) }) };

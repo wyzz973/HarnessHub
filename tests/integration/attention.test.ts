@@ -14,6 +14,7 @@ import { SessionRuntime } from "../../src/contexts/session/application/runtime.j
 import { appStore } from "../fixtures/runtime-store.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url));
 const owner = fileURLToPath(new URL("../../../tests/fixtures/kept-owner.mjs", import.meta.url));
@@ -76,7 +77,7 @@ test("every conversation's waiting approval is listed with its deadline until it
   await app.decidePermission(second.id, app.permissionRequests(second.id)[0]!.id, "allow_once", "decide-two");
   assert.deepEqual(app.attention(), []);
   await app.wait(first.id); await app.wait(second.id);
-  assert.deepEqual([app.read(first.id).runs[0]!.status, app.read(second.id).runs[0]!.status], ["completed", "completed"]);
+  assert.deepEqual([oldShape(app, first.id).runs[0]!.status, oldShape(app, second.id).runs[0]!.status], ["completed", "completed"]);
 });
 
 test("a request still waiting at the end of the wait budget expires: the Turn is cancelled and the program never gets an approval", async t => {
@@ -85,7 +86,7 @@ test("a request still waiting at the end of the wait budget expires: the Turn is
   app.send(session.id, "approve this", "send");
   await until(() => app.attention().length === 1);
   await app.wait(session.id);
-  const state = app.read(session.id), run = state.runs[0]!;
+  const state = oldShape(app, session.id), run = state.runs[0]!;
   assert.equal(run.status, "cancelled", "the program settled after the stop"); assert.equal(run.error?.code, "WAIT_EXPIRED"); assert.equal(state.status, "open");
   assert.equal(run.notices?.at(-1)?.title, "等待期限已到"); assert.match(run.notices?.at(-1)?.detail ?? "", /^等待你的决定超过了设置的 400 毫秒，本回合已取消；原程序没有收到决定。$/u);
   const closed = store.events(session.id, 0).filter(event => event.type === "permission.closed").map(event => event.data as { reason?: string });
@@ -120,7 +121,7 @@ test("a restarted owner lists no request its predecessor left waiting", { skip: 
   t.after(() => rm(root, { recursive: true, force: true }));
   assert.deepEqual(app.attention(), [], "nothing can answer a request its process no longer holds");
   assert.deepEqual(app.permissionRequests(asked.session), []);
-  assert.equal(app.read(asked.session).runs[0]?.status, "unknown", "the Turn's outcome is unknown, as after any crash");
+  assert.equal(oldShape(app, asked.session).runs[0]?.status, "unknown", "the Turn's outcome is unknown, as after any crash");
 });
 
 test("a restarted owner records a Turn that was queued for a slot as interrupted, never queued again", { skip: process.platform === "win32" ? "the fixture owner is killed with a POSIX signal" : false }, async t => {
@@ -140,8 +141,8 @@ test("a restarted owner records a Turn that was queued for a slot as interrupted
   const exited = once(child, "exit"); child.kill("SIGKILL"); await exited;
   const { app } = await setup(t, 5000, root);
   t.after(() => rm(root, { recursive: true, force: true }));
-  const queued = app.read(seen.queued).runs[0]!;
+  const queued = oldShape(app, seen.queued).runs[0]!;
   assert.equal(queued.status, "cancelled"); assert.equal(queued.error?.code, "OWNER_ENDED");
   assert.equal(app.slotWait(seen.queued), null); assert.deepEqual(app.attention(), []);
-  assert.equal(app.read(seen.session).runs[0]!.status, "unknown");
+  assert.equal(oldShape(app, seen.session).runs[0]!.status, "unknown");
 });

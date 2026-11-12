@@ -16,6 +16,7 @@ import { PosixProcessGroups } from "../../src/infrastructure/control/process-gro
 import { appStore } from "../fixtures/runtime-store.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url));
 const keptOwner = fileURLToPath(new URL("../../../tests/fixtures/kept-owner.mjs", import.meta.url));
@@ -72,7 +73,7 @@ test("a conversation that keeps its process reuses it for the next Turn, and tur
   const session = await app.create(await workspace("one"), { harnessId: "alpha" }, "create");
   app.setRetention(session.id, true, "keep");
   app.send(session.id, "first", "first"); await app.wait(session.id);
-  let state = app.read(session.id);
+  let state = oldShape(app, session.id);
   const first = state.runs[0]!;
   assert.equal(first.status, "completed"); assert.equal(first.retained, true); assert.equal(first.cleanup, null);
   assert.deepEqual(state.retained, { harnessId: "alpha", controlId: "alpha-acp", runId: first.id, since: NOW.getTime() });
@@ -80,7 +81,7 @@ test("a conversation that keeps its process reuses it for the next Turn, and tur
   assert.equal(app.keptProcess(session.id)?.harnessId, "alpha");
 
   app.send(session.id, "second", "second"); await app.wait(session.id);
-  state = app.read(session.id);
+  state = oldShape(app, session.id);
   const second = state.runs[1]!;
   assert.equal(second.status, "completed"); assert.equal(second.reused, true); assert.equal(second.retained, true);
   assert.equal(factory.prepared.length, 1, "the second Turn does not start the program again");
@@ -91,12 +92,12 @@ test("a conversation that keeps its process reuses it for the next Turn, and tur
   assert.equal(state.nativeBindings?.[0]?.status, "ready"); assert.equal(state.nativeBindings?.[0]?.throughRunId, second.id);
 
   app.setRetention(session.id, false, "release"); await app.wait(session.id);
-  state = app.read(session.id);
+  state = oldShape(app, session.id);
   assert.equal(state.retained, undefined); assert.equal(state.retainNative, undefined); assert.equal(factory.prepared[0]!.closed, true);
   const [closed] = closes(session.id);
   assert.equal(closed?.reason, "disabled"); assert.equal(closed?.cleanup?.closed, true);
   app.send(session.id, "third", "third"); await app.wait(session.id);
-  assert.equal(factory.prepared.length, 2, "without the option every Turn starts the program"); assert.equal(app.read(session.id).runs[2]!.retained, undefined);
+  assert.equal(factory.prepared.length, 2, "without the option every Turn starts the program"); assert.equal(oldShape(app, session.id).runs[2]!.retained, undefined);
   assert.equal(factory.prepared[1]!.closed, true);
 });
 
@@ -107,7 +108,7 @@ test("a kept process counts background updates and is closed after its idle time
   // The fixture sends one more update after the Turn ended: background activity, counted but never shown as content.
   app.send(session.id, "late tail", "first"); await app.wait(session.id);
   await until(() => (app.keptProcess(session.id)?.backgroundUpdates ?? 0) === 1);
-  await until(() => app.read(session.id).retained === undefined);
+  await until(() => oldShape(app, session.id).retained === undefined);
   const [closed] = closes(session.id);
   assert.equal(closed?.reason, "idle"); assert.equal(closed?.backgroundUpdates, 1); assert.equal(closed?.cleanup?.closed, true);
   assert.equal(app.keptProcess(session.id), null);
@@ -117,19 +118,19 @@ test("switching, rebuilding, branching, closing and shutting down each close the
   const { factory, app, workspace, closes } = await setup(t);
   const session = await app.create(await workspace("triggers"), { harnessId: "alpha" }, "create");
   app.setRetention(session.id, true, "keep");
-  const keep = async (key: string) => { app.send(session.id, "turn " + key, key); await app.wait(session.id); assert.notEqual(app.read(session.id).retained, undefined, key); };
+  const keep = async (key: string) => { app.send(session.id, "turn " + key, key); await app.wait(session.id); assert.notEqual(oldShape(app, session.id).retained, undefined, key); };
   await keep("a");
   app.switch(session.id, { harnessId: "alpha", nativeModel: "deepseek:deepseek-v4-flash" }, "switch"); await app.wait(session.id);
-  assert.equal(app.read(session.id).retained, undefined);
+  assert.equal(oldShape(app, session.id).retained, undefined);
   await keep("b");
-  app.resetNative(session.id, "reset", app.read(session.id).epoch); await app.wait(session.id);
-  assert.equal(app.read(session.id).retained, undefined);
+  app.resetNative(session.id, "reset", oldShape(app, session.id).epoch); await app.wait(session.id);
+  assert.equal(oldShape(app, session.id).retained, undefined);
   await keep("c");
   const branch = app.fork(session.id, "branch"); await app.wait(session.id); await app.wait(branch.id);
-  assert.equal(app.read(session.id).retained, undefined);
+  assert.equal(oldShape(app, session.id).retained, undefined);
   await keep("d");
   await app.closeSession(session.id, "close");
-  assert.equal(app.read(session.id).retained, undefined); assert.equal(app.read(session.id).status, "closed");
+  assert.equal(oldShape(app, session.id).retained, undefined); assert.equal(oldShape(app, session.id).status, "closed");
   const other = await app.create(await workspace("shutdown"), { harnessId: "alpha" }, "create-other");
   app.setRetention(other.id, true, "keep-other"); app.send(other.id, "turn", "other"); await app.wait(other.id);
   await app.close();
@@ -147,7 +148,7 @@ test("no fixed number of processes is kept: six conversations each keep theirs",
     app.setRetention(session.id, true, "keep-" + index); app.send(session.id, "turn", "send-" + index); await app.wait(session.id);
     sessions.push(session.id);
   }
-  assert.deepEqual(sessions.map(id => app.read(id).retained !== undefined), Array(6).fill(true));
+  assert.deepEqual(sessions.map(id => oldShape(app, id).retained !== undefined), Array(6).fill(true));
   assert.ok(factory.prepared.every(entry => !entry.closed), "none was closed to make room");
   assert.equal(app.keptProcesses().length, 6);
 });
@@ -160,13 +161,13 @@ test("an operator's limit on kept processes closes the process of a Turn over it
     app.setRetention(session.id, true, "keep-" + index); app.send(session.id, "turn", "send-" + index); await app.wait(session.id);
     sessions.push(session.id);
   }
-  assert.deepEqual(sessions.map(id => app.read(id).retained !== undefined), [true, true, false]);
+  assert.deepEqual(sessions.map(id => oldShape(app, id).retained !== undefined), [true, true, false]);
   assert.equal(factory.prepared[2]!.closed, true);
   assert.deepEqual(store.events(sessions[2]!, 0).filter(event => event.type === "native.retention_skipped").map(event => (event.data as { reason: string }).reason), ["limit"]);
-  assert.equal(app.read(sessions[2]!).runs[0]!.cleanup?.closed, true);
-  assert.deepEqual(app.read(sessions[2]!).runs[0]!.notices?.map(notice => [notice.severity, notice.title]), [["info", "这一轮的 Harness 进程没有保留"]]);
-  assert.match(app.read(sessions[2]!).runs[0]!.notices![0]!.detail!, /已经保留了 2 个/u);
-  assert.equal(app.read(sessions[0]!).runs[0]!.notices, undefined, "a Turn that was kept has nothing to say");
+  assert.equal(oldShape(app, sessions[2]!).runs[0]!.cleanup?.closed, true);
+  assert.deepEqual(oldShape(app, sessions[2]!).runs[0]!.notices?.map(notice => [notice.severity, notice.title]), [["info", "这一轮的 Harness 进程没有保留"]]);
+  assert.match(oldShape(app, sessions[2]!).runs[0]!.notices![0]!.detail!, /已经保留了 2 个/u);
+  assert.equal(oldShape(app, sessions[0]!).runs[0]!.notices, undefined, "a Turn that was kept has nothing to say");
 });
 
 test("another conversation in the same workspace runs beside a kept process: they share the Gateway's lease and nothing needs ending", async t => {
@@ -176,17 +177,17 @@ test("another conversation in the same workspace runs beside a kept process: the
   app.setRetention(holder.id, true, "keep"); app.send(holder.id, "turn", "holder-turn"); await app.wait(holder.id);
   const other = await app.create(shared, { harnessId: "alpha" }, "create-other");
   app.send(other.id, "beside it", "other-first"); await app.wait(other.id);
-  const ran = app.read(other.id).runs[0]!;
-  assert.equal(ran.status, "completed"); assert.equal(ran.error, null); assert.equal(app.read(other.id).status, "open");
+  const ran = oldShape(app, other.id).runs[0]!;
+  assert.equal(ran.status, "completed"); assert.equal(ran.error, null); assert.equal(oldShape(app, other.id).status, "open");
   assert.equal(factory.prepared.length, 2, "both programs ran in the directory");
-  assert.equal(app.read(holder.id).retained !== undefined, true, "the holder's kept process was not touched");
+  assert.equal(oldShape(app, holder.id).retained !== undefined, true, "the holder's kept process was not touched");
   assert.equal(factory.prepared[0]!.closed, false);
   assert.deepEqual(app.keptProcesses().map(row => [row.sessionId, row.workspace]), [[holder.id, shared.workspace]]);
   // The lease is released with the last holder: ending the kept process lets the workspace go.
   await app.endKept(holder.id, "end-holder");
-  assert.equal(app.read(holder.id).retained, undefined); assert.equal(closes(holder.id)[0]?.reason, "ended_by_user");
+  assert.equal(oldShape(app, holder.id).retained, undefined); assert.equal(closes(holder.id)[0]?.reason, "ended_by_user");
   app.send(other.id, "now", "other-second"); await app.wait(other.id);
-  assert.equal(app.read(other.id).runs[1]!.status, "completed");
+  assert.equal(oldShape(app, other.id).runs[1]!.status, "completed");
 });
 
 test("a kept process that exited while idle is closed and the next Turn restores the native session as usual", async t => {
@@ -198,7 +199,7 @@ test("a kept process that exited while idle is closed and the next Turn restores
   app.send(session.id, "again", "second"); await app.wait(session.id);
   await until(() => closes(session.id).length === 1);
   assert.equal(closes(session.id)[0]?.reason, "exited");
-  const second = app.read(session.id).runs[1]!;
+  const second = oldShape(app, session.id).runs[1]!;
   assert.equal(second.status, "completed"); assert.equal(second.reused, undefined); assert.equal(factory.prepared.length, 2);
   assert.ok((await methods(1)).includes("session/resume"), "the new process restores the native session");
 });
@@ -209,7 +210,7 @@ test("a Codex app-server is kept and reused the same way", async t => {
   app.setRetention(session.id, true, "keep");
   app.send(session.id, "first", "first"); await app.wait(session.id);
   app.send(session.id, "second", "second"); await app.wait(session.id);
-  const state = app.read(session.id);
+  const state = oldShape(app, session.id);
   assert.deepEqual(state.runs.map(run => [run.status, run.reused ?? false, run.retained ?? false]), [["completed", false, true], ["completed", true, true]]);
   assert.equal(factory.prepared.length, 1);
   const sent = await methods(0);
@@ -268,19 +269,19 @@ test("a process kept under an owner that was killed is ended at the next start, 
   assert.ok(alive(crashed.member!), "the background task outlived its owner");
   // The program itself leaves once its input closes; its group lives on in the background task.
   assert.ok(await settle(() => !alive(crashed.leader)), "the program exits when its input closes");
-  assert.notEqual(app.read(crashed.session).retained, undefined, "recovery keeps the record for the reaper");
+  assert.notEqual(oldShape(app, crashed.session).retained, undefined, "recovery keeps the record for the reaper");
 
   assert.deepEqual(await app.reapKept(), [{ sessionId: crashed.session, outcome: "terminated", leaseReleased: true }], "the outcomes it reports");
   assert.deepEqual(app.keptLoss(crashed.session), { outcome: "terminated", leaseReleased: true, at: NOW.getTime() });
   assert.ok(await settle(() => !alive(crashed.member!)), "the whole group ended, the background task included");
-  assert.equal(app.read(crashed.session).retained, undefined);
+  assert.equal(oldShape(app, crashed.session).retained, undefined);
   // The program left with its owner, so whatever it had started was adopted elsewhere: unknown, never zero.
   assert.deepEqual(lost(crashed.session), [{ runId: crashed.retained?.runId, harnessId: "alpha", controlId: "alpha-acp", reason: "owner_ended", outcome: "terminated", leaseReleased: true,
     outside: { state: "unknown" } }]);
   assert.equal(app.keptOutside(crashed.session), null);
 
   app.send(crashed.session, "again", "again"); await app.wait(crashed.session);
-  const next = app.read(crashed.session).runs.at(-1)!;
+  const next = oldShape(app, crashed.session).runs.at(-1)!;
   assert.equal(next.status, "completed", "the released workspace admits the next Turn");
   assert.equal(app.keptLoss(crashed.session), null, "the notice ends with the next Turn");
   const sent = (await readFile(factory.prepared[0]!.trace, "utf8")).trim().split("\n").map(line => (JSON.parse(line) as { method?: string }).method ?? "");
@@ -298,7 +299,7 @@ test("a kept program that ended with its owner is recorded as gone and its works
   // The program and its group are gone, so its descendants, if any, were adopted elsewhere: they cannot be enumerated.
   assert.deepEqual(lost(crashed.session).map(data => (data as { outside: unknown }).outside), [{ state: "unknown" }]);
   app.send(crashed.session, "again", "again"); await app.wait(crashed.session);
-  assert.equal(app.read(crashed.session).runs.at(-1)!.status, "completed");
+  assert.equal(oldShape(app, crashed.session).runs.at(-1)!.status, "completed");
 });
 
 test("a kept process without a recorded identity is never signalled and its workspace stays quarantined", posixOnly, async t => {
@@ -310,10 +311,10 @@ test("a kept process without a recorded identity is never signalled and its work
   assert.deepEqual(app.keptLoss(crashed.session), { outcome: "unconfirmed", leaseReleased: false, at: NOW.getTime() });
   assert.ok(alive(crashed.member!), "a group that cannot be recognized is left running");
   assert.deepEqual(lost(crashed.session).map(data => [(data as { outcome: string }).outcome, (data as { leaseReleased: boolean }).leaseReleased, (data as { outside: unknown }).outside]), [["unconfirmed", false, { state: "unknown" }]]);
-  assert.equal(app.read(crashed.session).retained, undefined, "the record is resolved once; the quarantine carries on");
+  assert.equal(oldShape(app, crashed.session).retained, undefined, "the record is resolved once; the quarantine carries on");
   app.send(crashed.session, "again", "again");
   await assert.rejects(app.wait(crashed.session), { code: "SESSION_BLOCKED" }, "an unresolved workspace blocks the conversation as before");
-  const refused = app.read(crashed.session).runs.at(-1)!;
+  const refused = oldShape(app, crashed.session).runs.at(-1)!;
   assert.equal(refused.status, "unknown"); assert.equal(refused.error?.code, "WORKSPACE_QUARANTINED"); assert.equal(factory.prepared.length, 0);
 });
 
@@ -353,7 +354,7 @@ test("closing a kept program records the background task that left its group, le
   });
   const session = await app.create({ workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true }, { harnessId: "alpha" }, "create");
   app.setRetention(session.id, true, "keep"); app.send(session.id, "first", "first"); await app.wait(session.id);
-  assert.notEqual(app.read(session.id).retained, undefined);
+  assert.notEqual(oldShape(app, session.id).retained, undefined);
   const outsider = Number(await readFile(factory.prepared[0]!.outsider!, "utf8"));
   await app.endKept(session.id, "end");
   const closed = store.events(session.id, 0).filter(event => event.type === "native.process_closed").map(event => (event.data as { outside: unknown; reason: string }));
@@ -372,7 +373,7 @@ test("G028-UP1 an upgrade of a Harness closes its idle kept processes and says s
   assert.deepEqual(app.programUsers("alpha"), [{ sessionId: session.id, busy: false }]); assert.deepEqual(app.programUsers("beta"), []);
   assert.equal(await app.releaseForUpgrade("beta"), 0); assert.equal(factory.prepared[0]!.closed, false, "another Harness's upgrade leaves it");
   assert.equal(await app.releaseForUpgrade("alpha"), 1);
-  assert.equal(factory.prepared[0]!.closed, true); assert.equal(app.read(session.id).retained, undefined); assert.deepEqual(app.programUsers("alpha"), []);
+  assert.equal(factory.prepared[0]!.closed, true); assert.equal(oldShape(app, session.id).retained, undefined); assert.deepEqual(app.programUsers("alpha"), []);
   // The reason is read back through the store's event parser, which has not changed since the deployed build 80a5246:
   // it checks an event's type name, shape and size, never the values inside its data, so that build reads it too.
   const [closed] = closes(session.id);

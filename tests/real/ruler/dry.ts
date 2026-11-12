@@ -244,8 +244,8 @@ function json(response: ServerResponse, status: number, value: unknown): void {
  * The Hub's /api/table routes (src/web/table-routes.ts, the same code) for one cell's Runtime on a loopback port of their own. The
  * dry run has no web server of the Hub's — its Runtime is made of scripted parts — so this is all of it the tool program needs.
  */
-async function serveTable(hub: { readonly runtime: SessionRuntime; readonly content: LocalContentStore }, mount: WatchedMount): Promise<{ readonly origin: string; close(): Promise<void> }> {
-  const api = new TableApi({ grants: mount.grants, read: id => hub.runtime.read(id), content: hub.content,
+async function serveTable(hub: { readonly store: SqliteConversationStore; readonly content: LocalContentStore }, mount: WatchedMount): Promise<{ readonly origin: string; close(): Promise<void> }> {
+  const api = new TableApi({ grants: mount.grants, reader: hub.store, content: hub.content,
     http: { json, queries: (url, allowed) => { for (const key of url.searchParams.keys()) if (!allowed.includes(key)) throw new SessionError("INVALID_INPUT", "unknown query parameter " + key); } } });
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");

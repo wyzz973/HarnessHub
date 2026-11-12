@@ -524,6 +524,14 @@ lines.on("line", line => {
       notification("item/commandExecution/outputDelta", { ...base, itemId: "cmd-2", delta: "line1" });
       codexOutput(); finish(); return;
     }
+    // A command whose output is far longer than any preview: 400 KiB in four deltas, then the whole of it in the completed item.
+    if (protocol === "codex-app-server" && scenario === "big-output") {
+      const base = { threadId: THREAD, turnId: `turn-${turn}` }, piece = "x".repeat(100 * 1024);
+      notification("item/started", { ...base, item: { type: "commandExecution", id: "cmd-big", command: "yes", cwd: "/w", status: "inProgress" } });
+      for (let n = 0; n < 4; n++) notification("item/commandExecution/outputDelta", { ...base, itemId: "cmd-big", delta: piece });
+      notification("item/completed", { ...base, item: { type: "commandExecution", id: "cmd-big", command: "yes", cwd: "/w", status: "completed", aggregatedOutput: piece.repeat(4) + "END", exitCode: 0 } });
+      codexOutput(); finish(); return;
+    }
     // Plan mode answers with a proposed plan item; its deltas may differ from the completed item, which is authoritative. A
     // connection that declared the experimental API also hears the thread's read state change before the turn completes.
     if (protocol === "codex-app-server" && scenario === "plan-mode") {

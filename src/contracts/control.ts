@@ -75,12 +75,9 @@ export interface NativeToolDetail {
   readonly exitCode?: number;
   /** Owning parent tool or sub-agent identity inside the same Turn. */
   readonly parentId?: string;
-  /** A preview was cut to its byte budget. */
+  /** Written by builds before 2026-11-12 that cut a preview to its byte budget. No driver cuts a detail any more (the content store keeps it whole); the flag stays so that what was written reads. */
   readonly truncated?: boolean;
 }
-export const TOOL_INPUT_BYTES = 16 * 1024;
-export const TOOL_OUTPUT_BYTES = 64 * 1024;
-export const TOOL_DIFF_BYTES = 64 * 1024;
 export interface NativePlanEntry { readonly content: string; readonly status: "pending" | "in_progress" | "completed"; readonly priority?: "high" | "medium" | "low" }
 /** Latest native accounting. Turn tokens belong to this Run; context and cost carry their own scope. */
 export interface NativeUsage {
@@ -115,7 +112,9 @@ export type ControlEvent =
        */
       readonly expiresInMs?: number; readonly expiresBy?: "native" | "turn";
       /** A question the program asks (a form, a choice, free text) rather than an approval of its own action; approval when absent. */
-      readonly kind?: "approval" | "question" }
+      readonly kind?: "approval" | "question";
+      /** The id the program gave the call this approval is about (the `id` of its `tool` event), when it names it: ACP's `toolCall.toolCallId`, Codex's `itemId`. */
+      readonly forCall?: string }
   | { readonly type: "permission"; readonly id: string; readonly decision: "denied" | "cancelled" }
   | { readonly type: "diagnostic"; readonly message: string }
   /**

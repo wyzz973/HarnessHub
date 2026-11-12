@@ -8,6 +8,7 @@ import { TABLE_ENV } from "../../src/contracts/table.js";
 import type { SessionConfiguration, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { TableMount } from "../../src/infrastructure/table/mount.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 // The context table's mount (docs/decisions/LOG.md, 2026-11-11), through the formal composition: application(), a real store
 // and workspace leases, and an ACP peer that records the table variables it was started with. Only the Harness is a fixture.
@@ -51,7 +52,7 @@ async function fixture(t: test.TestContext, table?: TableMount) {
   const create = async (name: string) => (await running.runtime.create(await configuration(name), { harnessId: "table-peer" }, "create-" + name)).id;
   const turn = async (session: SessionId, text: string) => {
     running.runtime.send(session, text, "send-" + text.replace(/[^a-z0-9]+/giu, "-")); await running.runtime.wait(session);
-    return running.runtime.read(session).runs.at(-1)!;
+    return oldShape(running.runtime, session).runs.at(-1)!;
   };
   const spawns = async (): Promise<readonly Spawn[]> => { try { return (await readFile(trace, "utf8")).trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as Spawn); } catch { return []; } };
   return { app: running, create, turn, spawns };

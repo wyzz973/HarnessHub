@@ -12,6 +12,7 @@ import { captureNativeEnvironment } from "../../src/infrastructure/session/nativ
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
 import { inventory } from "../../src/infrastructure/catalog/inventory-composition.js";
 import { createNativeControl } from "../../src/adapters/control/factory.js";
+import { oldShape } from "../fixtures/old-shape.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -66,8 +67,8 @@ async function turn(app: App, id: SessionId, text: string): Promise<{ run: Publi
   app.runtime.send(id, text, "send-" + randomUUID());
   const deadline = Date.now() + 6 * 60 * 1000;
   for (;;) {
-    const current = app.runtime.read(id).runs.at(-1)!;
-    if (TERMINAL.has(current.status)) { await app.runtime.wait(id); const done = app.runtime.read(id).runs.at(-1)!; return { run: done, reply: app.runtime.read(id).messages.find(row => row.id === done.assistantMessageId)?.text ?? "" }; }
+    const current = oldShape(app.runtime, id).runs.at(-1)!;
+    if (TERMINAL.has(current.status)) { await app.runtime.wait(id); const done = oldShape(app.runtime, id).runs.at(-1)!; return { run: done, reply: oldShape(app.runtime, id).messages.find(row => row.id === done.assistantMessageId)?.text ?? "" }; }
     if (app.runtime.permissionRequests(id).length) throw new Error("the continued turn asked for an approval");
     if (Date.now() > deadline) throw new Error("continued turn did not settle in time");
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -98,14 +99,14 @@ test("installed Harness continues its own session of the workspace in the Hub, w
         proof.listed = page === null ? null : { sessions: page.sessions.length, titled: page.sessions.filter(row => row.title !== null).length, sources: page.sessions.map(row => row.source ?? null) };
         const native = page?.sessions[0];
         if (!native) throw new Error("the Harness listed no session for the workspace");
-        const imported = await app.runtime.importNative(configuration, { harnessId }, native.id, "import-" + randomUUID());
+        const imported = oldShape(app.runtime, (await app.runtime.importNative(configuration, { harnessId }, native.id, "import-" + randomUUID())).id);
         const origin = imported.origin?.kind === "import" ? imported.origin : null;
         proof.imported = origin === null ? null : { messages: origin.history.length, omitted: origin.omitted, complete: origin.complete, historyRead: origin.historyRead, tagQuoted: origin.history.some(row => row.role === "user" && row.text.includes(tag)) };
         if (resumeOnly.has(harnessId) ? origin?.historyRead !== false || origin.history.length !== 0 : !origin?.historyRead || !origin.history.some(row => row.text.includes(tag))) failures.push(harnessId + ": quoted history");
         try { await app.runtime.importNative(configuration, { harnessId }, native.id, "import-" + randomUUID()); proof.secondImport = "accepted"; failures.push(harnessId + ": second holder"); }
         catch (error) { proof.secondImport = error !== null && typeof error === "object" && "code" in error ? String(error.code) : "failed"; }
         const asked = await turn(app, imported.id, "我之前让你记住的标记是什么？只回复那个标记本身，不要调用任何工具。");
-        proof.turn = { status: asked.run.status, matched: asked.reply.includes(tag), sourceRunIds: asked.run.sourceRunIds.length, binding: app.runtime.read(imported.id).nativeBindings?.map(row => row.status) ?? [] };
+        proof.turn = { status: asked.run.status, matched: asked.reply.includes(tag), sourceRunIds: asked.run.sourceRunIds.length, binding: oldShape(app.runtime, imported.id).nativeBindings?.map(row => row.status) ?? [] };
         if (asked.run.status !== "completed" || !asked.reply.includes(tag) || asked.run.sourceRunIds.length) failures.push(harnessId + ": continued answer");
       } catch (error) {
         proof.failure = { code: error !== null && typeof error === "object" && "code" in error ? String(error.code) : "ASSERTION", message: error instanceof Error ? error.message.slice(0, 512) : "failed" };

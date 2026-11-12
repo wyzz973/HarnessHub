@@ -5,6 +5,7 @@ import { kindOf } from "../../src/contexts/session/domain/relay/narration.js";
 import { renderRelay } from "../../src/contexts/session/domain/relay/packet.js";
 import { readTurn, tableRedaction, turnNeeds, turnsView, type TableToolDetail } from "../../src/contexts/session/domain/table.js";
 import { contentId } from "../../src/contracts/content.js";
+import { snapshotHistory, snapshotTable } from "../fixtures/old-shape.js";
 import { conversation, names, tool } from "../fixtures/relay-scenarios.js";
 
 // The relay's packet and the context table read a tool call with the same rule as the protocol (domain/protocol/tools.ts): where a
@@ -20,7 +21,7 @@ const TOOLS = [tool("d1", "bash", "other"), tool("d2", "read", "other"), tool("d
   tool("d7", "web_fetch", "other"), tool("d8", "bash", "other", { exitCode: 1, status: "failed" })];
 function lines(language: "zh" | "en", tools = TOOLS): string[] {
   const scenario = conversation([{ input: language === "zh" ? "看看项目结构" : "Look at the project", harnessId: "dsh", reply: "ok", tools }, { input: language === "zh" ? "继续" : "Go on", harnessId: "codex" }], [], DETAILS);
-  const text = renderRelay({ state: scenario.state, current: scenario.current, sources: scenario.sources, origin: false, names, details: scenario.details }).text;
+  const text = renderRelay({ state: snapshotHistory(scenario.state), current: scenario.current, sources: scenario.sources, origin: false, names, details: scenario.details }).text;
   return text.split("\n").filter(line => line.startsWith("- ") && !/省略|Nothing left|没有读取|not read|按格式|Never included/u.test(line));
 }
 
@@ -31,7 +32,7 @@ test("a DeepSeek Harness tool is worded by what its stored detail says, and as a
     "- Fetched `https://example.com/`", "- Ran `npm test` → exit code 1"]);
   // Without any detail read, every one of them is what it was before the name table: an operation of no known kind, quoted by its title.
   const scenario = conversation([{ input: "x", harnessId: "dsh", reply: "ok", tools: TOOLS }, { input: "y", harnessId: "codex" }]);
-  const text = renderRelay({ state: scenario.state, current: scenario.current, sources: scenario.sources, origin: false, names, details: new Map() }).text;
+  const text = renderRelay({ state: snapshotHistory(scenario.state), current: scenario.current, sources: scenario.sources, origin: false, names, details: new Map() }).text;
   assert.deepEqual(text.split("\n").filter(line => /^- Other /u.test(line)), ["- Other `bash`", "- Other `read`", "- Other `edit`", "- Other `bash`", "- Other `grep`", "- Other `Brainstorm`", "- Other `web_fetch`", "- Other `bash` (failed)"]);
   // The packet's policy changed with its words.
   assert.equal(RELAY_POLICY_VERSION, "relay/1-mvp.7");
@@ -39,7 +40,7 @@ test("a DeepSeek Harness tool is worded by what its stored detail says, and as a
 
 test("a failing command of such a Harness now has its output tail carried, as any Harness's failing command does", () => {
   const scenario = conversation([{ input: "x", harnessId: "dsh", reply: "ok", tools: TOOLS }, { input: "y", harnessId: "codex" }], [], DETAILS);
-  const text = renderRelay({ state: scenario.state, current: scenario.current, sources: scenario.sources, origin: false, names, details: scenario.details }).text;
+  const text = renderRelay({ state: snapshotHistory(scenario.state), current: scenario.current, sources: scenario.sources, origin: false, names, details: scenario.details }).text;
   assert.match(text, /DeepSeek Harness recorded output|DeepSeek Harness 记录的输出|Output recorded by DeepSeek Harness/u); assert.match(text, /expected 1/u);
 });
 
@@ -53,7 +54,7 @@ test("the relay and the table take a tool's kind from the one shared rule", () =
 
 test("the table keeps back the output of a DeepSeek Harness command that touches a credential file, which it could not tell before", () => {
   const ref = (id: string) => ({ id: contentId("content-" + id), name: id + ".json", mediaType: "application/json", kind: "file" as const, bytes: 10, sha256: "5".repeat(64) });
-  const { state } = conversation([{ input: "x", harnessId: "dsh", reply: "ok", tools: [tool("c1", "bash", "other", { detail: ref("c1") }), tool("c2", "bash", "other", { detail: ref("c2") })] }, { input: "y", harnessId: "codex" }]);
+  const state = snapshotTable(conversation([{ input: "x", harnessId: "dsh", reply: "ok", tools: [tool("c1", "bash", "other", { detail: ref("c1") }), tool("c2", "bash", "other", { detail: ref("c2") })] }, { input: "y", harnessId: "codex" }]).state);
   const details = new Map<string, TableToolDetail>([["run-1/c1", { input: "cat .env", output: "SECRET_VALUE_1234567890" }], ["run-1/c2", { input: "ls", output: "a.txt" }]]);
   const redaction = tableRedaction([]);
   assert.match(readTurn(state, 1, { part: "output", tool: 1 }, details, redaction).text, /^Withheld: this tool call touches a credential file/u);

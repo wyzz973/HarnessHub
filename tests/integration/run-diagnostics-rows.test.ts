@@ -9,7 +9,8 @@ import { SessionError, sessionId, type HarnessSelection, type PreparedSessionBin
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { messageStarts, turnSource } from "../../src/contexts/session/domain/turn-source.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
-import { runDiagnostics, turnDiagnostics, type RunDiagnosticsInput } from "../../src/web/run-diagnostics.js";
+import { turnDiagnostics } from "../../src/web/run-diagnostics.js";
+import { runDiagnostics, type RunDiagnosticsInput } from "../fixtures/old-shape.js";
 import { appStore } from "../fixtures/runtime-store.js";
 import { temporary } from "../fixtures/store-helpers.js";
 import { V13_FIXTURES, loadV13Fixture, writeV13Root } from "../fixtures/storage/v13/database.js";

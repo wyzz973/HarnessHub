@@ -16,6 +16,7 @@ import type { RelayRecord } from "../../src/contexts/session/domain/relay/packet
 import { appStore } from "../fixtures/runtime-store.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 // G070 MVP through the formal Runtime and a real SqliteConversationStore (ADR-055 §5, §7.6 on Session v12): the packet a Turn
 // sends, what run.context_prepared records of it, zero injection, the A→B→A delta and known secrets. Harnesses are
@@ -49,10 +50,10 @@ function prepared(store: SqliteConversationStore, id: SessionId, run: string): R
 }
 async function sent(app: SessionRuntime, id: SessionId, text: string, key: string, relay?: { readonly attach: "none" }): Promise<PublicRun> {
   const receipt = app.send(id, text, key, [], relay); await app.wait(id);
-  return app.read(id).runs.find(row => row.id === receipt.runId)!;
+  return oldShape(app, id).runs.find(row => row.id === receipt.runId)!;
 }
 async function switched(app: SessionRuntime, id: SessionId, harnessId: string, key: string): Promise<void> {
-  app.switch(id, { harnessId }, key); await app.wait(id); assert.equal(app.read(id).selection.harnessId, harnessId);
+  app.switch(id, { harnessId }, key); await app.wait(id); assert.equal(oldShape(app, id).selection.harnessId, harnessId);
 }
 
 /**
@@ -94,7 +95,7 @@ test("G070-MVP a single-Harness conversation is never injected: every input, the
   const inputs = ["first question", "第二个问题", "/not-a-command with words", "```\ncode first\n```", "〔HarnessHub 交接单 relay-aaaaaaaaaaaaaaaaaaaa〕"];
   for (const [index, text] of inputs.entries()) await sent(app, session.id, text, "s" + index);
   assert.deepEqual(fake.to("alpha"), inputs);
-  const state = app.read(session.id);
+  const state = oldShape(app, session.id);
   assert.ok(state.runs.every(run => run.sourceRunIds.length === 0));
   assert.ok(events(f.store, session.id).filter(row => row.type === "run.context_prepared").every(row => !("relay" in row.data)), "no packet was rendered");
 });
@@ -130,9 +131,9 @@ test("G070-MVP A→B→A through the Runtime: bravo gets a packet of alpha's tur
     assert.ok(!JSON.stringify(data).includes(run.input) && !JSON.stringify(data).includes(sources[0].input), "no text of the packet in the event");
   }
   // The snapshot keeps no text of a packet: only its identity in the Run's and the binding's relay state (Session v13, G068 phase two).
-  const snapshot = JSON.stringify(app.read(session.id));
+  const snapshot = JSON.stringify(oldShape(app, session.id));
   assert.ok(!snapshot.includes("HH-DATA") && !snapshot.includes("policyVersion"));
-  assert.equal(app.read(session.id).runs.find(row => row.id === b3.id)?.relay?.packetId, readRelayPrompt(fake.to("bravo")[0]!).packetId);
+  assert.equal(oldShape(app, session.id).runs.find(row => row.id === b3.id)?.relay?.packetId, readRelayPrompt(fake.to("bravo")[0]!).packetId);
 });
 
 test("G070-MVP the binding's known secrets never leave in a packet, in any of their three spellings; the user's current words still go as typed", async t => {
@@ -199,7 +200,7 @@ test("G070-MVP a call's detail of any size is read for the packet: the same comm
     const tools = (harnessId: string): readonly ControlEvent[] => harnessId !== "alpha" ? [] : [{ type: "tool", id: "build-1", title: "Terminal", status: "failed", detail: { kind: "execute", input: "make build-all --verbose", output, exitCode: 1 } }];
     const f = await world(t), fake = new FakeHarnesses(undefined, [], [], tools), app = f.runtime(fake, { content: f.content }), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
     await sent(app, session.id, "把构建跑一遍", "a1");
-    assert.equal((app.read(session.id).runs[0]!.tools?.[0]?.detail?.bytes ?? 0) > size, true, size + ": the detail was kept whole");
+    assert.equal((oldShape(app, session.id).runs[0]!.tools?.[0]?.detail?.bytes ?? 0) > size, true, size + ": the detail was kept whole");
     await switched(app, session.id, "bravo", "to-b");
     await sent(app, session.id, "看看哪里失败了", "b1");
     const prompt = fake.to("bravo")[0]!;
@@ -273,7 +274,7 @@ test("G070-MVP m7: a stored detail whose bytes cannot be read (no permission, a 
     { type: "tool", id: "edit-1", title: "Edit file", status: "completed", detail: { kind: "edit", diff: "--- a/src/a.ts\n+++ b/src/a.ts\n+x\n", locations: ["src/a.ts"] } }];
   const f = await world(t), fake = new FakeHarnesses(undefined, [], [], tools), app = f.runtime(fake, { content: f.content }), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   await sent(app, session.id, "改一下 a.ts", "a1");
-  const ref = app.read(session.id).runs[0]!.tools?.[0]?.detail;
+  const ref = oldShape(app, session.id).runs[0]!.tools?.[0]?.detail;
   assert.ok(ref !== undefined, "the detail was stored");
   const blob = f.content.read(ref.id).path, aside = blob + ".aside", mode = (await stat(blob)).mode & 0o777;
   assert.notEqual(await f.content.readText(ref, 256 * 1024), null, "readable as stored");
@@ -337,7 +338,7 @@ test("G070-MVP N3: secrets are read only for a Turn that builds a packet; when t
   fake.failure = new Error("must not be asked");
   const command = await sent(app, session.id, "/review the change", "b1");
   assert.equal(command.status, "completed"); assert.deepEqual(fake.asked, []); assert.deepEqual(fake.to("bravo"), ["/review the change"]);
-  const positions = () => JSON.stringify((app.read(session.id).nativeBindings ?? []).map(row => [row.harnessId, row.relay])), before = positions();
+  const positions = () => JSON.stringify((oldShape(app, session.id).nativeBindings ?? []).map(row => [row.harnessId, row.relay])), before = positions();
   // The factory names what it cannot read: that Turn is sent as typed (the relay never fails a Turn), says why, and moves no position.
   fake.failure = new SessionError("RELAY_PREPARE_FAILED", "没能准备交接单：读不到 Alpha Harness 的配置文件 /tmp/alpha.json（超过 2 MiB）。修好或缩小这个文件后再发；也可以只发这条消息，不带交接单。");
   const typed = await sent(app, session.id, "now continue", "b2");

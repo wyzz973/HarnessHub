@@ -9,6 +9,7 @@ import type { PublicRun, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -33,8 +34,8 @@ async function closeApp(app: App): Promise<void> {
 async function settle(app: App, id: SessionId, count: number): Promise<PublicRun> {
   const deadline = Date.now() + 6 * 60 * 1000;
   for (;;) {
-    const state = app.runtime.read(id), run = state.runs.at(-1);
-    if (run !== undefined && state.runs.length === count && TERMINAL.has(run.status)) { await app.runtime.wait(id); return app.runtime.read(id).runs.at(-1)!; }
+    const state = oldShape(app.runtime, id), run = state.runs.at(-1);
+    if (run !== undefined && state.runs.length === count && TERMINAL.has(run.status)) { await app.runtime.wait(id); return oldShape(app.runtime, id).runs.at(-1)!; }
     if (app.runtime.permissionRequests(id).length) throw new Error("a configuration turn asked for an approval");
     if (Date.now() > deadline) throw new Error("configuration turn did not settle in time");
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -60,8 +61,8 @@ test("installed Harness keeps a setting its own command changed, until an explic
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()];
         const byModel = option === "model", selection = byModel ? { harnessId, nativeModel: from } : { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }), nativeOptions: { [option]: from } };
         const session = await app.runtime.create(configuration, selection, "create-" + randomUUID());
-        const observed = () => { const reported = app.runtime.read(session.id).nativeBindings?.find(binding => binding.status === "ready")?.observed; return (byModel ? reported?.model : reported?.options[option]) ?? null; };
-        const turn = async (text: string) => { const count = app.runtime.read(session.id).runs.length + 1; app.runtime.send(session.id, text, "send-" + randomUUID()); const run = await settle(app, session.id, count); return { status: run.status, error: run.error?.code ?? null, observed: observed() }; };
+        const observed = () => { const reported = oldShape(app.runtime, session.id).nativeBindings?.find(binding => binding.status === "ready")?.observed; return (byModel ? reported?.model : reported?.options[option]) ?? null; };
+        const turn = async (text: string) => { const count = oldShape(app.runtime, session.id).runs.length + 1; app.runtime.send(session.id, text, "send-" + randomUUID()); const run = await settle(app, session.id, count); return { status: run.status, error: run.error?.code ?? null, observed: observed() }; };
         const ask = "只回复“好的”，不要调用任何工具。";
         proof.first = await turn(ask);
         proof.command = await turn(command);
@@ -69,7 +70,7 @@ test("installed Harness keeps a setting its own command changed, until an explic
         const carried = app.store.events(session.id, 0, 100).filter(row => row.type === "native.config_carried").map(row => { const data = row.data as { model?: string; options?: Record<string, string> }; return (byModel ? data.model : data.options?.[option]) ?? null; });
         proof.carried = carried;
         app.runtime.switch(session.id, selection, "reassert-" + randomUUID()); await app.runtime.wait(session.id);
-        proof.epoch = app.runtime.read(session.id).epoch;
+        proof.epoch = oldShape(app.runtime, session.id).epoch;
         proof.afterSwitch = await turn(ask);
         const steps = proof as { first: { status: string; observed: string | null }; command: { status: string; observed: string | null }; next: { status: string; observed: string | null }; afterSwitch: { status: string; observed: string | null } };
         if ([steps.first, steps.command, steps.next, steps.afterSwitch].some(step => step.status !== "completed")) failures.push(harnessId + ": a turn did not complete");

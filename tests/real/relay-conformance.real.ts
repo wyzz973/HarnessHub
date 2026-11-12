@@ -24,6 +24,7 @@ import { captureNativeEnvironment } from "../../src/infrastructure/session/nativ
 import { conversation, tool } from "../fixtures/relay-scenarios.js";
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
 import { TOKEN_LIMIT, TURN_LIMIT_MS, closeApp, digits, displayName, displayNames, list, relayOf, reply, selection, summary, tokens, type App } from "./relay-support.js";
+import { oldShape, snapshotHistory } from "../fixtures/old-shape.js";
 
 /**
  * Relay on the user's installed Harnesses (ADR-055, G074). One file, two suites, chosen by what the environment names:
@@ -87,7 +88,7 @@ if (probeTargets.length === 0) test("installed Harnesses hand a conversation ove
     };
     const ask = async (text: string): Promise<{ state: SessionSnapshot; run: PublicRun; relay: Record<string, unknown> | null }> => {
       app.runtime.send(id, text, "send-" + randomUUID()); await settle("Turn " + (turns.length + 1));
-      const state = app.runtime.read(id), run = state.runs.at(-1)!;
+      const state = oldShape(app.runtime, id), run = state.runs.at(-1)!;
       turns.push(summary(app, id, state, run));
       const used = tokens(run);
       if (used !== null && used > TOKEN_LIMIT) throw new Error("Turn " + turns.length + " reported " + used + " tokens, past the " + TOKEN_LIMIT + " stop line");
@@ -95,7 +96,7 @@ if (probeTargets.length === 0) test("installed Harnesses hand a conversation ove
     };
     const switchTo = async (harnessId: string): Promise<void> => {
       app.runtime.switch(id, selection(harnessId), "switch-" + randomUUID()); await settle("the switch to " + harnessId);
-      assert.equal(app.runtime.read(id).selection.harnessId, harnessId, "the switch to " + harnessId + " took effect");
+      assert.equal(oldShape(app.runtime, id).selection.harnessId, harnessId, "the switch to " + harnessId + " took effect");
     };
 
     const one = await ask("请随便想一个五位数（不要用 12345、11111 这类有规律的数），只回复这个数字本身，不要调用任何工具，不要别的字。");
@@ -133,7 +134,7 @@ if (probeTargets.length === 0) test("installed Harnesses hand a conversation ove
       app.runtime.send(id, "从 1 数到 3，每个数字单独一行，不要调用任何工具。", "send-" + randomUUID());
       await new Promise(resolve => setTimeout(resolve, 1500));
       app.runtime.cancel(id, "cancel-" + randomUUID()); await settle("the stopped Turn");
-      { const state = app.runtime.read(id), run = state.runs.at(-1)!; turns.push({ step: "stopped", ...summary(app, id, state, run) }); }
+      { const state = oldShape(app.runtime, id), run = state.runs.at(-1)!; turns.push({ step: "stopped", ...summary(app, id, state, run) }); }
       await ask("刚才 " + displayName(first) + " 最后回复的数字是多少？" + brief);
       await ask("这段对话里你一共回答过几次？" + brief);
       await switchTo(first);
@@ -526,7 +527,7 @@ function fullPacket(target: string, user: string, nonce: string, firstLine = tru
     { input: "给导出文件加一个标题行，再把测试跑一遍。", harnessId: sourceOf(target), model: "synthetic-model", reply: "标题行已经加好，测试全部通过。这次核对用的暗号是 " + codeword + "。",
       tools: [tool("r1", "Read src/export.ts", "read"), tool("e1", "Edit `src/export.ts`", "edit")] },
     { input: user, harnessId: target }]);
-  return relayTurnOf(renderRelay({ state: scenario.state, current: scenario.current, sources: scenario.sources, origin: false, names, firstLine }), user, codeword);
+  return relayTurnOf(renderRelay({ state: snapshotHistory(scenario.state), current: scenario.current, sources: scenario.sources, origin: false, names, firstLine }), user, codeword);
 }
 /**
  * A delta for `target` back on its own native session: it said `number` in its first turn (its binding stands there), another
@@ -538,7 +539,7 @@ function deltaPacket(target: string, partner: string, number: number, question: 
     { input: "上一位 Harness 回复的那个五位数加 1 等于多少？只回复结果数字本身，不要调用任何工具，不要别的字。", harnessId: partner, reply: String(number + 1) },
     { input: question, harnessId: target }],
   [{ harnessId: target, controlId: target + "-acp", checkpoint: "private", throughRunId: runId("run-1"), status: "ready" }]);
-  return relayTurnOf(renderRelay({ state: scenario.state, current: scenario.current, sources: scenario.sources.slice(1), origin: false, names, firstLine: true }), question, "");
+  return relayTurnOf(renderRelay({ state: snapshotHistory(scenario.state), current: scenario.current, sources: scenario.sources.slice(1), origin: false, names, firstLine: true }), question, "");
 }
 
 /** The sent parts of a relay Turn by the Driver's placement (what the Driver hands the native side), as one text for comparing. */

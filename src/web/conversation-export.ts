@@ -1,11 +1,13 @@
-import type { ConversationReader, TurnItems } from "../contracts/conversation.js";
+import type { ConversationReader, RunRow, TurnItems } from "../contracts/conversation.js";
 import { statusText, turnFacts } from "../contracts/protocol-lines.js";
 import type { ReadTurn } from "../contracts/protocol-read.js";
 import { ITEM_STATUS_WORDS } from "../contracts/protocol-words.js";
 import type { WorkItem } from "../contracts/protocol.js";
-import type { PublicRun, SessionId } from "../contracts/session.js";
-import type { SessionView, WireTurn } from "../contracts/web.js";
+import { sessionId, type PublicMessage, type PublicRun, type PublicSwitch, type SessionId } from "../contracts/session.js";
+import type { SessionHeadView, WebRun, WireTurn } from "../contracts/web.js";
+import { fromItems } from "../contexts/session/domain/store-conversion.js";
 import { turnRecord } from "../contexts/session/domain/turn-source.js";
+import type { RunRelayReading } from "./turn-view.js";
 
 function bytes(value: number): string { return value >= 1024 * 1024 ? (value / 1024 / 1024).toFixed(1) + " MB" : value >= 1024 ? Math.ceil(value / 1024) + " KB" : value + " B"; }
 /** Text is quoted as-is; only a line that would close the surrounding fence is indented. */
@@ -46,35 +48,6 @@ function foldedError(turn: ReadTurn, item: { readonly id: string }): boolean { r
 function heading(turn: ReadTurn): string {
   return `## ${turn.executor.harness}${turn.executor.model === undefined ? "" : "（" + turn.executor.model.label + "）"} · ${statusText(turn)}`;
 }
-/** A Run the view has no Turn for: it is named and said to have none, never worded from anything else. */
-function withoutTurn(run: PublicRun, harnessName: (id: string) => string): string[] { return [`## ${harnessName(run.selection.harnessId)} · 这一轮没有协议数据`, ""]; }
-
-/**
- * The public conversation as Markdown: committed messages in order with their Turn's facts, worded as the page words them (state, model,
- * time and usage included). Private native state, tool detail bodies and stored bytes are not included; attachments and products are
- * listed by name. (This reads the conversation's old whole shape, as the web server still gives it; `exportMarkdown` below reads rows,
- * a Turn at a time, and is what replaces it.)
- */
-export function conversationMarkdown(view: SessionView, harnessName: (id: string) => string, exportedAt: Date): string {
-  const runs = new Map(view.runs.map(run => [run.id, run])), title = view.messages.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim().slice(0, 80) || "新对话";
-  const out = [`# ${title}`, "", `- 导出时间：${exportedAt.toISOString()}`, `- 工作区：${view.workspace}`, `- 会话：${view.id}（${view.status}）`, ""];
-  for (const message of [...view.messages].sort((a, b) => a.seq - b.seq)) {
-    const run = runs.get(message.runId);
-    if (message.role === "user") {
-      out.push("---", "", "## 你", "", "```text", fenced(message.text), "```", "");
-      if (run?.attachments?.length) out.push("附件：", ...run.attachments.map(item => `- ${item.name}（${item.mediaType}，${bytes(item.bytes)}）`), "");
-      // A Run that produced no reply message (failed before output, still queued) keeps its status and facts in place.
-      if (run && !view.messages.some(row => row.runId === run.id && row.role === "assistant")) out.push(...(run.protocol === undefined ? withoutTurn(run, harnessName) : [heading(run.protocol), "", ...factsOf(run.protocol), ""]));
-      continue;
-    }
-    if (run?.protocol === undefined) { out.push(...(run === undefined ? ["## Harness", ""] : withoutTurn(run, harnessName)), message.text, ""); continue; }
-    out.push(heading(run.protocol), "", message.text, "");
-    const facts = factsOf(run.protocol);
-    if (facts.length) out.push(...facts, "");
-  }
-  return out.join("\n");
-}
-
 // ---------------------------------------------------------------------------------------------------------------------------------
 // From rows, a Turn at a time
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -129,7 +102,7 @@ function inOrder(turn: ReadTurn): string[] {
 
 /**
  * The public conversation as Markdown, a Turn at a time: each yield is the text of one piece (the head, then one Turn after another), and the pieces written one after the other are
- * `conversationMarkdown` of the same conversation. Nothing but the Turn being written is held. A Turn from before the order was recorded
+ * the whole of the Markdown. Nothing but the Turn being written is held. A Turn from before the order was recorded
  * is written as it always was (the words of the reply, then its plan, steps, products, numbers and errors) with a line that says its parts stand in a fixed arrangement; a Turn that has the
  * order writes what it did in the order it did it: the words, the steps after them, the words after those.
  */
@@ -150,4 +123,98 @@ export function* exportMarkdown(source: ExportSource, exportedAt: Date): Generat
     } else out.push(heading(turn), "", ...inOrder(turn));
     yield "\n" + out.join("\n");
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// The JSON export, a Turn at a time
+// ---------------------------------------------------------------------------------------------------------------------------------
+
+/** One Turn as the conversation is stored: its Run (what the old `PublicRun` was, the relay's reading of its packet read in) and the words said in it (the user's, then the reply when there is one). */
+export interface StoredTurn { readonly run: WebRun; readonly messages: readonly PublicMessage[] }
+/** A Run with the relay's reading of it in: the state of its packet and the decision made for its context. The choices it was asked with (an HMAC) stay in the Gateway, as the API never showed them. */
+export function storedRun(run: PublicRun, reading: RunRelayReading): WebRun {
+  const { relayRequest: _hidden, relay, ...rest } = run;
+  if (relay === undefined) return rest;
+  return { ...rest, relay: { ...relay, ...(reading.delivery === undefined ? {} : { delivery: reading.delivery }), ...(reading.decision === undefined ? {} : { decision: reading.decision }) } };
+}
+/** A conversation as the JSON export reads it: what it says as a whole, where each Turn's words stand among the others', and its Turns one at a time. */
+export interface JsonExportSource {
+  /** The `session` of the export but its messages, Runs and switches, in the order they are written. */
+  readonly head: Readonly<Record<string, unknown>>;
+  readonly count: number;
+  readonly switches: readonly PublicSwitch[];
+  /** The seq of the user's words of a Turn and of its reply (null: it said nothing), read without the Turn's words; null when there is no Turn at the place. */
+  places(ordinal: number): { readonly user: number; readonly reply: number | null } | null;
+  /** The Turn whole; null when there is none at the place. */
+  read(ordinal: number): StoredTurn | null;
+}
+/** A conversation kept as rows, read for the JSON export: its head as the page reads it, its switches, and each Turn made into the stored shape by `fromItems`. */
+export function rowsJsonExport(reader: Pick<ConversationReader, "turnAt">, view: SessionHeadView, switches: readonly PublicSwitch[], reading: (row: RunRow) => RunRelayReading): JsonExportSource {
+  const id = sessionId(view.id);
+  // What the old view said of the conversation itself; the requests waiting for the user stay out, as they always did.
+  const head = { id: view.id, version: view.version, lastSeq: view.lastSeq, epoch: view.epoch, status: view.status, workspace: view.workspace, selection: view.selection, activeRunId: view.activeRunId,
+    pendingSwitchId: view.pendingSwitchId, permissions: [], nativeStates: view.nativeStates ?? [], ...(view.origin === undefined ? {} : { origin: view.origin }), ...(view.queue === undefined ? {} : { queue: view.queue }),
+    ...(view.retention === undefined ? {} : { retention: view.retention }) };
+  return {
+    head, count: view.runCount, switches,
+    places: ordinal => {
+      // No item's text or body is read: the places are columns.
+      const turn = reader.turnAt(id, ordinal, { inlineBytes: 0 });
+      if (turn === null) return null;
+      const reply = turn.items.filter(item => item.itemId.startsWith("text:")).sort((left, right) => left.seq - right.seq)[0];
+      return { user: turn.run.userSeq, reply: reply === undefined ? null : reply.createdSeq ?? turn.run.userSeq };
+    },
+    read: ordinal => {
+      const turn = reader.turnAt(id, ordinal, { inlineBytes: Infinity });
+      if (turn === null) return null;
+      const { run, messages } = fromItems({ row: turn.run, items: turn.items, contentRefs: [] });
+      return { run: storedRun(run, reading(turn.run)), messages };
+    },
+  };
+}
+
+/** A value as JSON laid out in two-space lines, its continuation lines indented by `by` more spaces. */
+function block(value: unknown, by: number): string { return JSON.stringify(value, null, 2).split("\n").join("\n" + " ".repeat(by)); }
+/** The elements of an array member of the session, one after the other: `[`, the elements, `]` (`[]` for none). */
+function* elements(values: Iterable<unknown>): Generator<string> {
+  let first = true;
+  for (const value of values) { yield (first ? "[\n" : ",\n") + "      " + block(value, 6); first = false; }
+  yield first ? "[]" : "\n    ]";
+}
+
+/**
+ * The conversation as JSON, a Turn at a time: the pieces written one after the other are the text `JSON.stringify(…, null, 2)` makes of `{ application, exportedAt, session }`, with the
+ * session's messages in the order they were said (the seq of each places it: a queued input is accepted before the reply of the Turn in front of it), then its Runs, then its switches.
+ * The order of the messages is worked out from the places alone (a small entry for each message); the words are read as they are written, with at most a few Turns held. A Turn that is
+ * still going is written as it stands when it is read.
+ */
+export function* exportJson(source: JsonExportSource, exportedAt: Date): Generator<string> {
+  yield "{\n  \"application\": \"HarnessHub\",\n  \"exportedAt\": " + JSON.stringify(exportedAt.toISOString()) + ",\n  \"session\": {\n"
+    + Object.entries(source.head).map(([name, value]) => "    " + JSON.stringify(name) + ": " + block(value, 4)).join(",\n") + ",\n    \"messages\": ";
+  const said: { readonly seq: number; readonly ordinal: number; readonly role: 0 | 1 }[] = [];
+  for (let ordinal = 0; ordinal < source.count; ordinal++) {
+    const place = source.places(ordinal);
+    if (place === null) continue;
+    said.push({ seq: place.user, ordinal, role: 0 });
+    if (place.reply !== null) said.push({ seq: place.reply, ordinal, role: 1 });
+  }
+  // The old store held the messages by seq, a Turn's user words before its reply when they share one.
+  said.sort((left, right) => left.seq - right.seq || left.ordinal - right.ordinal || left.role - right.role);
+  const held = new Map<number, StoredTurn | null>();
+  const turn = (ordinal: number): StoredTurn | null => {
+    let found = held.get(ordinal);
+    if (found !== undefined) { held.delete(ordinal); held.set(ordinal, found); return found; }
+    found = source.read(ordinal);
+    held.set(ordinal, found);
+    if (held.size > 3) held.delete(held.keys().next().value!);
+    return found;
+  };
+  function* messages(): Generator<PublicMessage> { for (const entry of said) { const message = turn(entry.ordinal)?.messages[entry.role]; if (message !== undefined) yield message; } }
+  function* runs(): Generator<WebRun> { for (let ordinal = 0; ordinal < source.count; ordinal++) { const found = turn(ordinal); if (found !== null) yield found.run; } }
+  yield* elements(messages());
+  yield ",\n    \"runs\": ";
+  yield* elements(runs());
+  yield ",\n    \"switches\": ";
+  yield* elements(source.switches);
+  yield "\n  }\n}\n";
 }

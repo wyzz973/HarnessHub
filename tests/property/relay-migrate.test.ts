@@ -15,6 +15,7 @@ import { parseSession } from "../../src/infrastructure/session/legacy/state.js";
 import { appStore } from "../fixtures/runtime-store.js";
 import { writeV12Root } from "../fixtures/relay/v12/database.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 // Random v12 conversations (ADR-055 §14.4): random v12 conversations migrated to v13. The conversations are made by the formal
 // SessionRuntime and a real SqliteConversationStore with an in-process model Harness that keeps the ground truth of every native
@@ -126,7 +127,7 @@ async function play(w: World, id: SessionId, random: () => number, steps: number
   const app = w.runtime, key = () => "key-" + w.next();
   const settle = async () => { try { await app.wait(id); } catch (error) { if (!(error instanceof SessionError) || error.code !== "SESSION_BLOCKED") throw error; } };
   for (let step = 0; step < steps; step++) {
-    const state = app.read(id), selected = state.selection.harnessId;
+    const state = oldShape(app, id), selected = state.selection.harnessId;
     if (state.status === "blocked") { app.resume(id, { harnessId: harnesses[Math.floor(random() * harnesses.length)]! }, key(), true); await settle(); continue; }
     if (state.nativeBindings?.some(binding => binding.harnessId === selected && (binding.status === "unconfirmed" || binding.status === "forking"))) { app.resetNative(id, key(), state.epoch); continue; }
     const draw = random();
@@ -240,11 +241,11 @@ for (const [seed, legacy] of [[1, false], [2, false], [3, true], [4, false], [5,
     const sessions: SessionId[] = [];
     for (let index = 0; index < 4; index++) {
       const shape = random(), harnesses = HARNESSES.slice(0, 1 + Math.floor(random() * 3));
-      let session: SessionSnapshot;
+      let session: { readonly id: SessionId };
       if (shape < 0.2) session = await w.runtime.importNative(configuration(w.workspace), { harnessId: harnesses[0]! }, "native-imported-" + seed + "-" + index, "import-" + index);
       else if (shape < 0.4 && sessions.length > 0) {
-        const source = sessions[Math.floor(random() * sessions.length)]!, finished = w.runtime.read(source).runs.filter(run => ["completed", "failed", "cancelled", "unknown"].includes(run.status));
-        if (!finished.length || w.runtime.read(source).status !== "open") { session = await w.runtime.create(configuration(w.workspace), { harnessId: harnesses[0]! }, "create-" + index); }
+        const source = sessions[Math.floor(random() * sessions.length)]!, finished = oldShape(w.runtime, source).runs.filter(run => ["completed", "failed", "cancelled", "unknown"].includes(run.status));
+        if (!finished.length || oldShape(w.runtime, source).status !== "open") { session = await w.runtime.create(configuration(w.workspace), { harnessId: harnesses[0]! }, "create-" + index); }
         else { session = w.runtime.fork(source, "branch-" + index, finished.at(-1)!.id); try { await w.runtime.wait(session.id); } catch { /* a refused fork leaves the branch on public history */ } }
       } else session = await w.runtime.create(configuration(w.workspace), { harnessId: harnesses[0]! }, "create-" + index);
       sessions.push(session.id);
@@ -309,7 +310,7 @@ test("G066-C02 before G067 a command moved the position past what it owed: the n
   await send("a1", "a1"); await send("a2", "a2"); await to("bravo", "to-b"); await send("b1", "b1"); await send("b2", "b2"); await to("alpha", "to-a");
   await send("/compact", "d1");
   // A build before G067 moved alpha's position to the command, past bravo's two Turns it never sent there (R4 D1).
-  const command = app.read(id).runs.at(-1)!;
+  const command = oldShape(app, id).runs.at(-1)!;
   const db = new DatabaseSync(join(w.data, "gateway.sqlite"));
   db.prepare("UPDATE bindings SET through_run_id=?, binding_json=json_set(binding_json,'$.throughRunId',?) WHERE session_id=? AND harness_id='alpha' AND status<>'archived'").run(command.id, command.id, id);
   db.close();

@@ -6,7 +6,7 @@ import { nativeConversationId, singleText, type BackendResult, type CleanupEvide
 import { SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionId, type SessionRuntimeOptions } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { SqliteConversationStore, SqliteConversationStoreOptions } from "../../src/infrastructure/session/conversation-store.js";
 import { appStore } from "./runtime-store.js";
 import { temporary } from "./store-helpers.js";
 
@@ -60,12 +60,19 @@ export interface ScriptedWorld {
   /** Sends an input and waits for its Turn to end. */
   send(text: string): Promise<void>;
 }
-export async function scriptedWorld(t: TestContext, script: Script, options: { readonly wrap?: (store: SqliteConversationStore) => SqliteConversationStore; readonly runtime?: Partial<SessionRuntimeOptions> } = {}): Promise<ScriptedWorld> {
+export async function scriptedWorld(t: TestContext, script: Script, options: {
+  readonly wrap?: (store: SqliteConversationStore) => SqliteConversationStore; readonly runtime?: Partial<SessionRuntimeOptions>;
+  /** Runs on the data directory before the store opens it: a test that wants a data root as an earlier build, or a broken disk, left it makes it here. */
+  readonly before?: (data: string) => void;
+  /** More of what the store is opened with. */
+  readonly store?: SqliteConversationStoreOptions;
+} = {}): Promise<ScriptedWorld> {
   const open: { app?: SessionRuntime; store?: SqliteConversationStore } = {};
   t.after(async () => { await open.app?.close(); open.store?.close(); });
   const root = temporary(t), workspace = join(root, "workspace"), data = join(root, "data");
   mkdirSync(workspace);
-  const store = appStore(data, { now: () => STAMP }), content = new LocalContentStore(data, () => store.assertOwner());
+  options.before?.(data);
+  const store = appStore(data, { now: () => STAMP, ...options.store }), content = new LocalContentStore(data, () => store.assertOwner());
   open.store = store;
   let next = 0;
   const app = new SessionRuntime(options.wrap === undefined ? store : options.wrap(store), new ScriptedHarness(script), { id: () => String(++next), now: () => STAMP, publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"), content, ...options.runtime });

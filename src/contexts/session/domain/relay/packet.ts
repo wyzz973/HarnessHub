@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { RelayPacketKind } from "../../../../contracts/relay.js";
 import type { NativeSessionBinding, PublicRun, RunId } from "../../../../contracts/session.js";
-import { historyOf, type RelayHistory, type RelayState } from "./history.js";
+import type { RelayHistory } from "./history.js";
 import { RELAY_POLICY_VERSION, estimateTokens, resolveRelayBudget, type RelayBudget } from "./budget.js";
 import { dataRegion, firstLine, type RelayLanguage } from "./escape.js";
 import { ITEM_KINDS, LEAST, Narrator, OUTPUT_LINES, candidatesOf, kindOf, opsLabel, relayUnits, type Candidate, type ItemKind, type RelayToolDetail, type RelayUnit } from "./narration.js";
@@ -28,8 +28,8 @@ import { reportedWindow } from "./windows.js";
 
 /** What the packet's rendering needs beyond the snapshot. */
 export interface RelayRenderInput {
-  /** The conversation as the renderer reads it (src/contexts/session/domain/relay/history.ts), or the old whole shape of one. */
-  readonly state: RelayState;
+  /** The conversation as the renderer reads it (src/contexts/session/domain/relay/history.ts). */
+  readonly state: RelayHistory;
   /** The Run that sends the packet; its input is the user's current words. */
   readonly current: PublicRun;
   /** The Runs it owes, validated and in conversation order. */
@@ -306,6 +306,16 @@ const HOPELESS = 8;
 /** How many items in a row may fail to fit before the room left is given up on (what comes later is then left out, as ledgered). */
 const MISSES = 40;
 
+/** Whether a text is too long for the room left to be rendered at all. A text not read yet is told by what is known of its size, then by its start, and read whole only when neither settles it. */
+function hopeless(item: Candidate, room: number): boolean {
+  const { least, most, exact, exceeds } = item.size;
+  if (most / 3.2 <= HOPELESS * room) return false;
+  if (least / 3.2 > HOPELESS * room) return true;
+  // One unit more than the limit asks for, so that the arithmetic of the two ways of telling cannot part them.
+  if (exceeds?.(Math.ceil(HOPELESS * room * 3.2) + 1) === true) return true;
+  return exact() / 3.2 > HOPELESS * room;
+}
+
 /** What a rendering produced besides its text: the ID slots split it into head, body and tail. */
 interface Draft {
   readonly head: string; readonly body: string; readonly tail: string; readonly tokens: number;
@@ -348,7 +358,7 @@ function compose(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, 
     let used = 0, userUsed = 0;
     const take = (item: Candidate, userLimit: number): boolean => {
       const room = available - used;
-      if (room <= 0 || item.withheld || (item.needs !== null && !chosen.has(item.needs)) || item.raw / 3.2 > HOPELESS * room) return false;
+      if (room <= 0 || item.withheld || (item.needs !== null && !chosen.has(item.needs)) || hopeless(item, room)) return false;
       const piece = item.piece();
       if (piece === null) return false;
       // A command's note on its output (item.unattached) is paid for with the command, whether or not its output tail is chosen after it.
@@ -436,7 +446,7 @@ function compose(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, 
  * `record.tokens` against `record.budget.cap` and can send the words alone.
  */
 export function renderRelay(input: RelayRenderInput): RelayRendering {
-  const { current } = input, state = historyOf(input.state), language = languageOf(current.input), redactor = relayRedactor(input.secrets ?? []);
+  const { current, state } = input, language = languageOf(current.input), redactor = relayRedactor(input.secrets ?? []);
   const n = new Narrator(language, redactor, input.names ?? (() => null), input.hubTools === true), units = relayUnits(state, input.sources, input.origin, input.details);
   const binding = targetBinding(state, current);
   const delta = binding !== undefined && (binding.throughRunId !== null || ((state.origin?.history.length ?? 0) > 0 && !input.origin));

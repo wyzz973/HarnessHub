@@ -12,7 +12,7 @@ import { ManagementError, type InstallationJobView } from "../../src/contracts/m
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
 import { homePathsIn } from "../../src/web/shown-paths.js";
-import { conversationMarkdown } from "../../src/web/conversation-export.js";
+import { statusText } from "../../src/contracts/protocol-lines.js";
 import type { PublicRun } from "../../src/contracts/session.js";
 import type { SessionView, SessionViewV14 } from "../../src/contracts/web.js";
 import { readWhole, type ReadConversation } from "../fixtures/http-conversation.js";
@@ -529,15 +529,12 @@ test("the public conversation exports as Markdown or JSON without private native
   assert.equal(JSON.stringify(exported).includes("\"protocol\""), false, "the protocol view reads stored tool details, which an export leaves out");
   // The Markdown is worded from the protocol Turns, as the page words them: the Turn's model and numbers, and a Turn the Hub stopped with why it ended (ADR-036).
   assert.match(text, /^统计：用时 [0-9.]+ 秒/mu, "the Turn's time is written as the page writes it");
-  // The export is still the conversation whole, in the shape of the old view; the Turns its Markdown is worded from are the ones a page reads (each Turn's header and items), put to the Runs.
-  const turns = (await state(f, id)).turns, whole = exported.session as SessionView;
-  const live: SessionView = { ...whole, runs: whole.runs.map((run, index) => ({ ...run, protocol: { ...turns[index]!.run.turn, items: turns[index]!.items } })) };
-  assert.ok(conversationMarkdown(live, () => "Web a", new Date(0)).includes("## Web a · 已完成"), "the Turn a page reads is worded as the exported one is");
-  const ended = (stopReason: "budget" | "user_stopped" | "cleared") => conversationMarkdown({ ...live,
-    runs: live.runs.map(run => ({ ...run, status: "cancelled" as const, protocol: { ...run.protocol!, status: "cancelled" as const, stopReason } })),
-    messages: live.messages.map(message => ({ ...message, status: "cancelled" as const })) }, () => "Web a", new Date(0));
-  assert.ok(ended("budget").includes("## Web a · 已停止 · 超过了这一轮的时间上限")); assert.ok(ended("user_stopped").includes("## Web a · 已停止 · 你停止了这一轮"));
-  assert.ok(ended("cleared").includes("## Web a · 已停止 · 已清空，下一条消息开新会话"));
+  // The Turns its Markdown is worded from are the ones a page reads (each Turn's header and items): what a Turn the Hub stopped says of why it ended is worded the same.
+  const turns = (await state(f, id)).turns, page = { ...turns[0]!.run.turn, items: turns[0]!.items };
+  assert.equal(statusText(page), "已完成", "the Turn a page reads is worded as the exported one is");
+  const ended = (stopReason: "budget" | "user_stopped" | "cleared") => statusText({ ...page, status: "cancelled" as const, stopReason });
+  assert.equal(ended("budget"), "已停止 · 超过了这一轮的时间上限"); assert.equal(ended("user_stopped"), "已停止 · 你停止了这一轮");
+  assert.equal(ended("cleared"), "已停止 · 已清空，下一条消息开新会话");
   assert.equal((await call(f, `/api/v1/sessions/${id}/export?format=pdf`)).status, 400);
   assert.equal((await fetch(f.origin + `/api/v1/sessions/${id}/export`)).status, 401);
 });

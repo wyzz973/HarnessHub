@@ -1,7 +1,7 @@
 import type { Conversation, ConversationReader } from "../../../../contracts/conversation.js";
-import type { NativeSessionBinding, PublicRun, SessionId, SessionOrigin, SessionSnapshot } from "../../../../contracts/session.js";
+import type { NativeSessionBinding, PublicRun, SessionId, SessionOrigin } from "../../../../contracts/session.js";
 import { originFromRows } from "../store-conversion.js";
-import { snapshotTurns, turnSource, type TurnRecord } from "../turn-source.js";
+import { outlineOfRecord, turnSource, type OutlineReads, type TurnOutline, type TurnRecord } from "../turn-source.js";
 
 /*
  * What the relay's renderer reads of a conversation (ADR-057 3.3, readers): the Runs without their words, which are light and all there; the native bindings; the history the conversation started
@@ -21,20 +21,18 @@ export interface RelayHistory {
   readonly origin?: SessionOrigin | undefined;
   /** The Turn at an ordinal, with its words; null when there is none. A Turn is read once. */
   turn(ordinal: number): TurnRecord | null;
+  /** The Turn at an ordinal without its bodies (turn-source.ts `TurnOutline`): what a packet counts every Turn it owes by; the words are read when a piece of the packet needs them. Absent: `turn` tells it. */
+  outline?(ordinal: number): TurnOutline | null;
 }
-
-/** A conversation in the old whole shape as the renderer reads it: for a caller that has the snapshot already (the tests of the renderer, until the last of them reads rows). */
-export function snapshotHistory(state: SessionSnapshot): RelayHistory {
-  const places = new Map(state.messages.map(message => [message.id as string, message.seq])), turns = snapshotTurns(state);
-  return { id: state.id, lastSeq: state.lastSeq, runs: state.runs.map(run => places.has(run.userMessageId) ? { ...run, userSeq: places.get(run.userMessageId)! } : run),
-    ...(state.nativeBindings === undefined ? {} : { nativeBindings: state.nativeBindings }), ...(state.origin === undefined ? {} : { origin: state.origin }), turn: ordinal => turns.turn(ordinal) };
+/** The outline of a Turn of a history: its own when it has one, else made of the Turn read whole. */
+export function outlineOf(history: RelayHistory, ordinal: number): TurnOutline | null {
+  if (history.outline !== undefined) return history.outline(ordinal);
+  const record = history.turn(ordinal);
+  return record === null ? null : outlineOfRecord(record);
 }
-/** What the renderer takes of a conversation: the history as it reads it, or the old whole shape of one. */
-export type RelayState = RelayHistory | SessionSnapshot;
-export function historyOf(state: RelayState): RelayHistory { return "turn" in state ? state : snapshotHistory(state); }
 
 /** A conversation kept as rows, as the renderer reads it: the light rows of its Runs now, its Turns when asked for, the history it quoted when a packet owes it. */
-export function rowsHistory(conversation: Conversation, reader: Pick<ConversationReader, "head" | "turnAt" | "runOrdinal" | "originHistory">): RelayHistory {
+export function rowsHistory(conversation: Conversation, reader: Pick<ConversationReader, "head" | "turnAt" | "runOrdinal" | "originHistory"> & OutlineReads): RelayHistory {
   const turns = turnSource(reader, conversation.id);
   let origin: SessionOrigin | null | undefined;
   return {
@@ -45,5 +43,6 @@ export function rowsHistory(conversation: Conversation, reader: Pick<Conversatio
       return origin ?? undefined;
     },
     turn: ordinal => turns.turn(ordinal),
+    outline: ordinal => turns.outline(ordinal),
   };
 }

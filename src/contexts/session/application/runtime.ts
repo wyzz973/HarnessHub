@@ -7,17 +7,17 @@ import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, STOP_GRACE_MS, STREAM_WINDOW_BYTES, STREAM_WINDOW_MS,
   type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type OutsideEvidence, type OutsideProcess, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionConfiguration,
-  type SessionId, type SessionEvent, type SessionRuntimeOptions, type SessionSnapshot, type SwitchReceipt,
+  type SessionId, type SessionEvent, type SessionRuntimeOptions, type SwitchReceipt,
 } from "../../../contracts/session.js";
 import { buildPublicContext, type PublicContext, type PublicContextOptions } from "../domain/context.js";
 import { assertConversationTransition, inputOf, runIn, settledItems, updatedRun, userItemOf, withItems } from "../domain/conversation-state.js";
 import { detailJson } from "../domain/detail-json.js";
 import { itemsOf, openTurn, place, takeDetails, type ActiveTurn, type PlaceInput, type Placed, type StoreRequest, type TerminalStatus } from "../domain/items-place.js";
 import { runRowOf } from "../domain/run-row.js";
-import { originToRows } from "../domain/store-conversion.js";
+import { originFromRows, originToRows } from "../domain/store-conversion.js";
 import { RELAY_DETAIL_POLICY, relayDetailOf, type RelayToolDetail } from "../domain/relay/narration.js";
 import { readDetail } from "../domain/detail-read.js";
-import { rowsHistory, type RelayHistory } from "../domain/relay/history.js";
+import { outlineOf, rowsHistory, type RelayHistory } from "../domain/relay/history.js";
 import { turnSource } from "../domain/turn-source.js";
 import { toolFamily } from "../domain/protocol/index.js";
 import { commandEffect, commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
@@ -261,7 +261,7 @@ export class SessionRuntime {
   private accepting = true;
   private readonly closingSessions = new Set<SessionId>();
   private readonly managedSessions = new Set<SessionId>();
-  private readonly creating = new Set<Promise<SessionSnapshot>>();
+  private readonly creating = new Set<Promise<Conversation>>();
   /** Whether a conversation started from quoted history (a branch's, an import's), read once per process for an import: what a binding is owed besides the Turns. */
   private readonly quoted = new Map<SessionId, boolean>();
   /** Conversations with work their worker has not taken yet (ADR-036). */
@@ -344,7 +344,7 @@ export class SessionRuntime {
     this.relayKeys = options.relayKeys ?? new UnkeptRelayKeys();
   }
 
-  create(configuration: SessionConfiguration, selection: SelectionRequest, key: string): Promise<SessionSnapshot> {
+  create(configuration: SessionConfiguration, selection: SelectionRequest, key: string): Promise<Conversation> {
     try {
       this.admit();
     } catch (error) { return Promise.reject(error); }
@@ -353,17 +353,17 @@ export class SessionRuntime {
     void pending.then(() => { this.creating.delete(pending); }, () => { this.creating.delete(pending); });
     return pending;
   }
-  private async createOwned(configuration: SessionConfiguration, selection: SelectionRequest, key: string): Promise<SessionSnapshot> {
+  private async createOwned(configuration: SessionConfiguration, selection: SelectionRequest, key: string): Promise<Conversation> {
     this.admit();
     const config = parseConfiguration(configuration), request = requested(selection), command = commandId(key);
     const fingerprint = this.fingerprint({ kind: "create", configuration: config, selection: request });
     const prior = this.store.findByCreateKey(command);
-    if (prior) { replayCommand(prior, command, "create", fingerprint); return this.snapshotOf(prior.id); }
+    if (prior) { replayCommand(prior, command, "create", fingerprint); return this.load(prior.id); }
     const validated = await this.factory.validate(request, config);
     this.admit();
     // Validation has an await boundary; another create may have committed the same command in the meantime.
     const concurrent = this.store.findByCreateKey(command);
-    if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return this.snapshotOf(concurrent.id); }
+    if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return this.load(concurrent.id); }
     const id = sessionId("session-" + this.options.id());
     const state: Conversation = { id, version: 0, lastSeq: 0, format: CONVERSATION_FORMAT, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
@@ -372,7 +372,7 @@ export class SessionRuntime {
       const committed = this.store.create(state, [event("session.created", { selection: validated, continuity: "public_context_rehydrate" })]);
       this.managedSessions.add(committed.conversation.id);
       this.publish(committed);
-      return this.snapshotOf(id);
+      return this.load(id);
     }
     catch (error) { if (storeUntrusted(error)) this.fail(error, id); throw error; }
   }
@@ -382,7 +382,7 @@ export class SessionRuntime {
    * and no other conversation may hold it; its recent messages are quoted (never re-executed) and its reference becomes
    * this conversation's native session, so the next input goes to it directly. Nothing is sent to a model.
    */
-  importNative(configuration: SessionConfiguration, selection: SelectionRequest, nativeId: string, key: string): Promise<SessionSnapshot> {
+  importNative(configuration: SessionConfiguration, selection: SelectionRequest, nativeId: string, key: string): Promise<Conversation> {
     try {
       this.admit();
     } catch (error) { return Promise.reject(error); }
@@ -391,14 +391,14 @@ export class SessionRuntime {
     void pending.then(() => { this.creating.delete(pending); }, () => { this.creating.delete(pending); });
     return pending;
   }
-  private async importOwned(configuration: SessionConfiguration, selection: SelectionRequest, nativeId: string, key: string): Promise<SessionSnapshot> {
+  private async importOwned(configuration: SessionConfiguration, selection: SelectionRequest, nativeId: string, key: string): Promise<Conversation> {
     this.admit();
     if (typeof nativeId !== "string" || !nativeId.trim() || Buffer.byteLength(nativeId) > 1024 || /[\0-\x1f\x7f]/u.test(nativeId)) throw new SessionError("INVALID_INPUT", "invalid native session identity");
     const config = parseConfiguration(configuration), request = requested(selection), command = commandId(key);
     if (request.provider != null) throw new SessionError("INVALID_INPUT", "a native session continues with its own Harness, not a managed Provider");
     const fingerprint = this.fingerprint({ kind: "import", configuration: config, selection: request, nativeId });
     const replay = () => { const prior = this.store.findByCreateKey(command); if (prior) replayCommand(prior, command, "create", fingerprint); return prior; };
-    const prior = replay(); if (prior) return this.snapshotOf(prior.id);
+    const prior = replay(); if (prior) return this.load(prior.id);
     const validated = await this.factory.validate(request, config);
     this.admit();
     if (validated.provider !== undefined) throw new SessionError("INVALID_INPUT", "a native session continues with its own Harness, not a managed Provider");
@@ -410,7 +410,7 @@ export class SessionRuntime {
     held(nativeId);
     const read = await this.factory.readNativeSession(validated, config, nativeId);
     this.admit();
-    const concurrent = replay(); if (concurrent) return this.snapshotOf(concurrent.id);
+    const concurrent = replay(); if (concurrent) return this.load(concurrent.id);
     const checkpoint = read.checkpoint;
     if (typeof checkpoint !== "string" || !checkpoint || Buffer.byteLength(checkpoint) > 8192 || /[\0\r\n]/u.test(checkpoint)) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "invalid original Harness recovery reference");
     held(checkpoint);
@@ -428,7 +428,7 @@ export class SessionRuntime {
         origin: { harnessId: validated.harnessId, messages: quoted.length, omitted, historyRead: read.historyRead === true } })], parts.rows);
       this.managedSessions.add(id);
       this.publish(committed);
-      return this.snapshotOf(id);
+      return this.load(id);
     } catch (error) { if (storeUntrusted(error)) this.fail(error, id); throw error; }
   }
 
@@ -521,7 +521,6 @@ export class SessionRuntime {
     this.admit(); return this.cancelInternal(id, commandId(key), target === undefined ? undefined : runId(target));
   }
   /** The conversation in the shape the readers that have not moved to items read it in (the store's adapter over the rows, ADR-057 3.3). */
-  read(id: SessionId): SessionSnapshot { this.load(id); return this.snapshotOf(id); }
   /**
    * What each of the conversation's native bindings asks the user to look at now (the read behind the `attention` of `GET …/relay`):
    * worked out from the state the conversation is in at this moment — whether a packet was sent and nothing confirmed it, and whether
@@ -552,10 +551,10 @@ export class SessionRuntime {
     const problem = this.relayKeys.unusable;
     return problem === undefined || problem === null ? [] : [{ cause: "key_unavailable", detail: problem.slice(0, 200) }];
   }
-  resetNative(id: SessionId, key: string, epoch: number): SessionSnapshot {
+  resetNative(id: SessionId, key: string, epoch: number): Conversation {
     this.admit(); const state = this.load(id), command = commandId(key);
     const fingerprint = this.fingerprint({ kind: "native-reset", epoch });
-    if (replayCommand(state, command, "native-reset", fingerprint)) return this.snapshotOf(id);
+    if (replayCommand(state, command, "native-reset", fingerprint)) return this.load(id);
     if (state.status === "closed" || state.activeRunId !== null || state.pendingSwitchId !== null || state.runs.some(run => !terminal(run.status))) throw new SessionError("NATIVE_SESSION_BUSY", "native state can be branched only while idle");
     if (epoch !== state.epoch || state.selection.provider !== undefined) throw new SessionError("NATIVE_SELECTION_CONFLICT", "the selected native Harness changed");
     if (state.runs.some(run => run.status === "unknown" && run.cleanup?.closed !== true)) throw new SessionError("RECOVERY_CLEANUP_REQUIRED", "native resources must be confirmed before branching");
@@ -566,29 +565,25 @@ export class SessionRuntime {
     }, events: [event("native.branch_requested", { harnessId: current.selection.harnessId, controlId: current.selection.controlId, historyPreserved: true, previousBindingPreserved: true })] }));
     // The kept process runs the archived native session; it is closed before the next Turn opens a new one (ADR-030).
     if (this.kept.has(id)) void this.requestRelease(id, "native_reset");
-    return this.snapshotOf(committed.conversation.id);
+    return this.load(committed.conversation.id);
   }
   /**
    * Branches a Session after a finished Run. The branch quotes the public history through that Run and starts with the
    * same selection. When the source's native session is exactly at that Run, the branch gets a native fork of it (made
    * before the branch's first input); otherwise the branch continues from public history. Nothing is sent to a model.
    */
-  fork(sourceId: SessionId, key: string, throughRunId?: string): SessionSnapshot {
+  fork(sourceId: SessionId, key: string, throughRunId?: string): Conversation {
     this.admit();
     const loaded = this.load(sourceId), command = commandId(key);
     if (throughRunId !== undefined && (typeof throughRunId !== "string" || !/^run-[A-Za-z0-9-]{1,128}$/u.test(throughRunId))) throw new SessionError("INVALID_INPUT", "invalid branch point");
     const through = throughRunId === undefined ? [...loaded.runs].reverse().find(run => terminal(run.status)) : loaded.runs.find(run => run.id === throughRunId);
     const fingerprint = this.fingerprint({ kind: "fork", source: sourceId, through: through?.id ?? null });
     const prior = this.store.findByCreateKey(command);
-    if (prior) { replayCommand(prior, command, "create", fingerprint); return this.snapshotOf(prior.id); }
+    if (prior) { replayCommand(prior, command, "create", fingerprint); return this.load(prior.id); }
     if (!through || !terminal(through.status)) throw new SessionError("FORK_UNAVAILABLE", "a branch starts after a finished reply");
     if (loaded.activeRunId !== null || loaded.pendingSwitchId !== null) throw new SessionError("NATIVE_SESSION_BUSY", "wait for the current reply or switch to finish before branching");
-    // The branch quotes the public history through that Run: its words are read from the rows, in the old shape the quoting was always made from.
-    const source = this.snapshotOf(sourceId), last = source.runs.findIndex(run => run.id === through.id), included = new Set(source.runs.slice(0, last + 1).filter(run => terminal(run.status)).map(run => run.id));
-    const history: ForkedMessage[] = [...(source.origin?.history ?? []), ...[...source.messages].filter(message => included.has(message.runId)).sort((a, b) => a.seq - b.seq).map(message => {
-      const run = source.runs.find(row => row.id === message.runId)!;
-      return { role: message.role, text: message.text, status: run.status, ...(message.role === "assistant" ? { harnessId: run.selection.harnessId } : {}), ...(message.role === "user" && run.attachments?.length ? { attachments: run.attachments } : {}) };
-    })];
+    // The branch quotes the public history through that Run: its words are read from the rows, a Turn at a time.
+    const last = loaded.runs.findIndex(run => run.id === through.id), history = this.quotedThrough(sourceId, loaded, last);
     const native = loaded.selection.provider === undefined ? loaded.nativeBindings?.find(binding => binding.harnessId === loaded.selection.harnessId && binding.controlId === loaded.selection.controlId && binding.status === "ready") : undefined;
     // The native session is exactly at `through` only when no later Turn was dispatched to it, `through` ran in its current
     // native epoch, and the binding is synced with nothing owed up to `through` (ADR-055 §7.5): its native position follows
@@ -608,8 +603,25 @@ export class SessionRuntime {
       // The source's kept process holds the native session the branch forks; it is closed first (ADR-030).
       if (this.kept.has(sourceId)) void this.requestRelease(sourceId, "branched");
       if (nativeFork) this.schedule(id);
-      return this.snapshotOf(id);
+      return this.load(id);
     } catch (error) { if (storeUntrusted(error)) this.fail(error, id); throw error; }
+  }
+  /**
+   * The history a branch after the Run at `last` quotes: what the source itself quoted, then the words of its finished Turns through that Run in the order they were said (the seq of each message
+   * places it: a queued input is accepted before the reply of the Turn in front of it is made).
+   */
+  private quotedThrough(sourceId: SessionId, loaded: Conversation, last: number): ForkedMessage[] {
+    const turns = turnSource(this.store, sourceId), said: { readonly seq: number; readonly message: ForkedMessage }[] = [];
+    for (let ordinal = 0; ordinal <= last; ordinal++) {
+      const turn = turns.turn(ordinal);
+      if (turn === null || !terminal(turn.run.status)) continue;
+      const run = turn.run;
+      said.push({ seq: turn.user.seq, message: { role: "user", text: turn.user.text, status: run.status, ...(run.attachments?.length ? { attachments: run.attachments } : {}) } });
+      if (turn.assistant !== undefined) said.push({ seq: turn.assistant.seq, message: { role: "assistant", text: turn.assistant.text, status: run.status, harnessId: run.selection.harnessId } });
+    }
+    said.sort((left, right) => left.seq - right.seq);
+    const quoted = loaded.origin === undefined ? null : originFromRows(loaded.origin, this.store.originHistory?.(sourceId) ?? []);
+    return [...(quoted?.history ?? []), ...said.map(item => item.message)];
   }
   /** Whether a binding's native session holds exactly the conversation through `through` (relay-coordinator nativeExactAt). */
   private exactAt(state: Conversation, binding: NativeSessionBinding, through: ConversationRun): boolean {
@@ -633,9 +645,9 @@ export class SessionRuntime {
    * Opts this conversation in or out of keeping its native process between Turns (ADR-030). Off by default; turning it off
    * closes a kept process before the next Turn. Idempotent by command key.
    */
-  setRetention(id: SessionId, enabled: boolean, key: string): SessionSnapshot {
+  setRetention(id: SessionId, enabled: boolean, key: string): Conversation {
     this.admit(); const state = this.load(id), command = commandId(key), fingerprint = this.fingerprint({ kind: "retention", enabled });
-    if (replayCommand(state, command, "retention", fingerprint)) return this.snapshotOf(id);
+    if (replayCommand(state, command, "retention", fingerprint)) return this.load(id);
     if (state.status === "closed") throw new SessionError("SESSION_CLOSED", "a closed Session keeps no native process");
     const committed = this.commit(id, current => {
       const { retainNative, ...rest } = current;
@@ -643,16 +655,16 @@ export class SessionRuntime {
         events: [event("session.retention_changed", { enabled })] };
     });
     if (!enabled && this.kept.has(id)) void this.requestRelease(id, "disabled");
-    return this.snapshotOf(committed.conversation.id);
+    return this.load(committed.conversation.id);
   }
   /** Closes this conversation's kept process at the user's request, with the normal stop chain; resolves once it is recorded. */
-  async endKept(id: SessionId, key: string): Promise<SessionSnapshot> {
+  async endKept(id: SessionId, key: string): Promise<Conversation> {
     this.admit(); const state = this.load(id), command = commandId(key), fingerprint = this.fingerprint({ kind: "native-close" });
     if (!replayCommand(state, command, "native-close", fingerprint)) {
       this.commit(id, current => ({ next: { ...current, commands: [...current.commands, { id: command, kind: "native-close", fingerprint, resultId: id }] }, events: [event("native.process_close_requested", {})] }));
     }
     if (this.kept.has(id) || this.releasing.has(id)) await this.requestRelease(id, "ended_by_user");
-    return this.snapshotOf(id);
+    return this.load(id);
   }
   /** This conversation's kept process as the chat shows it; null when it keeps none. */
   keptProcess(id: SessionId): { readonly harnessId: string; readonly controlId: string; readonly since: number; readonly lastUsedAt: number; readonly idleEndsAt: number; readonly backgroundUpdates: number } | null {
@@ -812,10 +824,10 @@ export class SessionRuntime {
     } catch { return { keep: false }; }
   }
 
-  async closeSession(id: SessionId, key: string): Promise<SessionSnapshot> {
+  async closeSession(id: SessionId, key: string): Promise<Conversation> {
     this.admit(); const command = commandId(key), fingerprint = this.fingerprint({ kind: "close" });
     const state = this.load(id), prior = replayCommand(state, command, "close", fingerprint);
-    if (prior) { await this.wait(id); return this.snapshotOf(id); }
+    if (prior) { await this.wait(id); return this.load(id); }
     this.closingSessions.add(id);
     try {
       // Text the active Turn streamed before the close is committed first, so the close never precedes it in the log (ADR-047).
@@ -830,7 +842,7 @@ export class SessionRuntime {
       if (this.kept.has(id)) void this.requestRelease(id, "conversation_closed");
       await this.wait(id);
       this.commit(id, current => ({ next: { ...current, status: "closed" }, events: [event("session.closed", {})] }));
-      return this.snapshotOf(id);
+      return this.load(id);
     } finally { this.closingSessions.delete(id); }
   }
 
@@ -965,14 +977,6 @@ export class SessionRuntime {
   private readonly versions = new Map<SessionId, number>();
   private load(id: SessionId): Conversation {
     try { const state = this.store.get(id); this.versions.set(id, state.version); return state; }
-    catch (error) {
-      if (!(error instanceof SessionError && error.code === "SESSION_NOT_FOUND")) this.stalls(error, id);
-      throw error;
-    }
-  }
-  /** The conversation in the old shape (the store's adapter over the rows): for what is made of the words of the earlier Turns, which the rows hold and the light rows of `load` do not. */
-  private snapshotOf(id: SessionId): SessionSnapshot {
-    try { return this.store.snapshot(id); }
     catch (error) {
       if (!(error instanceof SessionError && error.code === "SESSION_NOT_FOUND")) this.stalls(error, id);
       throw error;
@@ -2317,7 +2321,7 @@ export class SessionRuntime {
     if (content === undefined || (content.readText === undefined && content.readChunks === undefined)) return details;
     // Only the Turns whose details are read are read: the first owed Run's and the 12 latest.
     const position = new Map(history.runs.map((run, index) => [run.id as string, index]));
-    const runs = [...new Set([...sources.slice(0, 1), ...sources.slice(-12)])].flatMap(id => { const turn = history.turn(position.get(id) ?? -1); return turn === null ? [] : [turn.run]; });
+    const runs = [...new Set([...sources.slice(0, 1), ...sources.slice(-12)])].flatMap(id => { const turn = outlineOf(history, position.get(id) ?? -1); return turn === null ? [] : [turn.run]; });
     let left = 128;
     for (const run of runs) {
       let taken = 0;

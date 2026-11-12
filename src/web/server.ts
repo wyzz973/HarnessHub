@@ -9,7 +9,7 @@ import { application as composeApplication, builtinHarnessName } from "../cli/se
 import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
 import type { ConversationCommit, StartupSample } from "../contracts/conversation.js";
-import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type TurnLimits } from "../contracts/session.js";
+import { SessionError, parseNativeOptions, runId, sessionId, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type TurnLimits } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
 import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, MaintenanceView, NativeSessionListView, UninstallCheckView, InstallCheckView, WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
@@ -28,15 +28,16 @@ import { RelayApi, parseSendRelay } from "./relay-routes.js";
 import { ConversationRoutes, type HeadLive } from "./conversation-routes.js";
 import { commitFrame } from "./commit-frame.js";
 import { DetailHeads } from "./detail-heads.js";
-import { exportView } from "./export-view.js";
+import { sendPieces } from "./download.js";
 import { RunRelayReader } from "./run-relay.js";
 import { TableApi } from "./table-routes.js";
 import type { TableGrants } from "../contracts/table.js";
 import { AttentionStreamHub } from "./attention-stream.js";
 import { HarnessModels } from "./harness-models.js";
 import { buildRevision, NativeCatalogCache, type NativeReadiness } from "./native-catalog-cache.js";
-import { conversationMarkdown } from "./conversation-export.js";
-import { runDiagnostics, scrubDiagnostics } from "./run-diagnostics.js";
+import { exportJson, exportMarkdown, rowsExport, rowsJsonExport } from "./conversation-export.js";
+import { scrubDiagnostics, turnDiagnostics } from "./run-diagnostics.js";
+import { messageStarts, turnSource } from "../contexts/session/domain/turn-source.js";
 import { nativeResume } from "../infrastructure/management/verified-versions.js";
 import { LoginShellStore, readLoginShellPath, type LoginShellDirectories } from "../infrastructure/discovery/login-shell.js";
 import { CapabilityService, type InstalledChannel, type InstalledHarness } from "../infrastructure/capabilities/service.js";
@@ -421,12 +422,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   });
   // An application put together by hand may bring no tokens for the context table: it then has a table nobody can enter.
   app = { ...made, grants: made.grants ?? table.grants };
-  relayApi = new RelayApi({ reads: app.store, read: id => app.runtime.read(id),
+  relayApi = new RelayApi({ reads: app.store,
     declaration: selection => { const factory: SessionBindingFactory = app.factory; return factory.relayCapabilities?.(selection); },
     // What each binding asks the user to look at, and whether the data directory is in the workspace's reach: the Runtime's reads (never a block).
     attention: id => app.runtime.relayAttention(id), installation: () => app.runtime.relayInstallation(), http: { json, headers, queries, body } });
   // The context table's API (docs/decisions/LOG.md, 2026-11-11): what a Harness running a Turn of a conversation may read back of it, by the token its process was given.
-  const tableApi = new TableApi({ grants: app.grants, read: id => app.runtime.read(id), content: app.content,
+  const tableApi = new TableApi({ grants: app.grants, reader: app.store, content: app.content,
     secrets: (configuration, harnessIds) => { const factory: SessionBindingFactory = app.factory; return factory.relaySecrets === undefined ? Promise.resolve([]) : factory.relaySecrets(configuration, harnessIds); },
     http: { json, queries } });
   // This build: every compiled Gateway file by name and content (ADR-033), also named in a Turn's diagnostics (ADR-037).
@@ -1082,9 +1083,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (diagnosticsRoute && method === "GET") {
       queries(url, ["content"]); const content = url.searchParams.get("content");
       if (content !== null && content !== "0" && content !== "1") throw new HttpError(400, "INVALID_INPUT", "content must be 0 or 1");
-      const id = sessionId(diagnosticsRoute[1]!), snapshot = app.runtime.read(id), run = snapshot.runs.find(item => item.id === diagnosticsRoute[2]);
-      if (run === undefined) throw new HttpError(404, "RUN_NOT_FOUND", "this conversation has no such Turn");
-      const events: SessionEvent[] = []; let after = 0, complete = true;
+      // A conversation that is not there, or was deleted, is not found; the Turn is read from its rows, and the conversation's words only when a log is checked against them.
+      const id = sessionId(diagnosticsRoute[1]!); app.store.get(id);
+      const turns = turnSource(app.store, id);
+      let ordinal: number | null = null; try { ordinal = turns.ordinalOf(runId(diagnosticsRoute[2]!)); } catch { ordinal = null; }
+      const turn = ordinal === null ? null : turns.turn(ordinal);
+      if (turn === null) throw new HttpError(404, "RUN_NOT_FOUND", "this conversation has no such Turn");
+      const run = turn.run, events: SessionEvent[] = []; let after = 0, complete = true;
       for (let page = 0; ; page++) {
         const batch = app.store.events(id, after, 100);
         for (const event of batch) if (event.data.runId === run.id) events.push(event);
@@ -1095,7 +1100,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       const harness = harnesses.find(item => item.id === run.selection.harnessId), includeContent = content === "1";
       let user: string | null = null; try { user = userInfo().username; } catch { user = null; }
       const kept = app.runtime.runDiagnostics(id, run.id);
-      const text = runDiagnostics({ session: snapshot, run, events, eventsComplete: complete, stderr: kept === null ? null : { text: kept.stderr, truncated: kept.truncated },
+      const text = turnDiagnostics({ turn, turns: turns.count, messages: () => messageStarts(app.store, id), events, eventsComplete: complete, stderr: kept === null ? null : { text: kept.stderr, truncated: kept.truncated },
         harness: harness === undefined ? null : { name: harness.name, programVersion: harness.management.programVersion, installedVersion: harness.management.installedVersion },
         build: revision, runtime: { node: process.version, platform: process.platform, release: release(), arch: process.arch }, now: new Date(), includeContent,
         scrub: value => scrubDiagnostics(value, { redact: text => app.providers.redact(text), user }) });
@@ -1124,21 +1129,18 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         // A download of the public conversation; private native state and stored bytes stay out.
         queries(url, ["format"]); const format = url.searchParams.get("format") ?? "markdown";
         if (format !== "markdown" && format !== "json") throw new HttpError(400, "INVALID_INPUT", "export format must be markdown or json");
-        // Names come from the catalog, the same in every scan: the last one is enough.
-        // The JSON is the conversation as it is stored: the protocol Turn is derived from it (and reads a command's text from the stored details),
-        // so the Runs go as they were. The Markdown is worded from the protocol Turns, as the page words them. The whole conversation, in the old shape: the one place the
-        // server still reads it so (`exportView`), until the export is made from the rows. No size stops it.
-        const snapshot = app.runtime.read(id), now = new Date(), names = new Map(harnesses.map(harness => [harness.id, harness.name]));
-        const lost = app.runtime.keptLoss(id), outside = app.runtime.keptOutside(id), upgraded = app.runtime.keptUpgrade(id), queue = queueOf(id);
-        const current = exportView(snapshot, relayApi.runViews(snapshot), { kept: app.runtime.keptProcess(id), lost, queue, outside, upgraded },
-          { harnessName: harnessId => scannedNames.get(harnessId) ?? builtinName(harnessId), modelName: (harnessId, nativeModel) => nativeModels.modelName(harnessId, nativeModel), detail: ref => detailHeads.read(ref) });
-        const exported = { ...current, runs: current.runs.map(({ protocol: _derived, ...run }) => run) };
-        const bytes = Buffer.from(format === "json" ? JSON.stringify({ application: "HarnessHub", exportedAt: now.toISOString(), session: exported }, null, 2) + "\n" : conversationMarkdown(current, harnessId => names.get(harnessId) ?? harnessId, now));
+        // Written a Turn at a time, straight into the response: an export is as long as the conversation, and nothing but the Turn being written is held (src/web/conversation-export.ts).
+        // The JSON is the conversation as it is stored (the Runs as they were kept, with the relay's reading of each in); the Markdown is worded from the Turns as the page words them.
+        // A conversation that is not there is found out before anything is sent; a failure after that ends the connection.
+        const head = conversations!.head(id), now = new Date();
+        const pieces = format === "json" ? exportJson(rowsJsonExport(app.store, head, app.store.get(id).switches, runRelay.of(id)), now) : exportMarkdown(rowsExport(app.store, id, conversations!.turnView(id)), now);
         if (response.destroyed || response.writableEnded) return;
-        headers(response); response.statusCode = 200;
-        response.setHeader("Content-Type", format === "json" ? "application/json; charset=utf-8" : "text/markdown; charset=utf-8"); response.setHeader("Content-Length", bytes.length);
-        response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encodeURIComponent("harnesshub-" + id + (format === "json" ? ".json" : ".md")));
-        response.end(bytes); return;
+        await sendPieces(response, pieces, () => {
+          headers(response); response.statusCode = 200;
+          response.setHeader("Content-Type", format === "json" ? "application/json; charset=utf-8" : "text/markdown; charset=utf-8");
+          response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encodeURIComponent("harnesshub-" + id + (format === "json" ? ".json" : ".md")));
+        });
+        return;
       }
       // How to continue the current native session in the Harness's own program (ADR-039); read on demand, never exported.
       if (action === "native-resume" && method === "GET") {

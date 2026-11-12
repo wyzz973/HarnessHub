@@ -22,6 +22,7 @@ import { repairRelayPrefs } from "./relay-tables.js";
 import { bindingColumns, bindingRowFrom, bindingRowOf, canonicalJson, commandRowOf, itemRowOf, runRowFrom, sourceThroughOrdinal, switchColumns, switchRowFrom, switchRowOf, utf8Length } from "./rows.js";
 import { MOVES_DDL, UnreadableHolders, movedOrdinals, recordMoves, recordedMoves, resolveSharedSessions, withMoves, type NativeMove } from "./shared-sessions.js";
 import { snapshotFromRows } from "./snapshot-adapter.js";
+import { stampSchema } from "./schema-fingerprint.js";
 import { all, one, prepared } from "./statements.js";
 import { ladderFaults, refusal, repeatedRunIds } from "./upgrade-check.js";
 
@@ -251,6 +252,8 @@ export function upgradeSchema(db: DatabaseSync, from: number, options: Pick<Migr
       repairRelayPrefs(db);
       for (const sql of RELAY_V14_REBUILD) db.exec(sql);
       for (const sql of schemaV14Statements("v13")) db.exec(sql);
+      // The structure this build wrote is written down with it (schema-fingerprint.ts).
+      stampSchema(db);
       for (const table of BOOKKEEPING) db.exec(table.sql);
       mark(db, "from", String(from)); mark(db, "phase", "converting"); mark(db, "references", "pending");
       // A native session two conversations hold cannot be held twice by the tables: who gives it up is decided here, with everything else in this transaction, and kept.

@@ -122,6 +122,34 @@
         "inPaths": ["src/infrastructure/**", "src/adapters/**"]
       },
       "exceptions": []
+    },
+    {
+      "id": "B11",
+      "title": "整个对话的旧形状（SessionSnapshot）只留给迁移的保真核对和命令行的只读读取器：src 里不导入把行拼回旧形状的适配器，读对话走 ConversationReader 的页和一个个 Turn",
+      "kind": "imports",
+      "appliesTo": ["src/**"],
+      "paths": { "deny": ["src/infrastructure/session/snapshot-adapter.js"] },
+      "exceptions": [
+        {
+          "file": "src/infrastructure/session/migrate-v14.ts",
+          "key": "src/infrastructure/session/snapshot-adapter.js",
+          "reason": "2026-11-12 登记：迁移把每个旧快照转成行之后，把行读回旧形状，逐字段核对没有丢东西（保真检查）。这是适配器存在的原因，不是读对话的入口。"
+        },
+        {
+          "file": "src/infrastructure/session/session-reader.ts",
+          "key": "src/infrastructure/session/snapshot-adapter.js",
+          "reason": "2026-11-12 登记：命令行 sessions show/list 的只读读取器要按数据库版本读两种存储（v13 的快照、v14 的行），v14 的对话按旧形状印出。只用于这个命令；服务和各读取器不经过它。"
+        }
+      ]
+    },
+    {
+      "id": "B12",
+      "title": "src 里不调用 store.snapshot()：存储的类上还留着这个旧形状读取，只给测试用；读对话走 ConversationReader",
+      "kind": "member-calls",
+      "appliesTo": ["src/**"],
+      "members": ["snapshot"],
+      "receivers": ["store"],
+      "exceptions": []
     }
   ]
 }

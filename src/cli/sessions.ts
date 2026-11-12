@@ -53,7 +53,9 @@ export async function main(args: readonly string[]): Promise<number> {
       await app.runtime.wait(id);
     } else if (action === "close") {
       app = application(root, () => {}, { searchBackfill: false, ...(values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] }) });
-      output = await app.runtime.closeSession(sessionId(values.session), values["command-id"] ?? newCommand("close"));
+      const closed = await app.runtime.closeSession(sessionId(values.session), values["command-id"] ?? newCommand("close"));
+      // What closing did: the conversation's head after it (its history is read with `show`).
+      output = { id: closed.id, status: closed.status, epoch: closed.epoch, version: closed.version, lastSeq: closed.lastSeq, selection: closed.selection, runs: closed.runs.length };
     } else {
       reader = new SqliteSessionReader(root);
       // A database whose upgrade to the tables has not finished holds conversations of both kinds: each is read as it is, and the tool says the rest are not converted yet.

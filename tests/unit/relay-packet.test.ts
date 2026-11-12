@@ -7,9 +7,10 @@ import { fileURLToPath } from "node:url";
 import { RELAY_POLICY_VERSION, estimateTokens, resolveRelayBudget, type RelayBudget } from "../../src/contexts/session/domain/relay/budget.js";
 import { fence, firstLine, longestFenceRun, neutralize, normalize, visible } from "../../src/contexts/session/domain/relay/escape.js";
 import { ITEM_KINDS, diffFiles, type ItemKind, type RelayToolDetail } from "../../src/contexts/session/domain/relay/narration.js";
-import { languageOf, renderRelay, type RelayRenderInput } from "../../src/contexts/session/domain/relay/packet.js";
+import { languageOf, renderRelay as renderOver, type RelayRenderInput } from "../../src/contexts/session/domain/relay/packet.js";
 import { credentialValues, namesCredentialFile, relayRedactor } from "../../src/contexts/session/domain/relay/redaction.js";
-import { runId, type PublicRun } from "../../src/contracts/session.js";
+import { runId, type PublicRun, type SessionSnapshot } from "../../src/contracts/session.js";
+import { snapshotHistory } from "../fixtures/old-shape.js";
 import { endLines, fenced, readRelayPrompt, TITLE } from "../fixtures/relay-packet.js";
 import { conversation, longConversation, names, s1, s1Delta, s3, tool, type RunSpec, type Scenario } from "../fixtures/relay-scenarios.js";
 
@@ -18,7 +19,10 @@ import { conversation, longConversation, names, s1, s1Delta, s3, tool, type RunS
 // in tests/integration/relay-mvp.test.ts.
 
 const GOLDEN = fileURLToPath(new URL("../../../tests/fixtures/relay/golden/", import.meta.url));
-function input(scenario: Scenario, extra: Partial<RelayRenderInput> = {}): RelayRenderInput {
+/** The renderer reads a conversation as `RelayHistory` tells it; these tests make theirs by hand, in the old whole shape (tests/fixtures/old-shape.ts). */
+type RenderInput = Omit<RelayRenderInput, "state"> & { readonly state: SessionSnapshot };
+const renderRelay = (given: RenderInput) => renderOver({ ...given, state: snapshotHistory(given.state) });
+function input(scenario: Scenario, extra: Partial<RenderInput> = {}): RenderInput {
   return { state: scenario.state, current: scenario.current, sources: scenario.sources, origin: false, names, details: scenario.details, ...extra };
 }
 /** A budget of `cap` tokens as windows.ts makes one for a window of 128k: the share of the user's words is half of it, at most 2,500. */

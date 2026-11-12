@@ -11,6 +11,7 @@ import type { PublicRun, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -43,8 +44,8 @@ async function closeApp(app: App): Promise<void> {
 /** Reading the attachment copy can need the Harness's own approval (it lives outside the workspace); it is allowed once and recorded. */
 async function settle(app: App, id: SessionId, deadline: number, permissions: Record<string, unknown>[]): Promise<PublicRun> {
   for (;;) {
-    const run = app.runtime.read(id).runs.at(-1)!;
-    if (TERMINAL.has(run.status)) { await app.runtime.wait(id); return app.runtime.read(id).runs.at(-1)!; }
+    const run = oldShape(app.runtime, id).runs.at(-1)!;
+    if (TERMINAL.has(run.status)) { await app.runtime.wait(id); return oldShape(app.runtime, id).runs.at(-1)!; }
     for (const request of app.runtime.permissionRequests(id).filter(item => !item.decided)) {
       const option = request.options.find(item => /^(allow|accept|approve|once|yes|proceed)/iu.test(item.id) && !/\b(always|session|forever|remember)\b/iu.test(item.id + " " + item.name));
       permissions.push({ title: request.title.slice(0, 160), options: request.options.map(item => item.id), chosen: option?.id ?? null });
@@ -84,17 +85,17 @@ test("installed Harness reads a text attachment, sees an image it declares, and 
         app.runtime.send(created.id, "请读取我附上的 note.txt，告诉我里面的代码。只回复代码本身，不要调用除读取附件之外的工具。", "file-" + randomUUID(), [note.id]);
         const permissions: Record<string, unknown>[] = []; proof.permissions = permissions;
         const fileRun = await settle(app, created.id, Date.now() + 6 * 60 * 1000, permissions);
-        const fileReply = app.runtime.read(created.id).messages.find(row => row.id === fileRun.assistantMessageId)?.text ?? "";
+        const fileReply = oldShape(app.runtime, created.id).messages.find(row => row.id === fileRun.assistantMessageId)?.text ?? "";
         proof.file = { status: fileRun.status, error: fileRun.error, matched: fileReply.includes(code), reply: fileReply.slice(0, 200), tools: (fileRun.tools ?? []).map(tool => tool.title.slice(0, 80)) };
         if (fileRun.status !== "completed" || !fileReply.includes(code)) failures.push(harnessId + ": text attachment");
         const image = await stage("color.png", "image/png", redPng());
         app.runtime.send(created.id, "这张图片的主要颜色是什么？只用一个中文颜色词回答，不要调用工具。", "image-" + randomUUID(), [image.id]);
         const imageRun = await settle(app, created.id, Date.now() + 6 * 60 * 1000, permissions);
-        const imageReply = app.runtime.read(created.id).messages.find(row => row.id === imageRun.assistantMessageId)?.text ?? "";
+        const imageReply = oldShape(app.runtime, created.id).messages.find(row => row.id === imageRun.assistantMessageId)?.text ?? "";
         proof.image = { declared: inputs?.image ?? null, status: imageRun.status, error: imageRun.error, matched: imageReply.includes("红"), reply: imageReply.slice(0, 200) };
         if (inputs?.image === true) { if (imageRun.status !== "completed" || !imageReply.includes("红")) failures.push(harnessId + ": image attachment"); }
         else if (imageRun.status !== "failed" || imageRun.error?.code !== "ATTACHMENT_UNSUPPORTED" || imageRun.backend !== null) failures.push(harnessId + ": undeclared image was not refused before dispatch");
-        proof.sessionStatus = app.runtime.read(created.id).status;
+        proof.sessionStatus = oldShape(app.runtime, created.id).status;
         proof.copies = { stable: (await app.content.materialize([note]))[0]!.path.includes(join("content", "files", note.id)) };
       } catch (error) {
         proof.failure = { code: error !== null && typeof error === "object" && "code" in error ? String(error.code) : "ASSERTION", message: error instanceof Error ? error.message.slice(0, 512) : "failed" };

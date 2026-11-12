@@ -245,6 +245,8 @@ export class ConversationRoutes {
       title: row.title, runCount: row.runCount, ...(last === null ? {} : { lastSwitch: last }), facts: this.factsOf(id, row.version) };
   }
   head(id: string): SessionHeadView { return this.headView(this.headRow(id)); }
+  /** The Turns of a conversation as the wire tells them, for a reader that goes through them one at a time (the export). A conversation that is not there, or was deleted, is not found. */
+  turnView(id: string): TurnView { return this.viewOf(this.headRow(id).id); }
 
   // ---- the routes ---------------------------------------------------------------------------------------------------
 

@@ -9,6 +9,7 @@ import { SessionError, type HarnessSelection, type PreparedSessionBinding, type 
 import { SessionRuntime, type RelayChoice } from "../../src/contexts/session/application/runtime.js";
 import { appStore } from "./runtime-store.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import { oldShape } from "./old-shape.js";
 
 // Fixture Harnesses and a world of real parts for the relay (slim.md): a real SqliteConversationStore with recoverRelay on a
 // temporary data root, the formal SessionRuntime, and in-process fake Harnesses behind a binding factory that answers the
@@ -156,11 +157,11 @@ export function world(t: TestContext, prefix = "relay-flow-"): World {
 export async function turn(app: SessionRuntime, id: SessionId, text: string, key: string, relay?: RelayChoice): Promise<PublicRun> {
   const receipt = app.send(id, text, key, [], relay);
   await app.wait(id).catch((error: unknown) => { if (!(error instanceof SessionError && error.code === "SESSION_BLOCKED")) throw error; });
-  return app.read(id).runs.find(row => row.id === receipt.runId)!;
+  return oldShape(app, id).runs.find(row => row.id === receipt.runId)!;
 }
 export async function to(app: SessionRuntime, id: SessionId, harnessId: string, key: string): Promise<void> {
   app.switch(id, { harnessId }, key); await app.wait(id);
-  if (app.read(id).selection.harnessId !== harnessId) throw new Error("the switch to " + harnessId + " did not take effect");
+  if (oldShape(app, id).selection.harnessId !== harnessId) throw new Error("the switch to " + harnessId + " did not take effect");
 }
 export function events(store: SqliteConversationStore, id: SessionId): readonly SessionEvent[] {
   const all: SessionEvent[] = [];

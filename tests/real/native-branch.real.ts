@@ -9,6 +9,7 @@ import type { PublicRun, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -30,8 +31,8 @@ async function turn(app: App, id: SessionId, text: string): Promise<{ run: Publi
   app.runtime.send(id, text, "send-" + randomUUID());
   const deadline = Date.now() + 6 * 60 * 1000;
   for (;;) {
-    const run = app.runtime.read(id).runs.at(-1)!;
-    if (TERMINAL.has(run.status)) { await app.runtime.wait(id); const done = app.runtime.read(id).runs.at(-1)!; return { run: done, reply: app.runtime.read(id).messages.find(row => row.id === done.assistantMessageId)?.text ?? "" }; }
+    const run = oldShape(app.runtime, id).runs.at(-1)!;
+    if (TERMINAL.has(run.status)) { await app.runtime.wait(id); const done = oldShape(app.runtime, id).runs.at(-1)!; return { run: done, reply: oldShape(app.runtime, id).messages.find(row => row.id === done.assistantMessageId)?.text ?? "" }; }
     if (app.runtime.permissionRequests(id).length) throw new Error("a branch turn asked for an approval");
     if (Date.now() > deadline) throw new Error("branch turn did not settle in time");
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -57,11 +58,11 @@ test("installed Harness branches a conversation natively when it can, and the br
         const source = await app.runtime.create(configuration, { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }) }, "create-" + randomUUID());
         const tagA = "A-" + randomUUID().slice(0, 6).toUpperCase(), tagB = "B-" + randomUUID().slice(0, 6).toUpperCase();
         const first = await turn(app, source.id, "请记住标记 " + tagA + "。只回复“好的”，不要调用任何工具。");
-        proof.source = { status: first.run.status, binding: app.runtime.read(source.id).nativeBindings?.map(binding => binding.status) ?? [] };
+        proof.source = { status: first.run.status, binding: oldShape(app.runtime, source.id).nativeBindings?.map(binding => binding.status) ?? [] };
         if (first.run.status !== "completed") failures.push(harnessId + ": source turn");
         const branch = app.runtime.fork(source.id, "fork-" + randomUUID());
         await app.runtime.wait(branch.id);
-        const forked = app.runtime.read(branch.id), events = app.store.events(branch.id, 0, 100).filter(row => row.type.startsWith("native.")).map(row => {
+        const forked = oldShape(app.runtime, branch.id), events = app.store.events(branch.id, 0, 100).filter(row => row.type.startsWith("native.")).map(row => {
           const data = row.data as { error?: { code?: string } | null; cleanup?: { exitCode?: number | null; protocolFailure?: { code?: string } | null } | null };
           return { type: row.type, error: data.error?.code ?? null, exitCode: data.cleanup?.exitCode ?? null, protocolFailure: data.cleanup?.protocolFailure?.code ?? null };
         });

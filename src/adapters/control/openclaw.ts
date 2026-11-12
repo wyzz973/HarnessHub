@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import JSON5 from "json5";
-import { MAX_NATIVE_EXTENSIONS, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type CommandClass, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeInputs, type NativeModelCatalog, type NativeOption, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
+import { MAX_NATIVE_EXTENSIONS, type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type CommandClass, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeInputs, type NativeModelCatalog, type NativeOption, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
 import type { RelayCapabilities } from "../../contracts/relay.js";
 import { AcpControl } from "./acp.js";
 import { hubClearReading, openClawClassify, openClawCommandEffect, openClawNativeClassify, relayDeclaration } from "./relay-classify.js";
@@ -122,10 +122,6 @@ function blocks(value: unknown): readonly Record<string, unknown>[] {
   return Array.isArray(content) ? content.filter((item): item is Record<string, unknown> => item !== null && typeof item === "object") : [];
 }
 function textOf(value: unknown): string { return blocks(value).flatMap(block => block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n"); }
-function cap(value: string, limit: number, tail = false): { text: string; cut: boolean } {
-  const bytes = Buffer.from(value); if (bytes.length <= limit) return { text: value, cut: false };
-  return { text: new TextDecoder().decode(tail ? bytes.subarray(bytes.length - limit) : bytes.subarray(0, limit)), cut: true };
-}
 const TOOL_KIND: Readonly<Record<string, string>> = { exec: "execute", bash: "execute", process: "execute", read: "read", write: "edit", edit: "edit", apply_patch: "edit", web_search: "search", web_fetch: "fetch", memory_search: "search", sessions_spawn: "subagent" };
 /** The ACP tool statuses that end a call; a streamed call left before them has not told its outcome. */
 const SETTLED_TOOL = new Set(["completed", "failed"]);
@@ -159,11 +155,12 @@ function reconcileTurn(entries: readonly unknown[], backend: BackendResult, emit
         if (done !== undefined && !SETTLED_TOOL.has(shown.status)) emit({ type: "tool", id: block.id, title: shown.title, status: done.failed ? "failed" : "completed" });
         continue;
       }
-      const input = cap(JSON.stringify(block.arguments ?? {}, null, 2), TOOL_INPUT_BYTES), output = done ? cap(done.output, TOOL_OUTPUT_BYTES, true) : null;
+      // What the call was given and what it answered are reported whole: the content store keeps a detail of any size, and a cut at the driver would be a loss nobody could see.
+      const input = JSON.stringify(block.arguments ?? {}, null, 2), output = done ? done.output : null;
       const args = block.arguments !== null && typeof block.arguments === "object" ? block.arguments as Record<string, unknown> : {};
       const summary = [args.command, args.path, args.file_path, args.query, args.url].find(value => typeof value === "string") as string | undefined;
       emit({ type: "tool", id: block.id.slice(0, 256), title: (block.name + (summary ? ": " + summary : "")).replace(/[\0-\x1f\x7f]+/gu, " ").trim().slice(0, 4096), status: done ? (done.failed ? "failed" : "completed") : "completed",
-        detail: { kind: TOOL_KIND[block.name] ?? "other", name: block.name.slice(0, 256), input: input.text, ...(output?.text ? { output: output.text } : {}), ...(input.cut || output?.cut ? { truncated: true } : {}) } satisfies NativeToolDetail });
+        detail: { kind: TOOL_KIND[block.name] ?? "other", name: block.name.slice(0, 256), input, ...(output ? { output } : {}) } satisfies NativeToolDetail });
     }
     const call = row.usage !== null && typeof row.usage === "object" ? row.usage as Record<string, unknown> : null;
     if (call) {

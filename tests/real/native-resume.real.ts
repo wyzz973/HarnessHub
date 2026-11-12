@@ -9,6 +9,7 @@ import type { PublicRun, SessionId, SessionSnapshot } from "../../src/contracts/
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -52,11 +53,11 @@ test("installed Harness resumes its own native session across a Hub owner restar
         const model = requested ?? catalog.defaultModel ?? undefined;
         assert.ok(model === undefined || catalog.models.some(row => row.id === model), "requested native model is not in the installed catalog");
         proof.catalog = { models: catalog.models.length, defaultModel: catalog.defaultModel, authentication: catalog.authentication, chosenModel: model ?? null };
-        const created: SessionSnapshot = await app.runtime.create(configuration, { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }) }, "create-" + randomUUID());
+        const created = await app.runtime.create(configuration, { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }) }, "create-" + randomUUID());
         id = created.id;
         app.runtime.send(id, "请记住这个标记：" + tag + "。只回复“已记住”，不要调用任何工具。", "first-" + randomUUID());
         await app.runtime.wait(id);
-        let state = app.runtime.read(id);
+        let state = oldShape(app.runtime, id);
         const first = state.runs.at(-1)!, firstReply = state.messages.find(row => row.id === first.assistantMessageId)?.text ?? "";
         proof.first = runSummary(first, firstReply);
         proof.bindingAfterFirst = (state.nativeBindings ?? []).map(binding => ({ harnessId: binding.harnessId, controlId: binding.controlId, status: binding.status, throughRunIsFirst: binding.throughRunId === first.id }));
@@ -67,7 +68,7 @@ test("installed Harness resumes its own native session across a Hub owner restar
         app = application(data, () => {}, { installations: realInstallations, workspaceLockRoot: join(root, "locks") });
         app.runtime.send(id, "上一条用户消息里的标记是什么？只原样回复那个标记，不要调用任何工具。", "second-" + randomUUID());
         await app.runtime.wait(id);
-        state = app.runtime.read(id);
+        state = oldShape(app.runtime, id);
         const second = state.runs.at(-1)!, reply = state.messages.find(row => row.id === second.assistantMessageId)?.text ?? "";
         proof.second = runSummary(second, reply);
         proof.matched = reply.includes(tag);

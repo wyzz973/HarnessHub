@@ -4,6 +4,7 @@ import { SessionError } from "../../src/contracts/session.js";
 import { verify } from "../../src/contexts/session/domain/conversation-verify.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { scriptedWorld } from "../fixtures/scripted-world.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 // The last resort of a Turn's end (runtime.ts, `unrecorded`): the store refuses the end of a Turn twice — with its relay part and without it — for a rule of its rows, and the Turn is ended as what it is, unknown, and the
 // conversation blocked. The end still does all it does apart from the relay: what was open in the Turn is closed as an unknown Turn's items are, the switch the Turn held up fails with it (and the input waiting for that
@@ -71,5 +72,5 @@ test("a Turn whose end the store refuses twice is ended unknown with its open it
   // The Runtime goes on: another conversation is served.
   const other = await w.app.create(w.configuration, { harnessId: "alpha" }, "other");
   w.app.send(other.id, "hello", "o1"); await w.app.wait(other.id);
-  assert.equal(w.app.read(other.id).runs[0]?.status, "completed", "another conversation runs to its end: " + JSON.stringify(w.app.read(other.id).runs[0]?.error));
+  assert.equal(oldShape(w.app, other.id).runs[0]?.status, "completed", "another conversation runs to its end: " + JSON.stringify(oldShape(w.app, other.id).runs[0]?.error));
 });

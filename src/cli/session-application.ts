@@ -28,6 +28,7 @@ import { loadBuiltinCatalog } from "../adapters/catalog.js";
 import { catalogTarget } from "../infrastructure/catalog/platform.js";
 import { MemoryTableGrants } from "../infrastructure/session/table-grants.js";
 import type { TableGrants } from "../contracts/table.js";
+import { reasonOf, storageCause } from "./startup-failure.js";
 
 /**
  * A Harness's display name by its id: its name in the built-in catalog ("Claude Code", "DeepSeek Harness", "Hermes Agent"), read once at the
@@ -100,7 +101,9 @@ export function selection(value: string, explicitControl?: string): SelectionReq
 export function hash(value: string): string { return createHash("sha256").update(value).digest("hex"); }
 export function newCommand(prefix = "command"): string { return prefix + "-" + randomUUID(); }
 export function errorRecord(error: unknown): { readonly code: string; readonly message: string } {
-  return error instanceof SessionError ? { code: error.code, message: error.message } : { code: "GATEWAY_FAILED", message: error instanceof Error ? error.message.slice(0, 512) : "gateway operation failed" };
+  // A failure of the storage is told with what it was made of (a table, a column, a rule: startup-failure.ts), not with its code alone.
+  if (error instanceof SessionError) { const cause = storageCause(error); return { code: error.code, message: cause === null ? error.message : error.message + " (" + cause + ")" }; }
+  return { code: "GATEWAY_FAILED", message: error instanceof Error ? (reasonOf(error) ?? "gateway operation failed").slice(0, 512) : "gateway operation failed" };
 }
 /** What is said of the workspace lock root before anything is looked at or made: the platform, and an explicit root's shape. */
 function lockRootShape(explicit?: string): void {
@@ -172,7 +175,9 @@ export function application(root: string, publish: (commit: ConversationCommit) 
   // cannot be converted ends the start), then recovers what a previous owner left unfinished with the domain's recovery; the relay deliveries it left in flight are
   // decided per conversation in a SAVEPOINT of its own (ADR-055 §9 S15; ADR-057 3.6).
   // What the upgrade says as it goes (a conversation it stopped at, a native session two conversations held and one gave up) is told on the error stream, in the log of the service.
-  const store = new SqliteConversationStore(root, { recover: recoverConversation, recoverRelay: recoverConversationRelay, log: line => { process.stderr.write("HarnessGateway: UPGRADE (" + line + ")\n"); } });
+  const store = new SqliteConversationStore(root, { recover: recoverConversation, recoverRelay: recoverConversationRelay, log: line => { process.stderr.write("HarnessGateway: UPGRADE (" + line + ")\n"); },
+    // A full-text index that cannot be used is derived data: it is told once in the log of the service, and searches scan.
+    report: problem => { process.stderr.write("HarnessGateway: SEARCH_INDEX_UNAVAILABLE (" + problem + ")\n"); } });
   if (store.migration !== null && store.migration.backup !== null) {
     process.stderr.write("HarnessGateway: UPGRADE (the conversation library was upgraded from version " + store.migration.from + " to 14, " + store.migration.converted + " conversation" + (store.migration.converted === 1 ? "" : "s")
       + " converted; the copy from before is backups/gateway-v" + store.migration.from + "-before-v14.sqlite in the data directory)\n");

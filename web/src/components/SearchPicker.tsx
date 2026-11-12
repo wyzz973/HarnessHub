@@ -25,10 +25,12 @@ const TONES = { success: "badge-accent", warning: "badge-amber", danger: "badge-
  * in amber. The trigger keeps the accessible name `label`; by default it shows the selected choice, after `prefix` when
  * given, and `trigger` replaces that content (the composer's merged picker draws its segments this way). Input-method
  * composition never selects. `open` and `onOpenChange` make it controlled, so a shortcut (⌘J) can open it; focus goes to
- * the search field and returns to the trigger when the list closes.
+ * the search field and returns to the trigger when the list closes. A list closed by a choice gives the focus to `focusAfterChoice`
+ * when there is one (the message box, for the composer's lists: what is typed next is the message, not a key pressed on the
+ * control that opened the list); one closed without a choice still gives it back to where it came from.
  */
 export function SearchPicker({ label, value, placeholder, options, onChange, disabled = false, footer, prefix, className, wide = false, side = "top", align = "start",
-  open: controlledOpen, onOpenChange, title, trigger, chevron = true, size = "md", empty, triggerRef: outerTrigger, describedBy }: {
+  open: controlledOpen, onOpenChange, title, trigger, chevron = true, size = "md", empty, triggerRef: outerTrigger, describedBy, focusAfterChoice }: {
   label: string; value: string; placeholder: string; options: readonly PickerOption[];
   onChange: (value: string) => void; disabled?: boolean; footer?: ReactNode; prefix?: string; className?: string; wide?: boolean; side?: "top" | "bottom";
   align?: "start" | "end";
@@ -47,6 +49,8 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
   triggerRef?: RefObject<HTMLButtonElement | null>;
   /** The id of what describes the trigger beyond its name, such as a mark the trigger shows. */
   describedBy?: string | undefined;
+  /** Where the focus goes when the list closes because a choice was made, in place of the trigger; used only while that element can take it. */
+  focusAfterChoice?: RefObject<HTMLElement | null>;
 }) {
   const [ownOpen, setOwnOpen] = useState(false);
   const open = controlledOpen ?? ownOpen;
@@ -64,13 +68,20 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
   // Opening, from the trigger or from a shortcut, starts with an empty search and the current choice active.
   const [wasOpen, setWasOpen] = useState(open);
   // Opened from elsewhere (a shortcut), it gives the focus back to where it was when it closes, not to its trigger.
-  const triggerRef = useRef<HTMLButtonElement>(null), popup = useRef<HTMLDivElement>(null), returnTo = useRef<Element | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null), popup = useRef<HTMLDivElement>(null), returnTo = useRef<Element | null>(null), chosen = useRef(false);
   if (open !== wasOpen) {
     setWasOpen(open);
-    if (open) { setQuery(""); setActiveValue(value); const focused = document.activeElement; returnTo.current = focused !== triggerRef.current && focused !== document.body ? focused : null; }
+    if (open) { setQuery(""); setActiveValue(value); chosen.current = false; const focused = document.activeElement; returnTo.current = focused !== triggerRef.current && focused !== document.body ? focused : null; }
   }
   const setOpen = (next: boolean) => { if (controlledOpen === undefined) setOwnOpen(next); onOpenChange?.(next); };
-  const choose = (option: PickerOption) => { if (option.disabled) return; onChange(option.value); setOpen(false); };
+  /** The field the focus goes to for a choice, if it can take it now. */
+  const target = (): HTMLElement | null => { const next = focusAfterChoice?.current; return next instanceof HTMLElement && next.isConnected && !(next as HTMLTextAreaElement).disabled ? next : null; };
+  const choose = (option: PickerOption) => {
+    if (option.disabled) return;
+    chosen.current = true; onChange(option.value); setOpen(false);
+    // The keys pressed next are the message: the focus is there at once, not when the list has finished closing (a key pressed meanwhile would land on the row just chosen).
+    target()?.focus({ preventScroll: true });
+  };
   const name = label.replace(/^选择/u, "");
   const large = size === "lg";
   const setTrigger = useCallback((node: HTMLButtonElement | null) => { triggerRef.current = node; if (outerTrigger) outerTrigger.current = node; }, [outerTrigger]);
@@ -90,6 +101,8 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
           // Focus the user already moved elsewhere (into the message, say) stays there.
           const focused = document.activeElement;
           if (focused !== null && focused !== document.body && !popup.current?.contains(focused)) return false;
+          const next = chosen.current ? target() : null;
+          if (next !== null) return next;
           return returnTo.current instanceof HTMLElement && returnTo.current.isConnected ? returnTo.current : true;
         }} className={cn("picker-popover surface-pop flex max-h-[min(460px,var(--available-height))] flex-col overflow-hidden",
           wide ? "w-[360px]" : "w-[320px]", "max-w-[calc(100vw-24px)]")}>

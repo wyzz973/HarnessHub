@@ -14,6 +14,7 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 import { evidenceHeader, guardTest, snapshot, type SuiteEvidence } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 const CODEX_MODEL = "fixture-cross-harness-codex";
 const GEMINI_MODEL = "gemini-2.5-flash";
@@ -124,17 +125,17 @@ test("real Codex→Gemini→Codex uses the same public Session with explicit Pro
   async function send(index: number): Promise<void> {
     const before = calls.length; app.runtime.send(session.id, MARKERS[index]! + ": reply briefly and do not use tools", "cross-message-" + index);
     await app.runtime.wait(session.id);
-    const run = app.runtime.read(session.id).runs[index]; assert.ok(run);
+    const run = oldShape(app.runtime, session.id).runs[index]; assert.ok(run);
     assert.equal(calls.length, before + 1, "real Harness ended without one intended local model request: " + JSON.stringify(run.error));
     assert.equal(run.status, "completed", JSON.stringify(run)); assert.equal(run.cleanup?.closed, true); assert.equal(run.cleanup?.protocolFailure, null);
   }
   await send(0);
   app.runtime.switch(session.id, { harnessId: "gemini", controlId: geminiControl.id, provider: target(geminiProvider) }, "cross-switch-gemini"); await app.runtime.wait(session.id);
-  assert.equal(app.runtime.read(session.id).selection.harnessId, "gemini", JSON.stringify(app.runtime.read(session.id).switches)); await send(1);
+  assert.equal(oldShape(app.runtime, session.id).selection.harnessId, "gemini", JSON.stringify(oldShape(app.runtime, session.id).switches)); await send(1);
   app.runtime.switch(session.id, { harnessId: "codex", controlId: codexControl.id, provider: target(codexProvider) }, "cross-switch-codex"); await app.runtime.wait(session.id);
-  assert.equal(app.runtime.read(session.id).selection.harnessId, "codex"); await send(2);
+  assert.equal(oldShape(app.runtime, session.id).selection.harnessId, "codex"); await send(2);
   assert.deepEqual(errors, []); assert.equal(calls.length, 3); assert.deepEqual(calls.map(call => call.harness), ["codex", "gemini", "codex"]);
-  const persisted = app.store.events(session.id, 0, 100), runs = app.runtime.read(session.id).runs;
+  const persisted = app.store.events(session.id, 0, 100), runs = oldShape(app.runtime, session.id).runs;
   for (let at = 0; at < calls.length; at++) {
     const serialized = JSON.stringify(calls[at]!.input), typed = MARKERS[at]! + ": reply briefly and do not use tools";
     for (let prior = 0; prior <= at; prior++) assert.ok(serialized.includes(MARKERS[prior]!), "current and prior public input did not reach the selected model endpoint");
@@ -153,7 +154,7 @@ test("real Codex→Gemini→Codex uses the same public Session with explicit Pro
     if (at === 2) assert.ok(packet.body.includes("GEMINI-PUBLIC-ANSWER [redacted]"), "the packet carries Gemini's answer with its key redacted");
   }
   assert.ok(JSON.stringify(calls[1]!.input).includes("CODEX-PUBLIC-ANSWER")); assert.ok(JSON.stringify(calls[2]!.input).includes("GEMINI-PUBLIC-ANSWER"));
-  const final = app.runtime.read(session.id); assert.equal(final.id, session.id); assert.equal(final.epoch, 3); assert.equal(final.runs.length, 3);
+  const final = oldShape(app.runtime, session.id); assert.equal(final.id, session.id); assert.equal(final.epoch, 3); assert.equal(final.runs.length, 3);
   assert.deepEqual(final.runs.map(run => run.selection.harnessId), ["codex", "gemini", "codex"]);
   assert.deepEqual(final.runs.map(run => run.selection.provider), [target(codexProvider), target(geminiProvider), target(codexProvider)]);
   assert.ok(final.switches.every(entry => entry.status === "effective")); assert.deepEqual(final.runs[2]?.sourceRunIds, final.runs.slice(0, 2).map(run => run.id));

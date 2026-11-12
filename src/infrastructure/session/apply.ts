@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { BindingWrite, ItemWrite, Mutation, RunWrite, SwitchWrite, TextAppend } from "../../contracts/conversation.js";
 import type { RelayRows } from "../../contracts/relay.js";
 import { SessionError, type EventDraft, type SessionEvent } from "../../contracts/session.js";
-import { SEARCHED_TYPES, maintainSearch } from "./search-index.js";
+import { IndexHealth, SEARCHED_TYPES, maintainSearch } from "./search-index.js";
 import {
   RUN_IDENTITY, bindingColumns, commandColumns, contentRefColumns, endsInHighSurrogate, headColumns, itemColumns, originHistoryColumns, runColumns, switchColumns, textColumns, utf8Length, wellFormed,
 } from "./rows.js";
@@ -34,6 +34,8 @@ export interface ApplyOptions {
   readonly timestamp: string;
   /** Writes the relay's rows (relay-tables.ts), called after the events and before the head; required when the Mutation has relay rows. */
   readonly writeRelay?: (rows: RelayRows) => void;
+  /** What the process knows of its full-text indexes; an index that fails the commit's maintenance is made unusable there and the commit goes on. Absent: this commit knows nothing before it. */
+  readonly indexes?: IndexHealth;
 }
 export interface Applied {
   /** The events as committed: their seq, the owner generation, the time. */
@@ -185,8 +187,8 @@ function write(db: DatabaseSync, mutation: Mutation, options: ApplyOptions): App
     options.writeRelay(mutation.relay);
   }
 
-  // The full-text indexes follow the segments this commit finished.
-  maintainSearch(db, items.filter(item => (SEARCHED_TYPES as readonly string[]).includes(item.row.type) && !["pending", "running", "waiting"].includes(item.row.status)).map(item => ({ runId: item.row.runId, seq: item.row.seq })));
+  // The full-text indexes follow the segments this commit finished. Derived data: if an index cannot be kept current the commit goes on without it (search-index.ts says how).
+  maintainSearch(db, items.filter(item => (SEARCHED_TYPES as readonly string[]).includes(item.row.type) && !["pending", "running", "waiting"].includes(item.row.status)).map(item => ({ runId: item.row.runId, seq: item.row.seq })), options.indexes);
 
   // The head, last: its triggers see this commit's rows.
   let version = 1;

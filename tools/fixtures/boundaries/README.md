@@ -19,6 +19,7 @@
 | `domain-imports-child-process.ts` | B1、B2、B4 | 领域层和应用层导入子进程、文件、数据库、HTTP 模块、第三方包和实现层；一个上下文导入另一个上下文 |
 | `contract-imports-yaml.ts` | B3、B10 | 契约层导入 yaml、node 模块、实现层和领域层；cli、web、infrastructure、adapters 里出现不该出现或未登记的第三方包 |
 | `web-imports-infrastructure.ts` | B5、B6、B7 | 前端引用基础设施、服务端和 node 模块；Adapter 引用 web 和 cli；src 引用 tests 和前端目录 |
+| `old-shape-readers.ts` | B11、B12 | `src` 导入把行拼回旧形状的适配器，或对 `store`（含 `app.store`、`this.store`、括号取值）调用 `snapshot()`；不叫 `store` 的 `snapshot`（流的 Hub、数据源）和 `tests` 里的读取不在其内 |
 | `test-without-lock-root.ts` | B8、B9 | 测试组合应用、启动 Gateway、启动正式命令时漏传租约目录，传了清单却没配 `--allow-unofficial`；含别名导入、命名空间、promisify 和辅助函数的写法 |
 
 B0（无法解析的文件、缺失的扫描目录、过期的例外、无法归类的导入）由测试直接构造，不在这里。新增规则时在这里补无效样例，没有样例的规则会使测试失败。

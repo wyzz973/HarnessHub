@@ -73,6 +73,8 @@ export interface WireOptions {
   readonly searchLimit?: number;
   /** The conversation's export as Markdown, written by a reader of rows instead of asked of the web server. */
   readonly markdown?: (app: Application, root: string, id: string, exportedAt: Date) => Promise<string>;
+  /** What is edited of the Markdown export, however it was made, before it is digested. */
+  readonly editMarkdown?: (text: string) => string;
 }
 /** What a body gets of the application started on a fixture: how to read it as a page, and as a Harness's tool process would; the application itself and its data root. */
 export interface Running {
@@ -146,7 +148,7 @@ export async function wireOfFixture(name: V13FixtureName, options: WireOptions =
     for (const row of fixture.sessions) {
       const id = row.id, base = "/api/v1/sessions/" + id;
       const markdown = options.markdown === undefined ? await read(base + "/export?format=markdown") : { status: 200, text: await options.markdown(app, data, id, new Date()) };
-      note(id + " export.md", markdown.status + " " + markdown.text.split("\n").filter(line => !line.startsWith("- 导出时间：")).join("\n"));
+      note(id + " export.md", markdown.status + " " + (options.editMarkdown?.(markdown.text) ?? markdown.text).split("\n").filter(line => !line.startsWith("- 导出时间：")).join("\n"));
       json(id + " export.json", await read(base + "/export?format=json"), value => { delete value.exportedAt; const exported = value.session; if (exported !== null && typeof exported === "object") delete (exported as Record<string, unknown>).version; });
       // The event log, a page at a time.
       const events: unknown[] = [];

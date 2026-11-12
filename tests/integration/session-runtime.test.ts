@@ -18,6 +18,8 @@ import type { SqliteConversationStore } from "../../src/infrastructure/session/c
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
+import { wireItem } from "../../src/web/commit-frame.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url));
 const clean: CleanupEvidence = { closed: true, exitCode: 0, signal: null, protocolFailure: null };
@@ -185,10 +187,10 @@ test("cancelling during native command discovery never dispatches the command", 
   await reading.promise;
   app.cancel(session.id, "cancel", sent.runId); catalog.resolve();
   await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!;
+  const run = oldShape(app, session.id).runs[0]!;
   assert.equal(dispatched, 0); assert.equal(run.status, "cancelled");
   assert.equal(run.backend, null); assert.equal(run.cleanup?.closed, true);
-  assert.equal(peer.closeCount, 1); assert.equal(app.read(session.id).status, "open");
+  assert.equal(peer.closeCount, 1); assert.equal(oldShape(app, session.id).status, "open");
 });
 
 test("real SQLite and ACP/Codex IPC retain one public Session through A to B to A with new connections", async (t) => {
@@ -203,7 +205,7 @@ test("real SQLite and ACP/Codex IPC retain one public Session through A to B to 
   app.send(state.id, "third public question", "third"); await app.wait(state.id);
   app.switch(state.id, { harnessId: "alpha" }, "switch-a"); await app.wait(state.id);
   app.send(state.id, "fourth public question", "fourth"); await app.wait(state.id);
-  const final = app.read(state.id);
+  const final = oldShape(app, state.id);
   assert.equal(final.id, state.id); assert.equal(final.epoch, 3); assert.equal(final.status, "open");
   assert.deepEqual(final.runs.map(run => run.status), ["completed", "completed", "completed", "completed"]);
   assert.deepEqual(final.runs.map(run => run.selection.harnessId), ["alpha", "alpha", "bravo", "alpha"]);
@@ -237,7 +239,7 @@ test("each Run records when it was accepted, prepared, ready, dispatched, first 
   f.runtimes.push(app);
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   app.send(state.id, "timed question", "timed"); await app.wait(state.id);
-  const run = app.read(state.id).runs[0]!, timing = run.timing!;
+  const run = oldShape(app, state.id).runs[0]!, timing = run.timing!;
   assert.equal(run.status, "completed");
   const order = [timing.acceptedAt, timing.preparingAt, timing.readyAt, timing.dispatchedAt, timing.firstOutputAt, timing.endedAt];
   assert.ok(order.every(value => typeof value === "number"), "every phase of a completed Run is recorded");
@@ -260,7 +262,7 @@ test("idempotent create/send/switch/cancel persist one intent and reject key con
   const switched = app.switch(state.id, { harnessId: "bravo" }, "switch");
   assert.equal(app.switch(state.id, { harnessId: "bravo" }, "switch").switchId, switched.switchId);
   assert.throws(() => app.switch(state.id, { harnessId: "alpha" }, "switch"), /another request/);
-  await app.wait(state.id); assert.equal(app.read(state.id).runs.length, 1); assert.equal(app.read(state.id).switches.length, 1);
+  await app.wait(state.id); assert.equal(oldShape(app, state.id).runs.length, 1); assert.equal(oldShape(app, state.id).switches.length, 1);
   assert.ok(!factory.prepared.some(entry => entry.run === sent.runId), "cancelled queued input was launched");
 });
 
@@ -273,9 +275,9 @@ test("busy switch waits for old cleanup and freezes its source identities before
   const next = app.send(state.id, "queued next input", "next");
   assert.throws(() => app.switch(state.id, { harnessId: "alpha" }, "another-switch"), /already pending/);
   first.result.resolve({ status: "completed", reason: "fixture" }); await first.closing.promise;
-  assert.equal(factory.prepared.length, 1); assert.equal(app.read(state.id).selection.harnessId, "alpha");
+  assert.equal(factory.prepared.length, 1); assert.equal(oldShape(app, state.id).selection.harnessId, "alpha");
   first.closed.resolve(clean); await app.wait(state.id);
-  const final = app.read(state.id), sw = final.switches.find(sw => sw.id === switchReceipt.switchId)!;
+  const final = oldShape(app, state.id), sw = final.switches.find(sw => sw.id === switchReceipt.switchId)!;
   assert.equal(sw.status, "effective"); assert.deepEqual(sw.sourceRunIds, [initial.runId]);
   assert.ok(sw.throughSeq >= final.runs[0]!.contextThroughSeq);
   assert.equal(final.runs.find(run => run.id === next.runId)?.selection.harnessId, "bravo");
@@ -290,7 +292,7 @@ test("new queued input is not included in the active Turn prompt and cancellatio
   const prompt = await first.started.promise; assert.ok(!prompt.includes("future queued input"));
   app.cancel(state.id, "cancel", active.runId); first.result.resolve({ status: "completed", reason: "late completion" });
   await app.wait(state.id);
-  const final = app.read(state.id);
+  const final = oldShape(app, state.id);
   assert.equal(final.runs[0]?.status, "cancelled"); assert.equal(final.runs[0]?.backend?.status, "completed");
   assert.equal(final.runs[1]?.id, queued.runId); assert.equal(final.runs[1]?.status, "completed");
   assert.equal(first.stopCount, 1); assert.equal(first.closeCount, 1);
@@ -300,7 +302,7 @@ test("cancel during initialization closes connection without dispatching the inp
   const f = await fixture(t), first = controlled({ holdInitialize: true }), factory = new ControlledFactory([first]), app = runtime(f, factory); t.after(() => app.close());
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"), receipt = app.send(state.id, "no dispatch", "send");
   await first.initialized.promise; app.cancel(state.id, "cancel", receipt.runId); await app.wait(state.id);
-  assert.equal(app.read(state.id).runs[0]?.status, "cancelled"); assert.equal(app.read(state.id).runs[0]?.backend, null);
+  assert.equal(oldShape(app, state.id).runs[0]?.status, "cancelled"); assert.equal(oldShape(app, state.id).runs[0]?.backend, null);
   assert.equal(first.stopCount, 0); assert.equal(first.closeCount, 1);
 });
 
@@ -310,7 +312,7 @@ test("one global writer waits for confirmed close before another Session starts"
   app.send(a.id, "writer a", "a-input"); await first.closing.promise;
   app.send(b.id, "writer b", "b-input"); assert.equal(factory.prepared.length, 1);
   first.closed.resolve(clean); await app.wait(b.id);
-  assert.equal(factory.prepared.length, 2); assert.equal(app.read(b.id).runs[0]?.status, "completed");
+  assert.equal(factory.prepared.length, 2); assert.equal(oldShape(app, b.id).runs[0]?.status, "completed");
 });
 
 test("target validation failure keeps actual selection and history, but never dispatches input awaiting that switch", async (t) => {
@@ -318,12 +320,12 @@ test("target validation failure keeps actual selection and history, but never di
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   app.send(state.id, "preserved input", "first"); await app.wait(state.id);
   app.switch(state.id, { harnessId: "missing" }, "bad-switch"); app.send(state.id, "continue explicitly on alpha", "next"); await app.wait(state.id);
-  const final = app.read(state.id);
+  const final = oldShape(app, state.id);
   assert.equal(final.selection.harnessId, "alpha"); assert.equal(final.epoch, 1); assert.equal(final.switches[0]?.status, "failed");
   assert.equal(final.runs[1]?.status, "failed"); assert.equal(final.runs[1]?.error?.code, "SWITCH_NOT_EFFECTIVE");
   assert.equal(factory.prepared.length, 1);
   app.send(state.id, "explicit continuation after failed switch", "continue"); await app.wait(state.id);
-  assert.equal(app.read(state.id).runs[2]?.status, "completed"); assert.equal(app.read(state.id).runs[2]?.selection.harnessId, "alpha");
+  assert.equal(oldShape(app, state.id).runs[2]?.status, "completed"); assert.equal(oldShape(app, state.id).runs[2]?.selection.harnessId, "alpha");
 });
 
 test("unconfirmed cleanup blocks next writer and does not rerun or activate pending switch", async (t) => {
@@ -334,7 +336,7 @@ test("unconfirmed cleanup blocks next writer and does not rerun or activate pend
   app.switch(state.id, { harnessId: "bravo" }, "switch"); app.send(state.id, "never launched", "next");
   first.closed.reject(new SessionError("CLEANUP_FAILED", "synthetic unconfirmed cleanup"));
   await assert.rejects(() => app.wait(state.id), /new dispatch is disabled/);
-  const final = app.read(state.id);
+  const final = oldShape(app, state.id);
   assert.equal(final.status, "blocked"); assert.equal(final.runs[0]?.status, "unknown"); assert.equal(factory.prepared.length, 1);
   assert.equal(final.selection.harnessId, "alpha"); assert.throws(() => app.send(state.id, "retry", "retry"), /disabled/);
 });
@@ -344,11 +346,11 @@ test("late protocol failure retains backend evidence, fails the reply and leaves
   t.after(async () => { try { await app.close(); } catch {} });
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"); app.send(state.id, "duplicate terminal", "send");
   await app.wait(state.id);
-  const final = app.read(state.id), run = final.runs[0]!;
+  const final = oldShape(app, state.id), run = final.runs[0]!;
   assert.equal(run.backend?.status, "completed"); assert.equal(run.cleanup?.closed, true); assert.notEqual(run.cleanup?.protocolFailure, null);
   assert.equal(run.status, "failed"); assert.equal(final.status, "open"); assert.equal(factory.prepared.length, 1);
   app.switch(state.id, { harnessId: "bravo" }, "next-selection"); await app.wait(state.id);
-  assert.equal(app.read(state.id).selection.harnessId, "bravo");
+  assert.equal(oldShape(app, state.id).selection.harnessId, "bravo");
 });
 
 test("publication exception occurs after commit, stops resources and records blocked without publishing uncommitted facts", async (t) => {
@@ -361,7 +363,7 @@ test("publication exception occurs after commit, stops resources and records blo
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"); app.send(state.id, "publication test", "send");
   await assert.rejects(() => app.wait(state.id), /publication failed/);
   assert.equal(failed, true); assert.equal(factory.prepared[0]?.peer.closeCount, 1);
-  assert.equal(app.read(state.id).status, "blocked"); assert.ok(app.read(state.id).messages.some(message => message.role === "assistant"));
+  assert.equal(oldShape(app, state.id).status, "blocked"); assert.ok(oldShape(app, state.id).messages.some(message => message.role === "assistant"));
 });
 
 test("real SQLite write failure does not publish output or dispatch later queued input and closes the external resource", async (t) => {
@@ -386,10 +388,10 @@ test("Session close and runtime close cancel queued inputs, await active cleanup
   app.send(state.id, "queued", "queued"); const closed = app.closeSession(state.id, "close");
   first.result.resolve({ status: "cancelled", reason: "fixture" });
   assert.equal((await closed).status, "closed"); assert.equal((await app.closeSession(state.id, "close")).status, "closed");
-  assert.equal(factory.prepared.length, 1); assert.ok(app.read(state.id).runs.every(run => run.status === "cancelled"));
+  assert.equal(factory.prepared.length, 1); assert.ok(oldShape(app, state.id).runs.every(run => run.status === "cancelled"));
   assert.throws(() => app.send(state.id, "after close", "late"), /closed or blocked/);
   const second = await app.create(f.configuration, { harnessId: "alpha" }, "second"); app.send(second.id, "cancel before runtime stop", "second-input");
-  await app.close(); assert.equal(app.read(second.id).status, "open"); assert.equal(app.read(second.id).runs[0]?.status, "cancelled");
+  await app.close(); assert.equal(oldShape(app, second.id).status, "open"); assert.equal(oldShape(app, second.id).runs[0]?.status, "cancelled");
   assert.throws(() => app.send(second.id, "late", "late"), /not accepting/);
   f.store.assertOwner();
 });
@@ -410,7 +412,7 @@ test("closing during a busy pending switch retains source identity until old exe
   const active = app.send(state.id, "old execution", "active"); await first.started.promise;
   const sw = app.switch(state.id, { harnessId: "bravo" }, "switch");
   const closing = app.closeSession(state.id, "close");
-  assert.equal(app.read(state.id).switches[0]?.status, "requested");
+  assert.equal(oldShape(app, state.id).switches[0]?.status, "requested");
   first.result.resolve({ status: "cancelled", reason: "fixture" });
   const final = await closing;
   assert.equal(final.status, "closed"); assert.equal(final.pendingSwitchId, null); assert.equal(final.selection.harnessId, "alpha");
@@ -427,7 +429,7 @@ test("a message over its byte limit is refused, the queue of waiting inputs has 
   const receipts = Array.from({ length: 40 }, (_, index) => app.send(state.id, "queued " + index, "send-" + index));
   for (const [index, receipt] of receipts.entries()) app.cancel(state.id, "cancel-" + index, receipt.runId);
   await app.wait(state.id);
-  assert.equal(factory.prepared.length, 0); assert.ok(app.read(state.id).runs.every(run => run.status === "cancelled"));
+  assert.equal(factory.prepared.length, 0); assert.ok(oldShape(app, state.id).runs.every(run => run.status === "cancelled"));
 });
 
 test("inputs queued before switch retain their original Harness and become completed switch context sources", async (t) => {
@@ -438,7 +440,7 @@ test("inputs queued before switch retain their original Harness and become compl
   const sw = app.switch(state.id, { harnessId: "bravo" }, "switch");
   const after = app.send(state.id, "new Harness queued input", "after");
   first.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(state.id);
-  const final = app.read(state.id), firstSwitch = final.switches.find(entry => entry.id === sw.switchId)!;
+  const final = oldShape(app, state.id), firstSwitch = final.switches.find(entry => entry.id === sw.switchId)!;
   assert.deepEqual(factory.prepared.map(entry => entry.selection.harnessId), ["alpha", "alpha", "bravo"]);
   assert.deepEqual(firstSwitch.sourceRunIds, [active.runId, before.runId]);
   assert.equal(final.runs.find(run => run.id === before.runId)?.epoch, 1);
@@ -453,7 +455,7 @@ test("missing backend settlement times out, confirms resource closure and never 
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   app.send(state.id, "unknown external result", "first"); app.send(state.id, "do not replay", "second");
   await assert.rejects(() => app.wait(state.id), /disabled/);
-  const final = app.read(state.id);
+  const final = oldShape(app, state.id);
   assert.equal(final.status, "blocked"); assert.equal(final.runs[0]?.backend, null); assert.equal(final.runs[0]?.status, "unknown");
   assert.equal(final.runs[0]?.cleanup?.closed, true); assert.equal(factory.prepared.length, 1);
   const pid = Number(await readFile(factory.prepared[0]!.pid, "utf8")); assert.throws(() => process.kill(pid, 0));
@@ -464,7 +466,7 @@ test("binding preparation cleanup failure blocks the Session even when no contro
   const app = runtime(f, { validate: async request => selection(request), prepare: async () => { prepares += 1; throw new SessionError("BINDING_CLEANUP_FAILED", "synthetic resource owner could not close"); } });
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"); app.send(state.id, "preparation unknown", "first"); app.send(state.id, "do not launch", "second");
   await assert.rejects(() => app.wait(state.id), /disabled/);
-  assert.equal(app.read(state.id).status, "blocked"); assert.equal(app.read(state.id).runs[0]?.status, "unknown"); assert.equal(prepares, 1);
+  assert.equal(oldShape(app, state.id).status, "blocked"); assert.equal(oldShape(app, state.id).runs[0]?.status, "unknown"); assert.equal(prepares, 1);
 });
 
 test("publication failure after terminal commit preserves completion evidence and durably blocks further dispatch", async (t) => {
@@ -473,7 +475,7 @@ test("publication failure after terminal commit preserves completion evidence an
   });
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"); app.send(state.id, "known completed input", "send");
   await assert.rejects(() => app.wait(state.id), /publication failed/);
-  const final = app.read(state.id);
+  const final = oldShape(app, state.id);
   assert.equal(final.runs[0]?.status, "completed"); assert.equal(final.runs[0]?.backend?.status, "completed");
   assert.equal(final.runs[0]?.cleanup?.closed, true); assert.equal(final.status, "blocked"); assert.equal(factory.prepared.length, 1);
 });
@@ -484,9 +486,9 @@ test("switch effective watermark advances through validation without creating an
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"), sw = app.switch(state.id, { harnessId: "bravo" }, "switch");
   await validating.promise;
   const later = app.send(state.id, "later cancelled input", "later"); app.cancel(state.id, "cancel", later.runId);
-  const beforeEffective = app.read(state.id).lastSeq;
+  const beforeEffective = oldShape(app, state.id).lastSeq;
   release.resolve(); await app.wait(state.id);
-  const final = app.read(state.id), effective = final.switches.find(entry => entry.id === sw.switchId)!;
+  const final = oldShape(app, state.id), effective = final.switches.find(entry => entry.id === sw.switchId)!;
   assert.equal(effective.throughSeq, beforeEffective + 1); assert.deepEqual(effective.sourceRunIds, []);
   assert.equal(effective.status, "effective"); assert.equal(final.runs[0]?.status, "cancelled");
   assert.equal(factory.prepared.length, 0);
@@ -543,7 +545,7 @@ test("shutdown owns one Promise before committed-event callbacks can reenter clo
   app = runtime(f, factory, value => { if (value.type === "runtime.stopping") reentered = app.close(); });
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"); app.send(state.id, "cancel before launch", "send");
   const closing = app.close(); assert.equal(app.close(), closing); await closing;
-  assert.equal(reentered, closing); assert.equal(factory.prepared.length, 0); assert.equal(app.read(state.id).runs[0]?.status, "cancelled");
+  assert.equal(reentered, closing); assert.equal(factory.prepared.length, 0); assert.equal(oldShape(app, state.id).runs[0]?.status, "cancelled");
 });
 
 const providerA = { providerId: "provider-11111111-1111-4111-8111-111111111111", revision: 1, model: "model-a" };
@@ -554,11 +556,11 @@ test("Provider switch pins the current Turn and waits for cleanup before changin
   const initial = app.send(state.id, "on A", "provider-first"); await first.started.promise;
   app.switch(state.id, { harnessId: "alpha", provider: providerB }, "provider-switch");
   const next = app.send(state.id, "on B", "provider-next");
-  assert.deepEqual(app.read(state.id).selection.provider, providerA);
+  assert.deepEqual(oldShape(app, state.id).selection.provider, providerA);
   first.result.resolve({ status: "completed", reason: "fixture" }); await first.closing.promise;
-  assert.equal(factory.prepared.length, 1); assert.deepEqual(app.read(state.id).runs[0]?.selection.provider, providerA);
+  assert.equal(factory.prepared.length, 1); assert.deepEqual(oldShape(app, state.id).runs[0]?.selection.provider, providerA);
   first.closed.resolve(clean); await app.wait(state.id);
-  const final = app.read(state.id);
+  const final = oldShape(app, state.id);
   assert.equal(final.runs.find(run => run.id === initial.runId)?.selection.provider?.model, "model-a");
   assert.deepEqual(final.runs.find(run => run.id === next.runId)?.selection.provider, providerB);
   assert.deepEqual(final.selection.provider, providerB); assert.equal(final.epoch, 2);
@@ -567,10 +569,10 @@ test("Harness-only switch inherits Provider and an explicit null clears managed 
   const f = await fixture(t), factory = new ControlledFactory([]), app = runtime(f, factory);
   const state = await app.create(f.configuration, { harnessId: "alpha", provider: providerA }, "inherit-create");
   app.switch(state.id, { harnessId: "bravo" }, "inherit-switch"); await app.wait(state.id);
-  assert.deepEqual(app.read(state.id).selection.provider, providerA);
+  assert.deepEqual(oldShape(app, state.id).selection.provider, providerA);
   assert.equal(factory.prepared.length,0,"ordinary selection must not start a native process");
   app.switch(state.id, { harnessId: "alpha", provider: null }, "clear-switch"); await app.wait(state.id);
-  assert.equal(app.read(state.id).selection.provider, undefined);
+  assert.equal(oldShape(app, state.id).selection.provider, undefined);
 });
 
 test("initialization failure with confirmed close fails only that reply and permits another selection in the same Session", async t => {
@@ -579,11 +581,11 @@ test("initialization failure with confirmed close fails only that reply and perm
   app.send(state.id, "before initialization", "first"); await broken.initialized.promise;
   broken.initialize!.reject(new SessionError("GATEWAY_AUTH_REQUIRED", "synthetic missing Gateway token"));
   await app.wait(state.id);
-  const failed = app.read(state.id); assert.equal(failed.status, "open"); assert.equal(failed.runs[0]!.status, "failed");
+  const failed = oldShape(app, state.id); assert.equal(failed.status, "open"); assert.equal(failed.runs[0]!.status, "failed");
   assert.equal(failed.runs[0]!.backend, null); assert.equal(failed.runs[0]!.cleanup?.closed, true);
   app.switch(state.id, { harnessId: "bravo" }, "choose-working"); await app.wait(state.id);
   app.send(state.id, "explicit next request", "next"); await app.wait(state.id);
-  const final = app.read(state.id); assert.equal(final.id, state.id); assert.equal(final.runs[1]!.status, "completed");
+  const final = oldShape(app, state.id); assert.equal(final.id, state.id); assert.equal(final.runs[1]!.status, "completed");
   assert.equal(final.messages[0]!.text, "before initialization"); assert.equal(factory.prepared.length, 2);
 });
 
@@ -595,10 +597,10 @@ test("a Session with unknown execution cannot poison a different workspace or ad
   await assert.rejects(() => app.wait(blocked.id), /disabled for this Session/);
   const other = await app.create({ ...f.configuration, workspace: join(f.root, "other-workspace") }, { harnessId: "alpha" }, "create-other");
   app.send(other.id, "another workspace request", "other"); await app.wait(other.id);
-  assert.equal(app.read(other.id).runs[0]!.status, "completed"); assert.equal(app.read(blocked.id).status, "blocked");
+  assert.equal(oldShape(app, other.id).runs[0]!.status, "completed"); assert.equal(oldShape(app, blocked.id).status, "blocked");
   assert.throws(() => app.send(blocked.id, "implicit retry", "bad-retry"), /disabled/);
-  await app.closeSession(blocked.id, "archive-unknown"); assert.equal(app.read(blocked.id).status, "closed");
-  assert.equal(app.read(blocked.id).runs[0]!.status, "unknown");
+  await app.closeSession(blocked.id, "archive-unknown"); assert.equal(oldShape(app, blocked.id).status, "closed");
+  assert.equal(oldShape(app, blocked.id).runs[0]!.status, "unknown");
 });
 
 test("explicit recovery preserves unknown facts, cancels queued inputs and starts only the user's new request", async t => {
@@ -607,17 +609,17 @@ test("explicit recovery preserves unknown facts, cancels queued inputs and start
   app.send(state.id, "result is unknown", "first"); app.send(state.id, "queued input must never be replayed", "queued");
   await first.started.promise; first.result.reject(new SessionError("CONTROL_FAILED", "transport ended without settlement"));
   await assert.rejects(() => app.wait(state.id), /disabled/);
-  const before = app.read(state.id);
+  const before = oldShape(app, state.id);
   assert.throws(() => app.resume(state.id, { harnessId: "bravo" }, "resume", false), error => error instanceof SessionError && error.code === "RECOVERY_ACK_REQUIRED");
   const receipt = app.resume(state.id, { harnessId: "bravo" }, "resume", true); await app.wait(state.id);
-  const resumed = app.read(state.id); assert.equal(resumed.status, "open"); assert.equal(resumed.epoch, 2);
+  const resumed = oldShape(app, state.id); assert.equal(resumed.status, "open"); assert.equal(resumed.epoch, 2);
   assert.deepEqual(resumed.runs[0], before.runs[0]); assert.equal(resumed.runs[1]!.status, "cancelled");
   assert.equal(factory.prepared.length, 2, "recovery only initializes a fresh connection");
   assert.equal(app.resume(state.id, { harnessId: "bravo" }, "resume", true).switchId, receipt.switchId);
   assert.throws(() => app.switch(state.id, { harnessId: "bravo" }, "resume"), /another request/);
   app.send(state.id, "new explicit input", "new"); await app.wait(state.id);
-  assert.equal(factory.prepared.length, 3); assert.equal(app.read(state.id).runs[2]!.status, "completed");
-  assert.equal(app.read(state.id).runs[0]!.status, "unknown");
+  assert.equal(factory.prepared.length, 3); assert.equal(oldShape(app, state.id).runs[2]!.status, "completed");
+  assert.equal(oldShape(app, state.id).runs[0]!.status, "unknown");
   // The recovery switch took the unknown Turn over: the rows say which switch did (the open conversation holds no unknown Turn nobody acknowledged), and the checker agrees.
   const held = f.store.get(state.id);
   assert.equal(held.runs[0]!.status, "unknown"); assert.equal(held.runs[0]!.acknowledgedBy, receipt.switchId, "the unknown Turn is acknowledged by the recovery switch");
@@ -629,10 +631,10 @@ test("legacy falsely blocked switch resumes with the same Session and immutable 
   const f=await fixture(t), factory=new ControlledFactory([]), validate=factory.validate.bind(factory); factory.validate=async request=>{if(request.harnessId==="bravo")throw new SessionError("GATEWAY_AUTH_REQUIRED","synthetic legacy authentication failure");return validate(request);}; const app=runtime(f,factory);
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"), failed = app.switch(state.id, { harnessId: "bravo" }, "bad-switch");
   await app.wait(state.id);
-  const cleanFailure = app.read(state.id);
+  const cleanFailure = oldShape(app, state.id);
   f.store.transact(state.id, cleanFailure.version, current => ({ next: { ...current, status: "blocked" }, events: [{type:"switch.failed",data:{switchId:failed.switchId,error:{code:"GATEWAY_AUTH_REQUIRED"},cleanup:clean}},{ type: "session.blocked", data: { switchId: failed.switchId } }] }));
   app.resume(state.id, { harnessId: "alpha" }, "recover"); await app.wait(state.id);
-  const current = app.read(state.id); assert.equal(current.id, state.id); assert.equal(current.status, "open");
+  const current = oldShape(app, state.id); assert.equal(current.id, state.id); assert.equal(current.status, "open");
   assert.deepEqual(current.switches[0], cleanFailure.switches[0]); assert.equal(current.selection.harnessId, "alpha");
   assert.ok(f.store.events(state.id, 0, 100).some(value => value.type === "switch.effective" && value.data.recovered === true));
 });
@@ -673,18 +675,18 @@ test("native bindings survive process owners, A to B to A sends only unseen publ
   const delta = readRelayPrompt(await peers[3]!.started.promise);
   assert.equal(delta.kind, "delta"); assert.deepEqual(delta.history.map(row => row.user.text), ["third from bravo"]); assert.equal(delta.currentInput.text, "fourth");
   assert.deepEqual(resumes, [undefined, "private-native-alpha", undefined, "private-native-alpha"]);
-  const saved = app.read(session.id); assert.equal(saved.nativeBindings?.length, 2);
+  const saved = oldShape(app, session.id); assert.equal(saved.nativeBindings?.length, 2);
   await app.close(); f.store.close();
   const reopened = appStore(join(f.root, "data")); f.stores.push(reopened);
   const next = runtime({ ...f, store: reopened }, factory, () => {}, "restart-");
   next.send(session.id, "after owner restart", "five"); await next.wait(session.id);
   assert.equal(await peers[4]!.started.promise, "after owner restart"); assert.equal(resumes.at(-1), "private-native-alpha");
-  assert.equal(next.read(session.id).nativeBindings?.filter(binding => binding.status === "ready").length, 2);
-  const epoch = next.read(session.id).epoch;
+  assert.equal(oldShape(next, session.id).nativeBindings?.filter(binding => binding.status === "ready").length, 2);
+  const epoch = oldShape(next, session.id).epoch;
   assert.throws(() => next.resetNative(session.id, "bad-epoch", epoch - 1), /changed/);
-  const branched = next.resetNative(session.id, "branch", epoch);
+  const branched = oldShape(next, next.resetNative(session.id, "branch", epoch).id);
   assert.equal(branched.messages.length, saved.messages.length + 2); assert.equal(branched.nativeBindings?.[0]?.status, "archived");
-  assert.deepEqual(next.resetNative(session.id, "branch", epoch), branched);
+  assert.deepEqual(oldShape(next, next.resetNative(session.id, "branch", epoch).id), branched);
   assert.throws(() => reopened.transact(session.id, branched.version, current => ({next:{...current,nativeBindings:[]},events:[{type:"invalid.erase",data:{}}]})), /silently erased/);
 });
 
@@ -695,16 +697,16 @@ test("uncertain native dispatch cannot be silently restored after public recover
   const app = runtime(f, factory), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   app.send(session.id, "first unknown", "one"); await first.started.promise;
   first.result.reject(new Error("external connection lost")); await assert.rejects(app.wait(session.id), /needs recovery/);
-  assert.equal(app.read(session.id).nativeBindings?.[0]?.status, "unconfirmed");
+  assert.equal(oldShape(app, session.id).nativeBindings?.[0]?.status, "unconfirmed");
   app.resume(session.id, { harnessId: "alpha" }, "resume", true); await app.wait(session.id);
   const count = factory.prepared.length;
   app.send(session.id, "must not create empty native state", "two"); await app.wait(session.id);
-  assert.equal(factory.prepared.length, count); assert.equal(app.read(session.id).runs.at(-1)?.error?.code, "NATIVE_STATE_UNCONFIRMED");
-  const state = app.read(session.id); app.resetNative(session.id, "explicit-branch", state.epoch);
+  assert.equal(factory.prepared.length, count); assert.equal(oldShape(app, session.id).runs.at(-1)?.error?.code, "NATIVE_STATE_UNCONFIRMED");
+  const state = oldShape(app, session.id); app.resetNative(session.id, "explicit-branch", state.epoch);
   app.send(session.id, "explicit new native branch", "three"); await app.wait(session.id);
-  assert.equal(app.read(session.id).nativeBindings?.[0]?.status, "archived");
-  assert.equal(app.read(session.id).nativeBindings?.[1]?.status, "ready");
-  assert.equal(app.read(session.id).runs[0]?.status, "unknown");
+  assert.equal(oldShape(app, session.id).nativeBindings?.[0]?.status, "archived");
+  assert.equal(oldShape(app, session.id).nativeBindings?.[1]?.status, "ready");
+  assert.equal(oldShape(app, session.id).runs[0]?.status, "unknown");
 });
 
 test("neither the answer to a question nor the number of requests waiting at once has a limit of the Hub's: a 3 MiB answer reaches the Harness, and two hundred approvals wait together", { timeout: 20000 }, async t => {
@@ -724,7 +726,7 @@ test("neither the answer to a question nor the number of requests waiting at onc
   const app = runtime(f, factory), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   app.send(session.id, "ask me everything", "one"); await asked.promise;
   const waiting = app.permissionRequests(session.id);
-  assert.equal(waiting.length, 201, "all of them wait for the user"); assert.equal(app.read(session.id).runs[0]!.status, "running", "and the Turn goes on");
+  assert.equal(waiting.length, 201, "all of them wait for the user"); assert.equal(oldShape(app, session.id).runs[0]!.status, "running", "and the Turn goes on");
   const answer = "答案 ".repeat(500_000);
   assert.ok(Buffer.byteLength(answer) > 3 * 1024 * 1024);
   await app.decidePermission(session.id, waiting[0]!.id, "submit", "answer-1", answer);
@@ -752,7 +754,7 @@ test("a question the Harness withdraws closes its public request and refuses a l
   await assert.rejects(app.decidePermission(session.id, pending.id, "yes", "late"), /no longer pending/);
   peer.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
   assert.equal(events.filter(event => event.type === "permission.closed" && event.data.reason === "cancelled").length, 1);
-  assert.equal(app.read(session.id).runs[0]?.status, "completed");
+  assert.equal(oldShape(app, session.id).runs[0]?.status, "completed");
 });
 
 test("a long native turn with any number of calls completes, and every call it made stays (nothing is dropped at a count)", { timeout: 20000 }, async t => {
@@ -766,14 +768,14 @@ test("a long native turn with any number of calls completes, and every call it m
   };
   const app = runtime(f, factory), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   app.send(session.id, "many tools", "one"); await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!, expected = Array.from({ length: calls }, (_, index) => "tool-" + index);
+  const run = oldShape(app, session.id).runs[0]!, expected = Array.from({ length: calls }, (_, index) => "tool-" + index);
   assert.equal(run.status, "completed"); assert.equal(run.tools?.length, calls); assert.deepEqual(run.tools?.map(tool => tool.id), expected, "in the order they were reported");
   // They are rows, one item each, in the order of the Turn, and the checker has nothing to say about them.
   const turn = f.store.turnAt(session.id, 0, { inlineBytes: Infinity })!;
   assert.deepEqual(turn.items.filter(item => item.type === "tool").map(item => item.itemId), expected.map(id => "tool:" + id));
   assert.deepEqual(verify(f.store.get(session.id), f.store), []);
   assertRowsAreTheOnlyRecord(f);
-  app.send(session.id, "still usable", "two"); await app.wait(session.id); assert.equal(app.read(session.id).runs[1]?.status, "completed");
+  app.send(session.id, "still usable", "two"); await app.wait(session.id); assert.equal(oldShape(app, session.id).runs[1]?.status, "completed");
 });
 
 test("a tool whose title has a NUL, multibyte text, half a character or more than 4096 bytes is kept as the Harness reported it (a NUL removed and half a character mended, both told in the item) and the Turn runs on", { timeout: 10000 }, async t => {
@@ -792,7 +794,7 @@ test("a tool whose title has a NUL, multibyte text, half a character or more tha
   };
   const app = runtime(f, factory), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   app.send(session.id, "odd titles", "one"); await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!;
+  const run = oldShape(app, session.id).runs[0]!;
   assert.equal(run.status, "completed", "no title ended the Turn");
   assert.deepEqual(run.tools?.map(tool => tool.title), ["run tests", odd, long, "half \ufffd pair"]);
   const turn = f.store.turnAt(session.id, 0, { inlineBytes: Infinity })!;
@@ -800,7 +802,7 @@ test("a tool whose title has a NUL, multibyte text, half a character or more tha
   assert.deepEqual(told("nul"), ["title:nul"]); assert.deepEqual(told("half"), ["title:surrogate"]);
   assert.equal(told("wide"), undefined, "nothing was changed in a title that was only multibyte"); assert.equal(told("long"), undefined, "and none was cut for its length");
   assert.deepEqual(verify(f.store.get(session.id), f.store), []);
-  app.send(session.id, "still usable", "two"); await app.wait(session.id); assert.equal(app.read(session.id).runs[1]?.status, "completed", "the runtime goes on");
+  app.send(session.id, "still usable", "two"); await app.wait(session.id); assert.equal(oldShape(app, session.id).runs[1]?.status, "completed", "the runtime goes on");
 });
 
 test("native activity becomes public facts, and each call's detail is stored whole as content before the binding closes", { timeout: 10000 }, async t => {
@@ -831,7 +833,7 @@ test("native activity becomes public facts, and each call's detail is stored who
   emit!({ type: "output", output: { kind: "link", uri: "https://example.invalid/r", name: "r" } });
   emit!({ type: "output", output: { kind: "content", name: "chart.png", mediaType: "image/png", data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]) } });
   peer.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!;
+  const run = oldShape(app, session.id).runs[0]!;
   assert.equal(run.status, "completed");
   const shell = run.tools?.find(tool => tool.id === "shell"), edit = run.tools?.find(tool => tool.id === "edit");
   assert.deepEqual([shell?.kind, shell?.name, shell?.exitCode], ["execute", "Bash", 0]); assert.ok(shell?.detail);
@@ -854,7 +856,7 @@ test("native activity becomes public facts, and each call's detail is stored who
   emit!({ type: "notice", severity: "warning", title: "fallback" });
   emit!({ type: "notice", severity: "info", title: "new" });
   later.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
-  assert.deepEqual(app.read(session.id).runs[1]!.notices, [{ severity: "info", title: "new" }]);
+  assert.deepEqual(oldShape(app, session.id).runs[1]!.notices, [{ severity: "info", title: "new" }]);
   assertRowsAreTheOnlyRecord(f);
   assert.equal(f.store.events(session.id, 0, 100).filter(row => row.type === "run.output" && JSON.stringify(row.data).includes('"title":"fallback"')).length, 3);
 });
@@ -878,7 +880,7 @@ test("a call's detail is kept whole at any size: 25 MiB of output is stored in p
     emit!({ type: "tool", id: name, title: "make " + name, status: "completed", detail: { output: name[0]!.repeat(size), exitCode: 0 } });
   }
   peer.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!;
+  const run = oldShape(app, session.id).runs[0]!;
   assert.equal(run.status, "completed");
   for (const [name, size] of Object.entries(sizes)) {
     const tool = run.tools?.find(candidate => candidate.id === name);
@@ -930,7 +932,7 @@ test("a detail the content store cannot keep is said on the call's item, the Tur
   emit!({ type: "tool", id: "later", title: "make again", status: "completed", detail: { output: "second try", exitCode: 0 } });
   await kept.promise; await new Promise<void>(resolve => setImmediate(resolve));
   peer.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!;
+  const run = oldShape(app, session.id).runs[0]!;
   assert.equal(run.status, "completed", "a detail that could not be kept ends nothing");
   const turn = f.store.turnAt(session.id, 0, { inlineBytes: Infinity })!, itemOf = (name: string) => turn.items.find(candidate => candidate.itemId === "tool:" + name)!;
   const fieldsOf = (name: string) => itemOf(name).fields as { readonly detail?: { readonly id: string }; readonly native?: { readonly clipped?: readonly string[] } };
@@ -945,7 +947,7 @@ test("a detail the content store cannot keep is said on the call's item, the Tur
   assert.equal(log.length, 2, "the log says why, as it always did");
   assert.deepEqual(f.store.contentReferences(), new Set([fieldsOf("later").detail!.id]), "only the detail that was kept is registered");
   assert.deepEqual(verify(f.store.get(session.id), f.store), []);
-  app.send(session.id, "and again", "two"); await app.wait(session.id); assert.equal(app.read(session.id).runs[1]?.status === "completed" || app.read(session.id).runs[1]?.status === "failed", true, "the runtime goes on");
+  app.send(session.id, "and again", "two"); await app.wait(session.id); assert.equal(oldShape(app, session.id).runs[1]?.status === "completed" || oldShape(app, session.id).runs[1]?.status === "failed", true, "the runtime goes on");
 });
 
 test("attachments are admitted with the input, checked and copied before dispatch, and a refusal fails only that input", { timeout: 10000 }, async t => {
@@ -969,12 +971,12 @@ test("attachments are admitted with the input, checked and copied before dispatc
   const elsewhere = await content.stage({ workspace: "/elsewhere", name: "x.txt", mediaType: "text/plain", commandId: "upload-2", declaredBytes: 1, source: body(Buffer.from("x")) });
   // Admission is synchronous: an unknown or foreign upload creates no Run.
   assert.throws(() => app.send(session.id, "look", "send-foreign", [elsewhere.id]), (error: unknown) => error instanceof SessionError && error.code === "ATTACHMENT_UNAVAILABLE");
-  assert.equal(app.read(session.id).runs.length, 0);
+  assert.equal(oldShape(app, session.id).runs.length, 0);
   const receipt = app.send(session.id, "look", "send-1", [image.id]);
   assert.deepEqual(app.send(session.id, "look", "send-1", [image.id]), { ...receipt, replayed: true });
   assert.throws(() => app.send(session.id, "look", "send-1", []), (error: unknown) => error instanceof SessionError && error.code === "IDEMPOTENCY_CONFLICT");
   await app.wait(session.id);
-  let state = app.read(session.id);
+  let state = oldShape(app, session.id);
   assert.deepEqual(state.runs[0]?.attachments, [image]); assert.equal(state.runs[0]?.status, "completed");
   assert.deepEqual(received[0]?.checked, [image.id]);
   assert.equal(received[0]?.files[0]?.name, "shot.png"); assert.deepEqual(await readFile(received[0]!.files[0]!.path), png);
@@ -982,7 +984,7 @@ test("attachments are admitted with the input, checked and copied before dispatc
   // A refusal happens before dispatch: the input fails with the Driver's own message, the Session stays open and nothing is unknown.
   refuse = true;
   app.send(session.id, "again", "send-2", [image.id]); await app.wait(session.id);
-  state = app.read(session.id);
+  state = oldShape(app, session.id);
   assert.equal(state.runs[1]?.status, "failed"); assert.deepEqual(state.runs[1]?.error, { code: "ATTACHMENT_UNSUPPORTED", message: "当前 Harness 或模型不接受图片附件：shot.png" });
   assert.equal(state.status, "open"); assert.equal(received[1]?.files.length, 0, "a refused input never reaches the Harness");
 });
@@ -1003,21 +1005,21 @@ test("a branch quotes public history, forks the native session at its latest Tur
   const app = runtime(f, factory), source = await app.create(f.configuration, { harnessId: "alpha" }, "create");
   app.send(source.id, "first", "one"); await app.wait(source.id);
   app.send(source.id, "second", "two"); await app.wait(source.id);
-  const runs = app.read(source.id).runs;
+  const runs = oldShape(app, source.id).runs;
   // Native fork: the source binding is exactly at the latest Turn.
-  const branch = app.fork(source.id, "branch-latest");
+  const branch = oldShape(app, app.fork(source.id, "branch-latest").id);
   assert.deepEqual(branch.origin?.history.map(row => [row.role, row.text]), [["user", "first"], ["assistant", "synthetic response"], ["user", "second"], ["assistant", "synthetic response"]]);
-  assert.equal(branch.nativeBindings?.[0]?.status, "fork-pending"); assert.deepEqual(app.fork(source.id, "branch-latest"), branch, "the same command returns the same branch");
+  assert.equal(branch.nativeBindings?.[0]?.status, "fork-pending"); assert.deepEqual(oldShape(app, app.fork(source.id, "branch-latest").id), branch, "the same command returns the same branch");
   await app.wait(branch.id);
   assert.deepEqual(forks, ["native-source"]);
-  assert.deepEqual(app.read(branch.id).nativeBindings?.map(binding => [binding.checkpoint, binding.status]), [["native-source-copy-1", "ready"]]);
+  assert.deepEqual(oldShape(app, branch.id).nativeBindings?.map(binding => [binding.checkpoint, binding.status]), [["native-source-copy-1", "ready"]]);
   app.send(branch.id, "branch question", "b-one"); await app.wait(branch.id);
   assert.equal(opens.at(-1), "native-source-copy-1", "the branch resumes its own native copy");
   // Each fork and each Turn prepares its own connection: peers 0–1 ran the source, 2 made the fork, 3 runs the branch.
   assert.equal(await peers[3]!.started.promise, "branch question", "a native branch receives only the new input");
-  assert.equal(app.read(source.id).nativeBindings?.[0]?.checkpoint, "native-source", "the source keeps its own native session");
+  assert.equal(oldShape(app, source.id).nativeBindings?.[0]?.checkpoint, "native-source", "the source keeps its own native session");
   // Public-only branch: an earlier Turn is not where the native session is.
-  const early = app.fork(source.id, "branch-early", runs[0]!.id);
+  const early = oldShape(app, app.fork(source.id, "branch-early", runs[0]!.id).id);
   assert.equal(early.nativeBindings, undefined); assert.deepEqual(early.origin?.history.map(row => row.text), ["first", "synthetic response"]);
   app.send(early.id, "early question", "e-one"); await app.wait(early.id);
   const context = readRelayPrompt(await peers[4]!.started.promise);
@@ -1026,10 +1028,10 @@ test("a branch quotes public history, forks the native session at its latest Tur
   // A refused native fork archives the reference; the branch continues from public history.
   refuse = true;
   const refused = app.fork(source.id, "branch-refused"); await app.wait(refused.id);
-  assert.deepEqual(app.read(refused.id).nativeBindings?.map(binding => binding.status), ["archived"]);
+  assert.deepEqual(oldShape(app, refused.id).nativeBindings?.map(binding => binding.status), ["archived"]);
   assert.ok(f.store.events(refused.id, 0, 100).some(row => row.type === "native.fork_failed"));
   app.send(refused.id, "after refusal", "r-one"); await app.wait(refused.id);
-  assert.equal(app.read(refused.id).runs[0]?.status, "completed");
+  assert.equal(oldShape(app, refused.id).runs[0]?.status, "completed");
   assert.deepEqual(readRelayPrompt(await peers[6]!.started.promise).branchedHistory.map(row => row.text), ["first", "synthetic response", "second", "synthetic response"], "the whole branch history goes with its first input");
   assert.throws(() => app.fork(source.id, "branch-missing", "run-missing"), (error: unknown) => error instanceof SessionError && error.code === "FORK_UNAVAILABLE");
 });
@@ -1050,15 +1052,15 @@ test("an unreadable or invalid native configuration report leaves it unknown wit
   };
   const app = runtime(f, factory), session = await app.create(f.configuration, { harnessId: "alpha", nativeOptions: { effort: "low" } }, "create");
   app.send(session.id, "first", "one"); await app.wait(session.id);
-  assert.deepEqual(app.read(session.id).nativeBindings?.[0]?.observed, { model: null, options: { effort: "high" } });
+  assert.deepEqual(oldShape(app, session.id).nativeBindings?.[0]?.observed, { model: null, options: { effort: "high" } });
   // The second Turn applies the native value; its own report is unreadable, so the configuration becomes unknown.
   app.send(session.id, "second", "two"); await app.wait(session.id);
-  let state = app.read(session.id);
+  let state = oldShape(app, session.id);
   assert.deepEqual(opened, [{ effort: "low" }, { effort: "high" }]); assert.equal(state.runs[1]?.status, "completed");
   assert.equal(state.nativeBindings?.[0]?.status, "ready"); assert.equal(state.nativeBindings?.[0]?.observed, undefined);
   // Unknown means the selection is applied as requested; an invalid report is unknown too.
   app.send(session.id, "third", "three"); await app.wait(session.id);
-  state = app.read(session.id);
+  state = oldShape(app, session.id);
   assert.deepEqual(opened.at(-1), { effort: "low" }); assert.equal(state.runs[2]?.status, "completed"); assert.equal(state.nativeBindings?.[0]?.observed, undefined);
   assert.deepEqual(f.store.events(session.id, 0, 100).filter(row => row.type === "native.config_unreadable").map(row => row.data.code), ["NATIVE_CONFIG_UNAVAILABLE", "INVALID_DATA"]);
 });
@@ -1074,7 +1076,7 @@ test("a native session continues as a new conversation that quotes its recent hi
     const binding = await prepare(...args), original = binding.control.open;
     return { ...binding, control: { ...binding.control, open: async (cwd, model, options, checkpoint) => { opened.push(checkpoint); return original(cwd, model, options, checkpoint); }, checkpoint: async () => "private-native-a" } };
   };
-  const app = runtime(f, factory), imported = await app.importNative(f.configuration, { harnessId: "alpha" }, "native-a", "import-one");
+  const app = runtime(f, factory), imported = oldShape(app, (await app.importNative(f.configuration, { harnessId: "alpha" }, "native-a", "import-one")).id);
   const origin = imported.origin!; assert.equal(origin.kind, "import"); if (origin.kind !== "import") return;
   // Every message the Harness returned is quoted (the Hub holds no count of them); the four it left out itself are all that is omitted.
   assert.equal(origin.title, "Earlier work"); assert.equal(origin.history.length, 205); assert.equal(origin.omitted, 4); assert.equal(origin.complete, false);
@@ -1085,10 +1087,10 @@ test("a native session continues as a new conversation that quotes its recent hi
   await assert.rejects(app.importNative(f.configuration, { harnessId: "alpha" }, "native-a", "import-two"), (error: unknown) => error instanceof SessionError && error.code === "NATIVE_SESSION_CONFLICT", "one native session has one conversation");
   app.send(imported.id, "continue please", "send-one"); await app.wait(imported.id);
   assert.equal(await peers[0]!.started.promise, "continue please", "the native session gets the input itself, not a public context");
-  assert.deepEqual(opened, ["private-native-a"]); assert.equal(app.read(imported.id).runs[0]?.status, "completed");
+  assert.deepEqual(opened, ["private-native-a"]); assert.equal(oldShape(app, imported.id).runs[0]?.status, "completed");
   // A Harness that cannot read its history is continued without quoting any.
   (factory as SessionBindingFactory).readNativeSession = async () => ({ checkpoint: "private-native-c", title: null, history: [], omitted: 0, complete: false, historyRead: false });
-  const unread = await app.importNative(f.configuration, { harnessId: "alpha" }, "native-c", "import-three");
+  const unread = oldShape(app, (await app.importNative(f.configuration, { harnessId: "alpha" }, "native-c", "import-three")).id);
   assert.deepEqual(unread.origin, { kind: "import", harnessId: "alpha", title: null, omitted: 0, complete: false, historyRead: false, history: [] });
   delete (factory as SessionBindingFactory).readNativeSession;
   await assert.rejects(app.importNative(f.configuration, { harnessId: "alpha" }, "native-d", "import-four"), (error: unknown) => error instanceof SessionError && error.code === "NATIVE_SESSION_LIST_UNAVAILABLE");
@@ -1161,7 +1163,7 @@ function outputs(f: Fixture, id: SessionId): string[] {
   });
 }
 /** The `index`th assistant reply of a Session, as committed. */
-function reply(app: SessionRuntime, id: SessionId, index = 0): string | undefined { return app.read(id).messages.filter(message => message.role === "assistant")[index]?.text; }
+function reply(app: SessionRuntime, id: SessionId, index = 0): string | undefined { return oldShape(app, id).messages.filter(message => message.role === "assistant")[index]?.text; }
 /** Replaces the owner marker, so the Store's next ownership check fails with OWNER_LOST (as a taken-over data root does). */
 async function loseOwner(f: Fixture): Promise<void> {
   const data = join(f.root, "data");
@@ -1178,12 +1180,12 @@ test("INV-06/INV-20 ADR-047: 200 text chunks a millisecond apart are committed a
   // The first output is its own committed fact at the chunk's arrival; the text waits for its window.
   assert.deepEqual(log(f, session.id).filter(row => row.type === "run.first_output" || row.type === "run.output").map(row => row.type), ["run.first_output"]);
   assert.equal(timers.pending, 1, "the first chunk arms the window"); assert.equal(reply(app, session.id), undefined, "an open window is not committed");
-  const firstOutputAt = app.read(session.id).runs[0]!.timing!.firstOutputAt!;
+  const firstOutputAt = oldShape(app, session.id).runs[0]!.timing!.firstOutputAt!;
   // A millisecond between chunks: the window's timer is due after a hundred of them, so it is fired after each hundred.
   for (const [index, text] of chunks.entries()) { if (index > 0) turn.emit({ type: "text", text }); if ((index + 1) % 100 === 0) assert.equal(timers.fire(), 1, "one window is armed at a time"); }
   assert.equal(reply(app, session.id), chunks.join(""), "both windows were committed when their timers ran out");
   turn.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!, windows = outputs(f, session.id).filter(row => row.startsWith("text:"));
+  const run = oldShape(app, session.id).runs[0]!, windows = outputs(f, session.id).filter(row => row.startsWith("text:"));
   assert.equal(run.status, "completed"); assert.equal(reply(app, session.id), chunks.join(""));
   assert.ok(windows.length <= chunks.length / 10, `${windows.length} run.output events for ${chunks.length} chunks`);
   t.diagnostic(`ADR-047 text: ${chunks.length} chunks became ${windows.length} run.output events (one per chunk before)`);
@@ -1197,7 +1199,7 @@ test("INV-06/INV-20 ADR-047: 200 text chunks a millisecond apart are committed a
   for (const [index, text] of thoughts.entries()) { next.emit({ type: "thinking", text }); if ((index + 1) % 100 === 0) assert.equal(timers.fire(), 1); }
   next.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
   const thinking = outputs(f, session.id).filter(row => row.startsWith("thinking:"));
-  assert.equal(app.read(session.id).runs[1]!.thinking, thoughts.join("")); assert.ok(thinking.length <= thoughts.length / 10, `${thinking.length} thinking events for ${thoughts.length} chunks`);
+  assert.equal(oldShape(app, session.id).runs[1]!.thinking, thoughts.join("")); assert.ok(thinking.length <= thoughts.length / 10, `${thinking.length} thinking events for ${thoughts.length} chunks`);
   t.diagnostic(`ADR-047 thinking: ${thoughts.length} chunks became ${thinking.length} run.output events (one per chunk before)`);
   assert.equal(thinking.map(row => row.slice("thinking:".length)).join(""), thoughts.join(""));
   assert.equal(log(f, session.id).filter(row => row.type === "run.first_output").length, 2, "one first output per Turn");
@@ -1216,7 +1218,7 @@ test("an approval's deadline is the one its program announced, an operator's wai
   assert.deepEqual([week!.expiresBy, week!.expiresAt! - week!.requestedAt], ["native", 7 * 24 * 3600_000]);
   // Time passes: none of them is the Runtime's to expire, and the Turn is not cancelled for waiting.
   await new Promise(resolve => setTimeout(resolve, 150));
-  assert.equal(app.read(session.id).runs[0]!.status, "running"); assert.equal(app.attention().length, 3);
+  assert.equal(oldShape(app, session.id).runs[0]!.status, "running"); assert.equal(app.attention().length, 3);
   turn.result.resolve({ status: "cancelled", reason: "fixture" }); await app.wait(session.id);
 });
 
@@ -1231,6 +1233,32 @@ test("an operator's wait budget is the deadline of a request whose program annou
   assert.equal(later!.expiresBy, "turn", "the budget ends before the program's deadline");
   assert.deepEqual([sooner!.expiresBy, sooner!.expiresAt! - sooner!.requestedAt], ["native", 20_000], "the program's deadline ends before the budget");
   turn.result.resolve({ status: "cancelled", reason: "fixture" }); await app.wait(session.id);
+});
+
+test("a refused approval makes the call it is about declined in the rows a reader reads, whichever of the refusal and the program's report of the failure comes first (observed: Codex said declined, Claude Code failed)", async t => {
+  const f = await fixture(t), factory = new StreamingFactory(), { app } = windowed(f, factory), prepare = factory.prepare.bind(factory);
+  // A program that can be told what the user decided.
+  factory.prepare = async (...args) => { const binding = await prepare(...args); return { ...binding, control: { ...binding.control, enablePermissions: () => {}, decidePermission: async () => {} } }; };
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  const first = factory.dispatched(1); app.send(session.id, "edit it", "edit"); const turn = await first;
+  const options = [{ id: "allow", name: "Allow" }, { id: "reject", name: "Reject" }];
+  const refuse = async (key: string): Promise<void> => { const [asked] = app.attention(); assert.ok(asked); await app.decidePermission(session.id, asked.permissionId, "reject", key); };
+  const call = (id: string, status: string) => ({ type: "tool" as const, id, title: "Edit a.txt", status, detail: { kind: "edit", name: "Edit" } });
+  // The refusal first, then what Claude Code reports of a call that was refused: a failure.
+  turn.emit(call("edit-1", "pending")); turn.emit({ type: "permission_requested", id: "ask-1", forCall: "edit-1", title: "Edit a.txt", options });
+  await refuse("decide-1");
+  turn.emit(call("edit-1", "failed"));
+  // The failure first, then the refusal.
+  turn.emit(call("edit-2", "pending")); turn.emit({ type: "permission_requested", id: "ask-2", forCall: "edit-2", title: "Edit b.txt", options });
+  turn.emit(call("edit-2", "failed"));
+  await refuse("decide-2");
+  turn.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
+  const held = f.store.turnAt(session.id, 0, { inlineBytes: Infinity })!.items;
+  const word = (itemId: string) => held.find(item => item.itemId === itemId)!.status;
+  assert.deepEqual(["tool:edit-1", "tool:edit-2", "permission:ask-1", "permission:ask-2"].map(word), ["declined", "declined", "declined", "declined"]);
+  assert.deepEqual(held.filter(item => item.type === "approval").map(item => (item.fields as { forItem?: string }).forItem), ["tool:edit-1", "tool:edit-2"]);
+  for (const item of held.filter(row => row.itemId.startsWith("tool:"))) assert.equal(wireItem(item).status, "declined", "the page is told " + item.itemId + " as declined");
+  assert.equal(f.store.get(session.id).runs[0]!.status, "completed", "the Turn ended as it did");
 });
 
 // Directed mutation (checked by hand): without the flush before a non-text event in output(), or without the flush on a
@@ -1261,8 +1289,8 @@ test("INV-06 ADR-047: text open when any other event arrives is committed before
   assert.equal(timers.pending, 1, "only the window still open, the late thinking, is armed");
   turn.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
   assert.deepEqual(outputs(f, session.id).slice(-2), ["text:h1h2", "thinking:late"], "the open window is committed at the settlement");
-  assert.equal(reply(app, session.id), "abcdefgh1h2"); assert.equal(app.read(session.id).runs[0]!.thinking, "think morelate");
-  assert.equal(app.read(session.id).runs[0]!.status, "completed"); assert.equal(timers.pending, 0);
+  assert.equal(reply(app, session.id), "abcdefgh1h2"); assert.equal(oldShape(app, session.id).runs[0]!.thinking, "think morelate");
+  assert.equal(oldShape(app, session.id).runs[0]!.status, "completed"); assert.equal(timers.pending, 0);
 });
 
 test("INV-06 ADR-047: an open window is committed before the settlement, and before a cancel's request and stop; what streams after the stop is kept too", async t => {
@@ -1284,7 +1312,7 @@ test("INV-06 ADR-047: an open window is committed before the settlement, and bef
   const cancelAt = types.indexOf("run.cancel_requested"), stopAt = types.indexOf("run.stop_requested");
   assert.equal(types[cancelAt - 1], "run.output", "the window precedes the cancel"); assert.equal(stopAt, cancelAt + 1, "the stop request follows the cancel");
   assert.deepEqual(types.slice(stopAt + 1, stopAt + 3), ["run.output", "run.backend_settled"], "text after the stop is committed before the settlement");
-  assert.equal(app.read(session.id).runs[1]!.status, "cancelled"); assert.equal(reply(app, session.id, 1), "y1y2"); assert.equal(stopped.stops, 1);
+  assert.equal(oldShape(app, session.id).runs[1]!.status, "cancelled"); assert.equal(reply(app, session.id, 1), "y1y2"); assert.equal(stopped.stops, 1);
 });
 
 test("INV-10 ADR-047: an open window is committed before a budget's end is recorded, and the Turn ends cancelled by its budget with the text kept", async t => {
@@ -1298,7 +1326,7 @@ test("INV-10 ADR-047: an open window is committed before a budget's end is recor
   assert.ok(types.indexOf("run.output") < types.indexOf("run.budget_expired"), "the window precedes the expiry");
   assert.equal(timers.pending, 0, "the expiry took the window's timer");
   turn.result.resolve({ status: "cancelled", reason: "fixture" }); await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!;
+  const run = oldShape(app, session.id).runs[0]!;
   assert.equal(run.status, "cancelled"); assert.equal(run.error?.code, "RUN_TIMEOUT"); assert.equal(reply(app, session.id), "z1");
 });
 
@@ -1317,7 +1345,7 @@ test("INV-20 ADR-057 3.7: a reply and a thought have no length they may not pass
   turn.emit({ type: "text", text: "e" });
   turn.result.resolve({ status: "completed", reason: "end_turn" });
   await app.wait(session.id);
-  const run = app.read(session.id).runs[0]!, said = reply(app, session.id) ?? "";
+  const run = oldShape(app, session.id).runs[0]!, said = reply(app, session.id) ?? "";
   assert.equal(run.status, "completed"); assert.equal(run.error, null); assert.equal(Buffer.byteLength(said), 3 * 1024 * 1024 + 100 + 4 + 1); assert.equal(said.endsWith("c".repeat(100) + "🌱e"), true);
   assert.equal(said.startsWith("a"), true);
 });

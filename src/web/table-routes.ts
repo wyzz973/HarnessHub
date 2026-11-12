@@ -1,11 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ContentPort } from "../contracts/content.js";
 import type { ConversationReader } from "../contracts/conversation.js";
-import { SessionError, type SessionConfiguration, type SessionId, type SessionSnapshot } from "../contracts/session.js";
+import { SessionError, type SessionConfiguration, type SessionId } from "../contracts/session.js";
 import { TABLE_LIMITS, TABLE_PARTS, TABLE_SEARCH_SCOPES, type TableGrant, type TableGrants, type TablePart, type TableSearchScope } from "../contracts/table.js";
 import { readDetail } from "../contexts/session/domain/detail-read.js";
 import {
-  detailKey, directoryNeeds, directoryRange, readTurn, rowsTable, searchPage, searchWordsPage, snapshotTable, tableDetailOf, tableDetailPolicy, tableRedaction, turnNeeds, turnsView,
+  detailKey, directoryNeeds, directoryRange, readTurn, rowsTable, searchPage, searchWordsPage, tableDetailOf, tableDetailPolicy, tableRedaction, turnNeeds, turnsView,
   type SearchLoad, type TableConversation, type TableDetails, type TableDetailUse, type TableRedaction, type TableToolDetail, type TableToolRef,
 } from "../contexts/session/domain/table.js";
 
@@ -31,9 +31,7 @@ export interface TableHttp {
 export interface TableApiOptions {
   readonly grants: TableGrants;
   /** The conversations as rows: the table reads the head and the Turns a request needs, one at a time (SESSION_NOT_FOUND for an identity it does not hold). */
-  readonly reader?: Pick<ConversationReader, "head" | "turnAt" | "runOrdinal" | "originHistory" | "harnessIds" | "search">;
-  /** Until the web server reads rows: the Session as the Runtime reads it in the old whole shape (SESSION_NOT_FOUND for an identity it does not hold). One of `reader` and `read` is given; `reader` wins. */
-  readonly read?: (id: SessionId) => SessionSnapshot;
+  readonly reader: Pick<ConversationReader, "head" | "turnAt" | "runOrdinal" | "originHistory" | "harnessIds" | "search">;
   /** Where stored tool details are read back; absent: none can be, and what they hold is told as unread. */
   readonly content?: Pick<ContentPort, "readText" | "readChunks">;
   /** The known secret values of these Harnesses (the factory's relaySecrets), hidden wherever the table quotes them; absent: only the shape rules hide. */
@@ -64,10 +62,8 @@ function loopback(address: string | undefined): boolean {
 
 export class TableApi {
   private readonly secretsFor = new Map<string, { readonly values: readonly string[] | null; readonly until: number }>();
-  constructor(private readonly options: TableApiOptions) {
-    if (options.reader === undefined && options.read === undefined) throw new SessionError("INVALID_INPUT", "the table needs a reader of conversations");
-  }
-  private conversation(id: SessionId): TableConversation { return this.options.reader !== undefined ? rowsTable(this.options.reader, id) : snapshotTable(this.options.read!(id)); }
+  constructor(private readonly options: TableApiOptions) {}
+  private conversation(id: SessionId): TableConversation { return rowsTable(this.options.reader, id); }
 
   /**
    * Answers the table's routes; false for any other request. Called after the server's own Host check, before its login: a
@@ -110,10 +106,9 @@ export class TableApi {
     if (!(TABLE_SEARCH_SCOPES as readonly string[]).includes(scope)) invalid("in must be one of " + TABLE_SEARCH_SCOPES.join(", "));
     if (words === null || words.trim() === "" || words.length > TABLE_LIMITS.queryMax) invalid("q must be the words to search for, 1 to " + TABLE_LIMITS.queryMax + " characters");
     const limit = whole(url, "limit", 1, TABLE_LIMITS.searchMax), reader = this.options.reader;
-    if (scope === "words" && reader === undefined) invalid("this answer cannot search the words alone");
     // The words alone are found by the conversation's full-text indexes; everything is read Turn by Turn.
     const view = scope === "words"
-      ? searchWordsPage(state, words, { limit, ...(after === undefined ? {} : { after }) }, (query, range) => reader!.search(query, { sessionId: grant.sessionId, limit: range.limit, ...(range.after === undefined ? {} : { after: range.after }) }), hiding.redaction)
+      ? searchWordsPage(state, words, { limit, ...(after === undefined ? {} : { after }) }, (query, range) => reader.search(query, { sessionId: grant.sessionId, limit: range.limit, ...(range.after === undefined ? {} : { after: range.after }) }), hiding.redaction)
       : await searchPage(state, words, { limit, ...(after === undefined ? {} : { after }) }, this.searchLoad(), hiding.redaction);
     http.json(response, 200, { ...view, ...(notes.length ? { notes } : {}) }); return true;
   }
@@ -144,10 +139,8 @@ export class TableApi {
     return { redaction: tableRedaction(entry.values ?? []), known: entry.values !== null };
   }
 
-  /** The configuration the secrets of a conversation's Harnesses are asked with: the head's, or the old shape's. */
-  private configuration(id: SessionId): SessionConfiguration {
-    return this.options.reader !== undefined ? this.options.reader.head(id).head.configuration : this.options.read!(id).configuration;
-  }
+  /** The configuration the secrets of a conversation's Harnesses are asked with: the head's. */
+  private configuration(id: SessionId): SessionConfiguration { return this.options.reader.head(id).head.configuration; }
 
   /** One stored detail, read by what it is wanted for; null when it is not stored any more, was changed, is not a detail, or cannot be read. */
   private async detail(item: TableToolRef, use: TableDetailUse): Promise<TableToolDetail | null> {

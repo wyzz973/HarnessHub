@@ -1,6 +1,7 @@
 import { ITEM_KINDS, type ItemKind } from "../../../../contracts/relay.js";
 import type { PublicRun, PublicTool, RunStatus } from "../../../../contracts/session.js";
-import { historyOf, type RelayHistory, type RelayState } from "./history.js";
+import { outlineOf, type RelayHistory } from "./history.js";
+import { plainReply, plainWords, type TextSize, type TurnOutline, type TurnWords } from "../turn-source.js";
 import { estimateTokens } from "./budget.js";
 import { characters, codeUnitsOf, fence, headUnits, neutralize, normalize, visible, type RelayLanguage } from "./escape.js";
 import { marksIn, namesCredentialFile, restoreLabels, type RelayRedactor } from "./redaction.js";
@@ -71,11 +72,12 @@ export interface RelayUnit {
   readonly status: RunStatus;
   readonly error: { readonly code: string; readonly message: string } | null;
   readonly cancelRequested: boolean;
-  /** The user's words; null for a turn of an origin's history that starts with a reply, which has no user message. */
-  readonly user: string | null;
+  /** The user's words, read when a piece of the packet needs them; null for a turn of an origin's history that starts with a reply, which has no user message. */
+  readonly user: TurnWords | null;
   readonly attachments: readonly { readonly name: string; readonly mediaType: string; readonly bytes: number }[];
   readonly tools: readonly PublicTool[];
-  readonly reply: string;
+  /** The reply, inline `<think>` blocks and all, read when a piece needs it; `visible`: something is left of it once they are taken out. */
+  readonly reply: TurnOutline["reply"];
   readonly details: ReadonlyMap<string, RelayToolDetail>;
 }
 
@@ -101,14 +103,14 @@ function runModel(state: Pick<RelayHistory, "nativeBindings">, run: PublicRun, l
  * user message and the replies after it make one turn), then `sources` in their order. `details` holds what callers read
  * of tool details, by `runId + "/" + toolId`.
  */
-export function relayUnits(given: RelayState, sources: readonly PublicRun[], origin: boolean, details: ReadonlyMap<string, RelayToolDetail> = new Map()): readonly RelayUnit[] {
-  const state = historyOf(given), units: RelayUnit[] = [];
+export function relayUnits(state: RelayHistory, sources: readonly PublicRun[], origin: boolean, details: ReadonlyMap<string, RelayToolDetail> = new Map()): readonly RelayUnit[] {
+  const units: RelayUnit[] = [];
   if (origin && state.origin !== undefined) {
     let turn: { user: string | null; status: RunStatus; harnessId: string | null; attachments: RelayUnit["attachments"]; replies: string[] } | null = null;
     const close = () => {
       if (turn === null) return;
       units.push({ key: "origin-" + (units.length + 1), turn: units.length + 1, origin: true, harnessId: turn.harnessId ?? (state.origin!.kind === "import" ? state.origin!.harnessId : null),
-        model: null, status: turn.status, error: null, cancelRequested: false, user: turn.user, attachments: turn.attachments, tools: [], reply: turn.replies.join("\n\n"), details: new Map() });
+        model: null, status: turn.status, error: null, cancelRequested: false, user: turn.user === null ? null : plainWords(turn.user), attachments: turn.attachments, tools: [], reply: plainReply(turn.replies.join("\n\n")), details: new Map() });
       turn = null;
     };
     for (const message of state.origin.history) {
@@ -124,9 +126,11 @@ export function relayUnits(given: RelayState, sources: readonly PublicRun[], ori
   for (const run of sources) {
     const own = new Map<string, RelayToolDetail>();
     for (const tool of run.tools ?? []) { const detail = details.get(run.id + "/" + tool.id); if (detail !== undefined) own.set(tool.id, detail); }
+    // The words of a Turn are not read here: its outline says how big they are and whether the reply has anything to read, and the words come when a piece of the packet is written.
+    const outline = outlineOf(state, index.get(run.id) ?? -1);
     units.push({ key: run.id, turn: (index.get(run.id) ?? 0) + 1, origin: false, harnessId: run.selection.harnessId, model: runModel(state, run, latest), status: run.status,
-      error: run.error, cancelRequested: run.cancelRequested, user: run.input,
-      attachments: (run.attachments ?? []).map(item => ({ name: item.name, mediaType: item.mediaType, bytes: item.bytes })), tools: run.tools ?? [], reply: state.turn(index.get(run.id) ?? -1)?.assistant?.text ?? "", details: own });
+      error: run.error, cancelRequested: run.cancelRequested, user: outline?.user ?? plainWords(run.input),
+      attachments: (run.attachments ?? []).map(item => ({ name: item.name, mediaType: item.mediaType, bytes: item.bytes })), tools: run.tools ?? [], reply: outline?.reply ?? plainReply(""), details: own });
   }
   return units;
 }
@@ -375,8 +379,8 @@ export interface Candidate {
   readonly seq: number;
   /** Its priority among the unit's items when not all fit: lower first (changes, commands, errors, the reply, outputs, other calls). */
   readonly rank: number;
-  /** How many characters of the record it quotes whole (none for an output: only its last lines are quoted), to leave a text that cannot fit unrendered. */
-  readonly raw: number;
+  /** How many characters of the record it quotes whole (none for an output: only its last lines are quoted), to leave a text that cannot fit unrendered; a text not read yet is known by bounds, and read for its length only when they do not settle it. */
+  readonly size: TextSize;
   /** The item it stands under: a command's output goes only with the command. */
   readonly needs: Candidate | null;
   /**
@@ -401,9 +405,10 @@ export const LEAST = RANK.call;
 export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): readonly Candidate[] {
   const out: Candidate[] = [], words = WORDS[n.language], name = n.name(unit.harnessId);
   let seq = 0;
-  const add = (kind: ItemKind, group: ItemGroup, rank: number, raw: number, make: (counted: Tally) => string | null, needs: Candidate | null = null, withheld = false, unattached: string | null = null): Candidate => {
+  const add = (kind: ItemKind, group: ItemGroup, rank: number, raw: number | TextSize, make: (counted: Tally) => string | null, needs: Candidate | null = null, withheld = false, unattached: string | null = null): Candidate => {
     let made: Piece | null | undefined;
-    const candidate: Candidate = { kind, group, unit: index, seq: seq++, rank, raw, needs, withheld, unattached: unattached === null ? null : { text: unattached, tokens: estimateTokens(unattached) }, piece() {
+    const size: TextSize = typeof raw === "number" ? { least: raw, most: raw, exact: () => raw } : raw;
+    const candidate: Candidate = { kind, group, unit: index, seq: seq++, rank, size, needs, withheld, unattached: unattached === null ? null : { text: unattached, tokens: estimateTokens(unattached) }, piece() {
       if (made === undefined) {
         const counted: Tally = { hits: 0 }, text = withheld ? null : make(counted);
         made = text === null ? null : { text, tokens: estimateTokens(text), hits: counted.hits };
@@ -417,9 +422,9 @@ export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): reado
   const line = (verb: Verb, code: string, tail: string) => "- " + words.verb[verb] + " " + code + tail;
   if (unit.user !== null) {
     const user = unit.user;
-    add("userMessages", "user", 0, user.length, counted => {
+    add("userMessages", "user", 0, user.size, counted => {
       const attachments = unit.attachments.slice(0, 8).map(item => "`" + n.label(item.name, 120, counted) + "`" + (n.zh ? "（" : " (") + n.label(item.mediaType, 80, counted) + (n.zh ? "，" : ", ") + bytesLabel(item.bytes) + (n.zh ? "）" : ")"));
-      return [words.user, n.block(user, "text", counted) ?? words.empty, ...(attachments.length ? [words.attachments(attachments, unit.attachments.length)] : [])].join("\n");
+      return [words.user, n.block(user.text(), "text", counted) ?? words.empty, ...(attachments.length ? [words.attachments(attachments, unit.attachments.length)] : [])].join("\n");
     });
   }
   for (const tool of unit.tools) {
@@ -456,8 +461,9 @@ export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): reado
     const error = unit.error;
     add("outputs", "error", RANK.error, error.message.length, counted => words.error(name, n.label(error.code, 64, counted)) + "\n" + (n.block(error.message, "text", counted) ?? words.empty));
   }
-  const reply = withoutThinking(unit.reply);
-  if (reply.trim() !== "") add("replies", "reply", RANK.reply, reply.length, counted => words.reply(name) + "\n" + (n.block(reply, "text", counted) ?? words.empty));
+  // A reply that has something to read once its thinking is taken out is a candidate; it is read, and its thinking taken out, when its piece is written.
+  const reply = unit.reply;
+  if (reply.visible) add("replies", "reply", RANK.reply, reply.size, counted => words.reply(name) + "\n" + (n.block(withoutThinking(reply.text()), "text", counted) ?? words.empty));
   return out;
 }
 /** The line that opens a unit's operations. */

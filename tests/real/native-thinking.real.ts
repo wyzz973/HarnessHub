@@ -9,6 +9,7 @@ import type { PublicRun } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -47,13 +48,13 @@ test("installed Harness thinking is kept on the Run apart from its reply", { tim
         const session = await app.runtime.create(configuration, { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }), ...(nativeOptions === undefined ? {} : { nativeOptions }) }, "create-" + randomUUID());
         app.runtime.send(session.id, "请先仔细思考再回答：一个班有 37 名学生，每人买 43 支铅笔，一共多少支？只回复最终的数字，不要调用任何工具。", "send-" + randomUUID());
         const deadline = Date.now() + 6 * 60 * 1000;
-        while (!TERMINAL.has(app.runtime.read(session.id).runs.at(-1)!.status)) {
+        while (!TERMINAL.has(oldShape(app.runtime, session.id).runs.at(-1)!.status)) {
           if (Date.now() > deadline) throw new Error("thinking turn did not settle in time");
           if (app.runtime.permissionRequests(session.id).length) throw new Error("the thinking turn asked for an approval");
           await new Promise(resolve => setTimeout(resolve, 200));
         }
         await app.runtime.wait(session.id);
-        const run = app.runtime.read(session.id).runs.at(-1)!, reply = app.runtime.read(session.id).messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
+        const run = oldShape(app.runtime, session.id).runs.at(-1)!, reply = oldShape(app.runtime, session.id).messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
         const thinking = run.thinking ?? "";
         proof.nativeOptions = nativeOptions ?? null;
         proof.run = { status: run.status, error: run.error, cleanup: run.cleanup?.closed ?? null, thinkingChars: thinking.length, replyMatched: reply.includes("1591"), thinkingInReply: thinking.length > 20 && reply.includes(thinking.slice(0, 20)) };

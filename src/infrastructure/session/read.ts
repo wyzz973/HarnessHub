@@ -8,7 +8,7 @@ import { WORK_TYPES } from "../../contracts/protocol.js";
 import { SessionError, type HarnessSelection, type RunId, type SessionId } from "../../contracts/session.js";
 import { readItems } from "./load.js";
 import { headRowFrom, originHistoryRowFrom, runRowFrom, utf8Length, type Rec } from "./rows.js";
-import { hasWords, indexStates, spread, type SearchIndexName } from "./search-index.js";
+import { IndexHealth, hasWords, spread, type SearchIndexName } from "./search-index.js";
 import { all, one, prepared } from "./statements.js";
 
 /*
@@ -70,7 +70,8 @@ function boundary(buffer: Buffer, index: number): number {
 }
 
 export class ConversationTables implements ConversationReader {
-  constructor(private readonly db: DatabaseSync) {}
+  /** `health` is what the process knows of its full-text indexes; a reader made on its own (a second connection, a test) knows nothing and finds out for itself. */
+  constructor(private readonly db: DatabaseSync, private readonly health: IndexHealth = new IndexHealth()) {}
 
   head(id: SessionId): HeadRow {
     const row = one(this.db, "SELECT * FROM sessions WHERE id=?", id);
@@ -179,13 +180,14 @@ export class ConversationTables implements ConversationReader {
   /**
    * Finished messages and segments that hold the words, newest first, `limit` at most, continuing from the item numbered `after`. Three characters or
    * more go to the trigram index; one or two CJK characters to the per-character index; anything shorter (and any query while the index it needs is not
-   * complete) is a scan of the joined text of every finished segment, told in each hit's `via`.
+   * complete) is a scan of the joined text of every finished segment, told in each hit's `via`. An index that cannot be used — its table is gone, `derived` cannot be read, the query
+   * through it fails — is told once, made unusable for this process (`IndexHealth`) and the search scans: derived data is never a reason for a search, or the store, to fail.
    */
   search(query: string, scope: { readonly sessionId?: SessionId; readonly after?: number; readonly limit: number }): readonly SearchHit[] {
     const limit = counted(scope.limit, 1, "limit");
     const words = String(query).trim();
     if (words === "") return [];
-    const states = indexStates(this.db), length = [...words].length;
+    const states = this.health.states(this.db), length = [...words].length;
     let via: SearchHit["via"], index: SearchIndexName | undefined;
     if (length >= 3) { via = states.search_fts === "ready" ? "trigram" : "scan"; index = "search_fts"; }
     else if (CJK.test(words) && hasWords(spread(words))) { via = states.search_chars === "ready" ? "chars" : "scan"; index = "search_chars"; }
@@ -208,8 +210,14 @@ export class ConversationTables implements ConversationReader {
       if (scope.after !== undefined) args.push(wholeNumber(scope.after, "the search's cursor"));
       args.push(limit);
     }
-    return prepared(this.db, sql).all(...args).map((row): SearchHit => ({ id: Number(row.id), sessionId: String(row.session_id) as SessionId, runId: String(row.run_id) as RunId, ordinal: Number(row.ordinal), itemSeq: Number(row.seq),
+    const hits = (): readonly SearchHit[] => prepared(this.db, sql).all(...args).map((row): SearchHit => ({ id: Number(row.id), sessionId: String(row.session_id) as SessionId, runId: String(row.run_id) as RunId, ordinal: Number(row.ordinal), itemSeq: Number(row.seq),
       type: String(row.type) as SearchHit["type"], via }));
+    if (via === "scan") return hits();
+    try { return hits(); } catch (error) {
+      // The index said it was complete and cannot answer: it is not used again by this process, and this search is answered by a scan.
+      this.health.broke([index!], "while searching", error);
+      return this.search(query, scope);
+    }
   }
 
   // ---------------------------------------------------------------------------------------------------------------------

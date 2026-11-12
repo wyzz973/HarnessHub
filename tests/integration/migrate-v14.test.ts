@@ -30,6 +30,7 @@ import { canonicalJson } from "../../src/infrastructure/session/rows.js";
 import { schemaV14Statements } from "../../src/infrastructure/session/schema-v14.js";
 import { indexStates, rebuildSearchIndex } from "../../src/infrastructure/session/search-index.js";
 import { snapshotFromRows } from "../../src/infrastructure/session/snapshot-adapter.js";
+import { snapshotHistory } from "../fixtures/old-shape.js";
 import { appStore } from "../fixtures/runtime-store.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { V12_FIXTURES, loadV12Fixture, writeV12Root } from "../fixtures/relay/v12/database.js";
@@ -519,7 +520,7 @@ for (const name of ["relay-states", "trial-2026-11-11", "switches", "tools", "co
     for (const row of fixture.sessions) {
       const before = liveParse(row.snapshot), after = snapshotFromRows(db, sessionId(row.id));
       for (let at = 1; at < before.runs.length; at++) {
-        const input = (state: SessionSnapshot) => ({ state, current: state.runs[at]!, sources: state.runs.slice(0, at), origin: state.origin !== undefined, firstLine: true, hubTools: at % 2 === 0 });
+        const input = (state: SessionSnapshot) => ({ state: snapshotHistory(state), current: state.runs[at]!, sources: state.runs.slice(0, at), origin: state.origin !== undefined, firstLine: true, hubTools: at % 2 === 0 });
         const was = renderRelay(input(before)), now = renderRelay(input(after));
         assert.equal(now.text, was.text, `${row.id} Turn ${at}`);
         assert.deepStrictEqual(now.record, was.record, `${row.id} Turn ${at}`);

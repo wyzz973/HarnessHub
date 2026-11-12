@@ -116,6 +116,17 @@ test("ACP permission selects the actual reject option rather than approving", as
     assert.deepEqual(messages.find(message => message.id === "permission-1").result, { outcome: { outcome: "selected", optionId: "reject" } });
   } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
 });
+test("ACP names the call an approval is about by the id its program gave the call", async () => {
+  const driver = control("permission");
+  try {
+    const id = await ready(driver); driver.enablePermissions();
+    const events: ControlEvent[] = [], run = await driver.startText(id, "hello", event => events.push(event));
+    for (let i = 0; i < 100 && !events.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    const asked = events.find(event => event.type === "permission_requested");
+    assert.ok(asked?.type === "permission_requested"); assert.equal(asked.forCall, "tool-1");
+    await driver.decidePermission(asked.id, "reject"); await run.result;
+  } finally { await driver.close(); }
+});
 test("ACP permission arriving during stop is cancelled", async () => {
   const driver = control("stop-permission");
   try {

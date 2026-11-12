@@ -10,6 +10,7 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 import { TableMount } from "../../src/infrastructure/table/mount.js";
 import { Fakes, declared, eventOf, fromAlpha, relayOf, turn, to } from "../fixtures/relay-fakes.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 // The hint of the context table (docs/decisions/LOG.md, 2026-11-11): a handoff packet tells its target how to read the rest back with
 // the Hub's tools exactly when the target's process has them. Two joints are tried here. The Runtime hands the renderer what the
@@ -33,7 +34,7 @@ test("the Runtime hands the renderer the binding's fact: a packet to a process t
   const back = readRelayPrompt(fakes.to("alpha").at(-1)!.text);
   assert.equal(back.kind, "delta"); assert.doesNotMatch(back.body, SENTENCES); assert.doesNotMatch(back.body, /not attached/u);
   assert.equal((eventOf(w.store, id, "run.context_prepared", a2.id)!.data.relay as Record<string, unknown>).hubTools, undefined);
-  assert.equal(relayOf(app.read(id), "alpha").pending, null);
+  assert.equal(relayOf(oldShape(app, id), "alpha").pending, null);
 });
 
 test("a process that has the tools on one Turn and not on the next is told so Turn by Turn: the fact is the process's, not the Session's", async t => {
@@ -88,7 +89,7 @@ async function fixture(t: test.TestContext, mount: TableMount) {
   const create = async (name: string, configHome?: string) => (await running.runtime.create(await configuration(name, configHome), { harnessId: "hint-a" }, "create-" + name)).id;
   const send = async (session: SessionId, text: string) => {
     running.runtime.send(session, text, "send-" + text.replace(/[^a-z0-9]+/giu, "-")); await running.runtime.wait(session);
-    return running.runtime.read(session).runs.at(-1)!;
+    return oldShape(running.runtime, session).runs.at(-1)!;
   };
   const switchTo = async (session: SessionId, harnessId: string) => { running.runtime.switch(session, { harnessId }, "switch-" + harnessId + "-" + Math.random().toString(36).slice(2)); await running.runtime.wait(session); };
   const lines = async <T>(file: string): Promise<readonly T[]> => { try { return (await readFile(file, "utf8")).trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as T); } catch { return []; } };

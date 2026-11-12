@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { application } from "../../src/cli/session-application.js";
-import { CONVERSATION_FORMAT, type Conversation, type ConversationRun } from "../../src/contracts/conversation.js";
+import { CONVERSATION_FORMAT, type Conversation, type ConversationRun, type RunRow } from "../../src/contracts/conversation.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import {
   RELAY_PREF_DEFAULTS, RELAY_PREF_KEYS, RELAY_PREF_VALUES, parseDeliveryRecord, parseRelayPacket, relayPacketId,
@@ -23,7 +23,9 @@ import type { ConversationCommit } from "../../src/contracts/conversation.js";
 import type { RelayBindingView, RelayPacketView, RelayStreamFrame, RelayView, SessionCommitFrame, SessionViewV14, WireRun } from "../../src/contracts/web.js";
 import { readWhole, type ReadConversation } from "../fixtures/http-conversation.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+import { storedRun } from "../../src/web/conversation-export.js";
 import { RelayApi, parseSendRelay, type RelayReads } from "../../src/web/relay-routes.js";
+import { RunRelayReader } from "../../src/web/run-relay.js";
 import { SessionStreamHub, relayStreamEvent, type SessionStreamSink, type SessionStreamSource } from "../../src/web/session-stream.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
 
@@ -634,10 +636,10 @@ test("the read model over rows made by hand: every sync state, each delivery out
     relayPrefs: () => ({}), setPref: () => { throw new Error("not written here"); }, handoffs: () => [], handoffUsed: () => false,
     events: (_id, after, limit) => events.filter(item => item.seq > after).slice(0, limit ?? 100),
     get: () => light, head: () => ({ runCount: snapshot.runs.length }) as never, turnAt: () => null, runOrdinal: () => null, originHistory: () => [] };
-  const api = new RelayApi({ reads, read: () => snapshot,
+  const api = new RelayApi({ reads,
     declaration: selection => selection.harnessId === "alpha" ? codexRelayCapabilities : selection.harnessId === "bravo" ? codexRelayCapabilities : null,
     http: { json: () => { throw new Error("no HTTP here"); }, headers: () => {}, queries: () => {}, body: async () => { throw new Error("no HTTP here"); } } });
-  const model = api.view(snapshot);
+  const model = api.view(id);
   const bindings = new Map<string, RelayBindingView[]>(); for (const item of model.bindings) bindings.set(item.harnessId, [...bindings.get(item.harnessId) ?? [], item]);
   assert.deepEqual(model.bindings.map(item => item.harnessId), ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"], "an archived binding is not listed");
   // `canConfirm` follows the Driver's declaration (the Codex Driver records and can be asked; none declared cannot confirm); nothing is owed here
@@ -659,42 +661,44 @@ test("the read model over rows made by hand: every sync state, each delivery out
     { packetId: packets.unknown.id, runId: runs[2]!.id, runIndex: 2, number: 2, kind: "delta", tier: "full", target: { harnessId: "bravo", model: "gpt-x" }, estTokens: packets.unknown.body.estTokens, omissions: 7, redactions: 0, delivery: "unknown", evidence: null },
     { packetId: packets.refused.id, runId: runs[3]!.id, runIndex: 3, number: 3, kind: "packet", tier: "brief", target: { harnessId: "alpha", model: null }, estTokens: packets.refused.body.estTokens, omissions: 0, redactions: 0, delivery: "unknown", evidence: null },
   ], "the packet nothing stored is left out and takes its number with it");
-  // The Run DTO: the delivery of each Run that carried a packet, from its row, else unknown; the rest untouched.
-  const shown = api.runViews(snapshot);
+  // The Run as the API shows it: the delivery of each Run that carried a packet, from its row, else unknown; the rest untouched. Read by the relay's reader of Runs (src/web/run-relay.ts), the one the
+  // wire's Runs and the JSON export are made with; `rowOf` is the row the reader is asked about.
+  const rowOf = (run: PublicRun): RunRow => ({ runId: run.id, facts: { relay: run.relay } }) as unknown as RunRow;
+  const reading = new RunRelayReader({ relayDeliveries: reads.relayDeliveries, events: reads.events, get: reads.get }).of(id);
+  const shown = runs.map(run => storedRun(run, reading(rowOf(run))));
   assert.deepEqual(shown.map(item => item.relay?.delivery), [undefined, { state: "recorded", evidence: "E3" }, { state: "unknown", evidence: null }, { state: "unknown", evidence: null }, { state: "unknown", evidence: null }, undefined]);
-  assert.equal(shown[0], runs[0], "a Run that carried nothing is the Run itself"); assert.deepEqual({ ...shown[1]!, relay: undefined }, { ...runs[1]!, relay: undefined });
+  assert.deepEqual(shown[0], runs[0], "a Run that carried nothing is the Run itself"); assert.deepEqual({ ...shown[1]!, relay: undefined }, { ...runs[1]!, relay: undefined });
   assert.equal(runs[1]!.relay && "delivery" in runs[1]!.relay, false, "the Session's own Run is not changed");
   // No filesystem path of the native side, no digest, no vendor is part of what is shown.
   const wire = JSON.stringify([model, shown.map(item => item.relay)]);
   for (const hidden of ["/Users/someone", "transcript.jsonl", "unknown:", "chain", "0a1b2c3d", hex("c"), "file_offset"]) assert.equal(wire.includes(hidden), false, hidden + " leaked");
   // A Session whose Runs carried no packet reads no delivery row at all.
-  const none: SessionSnapshot = { ...snapshot, runs: [runs[0]!, runs[5]!] };
-  const quiet = new RelayApi({ reads: { ...reads, relayDeliveries: () => { throw new Error("read although nothing was carried"); } }, read: () => none, declaration: () => null,
-    http: { json: () => {}, headers: () => {}, queries: () => {}, body: async () => null } });
-  assert.equal(quiet.runViews(none), none.runs);
+  const quiet = new RunRelayReader({ relayDeliveries: () => { throw new Error("read although nothing was carried"); }, events: reads.events, get: () => ({ ...light, runs: [light.runs[0]!, light.runs[5]!] }) }).of(id);
+  assert.deepEqual([runs[0]!, runs[5]!].map(run => quiet(rowOf(run))), [{}, {}]);
   // Delivery rows that cannot be read do not fail the conversation: its Runs are shown as they are.
-  const broken = new RelayApi({ reads: { ...reads, relayDeliveries: () => { throw new SessionError("INVALID_DATA", "a delivery row is unreadable"); } }, read: () => snapshot, declaration: () => null,
-    http: { json: () => {}, headers: () => {}, queries: () => {}, body: async () => null } });
-  assert.equal(broken.runViews(snapshot), snapshot.runs);
-  assert.throws(() => broken.view(snapshot), (error: unknown) => error instanceof SessionError && error.code === "INVALID_DATA", "asked for the model itself, the failure is said");
+  const unreadable = { ...reads, relayDeliveries: () => { throw new SessionError("INVALID_DATA", "a delivery row is unreadable"); } };
+  const broken = new RelayApi({ reads: unreadable, declaration: () => null, http: { json: () => {}, headers: () => {}, queries: () => {}, body: async () => null } });
+  const unseen = new RunRelayReader({ relayDeliveries: unreadable.relayDeliveries, events: reads.events, get: reads.get }).of(id);
+  assert.deepEqual(runs.map(run => unseen(rowOf(run)).delivery), runs.map(() => undefined));
+  assert.throws(() => broken.view(id), (error: unknown) => error instanceof SessionError && error.code === "INVALID_DATA", "asked for the model itself, the failure is said");
 
   // What the Runtime says each binding asks of the user is passed on as it is said, with the packet a wait is about.
-  const asking = new RelayApi({ reads, read: () => snapshot, declaration: selection => selection.harnessId === "alpha" ? codexRelayCapabilities : selection.harnessId === "bravo" ? codexRelayCapabilities : null,
+  const asking = new RelayApi({ reads, declaration: selection => selection.harnessId === "alpha" ? codexRelayCapabilities : selection.harnessId === "bravo" ? codexRelayCapabilities : null,
     attention: () => [
       { harnessId: "alpha", controlId: "alpha-acp", attention: null },
       { harnessId: "bravo", controlId: "bravo-acp", attention: { cause: "delivery_unconfirmed", options: ["attach_full"], counts: { runs: 1, packets: 1 }, key: "delivery_unconfirmed:" + packets.unknown.id } },
       { harnessId: "foxtrot", controlId: "foxtrot-acp", attention: { cause: "attach_available", options: ["attach_full"], counts: { runs: 2, packets: 0 }, key: "attach_available:2" } },
     ],
     http: { json: () => {}, headers: () => {}, queries: () => {}, body: async () => null } });
-  const asked = new Map(asking.view(snapshot).bindings.map(item => [item.harnessId, item]));
+  const asked = new Map(asking.view(id).bindings.map(item => [item.harnessId, item]));
   assert.equal(asked.get("alpha")!.attention, undefined, "a binding that asks nothing has no attention");
   assert.deepEqual(asked.get("bravo")!.attention, { cause: "delivery_unconfirmed", options: ["attach_full"], counts: { runs: 1, packets: 1 }, key: "delivery_unconfirmed:" + packets.unknown.id, packet: 2 },
     "the wait is about 交接单 #2: the packet its Run carried, which is the second Run to carry one");
   assert.deepEqual(asked.get("foxtrot")!.attention, { cause: "attach_available", options: ["attach_full"], counts: { runs: 2, packets: 0 }, key: "attach_available:2" });
   // A Runtime that cannot be asked (or fails) leaves the view as it is: attention is a help, never a reason for the conversation to fail to load.
-  const failing = new RelayApi({ reads, read: () => snapshot, declaration: () => null, attention: () => { throw new Error("no attention here"); },
+  const failing = new RelayApi({ reads, declaration: () => null, attention: () => { throw new Error("no attention here"); },
     http: { json: () => {}, headers: () => {}, queries: () => {}, body: async () => null } });
-  assert.equal(failing.view(snapshot).bindings.every(item => item.attention === undefined), true);
+  assert.equal(failing.view(id).bindings.every(item => item.attention === undefined), true);
 });
 
 test("the state says the Gateway has the relay, and the events of the conversation keep no fingerprint of the user's choices", async t => {

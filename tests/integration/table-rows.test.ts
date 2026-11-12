@@ -10,17 +10,19 @@ import { TABLE_ENV, TABLE_PARTS, type TableSearchView } from "../../src/contract
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { readDetail } from "../../src/contexts/session/domain/detail-read.js";
 import {
-  LEGACY_ORDER_NOTE, detailKey, readTurn, rowsTable, searchPage, searchTurns, searchWordsPage, snapshotTable, tableDetailOf, tableDetailPolicy, tableRedaction, turnsView, type SearchLoad, type TableConversation, type TableDetails,
+  LEGACY_ORDER_NOTE, detailKey, readTurn, rowsTable, searchPage, searchTurns, searchWordsPage, tableDetailOf, tableDetailPolicy, tableRedaction, turnsView, type SearchLoad, type TableConversation, type TableDetails,
 } from "../../src/contexts/session/domain/table.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { MemoryTableGrants } from "../../src/infrastructure/session/table-grants.js";
 import { appStore } from "../fixtures/runtime-store.js";
 import { mountTable } from "../fixtures/table-http.js";
-import { temporary } from "../fixtures/store-helpers.js";
+import { Scenario, created, newConversation, temporary } from "../fixtures/store-helpers.js";
+import { event } from "../fixtures/conversation-builder.js";
 import { V13_FIXTURES, loadV13Fixture, writeV13Root } from "../fixtures/storage/v13/database.js";
 import { conversation, tool } from "../fixtures/relay-scenarios.js";
 import { scriptedWorld } from "../fixtures/scripted-world.js";
+import { snapshotTable } from "../fixtures/old-shape.js";
 
 // The context table over rows: the directory, a Turn, a search read one Turn at a time from the tables of a real store (rows, not the conversation's old whole shape), held to what
 // the old shape gives for every migrated fixture (apart from the one thing a Turn from before the order was kept is now told with); a stored detail of any size read for what it can
@@ -224,4 +226,17 @@ test("the words alone are found by the full-text indexes: the same places as a s
   assert.match(found.text, /only the user's words and the replies were searched/u); assert.match(found.text, /More places match: hub_search \{"query":"needle","after":"w\d+\.\d+(user|reply)","limit":3,"in":"words"\}/u);
   const refused = await callTool("hub_search", { query: "needle", in: "everything" }, "mcp", env);
   assert.equal(refused.isError, true);
+});
+
+test("a conversation that was deleted is not found by the table, though its rows are kept while another conversation may quote it", t => {
+  let opened: SqliteConversationStore | undefined;
+  t.after(() => opened?.close());
+  const store = opened = appStore(join(temporary(t), "data"));
+  const id = created(store, newConversation("/work", "gone")).conversation.id;
+  new Scenario(store, id, "run-gone", false).turn("a question", "an answer");
+  assert.equal(rowsTable(store, id).turns.count, 1);
+  store.transact(id, store.get(id).version, current => ({ next: { ...current, status: "closed" }, events: [event("session.closed")] }));
+  store.deleteSession(id);
+  assert.equal(store.head(id).deletedAt !== null, true, "the rows are still there");
+  assert.throws(() => rowsTable(store, id), (error: unknown) => error instanceof SessionError && error.code === "SESSION_NOT_FOUND");
 });

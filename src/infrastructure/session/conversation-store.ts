@@ -31,7 +31,8 @@ import { handoffNamed, handoffRows, logHandoff, readPrefs, writePref } from "./r
 import { readIndexRows, readPacket, readPacketBody, readPackets, repairRelayPrefs } from "./relay-tables.js";
 import { originHistoryRowFrom, runRowFrom, runRowOf, utf8Length } from "./rows.js";
 import { schemaV14Statements, RELAY_V14_REBUILD } from "./schema-v14.js";
-import { BACKFILL, backfillStep, indexProgress, indexStates, rebuildSearchIndex, type BackfillBudget, type BackfillStep, type SearchIndexName, type SearchIndexState } from "./search-index.js";
+import { judgeStructure, stampSchema, structureMismatch } from "./schema-fingerprint.js";
+import { BACKFILL, IndexHealth, SEARCH_INDEXES, backfillStep, derivedWork, indexProgress, rebuildSearchIndex, type BackfillBudget, type BackfillStep, type SearchIndexName, type SearchIndexState } from "./search-index.js";
 import { all, insertInto, one, refused, updateRow } from "./statements.js";
 import { readEvents, drafts, pageLimit } from "./store-events.js";
 import {
@@ -92,6 +93,8 @@ export interface SqliteConversationStoreOptions extends ConversationStoreOptions
   /** Called at four points inside the first transaction of the migration (see MigrationOptions.inside); tests stop a start inside it. */
   readonly migrationInside?: MigrationOptions["inside"];
   readonly log?: (line: string) => void;
+  /** Where the store says, once, that derived data (a full-text index) cannot be used and a search scans instead. */
+  readonly report?: (problem: string) => void;
 }
 
 interface Written { readonly entry: CacheEntry; readonly commit: ConversationCommit }
@@ -163,6 +166,8 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
   private readonly cache: ConversationCache;
   private readonly turns: TurnCache;
   private readonly relayQuota: number;
+  /** What this process knows of its full-text indexes (derived data): the ones that failed it, and the one telling of that. */
+  private readonly indexes: IndexHealth;
   /** PRAGMA data_version when the memory was last known to match the database; another connection's commit changes it. */
   private dataVersion: number | null = null;
   private inTransaction = false;
@@ -185,6 +190,7 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
     this.cache = new ConversationCache(options.cache?.conversations, options.cache?.runs);
     this.turns = new TurnCache(options.snapshotCacheBytes);
     this.relayQuota = options.relayBodyQuotaBytes ?? RELAY_SESSION_BODY_BYTES;
+    this.indexes = new IndexHealth(options.report);
     if (!Number.isSafeInteger(this.relayQuota) || this.relayQuota < 1) throw new SessionError("INVALID_INPUT", "the relay text quota must be a positive integer");
     const initialized = initializeRoot(root);
     this.root = initialized.root; this.rootIdentity = pathIdentity(this.root, true);
@@ -205,7 +211,7 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
       database = new DatabaseSync(this.databasePath, { timeout: 0, allowExtension: false, enableForeignKeyConstraints: true });
       this.database = database;
       database.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON");
-      this.tables = new ConversationTables(database);
+      this.tables = new ConversationTables(database, this.indexes);
       this.facts = new ConversationFacts(database);
       this.migration = this.start();
     } catch (error) {
@@ -254,6 +260,8 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
     if (version === 0) this.makeNew();
     else if (version < CURRENT_VERSION) report = this.upgrade();
     else {
+      // The structure is this build's or the start ends here, before anything is written (schema-fingerprint.ts).
+      this.verifyStructure();
       this.reclaim();
       // An upgrade that was stopped (or killed) leaves conversations that are not converted, or all converted and the references not yet compared: the start goes on with
       // what is left, and does not go on without it.
@@ -278,6 +286,8 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
         db.exec(KEYS_DDL); db.exec(EVENTS_DDL); db.exec(RELAY_DDL_V13);
         for (const sql of RELAY_V14_REBUILD) db.exec(sql);
         repairRelayPrefs(db);
+        // The structure this build wrote is written down with it: a later build that writes another is told at once (schema-fingerprint.ts).
+        stampSchema(db);
         // Nothing is stored yet, so both full-text indexes are complete: every segment that finishes is indexed by the commit that finishes it.
         const at = this.stamp().getTime();
         db.prepare("INSERT INTO derived(name,state,updated_at) VALUES('search_fts','ready',?),('search_chars','ready',?)").run(at, at);
@@ -289,6 +299,18 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
         db.exec("COMMIT");
       } catch (error) { if (db.isTransaction) db.exec("ROLLBACK"); throw error; }
     } finally { db.exec("PRAGMA foreign_keys=ON"); }
+  }
+
+  /**
+   * A v14 database is held to the structure this build writes before anything is written to it: it carries this build's fingerprint, or it carries none (made before the stamp) and its
+   * structure is whole and is stamped now; any other is refused with SCHEMA_MISMATCH and left as it is.
+   */
+  private verifyStructure(): void {
+    const db = this.database, verdict = judgeStructure(db);
+    if (verdict.kind === "mismatch") throw structureMismatch(verdict.detail);
+    if (verdict.kind === "stamped") return;
+    db.exec("BEGIN IMMEDIATE");
+    try { stampSchema(db); this.assertPaths(); db.exec("COMMIT"); } catch (error) { if (db.isTransaction) db.exec("ROLLBACK"); throw error; }
   }
 
   /** A v14 database: the generation is claimed in a short transaction of its own. */
@@ -453,7 +475,7 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
       ...(mutation.createdBy === undefined ? {} : { createdBy: mutation.createdBy }), title, updatedAt: at.getTime() });
     const origin = originReferences(next.id, mutation.originHistory);
     const rows: Mutation = origin.length === 0 ? made : { ...made, contentRefs: [...(made.contentRefs ?? []), ...origin] };
-    const applied = applyMutation(db, rows, { ownerGeneration: this.generation, timestamp: at.toISOString(), writeRelay: relay => { writeRelayRowsV14(db, next.id, relay, this.relayQuota); } });
+    const applied = applyMutation(db, rows, { ownerGeneration: this.generation, timestamp: at.toISOString(), writeRelay: relay => { writeRelayRowsV14(db, next.id, relay, this.relayQuota); }, indexes: this.indexes });
     // A relay state that names a packet must find it kept: the rows of the commit are in, and a throw here takes the whole commit back.
     checkPacketReferencesV14(db, next.id, before, applied.changes);
     const settled = freezeConversation(settleConversation(next, applied), before);
@@ -474,9 +496,14 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
   }
 
   // ---------------------------------------------------------------------------------------------------------------------
-  // The old shape, for the readers that have not moved to items
+  // The old shape: for tests and the migration's checks only
   // ---------------------------------------------------------------------------------------------------------------------
 
+  /**
+   * The conversation in the old whole shape, made by `fromItems` from the rows: a finished Run once (it never changes) and kept, the Runs not finished from memory. NOT part of
+   * `ConversationStore`: nothing in `src/` reads a conversation this way any more (tools/check-boundaries.mjs, rule B11); the tests hold what the readers say to it, the
+   * way the old store said it.
+   */
   snapshot(id: SessionId): SessionSnapshot {
     this.assertOwner(); sessionId(id);
     return this.read(() => {
@@ -594,12 +621,28 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
   collectionGate(): CollectionGate { this.assertOwner(); return this.read(() => collectionGate(this.database)); }
   /** The first start after an upgrade has reported what the collector would collect: the upgrade's bookkeeping is dropped and the collector is free. */
   acknowledgeFirstStart(): void { this.assertOwner(); this.transaction(() => { acknowledgeFirstStart(this.database); }); }
-  /** Makes both full-text indexes again from the text chunks (search-index.ts); returns how many items were indexed. A maintenance command. */
-  rebuildSearchIndex(): number { this.assertOwner(); return this.transaction(() => rebuildSearchIndex(this.database, this.stamp().getTime())); }
-  /** Whether each full-text index is complete, and how far the backfill of each has got (`items.id`). */
+  /**
+   * Makes both full-text indexes again from the text chunks (search-index.ts); returns how many items were indexed. A maintenance command. If it cannot (a table is gone), the failure is
+   * the caller's to be told and the store is not failed by it; when it can, the indexes are used again by this process.
+   */
+  rebuildSearchIndex(): number {
+    this.assertOwner();
+    const made = this.transaction(() => derivedWork(this.database, () => rebuildSearchIndex(this.database, this.stamp().getTime())));
+    if (!made.ok) {
+      this.indexes.broke(SEARCH_INDEXES, "while making them again", made.error);
+      throw Object.assign(new SessionError("SEARCH_INDEX_UNAVAILABLE", "the full-text indexes could not be made again; searches scan"), { cause: made.error });
+    }
+    this.indexes.restore();
+    return made.value;
+  }
+  /** Whether each full-text index is complete (`unusable`: it failed this process, or `derived` cannot say), and how far the backfill of each has got (`items.id`; 0 when that cannot be read). */
   searchIndex(): { readonly states: Readonly<Record<SearchIndexName, SearchIndexState>>; readonly progress: Readonly<Record<SearchIndexName, number>> } {
     this.assertOwner();
-    return this.read(() => ({ states: indexStates(this.database), progress: indexProgress(this.database) }));
+    return this.read(() => {
+      let progress: Readonly<Record<SearchIndexName, number>> = { search_fts: 0, search_chars: 0 };
+      try { progress = indexProgress(this.database); } catch (error) { this.indexes.broke(SEARCH_INDEXES, "while reading how far the indexes are filled", error); }
+      return { states: this.indexes.states(this.database), progress };
+    });
   }
   /**
    * Fills the full-text indexes of a root that was upgraded (the migration writes none), in the background and in small steps, and resolves when they are complete or the work was
@@ -625,9 +668,14 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
         let step: BackfillStep;
         try {
           this.assertOwner();
-          const states = this.read(() => indexStates(this.database));
+          // Derived data: an index that cannot be read or written stops the backfill and nothing else. The step is a transaction of the store's, its work a savepoint inside it, so a failure
+          // of the work is taken back and the transaction ends clean; what ends the transaction itself (the owner lost, a broken file) is the store's and ends the backfill with it.
+          const states = this.indexes.states(this.database);
+          if (states.search_fts === "unusable" || states.search_chars === "unusable") return;
           if (states.search_fts === "ready" && states.search_chars === "ready") return;
-          step = this.transaction(() => backfillStep(this.database, this.stamp().getTime(), budget));
+          const worked = this.transaction(() => derivedWork(this.database, () => backfillStep(this.database, this.stamp().getTime(), budget)));
+          if (!worked.ok) { this.indexes.broke(SEARCH_INDEXES.filter(name => states[name] !== "ready"), "while filling them", worked.error); return; }
+          step = worked.value;
         } catch { return; }
         options.onStep?.(step);
         if (step.done) return;

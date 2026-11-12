@@ -253,6 +253,9 @@ test("formal chat management lists history and closes admission without launchin
   }
   const close = spawnSync(process.execPath, [sessionsCli, "close", "--data-dir", f.data, "--workspace-lock-root", join(f.root, "locks"), "--session", state.id, "--json"], { cwd: f.root, env: env(f), encoding: "utf8", timeout: 10000 });
   assert.equal(close.status, 0, close.stderr); assert.equal((await persisted(f)).status, "closed");
+  // What closing printed is the conversation's head after it, not the whole conversation in the old shape (its history is read with `show`).
+  const closed = JSON.parse(close.stdout) as Record<string, unknown>;
+  assert.deepEqual([closed.id, closed.status, closed.runs], [state.id, "closed", 1]); assert.equal("messages" in closed || "schemaVersion" in closed, false);
   assert.equal((await trace(f)).filter(entry => entry.kind === "spawn").length, before);
   const resumed = start(t, f, ["--session", state.id]); resumed.child.stdin.end("another input\n"); assert.notEqual((await resumed.result).code, 0);
   await assertClean(f);

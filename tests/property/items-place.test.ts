@@ -726,6 +726,77 @@ test("an approval waits as an item, is decided in the same item, and says who de
   for (const where of [JSON.stringify(secret.commits), JSON.stringify(secret.turn), JSON.stringify(secret.items)]) assert.ok(!where.includes(SECRET), "the secret is not there");
 });
 
+// A refused approval is the call's outcome, whoever reports what and whenever: the approval says which call it is about (`forItem`), and the call says `declined` — not what its program
+// then calls the failure of a call that was refused (Codex says declined, Claude Code says failed). Observed on real machines: the approval item itself was right, the call it refused was not.
+test("an approval says which call it is about, and when it ends declined that call is declined, whichever of the refusal and the program's report of the failure comes first", () => {
+  const options = [{ id: "allow", name: "Allow" }, { id: "reject", name: "Reject" }];
+  const call = (id: string, status: string) => ({ type: "tool" as const, id, title: "Edit a.txt", status, detail: { kind: "edit", name: "Edit" } });
+  const status = (d: Driver, id: string) => d.item("tool:" + id).status;
+  const turnEnds = (d: Driver, id: string) => { d.settle("completed"); assert.equal(status(d, id), "declined", "the end of the Turn leaves what was decided"); d.settle("failed"); };
+
+  // The refusal first, then the program's report that the call failed.
+  const refusedFirst = new Driver();
+  refusedFirst.event(call("c1", "pending"));
+  refusedFirst.event({ type: "permission_requested", id: "p1", forCall: "c1", title: "Edit a.txt", options });
+  assert.equal(fieldsOf(refusedFirst.item("permission:p1")).forItem, "tool:c1", "the approval names the item of the call");
+  assert.equal(status(refusedFirst, "c1"), "pending");
+  refusedFirst.input({ kind: "decided", id: "p1", option: "reject", at: 500 });
+  assert.deepStrictEqual([refusedFirst.item("permission:p1").status, status(refusedFirst, "c1"), refusedFirst.item("tool:c1").endedAt], ["declined", "declined", 500]);
+  refusedFirst.event(call("c1", "failed"));
+  assert.equal(status(refusedFirst, "c1"), "declined", "a later report of a failure does not change it back");
+  refusedFirst.event({ ...call("c1", "failed"), detail: { output: "The user doesn't want to proceed", exitCode: 1 } });
+  assert.equal(status(refusedFirst, "c1"), "declined", "nor does the next");
+  assert.equal(native(refusedFirst.item("tool:c1")).status, "failed", "what the program reported stays as it reported it");
+  assert.deepStrictEqual(refusedFirst.commits.slice(-2).flatMap(placed => placed.changes.items ?? []).filter(write => write.row.itemId === "tool:c1").map(write => write.row.status), ["declined", "declined"],
+    "what the program adds about the call (its output, its exit code) is written, and every write of it says declined");
+  turnEnds(refusedFirst, "c1");
+
+  // The program's report first (the call already failed when the refusal is recorded), then the refusal.
+  const failedFirst = new Driver();
+  failedFirst.event(call("c2", "pending"));
+  failedFirst.event({ type: "permission_requested", id: "p2", forCall: "c2", title: "Edit a.txt", options });
+  failedFirst.event(call("c2", "failed"));
+  assert.equal(status(failedFirst, "c2"), "failed");
+  failedFirst.input({ kind: "decided", id: "p2", option: "reject", at: 600 });
+  assert.deepStrictEqual([failedFirst.item("permission:p2").status, status(failedFirst, "c2")], ["declined", "declined"]);
+  turnEnds(failedFirst, "c2");
+
+  // A refusal for a call that has not been reported yet: the call, when it is, is declined however it is reported — in the Turn as it goes, and in the Turn as a restart finds it.
+  const unseen = new Driver();
+  unseen.event({ type: "permission_requested", id: "p3", forCall: "c3", title: "Edit a.txt", options });
+  unseen.input({ kind: "decided", id: "p3", option: "reject", at: 700 });
+  assert.equal(unseen.items.some(item => item.itemId === "tool:c3"), false, "nothing is invented for a call nobody reported");
+  const found = new Driver({}, openTurn(unseen.turn.run, unseen.items));
+  found.event(call("c3", "failed"));
+  assert.equal(status(found, "c3"), "declined", "the refusal is in the items a restart finds");
+  unseen.event(call("c3", "failed"));
+  assert.equal(status(unseen, "c3"), "declined");
+
+  // The Harness took the request back as denied (its own deadline): refused all the same. Timed out by the Hub, closed with the Turn, or allowed: the call is its program's to report.
+  const withdrawn = new Driver();
+  withdrawn.event(call("c5", "pending")); withdrawn.event({ type: "permission_requested", id: "p5", forCall: "c5", title: "Edit a.txt", options });
+  withdrawn.event({ type: "permission", id: "p5", decision: "denied" }); withdrawn.event(call("c5", "failed"));
+  assert.deepStrictEqual([withdrawn.item("permission:p5").status, status(withdrawn, "c5")], ["declined", "declined"]);
+  const others = new Driver();
+  others.event(call("c6", "pending")); others.event({ type: "permission_requested", id: "p6", forCall: "c6", title: "Edit a.txt", options }); others.input({ kind: "expired", at: 900 });
+  others.event(call("c6", "failed"));
+  assert.deepStrictEqual([others.item("permission:p6").status, status(others, "c6")], ["cancelled", "failed"], "a request that timed out refused nothing");
+  const allowed = new Driver();
+  allowed.event(call("c7", "pending")); allowed.event({ type: "permission_requested", id: "p7", forCall: "c7", title: "Edit a.txt", options }); allowed.input({ kind: "decided", id: "p7", option: "allow", at: 1000 });
+  allowed.event(call("c7", "failed"));
+  assert.deepStrictEqual([allowed.item("permission:p7").status, status(allowed, "c7")], ["completed", "failed"], "an allowed call that fails fails");
+
+  // A question names no call; an approval that names none declines nothing but itself.
+  const plain = new Driver();
+  plain.event(call("c8", "pending")); plain.event({ type: "permission_requested", id: "p8", title: "May I?", options });
+  assert.equal(fieldsOf(plain.item("permission:p8")).forItem, undefined);
+  plain.input({ kind: "decided", id: "p8", option: "reject", at: 1100 }); plain.event(call("c8", "failed"));
+  assert.deepStrictEqual([plain.item("permission:p8").status, status(plain, "c8")], ["declined", "failed"]);
+  const asked = new Driver();
+  asked.event({ type: "permission_requested", id: "q", forCall: "c9", title: "Which one?", options: [{ id: "skip", name: "Skip" }], kind: "question" });
+  assert.equal(fieldsOf(asked.item("permission:q")).forItem, undefined, "a question is about no call");
+});
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Details and links
 // ---------------------------------------------------------------------------------------------------------------------------------

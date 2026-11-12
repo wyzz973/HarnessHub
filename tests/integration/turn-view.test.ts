@@ -11,7 +11,7 @@ import { ConversationFacts } from "../../src/infrastructure/session/facts.js";
 import { ConversationTables } from "../../src/infrastructure/session/read.js";
 import { readDeliveriesV14 } from "../../src/infrastructure/session/relay-rows-v14.js";
 import { LINE_SEQ, TurnView, turnFactsOf, type TurnEnv, type TurnFacts } from "../../src/web/turn-view.js";
-import { RelayApi } from "../../src/web/relay-routes.js";
+import { runViews, type RunViewReads } from "../fixtures/old-shape.js";
 import { V13_FIXTURES, type V13Fixture } from "../fixtures/storage/v13/database.js";
 import { migrated } from "../fixtures/migrated.js";
 import { SESSION, item, replyItem, run, toolItem, userItem } from "../fixtures/conversation-builder.js";
@@ -26,12 +26,11 @@ import type { NativeSessionBinding } from "../../src/contracts/session.js";
 
 const harnessName = builtinHarnessName();
 
-/** The relay's reading of the Runs of one conversation, the same inputs for both paths: the delivery rows and the decisions the events recorded, through the relay API's own `runViews`. */
-function relayApiOf(db: import("node:sqlite").DatabaseSync, snapshot: SessionSnapshot): RelayApi {
+/** The relay's reading of the Runs of one conversation, the same inputs for both paths: the delivery rows and the decisions the events recorded, through the oracle of what the old view showed (`runViews`). */
+function relayReads(db: import("node:sqlite").DatabaseSync): RunViewReads {
   const events = (id: SessionId, afterSeq: number, limit = 100): readonly SessionEvent[] =>
     db.prepare("SELECT event_json FROM events WHERE session_id=? AND seq>? ORDER BY seq LIMIT ?").all(id, afterSeq, limit).map(row => JSON.parse(String(row.event_json)) as SessionEvent);
-  const reads = { relayDeliveries: (id: SessionId) => readDeliveriesV14(db, id), events } as unknown as ConstructorParameters<typeof RelayApi>[0]["reads"];
-  return new RelayApi({ reads, read: () => snapshot, declaration: () => null, http: {} as never });
+  return { relayDeliveries: (id: SessionId) => readDeliveriesV14(db, id), events };
 }
 const contentHeads = (fixture: V13Fixture): ((ref: ContentRef) => ToolDetailInput | null) => ref => {
   const text = fixture.contents[ref.id]?.text;
@@ -42,7 +41,7 @@ const contentHeads = (fixture: V13Fixture): ((ref: ContentRef) => ToolDetailInpu
 interface Both { readonly id: SessionId; readonly snapshot: SessionSnapshot; readonly old: readonly ProtocolTurn[]; readonly now: readonly WireTurn[] }
 function read(fixture: V13Fixture, db: import("node:sqlite").DatabaseSync, row: V13Fixture["sessions"][number], detail: boolean): Both {
   const snapshot = JSON.parse(JSON.stringify(row.snapshot)) as SessionSnapshot, id = snapshot.id;
-  const api = relayApiOf(db, snapshot), runs = api.runViews(snapshot);
+  const runs = runViews(snapshot, relayReads(db));
   const env: ProjectionEnv = { harnessName, detail: detail ? contentHeads(fixture) : () => null };
   const old = projectTurns({ runs, messages: snapshot.messages, nativeBindings: snapshot.nativeBindings }, env);
   const reader = new ConversationTables(db), facts = new ConversationFacts(db);

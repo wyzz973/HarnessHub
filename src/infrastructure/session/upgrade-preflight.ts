@@ -9,6 +9,7 @@ import { sound } from "../../contexts/session/domain/store-conversion.js";
 import { SessionError, sessionId, type PublicTool } from "../../contracts/session.js";
 import { databaseBytes, freeBytesOf } from "./backup.js";
 import { convertConversation, migrationState, upgradeSchema } from "./migrate-v14.js";
+import { judgeStructure } from "./schema-fingerprint.js";
 import { UnreadableHolders, heldTwice, liveHoldings, recordMoves, resolveSharedSessions, type NativeMove } from "./shared-sessions.js";
 import { all, one } from "./statements.js";
 import { ownerGenerations, type OwnerGenerations } from "./owner-generations.js";
@@ -228,6 +229,9 @@ function inspect(root: string, opened: Opened, stores: readonly StoreFinding[], 
   if (version === 0) return { ...base, ok: problems.length === 0, state: "empty", problems };
   if (version > 14) return { ...base, ok: false, state: "newer", problems: [...problems, "the library is version " + version + ", which this build does not know"] };
   if (version === 14) {
+    // A library whose table structure is another build's is not one this build starts on (SCHEMA_MISMATCH): the check says so, read-only.
+    const verdict = judgeStructure(db);
+    if (verdict.kind === "mismatch") problems.push("the table structure is inconsistent with this build (" + verdict.detail + ")");
     const state = migrationState(db);
     if (state.kind !== "converting") return { ...base, ok: problems.length === 0, state: "current", problems };
     return { ...base, ok: problems.length === 0 && state.stopped === null, state: "under-way", underWay: { remaining: state.remaining, stoppedAt: state.stopped?.sessionId ?? null, reason: state.stopped?.reason ?? null }, problems };

@@ -9,6 +9,7 @@ import type { PublicRun, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -29,12 +30,12 @@ async function closeApp(app: App): Promise<void> {
   try { await app.runtime.close(); } finally { try { await app.management.shutdown(); } finally { try { await app.providers.shutdown(); } finally { app.store.close(); } } }
 }
 async function turn(app: App, id: SessionId, text: string): Promise<PublicRun> {
-  const count = app.runtime.read(id).runs.length + 1;
+  const count = oldShape(app.runtime, id).runs.length + 1;
   app.runtime.send(id, text, "send-" + randomUUID());
   const deadline = Date.now() + 8 * 60 * 1000;
   for (;;) {
-    const state = app.runtime.read(id), run = state.runs.at(-1)!;
-    if (state.runs.length === count && TERMINAL.has(run.status)) { await app.runtime.wait(id); return app.runtime.read(id).runs.at(-1)!; }
+    const state = oldShape(app.runtime, id), run = state.runs.at(-1)!;
+    if (state.runs.length === count && TERMINAL.has(run.status)) { await app.runtime.wait(id); return oldShape(app.runtime, id).runs.at(-1)!; }
     if (app.runtime.permissionRequests(id).length) throw new Error("the turn asked for an approval");
     if (Date.now() > deadline) throw new Error("turn did not settle in time");
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -61,7 +62,7 @@ test("installed Harness applies the selected native settings and runs a native c
         const session = await app.runtime.create(configuration, { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }), ...(nativeOptions === undefined ? {} : { nativeOptions }) }, "create-" + randomUUID());
         if (nativeOptions !== undefined) {
           const run = await turn(app, session.id, "请用你的文件编辑工具把 notes.txt 里的 bravo 改成 delta；如果当前模式不允许修改文件，就只说明你会怎么改。");
-          const observed = app.runtime.read(session.id).nativeBindings?.find(binding => binding.status === "ready")?.observed?.options ?? {};
+          const observed = oldShape(app.runtime, session.id).nativeBindings?.find(binding => binding.status === "ready")?.observed?.options ?? {};
           const unchanged = (await readFile(join(workspace, "notes.txt"), "utf8")).includes("bravo");
           proof.options = { requested: nativeOptions, observed: Object.fromEntries(Object.keys(nativeOptions).map(key => [key, observed[key] ?? null])), status: run.status, fileUnchanged: unchanged };
           if (run.status !== "completed") failures.push(harnessId + ": options turn");

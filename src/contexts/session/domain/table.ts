@@ -1,5 +1,5 @@
 import type { ContentRef } from "../../../contracts/content.js";
-import { SessionError, type PublicRun, type PublicTool, type RunId, type SessionId, type SessionSnapshot } from "../../../contracts/session.js";
+import { SessionError, type PublicRun, type PublicTool, type RunId, type SessionId } from "../../../contracts/session.js";
 import {
   TABLE_LIMITS, TABLE_PARTS, TABLE_TOOL_PARTS,
   type TablePart, type TableSearchHit, type TableSearchView, type TableSearchWhere, type TableTurnLine, type TableTurnRead, type TableTurnsView,
@@ -9,7 +9,7 @@ import { changesOf, kindOf, parseToolDetail, withoutThinking, type FileChange, t
 import { namesCredentialFile, relayRedactor, restoreLabels } from "./relay/redaction.js";
 import type { DetailPolicy, DetailRead } from "./detail-read.js";
 import type { ConversationReader } from "../../../contracts/conversation.js";
-import { snapshotTurns, turnSource, type TurnRecord, type TurnSource } from "./turn-source.js";
+import { turnSource, type TurnRecord, type TurnSource } from "./turn-source.js";
 
 /**
  * The context table's read model (docs/decisions/LOG.md, 2026-11-11): what a conversation holds, as a Harness may read it back
@@ -135,19 +135,13 @@ export interface TableConversation {
 /** A conversation kept as rows, as the table reads it: its head now, its Turns when asked for. */
 export function rowsTable(reader: Pick<ConversationReader, "head" | "turnAt" | "runOrdinal" | "originHistory" | "harnessIds">, id: SessionId): TableConversation {
   const head = reader.head(id), origin = head.head.origin;
+  // A conversation that was deleted is hidden, and its rows kept while another quotes it.
+  if (head.deletedAt !== null) throw new SessionError("SESSION_NOT_FOUND", "public Session was not found");
   // A branch that refers to its source instead of quoting it has no history of its own to count.
   const quoted = origin !== undefined && (origin.kind === "import" || origin.quoted);
   return { id, workspace: head.head.configuration.workspace, activeRunId: head.activeRunId, turns: turnSource(reader, id), harnessIds: () => reader.harnessIds?.(id) ?? [head.head.selection.harnessId],
     ...(quoted ? { origin: { kind: origin.kind, messages: reader.originHistory?.(id).length ?? 0 } } : {}) };
 }
-/** A conversation in the old whole shape as the table's: for a caller that has the snapshot already. Nothing is read, and no Turn is `legacyOrder` (the old shape does not say). */
-export function snapshotTable(state: SessionSnapshot): TableConversation {
-  return { id: state.id, workspace: state.configuration.workspace, activeRunId: state.activeRunId, turns: snapshotTurns(state), harnessIds: () => [...new Set(state.runs.map(run => run.selection.harnessId))].sort(),
-    ...(state.origin === undefined ? {} : { origin: { kind: state.origin.kind, messages: state.origin.history.length } }) };
-}
-/** What the table's functions take: the conversation as the table reads it, or the old whole shape of one (read through `snapshotTable`). */
-export type TableState = TableConversation | SessionSnapshot;
-function conversationOf(state: TableState): TableConversation { return "turns" in state ? state : snapshotTable(state); }
 function turnAt(table: TableConversation, n: number): TurnRecord {
   const turn = Number.isInteger(n) && n >= 1 ? table.turns.turn(n - 1) : null, total = table.turns.count;
   if (turn === null) throw new SessionError("TABLE_TURN_NOT_FOUND", total === 0 ? "This conversation has no turns yet."
@@ -248,14 +242,14 @@ function filesText(run: PublicRun, details: TableDetails, redaction: TableRedact
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** The window of Turns a directory request lists: `limit` from `from` (the latest Turns when `from` is absent), within the conversation. */
-export function directoryRange(state: TableState, from: number | undefined, limit: number | undefined): { readonly from: number; readonly to: number } {
-  const total = conversationOf(state).turns.count, count = Math.min(Math.max(1, whole(limit, TABLE_LIMITS.turnsDefault)), TABLE_LIMITS.turnsMax);
+export function directoryRange(table: TableConversation, from: number | undefined, limit: number | undefined): { readonly from: number; readonly to: number } {
+  const total = table.turns.count, count = Math.min(Math.max(1, whole(limit, TABLE_LIMITS.turnsDefault)), TABLE_LIMITS.turnsMax);
   const first = from === undefined ? Math.max(1, total - count + 1) : Math.max(1, whole(from, 1));
   return { from: first, to: first > total ? first - 1 : Math.min(total, first + count - 1) };
 }
 /** The details the directory needs for the Turns `from`..`to`: the change tools' (their files are counted). */
-export function directoryNeeds(state: TableState, from: number, to: number): readonly TableToolRef[] {
-  const table = conversationOf(state), refs: TableToolRef[] = [];
+export function directoryNeeds(table: TableConversation, from: number, to: number): readonly TableToolRef[] {
+  const refs: TableToolRef[] = [];
   for (let n = Math.max(1, from); n <= Math.min(to, table.turns.count); n++) refs.push(...refsOf(table.turns.turn(n - 1)!.run, tool => kindOf(tool) === "change"));
   return refs;
 }
@@ -263,8 +257,8 @@ export function directoryNeeds(state: TableState, from: number, to: number): rea
 const LINE_CHARS = 80;
 function shown(redaction: TableRedaction, text: string): string { return clip(fold(redaction.redact(text, "text").slice(0, LINE_CHARS * 4)), LINE_CHARS); }
 
-export function turnsView(state: TableState, from: number | undefined, limit: number | undefined, details: TableDetails, redaction: TableRedaction): TableTurnsView {
-  const table = conversationOf(state), range = directoryRange(table, from, limit), lines: TableTurnLine[] = [];
+export function turnsView(table: TableConversation, from: number | undefined, limit: number | undefined, details: TableDetails, redaction: TableRedaction): TableTurnsView {
+  const range = directoryRange(table, from, limit), lines: TableTurnLine[] = [];
   for (let n = range.from; n <= range.to; n++) {
     const turn = table.turns.turn(n - 1)!, run = turn.run, model = modelOf(run), { files, unread } = filesOf(run, details, table.workspace);
     lines.push({ n, harnessId: run.selection.harnessId, status: run.status, user: shown(redaction, run.input), reply: shown(redaction, replyOf(turn)),
@@ -289,8 +283,8 @@ export interface TableReadQuery {
   readonly limit?: number;
 }
 /** The details reading `part` of Turn `n` needs: the Turn's change tools' for the overview and the files, the one tool's for `input`, `output` and `diff`. */
-export function turnNeeds(state: TableState, n: number, part: TablePart | undefined, tool: number | undefined): readonly TableToolRef[] {
-  const run = turnAt(conversationOf(state), n).run;
+export function turnNeeds(table: TableConversation, n: number, part: TablePart | undefined, tool: number | undefined): readonly TableToolRef[] {
+  const run = turnAt(table, n).run;
   if ((TABLE_TOOL_PARTS as readonly string[]).includes(part ?? "")) {
     const facts = toolsOf(run).find(item => item.k === tool);
     return facts?.tool.detail === undefined ? [] : [{ runId: run.id, toolId: facts.tool.id, ref: facts.tool.detail }];
@@ -337,8 +331,8 @@ function overview(table: TableConversation, n: number, turn: TurnRecord, details
 }
 
 /** Reads one Turn, or one piece of it, as one page; throws SessionError (TABLE_TURN_NOT_FOUND, TABLE_TOOL_NOT_FOUND, TABLE_DETAIL_UNAVAILABLE, INVALID_INPUT). */
-export function readTurn(state: TableState, n: number, query: TableReadQuery, details: TableDetails, redaction: TableRedaction): TableTurnRead {
-  const table = conversationOf(state), turn = turnAt(table, n), run = turn.run, part = query.part ?? "overview", model = modelOf(run);
+export function readTurn(table: TableConversation, n: number, query: TableReadQuery, details: TableDetails, redaction: TableRedaction): TableTurnRead {
+  const turn = turnAt(table, n), run = turn.run, part = query.part ?? "overview", model = modelOf(run);
   if (!(TABLE_PARTS as readonly string[]).includes(part)) throw new SessionError("INVALID_INPUT", "part must be one of " + TABLE_PARTS.join(", "));
   const base = { n, total: table.turns.count, harnessId: run.selection.harnessId, status: run.status, ...(model === undefined ? {} : { model }), part };
   const limit = Math.min(Math.max(1, whole(query.limit, TABLE_LIMITS.pageDefault)), TABLE_LIMITS.pageMax), offset = Math.max(0, whole(query.offset, 0));
@@ -389,8 +383,8 @@ export function readTurn(state: TableState, n: number, query: TableReadQuery, de
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** The details a search through the whole conversation reads, the newest Turn's first: every tool call's stored detail. */
-export function searchNeeds(state: TableState): readonly TableToolRef[] {
-  const table = conversationOf(state), refs: TableToolRef[] = [];
+export function searchNeeds(table: TableConversation): readonly TableToolRef[] {
+  const refs: TableToolRef[] = [];
   for (let n = table.turns.count; n >= 1; n--) refs.push(...refsOf(table.turns.turn(n - 1)!.run, () => true));
   return refs;
 }
@@ -449,8 +443,8 @@ function turnPlaces(n: number, turn: TurnRecord, search: Search, details: TableD
  * could not read; with the outputs withheld they make `unsearched`. (The Turns are read one after the other; a request that pages
  * through a conversation is `searchPage`.)
  */
-export function searchTurns(state: TableState, query: string, limit: number | undefined, details: TableDetails, redaction: TableRedaction, unread: number): TableSearchView {
-  const table = conversationOf(state), search = searchOf(query), most = Math.min(Math.max(1, whole(limit, TABLE_LIMITS.searchDefault)), TABLE_LIMITS.searchMax), hits: TableSearchHit[] = [];
+export function searchTurns(table: TableConversation, query: string, limit: number | undefined, details: TableDetails, redaction: TableRedaction, unread: number): TableSearchView {
+  const search = searchOf(query), most = Math.min(Math.max(1, whole(limit, TABLE_LIMITS.searchDefault)), TABLE_LIMITS.searchMax), hits: TableSearchHit[] = [];
   let total = 0, kept = 0;
   for (let n = table.turns.count; n >= 1; n--) {
     const found = turnPlaces(n, table.turns.turn(n - 1)!, search, details, redaction);
@@ -470,8 +464,8 @@ export type WordsFinder = (words: string, scope: { readonly limit: number; reado
  * are in and kept only if the match is still there once the text is redacted. The cursor is the last match consumed and the place it belonged to, so that a reply whose segments the page boundary
  * falls between is not told twice.
  */
-export function searchWordsPage(state: TableState, query: string, options: { readonly limit?: number | undefined; readonly after?: string | undefined }, find: WordsFinder, redaction: TableRedaction): TableSearchView {
-  const table = conversationOf(state), search = searchOf(query), most = Math.min(Math.max(1, whole(options.limit, TABLE_LIMITS.searchDefault)), TABLE_LIMITS.searchMax);
+export function searchWordsPage(table: TableConversation, query: string, options: { readonly limit?: number | undefined; readonly after?: string | undefined }, find: WordsFinder, redaction: TableRedaction): TableSearchView {
+  const search = searchOf(query), most = Math.min(Math.max(1, whole(options.limit, TABLE_LIMITS.searchDefault)), TABLE_LIMITS.searchMax);
   const cursor = options.after === undefined ? null : /^w([0-9]{1,15})\.([0-9]{1,9})(user|reply)$/u.exec(options.after);
   if (options.after !== undefined && cursor === null) throw new SessionError("INVALID_INPUT", "after must be the cursor an earlier search gave");
   let after = cursor === null ? undefined : Number(cursor[1]), last = cursor === null ? "" : cursor[2]! + cursor[3]!;
@@ -514,8 +508,8 @@ export type SearchLoad = (refs: readonly TableToolRef[]) => Promise<{ readonly d
  * One page of a search: the places that match, newest Turn first, `limit` of them at most, from where `after` (the cursor of the page before) says, and `next` to go on from when
  * the conversation has more. The Turns are read one at a time and the search stops reading when the page is full, so a conversation of any length is searched a page at a time.
  */
-export async function searchPage(state: TableState, query: string, options: { readonly limit?: number | undefined; readonly after?: string | undefined }, load: SearchLoad, redaction: TableRedaction): Promise<TableSearchView> {
-  const table = conversationOf(state), search = searchOf(query), most = Math.min(Math.max(1, whole(options.limit, TABLE_LIMITS.searchDefault)), TABLE_LIMITS.searchMax);
+export async function searchPage(table: TableConversation, query: string, options: { readonly limit?: number | undefined; readonly after?: string | undefined }, load: SearchLoad, redaction: TableRedaction): Promise<TableSearchView> {
+  const search = searchOf(query), most = Math.min(Math.max(1, whole(options.limit, TABLE_LIMITS.searchDefault)), TABLE_LIMITS.searchMax);
   const start = searchStart(options.after, table.turns.count), hits: TableSearchHit[] = [];
   let unsearched = 0, next: string | undefined;
   for (let n = start.n; n >= 1 && next === undefined; n--) {

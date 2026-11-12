@@ -23,11 +23,19 @@ import { all, one, prepared } from "./statements.js";
  * tombstone that leaves the connection's last inserted row number beyond what a JavaScript number holds, which node:sqlite refuses to hand back from the next
  * statement that does not insert (hence `put` reads its deletes as bigints and always ends on an insert). A restart goes on from `progress`; until `ready`
  * a search scans, and says so.
+ *
+ * DERIVED DATA NEVER TAKES STORAGE DOWN. An index can be made again from the rows, so a failure of its own — a SQLite error in the backfill, in the commit that keeps the
+ * indexes current, in the question of which are complete, or in a search through one — is not a failure of the store. `IndexHealth` is what the process knows: the index that failed
+ * it is `unusable` for this process (a search scans and each hit says `scan`; the writers leave it alone), the reason is told once in the service log, and the work that failed is taken
+ * back by the savepoint it ran in (`derivedWork`), so the transaction it was part of — a commit, a step of the backfill — goes on and ends as if the index were not there. Nothing is
+ * stored about it that a broken `derived` table could refuse to keep: the one write that is tried, `empty` for the indexes a commit could not keep current (so that the next start
+ * makes them again instead of trusting what missed a commit), is best effort. A failure that ends the transaction itself — a full disk, a broken file — is the store's, and passes.
  */
 
 export const SEARCH_INDEXES = ["search_fts", "search_chars"] as const;
 export type SearchIndexName = typeof SEARCH_INDEXES[number];
-export type SearchIndexState = "empty" | "building" | "ready";
+/** `unusable` is never stored: it is what this process knows of an index that failed it. */
+export type SearchIndexState = "empty" | "building" | "ready" | "unusable";
 /** The item types the search finds. */
 export const SEARCHED_TYPES = ["user_message", "assistant_message"] as const;
 const FINISHED = "('completed','failed','declined','cancelled','unknown')";
@@ -38,6 +46,57 @@ export function spread(value: string): string {
 }
 /** Whether `spread` leaves words for the per-character index to find (a query of punctuation alone has none). */
 export function hasWords(value: string): boolean { return /[\p{L}\p{N}]/u.test(value); }
+
+/** What a log may carry of a failure of derived data: SQLite names the table, the column or the rule, never a row's content; cut so that nothing long goes into a log. */
+function reasonOf(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\s+/gu, " ").trim().slice(0, 300) || "an unnamed failure";
+}
+/**
+ * What this process knows of its indexes beyond what the database says: the ones that failed it. Shared by the writers (apply.ts), the backfill and the readers of the store, so that
+ * an index that failed once is not tried again by each of them, and the log says it once.
+ */
+export class IndexHealth {
+  private readonly broken = new Map<SearchIndexName, string>();
+  constructor(private readonly report: (problem: string) => void = () => {}) {}
+  usable(name: SearchIndexName): boolean { return !this.broken.has(name); }
+  /** Whether any index failed this process. */
+  get failed(): boolean { return this.broken.size > 0; }
+  /** The indexes are unusable for this process, and why (said once for each). Never throws: a report that fails is not a reason to fail anything. */
+  broke(names: readonly SearchIndexName[], phase: string, error: unknown): void {
+    const fresh = names.filter(name => !this.broken.has(name)), reason = reasonOf(error);
+    for (const name of fresh) this.broken.set(name, reason);
+    if (fresh.length === 0) return;
+    try { this.report(fresh.join(" and ") + " cannot be used (" + phase + "): " + reason + ". A search scans until the index is made again."); } catch { /* the log is not the store */ }
+  }
+  /** The index is whole again (it was made again): it is used from now on. */
+  restore(names: readonly SearchIndexName[] = SEARCH_INDEXES): void { for (const name of names) this.broken.delete(name); }
+  /** Which indexes are complete, as this process may rely on it: one that failed it is `unusable` whatever the database says, and a database that cannot say makes all of them so. */
+  states(db: DatabaseSync): Readonly<Record<SearchIndexName, SearchIndexState>> {
+    let stored: Readonly<Record<SearchIndexName, SearchIndexState>> | null = null;
+    if (SEARCH_INDEXES.some(name => this.usable(name))) {
+      try { stored = indexStates(db); } catch (error) { this.broke(SEARCH_INDEXES, "while reading which indexes are complete", error); }
+    }
+    const state = (name: SearchIndexName): SearchIndexState => stored === null || !this.usable(name) ? "unusable" : stored[name];
+    return { search_fts: state("search_fts"), search_chars: state("search_chars") };
+  }
+}
+/**
+ * Runs derived-data work in a savepoint of the caller's transaction. If it fails the work is taken back and the failure is returned, and the transaction goes on; if the failure ended
+ * the transaction itself (SQLite does that for a full disk or a broken file) it is not derived data's and is thrown as it is.
+ */
+export function derivedWork<T>(db: DatabaseSync, work: () => T): { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown } {
+  db.exec("SAVEPOINT derived_work");
+  try {
+    const value = work();
+    db.exec("RELEASE derived_work");
+    return { ok: true, value };
+  } catch (error) {
+    if (!db.isTransaction) throw error;
+    try { db.exec("ROLLBACK TO derived_work"); db.exec("RELEASE derived_work"); } catch { throw error; }
+    return { ok: false, error };
+  }
+}
 
 export function indexStates(db: DatabaseSync): Readonly<Record<SearchIndexName, SearchIndexState>> {
   const states: Record<SearchIndexName, SearchIndexState> = { search_fts: "empty", search_chars: "empty" };
@@ -63,31 +122,49 @@ function wholeText(db: DatabaseSync, runId: string, seq: number): string {
  * tombstone whose row number is far beyond a JavaScript number, and it becomes the connection's last inserted row number: its result is therefore read as a bigint here, and
  * the insert that follows sets that number back to the item's own (see the top of this file).
  */
-function put(db: DatabaseSync, id: number, text: string, names: readonly SearchIndexName[]): void {
-  for (const name of names) {
-    const remove = prepared(db, "DELETE FROM " + name + " WHERE rowid=?");
-    remove.setReadBigInts(true); remove.run(id);
-    if (text === "") continue;
-    prepared(db, "INSERT INTO " + name + "(rowid,text) VALUES(?,?)").run(id, name === "search_fts" ? text : spread(text));
-  }
+function putOne(db: DatabaseSync, id: number, text: string, name: SearchIndexName): void {
+  const remove = prepared(db, "DELETE FROM " + name + " WHERE rowid=?");
+  remove.setReadBigInts(true); remove.run(id);
+  if (text === "") return;
+  prepared(db, "INSERT INTO " + name + "(rowid,text) VALUES(?,?)").run(id, name === "search_fts" ? text : spread(text));
 }
+function put(db: DatabaseSync, id: number, text: string, names: readonly SearchIndexName[]): void { for (const name of names) putOne(db, id, text, name); }
 
 /**
  * Called by a commit with the items it finished: each is indexed in every index that is `ready`, and in one that is `building` when the backfill has already passed it
  * (an index that is `empty` is waited for by the backfill or a rebuild, which will see the item). Items of other types, and items not finished, are left out.
  */
-export function maintainSearch(db: DatabaseSync, items: readonly { readonly runId: string; readonly seq: number }[]): void {
+export function maintainSearch(db: DatabaseSync, items: readonly { readonly runId: string; readonly seq: number }[], health: IndexHealth = new IndexHealth()): void {
   if (items.length === 0) return;
-  const states = indexStates(db), live = SEARCH_INDEXES.filter(name => states[name] !== "empty");
+  const states = health.states(db), live = SEARCH_INDEXES.filter(name => states[name] === "ready" || states[name] === "building");
   if (live.length === 0) return;
-  const reached = live.some(name => states[name] === "building") ? indexProgress(db) : null;
+  // Reading how far the backfill has got is a read of derived data too.
+  let reached: Readonly<Record<SearchIndexName, number>> | null = null;
+  if (live.some(name => states[name] === "building")) {
+    const read = derivedWork(db, () => indexProgress(db));
+    if (!read.ok) { health.broke(live, "while reading how far the indexes are filled", read.error); keepFromTrusting(db, live); return; }
+    reached = read.value;
+  }
+  const failed: SearchIndexName[] = [];
   for (const item of items) {
     const row = one(db, "SELECT id, type, status FROM items WHERE run_id=? AND seq=?", item.runId, item.seq);
     if (row === undefined || !(SEARCHED_TYPES as readonly string[]).includes(String(row.type)) || ["pending", "running", "waiting"].includes(String(row.status))) continue;
-    const id = Number(row.id), names = live.filter(name => states[name] === "ready" || id <= (reached?.[name] ?? 0));
+    const id = Number(row.id), names = live.filter(name => health.usable(name) && (states[name] === "ready" || id <= (reached?.[name] ?? 0)));
     if (names.length === 0) continue;
-    put(db, id, wholeText(db, item.runId, item.seq), names);
+    const text = wholeText(db, item.runId, item.seq);
+    for (const name of names) {
+      const worked = derivedWork(db, () => { putOne(db, id, text, name); });
+      if (!worked.ok) { health.broke([name], "while indexing what a commit finished", worked.error); failed.push(name); }
+    }
   }
+  if (failed.length > 0) keepFromTrusting(db, failed);
+}
+/**
+ * An index that missed what a commit finished is not complete any more, and a restart must not take it for whole: `empty` is written so that the next start makes it again. Best effort
+ * (a `derived` table that is the reason cannot be written either), in a savepoint of its own.
+ */
+function keepFromTrusting(db: DatabaseSync, names: readonly SearchIndexName[]): void {
+  derivedWork(db, () => { for (const name of names) setState(db, name, "empty", Date.now()); });
 }
 
 /**

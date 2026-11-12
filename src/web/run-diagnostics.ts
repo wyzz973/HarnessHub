@@ -1,5 +1,5 @@
 import type { ProtocolObservation } from "../contracts/control.js";
-import type { PublicMessage, PublicRun, SessionEvent, SessionSnapshot } from "../contracts/session.js";
+import type { SessionEvent } from "../contracts/session.js";
 import type { TurnRecord } from "../contexts/session/domain/turn-source.js";
 
 /** The most a diagnostics text holds, and how much of a Turn's stderr it carries (ADR-037). */
@@ -62,10 +62,16 @@ export function withholdConversation(text: string, messages: readonly string[]):
   }).join("\n");
 }
 
-/** What the Gateway knows about one Turn, gathered for its report; every string from a program is scrubbed when written. */
-export interface RunDiagnosticsInput {
-  readonly session: SessionSnapshot;
-  readonly run: PublicRun;
+/**
+ * What the Gateway knows about one Turn, gathered for its report; every string from a program is scrubbed when written. The Turn is read by itself from the rows, whatever the length of the
+ * conversation it is in.
+ */
+export interface TurnDiagnosticsInput {
+  readonly turn: TurnRecord;
+  /** How many Turns the conversation has. */
+  readonly turns: number;
+  /** The messages of the conversation, or the starts of them (`messageStarts`): a program's log is checked against them when the report holds no conversation content. */
+  readonly messages: () => readonly string[];
   /** This Turn's events, in order. */
   readonly events: readonly SessionEvent[];
   /** Whether the event count is complete, or stopped at the reading budget. */
@@ -78,13 +84,6 @@ export interface RunDiagnosticsInput {
   readonly now: Date;
   readonly includeContent: boolean;
   readonly scrub: (text: string) => string;
-}
-/** What a Turn's report is made from when the Turns are read one at a time: the Turn, how many the conversation has, and (asked for only when a log is checked) the messages or the starts of them. */
-export interface TurnDiagnosticsInput extends Omit<RunDiagnosticsInput, "session" | "run"> {
-  readonly turn: TurnRecord;
-  readonly turns: number;
-  /** The messages of the conversation, or the starts of them (`messageStarts`): a program's log is checked against them when the report holds no conversation content. */
-  readonly messages: () => readonly string[];
 }
 function bytes(text: string): number { return Buffer.byteLength(text, "utf8"); }
 /** The last `limit` bytes of `text`, starting at a whole character. */
@@ -103,13 +102,6 @@ function ms(from: number | undefined, to: number | undefined): string { return f
  * One Turn's diagnostics as plain text, at most 64 KiB (ADR-037). Its first line says whether conversation content is in
  * it; without content it holds no prompt, reply, tool text or attachment. Nothing of it is stored by the Gateway.
  */
-export function runDiagnostics(input: RunDiagnosticsInput): string {
-  const { session, run, ...rest } = input, ordinal = session.runs.findIndex(item => item.id === run.id);
-  const user: PublicMessage = session.messages.find(message => message.id === run.userMessageId) ?? { id: run.userMessageId, runId: run.id, role: "user", text: run.input, seq: 0, status: run.status };
-  return turnDiagnostics({ ...rest, turn: { ordinal, run, user, assistant: session.messages.find(message => message.id === run.assistantMessageId), legacyOrder: false }, turns: session.runs.length,
-    messages: () => session.messages.map(message => message.text) });
-}
-/** The same report of a Turn read by itself from the rows, whatever the length of the conversation it is in. */
 export function turnDiagnostics(input: TurnDiagnosticsInput): string {
   const { scrub } = input, run = input.turn.run, timing = run.timing, index = input.turn.ordinal;
   const protocol = input.events.filter(event => event.type === "run.protocol").map(event => (event.data as { observation?: ProtocolObservation }).observation).at(-1);

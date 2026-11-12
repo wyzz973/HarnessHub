@@ -6,6 +6,7 @@ import type { HarnessSelection, PreparedSessionBinding, SelectionRequest, Sessio
 import { decisionOf, relayOf, turn, to, world } from "../fixtures/relay-fakes.js";
 import { driver, gatewayOf, peerRoot, prompts, type Harness, type Peer } from "../fixtures/relay-drivers.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 // A clear on each of the six Drivers, through the formal Runtime and a real SqliteConversationStore (slim.md: "clearing is the Hub's"):
 // the Drivers are the production ones, each on the relay peer as a real child process (tests/fixtures/relay-control-peer.mjs), so
@@ -47,7 +48,7 @@ for (const target of ["claude", "codex", "opencode", "dsh", "hermes", "openclaw"
     const first = readRelayPrompt((await received(target, peer))[0]!);
     // A Driver that places the packet and the words as blocks of their own leaves a blank line between them.
     assert.deepEqual([first.packet, first.currentInput.text.trim(), first.history.map(row => row.user.text)], [true, "x1 the first message on " + target, ["s1 a fact said on " + source]]);
-    const held = relayOf(app.read(id), target);
+    const held = relayOf(oldShape(app, id), target);
     assert.deepEqual([held.epoch, held.pending], [1, null], "the packet reached the binding");
     assert.ok(held.mark >= 1);
     const opened = await sessionsOpened(target, peer), seen = (await received(target, peer)).length;
@@ -57,7 +58,7 @@ for (const target of ["claude", "codex", "opencode", "dsh", "hermes", "openclaw"
     assert.equal(cleared.status, "completed", JSON.stringify(cleared.error));
     assert.equal(cleared.relay?.packetId ?? null, null, "a command carries no packet"); assert.equal(decisionOf(w.store, id, cleared.id), undefined);
     assert.equal((await received(target, peer)).length, seen, "the clear was not sent to the native side");
-    const state = app.read(id), now = relayOf(state, target);
+    const state = oldShape(app, id), now = relayOf(state, target);
     assert.deepEqual([now.epoch, now.mark, now.pending, now.resendAll], [2, -1, null, false], "a new epoch that holds nothing");
     assert.deepEqual(state.nativeBindings!.filter(row => row.harnessId === target).map(row => row.status), ["archived", "ready"], "the native session was given up for a new one");
     const offered = app.relayAttention(id).find(row => row.harnessId === target)?.attention;

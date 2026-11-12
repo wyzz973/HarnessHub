@@ -11,6 +11,7 @@ import { loadBuiltinCatalog } from "../../src/adapters/catalog.js";
 import { catalogTarget } from "../../src/infrastructure/catalog/platform.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { evidenceHeader, guardTest, snapshot, type SuiteEvidence } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 const MODEL = "gemini-2.5-flash";
 const KEY = "synthetic-gemini-key-private-acceptance";
@@ -96,14 +97,14 @@ test("real Gemini uses a managed private Provider endpoint, explicit model/key a
   const session = await app.runtime.create(configuration, { harnessId: "gemini", provider: target }, "real-gemini-session");
   app.runtime.send(session.id, MARKER + ": reply briefly without calling tools", "real-gemini-message");
   await Promise.race([received, app.runtime.wait(session.id).then(() => {
-    throw new Error("real Gemini ended before the local Provider received the public input: " + JSON.stringify(app.runtime.read(session.id).runs[0]));
+    throw new Error("real Gemini ended before the local Provider received the public input: " + JSON.stringify(oldShape(app.runtime, session.id).runs[0]));
   })]);
   await app.runtime.wait(session.id);
   assert.deepEqual(failures, []);
   const generation = calls.filter(call => call.path.includes(":streamGenerateContent"));
   assert.ok(generation.some(call => JSON.stringify(call.input).includes(MARKER)), "real Gemini did not dispatch the public context to the selected local endpoint");
   assert.ok(calls.every(call => call.key === KEY && call.path.includes(MODEL)));
-  const final = app.runtime.read(session.id), run = final.runs[0]; assert.ok(run);
+  const final = oldShape(app.runtime, session.id), run = final.runs[0]; assert.ok(run);
   assert.equal(run.status, "completed", JSON.stringify(run)); assert.equal(run.cleanup?.closed, true); assert.equal(run.cleanup?.protocolFailure, null);
   assert.deepEqual(run.selection.provider, target); assert.match(final.messages.at(-1)?.text ?? "", /Managed Gemini local Provider answer/u);
   assert.match(final.messages.at(-1)?.text ?? "", /\[redacted\]/u, "real Gemini SSE key echo was not redacted");

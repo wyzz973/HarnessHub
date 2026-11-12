@@ -9,6 +9,7 @@ import type { PublicRun, SessionId } from "../../src/contracts/session.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -30,15 +31,15 @@ async function turn(app: App, id: SessionId, text: string): Promise<PublicRun> {
   app.runtime.send(id, text, "send-" + randomUUID());
   const deadline = Date.now() + 6 * 60 * 1000;
   for (;;) {
-    const run = app.runtime.read(id).runs.at(-1)!;
-    if (TERMINAL.has(run.status)) { await app.runtime.wait(id); return app.runtime.read(id).runs.at(-1)!; }
+    const run = oldShape(app.runtime, id).runs.at(-1)!;
+    if (TERMINAL.has(run.status)) { await app.runtime.wait(id); return oldShape(app.runtime, id).runs.at(-1)!; }
     if (app.runtime.permissionRequests(id).length) throw new Error("a native command turn asked for an approval");
     if (Date.now() > deadline) throw new Error("native command turn did not settle in time");
     await new Promise(resolve => setTimeout(resolve, 200));
   }
 }
 function summary(app: App, id: SessionId, run: PublicRun): Record<string, unknown> {
-  const reply = app.runtime.read(id).messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
+  const reply = oldShape(app.runtime, id).messages.find(row => row.id === run.assistantMessageId)?.text ?? "";
   return { status: run.status, error: run.error, replyBytes: Buffer.byteLength(reply), activities: (run.activities ?? []).map(item => [item.kind, item.status, (item.detail ?? "").slice(0, 200)]),
     outputs: (run.outputs ?? []).map(output => output.kind === "content" ? { kind: output.content.kind, mediaType: output.content.mediaType, bytes: output.content.bytes } : { kind: "link" }), cleanup: run.cleanup?.closed ?? null };
 }
@@ -79,7 +80,7 @@ test("installed Harness compacts and exports its own session through the unified
           if (compact.status !== "completed") failures.push(harnessId + ": compact");
           // The native session still answers from its own (now compacted) context.
           const after = await turn(app, created.id, "我让你记住的数字是多少？只回复数字。");
-          const reply = app.runtime.read(created.id).messages.find(row => row.id === after.assistantMessageId)?.text ?? "";
+          const reply = oldShape(app.runtime, created.id).messages.find(row => row.id === after.assistantMessageId)?.text ?? "";
           proof.afterCompact = { ...summary(app, created.id, after), remembered: reply.includes("42"), sourceRunIds: after.sourceRunIds.length };
           if (after.status !== "completed" || !reply.includes("42")) failures.push(harnessId + ": context after compaction");
         }

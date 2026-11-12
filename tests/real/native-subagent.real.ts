@@ -9,6 +9,7 @@ import type { PermissionRequest, PublicRun, SessionId } from "../../src/contract
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { describeGuard, evidenceHeader, guardTargets, recheck, snapshot, type EvidenceHeader, type GuardCheck } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 /** A development manifest (HH_REAL_MANIFEST) names non-official entries, which only the development policy reads (ADR-044). */
 const realInstallations = process.env.HH_REAL_MANIFEST ? "any" as const : "official" as const;
 
@@ -36,8 +37,8 @@ async function settle(app: App, id: SessionId, deadline: number): Promise<Public
       const option = allowOnce(request); if (option === null) throw new Error("no one-time allow option");
       await app.runtime.decidePermission(id, request.id, option, "allow-" + randomUUID());
     }
-    const run = app.runtime.read(id).runs.at(-1)!;
-    if (TERMINAL.has(run.status)) { await app.runtime.wait(id); return app.runtime.read(id).runs.at(-1)!; }
+    const run = oldShape(app.runtime, id).runs.at(-1)!;
+    if (TERMINAL.has(run.status)) { await app.runtime.wait(id); return oldShape(app.runtime, id).runs.at(-1)!; }
     if (Date.now() > deadline) throw new Error("sub-agent turn did not settle in time");
     await new Promise(resolve => setTimeout(resolve, 200));
   }
@@ -61,7 +62,7 @@ test("installed Harness delegates to its own sub-agent and the Hub links the sub
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()], tag = "SUB-" + randomUUID().slice(0, 6).toUpperCase();
         const session = await app.runtime.create(configuration, { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }) }, "create-" + randomUUID());
         app.runtime.send(session.id, "请用你的子代理工具（例如 Task/Agent）启动一个子代理，让它在当前目录用命令行运行 `echo " + tag + "` 并把输出报告给你。然后你只回复一句：主代理收到。", "send-" + randomUUID());
-        const run = await settle(app, session.id, Date.now() + 8 * 60 * 1000), state = app.runtime.read(session.id);
+        const run = await settle(app, session.id, Date.now() + 8 * 60 * 1000), state = oldShape(app.runtime, session.id);
         const reply = state.messages.find(row => row.id === run.assistantMessageId)?.text ?? "", tools = run.tools ?? [];
         const ids = new Set(tools.map(tool => tool.id)), children = tools.filter(tool => tool.parentId !== undefined && ids.has(tool.parentId));
         const parents = [...new Set(children.map(tool => tool.parentId!))].map(id => tools.find(tool => tool.id === id)!);

@@ -1,5 +1,5 @@
 import { SessionError, type PublicRun, type RunId } from "../../../contracts/session.js";
-import { historyOf, type RelayHistory, type RelayState } from "./relay/history.js";
+import { outlineOf, type RelayHistory } from "./relay/history.js";
 import { dispatched } from "./relay/advance.js";
 import type { RelayToolDetail } from "./relay/narration.js";
 import { renderRelay, type RelayRecord } from "./relay/packet.js";
@@ -29,8 +29,8 @@ function currentSeqOf(state: RelayHistory, current: PublicRun): number {
  * whose input came before the current one and was dispatched. A Run that never reached a Harness (cancelled while queued,
  * failed before dispatch) is no fact of the conversation's history.
  */
-export function publicSources(given: RelayState, current?: PublicRun): readonly RunId[] {
-  const state = historyOf(given), currentSeq = current === undefined ? null : currentSeqOf(state, current);
+export function publicSources(state: RelayHistory, current?: PublicRun): readonly RunId[] {
+  const currentSeq = current === undefined ? null : currentSeqOf(state, current);
   return state.runs.filter(run => terminal(run.status) && dispatched(run) && run.id !== current?.id &&
     (currentSeq === null || (run.userSeq !== undefined && run.userSeq < currentSeq))).map(run => run.id);
 }
@@ -66,14 +66,14 @@ export interface PublicContextOptions {
  * current input, each once; the current input must be the Session's own. Queued inputs and native tool identities never
  * enter it.
  */
-export function buildPublicContext(given: RelayState, current: PublicRun, sourceRunIds?: readonly RunId[], options: PublicContextOptions = {}): PublicContext {
-  const state = historyOf(given), currentSeq = currentSeqOf(state, current), position = new Map(state.runs.map((run, index) => [run.id, index]));
-  // A source is read as the Turn it is, with its tool calls and words: only the sources are read.
+export function buildPublicContext(state: RelayHistory, current: PublicRun, sourceRunIds?: readonly RunId[], options: PublicContextOptions = {}): PublicContext {
+  const currentSeq = currentSeqOf(state, current), position = new Map(state.runs.map((run, index) => [run.id, index]));
+  // A source is read as the Turn it is, with its tool calls and without its words: only the sources are read, and the words only of those whose pieces are written (relay/narration.ts).
   const sourceOf = (id: RunId): PublicRun => {
-    const at = position.get(id), light = at === undefined ? undefined : state.runs[at], turn = at === undefined ? null : state.turn(at);
-    if (!light || turn === null || !terminal(light.status) || light.id === current.id || light.userSeq === undefined || light.userSeq >= currentSeq)
+    const at = position.get(id), light = at === undefined ? undefined : state.runs[at], outline = at === undefined ? null : outlineOf(state, at);
+    if (!light || outline === null || !terminal(light.status) || light.id === current.id || light.userSeq === undefined || light.userSeq >= currentSeq)
       throw new SessionError("INVALID_DATA", "public context source is not a completed public fact");
-    return turn.run;
+    return outline.run;
   };
   const sources = (sourceRunIds === undefined ? publicSources(state, current) : sourceRunIds).map(sourceOf);
   if (new Set(sources.map(run => run.id)).size !== sources.length) throw new SessionError("INVALID_DATA", "duplicate public context sources");

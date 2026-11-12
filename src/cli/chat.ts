@@ -2,19 +2,28 @@ import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
-import { SessionError, sessionId, type HarnessSelection, type SessionConfiguration, type SessionEvent, type SessionId, type SessionSnapshot } from "../contracts/session.js";
+import type { Conversation } from "../contracts/conversation.js";
+import { SessionError, sessionId, type HarnessSelection, type SessionConfiguration, type SessionId } from "../contracts/session.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { resolveInstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { defaultRelayKeyPath } from "../infrastructure/session/relay-keys.js";
 import { application, dataRoot, errorRecord, hash, newCommand, selection } from "./session-application.js";
 import { parseConfiguration } from "../contexts/session/domain/state.js";
-import { turnSource } from "../contexts/session/domain/turn-source.js";
+import { turnRecord, turnSource } from "../contexts/session/domain/turn-source.js";
 import { boundedWrite, MAX_CLI_INPUT_BYTES } from "./bounded-streams.js";
+
+/** The conversation as the NDJSON documents tell it: its head and the facts of each Turn's Run, without the words (a `turn` document brings those). */
+function headDocument(state: Conversation): Record<string, unknown> {
+  return { id: state.id, version: state.version, lastSeq: state.lastSeq, epoch: state.epoch, status: state.status, workspace: state.configuration.workspace, selection: state.selection,
+    activeRunId: state.activeRunId, pendingSwitchId: state.pendingSwitchId,
+    runs: state.runs.map(run => ({ id: run.id, ordinal: run.ordinal, status: run.status, selection: run.selection, epoch: run.epoch, cancelRequested: run.cancelRequested, error: run.error, ...(run.timing === undefined ? {} : { timing: run.timing }) })),
+    switches: state.switches };
+}
 
 export async function main(args: readonly string[]): Promise<number> {
   let app: ReturnType<typeof application> | undefined;
   /** The conversation the chat is in, as far as the chat needs it: who and where it is, not what was said in it. */
-  let current: { readonly id: SessionId; readonly status: SessionSnapshot["status"]; readonly selection: HarnessSelection; readonly configuration: SessionConfiguration } | undefined;
+  let current: { readonly id: SessionId; readonly status: Conversation["status"]; readonly selection: HarnessSelection; readonly configuration: SessionConfiguration } | undefined;
   const chatOf = (id: SessionId): NonNullable<typeof current> => {
     const state = app!.store.get(id);
     return { id: state.id, status: state.status, selection: state.selection, configuration: state.configuration };
@@ -97,8 +106,8 @@ export async function main(args: readonly string[]): Promise<number> {
       current = chatOf((await app.runtime.create(configuration, selection(values.harness!, values.control), key)).id);
     }
     if (current.status !== "open") throw new SessionError("SESSION_NOT_OPEN", "Session is " + current.status + "; read its persistent history with sessions show");
-    // The NDJSON mode's documents are the conversation as a whole, in the shape they have always had.
-    if (json) emit({ type: "session", sessionId: current.id, session: app.store.snapshot(current.id) });
+    // The NDJSON mode's documents: the conversation's head and a line for each Turn (`session`, and `snapshot` when the chat ends), and its words a Turn to a document when `:history` asks for them.
+    if (json) emit({ type: "session", sessionId: current.id, session: headDocument(app.store.get(current.id)) });
     else writeOutput("Session " + current.id + " · " + current.selection.harnessId + " · public_context_rehydrate\n");
     if (values.session !== undefined && values.harness !== undefined) app.runtime.switch(current.id, selection(values.harness, values.control), newCommand("switch"));
     if (values.prompt !== undefined) {
@@ -115,8 +124,16 @@ export async function main(args: readonly string[]): Promise<number> {
           if (line.trim() === ":quit") { beginShutdown(); break; }
           if (line.trim() === ":cancel") app.runtime.cancel(current.id, newCommand("cancel"));
           else if (line.trim() === ":history") {
-            if (json) emit({ type: "history", sessionId: current.id, session: app.store.snapshot(current.id) });
-            else {
+            if (json) {
+              const count = app.store.head(current.id).runCount;
+              emit({ type: "history", sessionId: current.id, turns: count });
+              for (let ordinal = 0; ordinal < count; ordinal++) {
+                const read = app.store.turnAt(current.id, ordinal, { inlineBytes: Infinity });
+                if (read === null) continue;
+                const turn = turnRecord(read);
+                emit({ type: "turn", sessionId: current.id, ordinal, run: turn.run, messages: [turn.user, ...(turn.assistant === undefined ? [] : [turn.assistant])] });
+              }
+            } else {
               // The words said, in the order they were said: each Turn is read when its turn comes.
               const source = turnSource(app.store, current.id), said = [];
               for (let ordinal = 0; ordinal < source.count; ordinal++) { const turn = source.turn(ordinal)!; said.push(turn.user, ...(turn.assistant === undefined ? [] : [turn.assistant])); }
@@ -132,7 +149,7 @@ export async function main(args: readonly string[]): Promise<number> {
     }
     const final = app.store.get(current.id);
     if (final.status === "blocked" || final.runs.some(run => run.status === "failed" || run.status === "unknown") || final.switches.some(entry => entry.status === "failed")) exitCode = 1;
-    if (json) emit({ type: "snapshot", sessionId: final.id, session: app.store.snapshot(final.id) });
+    if (json) emit({ type: "snapshot", sessionId: final.id, session: headDocument(final) });
   } catch (error) { report(error); }
   finally {
     lines?.close();

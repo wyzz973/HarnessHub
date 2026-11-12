@@ -4,6 +4,7 @@ import type { EventDraft } from "../../src/contracts/session.js";
 import { SessionError, type SessionId } from "../../src/contracts/session.js";
 import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
 import { scriptedWorld, type ScriptedWorld } from "../fixtures/scripted-world.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 // One judgment of what a failure means for the Runtime (runtime.ts `stalls`): only a failure that says the store cannot be trusted (storage, ownership, version) stalls it; a rule of the rows refusing one
 // write (INVALID_DATA, INVALID_TRANSITION) ends only the request or the Turn it belonged to. One case for each place that used to stall the Runtime for any failure: the worker's serving of a switch,
@@ -40,10 +41,10 @@ const ending = (runId: () => string) => (events: readonly EventDraft[]): boolean
 
 /** Another conversation of the same Runtime is served to the end of a Turn: the Runtime was not stalled. */
 async function serves(w: ScriptedWorld, name: string): Promise<void> {
-  assert.equal(w.app.read(w.id) !== undefined, true);
+  assert.equal(oldShape(w.app, w.id) !== undefined, true);
   const other = await w.app.create(w.configuration, { harnessId: "alpha" }, "other-" + name);
   w.app.send(other.id, "are you still there?", "other-" + name + "-1"); await w.app.wait(other.id);
-  assert.equal(w.app.read(other.id).runs[0]?.status, "completed", name + ": another conversation runs to its end");
+  assert.equal(oldShape(w.app, other.id).runs[0]?.status, "completed", name + ": another conversation runs to its end");
 }
 const quiet = () => [{ type: "text", text: "fine" }] as const;
 
@@ -65,10 +66,12 @@ test("a conversation that cannot be read once does not stall the Runtime: the re
   let target: SessionId | null = null;
   const w = await scriptedWorld(t, quiet, { wrap: refusing(counter, () => false, 1, { id: () => target, reads: 1 }) });
   target = w.id;
-  assert.throws(() => w.app.read(w.id), (error: unknown) => error instanceof SessionError && error.code === "INVALID_DATA");
+  // The Runtime's own read of a conversation (the one behind the relay's attention): it is the read that fails once, and it must not stall the Runtime.
+  assert.throws(() => w.app.relayAttention(w.id), (error: unknown) => error instanceof SessionError && error.code === "INVALID_DATA");
   assert.equal(counter.refused, 1);
   await serves(w, "read");
-  assert.equal(w.app.read(w.id).id, w.id, "and the conversation that failed to read once reads again");
+  assert.doesNotThrow(() => w.app.relayAttention(w.id), "the conversation that failed to read once reads again");
+  assert.equal(oldShape(w.app, w.id).id, w.id);
 });
 
 test("the close of a kept process that the rows refuse to record still closes it, and the Runtime goes on", { timeout: 30_000 }, async t => {
@@ -89,7 +92,7 @@ test("the log of an abandoned request that the rows refuse does not stop the Tur
   const run = w.app.send(w.id, "do it", "s1").runId;
   await w.app.wait(w.id).catch(() => {});
   assert.equal(counter.refused, 1, "the store refused the log of the request the Turn left open");
-  const ended = w.app.read(w.id).runs.find(item => item.id === run)!;
+  const ended = oldShape(w.app, w.id).runs.find(item => item.id === run)!;
   assert.ok(["completed", "cancelled", "unknown", "failed"].includes(ended.status), "the Turn ended: " + ended.status);
   await serves(w, "abandoned");
 });
@@ -116,7 +119,7 @@ test("a Turn's wait for a slot that the rows refuse to log the end of still goes
   assert.notEqual(w.app.slotWait(other.id), null, "the second conversation waits for the slot");
   gate.resolve(); await w.app.wait(w.id); await w.app.wait(other.id);
   assert.equal(counter.refused, 1, "the store refused the log of the wait's end");
-  assert.equal(w.app.read(other.id).runs[0]?.status, "completed", "the conversation that waited ran when the slot was free");
+  assert.equal(oldShape(w.app, other.id).runs[0]?.status, "completed", "the conversation that waited ran when the slot was free");
 });
 
 test("a Turn's wait for the user that the rows refuse to log the end of still goes on: the Turn completes and the Runtime is not stalled", { timeout: 30_000 }, async t => {
@@ -132,7 +135,7 @@ test("a Turn's wait for the user that the rows refuse to log the end of still go
   await w.app.decidePermission(w.id, request.id, "yes", "decide-1");
   gate.resolve(); await w.app.wait(w.id);
   assert.equal(counter.refused, 1, "the store refused the log of the wait's end");
-  assert.equal(w.app.read(w.id).runs.find(item => item.id === run)?.status, "completed", "the Turn went on and completed");
+  assert.equal(oldShape(w.app, w.id).runs.find(item => item.id === run)?.status, "completed", "the Turn went on and completed");
   await serves(w, "wait");
 });
 
@@ -146,7 +149,7 @@ test("a Turn whose budget ran out but whose expiry the rows refuse to log is sti
   const run = w.app.send(w.id, "take long", "s1").runId; await started.promise;
   while (counter.refused === 0) await new Promise(resolve => setTimeout(resolve, 10));
   gate.resolve(); await w.app.wait(w.id);
-  const ended = w.app.read(w.id).runs.find(item => item.id === run)!;
+  const ended = oldShape(w.app, w.id).runs.find(item => item.id === run)!;
   assert.equal(ended.status, "cancelled"); assert.equal(ended.error?.code, "RUN_TIMEOUT", "the budget stopped the Turn although its expiry was not logged");
   await serves(w, "expire");
 });

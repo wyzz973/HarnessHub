@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { v13Path } from "../fixtures/storage/v13/database.js";
 import { readsOfFixture } from "../fixtures/storage/v13/reads.js";
+import { REVIEWED, ROWS_WIRE, asBefore } from "../fixtures/storage/v13/rows-wire.js";
 import { WIRE_FIXTURES, wireOfFixture, type WireGolden } from "../fixtures/storage/v13/wire.js";
 
 // The cut (ADR-057 step 2): the runtime keeps conversations as rows, and the readers that have not moved to items are given the old shape by the store's adapter. This holds the
@@ -12,6 +13,9 @@ import { WIRE_FIXTURES, wireOfFixture, type WireGolden } from "../fixtures/stora
 // is held, as a digest, to the digest the build before the cut gave (tests/fixtures/storage/v13/wire.ts says what is left out and why; wire-golden.json was made by 26d4907).
 // The two shapes the page flip replaced, the list of conversations and a conversation's view, are no longer said as the build before the cut said them: the second block of tests below reads
 // their replacements whole (the page of conversations; each conversation's head and every Turn by the paged routes) and holds them to the golden's export of the same conversation.
+// Every reader of a conversation now reads rows (the context table, the Markdown export, the JSON export, the handoff view): what they say differently from the build before the cut is said once,
+// with its reason, in tests/fixtures/storage/v13/rows-wire.ts (the fixed-arrangement note of a migrated Turn, the page of a search, the Markdown of three conversations written in the order of the Turns);
+// the JSON export and everything else are held to the golden as it is.
 // Only the Harness is absent: the fixtures' data roots are in temporary directories and nothing here reaches a real data root, a real Harness or a process.
 
 const golden = JSON.parse(readFileSync(v13Path("wire-golden.json"), "utf8")) as WireGolden;
@@ -22,11 +26,11 @@ test("the golden holds every fixture the application is run on, and nothing else
 
 for (const name of WIRE_FIXTURES) {
   test(`${name}: the application started on it says over HTTP what the build before the cut said (views, exports, events, handoffs, context table, lists)`, { timeout: 60_000 }, async () => {
-    const expected = golden[name]!, wire = await wireOfFixture(name);
+    const expected = golden[name]!, wire = await wireOfFixture(name, { ...ROWS_WIRE, editMarkdown: asBefore });
     // The golden still holds the old list and the old view; this build says neither (see the second block).
     const kept = Object.keys(expected).filter(key => key !== "list" && !key.endsWith(" view"));
     assert.deepEqual(Object.keys(wire).sort(), kept.sort(), "the same things were read");
-    const differing = kept.filter(key => wire[key]?.sha256 !== expected[key]!.sha256 || wire[key]?.bytes !== expected[key]!.bytes);
+    const differing = kept.filter(key => REVIEWED[key] !== undefined ? wire[key]?.sha256 !== REVIEWED[key] : wire[key]?.sha256 !== expected[key]!.sha256 || wire[key]?.bytes !== expected[key]!.bytes);
     assert.deepEqual(differing, [], name + ": what differs from the build before the cut (WIRE_DUMP=<directory> keeps the texts of a run to diff)");
   });
 }

@@ -989,7 +989,7 @@ export class AcpControl implements HarnessControl {
     // No public Run owns an autonomous follow-up, so nobody can approve it: cancel instead of tearing down the connection.
     if (!active || active.settled) { this.unattributed++; return { outcome: { outcome: "cancelled" } }; }
     const tool = object(params.toolCall, "permission tool call");
-    string(tool.toolCallId, "permission tool identity");
+    const callId = string(tool.toolCallId, "permission tool identity");
     if (!Array.isArray(params.options) || params.options.length === 0 || params.options.length > 32)
       throw new ControlError("INVALID_PROTOCOL", "permission options are invalid");
     const options = params.options.map(raw => {
@@ -1006,7 +1006,8 @@ export class AcpControl implements HarnessControl {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const settle = (value: unknown): void => { clearTimeout(timer); resolve(value); };
         this.permissions.set(id, { request: id, options: options.map(option => option.id), resolve: settle, dispose: () => clearTimeout(timer) });
-        active.event({ type: "permission_requested", id, title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", ...(detail ? { detail } : {}), options: options.map(({ id, name }) => ({ id, name })),
+        // The request names the call it is about (the id the program gave it in its `tool_call`): the Hub records a refusal on that call, whatever the program then reports of it.
+        active.event({ type: "permission_requested", id, forCall: callId, title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", ...(detail ? { detail } : {}), options: options.map(({ id, name }) => ({ id, name })),
           ...requestExpiry(deadline === null ? null : Math.max(0, deadline - APPROVAL_DEADLINE_MARGIN_MS)) });
         // The agent refuses on its own at its deadline; the public request closes just before, so no late choice looks applied.
         if (deadline !== null) timer = setTimeout(() => {

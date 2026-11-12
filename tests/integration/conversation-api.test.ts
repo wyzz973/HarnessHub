@@ -33,7 +33,7 @@ const textOf = (entry: WireItem): string | undefined => (entry as { text?: strin
 const detailRef = (id: string): ContentRef => ({ id: id as ContentRef["id"], name: id + ".json", mediaType: "application/json", kind: "file", bytes: 10, sha256: "a".repeat(64) });
 const sha = (data: Uint8Array): string => createHash("sha256").update(data).digest("hex");
 
-interface Seeded { readonly turns: SessionId; readonly reply: SessionId; readonly edits: SessionId; readonly gone: SessionId; readonly many: readonly SessionId[]; readonly reply20: Buffer }
+interface Seeded { readonly turns: SessionId; readonly reply: SessionId; readonly edits: SessionId; readonly queued: SessionId; readonly gone: SessionId; readonly many: readonly SessionId[]; readonly reply20: Buffer }
 /** The conversations of the tests, written through the store before the Gateway opens the data root. */
 function seed(store: SqliteConversationStore, configuration: Conversation["configuration"]): Seeded {
   // The conversations carry the configuration the Gateway was opened with, so that a Turn sent to one is run by the Harness that configuration names.
@@ -47,12 +47,15 @@ function seed(store: SqliteConversationStore, configuration: Conversation["confi
   work.accept("first", { selection }); work.start(0); edit(0, "one", true); edit(0, "two", true); edit(0, "three", false); work.finish(0);
   work.accept("second", { selection }); work.start(1); plan(1); edit(1, "four", true); work.finish(1);
   work.turn("third", "done", { selection });
+  // A conversation whose second input was accepted while the first Turn ran: by the seqs the user's two inputs come before the first reply.
+  const queued = make("queued"), line = new Scenario(store, queued, "run-queued", false);
+  line.accept("first", { selection }); line.start(0); line.accept("second", { selection }); line.say(0, "reply to first"); line.finish(0); line.start(1); line.say(1, "reply to second"); line.finish(1);
   // A conversation that was deleted is hidden; the rest are many, for the list.
   const gone = make("gone"); new Scenario(store, gone, "run-gone", false).turn("a question", "an answer", { selection });
   store.transact(gone, store.get(gone).version, current => ({ next: { ...current, status: "closed" }, events: [event("session.closed")] }));
   store.deleteSession(gone);
   const many = Array.from({ length: 250 }, (_, index) => make("n" + String(index).padStart(3, "0")));
-  return { turns, reply, edits, gone, many, reply20 };
+  return { turns, reply, edits, queued, gone, many, reply20 };
 }
 
 /** The Gateway the tests of this file share: opened once on the seeded data root (the tests only read, but for the last, which sends a Turn to the conversation of 2,000). */
@@ -209,7 +212,7 @@ test("over HTTP the edits of the whole conversation are counted in its head and 
 });
 
 test("over HTTP the conversations are listed newest first a page at a time, every one by the cursor and none past the hundred a page carries, and a deleted one is not among them", { timeout: 120_000 }, async () => {
-  const s = shared!, everyone = [s.ids.turns, s.ids.reply, s.ids.edits, ...s.ids.many];
+  const s = shared!, everyone = [s.ids.turns, s.ids.reply, s.ids.edits, s.ids.queued, ...s.ids.many];
   const first = await get<SessionListView>(s, "/api/v1/sessions");
   assert.equal(first.status, 200); assert.equal(first.data.sessions.length, PAGE.sessions); assert.ok(first.data.next !== null);
   for (const limit of [undefined, 1, 37, 100, 100000]) {
@@ -228,6 +231,61 @@ test("over HTTP the conversations are listed newest first a page at a time, ever
   }
   const titles = new Map(first.data.sessions.map(row => [row.id, row.title]));
   assert.ok([...titles.values()].every(title => typeof title === "string"));
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// The export, written a Turn at a time
+// ---------------------------------------------------------------------------------------------------------------------------------
+
+interface Exported { readonly application: string; readonly exportedAt: string; readonly session: { readonly id: string; readonly runCount?: number; readonly runs: { readonly id: string; readonly input: string }[];
+  readonly messages: { readonly role: string; readonly text: string; readonly seq: number; readonly runId: string }[]; readonly switches: unknown[] } }
+async function download(s: Served, id: string, format: "json" | "markdown"): Promise<{ readonly status: number; readonly length: string | null; readonly type: string | null; readonly text: string }> {
+  const response = await fetch(s.origin + "/api/v1/sessions/" + id + "/export?format=" + format, { headers: { Cookie: s.cookie, Origin: s.origin } });
+  return { status: response.status, length: response.headers.get("content-length"), type: response.headers.get("content-type"), text: await response.text() };
+}
+
+test("over HTTP the JSON export of 2,000 Turns is sent in pieces as the JSON a person would write by hand: every Turn once, the words in the order they were said", { timeout: 120_000 }, async () => {
+  const s = shared!, sent = await download(s, s.ids.turns, "json");
+  assert.equal(sent.status, 200); assert.equal(sent.type, "application/json; charset=utf-8"); assert.equal(sent.length, null, "its length is not known before it is written");
+  const exported = JSON.parse(sent.text) as Exported;
+  assert.equal(JSON.stringify(exported, null, 2) + "\n", sent.text, "the layout is the one JSON.stringify makes of the whole");
+  assert.equal(exported.application, "HarnessHub"); assert.equal(exported.session.id, s.ids.turns);
+  assert.equal(exported.session.runs.length, 2000); assert.equal(exported.session.messages.length, 4000); assert.deepEqual(exported.session.switches, []);
+  assert.deepEqual(exported.session.runs.map(run => run.input).slice(0, 3).concat(exported.session.runs.at(-1)!.input), ["question 0", "question 1", "question 2", "question 1999"]);
+  assert.ok(exported.session.messages.every((message, index, all) => index === 0 || all[index - 1]!.seq < message.seq), "the words are in the order of their seqs");
+  assert.deepEqual([exported.session.messages[0]!.text, exported.session.messages[1]!.text, exported.session.messages.at(-1)!.text], ["question 0", "answer 0", "answer 1999"]);
+});
+
+test("over HTTP the words of an input that was queued behind a Turn are in the export in the order they were said, and the Runs in the order of the Turns", async () => {
+  const s = shared!, sent = await download(s, s.ids.queued, "json"), exported = JSON.parse(sent.text) as Exported;
+  assert.deepEqual(exported.session.messages.map(message => message.role + ": " + message.text), ["user: first", "user: second", "assistant: reply to first", "assistant: reply to second"]);
+  assert.deepEqual(exported.session.runs.map(run => run.input), ["first", "second"]);
+  assert.ok(exported.session.messages.every((message, index, all) => index === 0 || all[index - 1]!.seq < message.seq));
+  // The Markdown is the Turns in their order, each its own words and its own answer (the page draws it so).
+  const markdown = (await download(s, s.ids.queued, "markdown")).text;
+  assert.ok(markdown.indexOf("first\n```") < markdown.indexOf("reply to first") && markdown.indexOf("reply to first") < markdown.indexOf("second\n```") && markdown.indexOf("second\n```") < markdown.indexOf("reply to second"), markdown);
+});
+
+test("over HTTP the Markdown export of 2,000 Turns has each Turn once in order, and an export of a reply of 20 MiB carries it whole in both formats", { timeout: 180_000 }, async () => {
+  const s = shared!, many = await download(s, s.ids.turns, "markdown");
+  assert.equal(many.status, 200); assert.equal(many.type, "text/markdown; charset=utf-8"); assert.equal(many.length, null);
+  assert.match(many.text, /^# question 0\n/u); assert.equal(many.text.split("\n## 你\n").length - 1, 2000, "the words of each Turn once");
+  assert.ok(many.text.indexOf("question 7\n") < many.text.indexOf("question 8\n") && many.text.lastIndexOf("question 1999\n") < many.text.lastIndexOf("answer 1999\n"), "in the order of the Turns, each question before its answer");
+  const reply = s.ids.reply20.toString("utf8");
+  const json = JSON.parse((await download(s, s.ids.reply, "json")).text) as Exported;
+  assert.ok(json.session.messages[1]!.text === reply, "the 20 MiB reply is in the JSON whole, as the store holds it");
+  assert.ok((await download(s, s.ids.reply, "markdown")).text.includes(reply), "and in the Markdown");
+});
+
+test("over HTTP an export of a conversation that is not there, or was deleted, is not found before anything is sent; a format that is neither is refused", async () => {
+  const s = shared!;
+  for (const format of ["json", "markdown"] as const) {
+    for (const id of ["session-nowhere", s.ids.gone]) {
+      const missing = await get(s, "/api/v1/sessions/" + id + "/export?format=" + format);
+      assert.equal(missing.status, 404, id + " " + format); assert.equal(code(missing), "SESSION_NOT_FOUND"); assert.match(missing.type, /^application\/json/u, "a JSON error and not the start of a file");
+    }
+  }
+  assert.equal((await get(s, "/api/v1/sessions/" + s.ids.queued + "/export?format=pdf")).status, 400);
 });
 
 test("over HTTP a stream of a conversation of 2,000 Turns starts with its window, not the conversation, and the page that follows the frames of a new Turn holds what a read gives", { timeout: 120_000 }, async t => {

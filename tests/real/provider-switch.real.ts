@@ -10,6 +10,7 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 import type { ProviderView } from "../../src/contracts/provider.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { evidenceHeader, guardTest, snapshot, type SuiteEvidence } from "./guard.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 async function codex(): Promise<string> {
   for (const directory of new Set([...(process.env.PATH ?? "").split(":"), "/opt/homebrew/bin", "/usr/local/bin"])) {
@@ -79,10 +80,10 @@ test("real Codex switches managed Provider A to B to edited A with pinned key/mo
   const session = await app.runtime.create(config, { harnessId: "codex", provider: target(firstA) }, "real-create-session");
   app.runtime.send(session.id, "FIRST-TURN-MARKER: reply briefly, do not use tools", "real-send-one");
   await Promise.race([received.promise, app.runtime.wait(session.id).then(() => {
-    throw new Error("first real dispatch ended before the local Provider request: " + JSON.stringify(app.runtime.read(session.id).runs[0]?.error));
+    throw new Error("first real dispatch ended before the local Provider request: " + JSON.stringify(oldShape(app.runtime, session.id).runs[0]?.error));
   })]);
   const editedA = app.providers.update(firstA.id, make("Provider A edited", a.url, "fixture-model-a2", "synthetic-key-A-v2"), firstA.revision, "real-update-a");
-  assert.deepEqual(app.runtime.read(session.id).runs[0]?.selection.provider, target(firstA));
+  assert.deepEqual(oldShape(app.runtime, session.id).runs[0]?.selection.provider, target(firstA));
   app.runtime.switch(session.id, { harnessId: "codex", provider: target(firstB) }, "real-switch-b");
   app.runtime.send(session.id, "SECOND-TURN-MARKER: continue briefly", "real-send-two"); release.resolve(); await app.runtime.wait(session.id);
   app.runtime.switch(session.id, { harnessId: "codex", provider: target(editedA) }, "real-switch-a2");
@@ -90,7 +91,7 @@ test("real Codex switches managed Provider A to B to edited A with pinned key/mo
   assert.deepEqual(errors, []); assert.equal(calls.length, 3);
   assert.deepEqual(calls.map(item => [item.endpoint, item.key, item.input.model]), [["A", "Bearer synthetic-key-A-v1", "fixture-model-a1"], ["B", "Bearer synthetic-key-B-v1", "fixture-model-b1"], ["A", "Bearer synthetic-key-A-v2", "fixture-model-a2"]]);
   assert.ok(JSON.stringify(calls[1]?.input).includes("FIRST-TURN-MARKER")); assert.ok(JSON.stringify(calls[2]?.input).includes("SECOND-TURN-MARKER"));
-  const final = app.runtime.read(session.id); assert.equal(final.runs.length, 3); assert.ok(final.runs.every(run => run.status === "completed" && run.cleanup?.closed)); assert.equal(final.epoch, 3);
+  const final = oldShape(app.runtime, session.id); assert.equal(final.runs.length, 3); assert.ok(final.runs.every(run => run.status === "completed" && run.cleanup?.closed)); assert.equal(final.epoch, 3);
   const publicData = JSON.stringify({ snapshot: final, events: app.store.events(session.id, 0) });
   assert.ok(!publicData.includes("synthetic-key")); assert.ok(!(await readFile(join(data, "providers", "providers.sqlite"))).includes(Buffer.from("synthetic-key")));
   outcome.completed = true;

@@ -32,9 +32,11 @@
 | B8 | 测试里每次 `application(` 和 `startWebServer(` 必须在调用处给出 `workspaceLockRoot`，`startWebServer` 也可以改传自带租约目录的 `application` 组合器，不得落到各用户共用的租约目录（[ADR-041](../decisions/0041-workspace-lock-root.md)） |
 | B9 | 测试启动正式命令 `web`、`chat`、`sessions` 必须带 `--workspace-lock-root`，带 `--help` 或 `-h` 的除外；传 `--manifest` 必须同时传 `--allow-unofficial`，否则清单被忽略（[ADR-041](../decisions/0041-workspace-lock-root.md)、[ADR-044](../decisions/0044-macos-official-channels.md)）。 |
 | B10 | 第三方包只允许出现在 `src/infrastructure` 和 `src/adapters`，且限于 semver、yaml、jsonc-parser、tar、smol-toml、json5、yauzl、unbzip2-stream |
+| B11 | 整个对话的旧形状（`SessionSnapshot`）只留给迁移的保真核对和命令行的只读读取器：`src` 不导入把行拼回旧形状的适配器 `snapshot-adapter`，只有 `migrate-v14.ts` 和 `session-reader.ts` 两处登记的例外；读对话走 `ConversationReader` 的页和一个个 Turn |
+| B12 | `src` 里不调用 `store.snapshot()`（接收者名以 `store` 结尾）：存储的类上还留着这个旧形状读取，只给测试用，它不在 `ConversationStore` 契约里 |
 | B0 | 检查自身的完整性：文件无法解析、扫描目录缺失或没有源码、无法归类的导入（非字面量的 `import()`、指向仓库外的相对路径）、不再对应代码的例外。B0 不能登记例外 |
 
-检查按文件静态分析，不跨文件追踪值。B8、B9 只认调用处或同一文件内辅助函数里写出的选项和参数：经其他文件传入的会被判为“看不见”而失败，处理办法是在调用处或同文件的辅助函数里写明；同文件的辅助函数只追踪直接调用的实参，作为回调传递的不追踪，靠 `push` 之类的修改补上的参数列表也不追踪（会被判为缺少）。命令路径要以 `…/src/cli/web.js` 这样的整串出现才会被认作正式命令。`.mjs` 夹具、`/// <reference>` 指令和用路径串拼出的依赖不在检查范围内。公开类型面检查（`tools/check-contract-surface.mjs`）尚未实现，G063 的这一半仍是计划。
+检查按文件静态分析，不跨文件追踪值。B12 的 `member-calls` 只按调用处写出的接收者名认：别名（`const s = app.store; s.snapshot()`）认不出来。B8、B9 只认调用处或同一文件内辅助函数里写出的选项和参数：经其他文件传入的会被判为“看不见”而失败，处理办法是在调用处或同文件的辅助函数里写明；同文件的辅助函数只追踪直接调用的实参，作为回调传递的不追踪，靠 `push` 之类的修改补上的参数列表也不追踪（会被判为缺少）。命令路径要以 `…/src/cli/web.js` 这样的整串出现才会被认作正式命令。`.mjs` 夹具、`/// <reference>` 指令和用路径串拼出的依赖不在检查范围内。公开类型面检查（`tools/check-contract-surface.mjs`）尚未实现，G063 的这一半仍是计划。
 
 新增规则必须附无效样例：样例放在 [tools/fixtures/boundaries](../../tools/fixtures/boundaries/README.md)，由 `tests/integration/g063.test.ts` 逐行核对，并要求每条规则至少有一个样例；该测试也核对检查对真实代码、缺失目录、无法解析的文件和过期例外都以非零退出。
 

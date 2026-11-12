@@ -7,7 +7,8 @@ import { nativeConversationId, type BackendResult, type CleanupEvidence, type Co
 import { SessionError } from "../../src/contracts/session.js";
 import { LocalProviderService } from "../../src/infrastructure/provider/service.js";
 import { RedactedHarnessControl } from "../../src/infrastructure/session/redacted-control.js";
-import { MAX_DIAGNOSTICS_BYTES, runDiagnostics, scrubDiagnostics } from "../../src/web/run-diagnostics.js";
+import { MAX_DIAGNOSTICS_BYTES, scrubDiagnostics } from "../../src/web/run-diagnostics.js";
+import { runDiagnostics } from "../fixtures/old-shape.js";
 import type { PublicRun, SessionSnapshot } from "../../src/contracts/session.js";
 
 const keyA = "synthetic-private-key-version-A", keyB = "synthetic-private-key-version-B";

@@ -8,6 +8,7 @@ import type { ControlOptions } from "../../src/contracts/control.js";
 import { resolveHostBudgets } from "../../src/contracts/native-host.js";
 import { ControlError, JsonRpcProcess } from "../../src/infrastructure/control/json-rpc-process.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
+import { oldShape } from "../fixtures/old-shape.js";
 
 // The close chain of ADR-056 §4.11 (G085-C01) on real child processes: the input closes first, the group is signalled only
 // after the grace (resolveHostBudgets' own, 1.5 s), and the chain records how far it went and how long it took. Three tests
@@ -131,7 +132,7 @@ process.stdin.on("end", () => { eofAt = Date.now(); setTimeout(() => process.exi
   const configuration = await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true });
   const session = await app.runtime.create(configuration, { harnessId: "host-peer" }, "create");
   app.runtime.send(session.id, "hello", "first"); await app.runtime.wait(session.id);
-  const run = app.runtime.read(session.id).runs[0]!;
+  const run = oldShape(app.runtime, session.id).runs[0]!;
   assert.equal(run.status, "completed", JSON.stringify(run.error));
   assert.deepEqual(await signals(marks), [], "the program left on its own within the grace");
   // The snapshot keeps the cleanup in the shape it always had: no stage or time of the close chain.
@@ -186,7 +187,7 @@ process.stdin.on("end", () => process.exit(0));
   const session = await app.runtime.create(configuration, { harnessId: "host-peer" }, "create");
   app.runtime.send(session.id, "first", "first"); app.runtime.send(session.id, "second", "second");
   await app.runtime.wait(session.id);
-  assert.deepEqual(app.runtime.read(session.id).runs.map(run => run.status), ["completed", "completed"]);
+  assert.deepEqual(oldShape(app.runtime, session.id).runs.map(run => run.status), ["completed", "completed"]);
   const seen = await marks(), answered = seen.filter(mark => mark.kind === "answered").map(mark => mark.at), spawned = seen.filter(mark => mark.kind === "spawn").map(mark => mark.at);
   const bound = budgets.closeGraceMs + 500;
   for (const [index, at] of ended.entries()) assert.ok(at - answered[index]! < bound, "the Turn ended " + (at - answered[index]!) + " ms after its reply");
@@ -196,7 +197,7 @@ process.stdin.on("end", () => process.exit(0));
   for (let i = 0; i < 500 && (await marks()).filter(mark => mark.kind === "answered").length < 3; i++) await new Promise(resolve => setTimeout(resolve, 10));
   await new Promise(resolve => setTimeout(resolve, 300));
   app.runtime.cancel(session.id, "stop-after-reply"); await app.runtime.wait(session.id);
-  const third = app.runtime.read(session.id).runs[2]!;
+  const third = oldShape(app.runtime, session.id).runs[2]!;
   assert.equal(third.status, "completed"); assert.equal(third.backend?.status, "completed");
   // Every program left its descendant behind, still running: it was never signalled.
   for (const pid of (await readFile(outsiders, "utf8")).split("\n").filter(Boolean).map(Number)) assert.doesNotThrow(() => process.kill(pid, 0), "descendant " + pid + " still runs");
@@ -268,18 +269,18 @@ process.stdin.on("end", () => { eofAt = Date.now(); mark({ kind: "eof" }); setTi
   app.runtime.send(session.id, "first", "first");
   for (let i = 0; i < 500 && !(await seen()).some(mark => mark.kind === "answered"); i++) await new Promise(resolve => setTimeout(resolve, 10));
   await new Promise(resolve => setTimeout(resolve, 300));
-  assert.equal(app.runtime.read(session.id).runs[0]!.status, "settling", "the stop comes while the program is still leaving");
+  assert.equal(oldShape(app.runtime, session.id).runs[0]!.status, "settling", "the stop comes while the program is still leaving");
   app.runtime.cancel(session.id, "stop-after-reply"); await app.runtime.wait(session.id);
-  const first = app.runtime.read(session.id).runs[0]!;
+  const first = oldShape(app.runtime, session.id).runs[0]!;
   assert.equal(first.status, "completed", JSON.stringify(first.error)); assert.equal(first.backend?.status, "completed"); assert.equal(first.cancelRequested, false);
   assert.deepEqual(first.cleanup, { closed: true, exitCode: 0, signal: null, protocolFailure: null }, "the program left on its own");
   assert.deepEqual(await signals(marks), [], "and got no signal");
   assert.ok(app.store.events(session.id, 0).some(event => event.type === "run.cancel_requested" && event.data.runId === first.id), "the stop is recorded");
-  assert.deepEqual(app.runtime.read(session.id).nativeBindings?.map(binding => [binding.status, binding.throughRunId]), [["ready", first.id]], "the native session went through this Turn");
+  assert.deepEqual(oldShape(app.runtime, session.id).nativeBindings?.map(binding => [binding.status, binding.throughRunId]), [["ready", first.id]], "the native session went through this Turn");
   // The next Turn goes on in the same native session.
   app.runtime.send(session.id, "second", "second"); await app.runtime.wait(session.id);
-  const second = app.runtime.read(session.id).runs[1]!;
+  const second = oldShape(app.runtime, session.id).runs[1]!;
   assert.equal(second.status, "completed", JSON.stringify(second.error));
   assert.deepEqual((await seen()).filter(mark => mark.kind === "new" || mark.kind === "resume").map(mark => mark.kind), ["new", "resume"], "the second Turn resumed the first one's native session");
-  assert.deepEqual(app.runtime.read(session.id).nativeBindings?.map(binding => binding.throughRunId), [second.id]);
+  assert.deepEqual(oldShape(app.runtime, session.id).nativeBindings?.map(binding => binding.throughRunId), [second.id]);
 });
