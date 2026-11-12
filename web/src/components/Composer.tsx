@@ -79,7 +79,7 @@ export function readinessStatus(harness: HarnessView, readiness: HarnessReadines
   if (readiness === undefined || readiness.checkedAt === null) return undefined;
   const when = ago(readiness.checkedAt);
   switch (readiness.state) {
-    case "ready": return { tone: "success", label: "已就绪", title: when + "读取过本机模型" + (readiness.signedIn ? "，已登录" : "；登录与额度在发送时由它自己核实") };
+    case "ready": return undefined;
     case "signed_out": return { tone: "warning", label: SETUP_COMMANDS[harness.id] ? "需要配置" : "需要登录", title: when + "检查时，它需要先在本机完成登录或配置" + (SETUP_COMMANDS[harness.id] ? "（终端运行 " + SETUP_COMMANDS[harness.id] + "）" : "") };
     case "failed": return { tone: "danger", label: "读取失败", title: when + "读取本机模型失败：" + failureMessage({ code: readiness.failureCode ?? "", message: "原因未知，可以刷新本机模型重试。" }) };
     case "unchecked": return undefined;
@@ -96,10 +96,9 @@ export function harnessOptions(harnesses: readonly HarnessView[], readiness: rea
     const status = available ? readinessStatus(row, seen) : undefined;
     return {
       value: row.id, label: row.name, icon: <BrandIcon brand={row.id} name={row.name} size={26}/>,
-      group: available ? "本机可用" : "暂不可用",
+      group: available ? "" : "暂不可用",
       // The version is a fact of the installation; nothing is said about it (ADR-053).
-      description: [version ? version : row.controls.filter(item => item.available).map(item => protocolLabel(item.protocol)).join(" / "),
-        available && seen?.startupMs !== undefined ? "启动约 " + approximately(seen.startupMs) : ""].filter(Boolean).join(" · "),
+      description: version ? version : row.controls.filter(item => item.available).map(item => protocolLabel(item.protocol)).join(" / "),
       ...(status ? { status } : {}),
       disabled: !available, reason: row.installed ? "已发现程序，控制入口尚未就绪" : "尚未安装，可在 Harness 页查看安装方式",
     };
@@ -364,8 +363,9 @@ export function Composer(props: ComposerProps) {
   const pendingTarget = pending && session !== null && session.lastSwitch?.id === session.pendingSwitchId ? session.lastSwitch.requested : undefined;
   const nextHarness = harnesses.find(row => row.id === (pendingTarget?.harnessId ?? draft.harnessId));
   const takeOver = nextHarness ? session && session.selection.harnessId !== nextHarness.id ? `由 ${nextHarness.name} 接手` : "改用新的模型与设置" : "改用新的选择";
-  const placeholder = readonly ? "对话已关闭，历史仍可查看" : blocked ? "先写下想继续的内容，恢复后发送…" : active ? "回复进行中，可以先写下一条…" : session ? "继续这段对话…"
-    : harness ? `让 ${harness.name} 做什么？${commands.length ? "用 / 调原生命令，" : ""}@ 引用文件` : "说说你想完成的事…";
+  // The app's placeholders: a task to describe, or a reply in this conversation. What "/" and "@" do is in the list of shortcuts.
+  const placeholder = readonly ? "对话已关闭" : blocked ? "先写下想继续的内容，恢复后发送" : active ? "先写下一条" : session ? "回复…"
+    : harness ? `让 ${harness.name} 做什么？` : "描述一个任务，或问个问题";
   const thinkingShown = thought ? level.effort === "custom" ? "自定义" : level.effort !== null ? EFFORT_WORDS[level.effort] : valueName(thought, thought.currentValue) : null;
   const modeShown = mode ? valueName(mode, draft.nativeOptions[mode.id] ?? mode.currentValue) : null;
   const showProvider = props.providerManagement !== false || draft.providerId !== "";
@@ -412,17 +412,17 @@ export function Composer(props: ComposerProps) {
   const panelOpenChange = (kind: NonNullable<typeof panel>["kind"]) => (open: boolean) => setPanel(open ? { kind, harnessId: draft.harnessId } : null);
   const fromAgentList = (kind: NonNullable<typeof panel>["kind"]) => { props.onAgentPickerOpen(false); openPanel(kind); };
   // The unified lists: every level, the ones this Harness lacks greyed with why; its own native values are one step away (the footer).
-  const permissionChoices: PickerOption[] = [{ value: "", label: "跟随 " + (harness?.name ?? "Harness") + " 自己的设置", short: "本机设置", group: "权限" },
+  const permissionChoices: PickerOption[] = [{ value: "", label: "跟随 " + (harness?.name ?? "Harness") + " 自己的设置", short: "本机设置" },
     // Every level is offered (the adapter carries out what the Harness lacks); one that only comes near says how, under it; one that cannot be done says why.
     ...PERMISSION_LEVELS.map(id => { const way = level.levels.permission.find(entry => entry.level === id);
-      return { value: id, label: PERMISSION_WORDS[id], short: PERMISSION_WORDS[id], description: PERMISSION_MEANINGS[id] + (way?.note === undefined ? "" : "（" + way.note + "）"), group: "权限",
+      return { value: id, label: PERMISSION_WORDS[id], short: PERMISSION_WORDS[id], description: PERMISSION_MEANINGS[id] + (way?.note === undefined ? "" : "（" + way.note + "）"),
         ...(way?.impossible === undefined ? {} : { disabled: true, reason: way.impossible }) }; }),
-    ...(level.permission === "custom" ? [{ value: "custom", label: "自定义", short: "自定义", description: "改过这一家的原生选项，不对应任何一档", group: "权限", disabled: true }] : [])];
-  const effortChoices = (option: NativeOption): PickerOption[] => [{ value: "", label: valueName(option, option.currentValue) + " · 本机默认", short: valueName(option, option.currentValue), group: "思考强度" },
+    ...(level.permission === "custom" ? [{ value: "custom", label: "自定义", short: "自定义", description: "改过这一家的原生选项，不对应任何一档", disabled: true }] : [])];
+  const effortChoices = (option: NativeOption): PickerOption[] => [{ value: "", label: valueName(option, option.currentValue) + " · 本机默认", short: valueName(option, option.currentValue) },
     ...EFFORT_LEVELS.map(id => { const way = level.levels.effort.find(entry => entry.level === id), native = way?.options[option.id], used = native === undefined ? undefined : lastUsed(native, recalled?.nativeOptions?.[option.id]);
       const description = [used, way?.note].filter(Boolean).join("；");
-      return { value: id, label: EFFORT_WORDS[id], short: EFFORT_WORDS[id], group: "思考强度", ...(description ? { description } : {}), ...(way === undefined ? { disabled: true, reason: level.levels.effortMissing } : {}) }; }),
-    ...(level.effort === "custom" ? [{ value: "custom", label: "自定义", short: "自定义", description: "改过这一家的原生选项，不对应任何一档", group: "思考强度", disabled: true }] : [])];
+      return { value: id, label: EFFORT_WORDS[id], short: EFFORT_WORDS[id], ...(description ? { description } : {}), ...(way === undefined ? { disabled: true, reason: level.levels.effortMissing } : {}) }; }),
+    ...(level.effort === "custom" ? [{ value: "custom", label: "自定义", short: "自定义", description: "改过这一家的原生选项，不对应任何一档", disabled: true }] : [])];
   const nativeFooter = <button type="button" className="link-btn text-caption" onClick={() => { setList(null); openPanel("advanced"); }}>{(harness?.name ?? "这一家") + " 的原生选项…"}</button>;
   const [levelNotes, setLevelNotes] = useState<readonly string[]>([]);
   const changeLevels = (options: Readonly<Record<string, string>>) => { setLevelNotes([]); props.onDraft({ ...draft, nativeOptions: options }); };
@@ -475,7 +475,7 @@ export function Composer(props: ComposerProps) {
     {extensionsOffered ? <button type="button" className="link-btn text-caption" onClick={() => fromAgentList("extensions")}>查看技能与扩展…</button> : null}
     <button type="button" className="link-btn inline-flex items-center gap-1.5 text-caption" aria-describedby={outdated ? outdatedId : undefined} onClick={() => fromAgentList("advanced")}>高级配置…
       {outdated ? <span className="size-1.5 flex-none rounded-full bg-amber-dot" aria-hidden="true"/> : null}</button>
-  </span> : <span>↑ ↓ 选择 · Enter 确认 · 模型和思考强度在旁边的按钮里换</span>;
+  </span> : undefined;
 
   return <div className="composer-wrap flex flex-col gap-2">
     {/* Notices above the box: what waits, what is unavailable and why, with at most two ways forward (Interaction board). */}
@@ -585,7 +585,7 @@ export function Composer(props: ComposerProps) {
               <div ref={chip} className="agent-chip flex h-[34px] max-w-full min-w-0 items-center overflow-hidden rounded-block p-0.5 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle has-[[data-popup-open]]:bg-subtle"
                 role="group" aria-label="由谁来做：Harness、模型与思考强度">
                 <SearchPicker side={popSide} label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
-                  title={<span className="flex items-center gap-1">由谁来做 · <Kbd>⌘</Kbd><Kbd>J</Kbd></span>} open={agentPickerOpen && !docked} onOpenChange={onAgentPickerOpen} className={cn(SEGMENT, "flex-none gap-[7px] pl-1")}
+                  open={agentPickerOpen && !docked} onOpenChange={onAgentPickerOpen} className={cn(SEGMENT, "flex-none gap-[7px] pl-1")}
                   footer={agentFooter} triggerRef={agentButton} describedBy={outdated ? outdatedId : undefined} {...afterChoice}
                   empty={<>这台电脑上还没有找到可用的 Harness。<button type="button" className="link-btn" onClick={props.onHarnesses}>查看安装方式</button></>}
                   trigger={selected => selected && harness ? <>

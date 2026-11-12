@@ -221,6 +221,9 @@
 
 @layer base {
   html, body, #root { height: 100%; }
+  /* The window never scrolls: every page scrolls inside its own region. (Text kept for screen readers is absolute and may be laid out below
+     the window's foot; without this the window grew a scrollbar of its own beside the region's.) */
+  html, body { overflow: hidden; }
   html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
   body {
     margin: 0; background: var(--bg-app); color: var(--text); font-family: var(--font-sans); font-size: 13px; line-height: 20px;
@@ -667,7 +670,9 @@
   .diff-line.is-file { color: var(--text-2); font-weight: 500; }
 
   /* Scroll regions that keep their own scrollbar out of the layout */
-  .scroll-area { overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+  /* A scroll region holds what is positioned inside it (the text kept for screen readers is absolute): otherwise that text is laid out
+     against the page, far below the window's foot, and the page itself grows a second scrollbar beside the region's. */
+  .scroll-area { position: relative; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 }
 
 /*
