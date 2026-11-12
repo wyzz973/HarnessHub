@@ -14,6 +14,7 @@ import { checkInputs } from "../../infrastructure/control/attachments.js";
 import type { ContentKind, ContentRef, ControlAttachment } from "../../contracts/content.js";
 import { type TurnText } from "../../contracts/control.js";
 import { boundedRequests, usageRequest, measureBy, CWD_PREFIX_ALLOWANCE } from "./relay-turn.js";
+import { openclawFlavor } from "../flavors/openclaw.js";
 
 type OpenClawMethod = "agents.list" | "models.list" | "sessions.patch" | "sessions.get" | "sessions.list" | "chat.history" | "skills.status" | "tools.catalog";
 /** The Hub's own Gateway session keys; no other key is patched or continued. */
@@ -95,8 +96,8 @@ function repeatsThinking(options: readonly NativeOption[] | undefined): boolean 
   return mode !== undefined && levels.size > 0 && mode.values.length === levels.size && mode.values.every(row => levels.has(row.value));
 }
 /** A Turn that ended before its prompt because the selected model could not be confirmed: failed, and nothing was sent. */
-function notSent(error: ControlError): ControlRun {
-  return { result: Promise.resolve({ status: "failed", reason: "model_not_applied", error: { code: error.code, message: "OpenClaw 没有确认所选模型，这条消息没有发出。" }, input: "not_recorded" }),
+function notSent(error: ControlError, message = "OpenClaw 没有确认所选模型，这条消息没有发出。"): ControlRun {
+  return { result: Promise.resolve({ status: "failed", reason: "model_not_applied", error: { code: error.code, message }, input: "not_recorded" }),
     requestStop: () => Promise.reject(new ControlError("INVALID_STATE", "this Turn ended before its prompt was sent")) };
 }
 /** A Gateway session row's model in the catalog's provider/model form. */
@@ -242,7 +243,7 @@ export class OpenClawControl extends AcpControl {
    */
   protected override async abandonConversation(): Promise<void> {
     await super.abandonConversation();
-    this.sessionKey = null; this.restoredKey = null; this.selectedModel = undefined; this.appliedModel = undefined;
+    this.sessionKey = null; this.restoredKey = null; this.selectedModel = undefined; this.appliedModel = undefined; this.appliedPermission = undefined;
   }
   /** The bridge puts `[Working directory: <cwd>]` and a blank line before every prompt; the home directory shortens it, so this is the most. */
   protected override inputOverhead(unit: "chars" | "bytes"): number {
@@ -308,8 +309,14 @@ export class OpenClawControl extends AcpControl {
     const row: unknown = result.agents.find(item => item !== null && typeof item === "object" && (item as { readonly id?: unknown }).id === agent);
     const model = row !== null && typeof row === "object" ? (row as { readonly model?: unknown }).model : undefined;
     const primary = model !== null && typeof model === "object" ? (model as { readonly primary?: unknown }).primary : undefined;
+    // The agent's thinking levels as the Gateway resolves them for its model (agents.list `thinkingLevels`): the bridge offers its base list
+    // for a session that has no row yet, which can name levels the model refuses ("not supported for … (use off|ultra)").
+    const levels = row !== null && typeof row === "object" ? (row as { readonly thinkingLevels?: unknown }).thinkingLevels : undefined;
+    this.agentThinking = Array.isArray(levels) ? levels.flatMap(level => level !== null && typeof level === "object" && typeof (level as { readonly id?: unknown }).id === "string" ? [(level as { readonly id: string }).id] : []) : null;
     return { agent, model: typeof primary === "string" && primary.trim() && primary.length <= 1024 && !/[\0\r\n]/u.test(primary) ? primary : undefined };
   }
+  /** The thinking levels the Gateway resolves for a new session's agent and its configured model; null when it did not say (or for a restored session). */
+  private agentThinking: readonly string[] | null = null;
   /** One Gateway call through the original CLI (`openclaw gateway call`), within the connection's request timeout. */
   private call(method: OpenClawMethod, params: Readonly<Record<string, unknown>>): Promise<unknown> {
     if (this.nativeRequest) return this.nativeRequest(method, params);
@@ -424,6 +431,24 @@ export class OpenClawControl extends AcpControl {
     }
     this.appliedModel = model;
   }
+  /** The permission mode last confirmed on this connection's session; a clear or a new process applies the level again. */
+  private appliedPermission: string | undefined;
+  /**
+   * Makes the Hub's permission level the session's own permission mode (flavors/openclaw.ts, docs/gateway/permission-modes.md) just before a
+   * prompt: sessions.patch `permissionMode` on the Hub's own key (operator.write; "full" needs operator.admin), which also creates a new
+   * session's row; the mode the Gateway answers with must be the one asked for (NATIVE_OPTION_MISMATCH). Without a level nothing is written
+   * and the Gateway's own setting stands. Once confirmed it is not written again on this connection.
+   */
+  private async applyPermission(): Promise<void> {
+    const level = this.nativeOptions.permission;
+    const mode = level === undefined ? undefined : openclawFlavor.permission[level].session?.params?.permissionMode;
+    if (typeof mode !== "string" || this.appliedPermission === mode) return;
+    if (this.sessionKey === null || !HUB_KEY.test(this.sessionKey)) throw new ControlError("IDENTITY_MISMATCH", "OpenClaw permission mode has no owned key");
+    const patched = object(await this.call("sessions.patch", { key: this.sessionKey, permissionMode: mode }), "OpenClaw permission mode");
+    const entry = patched.entry !== null && typeof patched.entry === "object" ? patched.entry as Record<string, unknown> : null;
+    if (entry !== null && entry.permissionMode !== undefined && entry.permissionMode !== mode) throw new ControlError("NATIVE_OPTION_MISMATCH", "OpenClaw did not apply the permission mode");
+    this.appliedPermission = mode;
+  }
   /**
    * This key's Gateway session row; undefined until something writes the session: the bridge applying native options at
    * open(), the model patch just before the first prompt, or that prompt. A catalog probe writes nothing, so it leaves no row.
@@ -480,6 +505,8 @@ export class OpenClawControl extends AcpControl {
     // Nothing was sent, so this is the Turn's own failure rather than a dispatch with an unknown outcome.
     try { await this.applySelectedModel(); }
     catch (error) { if (error instanceof ControlError) return notSent(error); throw error; }
+    try { await this.applyPermission(); }
+    catch (error) { if (error instanceof ControlError) return notSent(error, "OpenClaw 没有确认所选的权限档位，这条消息没有发出。"); throw error; }
     if (this.unreported.length) {
       const named = this.unreported.map(row => row.id + " (" + row.unavailable + ")").join(", ");
       onEvent({ type: "diagnostic", message: `OpenClaw reports ${this.unreported.length} model(s) unavailable, left out of the model choice: ${named.length > 2048 ? named.slice(0, 2048) + "…" : named}` });
@@ -575,7 +602,11 @@ export class OpenClawControl extends AcpControl {
   override async models(): Promise<NativeModelCatalog> {
     const catalog = await super.models();
     const models = (await this.readNativeModels()).flatMap(({ unavailable, ...row }) => unavailable === null ? [row] : []);
-    const options = catalog.options !== undefined && repeatsThinking(catalog.options) ? catalog.options.filter(option => option.id !== "__mode") : catalog.options;
+    const listed = catalog.options !== undefined && repeatsThinking(catalog.options) ? catalog.options.filter(option => option.id !== "__mode") : catalog.options;
+    // Only the levels the Gateway takes for the configured model are offered (agentThinking), the session's own value kept; another model's
+    // levels are not known before its session runs it, so a selected model keeps the bridge's list.
+    const thinking = this.agentThinking, filter = thinking !== null && thinking.length > 0 && this.selectedModel === undefined;
+    const options = listed?.map(option => option.id !== "thought_level" || !filter ? option : { ...option, values: option.values.filter(row => thinking.includes(row.value) || row.value === option.currentValue) });
     const commands = catalog.commands?.map(command => ({ ...command, contextEffect: command.contextEffect ?? openClawCommandEffect(command.name) ?? "unknown" }));
     return { ...catalog, ...(options === undefined ? {} : { options }), ...(commands === undefined ? {} : { commands }), defaultModel: this.configuredModel, models, canSelect: models.length > 0 };
   }

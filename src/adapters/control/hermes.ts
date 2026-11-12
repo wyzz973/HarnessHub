@@ -1,4 +1,4 @@
-import type { BackendResult, CleanupEvidence, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog, NativeOptions, NativeToolDetail, NativeUsage } from "../../contracts/control.js";
+import type { BackendResult, CleanupEvidence, CommandClass, ControlEvent, ControlLaunch, ControlOptions, ControlRun, NativeConversationId, NativeModelCatalog, NativeOption, NativeOptions, NativeToolDetail, NativeUsage } from "../../contracts/control.js";
 import type { RelayCapabilities } from "../../contracts/relay.js";
 import { ControlError, NATIVE_FRAME_BYTES, classifyRemoteFailure } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
@@ -44,6 +44,13 @@ const TITLE_SET = /^Session title set: /u;
 /** Without --session-id Hermes exports every session it holds, its messaging gateway's too: the identifier must be a plain one. */
 const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 
+/**
+ * The reasoning effort the Hub offers for Hermes (flavors/hermes.ts): its ACP has no option for it, so the driver adds one to the catalog and
+ * carries a choice out with `/reasoning`; `unset` is Hermes's own setting (the profile's, `/reasoning reset`).
+ */
+const REASONING = { id: "reasoning_effort", unset: "default", values: ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as readonly string[] } as const;
+/** How long the viewer's answer to `/reasoning` is waited for (a fenced session mutation in the gateway, no model turn). */
+const REASONING_DEADLINE_MS = 15_000;
 /** Hermes 0.12's ACP approval bridge waits this long for the client and then denies the command itself (permissions.py). */
 const HERMES_APPROVAL_WAIT_MS = 60_000;
 /** Quiet time after Hermes's prompt response before its turn is settled. */
@@ -209,11 +216,42 @@ export class HermesControl extends AcpControl {
   }
   protected override get restoreByLoad(): boolean { return true; }
   protected override get takesSessionTools(): boolean { return true; }
-  /** A session opened here starts from nothing; one restored from a checkpoint has counters this connection never saw. */
+  /**
+   * A session opened here starts from nothing; one restored from a checkpoint has counters this connection never saw. The reasoning effort
+   * (REASONING) is not an option of Hermes's ACP: it is taken out of the options and set after the session is opened, with `/reasoning`.
+   */
   override async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
-    const id = await super.open(cwd, model, options, checkpoint);
+    const { [REASONING.id]: effort, ...native } = options ?? {};
+    const id = await super.open(cwd, model, options === undefined ? undefined : native, checkpoint);
     this.counters.set(id, checkpoint === undefined ? {} : null);
+    this.reasoning = REASONING.unset;
+    if (effort !== undefined && (effort !== REASONING.unset || checkpoint !== undefined)) await this.setReasoning(id, effort);
     return id;
+  }
+  /** The reasoning effort this connection confirmed for its session; REASONING.unset while it runs Hermes's own setting. */
+  private reasoning: string = REASONING.unset;
+  /**
+   * `/reasoning <level>` (or `/reasoning reset` for Hermes's own setting) on this session alone (gateway/session_setting_commands.py
+   * commit_reasoning_command: the session's durable choice, no config.yaml write without --global), answered by the viewer without a model
+   * turn. Its reply ("🧠 ✓ … `<level>` …", in any of its locales) is the confirmation; anything else fails the open with
+   * NATIVE_OPTION_MISMATCH, as an unapplied option does, and so does no answer within REASONING_DEADLINE_MS (the prompt is then given up).
+   */
+  private async setReasoning(id: NativeConversationId, effort: string): Promise<void> {
+    if (effort !== REASONING.unset && !REASONING.values.includes(effort)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "native option unavailable for selected Harness");
+    let reply = "";
+    const run = await super.sendPrompt(id, "/reasoning " + (effort === REASONING.unset ? "reset" : effort), event => { if (event.type === "text" && reply.length < 4096) reply += event.text; }, [], REASONING_DEADLINE_MS);
+    const result = await run.result;
+    if (result.status !== "completed" || !reply.includes("✓") || (effort !== REASONING.unset && !reply.includes("`" + effort + "`"))) throw new ControlError("NATIVE_OPTION_MISMATCH", "Hermes did not confirm the reasoning effort");
+    this.reasoning = effort;
+  }
+  /** The effort as an option of the catalog: Hermes's levels (hermes_constants.parse_reasoning_effort) and its own setting. */
+  private reasoningOption(): NativeOption {
+    return { id: REASONING.id, name: "思考强度", category: "thought_level", currentValue: this.reasoning,
+      values: [{ value: REASONING.unset, name: "按 Hermes 的设置" }, ...REASONING.values.map(value => ({ value, name: value }))] };
+  }
+  override async nativeConfig(): Promise<{ readonly model: string | null; readonly options: NativeOptions }> {
+    const config = await super.nativeConfig();
+    return { ...config, options: { ...config.options, [REASONING.id]: this.reasoning } };
   }
   /** A usage report's session totals become the Turn's own; what goes on is the rest of the report and the Turn's difference, when it is known. */
   private turnUsage(id: NativeConversationId, event: ControlEvent): ControlEvent | null {
@@ -324,7 +362,8 @@ export class HermesControl extends AcpControl {
       return { ...command, contextEffect: (name === undefined ? undefined : EFFECTS[name]) ?? command.contextEffect ?? "unknown" };
     });
     this.hubExport = !listed.some(command => command.name === EXPORT.name);
-    return { ...catalog, commands: this.hubExport ? [...listed, EXPORT] : listed };
+    const options = catalog.options?.some(option => option.id === REASONING.id) ? catalog.options : [...(catalog.options ?? []), this.reasoningOption()];
+    return { ...catalog, options, commands: this.hubExport ? [...listed, EXPORT] : listed };
   }
   private async exportSession(id: NativeConversationId, onEvent: (event: ControlEvent) => void): Promise<BackendResult> {
     try {

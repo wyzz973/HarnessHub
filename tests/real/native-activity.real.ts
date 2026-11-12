@@ -32,6 +32,7 @@ const askApproval = process.env.HH_REAL_APPROVAL === "1";
 const askPlan = process.env.HH_REAL_PLAN === "1";
 /** HH_REAL_READONLY=1: only a harmless echo through the Harness's command tool, for Harnesses whose tools act outside the test workspace (OpenClaw's agent workspace). */
 const readOnly = process.env.HH_REAL_READONLY === "1";
+const NO_NATIVE_DIFF = new Set(["dsh", "hermes"]);
 const TERMINAL = new Set<PublicRun["status"]>(["completed", "failed", "cancelled", "unknown"]);
 type App = ReturnType<typeof application>;
 async function closeApp(app: App): Promise<void> {
@@ -111,12 +112,18 @@ test("installed Harness tool activity is committed with stored, readable details
         for (let after = 0; ;) { const page = app.store.events(created.id, after, 100); if (!page.length) break; events.push(...page); after = page.at(-1)!.seq; }
         const diagnostics = events.flatMap(row => { const value = row.data.event as { type?: string; message?: string } | undefined; return row.type === "run.output" && value?.type === "diagnostic" ? [String(value.message).slice(0, 200)] : []; });
         proof.events = { toolDetail: events.filter(row => row.type === "run.tool_detail").length, outputs: events.filter(row => row.type === "run.output").length, diagnostics };
+        // What the Harness asked about and what the Hub's policy answered for the conversation's level (contracts/flavor.ts).
+        proof.asked = events.filter(row => row.type === "permission.requested").map(row => String(row.data.title).slice(0, 160));
+        proof.policy = events.filter(row => row.type === "permission.decided").map(row => ({ by: row.data.by ?? null, level: row.data.level ?? null, option: row.data.optionId ?? null }));
+        const planLevel = nativeOptions?.hub_permission === "plan";
         const checks = {
           completed: run.status === "completed",
-          ...(readOnly ? { echoed: details.some(row => row.output) && reply.includes("HH-TOOL-OK") } : { fileEdited: edited === "delta" }),
-          toolsCommitted: tools.length > 0 && tools.every(tool => !["pending", "in_progress", "inProgress", "running"].includes(tool.status)),
-          detailsReadable: details.length > 0 && details.some(row => row.input || row.output),
-          ...(readOnly ? {} : { editDiff: details.some(row => row.diff) }),
+          // Under the Hub's "plan" level nothing may change; under every other the file is edited.
+          ...(readOnly ? { echoed: details.some(row => row.output) && reply.includes("HH-TOOL-OK") } : planLevel ? { fileUntouched: edited !== "delta" } : { fileEdited: edited === "delta" }),
+          toolsCommitted: (planLevel || tools.length > 0) && tools.every(tool => !["pending", "in_progress", "inProgress", "running"].includes(tool.status)),
+          detailsReadable: planLevel || (details.length > 0 && details.some(row => row.input || row.output)),
+          // DeepSeek Harness and Hermes report no diff of their own (the Hub's own record of the workspace carries it).
+          ...(readOnly || planLevel || NO_NATIVE_DIFF.has(harnessId) ? {} : { editDiff: details.some(row => row.diff) }),
           cleanup: run.cleanup?.closed === true,
           ...(askApproval ? { approved: permissions.length > 0 && permissions.every(row => row.chosen !== null) } : {}),
           ...(askPlan ? { plan: (run.plan?.entries.length ?? 0) >= 2 } : {}),

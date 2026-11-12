@@ -32,7 +32,7 @@ const NATIVE_IMPORT_MS = 10 * 60_000;
  */
 const NATIVE_STARTUP_MS = 5 * 60_000;
 import type { NativeInstallationLocks, NativeUsageLease } from "../management/native-lock.js";
-import { nativeOnly } from "../../contracts/flavor.js";
+import { nativeOnly, selectedPermission } from "../../contracts/flavor.js";
 
 export interface ConfigurationInput {
   readonly workspace: string;
@@ -293,7 +293,8 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       // the user. The close grace is the host budgets' (ADR-056 §4.11); a Turn's close never waits for what left the program's group.
       const options = { cwd: configuration.workspace, env: environment, requestTimeoutMs: 10000, startupTimeoutMs: NATIVE_STARTUP_MS,
         maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024, closeGraceMs: this.budgets.closeGraceMs,
-        ...(nativeOnly(selection.nativeOptions) === undefined ? {} : { selectedOptions: nativeOnly(selection.nativeOptions)! }) };
+        ...(nativeOnly(selection.nativeOptions) === undefined ? {} : { selectedOptions: nativeOnly(selection.nativeOptions)! }),
+        ...(selectedPermission(selection.nativeOptions) === undefined ? {} : { permission: selectedPermission(selection.nativeOptions)! }) };
       this.assertOwner(); lease.assertOwned();
       control = await createNativeControl(selection.harnessId, launch, options);
       if (selection.provider !== undefined && this.providers) control = new RedactedHarnessControl(control, text => this.providers!.redact(text), () => this.providers!.createTextRedactor());

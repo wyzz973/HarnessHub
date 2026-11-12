@@ -558,7 +558,7 @@ export function approvalRole(option: { readonly id: string; readonly name: strin
 }
 /** What an approval is about, as far as its title says (a derived value, worked out again when the rule is better: `other` when nothing says). */
 export function subjectOf(title: string): ApprovalItem["subject"] {
-  const words = title.replace(/^子 Agent\s*·\s*/u, "").trim();
+  const words = title.replace(/^子 Agent\s*·\s*/u, "").trim().replace(/^(?:approve|allow|confirm|permit)\s+/iu, "");
   if (/请求修改文件|^(?:edit|write|create|update|patch|apply|delete|remove|move|rename|modify)\b/iu.test(words)) return "file_change";
   if (/请求执行命令|^(?:run|bash|shell|exec|execute|terminal|command)\b/iu.test(words)) return "command";
   if (/^(?:read|view|open|cat)\b/iu.test(words)) return "file_read";

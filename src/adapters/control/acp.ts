@@ -1019,7 +1019,7 @@ export class AcpControl implements HarnessControl {
         const settle = (value: unknown): void => { clearTimeout(timer); resolve(value); };
         this.permissions.set(id, { request: id, options: options.map(option => option.id), resolve: settle, dispose: () => clearTimeout(timer) });
         // The request names the call it is about (the id the program gave it in its `tool_call`): the Hub records a refusal on that call, whatever the program then reports of it.
-        active.event({ type: "permission_requested", id, forCall: callId, title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", ...(detail ? { detail } : {}), options: options.map(({ id, name }) => ({ id, name })),
+        active.event({ type: "permission_requested", id, forCall: callId, ...(typeof tool.kind === "string" && tool.kind.length <= 64 ? { toolKind: tool.kind } : {}), title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", ...(detail ? { detail } : {}), options: options.map(({ id, name }) => ({ id, name })),
           ...requestExpiry(deadline === null ? null : Math.max(0, deadline - APPROVAL_DEADLINE_MARGIN_MS)) });
         // The agent refuses on its own at its deadline; the public request closes just before, so no late choice looks applied.
         if (deadline !== null) timer = setTimeout(() => {

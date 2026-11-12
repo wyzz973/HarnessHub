@@ -11,9 +11,9 @@ import { approvalRole, subjectOf } from "../domain/items-place.js";
  */
 export interface PolicyDecision { readonly answer: PolicyAnswer; readonly option: string | null; readonly kind: RequestKind }
 const KIND_OF_FAMILY: Readonly<Record<string, RequestKind>> = { read: "read", search: "read", think: "read", fetch: "network", edit: "edit", delete: "edit", move: "edit", change: "edit", execute: "execute", mcp: "tool", subagent: "tool" };
-export function requestKind(title: string, toolKind: string | undefined): RequestKind {
-  const byTool = toolKind === undefined ? undefined : KIND_OF_FAMILY[toolKind];
-  if (byTool !== undefined) return byTool;
+/** The call a request is about, as the Hub placed it (its item): what tells the request when it says nothing of its own (DeepSeek Harness's has no title and no kind). */
+export interface RequestCall { readonly type: string; readonly title?: string; readonly name?: string }
+function kindOfTitle(title: string): RequestKind {
   switch (subjectOf(title)) {
     case "file_read": return "read";
     case "file_change": return "edit";
@@ -23,8 +23,23 @@ export function requestKind(title: string, toolKind: string | undefined): Reques
     default: return "other";
   }
 }
-export function policyDecision(flavor: HarnessFlavor | undefined, level: PermissionLevel | undefined, request: { readonly title: string; readonly options: readonly { readonly id: string; readonly name: string }[]; readonly question: boolean }, toolKind: string | undefined): PolicyDecision {
-  const kind = requestKind(request.title, toolKind);
+function kindOfCall(call: RequestCall): RequestKind {
+  switch (call.type) {
+    case "command": return "execute";
+    case "file_change": return "edit";
+    case "file_read": return "read";
+    case "mcp_tool": return "tool";
+    default: { const named = [call.name, call.title].map(text => text === undefined ? "other" : kindOfTitle(text)).find(kind => kind !== "other"); return named ?? "other"; }
+  }
+}
+/** What a request is about: by the kinds the program gave (the request's own, then the call's), then the request's title, then the call as the Hub placed it. */
+export function requestKind(title: string, toolKinds: readonly (string | undefined)[], call?: RequestCall): RequestKind {
+  for (const toolKind of toolKinds) { const byTool = toolKind === undefined ? undefined : KIND_OF_FAMILY[toolKind]; if (byTool !== undefined) return byTool; }
+  const byTitle = kindOfTitle(title);
+  return byTitle !== "other" || call === undefined ? byTitle : kindOfCall(call);
+}
+export function policyDecision(flavor: HarnessFlavor | undefined, level: PermissionLevel | undefined, request: { readonly title: string; readonly options: readonly { readonly id: string; readonly name: string }[]; readonly question: boolean }, toolKinds: readonly (string | undefined)[], call?: RequestCall): PolicyDecision {
+  const kind = requestKind(request.title, toolKinds, call);
   if (request.question || level === undefined) return { answer: "ask", option: null, kind };
   const answer = (flavor?.permission[level].policy ?? HUB_POLICIES[level])[kind];
   if (answer === "ask") return { answer, option: null, kind };

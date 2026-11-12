@@ -3,6 +3,7 @@ import type { ResolvedCommand } from "../contexts/catalog/domain/catalog.js";
 import type { ContentKind, ContentRef, ControlAttachment } from "./content.js";
 import type { RelayCapabilities, RelayPacketId, TurnText } from "./relay.js";
 import type { HarnessFlavor } from "./flavor.js";
+import type { PermissionLevel } from "./protocol.js";
 export type { TurnText };
 
 declare const nativeConversationBrand: unique symbol;
@@ -53,6 +54,12 @@ export interface ControlOptions {
    * A driver whose protocol fixes capabilities at initialize reads them; open() still validates what it receives.
    */
   readonly selectedOptions?: NativeOptions;
+  /**
+   * The Hub's permission level the connection's conversation runs at (contracts/flavor.ts), known before the program is started: the
+   * adapter carries out what its declaration says for it at start (environment) and at open (session parameters). Absent: no level was
+   * chosen, and the Harness's own setting stands. A level change starts a new process (the selection differs), so this is fixed per process.
+   */
+  readonly permission?: PermissionLevel;
 }
 export interface ProtocolObservation {
   readonly protocol: ControlProtocol;
@@ -119,7 +126,9 @@ export type ControlEvent =
       /** A question the program asks (a form, a choice, free text) rather than an approval of its own action; approval when absent. */
       readonly kind?: "approval" | "question";
       /** The id the program gave the call this approval is about (the `id` of its `tool` event), when it names it: ACP's `toolCall.toolCallId`, Codex's `itemId`. */
-      readonly forCall?: string }
+      readonly forCall?: string;
+      /** The kind the program gave that call in the request itself (ACP's `toolCall.kind`), when it gave one: what the Hub's policy tells the request by. */
+      readonly toolKind?: string }
   | { readonly type: "permission"; readonly id: string; readonly decision: "denied" | "cancelled" }
   | { readonly type: "diagnostic"; readonly message: string }
   /**
