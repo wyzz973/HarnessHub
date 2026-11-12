@@ -7,6 +7,12 @@ import type { SessionId } from "./session.js";
 
 /** The environment a native process started by the Hub carries, and the Hub's tool process reads. Absent: not a Hub session. */
 export const TABLE_ENV = { url: "HARNESSHUB_URL", session: "HARNESSHUB_SESSION" } as const;
+/**
+ * The session instructions the Hub's MCP server adds to its `initialize` instructions, given to the server of one session only, for a
+ * Harness that puts MCP instructions into its system prompt and has no entry of its own for them (InstructionsEntry `mcp-instructions`).
+ * Absent: the server says only what its tools are for.
+ */
+export const TABLE_INSTRUCTIONS_ENV = "HARNESSHUB_INSTRUCTIONS";
 
 /** The name of the Hub's own MCP entry in a Harness's configuration. */
 export const TABLE_MCP_NAME = "harnesshub";
@@ -17,9 +23,10 @@ export const TABLE_TOOLS = ["hub_turns", "hub_read_turn", "hub_search", "hub_upd
 export const TABLE_PROGRESS_TOOLS = ["hub_update_plan", "hub_wrap_up"] as const;
 export type TableTool = typeof TABLE_TOOLS[number];
 /**
- * What a Driver that can add to its session's system prompt adds there (HarnessControl.setSessionInstructions) when that session has the
- * Hub's tools and the preference `hub.progress` is on: how to use the two progress tools. It never goes into the user's message; the
- * settings page shows it word for word.
+ * What a Driver gives the model of its session (HarnessControl.setSessionInstructions, through the entry its adapter declaration names:
+ * the system prompt, the developer instructions, the Hub's MCP server's instructions, or a block after a new session's first prompt) when
+ * that session has the Hub's tools and the preference `hub.progress` is on: how to use the two progress tools. It never goes into the
+ * user's words as the Hub keeps them; the settings page shows it word for word.
  */
 export const HUB_PROGRESS_INSTRUCTIONS = "你在 HarnessHub 里工作，这个会话带有 harnesshub 的工具：\n"
   + "1. 任务要做好几步时，开始就调用 hub_update_plan 列出全部步骤（正在做的那一步标 in_progress），之后每开始或做完一步再调用一次更新。\n"

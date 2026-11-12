@@ -332,9 +332,9 @@ export class SessionRuntime {
     const pending = this.permissions.get(permission), level = selectedPermission(run.selection.nativeOptions), control = execution.binding?.control;
     if (pending === undefined || level === undefined || !control?.decidePermission) return;
     const call = value.forCall === undefined || execution.turn === null ? undefined : itemsOf(execution.turn).find(item => item.itemId === "tool:" + value.forCall)?.fields;
-    const named = call as { readonly title?: unknown; readonly name?: unknown } | undefined;
+    const named = call as { readonly title?: unknown; readonly name?: unknown; readonly hub?: unknown } | undefined;
     const decision = policyDecision(this.options.flavor?.(run.selection.harnessId), level, { title: value.title, options: value.options, question: value.kind === "question" || value.input !== undefined },
-      [value.toolKind, call?.native?.kind], call === undefined ? undefined : { type: call.type, ...(typeof named?.title === "string" ? { title: named.title } : {}), ...(typeof named?.name === "string" ? { name: named.name } : {}) });
+      [value.toolKind, call?.native?.kind], call === undefined ? undefined : { type: call.type, ...(typeof named?.title === "string" ? { title: named.title } : {}), ...(typeof named?.name === "string" ? { name: named.name } : {}), ...(named?.hub === true ? { hub: true } : {}) });
     if (decision.option === null || pending.option !== null) return;
     pending.option = decision.option; pending.command = "policy"; pending.request = { ...pending.request, decided: true };
     this.placed(execution, { kind: "decided", id: pending.nativeId, option: decision.option, by: "policy", level, at: this.options.now().getTime() },

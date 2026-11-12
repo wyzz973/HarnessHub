@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { TABLE_ENV, TABLE_MCP_NAME } from "../../contracts/table.js";
+import { TABLE_ENV, TABLE_INSTRUCTIONS_ENV, TABLE_MCP_NAME } from "../../contracts/table.js";
 import { listedCommand, nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
@@ -144,6 +144,14 @@ export const dshRelayCapabilities: RelayCapabilities = relayDeclaration({
   placement: { parts: "multiple", maxInput: null, measure: measureBy("multiple", "chars", ["file"]) },
   title: "none",
 });
+
+/**
+ * The session instructions as the block after a new session's first prompt (entry.instructions `first-prompt`): marked as the Hub's, so
+ * that the model does not take them for the user's words.
+ */
+function instructionsBlock(text: string): string {
+  return "<harnesshub-session-instructions>\n（以下是 HarnessHub 给这个会话的说明，不是用户的话。）\n" + text + "\n</harnesshub-session-instructions>";
+}
 
 /** ACP v1 anti-corruption layer. Client filesystem and terminal capabilities are not advertised. */
 export class AcpControl implements HarnessControl {
@@ -386,7 +394,7 @@ export class AcpControl implements HarnessControl {
     if (sessions.fork === undefined) throw new ControlError("NATIVE_FORK_UNAVAILABLE", "this agent does not declare session/fork");
     this.forking = true;
     try {
-      const setup = this.setupMs(), meta = this.sessionMeta;
+      const setup = this.setupMs(), meta = this.requestMeta();
       const response = object(await this.sessionRequest("session/fork", { sessionId: nativeConversationId(checkpoint), cwd, mcpServers: [], ...(meta === null ? {} : { _meta: meta }) }, setup), "session/fork result");
       const id = nativeConversationId(response.sessionId);
       if (id === checkpoint) throw new ControlError("IDENTITY_MISMATCH", "session/fork returned its source session");
@@ -428,22 +436,39 @@ export class AcpControl implements HarnessControl {
    * to send none. It holds only options the agent documents for its own sessions; read once per request.
    */
   protected get sessionMeta(): Readonly<Record<string, unknown>> | null { return null; }
-  protected async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> { const meta = this.sessionMeta; return { cwd, mcpServers: this.hubToolServers(), ...(meta === null ? {} : { _meta: meta }) }; }
   /**
-   * Whether this agent takes the Hub's tools per session (ACP `mcpServers` on session/new, session/load and session/resume) and uses them:
-   * Claude Code (claude-agent-acp hands them to its SDK), OpenCode, Hermes (its gateway viewer passes them to the gateway's session as the
-   * editor's servers, acp_adapter/gateway_server.py). Not OpenClaw, whose bridge refuses them, nor DeepSeek Harness, which ignores them.
+   * The `_meta` a session request carries: the agent's own (sessionMeta) and, where the declaration names it (entry.instructions
+   * `acp-meta`, claude-agent-acp: an object keeps Claude Code's preset and adds its `append`), the session instructions.
    */
-  protected get takesSessionTools(): boolean { return false; }
-  /** HarnessControl.sessionTools: this agent takes them and the process was started with the table's address and token. */
+  private requestMeta(): Readonly<Record<string, unknown>> | null {
+    const meta = this.sessionMeta;
+    if (this.instructions === null || this.options.entry?.instructions !== "acp-meta") return meta;
+    return { ...meta, systemPrompt: { append: this.instructions } };
+  }
+  protected async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> { const meta = this.requestMeta(); return { cwd, mcpServers: this.hubToolServers(), ...(meta === null ? {} : { _meta: meta }) }; }
+  /** HarnessControl.sessionTools: the declaration hands the tools over per session (entry.tools `acp`) and the process was started with the table's address and token. */
   get sessionTools(): boolean { return this.hubToolServers().length > 0; }
-  /** The Hub's tool program on the Node that runs the Hub, with this process's table variables; none when the agent does not take them or the table is not mounted. */
+  /**
+   * The Hub's tool program on the Node that runs the Hub, with this process's table variables, and the session instructions where the
+   * declaration has them said by the server (entry.instructions `mcp-instructions`); none when the declaration does not hand the tools
+   * over per session (OpenClaw's bridge refuses them) or the table is not mounted.
+   */
   private hubToolServers(): readonly Record<string, unknown>[] {
-    if (!this.takesSessionTools) return [];
+    if (this.options.entry?.tools !== "acp") return [];
     const url = this.options.env[TABLE_ENV.url], token = this.options.env[TABLE_ENV.session], tool = fileURLToPath(new URL("../../cli/hub-tools.js", import.meta.url));
     if (!url || !token || !existsSync(tool)) return [];
-    return [{ name: TABLE_MCP_NAME, command: process.execPath, args: [tool, "mcp"], env: [{ name: TABLE_ENV.url, value: url }, { name: TABLE_ENV.session, value: token }] }];
+    const said = this.instructions !== null && this.options.entry.instructions === "mcp-instructions" ? [{ name: TABLE_INSTRUCTIONS_ENV, value: this.instructions }] : [];
+    return [{ name: TABLE_MCP_NAME, command: process.execPath, args: [tool, "mcp"], env: [{ name: TABLE_ENV.url, value: url }, { name: TABLE_ENV.session, value: token }, ...said] }];
   }
+  /** What setSessionInstructions gave for the sessions this connection opens from now on; null gives nothing. */
+  private instructions: string | null = null;
+  /**
+   * Whether the session instructions still go with the next content prompt (entry.instructions `first-prompt`): set when this connection
+   * opens a session new, cleared once a prompt carried them to the native side.
+   */
+  private instructionsDue = false;
+  /** HarnessControl.setSessionInstructions, through the entry the declaration names (ControlOptions.entry.instructions). */
+  setSessionInstructions(text: string | null): void { this.instructions = text; }
   /**
    * Runs once, before the agent's program is started (initialize is the first request, and the process is spawned for it).
    * A driver whose program would act on the user's machine merely by starting (Hermes's `hermes acp` starts, stops or
@@ -650,6 +675,8 @@ export class AcpControl implements HarnessControl {
       if (method === "session/load") await this.replaySettled();
       this.replaying = false;
       this.openedCwd = cwd;
+      // A restored session already holds them from its first prompt; a new one is given them with its first content prompt.
+      this.instructionsDue = checkpoint === undefined && this.instructions !== null && this.options.entry?.instructions === "first-prompt";
       this.readModels(response); this.configuredDefault=this.catalog.defaultModel;
       for (const params of this.openingMetadata.splice(0)) this.notification("session/update", params);
       // A value the session already runs is not requested again (Hermes's set_model can reroute an unchanged model).
@@ -745,6 +772,9 @@ export class AcpControl implements HarnessControl {
     this.active = active;
     // Evidence of the prompt reaching the history is about content: a command's answer (a local reply) proves no such thing.
     const content = this.readsAsContent(prompt, kinds);
+    // The session instructions of a Harness with no other entry for them, once, after everything of the user's (a command is sent as typed).
+    const instructing = content && this.instructionsDue && this.instructions !== null;
+    if (instructing) { blocks.push({ type: "text", text: instructionsBlock(this.instructions!) }); this.instructionsDue = false; }
     const recorded = (reason: string | null): { readonly input?: "recorded" } => content && (active.answered || reason !== null && this.promptRecorded(reason)) ? { input: "recorded" } : {};
     const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks }, deadlineMs ?? this.options.runTimeoutMs ?? null, deadlineMs === null ? "abort" : "reject")
       .then(value => {
@@ -769,6 +799,10 @@ export class AcpControl implements HarnessControl {
         const quiet = this.trailingQuietMs;
         if (quiet > 0) for (const answered = Date.now(); Date.now() - Math.max(active.lastUpdate, answered) < quiet && Date.now() - answered < TRAILING_SETTLE_MS;) await new Promise(resolve => setTimeout(resolve, Math.min(quiet, 50)));
         return { ...result, ...recorded(result.reason) };
+      }, (error: unknown) => {
+        // A prompt that failed may not have reached the session: the instructions go with the next one (said twice rather than never).
+        if (instructing && this.conversation === id) this.instructionsDue = true;
+        throw error;
       }).catch((error: unknown): BackendResult => {
         if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) {
           const named = this.refusal("session/prompt", error, active.event), stands = this.refusedPrompt(error);

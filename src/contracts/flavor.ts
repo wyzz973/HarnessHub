@@ -40,10 +40,31 @@ export interface EffortWays {
 }
 /** Which operations this Harness asks about (sends a permission request for), which is what the Hub's policy can answer. */
 export interface AsksFor { readonly read: boolean; readonly edit: boolean; readonly execute: boolean; readonly note?: string }
+/**
+ * How the Hub's own MCP server (TABLE_MCP_NAME: the conversation's history, the task list, the wrap-up) reaches a session of this Harness,
+ * through an entry of that one session or process, never the Harness's configuration:
+ * - `acp`: ACP `mcpServers` on session/new, session/load and session/resume, with the process's table address and token;
+ * - `thread-config`: Codex's `config` on thread/start and thread/resume (`mcp_servers.<name>`), the user's own entry of that name kept;
+ * - `none`: the Harness has no such entry (its declaration says why), so the tools are not there.
+ */
+export type HubToolsEntry = "acp" | "thread-config" | "none";
+/**
+ * Where the Hub's session instructions (how to use the task list and the wrap-up) go, after anything of the user's own:
+ * - `acp-meta`: the session request's `_meta.systemPrompt.append` (claude-agent-acp keeps its own preset and adds this);
+ * - `developer-instructions`: Codex's thread `developerInstructions`, the user's own `developer_instructions` first;
+ * - `mcp-instructions`: the Hub's MCP server says them in its `initialize` instructions, which this Harness puts into its system prompt;
+ * - `first-prompt`: a text block after the first content prompt of a native session the connection opened new (the Harness has neither
+ *   a system prompt entry nor a use for MCP instructions); the Hub's own record of the user's words stays as typed;
+ * - `none`: nowhere (without the tools they would name nothing).
+ */
+export type InstructionsEntry = "acp-meta" | "developer-instructions" | "mcp-instructions" | "first-prompt" | "none";
+/** The two entries a Driver reads (ControlOptions.entry), from the declaration's capabilities. */
+export interface SessionEntry { readonly tools: HubToolsEntry; readonly instructions: InstructionsEntry }
 /** The capabilities the adapter will declare later; the fields are fixed now so that each adapter fills them in its own time. */
 export interface FlavorCapabilities {
-  readonly sessionMcp?: "native" | "config" | "none";
-  readonly systemPrompt?: "native" | "none";
+  readonly sessionMcp?: HubToolsEntry;
+  readonly systemPrompt?: InstructionsEntry;
+  /** The task list and the wrap-up: the Hub's own two tools (`hub`, through sessionMcp), only the Harness's own task tool (`native`), or none. */
   readonly planTool?: "native" | "hub" | "none";
   readonly questions?: "native" | "none";
   readonly usage?: "turn" | "session" | "context" | "none";
@@ -80,6 +101,10 @@ export const HUB_POLICIES: Readonly<Record<PermissionLevel, LevelPolicy>> = {
 };
 /** The selection's level, kept among its native options under this key (the Drivers never see it: `nativeOnly`). */
 export const PERMISSION_KEY = "hub_permission";
+/** How the Hub's tools and its session instructions reach this Harness's sessions, as its declaration says; neither when it says nothing. */
+export function sessionEntryOf(flavor: HarnessFlavor | undefined): SessionEntry {
+  return { tools: flavor?.capabilities?.sessionMcp ?? "none", instructions: flavor?.capabilities?.systemPrompt ?? "none" };
+}
 /** The selection's native options without the Hub's own keys: what a Driver is given. */
 export function nativeOnly(values: NativeOptions | undefined): NativeOptions | undefined {
   if (values === undefined) return undefined;

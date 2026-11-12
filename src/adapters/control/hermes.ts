@@ -230,7 +230,6 @@ export class HermesControl extends AcpControl {
     if (judged.kind === "refuse") throw new ControlError("NATIVE_GATEWAY_UNAVAILABLE", gatewayRefusalMessage(judged));
   }
   protected override get restoreByLoad(): boolean { return true; }
-  protected override get takesSessionTools(): boolean { return true; }
   /**
    * A session opened here starts from nothing; one restored from a checkpoint has counters this connection never saw. The reasoning effort
    * (REASONING) is not an option of Hermes's ACP: it is taken out of the options and set after the session is opened, with `/reasoning`.

@@ -2,6 +2,7 @@ import { HUB_POLICIES, type HarnessFlavor, type PolicyAnswer, type RequestKind }
 import type { TurnText } from "../../../contracts/control.js";
 import type { PermissionLevel } from "../../../contracts/protocol.js";
 import { approvalRole, subjectOf } from "../domain/items-place.js";
+import { isHubToolCall } from "../domain/protocol/tools.js";
 
 /**
  * The Hub's answer to a permission request under the conversation's permission level (T3 Code's client policy): by the adapter's declaration
@@ -11,8 +12,20 @@ import { approvalRole, subjectOf } from "../domain/items-place.js";
  */
 export interface PolicyDecision { readonly answer: PolicyAnswer; readonly option: string | null; readonly kind: RequestKind }
 const KIND_OF_FAMILY: Readonly<Record<string, RequestKind>> = { read: "read", search: "read", think: "read", fetch: "network", edit: "edit", delete: "edit", move: "edit", change: "edit", execute: "execute", mcp: "tool", subagent: "tool" };
-/** The call a request is about, as the Hub placed it (its item): what tells the request when it says nothing of its own (DeepSeek Harness's has no title and no kind). */
-export interface RequestCall { readonly type: string; readonly title?: string; readonly name?: string }
+/**
+ * The call a request is about, as the Hub placed it (its item): what tells the request when it says nothing of its own (DeepSeek Harness's
+ * has no title and no kind). `hub`: the call is one of the Hub's own tools (the item says so).
+ */
+export interface RequestCall { readonly type: string; readonly title?: string; readonly name?: string; readonly hub?: boolean }
+/**
+ * Whether a request is about one of the Hub's own tools (they read this conversation back or tell the Hub how the Turn goes, and touch
+ * nothing of the user's): the Hub allows those itself at every level ("plan" included), so that a Harness that asks about MCP tools does
+ * not ask the user before the task list is shown.
+ */
+function aboutHubTool(title: string, call: RequestCall | undefined): boolean {
+  if (call?.hub === true) return true;
+  return [title, call?.name, call?.title].some(text => text !== undefined && text.trim() !== "" && isHubToolCall({ title: text }));
+}
 function kindOfTitle(title: string): RequestKind {
   switch (subjectOf(title)) {
     case "file_read": return "read";
@@ -39,9 +52,9 @@ export function requestKind(title: string, toolKinds: readonly (string | undefin
   return byTitle !== "other" || call === undefined ? byTitle : kindOfCall(call);
 }
 export function policyDecision(flavor: HarnessFlavor | undefined, level: PermissionLevel | undefined, request: { readonly title: string; readonly options: readonly { readonly id: string; readonly name: string }[]; readonly question: boolean }, toolKinds: readonly (string | undefined)[], call?: RequestCall): PolicyDecision {
-  const kind = requestKind(request.title, toolKinds, call);
+  const hub = !request.question && aboutHubTool(request.title, call), kind = hub ? "read" : requestKind(request.title, toolKinds, call);
   if (request.question || level === undefined) return { answer: "ask", option: null, kind };
-  const answer = (flavor?.permission[level].policy ?? HUB_POLICIES[level])[kind];
+  const answer = hub ? "allow" : (flavor?.permission[level].policy ?? HUB_POLICIES[level])[kind];
   if (answer === "ask") return { answer, option: null, kind };
   const roles = request.options.map(option => ({ id: option.id, role: approvalRole(option) }));
   const option = answer === "allow" ? (roles.find(row => row.role === "allow_once") ?? roles.find(row => row.role === "allow_session"))?.id ?? null : roles.find(row => row.role === "deny")?.id ?? null;

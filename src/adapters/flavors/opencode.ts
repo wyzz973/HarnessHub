@@ -47,5 +47,8 @@ export const opencodeFlavor: HarnessFlavor = {
     note: "按所用模型的变体给档；没有变体的模型没有思考强度可选" },
   asks: { read: false, edit: true, execute: true, note: "Hub 为每个会话下发的规则让它在改文件、跑命令、碰工作区外的路径前来问" },
   nativePlan: true,
-  capabilities: { sessionMcp: "native", resume: "native", attachments: "native", usage: "turn" },
+  // packages/cli/src/acp/sessions.ts registerMcp: ACP `mcpServers` become runtime servers of the session's directory (experimental.mcp.add,
+  // "until restart", nothing written). No per-session system prompt over ACP (an agent's `system` replaces its whole prompt), but MCP server
+  // instructions go into the model's instructions as `<mcp_instructions>` (McpInstructions, core/mcp-guidance): the instructions go there.
+  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", resume: "native", attachments: "native", usage: "turn" },
 };

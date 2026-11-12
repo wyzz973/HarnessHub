@@ -33,5 +33,9 @@ export const hermesFlavor: HarnessFlavor = {
     note: "模型不支持的档位，Hermes 会就近降到它支持的档位" },
   asks: { read: false, edit: true, execute: true, note: "改文件按模式问；命令只问它认为危险的" },
   nativePlan: false,
-  capabilities: { sessionMcp: "native", resume: "native", attachments: "pointer", usage: "session" },
+  // acp_adapter/gateway_server.py new_session/_resume: ACP `mcpServers` become the gateway session's editor MCP servers (session.create
+  // `editor.mcp_servers`, gateway/session_local_mcp.py; a changed spec on resume is re-bound). No system prompt entry: session.create takes no
+  // prompt from the viewer (HERMES_EPHEMERAL_SYSTEM_PROMPT is read from a shell client's client_env, which the viewer does not send),
+  // `/personality` writes config.yaml, and its MCP client never reads a server's instructions (tools/mcp_tool*.py): first-prompt.
+  capabilities: { sessionMcp: "acp", systemPrompt: "first-prompt", planTool: "hub", resume: "native", attachments: "pointer", usage: "session" },
 };

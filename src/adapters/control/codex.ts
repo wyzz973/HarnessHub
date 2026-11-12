@@ -1,4 +1,7 @@
 import { isAbsolute } from "node:path";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { TABLE_ENV, TABLE_MCP_NAME } from "../../contracts/table.js";
 import { nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
@@ -383,14 +386,34 @@ export class CodexControl implements HarnessControl {
   /** HarnessControl.setSessionInstructions: Codex's `developerInstructions` on thread/start and thread/resume (app-server 0.166.0). */
   setSessionInstructions(text: string | null): void { this.instructions = text; }
   /**
-   * The thread's `developerInstructions` when there is something to add: the user's own (`developer_instructions` of the effective
-   * configuration, which the parameter would otherwise replace) and then ours, so nothing the user wrote is dropped. Nothing otherwise.
+   * The Hub's tool server as a thread's own MCP server (flavors/codex.ts `thread-config`): the Hub's tool program on the Node that runs
+   * the Hub, the table's two variables forwarded from this app-server's environment (`env_vars`, so the token is not in the request),
+   * and its tools never asked about (they read this conversation or tell the Hub how the turn goes). Null when the declaration does not
+   * name this entry or the table is not mounted.
    */
-  private async developerInstructions(cwd: string): Promise<{ readonly developerInstructions?: string }> {
-    if (this.instructions === null) return {};
+  private hubToolServer(): Readonly<Record<string, unknown>> | null {
+    if (this.options.entry?.tools !== "thread-config") return null;
+    const tool = fileURLToPath(new URL("../../cli/hub-tools.js", import.meta.url));
+    if (!this.options.env[TABLE_ENV.url] || !this.options.env[TABLE_ENV.session] || !existsSync(tool)) return null;
+    return { command: process.execPath, args: [tool, "mcp"], env_vars: [TABLE_ENV.url, TABLE_ENV.session], default_tools_approval_mode: "approve" };
+  }
+  /** HarnessControl.sessionTools: every thread this connection opens or resumes is given the Hub's tool server (hubToolServer). */
+  get sessionTools(): boolean { return this.hubToolServer() !== null; }
+  /**
+   * What a thread/start or thread/resume adds for the Hub, read with the effective configuration (config/read, nothing written):
+   * `developerInstructions`, the user's own (`developer_instructions`, which the parameter would otherwise replace) and then ours, so
+   * nothing the user wrote is dropped; and the Hub's tool server as the thread's `config` (`mcp_servers.<name>`, which leaves every other
+   * server of the user's as it is), unless the user's configuration already has an enabled server of that name, which is kept as it is.
+   */
+  private async threadEntry(cwd: string): Promise<{ readonly developerInstructions?: string; readonly config?: Readonly<Record<string, unknown>> }> {
+    const server = this.hubToolServer();
+    if (this.instructions === null && server === null) return {};
     const configured = object(object(await this.rpc.request("config/read", { includeLayers: false, cwd }), "native configuration").config, "effective native configuration");
     const own = typeof configured.developer_instructions === "string" ? configured.developer_instructions.trim() : "";
-    return { developerInstructions: own ? own + "\n\n" + this.instructions : this.instructions };
+    const servers = configured.mcp_servers !== null && typeof configured.mcp_servers === "object" ? configured.mcp_servers as Record<string, unknown> : {};
+    const mine = servers[TABLE_MCP_NAME], kept = mine !== null && typeof mine === "object" && (mine as { readonly enabled?: unknown }).enabled !== false;
+    return { ...(this.instructions === null ? {} : { developerInstructions: own ? own + "\n\n" + this.instructions : this.instructions }),
+      ...(server === null || kept ? {} : { config: { ["mcp_servers." + TABLE_MCP_NAME]: server } }) };
   }
   async nativeConfig(): Promise<{ readonly model: string | null; readonly options: NativeOptions } | null> {
     const mode = this.confirmedMode ?? (this.collaboration === null ? this.threadMode : null);
@@ -442,7 +465,7 @@ export class CodexControl implements HarnessControl {
         if (chosen === undefined) throw new ControlError("MODEL_UNAVAILABLE", "no model is configured for the collaboration mode");
         this.collaboration = { mode, model: chosen, effort: this.effort ?? presetEffort ?? selected?.options?.find(option => option.id === "reasoning_effort")?.currentValue ?? null };
       }
-      const instructions = await this.developerInstructions(cwd);
+      const instructions = await this.threadEntry(cwd);
       if (checkpoint !== undefined) this.conversation = nativeConversationId(checkpoint);
       // A cold start or a long thread resume loads native state before answering; bounded by the run budget.
       const response = object(await this.rpc.request(checkpoint === undefined ? "thread/start" : "thread/resume", {

@@ -149,8 +149,8 @@ test("an entry of the same name that someone else wrote is never overwritten or 
   assert.match(reason("hermes"), /网关/u); assert.match(reason("hermes"), /每个会话开始时/u);
   assert.match(reason("openclaw"), /Gateway/u);
   // Claude Code, OpenCode and Hermes are handed the tools by session; the entry is optional for them.
-  assert.deepEqual(view.harnesses.filter(row => row.bySession === true).map(row => row.harnessId), ["claude", "opencode", "hermes"]);
-  assert.match(reason("opencode"), /不用写进配置/u); assert.equal(reason("dsh"), "");
+  assert.deepEqual(view.harnesses.filter(row => row.bySession === true).map(row => row.harnessId), ["claude", "codex", "opencode", "dsh", "hermes"]);
+  assert.match(reason("opencode"), /不用写进配置/u); assert.match(reason("dsh"), /不用写进配置/u);
   await assert.rejects(f.changes.installHubTools("codex", INSTALLED.filter(row => row.harnessId !== "codex")), refused("CAPABILITY_NOT_FOUND"));
   // The tool program is not there: nothing is written.
   await rm(f.tool);

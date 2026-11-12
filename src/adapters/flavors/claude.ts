@@ -8,5 +8,7 @@ export const claudeFlavor: HarnessFlavor = {
   effort: { option: { category: "thought_level" }, values: {} },
   asks: { read: false, edit: true, execute: true },
   nativePlan: true,
-  capabilities: { sessionMcp: "native", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native" },
+  // claude-agent-acp 0.99.1 acp-agent.js createSession: `mcpServers` go to the SDK as the session's own servers; `_meta.systemPrompt`
+  // as an object keeps Claude Code's preset and adds `append`.
+  capabilities: { sessionMcp: "acp", systemPrompt: "acp-meta", planTool: "hub", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native" },
 };

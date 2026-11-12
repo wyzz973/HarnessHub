@@ -2,6 +2,8 @@ import { statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CapabilityError, type CapabilityChangeView, type HubToolsResult, type HubToolsTargetView, type HubToolsView, type McpTargetView } from "../../contracts/capabilities.js";
 import { TABLE_ENV, TABLE_MCP_NAME } from "../../contracts/table.js";
+import { sessionEntryOf } from "../../contracts/flavor.js";
+import { flavorOf } from "../../adapters/flavors/index.js";
 import { sameMcp, type McpDefinition } from "./mcp-definitions.js";
 import type { McpInventory } from "./mcp-changes.js";
 import type { InstalledHarness } from "./scan.js";
@@ -53,11 +55,11 @@ function sessionGap(harnessId: string): string | null {
 
 /** What HarnessHub needs of the change service the tools are written through. */
 /**
- * The Harnesses whose Driver hands the tools to each session it opens (ACP `mcpServers`, acp.ts `takesSessionTools`): they have them in every
- * Hub conversation with nothing written into the user's configuration, and an install there is optional. OpenClaw's bridge refuses them,
- * DeepSeek Harness ignores them, and Codex takes its servers from config.toml: those three need the entry.
+ * Whether the Harness's Driver hands the tools to each session it opens, as its adapter declaration says (capabilities.sessionMcp: ACP
+ * `mcpServers`, Codex's thread `config`): it has them in every Hub conversation with nothing written into the user's configuration, and
+ * an install there is optional. OpenClaw's bridge refuses them: only there would an entry be needed, and there it cannot tell the conversation.
  */
-const BY_SESSION: ReadonlySet<string> = new Set(["claude", "opencode", "hermes"]);
+function bySession(harnessId: string): boolean { const entry = sessionEntryOf(flavorOf(harnessId)).tools; return entry === "acp" || entry === "thread-config"; }
 const BY_SESSION_NOTE = "Hub 在每个会话开始时把工具传给它，不用写进配置；写进配置是可选的。";
 export interface HubToolsHost {
   readonly mcp: McpInventory;
@@ -94,9 +96,9 @@ export class HubTools {
     const reason = unavailable(harness.harnessId);
     if (reason !== null) return { harnessId: harness.harnessId, name: harness.name, state: "unsupported", writable: false, reason, file: null };
     if (target === undefined) return { harnessId: harness.harnessId, name: harness.name, state: "unsupported", writable: false, reason: "读不到这个 Harness 的 MCP 配置", file: null };
-    const gap = target.state === "unsupported" ? null : sessionGap(harness.harnessId), bySession = BY_SESSION.has(harness.harnessId);
-    return { harnessId: harness.harnessId, name: harness.name, state: target.state, writable: target.state !== "unsupported", reason: [bySession ? BY_SESSION_NOTE : null, target.reason, gap].filter(Boolean).join(" ") || null, file: target.file,
-      ...(bySession ? { bySession: true as const } : {}) };
+    const gap = target.state === "unsupported" ? null : sessionGap(harness.harnessId), handed = bySession(harness.harnessId);
+    return { harnessId: harness.harnessId, name: harness.name, state: target.state, writable: target.state !== "unsupported", reason: [handed ? BY_SESSION_NOTE : null, target.reason, gap].filter(Boolean).join(" ") || null, file: target.file,
+      ...(handed ? { bySession: true as const } : {}) };
   }
   /** Where `definition` stands in one Harness's file by the MCP list's own rules, whether or not the tools are written into that Harness. */
   private async stateOf(definition: McpDefinition, harnessId: string, installed: readonly InstalledHarness[]): Promise<McpTargetView> {

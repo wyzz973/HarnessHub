@@ -69,10 +69,15 @@ function namedBy(tool: Pick<PublicTool, "title" | "name">): Named | null {
 const MCP_PREFIXED = /^mcp__(.+?)__(.+)$/u, MCP_JOINED = /^([A-Za-z0-9_-]+)[./]([A-Za-z0-9_.-]+)$/u;
 /** OpenCode joins a server and a tool with an underscore; the Hub's own tools are the only ones told that way, since only they are known exactly. */
 const HUB_JOINED = new RegExp("^" + TABLE_MCP_NAME + "_(" + TABLE_TOOLS.join("|") + ")$", "u");
-/** The server and the tool of an MCP call's name: `mcp__server__tool` (Claude Code), `server/tool` or `server.tool` (Codex), `harnesshub_tool` (OpenCode). */
+/**
+ * Hermes's gateway names a server an ACP client handed it `editor_<name>_<tag>` (gateway/session_local_mcp.py `_server_names`, the tag 8 hex
+ * digits of the session): the Hub's own server is told by that name too, and no other server is renamed.
+ */
+const HERMES_EDITOR_HUB = new RegExp("^editor_" + TABLE_MCP_NAME + "_[0-9a-f]{8}$", "u");
+/** The server and the tool of an MCP call's name: `mcp__server__tool` (Claude Code, DeepSeek Harness, Hermes), `server/tool` or `server.tool` (Codex), `harnesshub_tool` (OpenCode). */
 function mcpParts(raw: string): { readonly server: string; readonly tool: string } | null {
   const prefixed = MCP_PREFIXED.exec(raw);
-  if (prefixed !== null) return { server: prefixed[1]!, tool: prefixed[2]! };
+  if (prefixed !== null) return { server: HERMES_EDITOR_HUB.test(prefixed[1]!) ? TABLE_MCP_NAME : prefixed[1]!, tool: prefixed[2]! };
   const joined = MCP_JOINED.exec(raw);
   if (joined !== null) return { server: joined[1]!, tool: joined[2]! };
   const hub = HUB_JOINED.exec(raw);
@@ -85,6 +90,11 @@ function mcpShaped(named: Named): boolean {
   return parts !== null && (named.source === "name" || parts[1] === TABLE_MCP_NAME);
 }
 
+/** Whether a call (or a permission request's title) names one of the Hub's own tools (TABLE_TOOLS of the server TABLE_MCP_NAME), in any Harness's spelling. */
+export function isHubToolCall(tool: Pick<PublicTool, "title" | "name">): boolean {
+  const named = namedBy(tool), parts = mcpParts(named?.raw ?? tool.title.trim());
+  return parts !== null && parts.server === TABLE_MCP_NAME && (TABLE_TOOLS as readonly string[]).includes(parts.tool);
+}
 /** Whether a call is one of the Hub's two tools that tell how the Turn goes (`hub_update_plan`, `hub_wrap_up`): what it said is the Turn's task list or wrap-up, not an action. */
 export function isHubProgressCall(tool: Pick<PublicTool, "title" | "name">): boolean {
   const named = namedBy(tool), parts = mcpParts(named?.raw ?? tool.title);

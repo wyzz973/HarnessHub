@@ -17,6 +17,8 @@ import { classifyRemoteFailure, ControlError } from "../../src/infrastructure/co
 import { bindNativeDependencies } from "../../src/adapters/control/native-dependencies.js";
 import { contentId } from "../../src/contracts/content.js";
 import { HUB_PROGRESS_INSTRUCTIONS } from "../../src/contracts/table.js";
+import { sessionEntryOf } from "../../src/contracts/flavor.js";
+import { claudeFlavor } from "../../src/adapters/flavors/claude.js";
 
 const options: ControlOptions = { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: 1500,
   maxFrameBytes: 65536, maxDiagnosticBytes: 1024, closeGraceMs: 150 };
@@ -882,7 +884,9 @@ test("Claude's session requests add the Hub's instructions to Claude Code's own 
   const directory = await mkdtemp(join(tmpdir(), "claude-session-instructions-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
   const launch = { protocol: "acp-v1" as const, executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "claude"], env: { FIXTURE_TRACE: trace } };
   const sent = async () => (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: { _meta?: unknown; prompt?: unknown } });
-  const told = new ClaudeControl(launch, options);
+  // The factory tells the Driver its declaration's entries; built directly here, it is told the same.
+  const declared = { ...options, entry: sessionEntryOf(claudeFlavor) };
+  const told = new ClaudeControl(launch, declared);
   let checkpoint: string | null = null;
   try {
     await told.initialize(); told.setSessionInstructions(HUB_PROGRESS_INSTRUCTIONS);
@@ -891,9 +895,9 @@ test("Claude's session requests add the Hub's instructions to Claude Code's own 
     checkpoint = await told.checkpoint();
   } finally { await told.close(); }
   assert.ok(checkpoint);
-  const resumed = new ClaudeControl(launch, options);
+  const resumed = new ClaudeControl(launch, declared);
   try { await resumed.initialize(); resumed.setSessionInstructions(HUB_PROGRESS_INSTRUCTIONS); await resumed.open(process.cwd(), undefined, undefined, checkpoint); } finally { await resumed.close(); }
-  const cleared = new ClaudeControl(launch, options);
+  const cleared = new ClaudeControl(launch, declared);
   try { await cleared.initialize(); cleared.setSessionInstructions(HUB_PROGRESS_INSTRUCTIONS); cleared.setSessionInstructions(null); await cleared.open(process.cwd()); } finally { await cleared.close(); }
   const requests = await sent(), own = { claudeCode: { options: { promptSuggestions: false } } };
   assert.deepEqual(requests.filter(row => row.method === "session/new" || row.method === "session/resume" || row.method === "session/load").map(row => [row.method, row.params?._meta]),

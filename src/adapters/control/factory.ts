@@ -13,6 +13,7 @@ import { OpenCodeControl, openCodeRelayCapabilities } from "./opencode.js";
 import { ClaudeControl, claudeRelayCapabilities } from "./claude.js";
 import { HermesControl, hermesRelayCapabilities } from "./hermes.js";
 import { flavorOf } from "../flavors/index.js";
+import { sessionEntryOf } from "../../contracts/flavor.js";
 
 /** A JSON object, or null for anything else. */
 function jsonObject(text: string | undefined): Record<string, unknown> | null {
@@ -45,9 +46,13 @@ export function levelEnvironment(harnessId: string, launch: ControlLaunch, optio
   return { ...launch, env };
 }
 
-/** Vendor extensions remain in the adapter layer; Gateway owns only the common control contract. */
+/**
+ * Vendor extensions remain in the adapter layer; Gateway owns only the common control contract. The Driver is told how its Harness takes
+ * the Hub's tools and session instructions (ControlOptions.entry) from the adapter declaration, never from the Harness's name.
+ */
 export async function createNativeControl(harnessId: string, launch: ControlLaunch, options: ControlOptions): Promise<HarnessControl> {
   launch = levelEnvironment(harnessId, await bindNativeDependencies(harnessId, launch), options);
+  options = { ...options, entry: options.entry ?? sessionEntryOf(flavorOf(harnessId)) };
   if (launch.protocol === "pi-rpc") return new PiControl(launch, options);
   if (launch.protocol === "codex-app-server") return new CodexControl(launch, options);
   return harnessId === "openclaw" ? new OpenClawControl(launch, options) : harnessId === "cursor" ? new CursorControl(launch, options)

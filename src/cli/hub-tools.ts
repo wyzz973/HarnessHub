@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { parseArgs } from "node:util";
 import {
-  TABLE_ENV, TABLE_LIMITS, TABLE_MCP_NAME, TABLE_NOT_IN_SESSION, TABLE_PARTS, TABLE_SEARCH_SCOPES, TABLE_TOOLS,
+  TABLE_ENV, TABLE_INSTRUCTIONS_ENV, TABLE_LIMITS, TABLE_MCP_NAME, TABLE_NOT_IN_SESSION, TABLE_PARTS, TABLE_SEARCH_SCOPES, TABLE_TOOLS,
   type TableSearchHit, type TableSearchView, type TableTool, type TableTurnRead, type TableTurnsView,
 } from "../contracts/table.js";
 import { isMainModule } from "./main-module.js";
@@ -26,12 +26,19 @@ const SERVER_VERSION = "1";
 /** The protocol versions this server speaks, newest first; the tools it offers are the same in all of them. */
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 const REQUEST_MS = 30_000, MAX_REPLY_BYTES = 8 * 1024 * 1024;
+/**
+ * What the server's `initialize` says of its tools, for every Harness that reads MCP instructions. How to use the task list and the
+ * wrap-up is the Hub's session instructions, which reach the model through the Harness's own entry (its system prompt, its developer
+ * instructions); only a session whose Harness has none is given them here (TABLE_INSTRUCTIONS_ENV), so that they are never said twice.
+ */
 const INSTRUCTIONS = "HarnessHub keeps the whole history of this conversation. A handoff note you were given is a summary: when it says something was left out, "
   + "or when you need what the user or an earlier Harness said or did, read it back with hub_turns, hub_read_turn and hub_search. "
-  + "HarnessHub also shows the user how your work goes, above the message box: when a task takes several steps, call hub_update_plan with the whole task list "
-  + "when you start and again each time a step starts or finishes (one step in_progress at a time); and at the end of every turn call hub_wrap_up once with two or three sentences "
-  + "of what is now done and what is not, adding one question and one or two short answers as buttons only when the next move is the user's decision. "
-  + "These are for the user to see; they do not replace your reply.";
+  + "hub_update_plan and hub_wrap_up show the user your task list and a short wrap-up above the message box; they do not replace your reply.";
+/** The server's instructions: what its tools are for, and the session instructions this session's process was given for it. */
+export function serverInstructions(env: Readonly<Record<string, string | undefined>>): string {
+  const session = env[TABLE_INSTRUCTIONS_ENV]?.trim();
+  return session ? INSTRUCTIONS + "\n\n" + session : INSTRUCTIONS;
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The tools
@@ -342,7 +349,7 @@ async function answer(message: unknown, env: ToolIo["env"]): Promise<object | nu
     case "initialize": {
       const asked = params.protocolVersion;
       const version = typeof asked === "string" && (PROTOCOL_VERSIONS as readonly string[]).includes(asked) ? asked : PROTOCOL_VERSIONS[0];
-      return ok(id, { protocolVersion: version, capabilities: { tools: {} }, serverInfo: { name: TABLE_MCP_NAME, title: "HarnessHub", version: SERVER_VERSION }, instructions: INSTRUCTIONS });
+      return ok(id, { protocolVersion: version, capabilities: { tools: {} }, serverInfo: { name: TABLE_MCP_NAME, title: "HarnessHub", version: SERVER_VERSION }, instructions: serverInstructions(env) });
     }
     case "ping": return ok(id, {});
     case "tools/list": return ok(id, { tools: TOOLS });

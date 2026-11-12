@@ -112,7 +112,6 @@ export class ClaudeControl extends AcpControl {
   private hubExport = false;
   protected override get product(): string { return "Claude Code"; }
   constructor(private readonly claudeLaunch: ControlLaunch, private readonly claudeOptions: ControlOptions) { super(claudeLaunch, claudeOptions); }
-  protected override get takesSessionTools(): boolean { return true; }
   /**
    * A session claude-agent-acp does not have, refused when the open resumes or loads it (0.99.1 `sessionNotFound`, ACP's
    * resource-not-found -32002, acp-agent.js:2491-2499; a session never prompted cannot be resumed by another process), is
@@ -153,16 +152,13 @@ export class ClaudeControl extends AcpControl {
   }
   // With an image or a file every input is content (startText sends it to Claude Code as it is), whatever the catalog lists.
   override classify(text: string, catalog: NativeModelCatalog | null, attachments: readonly ContentKind[] = []): CommandClass { return claudeNativeClassify(text, catalog, attachments); }
-  private instructions: string | null = null;
   /**
-   * HarnessControl.setSessionInstructions: claude-agent-acp's `_meta.systemPrompt` (0.99.1, acp-agent.js createSession, which
-   * session/new, session/load, session/resume and session/fork all reach): an object keeps Claude Code's own preset and adds its
-   * `append`. Not ACP's `systemPrompt` field, which this adapter takes only to override (SYSTEM_PROMPT_CAPABILITY).
+   * claude-agent-acp's per-session options. The session instructions go next to them as `_meta.systemPrompt` (flavors/claude.ts
+   * `acp-meta`; 0.99.1 acp-agent.js createSession, which session/new, session/load, session/resume and session/fork all reach): an
+   * object keeps Claude Code's own preset and adds its `append`. Not ACP's `systemPrompt` field, which this adapter takes only to
+   * override (SYSTEM_PROMPT_CAPABILITY).
    */
-  setSessionInstructions(text: string | null): void { this.instructions = text; }
-  protected override get sessionMeta(): Readonly<Record<string, unknown>> {
-    return this.instructions === null ? SESSION_META : { ...SESSION_META, systemPrompt: { append: this.instructions } };
-  }
+  protected override get sessionMeta(): Readonly<Record<string, unknown>> { return SESSION_META; }
   protected override extensionNotification(method: string, params: Readonly<Record<string, unknown>>): boolean {
     if (method !== AUTH_STATUS) return false;
     const status = params.authStatus, kind = typeof status === "object" && status !== null && "kind" in status ? status.kind : undefined;

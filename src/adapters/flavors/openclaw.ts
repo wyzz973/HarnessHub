@@ -26,5 +26,7 @@ export const openclawFlavor: HarnessFlavor = {
   effort: { option: { ids: ["thought_level"], category: "thought_level" }, values: { off: ["off"], low: ["low", "minimal"], medium: ["medium"], high: ["high"], max: ["max", "xhigh"] } },
   asks: { read: false, edit: false, execute: true, note: "只问执行审批，改文件从不来问" },
   nativePlan: false,
-  capabilities: { sessionMcp: "none", resume: "native", attachments: "native", usage: "turn" },
+  // docs/cli/acp.md: the bridge rejects per-session `mcpServers` (dist/server-*.mjs assertSupportedSessionSetup); sessions.patch has no
+  // tool or prompt field (SessionsPatchMutationProperties), and a prompt's `_meta` takes only prefixCwd, thinking, deliver and timeoutMs.
+  capabilities: { sessionMcp: "none", systemPrompt: "none", planTool: "none", resume: "native", attachments: "native", usage: "turn" },
 };

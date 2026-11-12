@@ -2,7 +2,7 @@ import type { ControlProtocol } from "../contexts/catalog/domain/discovery.js";
 import type { ResolvedCommand } from "../contexts/catalog/domain/catalog.js";
 import type { ContentKind, ContentRef, ControlAttachment } from "./content.js";
 import type { RelayCapabilities, RelayPacketId, TurnText } from "./relay.js";
-import type { HarnessFlavor } from "./flavor.js";
+import type { HarnessFlavor, SessionEntry } from "./flavor.js";
 import type { PermissionLevel } from "./protocol.js";
 export type { TurnText };
 
@@ -60,6 +60,12 @@ export interface ControlOptions {
    * chosen, and the Harness's own setting stands. A level change starts a new process (the selection differs), so this is fixed per process.
    */
   readonly permission?: PermissionLevel;
+  /**
+   * How the Hub's own tools and its session instructions reach this Harness's sessions (its adapter declaration's capabilities,
+   * contracts/flavor.ts sessionEntryOf), set by the factory: the Driver hands them over through these entries and no other. Absent:
+   * neither, and the Harness has only what its own configuration holds.
+   */
+  readonly entry?: SessionEntry;
 }
 export interface ProtocolObservation {
   readonly protocol: ControlProtocol;
@@ -300,13 +306,15 @@ export interface ControlRun {
 export interface HarnessControl {
   /**
    * The Driver hands the Hub's own tools (the context table, TABLE_MCP_NAME) to every native session it opens or restores, with this
-   * process's address and token (ACP `mcpServers`), so they work without anything written into the user's configuration. Absent: false.
+   * process's address and token, through the entry its declaration names (ControlOptions.entry: ACP `mcpServers`, Codex's thread
+   * `config`), so they work without anything written into the user's configuration. Absent: false.
    */
   readonly sessionTools?: boolean;
   /**
-   * Text the Driver adds to the system prompt of the native sessions it opens or restores from now on (null: nothing), through
-   * its Harness's own session-level entry (Claude Code: `_meta.systemPrompt.append`; Codex: `developerInstructions`, after the
-   * user's own). Never part of a message. Absent: this Harness has no such entry.
+   * Text the Driver gives the model of the native sessions it opens or restores from now on (null: nothing), through the entry its
+   * declaration names (ControlOptions.entry.instructions: Claude Code's `_meta.systemPrompt.append`, Codex's `developerInstructions`
+   * after the user's own, the Hub's MCP server's instructions, or a block after the first prompt of a new session). Never part of the
+   * user's words as the Hub keeps them. Absent: this Driver has no such entry.
    */
   setSessionInstructions?(text: string | null): void;
   /**

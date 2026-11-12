@@ -35,5 +35,8 @@ export const dshFlavor: HarnessFlavor = {
   effort: { option: { ids: ["reasoning_effort"], category: "thought_level" }, values: { off: ["off"], low: ["low"], high: ["high"], max: ["max"] } },
   asks: { read: false, edit: true, execute: true, note: "只在越出沙箱写文件时来问" },
   nativePlan: false,
-  capabilities: { sessionMcp: "config", resume: "native", attachments: "native", usage: "context" },
+  // dsh-acp 0.2.1-rc.5 mountAcpMcpServers: ACP `mcpServers` (stdio with an absolute command, or HTTP) are Agent-scoped MCP clients of that
+  // session, on new and resume; dsh-mcp-client registerServerContext puts each server's instructions into the system prompt (section
+  // `mcp:<name>`). No other per-session system prompt entry (dsh-system-prompt and dsh-agent-instructions read files and the profile).
+  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", resume: "native", attachments: "native", usage: "context" },
 };

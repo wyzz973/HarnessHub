@@ -14,5 +14,7 @@ export const codexFlavor: HarnessFlavor = {
   effort: { option: { ids: ["reasoning_effort"], category: "thought_level" }, values: {} },
   asks: { read: false, edit: true, execute: true },
   nativePlan: true,
-  capabilities: { sessionMcp: "config", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native" },
+  // app-server 0.166.0 ThreadStartParams / ThreadResumeParams: `config` (dotted overrides of this thread alone, as `-c`) carries
+  // `mcp_servers.harnesshub` (stdio, `env_vars` forwarded, default_tools_approval_mode "approve"); `developerInstructions` the instructions.
+  capabilities: { sessionMcp: "thread-config", systemPrompt: "developer-instructions", planTool: "hub", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native" },
 };
