@@ -1,6 +1,6 @@
 # 接力真机走查：Claude Code 与 Codex（2026-11-11）
 
-**证据等级**：真机。真实的 Claude Code 2.1.316（npm，经 claude-agent-acp 0.99.1，模型 haiku）与 Codex 0.166.0，本机原安装与登录，经 Hub 的正式 Runtime（`application()`，真实 SQLite），默认设置（默认放行）。代码 `e9a32a5`，另加本记录同一提交里对走查脚本的改动。数据在私有临时目录，跑完即删；没有碰 4317 与它的数据。只有这一对 Harness、各一趟；OpenCode、DeepSeek Harness、Hermes、OpenClaw 没有走。
+**证据等级**：真机。真实的 Claude Code 2.1.316（npm，经 claude-agent-acp 0.99.1，模型 haiku）与 Codex 0.166.0，本机原安装与登录，经 Hub 的正式 Runtime（`application()`，真实 SQLite），默认设置（默认放行）。代码 `e994654`，另加本记录同一提交里对走查脚本的改动。数据在私有临时目录，跑完即删；没有碰 4317 与它的数据。只有这一对 Harness、各一趟；OpenCode、DeepSeek Harness、Hermes、OpenClaw 没有走。
 
 脚本：`tests/real/relay-conformance.real.ts`，`HH_REAL_HARNESSES=claude,codex HH_REAL_MODEL_CLAUDE=haiku`，长走查另加 `HH_REAL_RELAY_WALK=1`。每一步的“接力内部”来自脚本新加的逐步记录（决定、核对、实时证据、送达行、各绑定的状态、耗时），只记状态与结论，不记正文。
 
@@ -37,7 +37,7 @@
 
 其他四家；没有实时确认的 Harness 上“送达不明”是否出现、出现多频繁；长对话与大交接单；带工具调用与文件改动的回合；Hub 重启后的恢复；界面（这次走的是 Runtime，不是浏览器）。第 9 步只看到“没有答出数字”，回复的正文没有记录。
 
-## 瘦身之后再走（同日，代码 `3ba4a70`）
+## 瘦身之后再走（同日，代码 `9ae9139`）
 
 接力做完减法（见 [slim.md](../proposals/relay/slim.md)：没有事后核对、没有待核状态、清空由 Hub 接管、交接单只放事实）之后，同样的 9 步两个方向各走一趟，都通过，没有失败的回合。每趟前后配置守护一致。
 

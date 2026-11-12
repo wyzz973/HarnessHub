@@ -1,6 +1,6 @@
 # ADR-057：有序条目落盘，对话存储改成表（v14），去掉所有内容上限
 
-状态：proposed，2026-11-12（第三稿）。取代初稿 dee209e 与第二稿 2b3dda7。依据：所有者的决定“全部转向新协议，每个对话不设置上限，学习t3code，包括其他功能都不要设置限制，不要局限功能”；[统一协议设计稿](../proposals/protocol/hub-protocol.html)；[显示层审计](../research/hub-display-audit-2026-11-12.md)；[T3 Code 调研](../research/t3code-protocol-ui-2026-11-12.md)加对其存储的补读（`b883156`，只读，出处写作“文件:行”，相对 T3 仓库）；[独立审查](../research/store-review-2026-11-12.md)（M1–M9、I1–I13，全部采纳，落点见第六节）；[上限清点](../research/limits-audit-2026-11-12.md)（编号 A/D 指它）。按 AGENTS.md，改持久格式与“会不会丢内容”的逻辑，每段上线末做一轮独立审查。实施顺序与任务见 [step2-plan](../proposals/protocol/step2-plan.md)；类型在 `src/contracts/conversation.ts`，表的 SQL 在 `src/infrastructure/session/schema-v14.ts`（`tests/integration/schema-v14.test.ts` 在真库上断言）。
+状态：proposed，2026-11-12（第三稿）。取代初稿 fa28011 与第二稿 f3ff0d3。依据：所有者的决定“全部转向新协议，每个对话不设置上限，学习t3code，包括其他功能都不要设置限制，不要局限功能”；[统一协议设计稿](../proposals/protocol/hub-protocol.html)；[显示层审计](../research/hub-display-audit-2026-11-12.md)；[T3 Code 调研](../research/t3code-protocol-ui-2026-11-12.md)加对其存储的补读（`b883156`，只读，出处写作“文件:行”，相对 T3 仓库）；[独立审查](../research/store-review-2026-11-12.md)（M1–M9、I1–I13，全部采纳，落点见第六节）；[上限清点](../research/limits-audit-2026-11-12.md)（编号 A/D 指它）。按 AGENTS.md，改持久格式与“会不会丢内容”的逻辑，每段上线末做一轮独立审查。实施顺序与任务见 [step2-plan](../proposals/protocol/step2-plan.md)；类型在 `src/contracts/conversation.ts`，表的 SQL 在 `src/infrastructure/session/schema-v14.ts`（`tests/integration/schema-v14.test.ts` 在真库上断言）。
 
 ## 一、决定了什么
 

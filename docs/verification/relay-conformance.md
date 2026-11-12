@@ -15,7 +15,7 @@ trust_level = "trusted"
 
 ## 环境
 
-- **代码**：基点 `cd542d2`；探针脚本 [tests/real/relay-conformance.real.ts](../../tests/real/relay-conformance.real.ts) 在运行时还没有提交（证据头 `uncommittedChanges: true`，`commit: cd542d2`），随后提交为 `67aecd1`（分支 `cc/relay-probe`），本记录在它之后单独提交。没有改 `src/**`。运行用的是 `pnpm build` 之后的 `dist/`；证据文件头里的 `script` 是编译产物的 sha256 前 16 位，脚本在两遍之间有改动（见“做法”），所以同一家的不同遍可能对应不同的 `script`。
+- **代码**：基点 `8029cfa`；探针脚本 [tests/real/relay-conformance.real.ts](../../tests/real/relay-conformance.real.ts) 在运行时还没有提交（证据头 `uncommittedChanges: true`，`commit: 8029cfa`），随后提交为 `ed7c44c`（分支 `cc/relay-probe`），本记录在它之后单独提交。没有改 `src/**`。运行用的是 `pnpm build` 之后的 `dist/`；证据文件头里的 `script` 是编译产物的 sha256 前 16 位，脚本在两遍之间有改动（见“做法”），所以同一家的不同遍可能对应不同的 `script`。
 - **系统与工具**：macOS 27.0.1，Node 26.13.0（nvm），pnpm 10.12.3。
 - **安装**（证据头 `installations`，策略 `official`，入口都来自 `path`）：
   - Claude Code 2.1.316（npm 全局，nvm v26.13.0）与适配器 claude-agent-acp 0.99.1；
@@ -304,7 +304,7 @@ haiku 作为 A 在点名题上答对了；它在间接问法上答成自己的�
 - 每个探针一次运行、一段对话：READ 的间接问法每家 1–2 次独立基线，不是统计；LATE 只测了两个取消时机；P11 对 Codex（400 回合）与 OpenClaw（200 条）没有造长度。
 - 没有测：Claude 的计划模式“清空上下文继续”（没有信号，契约缺口）、`/model X` → `/clear` → 仍为 X（Q22，Driver 的合成清空已不经 CLI）、压缩证据、`cacheTtl`、`placement.maxInput`（除 Codex 的发送前拒绝）。
 - DeepSeek Harness 的原生历史读不到，P1、P13、LATE、P16 的“逐字”只能是模型自述或未验证。
-- 证据文件头里的 `commit` 是基点 `cd542d2`，`uncommittedChanges: true`（脚本当时未提交）。
+- 证据文件头里的 `commit` 是基点 `8029cfa`，`uncommittedChanges: true`（脚本当时未提交）。
 - 脚本自测：`HH_REAL_PROBE_PEER=1` 在合成 peer 上六家都跑过一遍没有 `error` 判定，那只证明脚本本身能跑，不是证据。
 
 ## 复跑

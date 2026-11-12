@@ -1,6 +1,6 @@
 # HarnessHub 显示层审计：公共契约、六家 Driver 映射、前端渲染（只读）
 
-审计日期 2026-11-11。仓库 `~/Desktop/project/HarnessHub/.claude/worktrees/relay-stage2-7cb3e9`，分支 `claude/relay-stage2-7cb3e9`，HEAD `5d4c432`。下文路径均相对该仓库根。
+审计日期 2026-11-11。仓库 `~/Desktop/project/HarnessHub/.claude/worktrees/relay-stage2-7cb3e9`，分支 `claude/relay-stage2-7cb3e9`，HEAD `771df60`。下文路径均相对该仓库根。
 
 ## 0. 范围、方法与证据标记
 

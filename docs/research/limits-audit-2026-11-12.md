@@ -1,7 +1,7 @@
 # 上限、预算、配额与拒绝条件清点（只读）
 
 清点日期 2026-11-12。仓库 `~/Desktop/project/HarnessHub/.claude/worktrees/relay-stage2-7cb3e9`，分支 `claude/relay-stage2-7cb3e9`。
-清点途中别的会话把协议第 1 步合进了这个分支（HEAD 从 `790761a` 走到 `467dd62`；之后到 `8edc426` 只改了两份文档，源码没变），所以**文中的文件:行号一律以 `467dd62` 为准**，新增的协议代码（`src/contexts/session/domain/protocol/*`、`src/web/protocol-view.ts`、`web/src/lib/protocol/*`）也一并清点了。路径除特别说明外都相对仓库根。
+清点途中别的会话把协议第 1 步合进了这个分支（HEAD 从 `f11ef31` 走到 `ec07c6c`；之后到 `f3ff0d3` 只改了两份文档，源码没变），所以**文中的文件:行号一律以 `ec07c6c` 为准**，新增的协议代码（`src/contexts/session/domain/protocol/*`、`src/web/protocol-view.ts`、`web/src/lib/protocol/*`）也一并清点了。路径除特别说明外都相对仓库根。
 
 ## 0 怎么查的、没查什么、证据标记
 
@@ -156,7 +156,7 @@
 | D18 | 诊断收集：每回合 stderr 4096 字节、只留最近 64 个回合；诊断文本 ≤64 KiB | `runtime.ts:159,673`；`src/web/run-diagnostics.ts:5` | 截断 | 仅诊断，不是用户内容 | 保留 |
 | D19 | 原生目录缓存：24 小时 TTL、文件 ≤4 MiB、≤32 个目录 / 128 就绪项 / 512 个探测会话 | `src/web/native-catalog-cache.ts:14-18` | 淘汰旧项 | 缓存膨胀 | 保留 |
 | D20 | 内存索引：`busyHolders` 256 条、relay 决定缓存 64 个对话 | `runtime.ts:1072`；`src/web/relay-routes.ts:97` | 淘汰最旧 | 内存涨 | 保留（只是索引，不碰用户内容） |
-| D21 | **落盘校验里的字段长度界（字节），与上游按字符数截断不一致**：工具标题 4096 字节、工具 id 512、通知标题 1024 / 详情 4096、活动标题 1024、计划步 4096、模型 1024 字符等；而驱动用 `label()` / `line()` 按 **UTF-16 单位** 切到 4096（`acp.ts:63-67`、`codex.ts:90`），Runtime 在把工具标题交给 `commit` 前**不再夹一次**（`runtime.ts:1318`） | `state.ts:136-152,210-214`；`acp.ts:63-67,887`；`codex.ts:90`；`runtime.ts:1318` | 一个超过 4096 **字节**的工具标题（例如含多字节字符的长命令）→ `parseSession` 抛 `INVALID_DATA`；`INVALID_DATA` 不在“预期失败”名单（`runtime.ts:163`），`commit` 的 catch 调 `this.fail`（`runtime.ts:957`）→ **整个 Runtime fatal**【码：路径读通，未复现】 | 校验若不拒绝，坏数据会落盘 | **写入方按字节夹住再提交；外来文本只截断不拒绝**（ADR-057 初稿 `dee209e` 第 6 节写过这个原则；重写后的 ADR 和 step2-plan 里没有，搜“夹住、外来、致命、fatal”无命中）。这是“限制去不掉的那种护栏”：校验器要保留，但不能把外来数据当成可以拒绝的输入 |
+| D21 | **落盘校验里的字段长度界（字节），与上游按字符数截断不一致**：工具标题 4096 字节、工具 id 512、通知标题 1024 / 详情 4096、活动标题 1024、计划步 4096、模型 1024 字符等；而驱动用 `label()` / `line()` 按 **UTF-16 单位** 切到 4096（`acp.ts:63-67`、`codex.ts:90`），Runtime 在把工具标题交给 `commit` 前**不再夹一次**（`runtime.ts:1318`） | `state.ts:136-152,210-214`；`acp.ts:63-67,887`；`codex.ts:90`；`runtime.ts:1318` | 一个超过 4096 **字节**的工具标题（例如含多字节字符的长命令）→ `parseSession` 抛 `INVALID_DATA`；`INVALID_DATA` 不在“预期失败”名单（`runtime.ts:163`），`commit` 的 catch 调 `this.fail`（`runtime.ts:957`）→ **整个 Runtime fatal**【码：路径读通，未复现】 | 校验若不拒绝，坏数据会落盘 | **写入方按字节夹住再提交；外来文本只截断不拒绝**（ADR-057 初稿 `fa28011` 第 6 节写过这个原则；重写后的 ADR 和 step2-plan 里没有，搜“夹住、外来、致命、fatal”无命中）。这是“限制去不掉的那种护栏”：校验器要保留，但不能把外来数据当成可以拒绝的输入 |
 | D22 | 页面内存与浏览器存储：详情缓存 400 条（`web/src/lib/turn.ts:342`）、已显示回合记录 500（`:371`）、侧栏项目展开状态 ≤200 项 / 64 KiB（`web/src/components/Sidebar.tsx:98,106`）、草稿 sessionStorage ≤256 KiB（`web/src/App.tsx:82,542`，A35）、页面读响应 ≤16 MiB（`web/src/api.ts:913`） | 同左 | 淘汰最旧；草稿存不下时提示 | 页面内存涨、浏览器存储写失败 | 保留（只是页面本地缓存，不碰服务端内容）；详情缓存 400 随条目表消失 |
 | D23 | 接口入参的字段长度：目录 ≤4096 字节、名称 64 / Harness 与控制标识 96 / 命令 id 128、原生会话 id ≤1024、子 Agent 描述 ≤8192 与提示 ≤64 KiB（接口）。**子 Agent 提示在能力层另有 32 KiB 的界（`SUBAGENT_PROMPT_BYTES`）**，两处口径不一致：32–64 KiB 的提示过得了接口、过不了能力层 | `src/web/server.ts:126-131,147,612,647,1008`；`src/infrastructure/capabilities/subagent-definitions.ts:16` | 400 `INVALID_INPUT` / 能力层拒绝 | 校验是入参形状护栏 | 保留；子 Agent 提示两处口径对齐（跟随能力层，调大） |
 | D24 | Driver 里的节流与重试：审批提前量 `APPROVAL_DEADLINE_MARGIN_MS` = 2 s（对方宣告的审批期限提前这么多结算）；Codex 中断重试 `INTERRUPT_RETRY_MS` = 250 ms；Hermes 导出 5 s / 8 MiB；Pi 探测 150 ms；一次性原生命令行（`nativeCommand`）单次期限 = 请求期限 10 s、输出 ≤16 MiB（超了 `REQUEST_TIMEOUT` / `OUTPUT_LIMIT`） | `acp.ts:44`；`codex.ts:84`；`hermes.ts:38`；`pi.ts:70`；`src/infrastructure/control/native-command.ts:13-16` | 超时/超限即该次调用失败 | 卡住的子进程 | 保留；一次性命令的 10 s 对慢命令偏短，可按命令设 |
@@ -244,7 +244,7 @@
 - **建议**：个数去掉，字节上限调到 T3 量级；大图改走文件路径；服务端流式上传已经是（`stage` 流式写盘），不需要改。
 
 
-### 3.9 对 ADR-057 第 3.7 节的核对（`docs/decisions/0057-ordered-turn-items.md`，集成分支 `8edc426`）
+### 3.9 对 ADR-057 第 3.7 节的核对（`docs/decisions/0057-ordered-turn-items.md`，集成分支 `f3ff0d3`）
 
 我把 3.7 的每一行对到本清单的出处与行为，**覆盖到的都与代码一致**（A01–A09 的 Hub 级部分、A11–A16、A28 的常量、A29、A31 的响应界、relay 的 seq/回合界与 64 MiB；事件三个上限在 3.5）。下面是**没覆盖**和**需要改口径**的部分。
 
@@ -274,7 +274,7 @@
 | D01、D02–D07、D21–D24 | HTTP 入口的超时与并发、登录 8 小时、驱动连接期限（10 s 断连）、握手期限、关闭宽限、待决创建、字节/字符口径不一致、页面内存界、入参字段界、Driver 节流 | 都是“保留需写理由”的护栏，3.7 没逐项 |
 | D08–D20 | 宿主 TMPDIR 清空、内容库回收期、迁移备份留 2 份、管家下载界、能力读写界、Provider 探测、发现、CLI 缓冲、诊断、目录缓存 | 同上 |
 
-**三、一个可以直接补进 3.7 的说明**：A04、A05、A09 的撞墙后果（回合结尾那次提交被拒、或分支超界，会走 `fail()`，整个 Runtime fatal）只有 `docs/proposals/relay/round1/r4-internal-baseline.md:429`（D17）作为“推断”记过；ADR-057 初稿（`dee209e`）只写了“上限类错误只让提交失败”，重写后的 ADR 和 step2-plan 都没提。第一段上线前如果旧库里已有逼近上限的对话，这条路径仍然存在（`runtime.ts:1982`、`:578`），见 6 的止血项。
+**三、一个可以直接补进 3.7 的说明**：A04、A05、A09 的撞墙后果（回合结尾那次提交被拒、或分支超界，会走 `fail()`，整个 Runtime fatal）只有 `docs/proposals/relay/round1/r4-internal-baseline.md:429`（D17）作为“推断”记过；ADR-057 初稿（`fa28011`）只写了“上限类错误只让提交失败”，重写后的 ADR 和 step2-plan 都没提。第一段上线前如果旧库里已有逼近上限的对话，这条路径仍然存在（`runtime.ts:1982`、`:578`），见 6 的止血项。
 
 ## 4 对照 T3 Code
 
@@ -347,5 +347,5 @@ T3 里**最值得照抄的五条**：① 超长输入折成附件而不是拒绝
 - T3 部分用 `grep` 搜过，“没找到”不是证明；T3 的适配器文件很大（`ClaudeAdapterV2.ts` 一万多行），只读了与时间、并发、上限有关的片段。
 - 常量个数是估计：名字匹配约 160 个，数字常量约 600 个，其中大部分不是限制。**本清单的“项”是一行一条规则或一组同源常量**，不是常量个数。
 - 冻结的适配器（Pi、Cursor、Gemini）只看了与对话路径有关的几个界（D07 的审批 32、A23 的 Pi 期限）；`src/cli/` 里除 web、chat、sessions、hub-tools、control 外的入口没读；页面里的动效与轮询节奏常量（`App.tsx:144-146`、`use-relay.ts:7-9`、`Approval.tsx:91` 等）不是限制，没列。
-- 行号以 `467dd62` 为准；到 `8edc426` 为止源码没有再变（只改了两份文档），之后别的会话再合并可能让行号漂移。
+- 行号以 `ec07c6c` 为准；到 `f3ff0d3` 为止源码没有再变（只改了两份文档），之后别的会话再合并可能让行号漂移。
 

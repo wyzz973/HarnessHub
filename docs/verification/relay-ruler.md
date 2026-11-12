@@ -102,7 +102,7 @@ RUN HH_REAL_TABLE=1 HH_REAL_HARNESSES=claude,codex HH_REAL_MODEL_CLAUDE=haiku HH
 
 **2026-11-11 真机**。真实的 Claude Code（模型 haiku）与 Codex（默认模型，`reasoning_effort` low），本机原安装与登录。每格一遍，两个方向各一格。证据在 `~/.cache/harnesshub-acceptance/evidence/2026-11-11-ruler/`（`ruler-baseline.json`、`ruler-table.json`）。每趟前后配置守护一致。
 
-基线（代码 `1b8ad08`，没有桌子，36 条真实提示）：
+基线（代码 `0287228`，没有桌子，36 条真实提示）：
 
 | 任务 | 全程一家 | 换家（交接单） | 换家且不给交接单 |
 |---|---|---|---|
@@ -110,7 +110,7 @@ RUN HH_REAL_TABLE=1 HH_REAL_HARNESSES=claude,codex HH_REAL_MODEL_CLAUDE=haiku HH
 | booking：按上一家的结论修根因 | 2/2 | 2/2 | 2/2 |
 | worker：问完整输出里的细节 | 2/2 | 0/2（答不上） | 0/2 |
 
-带桌子（代码 `895f210`，`HH_REAL_TABLE=1`，工具经管家装进两家的用户级配置，只跑换家，12 条真实提示）：
+带桌子（代码 `b5202a1`，`HH_REAL_TABLE=1`，工具经管家装进两家的用户级配置，只跑换家，12 条真实提示）：
 
 | 任务 | 路线 | 结果 | 第 2 步调用 Hub 工具 | 交接单 token |
 |---|---|---|---|---|

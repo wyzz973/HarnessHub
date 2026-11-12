@@ -2,9 +2,9 @@
 
 > **2026-11-11 起已过时。** 接力做了大幅减法：现状以 [slim.md](slim.md) 与代码为准；本文描述的事后核对、待核状态、同意与厂商识别、探针门控、严格设置、多档交接单等机制大多已删除，只作历史参考。
 
-**依据与证据等级**：只读 `cd542d2` 的 AGENTS.md、ADR-055、终稿第 6.2、7、8.1、9、10.1、10.4、12 节、`stage3-workstreams.md`、`delivery.ts`、`relay-coordinator.ts`、`contracts/relay.ts`、`relay-tables.ts`、`invariants.md` 与六家 Driver 的声明。没有运行测试或 Harness，没有读工作区未提交的改动。以下是设计裁定，不是实现或验证结论。
+**依据与证据等级**：只读 `8029cfa` 的 AGENTS.md、ADR-055、终稿第 6.2、7、8.1、9、10.1、10.4、12 节、`stage3-workstreams.md`、`delivery.ts`、`relay-coordinator.ts`、`contracts/relay.ts`、`relay-tables.ts`、`invariants.md` 与六家 Driver 的声明。没有运行测试或 Harness，没有读工作区未提交的改动。以下是设计裁定，不是实现或验证结论。
 
-**一处要告知**：我把 `cd542d2` 的五个文件导出到了共享 scratchpad（`delivery.ts`、`coord.ts`、`adr.md`、`arch.md`、`contracts-relay.ts`）。那个目录里已有别的代理的文件；如果它原先有同名文件，现在已被 `cd542d2` 的版本覆盖。仓库内没有改动。
+**一处要告知**：我把 `8029cfa` 的五个文件导出到了共享 scratchpad（`delivery.ts`、`coord.ts`、`adr.md`、`arch.md`、`contracts-relay.ts`）。那个目录里已有别的代理的文件；如果它原先有同名文件，现在已被 `8029cfa` 的版本覆盖。仓库内没有改动。
 
 ## 0. 三条总规则
 
@@ -15,7 +15,7 @@
    - **策略单发**：事件 `alone`（n），绑定状态逐字节不变。
 3. **用户显式选过的不被策略改写。** 请求带 `relay.attach:"full"`、`resend`、`clearConfirmed`、`native`、`tier` 时按用户的来；显式要“附上”而附不了，仍让 Run 失败、草稿保留。
 
-新增一个模式开关 `relay.whenUnsure ∈ {auto（默认）, ask}`。`ask` 等于 `cd542d2` 的现行行为，现有测试在 `ask` 下应原样通过。
+新增一个模式开关 `relay.whenUnsure ∈ {auto（默认）, ask}`。`ask` 等于 `8029cfa` 的现行行为，现有测试在 `ask` 下应原样通过。
 
 ## 1. 默认行为总表（`relay.whenUnsure=auto`）
 
@@ -160,7 +160,7 @@
 - **P6 不按消息重复**：从任意可达状态起，连续 K=20 条内容输入、其间没有别的事件、结果全 unknown、核对全 unavailable，策略送达行至多 2 行。
 - **P7**：无证据能力的声明下，`by:"auto"` 的行数为 0；`by:"grown"` 在 top 不变时被拒。
 - **P8 留痕**：每个跨厂商的送达行 `consentLogSeq≠null`，且该日志行的 seq 不晚于它的 `run.context_prepared`；厂商最新一行为 revoke 时没有送达行。
-- **P9 严格模式等价**：四个严格取值全开时，`cd542d2` 的现有用例原样通过。
+- **P9 严格模式等价**：四个严格取值全开时，`8029cfa` 的现有用例原样通过。
 - **P10 显式选择优先**：带 `attach:"full"` 或 `resend` 而无法携带时 Run 失败，不被改成单发。
 - **P11 如实**：策略单发的 Run 的 `continuity` 与分隔线不出现“已接手”。
 

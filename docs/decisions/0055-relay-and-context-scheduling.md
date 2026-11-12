@@ -372,7 +372,7 @@ G068 阶段一的独立审查提出 F1–F13 与一个 packetId 重合的疑问�
 - `plan/tasks.json` 的验收写“4 × 13 格”，终稿第 7.2 节的属性写“4 种状态 × 14 种事件”，本实现按 14 种（g、h、i 分开）。
 - 崩溃注入的 K 表在 RT2 第 2 节，不在终稿第 16 节。
 - C10 的“配置承接读 input≠not_recorded 的最后一个已派发 Run”属于 `state.ts` 的 `carriedNativeConfiguration`（G004），现码不看 input；C10 只证实合成清空后模型能承接，没有改它。
-- 计划文件：主负责人的 `3bf4d01` 把 `delivery.ts`、`recover.ts` 登记进 `plan/slices.json` 的 relay 切片、把 `plan/tasks.json` 的 G068 置为 in_progress，并重新生成 `TASKS.md`；用例状态仍是 planned。本任务自己没有改 `plan/` 与生成视图。`check:design` 现在通过。
+- 计划文件：主负责人的 `f5ec0c3` 把 `delivery.ts`、`recover.ts` 登记进 `plan/slices.json` 的 relay 切片、把 `plan/tasks.json` 的 G068 置为 in_progress，并重新生成 `TASKS.md`；用例状态仍是 planned。本任务自己没有改 `plan/` 与生成视图。`check:design` 现在通过。
 - 契约 `src/contracts/relay.ts` 改了四处（`CARRIED_CAUSES` 与 pending prior 不带 carried，`EVIDENCE_CLASSES` 加 `choice` 与 `DELIVERY_EVIDENCE`，2026-11-10 的 `suspect.rewound`），`migrate.ts` 的两处 legacy suspect 写 `rewound: false`；G066 的 `tests/unit/relay-contract.test.ts` 与 `tests/performance/relay-store.test.ts` 的最长合法值（1,879 B）与有效 / 无效样例随之更新（合法行为变更）。
 
 **给阶段二的接缝建议**（结算处调用什么、哪些事件由谁在哪里产生）：
@@ -445,9 +445,9 @@ G068 阶段一的独立审查提出 F1–F13 与一个 packetId 重合的疑问�
 
 **经既有所有者修改的文件**：`src/contracts/control.ts`（G007）；`src/contracts/relay.ts`（G066，只改 `classify` 的类型）；`src/adapters/control/acp.ts`、`claude.ts`、`opencode.ts`、`hermes.ts`、`openclaw.ts`、`factory.ts`（G032）；`src/adapters/control/codex.ts`（G034）；`src/web/native-catalog-cache.ts`（G050）；`docs/contracts/switching.md`（C006，`classify` 签名与成员名）；ADR-033 的“影响”补一行。`hermes-gateway.ts`、`binding-factory.ts` 没有动。两个新源文件属 G069 的 `owns`，但 `plan/slices.json` 的 relay 切片 `allowed_files` 还没有列它们，`python3 tools/check_design.py` 因此报“application source outside approved slice”两行，由主负责人集成时登记；`plan/` 下 G069 的用例状态仍是 planned，声明一致性与对照用例 G069-D01–D04 没有计划条目。
 
-### 审批代理的决定（2026-11-10，G068 / G069 阶段二，对提交 `db39cbd`）
+### 审批代理的决定（2026-11-10，G068 / G069 阶段二，对提交 `4c19443`）
 
-依据是只读阅读本 ADR、终稿第 6.1、7、8.1、9、10.4、12 节与 `db39cbd` 的代码；审批代理没有运行测试或 Harness。此前三节决定没有被推翻；被改动的只有终稿第 6.1 节“E1 不单独提交”一句（A14）。
+依据是只读阅读本 ADR、终稿第 6.1、7、8.1、9、10.4、12 节与 `4c19443` 的代码；审批代理没有运行测试或 Harness。此前三节决定没有被推翻；被改动的只有终稿第 6.1 节“E1 不单独提交”一句（A14）。
 
 **G072 开工前必须先修**：
 - **Driver 丢包后水位仍推进**（B4b）：带包回合的原话被读作命令时 Driver 只发原话、丢掉交接单，结果不带 `input`，`successProvesRecorded=true` 的三家（Claude Code、OpenCode、Hermes）会把没发出的包记成 E3。改为拒绝整个 Turn：`failed`、`input: not_recorded`、原因 `classification_changed`，什么都不发。
@@ -496,7 +496,7 @@ G068 阶段一的独立审查提出 F1–F13 与一个 packetId 重合的疑问�
 
 ### G068、G069（阶段二）：送达状态机接进运行时，六家 Driver 的协议行为（2026-11-10）
 
-证据等级：代码完成、合成测试通过；没有运行任何真实 Harness，六家 `probed` 仍为 false。证据见[验证记录](../verification/relay-stage2-2026-11-10.md)。提交：`89cc2f6`（接缝）、`db39cbd`（实现）、`d20bfc1`（第一轮审查后的修正）与其后的第二批修正。
+证据等级：代码完成、合成测试通过；没有运行任何真实 Harness，六家 `probed` 仍为 false。证据见[验证记录](../verification/relay-stage2-2026-11-10.md)。提交：`9128a19`（接缝）、`4c19443`（实现）、`f44beb9`（第一轮审查后的修正）与其后的第二批修正。
 
 **做法**：
 - **接缝**（`src/contracts/control.ts`，经 G007）：`startText` 收 `TurnText`，默认拼法 `singleText`；`deliveryPosition`、`verifyDelivered(id, VerifyRequest)`、`relayVendor`、`userTextOf`、`setTitle`；`ControlEvent` 的 `input_recorded`；`BackendResult.native`（`replaced.checkpoint` 可为 null：旧原生会话已放弃，下一回合新开）；`NativeUsage.requests`。核对的契约：超时与失败只回 unavailable，约 2 秒内，不得弄坏连接、不得改变已结束回合的结果；`historyEmpty` 读全且为空才给 true，见到条目即 false；`markers` 可以为空（只问 `historyEmpty`）。
@@ -532,7 +532,7 @@ G068 阶段一的独立审查提出 F1–F13 与一个 packetId 重合的疑问�
 
 ### G072、默认放行与 G073（阶段三）：谁能接力、默认不拦、界面与 API（2026-11-10 至 11-11）
 
-证据等级：代码完成、合成测试通过，另有真实网关加真实构建的页面加夹具 Harness 的浏览器端到端走查（默认与严格设置各一）。真机只有 Driver 层探针（Claude Code、Codex、OpenCode、DeepSeek Harness 四家，见[探针记录](../verification/relay-conformance.md)）；经 Hub 的完整接力没有在真实 Harness 上跑过；六家 `probed` 仍为 false。证据见[验证记录](../verification/relay-stage3-2026-11-11.md)。分工见[第三阶段工作流](../proposals/relay/stage3-workstreams.md)。提交：`3584410`（G072）、`072075f`（默认放行）、`af2537b`、`a5bc877`、`84bda8f`（合并 API、界面、探针）、`bbaf871`（探针发现的 Driver 缺陷）、`c633da8`…`9a09b06`（接线与界面对齐）、`11f1f4f`、`1eddc7e`、`4ab4f91`、`2053c11`（独立审查后的修正）。
+证据等级：代码完成、合成测试通过，另有真实网关加真实构建的页面加夹具 Harness 的浏览器端到端走查（默认与严格设置各一）。真机只有 Driver 层探针（Claude Code、Codex、OpenCode、DeepSeek Harness 四家，见[探针记录](../verification/relay-conformance.md)）；经 Hub 的完整接力没有在真实 Harness 上跑过；六家 `probed` 仍为 false。证据见[验证记录](../verification/relay-stage3-2026-11-11.md)。分工见[第三阶段工作流](../proposals/relay/stage3-workstreams.md)。提交：`4ebeefe`（G072）、`747c4ab`（默认放行）、`ddcd3cf`、`e70b42d`、`ed7c44c`（合并 API、界面、探针）、`2f1d631`（探针发现的 Driver 缺陷）、`3578593`…`98d185e`（接线与界面对齐）、`3185a37`、`40ebc10`、`6468fa5`、`464da25`（独立审查后的修正）。
 
 **G072**：受理处经工厂读静态声明并同步答复，排队的 Run 启动前重做一次；探针门控、按目的厂商键的同意（安装级 `relay_log`，撤回优先，派发前复读）、数据根检查、安装级密钥 `relay-keys.ts`（送达行与请求指纹用它签，`"ephemeral"` 永不签发）、窗口与 `MIN_PACKET`、声明里的 `placement.measure` 与派发前按通道上限压低预算、读声明的 `classify`（`acceptsRelay` 的命令可捎带）、返回决策（默认续接原会话，`native:"new"` 归档后带整份）、Codex 的原生标题、Claude 的“会话不存在”映射。`VendorObservation` 的形状没有改；持久格式没有变。
 
@@ -553,7 +553,7 @@ G068 阶段一的独立审查提出 F1–F13 与一个 packetId 重合的疑问�
 
 **探针带来的 Driver 修正**：Claude 只在第一个字符就是 `/` 时才读命令（原生不去前导空白；此前 `" /clear"` 会被合成清空）；Claude 目录外的斜杠词是文本（`unlistedSlash: "text"`，`hidden` 的四个仍是命令）；Codex 在回合开始前的停止不再弄坏连接（等回合开始再中断）；Codex 回显客户端身份的字段是 `clientId`（真机证实）；DeepSeek Harness 的模型键取 JSON 数组文本的最后一项。
 
-**独立审查后的修正**（对 `072075f`：阻断 0、重要 7、次要 14）：厂商读取失败是“未看到”，不覆盖缓存观测，该控制已知的任一键被撤回即单发（撤回不被绕过）；清空确认的探针门（上文）；未声明机制的 Driver 上斜杠开头的输入原样发出、不捎带；`carry_settled` 加 `resent`，恢复按 `resendOf` 判定（恢复了被 `grown` 削弱的防御，`BindingSync` 形状不变）；原生标题挪到交接提交之后、派发之前，只在仍携带且是交接新开的会话时设置，脱敏用整会话的秘密；授权之后才撤回同意时扣下交接单、原话照发（新事件 `relay.withheld`，`assertSessionTransition` 为此开一个窄例外：未派发的运行中 Run 可以丢交接单，当且仅当有该事件点名同一 Run 与同一份包）；打开库时重建旧的 4 键 `relay_prefs`；密钥文件的空文件与目录情形。
+**独立审查后的修正**（对 `747c4ab`：阻断 0、重要 7、次要 14）：厂商读取失败是“未看到”，不覆盖缓存观测，该控制已知的任一键被撤回即单发（撤回不被绕过）；清空确认的探针门（上文）；未声明机制的 Driver 上斜杠开头的输入原样发出、不捎带；`carry_settled` 加 `resent`，恢复按 `resendOf` 判定（恢复了被 `grown` 削弱的防御，`BindingSync` 形状不变）；原生标题挪到交接提交之后、派发之前，只在仍携带且是交接新开的会话时设置，脱敏用整会话的秘密；授权之后才撤回同意时扣下交接单、原话照发（新事件 `relay.withheld`，`assertSessionTransition` 为此开一个窄例外：未派发的运行中 Run 可以丢交接单，当且仅当有该事件点名同一 Run 与同一份包）；打开库时重建旧的 4 键 `relay_prefs`；密钥文件的空文件与目录情形。
 
 **已知限制**：
 - 从没读到过厂商且没有缓存的首次交接，无法尊重对某个具体厂商的撤回。
