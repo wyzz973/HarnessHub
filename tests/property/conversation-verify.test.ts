@@ -106,6 +106,10 @@ const CASES: readonly Case[] = [
   { rule: "finished-run-no-open-item", on: ["switches"], make: c => ({ conversation: c, store: items(0, list => list.map((item, at) => at === 1 ? { ...item, status: "running" } : item)) }) },
   { rule: "item-chunks-well-formed", on: ["switches"], make: c => ({ conversation: c, store: items(0, list => list.map((item, at) => at === 1 ? stored({ ...item, text: ["bad\ud83d"] }) : item)) }) },
   { rule: "item-text-counts", on: ["switches"], make: c => ({ conversation: c, store: items(0, list => list.map((item, at) => at === 1 ? { ...item, textBytes: item.textBytes + 1 } : item)) }) },
+  // content
+  { rule: "content-refs-complete", on: ["tools"], make: c => ({ conversation: c, store: { references: ids => new Set([...ids].slice(1)) } }) },
+  { rule: "content-refs-complete", on: ["tools"], make: c => ({ conversation: c, store: { references: () => new Set() } }) },
+  { rule: "content-refs-complete", on: ["branch"], make: c => ({ conversation: c, store: { references: () => new Set() } }) },
   // what the store holds
   { rule: "head-agrees", on: ["switches"], make: c => ({ conversation: c, store: { head: head => ({ ...head, runCount: 99 }) } }) },
   { rule: "run-row-agrees", on: ["switches"], make: c => ({ conversation: c, store: { rows: { 0: row => ({ ...row, cancelRequested: true }) } } }) },

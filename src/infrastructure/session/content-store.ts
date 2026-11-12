@@ -3,13 +3,12 @@ import { constants, closeSync, existsSync, fstatSync, fsyncSync, linkSync, lstat
 import { chmod, copyFile, mkdir, open, rename, unlink } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS, MAX_RUN_ATTACHMENT_BYTES, contentId, contentKind, contentName, mediaType, type ContentOrigin, type ContentPort, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
+import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS, MAX_RUN_ATTACHMENT_BYTES, contentId, contentKind, contentName, mediaType, type ContentBytes, type ContentOrigin, type ContentPort, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { SessionError, commandId } from "../../contracts/session.js";
 
 const MARKER = '{"application":"harness-gateway-content","schemaVersion":1}';
-/** Owner-local budgets; content is user data, so pressure fails explicitly instead of evicting referenced items. */
-export const MAX_STORE_BYTES = 4 * 1024 * 1024 * 1024;
-export const MAX_STORE_RECORDS = 262144;
+// The store holds no total of its own (a count of records, a sum of bytes): content is user data, and a Harness's output is kept whole however much there is; what the disk cannot
+// take fails the write, and the writer says so on the item. What one UPLOAD may hold, and what one message may carry, is checked when the upload is staged and the message sent.
 /** Unreferenced content is kept this long for an interrupted Turn to be inspected; referenced content is never collected. */
 export const CONTENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const PARTIAL_RETENTION_MS = 60 * 60 * 1000;
@@ -34,8 +33,8 @@ function parseRow(value: unknown): Row {
   if (value === null || typeof value !== "object") throw new SessionError("INVALID_DATA", "stored content record is invalid");
   const item = value as Record<string, unknown>;
   if (typeof item.id !== "string" || typeof item.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(item.sha256) || typeof item.name !== "string" || typeof item.media_type !== "string" ||
-      (item.kind !== "image" && item.kind !== "audio" && item.kind !== "file") || typeof item.bytes !== "number" || !Number.isSafeInteger(item.bytes) || item.bytes < 0 || item.bytes > MAX_CONTENT_BYTES ||
-      (item.origin !== "upload" && item.origin !== "output") || typeof item.workspace !== "string" || !(item.fingerprint === null || typeof item.fingerprint === "string") ||
+      (item.kind !== "image" && item.kind !== "audio" && item.kind !== "file") || typeof item.bytes !== "number" || !Number.isSafeInteger(item.bytes) || item.bytes < 0 ||
+      (item.origin !== "upload" && item.origin !== "output") || (item.origin === "upload" && item.bytes > MAX_CONTENT_BYTES) || typeof item.workspace !== "string" || !(item.fingerprint === null || typeof item.fingerprint === "string") ||
       (item.discarded !== 0 && item.discarded !== 1) || typeof item.created_at !== "number" || !Number.isSafeInteger(item.created_at))
     throw new SessionError("INVALID_DATA", "stored content record is invalid");
   return item as unknown as Row;
@@ -50,7 +49,6 @@ export class LocalContentStore implements ContentPort {
   private readonly root: string;
   private readonly database: string;
   private readonly writing = new Set<string>();
-  private storedBytes = 0;
   constructor(dataRoot: string, private readonly owner: () => void, private readonly now: () => number = Date.now) {
     owner();
     if (!isAbsolute(dataRoot) || /[\0\r\n]/u.test(dataRoot)) throw new SessionError("INVALID_INPUT", "content data root must be absolute");
@@ -77,7 +75,6 @@ export class LocalContentStore implements ContentPort {
     });
     for (const name of readdirSync(join(this.root, "blobs"))) {
       if (!/^[a-f0-9]{64}$/u.test(name)) throw new SessionError("INVALID_STORAGE", "unexpected file in content storage");
-      this.storedBytes += lstatSync(join(this.root, "blobs", name)).size;
     }
   }
   /** Each operation owns its own connection, so the store has no handle for other owners to close. */
@@ -86,13 +83,17 @@ export class LocalContentStore implements ContentPort {
     try { db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA busy_timeout=1000"); return operation(db); }
     finally { db.close(); }
   }
-  /** Stores a non-text Harness output under the same budgets; the caller persists the returned reference. */
-  async storeOutput(input: { readonly workspace: string; readonly name: string; readonly mediaType: string; readonly data: Uint8Array }): Promise<ContentRef> {
+  /**
+   * Keeps what a Harness made (a tool call's detail, a file or image it produced) whole, of any size, written as it comes: the bytes can be given in pieces, so that
+   * a detail of tens of MiB is never joined into one string or one buffer here. The caller persists the returned reference. Content of no bytes is refused (there is nothing to keep).
+   */
+  async storeOutput(input: { readonly workspace: string; readonly name: string; readonly mediaType: string; readonly data: ContentBytes }): Promise<ContentRef> {
     this.owner();
     const name = contentName(input.name), type = mediaType(input.mediaType);
-    if (input.data.byteLength < 1 || input.data.byteLength > MAX_CONTENT_BYTES) throw new SessionError("OUTPUT_LIMIT", "native output content must contain 1 byte to 20 MiB");
-    const written = await this.write([input.data], input.data.byteLength);
+    const pieces: AsyncIterable<unknown> | Iterable<Uint8Array> = input.data instanceof Uint8Array ? [input.data] : input.data;
+    const written = await this.write(pieces, null);
     try {
+      if (written.bytes < 1) throw new SessionError("OUTPUT_LIMIT", "native output content must contain at least 1 byte");
       let kind: ContentRef["kind"] = "file";
       try { kind = contentKind(type, written.head); } catch { /* A mislabeled native output is still kept, but only as an opaque file. */ }
       return this.publish(written, { name, type, kind, origin: "output", workspace: input.workspace, command: null, fingerprint: null });
@@ -199,6 +200,29 @@ export class LocalContentStore implements ContentPort {
     if (data.byteLength !== ref.bytes || createHash("sha256").update(data).digest("hex") !== ref.sha256) return null;
     return data.toString("utf8");
   }
+  /** See ContentPort.readChunks: the same checks as `readText` before the first piece; the digest when the last has been read. */
+  async readChunks(ref: ContentRef): Promise<AsyncIterable<Uint8Array> | null> {
+    this.owner();
+    let found: ReturnType<LocalContentStore["read"]>;
+    try { found = this.read(ref.id); } catch (error) { if (error instanceof SessionError) return null; throw error; }
+    if (found.ref.sha256 !== ref.sha256 || found.ref.bytes !== ref.bytes) return null;
+    let handle: Awaited<ReturnType<typeof open>>;
+    try { handle = await open(found.path, constants.O_RDONLY | constants.O_NOFOLLOW); } catch { return null; }
+    try { if ((await handle.stat()).size !== ref.bytes) { await handle.close(); return null; } } catch { await handle.close().catch(() => {}); return null; }
+    return (async function* (): AsyncGenerator<Uint8Array> {
+      try {
+        const hash = createHash("sha256"), buffer = Buffer.allocUnsafe(256 * 1024);
+        let total = 0;
+        for (;;) {
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, total);
+          if (bytesRead === 0) break;
+          total += bytesRead; hash.update(buffer.subarray(0, bytesRead));
+          yield Uint8Array.prototype.slice.call(buffer, 0, bytesRead) as Uint8Array;
+        }
+        if (total !== ref.bytes || hash.digest("hex") !== ref.sha256) throw new SessionError("INVALID_STORAGE", "stored content changed while it was read");
+      } finally { await handle.close(); }
+    })();
+  }
   /**
    * `readText` without waiting, for a reader that cannot wait (the web view of a conversation is made synchronously): the same checks, the same
    * answer, null for anything that is not read. For the small details of tool calls only: it blocks while the file is read.
@@ -239,8 +263,7 @@ export class LocalContentStore implements ContentPort {
     });
     for (const name of readdirSync(join(this.root, "blobs"))) {
       if (live.has(name)) continue;
-      const path = join(this.root, "blobs", name), size = lstatSync(path).size;
-      unlinkSync(path); this.storedBytes -= size; blobs++;
+      unlinkSync(join(this.root, "blobs", name)); blobs++;
     }
     const recorded = this.use(db => new Set(db.prepare("SELECT id FROM content").all().map(value => String((value as { id?: unknown }).id))));
     for (const name of readdirSync(join(this.root, "files"))) {
@@ -282,7 +305,8 @@ export class LocalContentStore implements ContentPort {
     if (!info.isFile() || info.isSymbolicLink() || info.size !== bytes || (info.mode & 0o077) !== 0) throw new SessionError("INVALID_STORAGE", "stored content bytes are invalid");
     return path;
   }
-  private async write(source: AsyncIterable<unknown> | Iterable<Uint8Array>, declared: number): Promise<{ readonly path: string; readonly sha256: string; readonly bytes: number; readonly head: Uint8Array }> {
+  /** `declared`: the size an upload said it has, which it must have exactly and which is no more than an upload may hold; null for output, which is any size. */
+  private async write(source: AsyncIterable<unknown> | Iterable<Uint8Array>, declared: number | null): Promise<{ readonly path: string; readonly sha256: string; readonly bytes: number; readonly head: Uint8Array }> {
     const path = join(this.root, "partial", randomUUID()); this.writing.add(path);
     const hash = createHash("sha256"), head = Buffer.alloc(16); let bytes = 0;
     try {
@@ -290,11 +314,11 @@ export class LocalContentStore implements ContentPort {
       try {
         for await (const value of source) {
           if (!(value instanceof Uint8Array)) throw new SessionError("INVALID_INPUT", "content body must be bytes");
-          if (bytes + value.byteLength > declared || bytes + value.byteLength > MAX_CONTENT_BYTES) throw new SessionError("CONTENT_LIMIT", "content exceeds its declared size or 20 MiB");
+          if (declared !== null && (bytes + value.byteLength > declared || bytes + value.byteLength > MAX_CONTENT_BYTES)) throw new SessionError("CONTENT_LIMIT", "content exceeds its declared size or 20 MiB");
           if (bytes < head.length) Buffer.from(value.buffer, value.byteOffset, Math.min(value.byteLength, head.length - bytes)).copy(head, bytes);
           hash.update(value); await handle.write(value); bytes += value.byteLength;
         }
-        if (bytes !== declared) throw new SessionError("INVALID_INPUT", "content body does not match its declared size");
+        if (declared !== null && bytes !== declared) throw new SessionError("INVALID_INPUT", "content body does not match its declared size");
         await handle.sync();
       } finally { await handle.close(); }
     } catch (error) { this.removePartial(path); throw error; }
@@ -302,12 +326,9 @@ export class LocalContentStore implements ContentPort {
   }
   private publish(blob: { readonly sha256: string; readonly bytes: number; readonly path: string }, meta: { readonly name: string; readonly type: string; readonly kind: ContentRef["kind"]; readonly origin: ContentOrigin; readonly workspace: string; readonly command: string | null; readonly fingerprint: string | null }): ContentRef {
     this.owner();
-    const total = this.use(db => (db.prepare("SELECT count(*) AS records FROM content").get() as { records?: unknown } | undefined)?.records);
-    if (typeof total !== "number" || total >= MAX_STORE_RECORDS) throw new SessionError("CONTENT_LIMIT", "content record budget is exhausted");
     const target = join(this.root, "blobs", blob.sha256);
     if (!existsSync(target)) {
-      if (this.storedBytes + blob.bytes > MAX_STORE_BYTES) throw new SessionError("CONTENT_LIMIT", "local content storage budget is exhausted");
-      try { linkSync(blob.path, target); this.storedBytes += blob.bytes; } catch (error) { if (code(error) !== "EEXIST") throw error; }
+      try { linkSync(blob.path, target); } catch (error) { if (code(error) !== "EEXIST") throw error; }
       const fd = openSync(join(this.root, "blobs"), constants.O_RDONLY); try { fsyncSync(fd); } finally { closeSync(fd); }
     }
     this.blob(blob.sha256, blob.bytes);

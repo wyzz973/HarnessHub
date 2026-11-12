@@ -1,4 +1,5 @@
-import { SessionError, type PublicRun, type RunId, type SessionSnapshot } from "../../../contracts/session.js";
+import { SessionError, type PublicRun, type RunId } from "../../../contracts/session.js";
+import { historyOf, type RelayHistory, type RelayState } from "./relay/history.js";
 import { dispatched } from "./relay/advance.js";
 import type { RelayToolDetail } from "./relay/narration.js";
 import { renderRelay, type RelayRecord } from "./relay/packet.js";
@@ -16,23 +17,22 @@ export interface PublicContext {
 }
 
 /** The seq of the current input's public message, after checking that the input is the Session's own. */
-function currentSeqOf(state: SessionSnapshot, current: PublicRun): number {
-  const owned = state.runs.find(run => run.id === current.id);
-  const message = state.messages.find(message => message.id === current.userMessageId);
-  if (!owned || current.userMessageId !== owned.userMessageId || current.assistantMessageId !== owned.assistantMessageId || current.input !== owned.input ||
-    message === undefined || message.runId !== current.id || message.role !== "user" || message.text !== owned.input)
+function currentSeqOf(state: RelayHistory, current: PublicRun): number {
+  const at = state.runs.findIndex(run => run.id === current.id), owned = state.runs[at], turn = at < 0 ? null : state.turn(at);
+  if (!owned || current.userMessageId !== owned.userMessageId || current.assistantMessageId !== owned.assistantMessageId || turn === null || current.input !== turn.run.input ||
+    owned.userSeq === undefined || turn.user.runId !== current.id || turn.user.role !== "user" || turn.user.text !== turn.run.input)
     throw new SessionError("INVALID_DATA", "current input is not owned by this public Session");
-  return message.seq;
+  return owned.userSeq;
 }
 /**
  * The public facts a Turn can owe another native session, without rendering anything (ADR-055 R0a): every finished Run
  * whose input came before the current one and was dispatched. A Run that never reached a Harness (cancelled while queued,
  * failed before dispatch) is no fact of the conversation's history.
  */
-export function publicSources(state: SessionSnapshot, current?: PublicRun): readonly RunId[] {
-  const currentSeq = current === undefined ? null : currentSeqOf(state, current);
+export function publicSources(given: RelayState, current?: PublicRun): readonly RunId[] {
+  const state = historyOf(given), currentSeq = current === undefined ? null : currentSeqOf(state, current);
   return state.runs.filter(run => terminal(run.status) && dispatched(run) && run.id !== current?.id &&
-    (currentSeq === null || state.messages.some(message => message.id === run.userMessageId && message.seq < currentSeq))).map(run => run.id);
+    (currentSeq === null || (run.userSeq !== undefined && run.userSeq < currentSeq))).map(run => run.id);
 }
 
 /** What the relay packet takes beyond the snapshot (relay/packet.ts): what is owed, secrets, names, the first line, details. */
@@ -66,18 +66,17 @@ export interface PublicContextOptions {
  * current input, each once; the current input must be the Session's own. Queued inputs and native tool identities never
  * enter it.
  */
-export function buildPublicContext(state: SessionSnapshot, current: PublicRun, sourceRunIds?: readonly RunId[], options: PublicContextOptions = {}): PublicContext {
-  const currentSeq = currentSeqOf(state, current);
-  const sources = sourceRunIds === undefined ? publicSources(state, current).map(id => state.runs.find(run => run.id === id)!) : sourceRunIds.map(id => {
-    const run = state.runs.find(run => run.id === id);
-    const sourceMessage = run === undefined ? undefined : state.messages.find(message => message.id === run.userMessageId);
-    if (!run || !terminal(run.status) || run.id === current.id || sourceMessage === undefined || sourceMessage.seq >= currentSeq)
+export function buildPublicContext(given: RelayState, current: PublicRun, sourceRunIds?: readonly RunId[], options: PublicContextOptions = {}): PublicContext {
+  const state = historyOf(given), currentSeq = currentSeqOf(state, current), position = new Map(state.runs.map((run, index) => [run.id, index]));
+  // A source is read as the Turn it is, with its tool calls and words: only the sources are read.
+  const sourceOf = (id: RunId): PublicRun => {
+    const at = position.get(id), light = at === undefined ? undefined : state.runs[at], turn = at === undefined ? null : state.turn(at);
+    if (!light || turn === null || !terminal(light.status) || light.id === current.id || light.userSeq === undefined || light.userSeq >= currentSeq)
       throw new SessionError("INVALID_DATA", "public context source is not a completed public fact");
-    return run;
-  });
+    return turn.run;
+  };
+  const sources = (sourceRunIds === undefined ? publicSources(state, current) : sourceRunIds).map(sourceOf);
   if (new Set(sources.map(run => run.id)).size !== sources.length) throw new SessionError("INVALID_DATA", "duplicate public context sources");
-  for (const run of sources) if (!state.messages.some(message => message.id === run.userMessageId)) throw new SessionError("INVALID_DATA", "public context source lacks its user message");
-  const position = new Map(state.runs.map((run, index) => [run.id, index]));
   const ordered = [...sources].sort((a, b) => position.get(a.id)! - position.get(b.id)!);
   const rendered = renderRelay({ state, current, sources: ordered, origin: options.origin ?? false, ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
     ...(options.names === undefined ? {} : { names: options.names }), ...(options.firstLine === undefined ? {} : { firstLine: options.firstLine }), ...(options.details === undefined ? {} : { details: options.details }), ...(options.budget === undefined ? {} : { budget: options.budget }),

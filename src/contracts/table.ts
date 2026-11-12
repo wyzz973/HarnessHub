@@ -84,6 +84,12 @@ export interface TableTurnRead {
   readonly notes?: readonly string[];
 }
 
+/**
+ * What a search looks through: `all` (the default) is everything, the words and the tool calls with what they ran and printed, read Turn by Turn; `words` is the user's words and the
+ * replies alone, found by the conversation's full-text indexes, which is quick however long the conversation is.
+ */
+export const TABLE_SEARCH_SCOPES = ["all", "words"] as const;
+export type TableSearchScope = typeof TABLE_SEARCH_SCOPES[number];
 /** What a search match was found in: the user's words, a reply, a tool call's title, its input, its output or its diff. */
 export const TABLE_SEARCH_WHERE = ["user", "reply", "tool", "input", "output", "diff"] as const;
 export type TableSearchWhere = typeof TABLE_SEARCH_WHERE[number];
@@ -92,10 +98,14 @@ export interface TableSearchHit {
   readonly n: number; readonly where: TableSearchWhere; readonly tool?: number;
   readonly at: number; readonly matches: number; readonly snippet: string;
 }
-/** A search (`GET /api/table/search`): the places found, newest Turn first (`total` of them in all, `hits` the first of them), and how many tool details could not be searched. */
+/** A search (`GET /api/table/search`): a page of the places found, newest Turn first (`hits`, `total` of them in this page), `next` to go on from, and how many tool details could not be searched. */
 export interface TableSearchView {
   readonly query: string; readonly total: number; readonly hits: readonly TableSearchHit[];
   readonly turns: number; readonly unsearched: number;
+  /** What was searched, when it was the words alone. */
+  readonly scope?: "words";
+  /** Where the next page of places starts (`after` of the next search); absent when this page reached the first Turn. */
+  readonly next?: string;
   readonly notes?: readonly string[];
 }
 

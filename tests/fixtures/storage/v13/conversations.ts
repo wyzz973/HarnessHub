@@ -1,4 +1,4 @@
-import type { Conversation, ConversationReader, ConversationRun, ConvertedRun, HeadRow, HeldItem, RunRow, TurnItems } from "../../../../src/contracts/conversation.js";
+import type { Conversation, ConversationReader, ConversationRun, ConvertedRun, HeadRow, HeldItem, OriginHistoryRow, RunRow, TurnItems } from "../../../../src/contracts/conversation.js";
 import type { PublicMessage, PublicRun, SessionEvent, SessionSnapshot } from "../../../../src/contracts/session.js";
 import { fromItems, originToRows, toItems, type ConversionAt } from "../../../../src/contexts/session/domain/store-conversion.js";
 import { runEnded } from "../../../../src/contexts/session/domain/protocol/index.js";
@@ -15,6 +15,10 @@ export interface BuiltConversation {
   readonly conversation: Conversation;
   /** The Turn of each Run as the store holds it (the row, and the items with the counters the store keeps), by ordinal. */
   readonly turns: readonly TurnItems[];
+  /** The content ids the conversion registers a reference to (`content_refs`), whatever the role. */
+  readonly references: ReadonlySet<string>;
+  /** The history a branch or an import quoted, as the rows the conversion writes. */
+  readonly originHistory: readonly OriginHistoryRow[];
 }
 
 /** What a migration reads of the event log for each Run (see the top of store-conversion.ts), and the Run with its messages. */
@@ -51,8 +55,10 @@ export function conversationRun(converted: ConvertedRun): ConversationRun {
 export function conversationOf(name: string, snapshot: SessionSnapshot, events: readonly StoredEvent[]): BuiltConversation {
   const converted = atOf(snapshot, events).map(turn => toItems(turn.run, { user: turn.user, ...(turn.assistant === undefined ? {} : { assistant: turn.assistant }) }, turn.at));
   const { schemaVersion: _version, runs: _runs, messages: _messages, origin, ...head } = snapshot;
-  const conversation: Conversation = { ...head, format: 14, runs: converted.map(conversationRun), ...(origin === undefined ? {} : { origin: originToRows(snapshot.id, origin, -1).stored }) };
-  return { name, conversation, turns: converted.map(run => ({ run: run.row, items: run.items.map(stored) })) };
+  const parts = origin === undefined ? null : originToRows(snapshot.id, origin, -1);
+  const conversation: Conversation = { ...head, format: 14, runs: converted.map(conversationRun), ...(parts === null ? {} : { origin: parts.stored }) };
+  const references = new Set([...converted.flatMap(run => run.contentRefs.map(ref => ref.contentId as string)), ...(parts?.contentRefs.map(ref => ref.contentId as string) ?? [])]);
+  return { name, conversation, turns: converted.map(run => ({ run: run.row, items: run.items.map(stored) })), references, originHistory: parts?.rows ?? [] };
 }
 /** Every conversation of every v13 fixture. */
 export function fixtureConversations(): readonly BuiltConversation[] {
@@ -86,6 +92,9 @@ export interface StoreOverrides {
   readonly items?: Readonly<Record<number, (items: readonly HeldItem[]) => readonly HeldItem[]>>;
   readonly head?: (head: HeadRow) => HeadRow;
   readonly rows?: Readonly<Record<number, (row: RunRow) => RunRow>>;
+  /** The references the store has registered for the conversation, when they are not those the conversion wrote. */
+  readonly references?: (references: ReadonlySet<string>) => ReadonlySet<string>;
+  readonly originHistory?: (rows: readonly OriginHistoryRow[]) => readonly OriginHistoryRow[];
 }
 /** A reader standing in for the store: it follows the conversation it is given (the Turn at an ordinal is the Run whose ordinal that is) and answers only what `verify` asks. */
 export function readerOf(conversation: Conversation, built: BuiltConversation, overrides: StoreOverrides = {}): ConversationReader {
@@ -99,6 +108,8 @@ export function readerOf(conversation: Conversation, built: BuiltConversation, o
         createdSeq: run.userSeq, textBytes: 0, textChunks: 0, fields: { type: "user_message", messageId: run.userMessageId }, text: ["input"] })]);
       return { run: overrides.rows?.[ordinal] === undefined ? row : overrides.rows[ordinal]!(row), items };
     },
+    references: () => (overrides.references ?? ((value: ReadonlySet<string>) => value))(built.references),
+    originHistory: () => (overrides.originHistory ?? ((value: readonly OriginHistoryRow[]) => value))(built.originHistory),
     window: unused, older: unused, items: unused, text: unused, search: unused,
   };
 }

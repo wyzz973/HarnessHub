@@ -11,10 +11,14 @@ import {
 } from "../../../contracts/session.js";
 import { buildPublicContext, type PublicContext, type PublicContextOptions } from "../domain/context.js";
 import { assertConversationTransition, inputOf, runIn, settledItems, updatedRun, userItemOf, withItems } from "../domain/conversation-state.js";
+import { detailJson } from "../domain/detail-json.js";
 import { itemsOf, openTurn, place, takeDetails, type ActiveTurn, type PlaceInput, type Placed, type StoreRequest, type TerminalStatus } from "../domain/items-place.js";
 import { runRowOf } from "../domain/run-row.js";
 import { originToRows } from "../domain/store-conversion.js";
-import { parseToolDetail, type RelayToolDetail } from "../domain/relay/narration.js";
+import { RELAY_DETAIL_POLICY, relayDetailOf, type RelayToolDetail } from "../domain/relay/narration.js";
+import { readDetail } from "../domain/detail-read.js";
+import { rowsHistory, type RelayHistory } from "../domain/relay/history.js";
+import { turnSource } from "../domain/turn-source.js";
 import { toolFamily } from "../domain/protocol/index.js";
 import { commandEffect, commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
 import { initialBindingRelay, owed, plan, type RelayFact } from "../domain/relay/delivery.js";
@@ -527,7 +531,7 @@ export class SessionRuntime {
    */
   relayAttention(id: SessionId): readonly { readonly harnessId: string; readonly controlId: string; readonly attention: RelayAttention | null }[] {
     const state = this.load(id), originHistory = this.quotedHistory(state);
-    const originTurns = Math.max(1, !originHistory ? 0 : (this.snapshotOf(id).origin?.history ?? []).filter(row => row.role === "user").length);
+    const originTurns = Math.max(1, !originHistory ? 0 : (this.store.originHistory?.(id) ?? []).filter(row => row.message.role === "user").length);
     return (state.nativeBindings ?? []).filter(binding => binding.status !== "archived" && binding.relay !== undefined).map(binding => {
       const relay = binding.relay!, h = binding.harnessId, c = binding.controlId;
       const facts = this.relayFacts(state, { harnessId: h, controlId: c, nativeEpoch: relay.epoch });
@@ -757,7 +761,7 @@ export class SessionRuntime {
     if (pending) return pending;
     if (!this.kept.has(id)) return Promise.resolve();
     // A kept process is idle, so its close never meets its own conversation's Turn; Turns and switches wait for it (settleReleases).
-    const done: Promise<void> = this.release(id, reason).catch(error => { this.fail(error, id); })
+    const done: Promise<void> = this.release(id, reason).catch(error => { this.stalls(error, id); })
       .finally(() => { if (this.releasing.get(id) === done) this.releasing.delete(id); this.drive(); });
     this.releasing.set(id, done);
     return done;
@@ -777,10 +781,15 @@ export class SessionRuntime {
     const found = await this.outsideBefore(kept.identity);
     try { cleanup = await kept.binding.close(); } catch (error) { problem = fault(error); }
     const outside = await this.outsideAfter(id, found);
-    this.commit(id, current => {
-      const { retained, ...rest } = current;
-      return { next: rest, events: [event("native.process_closed", { runId: kept.runId, reason, backgroundUpdates, cleanup, outside, ...(problem === null ? {} : { error: problem }) })] };
-    });
+    try {
+      this.commit(id, current => {
+        const { retained, ...rest } = current;
+        return { next: rest, events: [event("native.process_closed", { runId: kept.runId, reason, backgroundUpdates, cleanup, outside, ...(problem === null ? {} : { error: problem }) })] };
+      });
+    } catch (error) {
+      // A rule of the rows refused the record of the close: the process is closed all the same, and the conversation goes on saying it keeps one until the next start finds none (reapKept).
+      if (storeUntrusted(error)) throw error;
+    }
   }
   /**
    * The process this conversation kept, when it can take a Turn with `selection`; a kept process that cannot is closed first.
@@ -957,7 +966,7 @@ export class SessionRuntime {
   private load(id: SessionId): Conversation {
     try { const state = this.store.get(id); this.versions.set(id, state.version); return state; }
     catch (error) {
-      if (!(error instanceof SessionError) || error.code !== "SESSION_NOT_FOUND") this.fail(error, id);
+      if (!(error instanceof SessionError && error.code === "SESSION_NOT_FOUND")) this.stalls(error, id);
       throw error;
     }
   }
@@ -965,7 +974,7 @@ export class SessionRuntime {
   private snapshotOf(id: SessionId): SessionSnapshot {
     try { return this.store.snapshot(id); }
     catch (error) {
-      if (!(error instanceof SessionError) || error.code !== "SESSION_NOT_FOUND") this.fail(error, id);
+      if (!(error instanceof SessionError && error.code === "SESSION_NOT_FOUND")) this.stalls(error, id);
       throw error;
     }
   }
@@ -977,7 +986,7 @@ export class SessionRuntime {
     if (origin.kind === "fork") return true;
     if (!origin.historyRead) return false;
     let found = this.quoted.get(state.id);
-    if (found === undefined) { found = (this.snapshotOf(state.id).origin?.history.length ?? 0) > 0; this.quoted.set(state.id, found); }
+    if (found === undefined) { found = (this.store.originHistory?.(state.id).length ?? 0) > 0; this.quoted.set(state.id, found); }
     return found;
   }
   /**
@@ -1044,6 +1053,15 @@ export class SessionRuntime {
     try { for (const value of commit.events) this.options.publish(value); }
     catch { this.publicationFailed = true; const error = new SessionError("PUBLICATION_FAILED", "committed event publication failed; execution stopped"); this.fail(error, commit.conversation.id); throw error; }
     return commit;
+  }
+  /**
+   * The one judgment of what a failure means for the Runtime: it stalls the Runtime only when it says the store cannot be trusted — a storage, ownership or version failure (`storeUntrusted`).
+   * Any other failure (a rule of the rows refusing one write) ends only the Turn or request it belonged to, which its caller then tells in the conversation. Says whether it stalled the Runtime.
+   */
+  private stalls(error: unknown, id?: SessionId): boolean {
+    if (!storeUntrusted(error)) return false;
+    this.fail(error, id);
+    return true;
   }
   private fail(error: unknown, id?: SessionId): void {
     this.fatal ??= new SessionError(fault(error).code, fault(error).message);
@@ -1146,7 +1164,7 @@ export class SessionRuntime {
     if (waiting === undefined) return;
     this.waitingForSlot.delete(id);
     const waitedMs = Math.max(0, this.options.now().getTime() - waiting.since);
-    try { this.commit(id, current => ({ next: current, events: [event("run.waiting_ended", { runId: waiting.runId, kind: "slot", waitedMs })] })); } catch (error) { this.fail(error, id); }
+    try { this.commit(id, current => ({ next: current, events: [event("run.waiting_ended", { runId: waiting.runId, kind: "slot", waitedMs })] })); } catch (error) { this.stalls(error, id); }
   }
   /**
    * Whether another conversation should go before this worker's next work, by acceptance (FIFO): one waiting for a slot while the
@@ -1184,7 +1202,7 @@ export class SessionRuntime {
           const queued = state.runs.find(run => run.status === "queued");
           if (queued) await this.execute(id, queued.id);
         }
-      } catch (error) { this.fail(error, id); }
+      } catch (error) { if (!this.stalls(error, id) && !this.endRequest(id, error)) return; }
       const after = this.load(id);
       const more = after.status === "open" && (after.pendingSwitchId !== null || after.runs.some(run => run.status === "queued")) && !this.closingSessions.has(id) && this.accepting && !this.fatal;
       if (!more && !this.work.has(id)) return;
@@ -1316,7 +1334,7 @@ export class SessionRuntime {
     clock.waiting = false; clock.since = now;
     if (execution.stopReason === null && !execution.backendSettled) { this.armBudget(execution); this.armHint(execution); }
     try { this.commit(execution.sessionId, current => ({ next: current, events: [event("run.waiting_ended", { runId: execution.runId, kind: "user", waitedMs: Math.round(waitedMs) })] })); }
-    catch (error) { this.fail(error, execution.sessionId); }
+    catch (error) { this.stalls(error, execution.sessionId); }
   }
   /**
    * An operator's budget ran out (ADR-036): requests still waiting expire first (the program gets the stop's cancellation, never an
@@ -1341,7 +1359,7 @@ export class SessionRuntime {
       execution.turn = said.turn;
       // The wait ends with its requests, so it is recorded like any other end of a wait.
       this.leaveWait(execution);
-    } catch (error) { this.fail(error, execution.sessionId); }
+    } catch (error) { this.stalls(error, execution.sessionId); }
     this.stop(execution);
   }
 
@@ -1526,14 +1544,23 @@ export class SessionRuntime {
     const handle = setTimeout(fn, ms); handle.unref?.();
     return () => clearTimeout(handle);
   }
-  /** Stores one call's detail whole (what the Harness reported of its input, output and changes) and writes its reference in the call's item. Storage trouble is reported, not hidden. */
+  /**
+   * Stores one call's detail whole, of any size (what the Harness reported of its input, output and changes), written in pieces as they are made, and writes its reference in the
+   * call's item. When it cannot be kept (the disk is full, a write failed) the call's item says so (`DETAIL_NOT_SAVED` in its `native.clipped`, which the readers show) and the
+   * log says why: the loss is told in the conversation, never only in the log.
+   */
   private storeDetail(execution: ActiveExecution, request: StoreRequest): void {
     const content = this.options.content; if (content === undefined) return;
     this.enqueue(execution, async () => {
       const state = this.owned(execution);
       let ref;
-      try { ref = await content.storeOutput({ workspace: state.configuration.workspace, name: "tool-" + safeName(request.toolId) + ".json", mediaType: "application/json", data: new TextEncoder().encode(JSON.stringify({ toolId: request.toolId, ...request.detail })) }); }
-      catch (error) { this.commit(state.id, current => ({ next: current, events: [event("run.output", { runId: execution.runId, event: { type: "diagnostic", message: "tool detail was not stored (" + fault(error).code + ")" } })] })); return; }
+      try { ref = await content.storeOutput({ workspace: state.configuration.workspace, name: "tool-" + safeName(request.toolId) + ".json", mediaType: "application/json", data: detailJson(request.toolId, request.detail) }); }
+      catch (error) {
+        this.owned(execution);
+        this.placed(execution, { kind: "detail_lost", toolId: request.toolId, at: this.options.now().getTime() },
+          [event("run.output", { runId: execution.runId, event: { type: "diagnostic", message: "tool detail was not stored (" + fault(error).code + ")" } })], { always: true });
+        return;
+      }
       this.owned(execution);
       this.placed(execution, { kind: "detail", toolId: request.toolId, ref, at: this.options.now().getTime() }, [event("run.tool_detail", { runId: execution.runId, toolId: request.toolId, content: ref })]);
     });
@@ -1639,8 +1666,8 @@ export class SessionRuntime {
       // The secrets are the whole Session's (M1): the target binding's own, and those of every Harness whose history it carries.
       // They and the tool details are read only for a Turn that builds a packet (N3): a command reads nothing for one, and a
       // configuration that cannot be read fails only a Turn that would carry history.
-      const relayFor = async (state: SessionSnapshot, sources: readonly PublicRun["id"][], origin: boolean): Promise<PublicContextOptions> => {
-        const details = await this.relayDetails(state, sources), secrets = [...(execution.binding?.secrets ?? []), ...await this.relaySecretsOf(state, run, sources, origin)];
+      const relayFor = async (history: RelayHistory, configuration: SessionConfiguration, sources: readonly PublicRun["id"][], origin: boolean): Promise<PublicContextOptions> => {
+        const details = await this.relayDetails(history, sources), secrets = [...(execution.binding?.secrets ?? []), ...await this.relaySecretsOf(history, configuration, run, sources, origin)];
         this.continue(execution);
         // The binding says whether its process has the Hub's tools (it was started with the table's environment and its Harness holds the tool entry): a fact of this Turn's process, which the packet may then repeat.
         return { origin, secrets, firstLine: reading.kind === "content", details, hubTools: execution.binding?.hubTools === true, ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
@@ -1749,27 +1776,27 @@ export class SessionRuntime {
         if (decision.kind === "carry") {
           const carrying = decision;
           try {
-            // What a packet is made of is the earlier Turns' words, which the rows hold: they are read in the old shape the renderer reads.
-            const snapshot = this.snapshotOf(id), asked = snapshot.runs.find(row => row.id === target)!;
-            const runs = needRuns(snapshot, asked, carrying.need);
+            // What a packet is made of is the earlier Turns' words, which the rows hold: the renderer reads the Runs' light rows and, of the Turns the binding is owed, the words, a Turn at a time.
+            const fresh = this.load(id), history = rowsHistory(fresh, this.store), asked = history.turn(fresh.runs.findIndex(row => row.id === target))!.run;
+            const runs = needRuns(history, asked, carrying.need);
             // The window the packet is budgeted against, and what the channel leaves it. The history is left out whole to fit; the renderer
             // never fails, and when even its least packet is over the cap (below) the input goes as typed.
-            const resolved = resolveWindow(snapshot, asked), limit = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(typed, kinds) ?? [...typed].length;
+            const resolved = resolveWindow(history, asked), limit = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(typed, kinds) ?? [...typed].length;
             const cap = hardCap(resolved, estimateTokens(typed), limit, size);
             const budget: RelayBudget = packetBudget(resolved, cap), standard = packetBudget(resolved, Number.POSITIVE_INFINITY);
             window = resolved;
             if (budget.cap < standard.cap) clamped = [limit !== null && hardCap(resolved, estimateTokens(typed), null, size) >= standard.cap ? "input_limit" : "window"];
             // The renderer sees the binding as a native session that holds nothing when the packet must be a whole one: it carries
             // everything again, or the native session holds no part of the conversation (no mark).
-            const options = await relayFor(snapshot, runs, carrying.need.origin);
+            const options = await relayFor(history, fresh.configuration, runs, carrying.need.origin);
             packetSecrets = options.secrets ?? [];
-            const context = buildPublicContext(renderView(snapshot, h, c, carrying.whole || working.mark < 0), asked, runs, { ...options, budget, ...(carrying.repeat ? { repeat: true } : {}) });
+            const context = buildPublicContext(renderView(history, h, c, carrying.whole || working.mark < 0), asked, runs, { ...options, budget, ...(carrying.repeat ? { repeat: true } : {}) });
             this.continue(execution);
             // The least packet there is (the title line, the sentences, the ledger, the end line) is over the cap: the history cannot be carried at all.
             if (context.relay.tokens > context.relay.budget.cap) throw inputLimit(run.selection);
             if (!context.text.endsWith("\n" + typed)) throw new RelayError({ code: "RELAY_PREPARE_FAILED", reason: "render" }, "没能准备交接单：交接单与这条消息拼接不一致，这条消息没有发出。");
-            const body = context.text.slice(0, context.text.length - typed.length - 1), range = rangeOf(snapshot, carrying.need, runs);
-            const manifest = packetManifest({ state: snapshot, run: asked, relay: working, record: context.relay, body, range, runs, attachOverride: carrying.by === "user",
+            const body = context.text.slice(0, context.text.length - typed.length - 1), range = rangeOf(history, carrying.need, runs);
+            const manifest = packetManifest({ state: history, run: asked, relay: working, record: context.relay, body, range, runs, attachOverride: carrying.by === "user",
               supersedes: carrying.resend !== null && working.pending !== null ? working.pending.packetId : null,
               firstLineOmitted: context.relay.firstLine ? null : reading.kind === "content" ? "secret_hit" : "slash", clamped });
             packet = { manifest, body, record: context.relay, runs };
@@ -1842,7 +1869,7 @@ export class SessionRuntime {
       // once the Turn that carries the packet is committed — a Turn that goes alone after all names nothing — and before it is
       // dispatched, with a name that hides what the packet hid, the known secrets of every Harness of the conversation.
       if (decision?.kind === "carry" && packet !== null && openedNew && declaration.capabilities?.title === "set" && control.setTitle !== undefined) {
-        const result = await this.titleFor(control, native, this.snapshotOf(id), packetSecrets); this.continue(execution);
+        const result = await this.titleFor(control, native, turnSource(this.store, id).turn(0)?.user.text ?? "", packetSecrets); this.continue(execution);
         this.commit(id, current => ({ next: current, events: [event("relay.title_set", { runId: target, harnessId: h, controlId: c, result })] }));
       }
       control.enablePermissions?.();
@@ -1902,7 +1929,8 @@ export class SessionRuntime {
       if (execution.streamFailure !== null) problem ??= fault(execution.streamFailure);
       const abandoned = [...this.permissions.entries()].filter(([, permission]) => permission.execution === execution);
       for (const [permissionId] of abandoned) this.permissions.delete(permissionId);
-      if (abandoned.length) this.commit(id, current => ({ next: current, events: abandoned.map(([permissionId]) => event("permission.closed", { permissionId, runId: target })) }));
+      // Only a log of what was abandoned: a refusal of it by the rows does not stop the Turn's end from being recorded below.
+      if (abandoned.length) { try { this.commit(id, current => ({ next: current, events: abandoned.map(([permissionId]) => event("permission.closed", { permissionId, runId: target })) })); } catch (error) { this.stalls(error, id); } }
       if (execution.stop) {
         try { await execution.stop; } catch (error) { problem ??= fault(error); }
       }
@@ -2038,11 +2066,24 @@ export class SessionRuntime {
         };
         // The last resort: what the commit above was refused for is not the store's trust but its rows (a check of the rows, a relay row). The Turn is then
         // ended as what it is, a Turn whose end could not be recorded in full: unknown, the reason told, the conversation blocked until the user resumes it, and
-        // nothing else in the commit. The Runtime goes on; a failure of the store itself fails it, as it always did.
+        // no relay part in the commit. What the end does apart from the relay it still does, so that no Turn is left half ended: the items that were open in it are closed
+        // as an unknown Turn's are, and the switch it held up fails with it (and the inputs waiting for that switch with it). A process it was to keep is not kept (the rows keep
+        // a process only for a Turn that completed): it is closed below, like the process of any Turn whose hand-over was not recorded.
+        // The Runtime goes on; a failure of the store itself fails it, as it always did.
+        let fellBack = false;
         const unrecorded = (reason: unknown) => (current: Conversation): ConversationMutation => {
-          const why = fault(reason);
-          const next = { ...updatedRun(current, target, { status: "unknown" as const, backend, cleanup: closed, error: why, ...phase(current, target, "endedAt", endedAt) }), activeRunId: null, status: "blocked" as const };
-          return { next, events: [event("run.ended", { runId: target, status: "unknown", backend, cleanup: closed, error: why, input, unrecorded: true }), event("session.blocked", { runId: target, reason: "the end of the Turn could not be recorded" })] };
+          fellBack = true;
+          const why = fault(reason), settled = place(noted, { kind: "settled", status: "unknown", at: endedAt });
+          let next: Conversation = { ...updatedRun(current, target, { status: "unknown" as const, backend, cleanup: closed, error: why, ...phase(current, target, "endedAt", endedAt), items: itemsOf(settled.turn) }),
+            activeRunId: null, status: "blocked" as const };
+          const cancelSwitch = (!this.accepting || this.closingSessions.has(id)) && next.pendingSwitchId !== null;
+          if (cancelSwitch) next = this.cancelPending(next);
+          const stranded = cancelSwitch ? null : next.pendingSwitchId, waiting = stranded === null ? [] : next.runs.filter(row => row.status === "queued" && row.awaitingSwitchId === stranded).map(row => row.id);
+          if (stranded !== null) next = this.strandSwitch(next, stranded, waiting, endedAt);
+          return { next, events: [event("run.ended", { runId: target, status: "unknown", backend, cleanup: closed, error: why, input, unrecorded: true }), event("session.blocked", { runId: target, reason: "the end of the Turn could not be recorded" }),
+            ...(cancelSwitch ? [event("switch.failed", { switchId: current.pendingSwitchId, reason: "cancelled by close" })] : []),
+            ...(stranded === null ? [] : [event("switch.failed", { switchId: stranded, error: STRANDED_SWITCH, reason: "the Turn it waited for ended without confirmed settlement" }),
+              ...waiting.map(queuedId => event("run.ended", { runId: queuedId, status: "failed", error: { code: "SWITCH_NOT_EFFECTIVE" }, neverDispatched: true }))])], createdBy: () => 0 };
         };
         try { this.commit(id, ended(true), true); }
         catch (error) {
@@ -2057,8 +2098,8 @@ export class SessionRuntime {
             catch (second) { if (storeUntrusted(second) || !this.relayRefusal(second)) throw second; this.commit(id, unrecorded(second)); }
           }
         }
-        handed = keep.keep;
-      } catch (error) { this.fail(error); }
+        handed = keep.keep && !fellBack;
+      } catch (error) { if (!this.stalls(error, id)) this.endUnrecorded(id, target, error); }
       if (keep.keep && !handed) {
         // The hand-over was not recorded, so the process is not kept: it is closed like any other Turn's.
         const unrecorded = this.kept.get(id);
@@ -2231,8 +2272,8 @@ export class SessionRuntime {
    * the conversation's public title (its first words), "新对话" when it holds anything the relay would redact (§10.2's egress
    * scan); `set`, `refused` (the Driver said no) or `unavailable` (late, or failed). Its failure never fails the Turn.
    */
-  private async titleFor(control: HarnessControl, native: NativeConversationId, state: SessionSnapshot, secrets: readonly string[]): Promise<"set" | "refused" | "unavailable"> {
-    const first = state.messages.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim().slice(0, 80) ?? "";
+  private async titleFor(control: HarnessControl, native: NativeConversationId, firstWords: string, secrets: readonly string[]): Promise<"set" | "refused" | "unavailable"> {
+    const first = firstWords.replace(/\s+/gu, " ").trim().slice(0, 80);
     const title = first === "" || relayRedactor(secrets).redact(first).hits > 0 ? "新对话" : first;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -2253,9 +2294,9 @@ export class SessionRuntime {
    * a configuration it could not read with RELAY_PREPARE_FAILED; ownership and cancellation keep their codes); any other
    * failure is the relay's too (N3), never the target Harness's: the Turn fails undispatched and what it owes stays owed.
    */
-  private async relaySecretsOf(state: SessionSnapshot, run: Pick<PublicRun, "selection">, sources: readonly PublicRun["id"][], origin: boolean): Promise<readonly string[]> {
+  private async relaySecretsOf(history: RelayHistory, configuration: SessionConfiguration, run: Pick<PublicRun, "selection">, sources: readonly PublicRun["id"][], origin: boolean): Promise<readonly string[]> {
     if (this.factory.relaySecrets === undefined) return [];
-    try { return await this.factory.relaySecrets(state.configuration, this.relayHarnesses(state, run, sources, origin)); }
+    try { return await this.factory.relaySecrets(configuration, this.relayHarnesses(history, run, sources, origin)); }
     catch (error) {
       if (error instanceof SessionError) throw error;
       throw new SessionError("RELAY_PREPARE_FAILED", "没能准备交接单：读取交接单必须隐去的凭据时出错，这条消息没有发出。修好后再发；也可以只发这条消息，不带交接单。");
@@ -2265,38 +2306,38 @@ export class SessionRuntime {
    * The Harnesses whose history a packet carries (ADR-055 §10.2, review M1): the owed Runs' and, when the Session's own
    * starting history is owed, its messages' (an import's Harness included), with the target's own.
    */
-  private relayHarnesses(state: SessionSnapshot, run: Pick<PublicRun, "selection">, sources: readonly PublicRun["id"][], origin: boolean): readonly string[] {
-    const ids = new Set<string>([run.selection.harnessId]);
-    for (const source of state.runs) if (sources.includes(source.id)) ids.add(source.selection.harnessId);
-    if (origin && state.origin !== undefined) {
-      if (state.origin.kind === "import") ids.add(state.origin.harnessId);
-      for (const message of state.origin.history) if (message.harnessId !== undefined) ids.add(message.harnessId);
+  private relayHarnesses(history: RelayHistory, run: Pick<PublicRun, "selection">, sources: readonly PublicRun["id"][], origin: boolean): readonly string[] {
+    const ids = new Set<string>([run.selection.harnessId]), owed = new Set<string>(sources);
+    for (const source of history.runs) if (owed.has(source.id)) ids.add(source.selection.harnessId);
+    const quoted = origin ? history.origin : undefined;
+    if (quoted !== undefined) {
+      if (quoted.kind === "import") ids.add(quoted.harnessId);
+      for (const message of quoted.history) if (message.harnessId !== undefined) ids.add(message.harnessId);
     }
     return [...ids].sort();
   }
   /**
    * What the relay packet may quote of the owed Runs' stored tool details (ADR-055 §6.4), read back within bounds: the
-   * commands, changes, reads and searches of the first owed Run and the 12 latest, ≤32 a Run, ≤128 in all, each ≤256 KiB.
+   * commands, changes, reads and searches of the first owed Run and the 12 latest, ≤32 a Run, ≤128 in all, whatever the size of each (what is kept of a large one: `RELAY_DETAIL_POLICY`).
    * A detail that cannot be read (no store that reads back, gone, changed, not JSON) is left out: the packet then lists
    * that tool by its title and its ledger says how many were not read.
    */
-  private async relayDetails(state: SessionSnapshot, sources: readonly PublicRun["id"][]): Promise<ReadonlyMap<string, RelayToolDetail>> {
+  private async relayDetails(history: RelayHistory, sources: readonly PublicRun["id"][]): Promise<ReadonlyMap<string, RelayToolDetail>> {
     const content = this.options.content, details = new Map<string, RelayToolDetail>();
-    if (content?.readText === undefined) return details;
-    const runs = sources.flatMap(id => state.runs.filter(run => run.id === id));
+    if (content === undefined || (content.readText === undefined && content.readChunks === undefined)) return details;
+    // Only the Turns whose details are read are read: the first owed Run's and the 12 latest.
+    const position = new Map(history.runs.map((run, index) => [run.id as string, index]));
+    const runs = [...new Set([...sources.slice(0, 1), ...sources.slice(-12)])].flatMap(id => { const turn = history.turn(position.get(id) ?? -1); return turn === null ? [] : [turn.run]; });
     let left = 128;
-    for (const run of [...new Set([...runs.slice(0, 1), ...runs.slice(-12)])]) {
+    for (const run of runs) {
       let taken = 0;
       for (const tool of run.tools ?? []) {
         if (left === 0 || taken === 32) break;
         if (tool.detail === undefined || tool.parentId !== undefined || !["execute", "change", "read", "search"].includes(toolFamily(tool))) continue;
         taken++; left--;
-        const text = await content.readText(tool.detail, 256 * 1024);
-        if (text === null) continue;
-        let value: unknown;
-        try { value = JSON.parse(text); } catch { continue; }
-        const detail = parseToolDetail(value);
-        if (detail !== null) details.set(run.id + "/" + tool.id, detail);
+        // Whatever its size: the command and the paths whole, an output too long to keep as its last lines (finding 1 of the cut review).
+        const read = await readDetail(content, tool.detail, RELAY_DETAIL_POLICY);
+        if (read !== null) details.set(run.id + "/" + tool.id, relayDetailOf(read));
       }
     }
     return details;
@@ -2315,9 +2356,48 @@ export class SessionRuntime {
     const accepted = this.store.events(state.id, run.userSeq - 1, 1)[0];
     return accepted?.type === "message.accepted" && accepted.data.runId === run.id ? acceptedChoices(accepted.data) : {};
   }
+  /**
+   * A request the conversation's worker was serving (its switch, its native fork, its next Turn) failed for a rule of the rows and not of the store: that request ends with the reason, told
+   * in the conversation, and the conversation and the Runtime go on. A switch fails (and the inputs waiting for it); a fork is given up as a branch whose native session could not be
+   * made; a queued Turn fails undispatched. If even that cannot be written for a rule of the rows, the conversation is left as it is and the worker stops serving it for now
+   * (false); a store that cannot be trusted stalls the Runtime instead, as it always did.
+   */
+  private endRequest(id: SessionId, error: unknown): boolean {
+    const why = fault(error), at = this.options.now().getTime();
+    try {
+      this.commit(id, current => {
+        const switchId = current.pendingSwitchId;
+        if (switchId !== null) {
+          const waiting = current.runs.filter(row => row.status === "queued" && row.awaitingSwitchId === switchId).map(row => row.id);
+          return { next: this.strandSwitch(current, switchId, waiting, at, why), events: [event("switch.failed", { switchId, error: why, reason: "the switch could not be applied" }),
+            ...waiting.map(queuedId => event("run.ended", { runId: queuedId, status: "failed", error: { code: "SWITCH_NOT_EFFECTIVE" }, neverDispatched: true }))] };
+        }
+        const fork = current.nativeBindings?.find(binding => binding.status === "fork-pending" || binding.status === "forking");
+        if (fork !== undefined) {
+          return { next: { ...current, nativeBindings: current.nativeBindings!.map(binding => binding === fork ? { ...binding, status: "archived" as const } : binding) },
+            events: [event("native.fork_failed", { harnessId: fork.harnessId, controlId: fork.controlId, error: why, continuity: "public_context_rehydrate" })] };
+        }
+        const queued = current.runs.find(row => row.status === "queued");
+        if (queued !== undefined) return { next: updatedRun(current, queued.id, { status: "failed", error: why, ...phase(current, queued.id, "endedAt", at) }), events: [event("run.ended", { runId: queued.id, status: "failed", error: why, neverDispatched: true })] };
+        return { next: current, events: [event("session.request_failed", { error: why })] };
+      });
+      return true;
+    } catch (second) {
+      this.stalls(second, id);
+      return false;
+    }
+  }
+  /**
+   * A Turn's end could not be written in any form for a rule of the rows (not for the store): the Runtime goes on, and the log says so. The Turn stays as the rows have it until the next start's recovery
+   * ends it as unknown; nothing the rows hold is changed here, so that the event is written whatever rule refused the rest.
+   */
+  private endUnrecorded(id: SessionId, runId: PublicRun["id"], error: unknown): void {
+    try { this.commit(id, current => ({ next: current, events: [event("run.end_unrecorded", { runId, error: fault(error) })] })); }
+    catch (second) { this.stalls(second, id); }
+  }
   /** The pending switch fails as stranded, and each input waiting for it ends as not dispatched (SWITCH_NOT_EFFECTIVE). */
-  private strandSwitch(state: Conversation, switchId: string, waiting: readonly PublicRun["id"][], endedAt: number): Conversation {
-    let next: Conversation = { ...state, pendingSwitchId: null, switches: state.switches.map(sw => sw.id === switchId ? { ...sw, status: "failed" as const, error: STRANDED_SWITCH } : sw) };
+  private strandSwitch(state: Conversation, switchId: string, waiting: readonly PublicRun["id"][], endedAt: number, error: { readonly code: string; readonly message: string } = STRANDED_SWITCH): Conversation {
+    let next: Conversation = { ...state, pendingSwitchId: null, switches: state.switches.map(sw => sw.id === switchId ? { ...sw, status: "failed" as const, error } : sw) };
     for (const queued of waiting) next = updatedRun(next, queued, { status: "failed", error: { code: "SWITCH_NOT_EFFECTIVE", message: "requested Harness switch failed; this input was not dispatched" }, ...phase(next, queued, "endedAt", endedAt) });
     return next;
   }

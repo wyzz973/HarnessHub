@@ -48,6 +48,8 @@ export const VERIFY_RULES = [
   "run-has-user-item", "item-seqs-increase", "item-ids-unique", "finished-run-no-open-item", "item-chunks-well-formed", "item-text-counts",
   // what the store holds
   "head-agrees", "run-row-agrees",
+  // content: what the rows mention is what the collector keeps
+  "content-refs-complete",
 ] as const;
 export type VerifyRule = typeof VERIFY_RULES[number];
 
@@ -83,9 +85,22 @@ function closedClean(run: ConversationRun): boolean { return run.cleanup?.closed
 function claims(entry: PublicSwitch, run: string): boolean { return (entry.acknowledgedUnknown as readonly string[] | undefined)?.includes(run) === true || (entry.sourceRunIds as readonly string[]).includes(run); }
 const hasLoneSurrogate = (text: string): boolean => /[\ud800-\udfff]/u.test(text);
 const encoder = new TextEncoder();
-/** A Turn as the store holds it, or null when it holds none (or cannot say). */
-function reading(reader: ConversationReader, id: SessionId, ordinal: number): TurnItems | null {
-  try { return reader.turnAt(id, ordinal); } catch { return null; }
+/** A Turn as the store holds it, or null when it holds none (or cannot say). `whole`: nothing left out for its size (an item's JSON longer than a page is whole). */
+function reading(reader: ConversationReader, id: SessionId, ordinal: number, whole = false): TurnItems | null {
+  try { return whole ? reader.turnAt(id, ordinal, { inlineBytes: Infinity }) : reader.turnAt(id, ordinal); } catch { return null; }
+}
+const CONTENT_ID = /^content-[A-Za-z0-9-]{1,96}$/u;
+/**
+ * The content a JSON value mentions: the id of every object in it that is a content reference (an id of content together with the digest of its bytes). It looks at
+ * the shape and not at where the writers put references, so that a place the writers forgot is found all the same.
+ */
+export function mentionedContent(value: unknown, found: Set<string> = new Set(), depth = 0): Set<string> {
+  if (depth > 32 || value === null || typeof value !== "object") return found;
+  if (Array.isArray(value)) { for (const entry of value) mentionedContent(entry, found, depth + 1); return found; }
+  const row = value as Readonly<Record<string, unknown>>;
+  if (typeof row.id === "string" && CONTENT_ID.test(row.id) && typeof row.sha256 === "string") found.add(row.id);
+  for (const entry of Object.values(row)) mentionedContent(entry, found, depth + 1);
+  return found;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -200,12 +215,15 @@ export const verify: VerifyConversation = (conversation: Conversation, reader: C
 
   // Each Run's Turn is read once: its items are checked (those held in memory, or those the store gives for a finished Run), the last of its messages
   // (what a later Run's context watermark must cover) is noted, and its row is kept for the comparison with the store at the end.
-  const lastMessage: number[] = [], rows: (RunRow | null)[] = [];
+  const lastMessage: number[] = [], rows: (RunRow | null)[] = [], mentions: { readonly id: string; readonly where: string }[] = [];
   runs.forEach((run, position) => {
     const where = "run " + run.id, turn = reading(reader, conversation.id, run.ordinal), held = run.items !== undefined;
     rows[position] = turn?.run ?? null;
-    const items: readonly HeldItem[] | null = held ? run.items! : turn === null ? null : turn.items;
+    let items: readonly HeldItem[] | null = held ? run.items! : turn === null ? null : turn.items;
     if (items === null) return;
+    // What the items mention of content (an item whose JSON was left out for its size is read again whole).
+    if (items.some(item => item.bodyOmitted === true)) items = reading(reader, conversation.id, run.ordinal, true)?.items ?? items;
+    for (const item of items) for (const id of mentionedContent(item.fields)) mentions.push({ id, where: where + " item " + item.seq + " (" + item.itemId + ")" });
     if (items.length === 0 || items[0]!.itemId !== "user" || items[0]!.seq !== 1 || items[0]!.createdSeq !== run.userSeq) say("run-has-user-item", where, "its first item is not its user message at seq 1 created at " + run.userSeq);
     const ids = new Set<string>();
     let top = run.userSeq;
@@ -221,6 +239,25 @@ export const verify: VerifyConversation = (conversation: Conversation, reader: C
     });
     lastMessage[position] = top;
   });
+
+  // Content: the collector keeps content by the references registered for a conversation and by nothing else, so every content the rows mention (the details and contents of
+  // the items, the Runs' attachments, the history a branch quoted) must be among them; one that is not is content the next collection deletes while a Turn still shows it.
+  if (reader.references !== undefined) {
+    let registered: ReadonlySet<string> | null = null;
+    try { registered = reader.references(conversation.id); } catch { registered = null; }
+    if (registered !== null) {
+      for (const run of runs) for (const id of mentionedContent({ ...run, items: undefined })) mentions.push({ id, where: "run " + run.id });
+      let quoted: readonly { readonly message: unknown }[] = [];
+      try { quoted = reader.originHistory?.(conversation.id) ?? []; } catch { quoted = []; }
+      quoted.forEach((row, at) => { for (const id of mentionedContent(row.message)) mentions.push({ id, where: "conversation " + conversation.id + " quoted message " + at }); });
+      const told = new Set<string>();
+      for (const mention of mentions) {
+        if (registered.has(mention.id) || told.has(mention.id + "\n" + mention.where)) continue;
+        told.add(mention.id + "\n" + mention.where);
+        say("content-refs-complete", mention.where, "it mentions the content " + mention.id + " and no reference to it is registered for the conversation");
+      }
+    }
+  }
 
   // The sources a Run carries: finished, accepted before it, and no later than its context watermark (the user's words and the reply of each).
   for (const run of runs) {

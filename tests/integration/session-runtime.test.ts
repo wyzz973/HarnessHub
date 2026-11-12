@@ -36,13 +36,25 @@ async function fixture(t: test.TestContext): Promise<Fixture> {
   const stores = [store];
   const runtimes: SessionRuntime[] = [];
   t.after(async () => {
-    for (const app of runtimes) {
-      try { await app.close(); }
-      // A fault test may already have poisoned its Store, or replaced the owner marker (the ADR-047 owner-loss case).
-      catch (error) { if (!(error instanceof SessionError) || !["SESSION_BLOCKED", "PUBLICATION_FAILED", "STORAGE_UNAVAILABLE", "OWNER_LOST"].includes(error.code)) throw error; }
+    const unsound: string[] = []; let checked = 0;
+    try {
+      for (const app of runtimes) {
+        try { await app.close(); }
+        // A fault test may already have poisoned its Store, or replaced the owner marker (the ADR-047 owner-loss case).
+        catch (error) { if (!(error instanceof SessionError) || !["SESSION_BLOCKED", "PUBLICATION_FAILED", "STORAGE_UNAVAILABLE", "OWNER_LOST"].includes(error.code)) throw error; }
+      }
+      // Whatever the test did, the conversations it left break no rule of the whole-conversation check: among them that every content the rows mention (a call's detail, an
+      // artifact, an attachment, the history a branch quoted) is registered, so that the collector cannot delete what a Turn still shows.
+      for (const owned of stores) {
+        try { for (const row of owned.list({ limit: 1000 }).rows) { checked++; for (const violation of verify(owned.get(row.id), owned)) unsound.push(row.id + ": " + violation.rule + " at " + violation.where + " (" + violation.detail + ")"); } }
+        catch { /* a fault test may already have poisoned its Store, which then answers nothing */ }
+      }
+    } finally {
+      for (const owned of stores) try { owned.close(); } catch { /* A fault test may already poison its Store. */ }
+      await rm(root, { recursive: true, force: true });
     }
-    for (const owned of stores) try { owned.close(); } catch { /* A fault test may already poison its Store. */ }
-    await rm(root, { recursive: true, force: true });
+    if (process.env.RUNTIME_TEST_VERBOSE) t.diagnostic("the whole-conversation check ran over " + checked + " conversation(s)");
+    assert.deepEqual(unsound, [], "the conversations the test left break no rule");
   });
   return { root, store, stores, runtimes, configuration: { workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true } };
 }
@@ -844,6 +856,95 @@ test("native activity becomes public facts, and each call's detail is stored who
   assert.deepEqual(app.read(session.id).runs[1]!.notices, [{ severity: "info", title: "new" }]);
   assertRowsAreTheOnlyRecord(f);
   assert.equal(f.store.events(session.id, 0, 100).filter(row => row.type === "run.output" && JSON.stringify(row.data).includes('"title":"fallback"')).length, 3);
+});
+
+test("a call's detail is kept whole at any size: 25 MiB of output is stored in pieces, and a command with 300 KiB and with 2 MiB of output keeps its command in both", { timeout: 60000 }, async t => {
+  const f = await fixture(t), peer = controlled({ holdResult: true }), factory = new ControlledFactory([peer]), prepare = factory.prepare.bind(factory);
+  const content = new LocalContentStore(join(f.root, "data"), () => f.store.assertOwner());
+  let emit: ((event: ControlEvent) => void) | null = null;
+  factory.prepare = async (...args) => {
+    const binding = await prepare(...args);
+    return { ...binding, control: { ...binding.control, startText: async (id: NativeConversationId, text: TurnText, output: (event: ControlEvent) => void) => { emit = output; return binding.control.startText(id, text, output); } } };
+  };
+  let id = 0;
+  const app = new SessionRuntime(f.store, factory, { id: () => String(++id), now: () => new Date("2026-10-11T00:00:00Z"), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"), content });
+  f.runtimes.push(app);
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(session.id, "print a lot", "one"); await peer.started.promise;
+  const sizes = { small: 300 * 1024, middle: 2 * 1024 * 1024, huge: 25 * 1024 * 1024 };
+  for (const [name, size] of Object.entries(sizes)) {
+    emit!({ type: "tool", id: name, title: "make " + name, status: "in_progress", detail: { kind: "execute", name: "Bash", input: "make-output --" + name } });
+    emit!({ type: "tool", id: name, title: "make " + name, status: "completed", detail: { output: name[0]!.repeat(size), exitCode: 0 } });
+  }
+  peer.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
+  const run = app.read(session.id).runs[0]!;
+  assert.equal(run.status, "completed");
+  for (const [name, size] of Object.entries(sizes)) {
+    const tool = run.tools?.find(candidate => candidate.id === name);
+    assert.ok(tool?.detail, name + ": the detail is kept");
+    assert.equal(tool.detail.bytes > size, true, name + ": kept whole, not cut to a bound");
+    const text = await readFile(content.read(tool.detail.id).path, "utf8"), stored = JSON.parse(text) as Record<string, unknown>;
+    assert.equal(stored.input, "make-output --" + name, name + ": the command is there"); assert.equal((stored.output as string).length, size, name + ": and the whole output");
+    assert.equal(stored.truncated, undefined);
+  }
+  const turn = f.store.turnAt(session.id, 0, { inlineBytes: Infinity })!;
+  for (const name of Object.keys(sizes)) {
+    const item = turn.items.find(candidate => candidate.itemId === "tool:" + name)!;
+    assert.equal((item.fields as { readonly native?: { readonly clipped?: readonly string[] } }).native?.clipped, undefined, name + ": nothing on the item says it was cut");
+    assert.ok((item.fields as { readonly detail?: unknown }).detail, name + ": and the row refers to the detail");
+  }
+  assert.deepEqual(verify(f.store.get(session.id), f.store), []);
+});
+
+test("a detail the content store cannot keep is said on the call's item, the Turn goes on, and a detail kept later takes the saying away", { timeout: 20000 }, async t => {
+  const f = await fixture(t), peer = controlled({ holdResult: true }), factory = new ControlledFactory([peer]), prepare = factory.prepare.bind(factory);
+  const store = new LocalContentStore(join(f.root, "data"), () => f.store.assertOwner());
+  let emit: ((event: ControlEvent) => void) | null = null;
+  factory.prepare = async (...args) => {
+    const binding = await prepare(...args);
+    return { ...binding, control: { ...binding.control, startText: async (id: NativeConversationId, text: TurnText, output: (event: ControlEvent) => void) => { emit = output; return binding.control.startText(id, text, output); } } };
+  };
+  // The disk fills for the first two writes, then there is room again.
+  const attempts: string[] = []; let failing = 2; const settled = new Gate<void>(), kept = new Gate<void>();
+  const content = Object.assign(Object.create(store) as LocalContentStore, {
+    storeOutput: async (input: Parameters<LocalContentStore["storeOutput"]>[0]) => {
+      attempts.push(input.name);
+      if (failing > 0) {
+        failing--;
+        if (failing === 0) settled.resolve();
+        throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+      }
+      const ref = await store.storeOutput(input); kept.resolve(); return ref;
+    },
+  });
+  let id = 0;
+  const app = new SessionRuntime(f.store, factory, { id: () => String(++id), now: () => new Date("2026-10-11T00:00:00Z"), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"), content });
+  f.runtimes.push(app);
+  const session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(session.id, "build it", "one"); await peer.started.promise;
+  emit!({ type: "tool", id: "lost", title: "make", status: "completed", detail: { kind: "execute", name: "Bash", input: "make", output: "built nothing", exitCode: 2 } });
+  emit!({ type: "tool", id: "later", title: "make again", status: "completed", detail: { kind: "execute", name: "Bash", input: "make", output: "first try", exitCode: 2 } });
+  await settled.promise; await new Promise<void>(resolve => setImmediate(resolve));
+  // The call that lost its detail is reported once more, finished, with the output it has now: the store has room, and what is kept now is the whole of it.
+  emit!({ type: "tool", id: "later", title: "make again", status: "completed", detail: { output: "second try", exitCode: 0 } });
+  await kept.promise; await new Promise<void>(resolve => setImmediate(resolve));
+  peer.result.resolve({ status: "completed", reason: "fixture" }); await app.wait(session.id);
+  const run = app.read(session.id).runs[0]!;
+  assert.equal(run.status, "completed", "a detail that could not be kept ends nothing");
+  const turn = f.store.turnAt(session.id, 0, { inlineBytes: Infinity })!, itemOf = (name: string) => turn.items.find(candidate => candidate.itemId === "tool:" + name)!;
+  const fieldsOf = (name: string) => itemOf(name).fields as { readonly detail?: { readonly id: string }; readonly native?: { readonly clipped?: readonly string[] } };
+  assert.deepEqual(fieldsOf("lost").native?.clipped, ["detail:not_saved"], "the item of the call that lost its detail says so");
+  assert.equal(fieldsOf("lost").detail, undefined, "and refers to no detail");
+  assert.equal(fieldsOf("later").native?.clipped, undefined, "a detail kept later takes the saying away");
+  assert.ok(fieldsOf("later").detail, "and the item refers to it");
+  const stored = JSON.parse(await readFile(content.read(fieldsOf("later").detail!.id).path, "utf8")) as Record<string, unknown>;
+  assert.equal(stored.output, "second try"); assert.equal(stored.input, "make");
+  assert.equal(attempts.length, 3, "the two writes that failed and the one that was kept");
+  const log = f.store.events(session.id, 0, 100).filter(row => row.type === "run.output" && JSON.stringify(row.data).includes("tool detail was not stored"));
+  assert.equal(log.length, 2, "the log says why, as it always did");
+  assert.deepEqual(f.store.contentReferences(), new Set([fieldsOf("later").detail!.id]), "only the detail that was kept is registered");
+  assert.deepEqual(verify(f.store.get(session.id), f.store), []);
+  app.send(session.id, "and again", "two"); await app.wait(session.id); assert.equal(app.read(session.id).runs[1]?.status === "completed" || app.read(session.id).runs[1]?.status === "failed", true, "the runtime goes on");
 });
 
 test("attachments are admitted with the input, checked and copied before dispatch, and a refusal fails only that input", { timeout: 10000 }, async t => {

@@ -37,12 +37,13 @@ export async function main(args: readonly string[]): Promise<number> {
       return check.ok ? 0 : 1;
     }
     if (action === "resume") {
-      app = application(root, () => {}, values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] });
-      const id = sessionId(values.session), current = app.runtime.read(id);
-      output = app.runtime.resume(id, values.harness === undefined ? current.selection : selection(values.harness), values["command-id"] ?? newCommand("resume"), values["acknowledge-unknown"] ?? false);
+      app = application(root, () => {}, { searchBackfill: false, ...(values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] }) });
+      // What it needs of the conversation is the Harness it selects now: the head says (the Turns are not read).
+      const id = sessionId(values.session), selected = app.store.head(id).head.selection;
+      output = app.runtime.resume(id, values.harness === undefined ? selected : selection(values.harness), values["command-id"] ?? newCommand("resume"), values["acknowledge-unknown"] ?? false);
       await app.runtime.wait(id);
     } else if (action === "close") {
-      app = application(root, () => {}, values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] });
+      app = application(root, () => {}, { searchBackfill: false, ...(values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] }) });
       output = await app.runtime.closeSession(sessionId(values.session), values["command-id"] ?? newCommand("close"));
     } else {
       reader = new SqliteSessionReader(root);

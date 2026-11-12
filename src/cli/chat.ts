@@ -2,17 +2,23 @@ import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
-import { SessionError, sessionId, type SessionEvent, type SessionSnapshot } from "../contracts/session.js";
+import { SessionError, sessionId, type HarnessSelection, type SessionConfiguration, type SessionEvent, type SessionId, type SessionSnapshot } from "../contracts/session.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { resolveInstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { defaultRelayKeyPath } from "../infrastructure/session/relay-keys.js";
 import { application, dataRoot, errorRecord, hash, newCommand, selection } from "./session-application.js";
 import { parseConfiguration } from "../contexts/session/domain/state.js";
+import { turnSource } from "../contexts/session/domain/turn-source.js";
 import { boundedWrite, MAX_CLI_INPUT_BYTES } from "./bounded-streams.js";
 
 export async function main(args: readonly string[]): Promise<number> {
   let app: ReturnType<typeof application> | undefined;
-  let current: SessionSnapshot | undefined;
+  /** The conversation the chat is in, as far as the chat needs it: who and where it is, not what was said in it. */
+  let current: { readonly id: SessionId; readonly status: SessionSnapshot["status"]; readonly selection: HarnessSelection; readonly configuration: SessionConfiguration } | undefined;
+  const chatOf = (id: SessionId): NonNullable<typeof current> => {
+    const state = app!.store.get(id);
+    return { id: state.id, status: state.status, selection: state.selection, configuration: state.configuration };
+  };
   let lines: ReturnType<typeof createInterface> | undefined;
   let quitting = false, interrupted = false, publicationBroken = false;
   let shutdown: Promise<void> | undefined;
@@ -71,7 +77,7 @@ export async function main(args: readonly string[]): Promise<number> {
         writeOutput("\n[" + event.type + "] " + JSON.stringify(event.data) + "\n");
     }, { installations: resolveInstallationPolicy(values["allow-unofficial"]), relayKeyFile: defaultRelayKeyPath(process.env.HOME || undefined), ...(values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] }) });
     if (values.session !== undefined) {
-      current = app.runtime.read(sessionId(values.session));
+      current = chatOf(sessionId(values.session));
       if ([values.cwd, values.manifest, values["config-home"], values["package-root"], values["search-dir"], values["path-only"]].some(value => value !== undefined)) {
         const saved = current.configuration;
         const config = await prepareConfiguration({ workspace: values.cwd === undefined ? saved.workspace : resolve(values.cwd),
@@ -88,10 +94,11 @@ export async function main(args: readonly string[]): Promise<number> {
         ...(values["config-home"] === undefined ? {} : { configHome: resolve(values["config-home"]) }),
         packageRoots: (values["package-root"] ?? []).map(path => resolve(path)), searchDirs: (values["search-dir"] ?? []).map(path => resolve(path)), pathOnly: values["path-only"] ?? false });
       const key = values["command-id"] === undefined ? newCommand("create") : "create:" + hash(values["command-id"]);
-      current = await app.runtime.create(configuration, selection(values.harness!, values.control), key);
+      current = chatOf((await app.runtime.create(configuration, selection(values.harness!, values.control), key)).id);
     }
     if (current.status !== "open") throw new SessionError("SESSION_NOT_OPEN", "Session is " + current.status + "; read its persistent history with sessions show");
-    if (json) emit({ type: "session", sessionId: current.id, session: current });
+    // The NDJSON mode's documents are the conversation as a whole, in the shape they have always had.
+    if (json) emit({ type: "session", sessionId: current.id, session: app.store.snapshot(current.id) });
     else writeOutput("Session " + current.id + " · " + current.selection.harnessId + " · public_context_rehydrate\n");
     if (values.session !== undefined && values.harness !== undefined) app.runtime.switch(current.id, selection(values.harness, values.control), newCommand("switch"));
     if (values.prompt !== undefined) {
@@ -108,9 +115,13 @@ export async function main(args: readonly string[]): Promise<number> {
           if (line.trim() === ":quit") { beginShutdown(); break; }
           if (line.trim() === ":cancel") app.runtime.cancel(current.id, newCommand("cancel"));
           else if (line.trim() === ":history") {
-            const snapshot = app.runtime.read(current.id);
-            if (json) emit({ type: "history", sessionId: current.id, session: snapshot });
-            else for (const message of snapshot.messages) writeOutput("\n" + message.role + " [" + message.status + "]: " + message.text + "\n");
+            if (json) emit({ type: "history", sessionId: current.id, session: app.store.snapshot(current.id) });
+            else {
+              // The words said, in the order they were said: each Turn is read when its turn comes.
+              const source = turnSource(app.store, current.id), said = [];
+              for (let ordinal = 0; ordinal < source.count; ordinal++) { const turn = source.turn(ordinal)!; said.push(turn.user, ...(turn.assistant === undefined ? [] : [turn.assistant])); }
+              for (const message of said.sort((left, right) => left.seq - right.seq)) writeOutput("\n" + message.role + " [" + message.status + "]: " + message.text + "\n");
+            }
           } else if (line.trim().startsWith(":harness ")) app.runtime.switch(current.id, selection(line.trim().slice(9).trim()), newCommand("switch"));
           else if (line.trim().startsWith(":")) throw new SessionError("INVALID_INPUT", "unknown chat command");
           else app.runtime.send(current.id, line, newCommand("send"));
@@ -119,9 +130,9 @@ export async function main(args: readonly string[]): Promise<number> {
       // Ordinary EOF drains accepted input; :quit/signal explicitly cancels owned unfinished work.
       if (!quitting) await app.runtime.wait(current.id);
     }
-    const final = app.runtime.read(current.id);
+    const final = app.store.get(current.id);
     if (final.status === "blocked" || final.runs.some(run => run.status === "failed" || run.status === "unknown") || final.switches.some(entry => entry.status === "failed")) exitCode = 1;
-    if (json) emit({ type: "snapshot", sessionId: final.id, session: final });
+    if (json) emit({ type: "snapshot", sessionId: final.id, session: app.store.snapshot(final.id) });
   } catch (error) { report(error); }
   finally {
     lines?.close();

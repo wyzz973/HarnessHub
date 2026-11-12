@@ -1,13 +1,14 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { CommandClass, ContextEffect } from "../../../contracts/control.js";
 import {
-  CONTEXT_EFFECTS, EPHEMERAL_KEY_ID, ITEM_KINDS, RELAY_MAX_SEQ, RELAY_PREF_DEFAULTS, RelayError, hmacDigest, packRunIndexes, parseExecutedOn, redactionTag, relayPacketId,
+  EPHEMERAL_KEY_ID, ITEM_KINDS, RELAY_PREF_DEFAULTS, RelayError, hmacDigest, packRunIndexes, redactionTag, relayPacketId,
   type BindingRelayState, type ContinuityLevel, type DeliveryRecord, type ExecutedOn, type Fingerprint, type HmacDigest, type RedactionTag, type RelayAttention, type RelayCapabilities, type RelayDecision,
-  type RelayDeliveryWrite, type RelayIndexRow, type RelayKeyPort, type RelayPacket, type RelayPacketId, type RelayPrefKey, type RunRelay, type RunRelayRequest, type SourceRange,
+  type RelayDeliveryWrite, type RelayKeyPort, type RelayPacket, type RelayPacketId, type RelayPrefKey, type RunRelay, type RunRelayRequest, type SourceRange,
 } from "../../../contracts/relay.js";
 import type { ConversationRun } from "../../../contracts/conversation.js";
-import { SessionError, type PublicRun, type RunId, type SessionEvent, type SessionId, type SessionSnapshot } from "../../../contracts/session.js";
+import { SessionError, type PublicRun, type RunId, type SessionId, type SessionSnapshot } from "../../../contracts/session.js";
 import { commandOutcome, dispatched } from "../domain/relay/advance.js";
+import { historyOf, type RelayState } from "../domain/relay/history.js";
 import { commandTurnEvent, nothingOwed, owed, settledOutcome, step, type PacketRef, type RelayFact, type RelayEvent, type TurnPlan } from "../domain/relay/delivery.js";
 import type { RelayRecord } from "../domain/relay/packet.js";
 import { terminal } from "../domain/state.js";
@@ -133,82 +134,6 @@ export class RelayLedger {
   }
 }
 
-type EventReader = (id: SessionId, afterSeq: number, limit: number) => readonly SessionEvent[];
-/**
- * The public facts of each Session as its events place them: the fact seq of each finished Run (its `run.ended`, or the
- * `session.recovered` that ended it) and the Runs that were native commands, with the effect each had on the native context (the
- * one its end settled, else the one it was read with): a command is a fact only when it entered the context like a message (keep).
- * Events are append-only, so each Session's are read once, from where the last read stopped; a new owner reads them again from the start.
- * This is the reading of the readers that still hold the old shape of a conversation (the relay API's brief); the Runtime reads the rows (`RelayLedger`).
- */
-export class EventRelayLedger {
-  private readonly sessions = new Map<SessionId, { after: number; readonly ended: Map<string, number>; readonly commands: Map<string, ContextEffect | undefined>; readonly settled: Map<string, ContextEffect> }>();
-  constructor(private readonly events: EventReader) {}
-  private scan(state: SessionSnapshot): { readonly ended: ReadonlyMap<string, number>; readonly commands: ReadonlyMap<string, ContextEffect | undefined>; readonly settled: ReadonlyMap<string, ContextEffect> } {
-    let known = this.sessions.get(state.id);
-    if (known === undefined || known.after > state.lastSeq) { known = { after: 0, ended: new Map(), commands: new Map(), settled: new Map() }; this.sessions.set(state.id, known); }
-    while (known.after < state.lastSeq) {
-      const page = this.events(state.id, known.after, 100);
-      if (!page.length) break;
-      for (const item of page) {
-        const data = item.data, run = typeof data.runId === "string" ? data.runId : null;
-        if (item.type === "run.ended" && run !== null && !known.ended.has(run)) {
-          known.ended.set(run, item.seq);
-          const effect = contextEffectOf(data.contextEffect);
-          if (effect !== undefined) known.settled.set(run, effect);
-        }
-        else if (item.type === "run.native_command" && run !== null) known.commands.set(run, contextEffectOf(data.contextEffect));
-        else if (item.type === "session.recovered")
-          for (const id of [...strings(data.unknownRunIds), ...strings(data.cancelledRunIds)]) if (!known.ended.has(id)) known.ended.set(id, item.seq);
-      }
-      known.after = page.at(-1)!.seq;
-    }
-    return known;
-  }
-  /** The fact seq of a finished Run, when its events place it. */
-  endedSeq(state: SessionSnapshot, run: RunId): number | undefined { return this.scan(state).ended.get(run); }
-  /**
-   * The public facts of the Session foreign to `binding` (its Harness control in its current native epoch): each finished,
-   * dispatched Run that did not run there, with its fact seq and where it ran — the Run's own `relay.executedOn` (v13), else the
-   * migration's index row (`index`), else null, which makes it foreign to every binding (a conservative reading: it may be sent again,
-   * never lost). A native command is a fact when it entered the context like a message (a skill, a custom command: the effect keep) and
-   * none when it did not (it left the history alone, compacted, rewound or cleared it, had an unknown effect, or never ran): the others
-   * put nothing into the conversation, or were settled by the binding that ran them. Only the facts a binding may owe are read: the events
-   * are paged only when there is a foreign Run to place, so a single-Harness conversation reads none.
-   */
-  facts(state: SessionSnapshot, index: readonly RelayIndexRow[], binding: { readonly harnessId: string; readonly controlId: string; readonly nativeEpoch: number }): readonly RelayFact[] {
-    const rows = new Map<string, Readonly<Record<string, unknown>>>();
-    for (const row of index) if (!rows.has(row.runId)) rows.set(row.runId, row.index);
-    const candidates: { readonly run: PublicRun; readonly row: Readonly<Record<string, unknown>> | undefined; readonly executedOn: ExecutedOn | null }[] = [];
-    for (const run of state.runs) {
-      if (!terminal(run.status) || !dispatched(run)) continue;
-      const row = rows.get(run.id);
-      // A Run from before v13 that the migration found to be a command (its effect is in its index row) is a fact only when it kept.
-      if (run.relay === undefined && row?.commandEffect != null && row.commandEffect !== "keep") continue;
-      const executedOn = run.relay !== undefined ? run.relay.executedOn : executedOf(row?.executedOn);
-      if (executedOn !== null && executedOn.harnessId === binding.harnessId && executedOn.controlId === binding.controlId && executedOn.nativeEpoch === binding.nativeEpoch) continue;
-      candidates.push({ run, row, executedOn });
-    }
-    if (candidates.length === 0) return [];
-    const scanned = this.scan(state), facts: RelayFact[] = [];
-    for (const { run, row, executedOn } of candidates) {
-      // A command Turn is a fact only when it kept: its effect is the index row's for a Run from before v13, else the one its end settled
-      // (a keep that never ran is none), else the one it was read with (a Turn that a recovery ended).
-      if (scanned.commands.has(run.id) && (run.relay === undefined ? row?.commandEffect : scanned.settled.get(run.id) ?? scanned.commands.get(run.id)) !== "keep") continue;
-      const indexed = typeof row?.seq === "number" && Number.isSafeInteger(row.seq) && row.seq >= 0 && row.seq <= RELAY_MAX_SEQ ? row.seq : undefined;
-      facts.push({ runId: run.id, seq: scanned.ended.get(run.id) ?? indexed ?? state.lastSeq, executedOn });
-    }
-    return facts;
-  }
-  forget(id: SessionId): void { this.sessions.delete(id); }
-}
-function strings(value: unknown): readonly string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []; }
-/** A stored context effect, or undefined for anything else. */
-function contextEffectOf(value: unknown): ContextEffect | undefined { return typeof value === "string" && (CONTEXT_EFFECTS as readonly string[]).includes(value) ? value as ContextEffect : undefined; }
-function executedOf(value: unknown): ExecutedOn | null {
-  if (value === null || value === undefined) return null;
-  try { return parseExecutedOn(value); } catch { return null; }
-}
 /**
  * Whether a binding's native session holds nothing the relay counts on it holding, so that a new native session may take its place
  * when its Driver refuses to open it as a session it does not have: nothing known (mark −1), nothing pending, never dispatched
@@ -321,14 +246,14 @@ export function attentionOf(input: AttentionInput): RelayAttention | null {
   return null;
 }
 /** The Runs of what is owed, in conversation order, each a finished fact whose input came before the current one's. */
-export function needRuns(state: SessionSnapshot, current: PublicRun, need: { readonly facts: readonly RelayFact[] }): readonly RunId[] {
-  const seqOf = (run: PublicRun) => state.messages.find(message => message.id === run.userMessageId)?.seq ?? Number.MAX_SAFE_INTEGER;
-  const before = seqOf(current), owedRuns = new Set<string>(need.facts.map(fact => fact.runId));
+export function needRuns(given: RelayState, current: PublicRun, need: { readonly facts: readonly RelayFact[] }): readonly RunId[] {
+  const state = historyOf(given), seqOf = (run: { readonly userSeq?: number }) => run.userSeq ?? Number.MAX_SAFE_INTEGER;
+  const before = seqOf(state.runs.find(run => run.userMessageId === current.userMessageId) ?? {}), owedRuns = new Set<string>(need.facts.map(fact => fact.runId));
   return state.runs.filter(run => owedRuns.has(run.id) && run.id !== current.id && terminal(run.status) && seqOf(run) < before).map(run => run.id);
 }
 const NO_RANGE: SourceRange = { fromSeq: 0, throughSeq: 0, fromRun: 0, throughRun: 0 };
 /** The facts of `need` its Runs cover (the ones a packet of `runs` carries), and their range (§4 SourceRange). */
-export function rangeOf(state: SessionSnapshot, need: { readonly facts: readonly RelayFact[]; readonly origin: boolean }, runs: readonly RunId[]): SourceRange {
+export function rangeOf(state: { readonly runs: readonly Pick<PublicRun, "id">[] }, need: { readonly facts: readonly RelayFact[]; readonly origin: boolean }, runs: readonly RunId[]): SourceRange {
   const carried = need.facts.filter(fact => runs.includes(fact.runId)), index = (run: RunId) => state.runs.findIndex(row => row.id === run);
   const seqs = [...carried.map(fact => fact.seq), ...(need.origin ? [0] : [])], indexes = carried.map(fact => index(fact.runId)).filter(value => value >= 0);
   if (seqs.length === 0) return NO_RANGE;
@@ -341,7 +266,7 @@ export function packetRef(id: RelayPacketId, range: SourceRange): PacketRef { re
  * position): an update goes only to a native session known to hold part of the conversation, so the position is shown as none when
  * the packet must be a whole one (`whole`: the binding holds nothing, or the packet carries everything again).
  */
-export function renderView(state: SessionSnapshot, harnessId: string, controlId: string, whole: boolean): SessionSnapshot {
+export function renderView<S extends RelayState>(state: S, harnessId: string, controlId: string, whole: boolean): S {
   if (!whole) return state;
   return { ...state, ...(state.nativeBindings === undefined ? {} : { nativeBindings: state.nativeBindings.map(binding =>
     binding.harnessId === harnessId && binding.controlId === controlId && binding.status !== "archived" ? { ...binding, throughRunId: null } : binding) }) };
@@ -353,7 +278,7 @@ export const MANIFEST_POLICY = "relay/1" as const;
  * carries, what it left out by kind (the record's ledger), how it was budgeted and what is known of its text. The Store checks it
  * with the text in the same transaction.
  */
-export function packetManifest(input: { readonly state: SessionSnapshot; readonly run: PublicRun; readonly relay: BindingRelayState; readonly record: RelayRecord; readonly body: string;
+export function packetManifest(input: { readonly state: { readonly runs: readonly Pick<PublicRun, "id">[] }; readonly run: PublicRun; readonly relay: BindingRelayState; readonly record: RelayRecord; readonly body: string;
     readonly range: SourceRange; readonly runs: readonly RunId[]; readonly attachOverride: boolean; readonly supersedes: RelayPacketId | null;
     readonly firstLineOmitted: RelayPacket["firstLineOmitted"]; readonly clamped?: readonly ("window" | "input_limit")[] }): RelayPacket {
   const { state, run, record } = input;

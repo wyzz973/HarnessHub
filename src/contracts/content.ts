@@ -4,7 +4,10 @@ declare const contentBrand: unique symbol;
 export type ContentId = string & { readonly [contentBrand]: true };
 export type ContentKind = "image" | "audio" | "file";
 export type ContentOrigin = "upload" | "output";
-/** Per item budget for stored bytes; native transport limits are checked again by each Driver. */
+/**
+ * What one UPLOAD (an attachment) may hold, checked when it is staged and refused then, so that nothing the user sent is lost after it was accepted; native transport limits are
+ * checked again by each Driver. The content a Harness made (a tool call's detail, an artifact) has no such bound: it is kept whole, whatever its size.
+ */
 export const MAX_CONTENT_BYTES = 20 * 1024 * 1024;
 /** User attachments admitted with one input. */
 export const MAX_RUN_ATTACHMENTS = 8;
@@ -71,7 +74,7 @@ export function parseContentRef(value: unknown): ContentRef {
   try {
     const kind = item.kind;
     if (kind !== "image" && kind !== "audio" && kind !== "file") throw new SessionError("INVALID_DATA", "unknown content kind");
-    if (typeof item.bytes !== "number" || !Number.isSafeInteger(item.bytes) || item.bytes < 0 || item.bytes > MAX_CONTENT_BYTES) throw new SessionError("INVALID_DATA", "invalid content size");
+    if (typeof item.bytes !== "number" || !Number.isSafeInteger(item.bytes) || item.bytes < 0) throw new SessionError("INVALID_DATA", "invalid content size");
     if (typeof item.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(item.sha256)) throw new SessionError("INVALID_DATA", "invalid content digest");
     const type = mediaType(item.mediaType), name = contentName(item.name);
     if (name !== item.name || type !== item.mediaType) throw new SessionError("INVALID_DATA", "content reference is not canonical");
@@ -93,8 +96,11 @@ export interface ControlAttachment extends ContentRef {
  * Owner of stored bytes for user attachments, native outputs and tool details; Session snapshots keep only references.
  * `resolve` is synchronous admission: it confirms the owner still holds each staged upload for the workspace.
  */
+/** The bytes of a stored output: all at once, or in pieces as they are made (a tool call's detail of tens of MiB is never held twice). */
+export type ContentBytes = Uint8Array | Iterable<Uint8Array> | AsyncIterable<Uint8Array>;
 export interface ContentPort {
-  storeOutput(input: { readonly workspace: string; readonly name: string; readonly mediaType: string; readonly data: Uint8Array }): Promise<ContentRef>;
+  /** Keeps what a Harness made, whole and of any size (at least one byte); a failure to keep it throws, and the caller says on the item that it was not kept. */
+  storeOutput(input: { readonly workspace: string; readonly name: string; readonly mediaType: string; readonly data: ContentBytes }): Promise<ContentRef>;
   resolve(ids: readonly string[], workspace: string): readonly ContentRef[];
   materialize(refs: readonly ContentRef[]): Promise<readonly ControlAttachment[]>;
   /**
@@ -103,4 +109,10 @@ export interface ContentPort {
    * lists the tool by its title and says so). Read-only; absent when the owner cannot read back.
    */
   readText?(ref: ContentRef, maxBytes: number): Promise<string | null>;
+  /**
+   * A stored item's bytes in pieces, in order, of any size: null when the record and the file are not exactly `ref` in size, or the file cannot be read. The digest is checked as the last piece
+   * is read, and a file that is not `ref` ends the iteration with an error instead of its end, so that what was read is never taken for the item. For readers that keep only part of a large
+   * item (a tool's detail: the command of a call whose output is megabytes long). Read-only; absent when the owner cannot read back.
+   */
+  readChunks?(ref: ContentRef): Promise<AsyncIterable<Uint8Array> | null>;
 }

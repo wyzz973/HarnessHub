@@ -57,14 +57,27 @@ function settled(value: unknown, window: { readonly from: number; readonly to: n
 }
 
 interface Reply { readonly status: number; readonly text: string }
+type Application = ReturnType<typeof application>;
+/**
+ * What a run of this file may be told, for a build whose readers have moved (tests/integration/cut-wire-rows.test.ts): where the context table is read from instead of the web server
+ * (a mount of the table over the application's store, which reads rows), and what is edited of a table answer before it is digested. The build before the cut is run without any.
+ */
+export interface WireOptions {
+  readonly table?: (app: Application, grants: MemoryTableGrants) => Promise<{ readonly origin: string; close(): Promise<void> }>;
+  readonly editTable?: (kind: "turns" | "turn" | "search", value: Record<string, unknown>) => void;
+  /** The `limit` a context-table search is asked with; 10 when absent. */
+  readonly searchLimit?: number;
+  /** The conversation's export as Markdown, written by a reader of rows instead of asked of the web server. */
+  readonly markdown?: (app: Application, root: string, id: string, exportedAt: Date) => Promise<string>;
+}
 
 /** Runs the application on the fixture's data root and reads it as a page and a Harness's tool process would. Nothing outside a temporary directory is touched. */
-export async function wireOfFixture(name: V13FixtureName): Promise<Wire> {
+export async function wireOfFixture(name: V13FixtureName, options: WireOptions = {}): Promise<Wire> {
   const fixture = loadV13Fixture(name), scratch = await mkdtemp(join(tmpdir(), "wire-v13-"));
   const workspace = join(scratch, "workspace"), assets = join(scratch, "assets"), manifest = join(scratch, "catalog.json"), home = join(scratch, "home"), locks = join(scratch, "locks"), data = join(scratch, "data");
   const started = Date.now(), window = { from: started - WINDOW_MS, to: started + 10 * WINDOW_MS };
   const wire: Record<string, WireDigest> = {};
-  let gateway: Awaited<ReturnType<typeof startWebServer>> | undefined;
+  let gateway: Awaited<ReturnType<typeof startWebServer>> | undefined, running: Application | undefined, mount: { close(): Promise<void> } | undefined;
   try {
     for (const directory of [workspace, assets, home]) await mkdir(directory);
     await writeFile(join(assets, "index.html"), "<!doctype html><title>wire fixture</title>");
@@ -77,7 +90,7 @@ export async function wireOfFixture(name: V13FixtureName): Promise<Wire> {
     const nativeEnvironment = { home, values: { HOME: home, PATH: dirname(process.execPath) + ":/usr/bin:/bin" }, system: join(scratch, "system") };
     const grants = new MemoryTableGrants();
     gateway = await startWebServer({ installations: "any", root: data, configuration, port: 0, assetsDirectory: assets, workspaceLockRoot: locks,
-      application: (root, publish) => application(root, publish, { workspaceLockRoot: locks, installations: "any", nativeEnvironment, tableGrants: grants }) });
+      application: (root, publish) => { running = application(root, publish, { workspaceLockRoot: locks, installations: "any", nativeEnvironment, tableGrants: grants }); return running; } });
     const parsed = new URL(gateway.url), origin = parsed.origin, token = new URLSearchParams(parsed.hash.slice(1)).get("token")!;
     const login = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
     if (login.status !== 200) throw new Error("the login of the fixture's application failed: " + login.status);
@@ -85,7 +98,9 @@ export async function wireOfFixture(name: V13FixtureName): Promise<Wire> {
     // WIRE_TRACE=1 says on stderr what each request got (its status and the start of the answer), for whoever reads a difference.
     const trace = (path: string, reply: Reply): Reply => { if (process.env.WIRE_TRACE) process.stderr.write(reply.status + " " + path.slice(0, 90).padEnd(90) + " " + reply.text.slice(0, 70).replace(/\s+/gu, " ") + "\n"); return reply; };
     const read = async (path: string): Promise<Reply> => { const response = await fetch(origin + path, { headers: { Cookie: cookie, Origin: origin } }); return trace(path, { status: response.status, text: await response.text() }); };
-    const table = async (path: string, bearer: string): Promise<Reply> => { const response = await fetch(origin + path, { headers: { Authorization: "Bearer " + bearer } }); return trace(path, { status: response.status, text: await response.text() }); };
+    const mounted = options.table === undefined ? undefined : await options.table(running!, grants);
+    mount = mounted;
+    const table = async (path: string, bearer: string): Promise<Reply> => { const response = await fetch((mounted?.origin ?? origin) + path, { headers: { Authorization: "Bearer " + bearer } }); return trace(path, { status: response.status, text: await response.text() }); };
     /** A JSON answer, settled; `edit` leaves out what is not the same by design. */
     const note = (key: string, text: string): void => { wire[key] = digestOf(text); pending.push(keep(name, key, text)); };
     const pending: Promise<void>[] = [];
@@ -110,7 +125,7 @@ export async function wireOfFixture(name: V13FixtureName): Promise<Wire> {
     for (const row of fixture.sessions) {
       const id = row.id, base = "/api/v1/sessions/" + id;
       json(id + " view", await read(base), noVersion);
-      const markdown = await read(base + "/export?format=markdown");
+      const markdown = options.markdown === undefined ? await read(base + "/export?format=markdown") : { status: 200, text: await options.markdown(running!, data, id, new Date()) };
       note(id + " export.md", markdown.status + " " + markdown.text.split("\n").filter(line => !line.startsWith("- 导出时间：")).join("\n"));
       json(id + " export.json", await read(base + "/export?format=json"), value => { delete value.exportedAt; const exported = value.session; if (exported !== null && typeof exported === "object") delete (exported as Record<string, unknown>).version; });
       // The event log, a page at a time.
@@ -130,16 +145,16 @@ export async function wireOfFixture(name: V13FixtureName): Promise<Wire> {
       // The context table, as the tool process of a Harness running a Turn of this conversation reads it.
       const grant = grants.mint({ sessionId: sessionId(id), harnessId: "wire-a", controlId: "wire-a-control" });
       const directory = await table("/api/table/turns?limit=100", grant);
-      json(id + " table turns", directory);
+      json(id + " table turns", directory, value => options.editTable?.("turns", value));
       const total = (JSON.parse(directory.text) as { readonly total?: number }).total ?? 0;
       const numbers = [...new Set([...Array.from({ length: Math.min(total, 6) }, (_, index) => index + 1), ...(total > 6 ? [total] : [])])];
-      for (const n of numbers) for (const part of ["overview", "user", "reply", "tools", "files", "plan"]) json(id + " table turn " + n + " " + part, await table("/api/table/turns/" + n + "?part=" + part, grant));
-      for (const words of ["run", "的"]) json(id + " table search " + words, await table("/api/table/search?limit=10&q=" + encodeURIComponent(words), grant));
+      for (const n of numbers) for (const part of ["overview", "user", "reply", "tools", "files", "plan"]) json(id + " table turn " + n + " " + part, await table("/api/table/turns/" + n + "?part=" + part, grant), value => options.editTable?.("turn", value));
+      for (const words of ["run", "的"]) json(id + " table search " + words, await table("/api/table/search?limit=" + (options.searchLimit ?? 10) + "&q=" + encodeURIComponent(words), grant), value => options.editTable?.("search", value));
     }
     await Promise.all(pending);
     return wire;
   } finally {
-    try { await gateway?.close(); } finally { await rm(scratch, { recursive: true, force: true }); }
+    try { await mount?.close(); } finally { try { await gateway?.close(); } finally { await rm(scratch, { recursive: true, force: true }); } }
   }
 }
 

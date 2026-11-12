@@ -155,7 +155,12 @@ export function application(root: string, publish: (event: SessionEvent) => void
   /** The context table's tokens (src/contracts/table.ts): the instance whoever starts native processes mints from and the web server resolves with; a private in-memory one when not given. */
   readonly tableGrants?: TableGrants;
   /** The context table's mount (docs/decisions/LOG.md, 2026-11-11): the native processes the Sessions start carry its address and a token each. None: they carry neither. */
-  readonly table?: TableMount } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteConversationStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime; readonly grants: TableGrants } {
+  readonly table?: TableMount;
+  /**
+   * Whether the full-text indexes that an upgrade leaves empty are filled in the background once the application is composed (default: yes). A command that runs for a moment
+   * and exits has no use for it.
+   */
+  readonly searchBackfill?: boolean } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteConversationStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime; readonly grants: TableGrants } {
   // What needs no ownership of the data directory is settled first: the workspace lock root (its shape, its owner and its mode) and the lease provider on it. Opening the root
   // below may upgrade the conversation library for good, and the build before this one refuses what it leaves; a start that is going to fail on a thing like this fails here, with
   // the data directory as it was.
@@ -203,6 +208,8 @@ export function application(root: string, publish: (event: SessionEvent) => void
     const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, ...(options.budgets ?? {}),
       ...(relayKeys === null ? {} : { relayKeys }),
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
+    // The full-text indexes an upgrade left empty are filled in small steps behind the work of the process; searches scan until they are complete (src/infrastructure/session/search-index.ts).
+    if (options.searchBackfill !== false) store.startSearchBackfill().catch(() => {});
     // Upgrades see and close this runtime's conversations' processes (ADR-043).
     management.attachProgramUsers({ list: harnessId => runtime.programUsers(harnessId), closeIdle: harnessId => runtime.releaseForUpgrade(harnessId) });
     return { store, content, factory, runtime, providers, management, grants: options.tableGrants ?? options.table?.grants ?? new MemoryTableGrants() };

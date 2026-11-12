@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { RelayPacketKind } from "../../../../contracts/relay.js";
-import type { NativeSessionBinding, PublicRun, RunId, SessionSnapshot } from "../../../../contracts/session.js";
+import type { NativeSessionBinding, PublicRun, RunId } from "../../../../contracts/session.js";
+import { historyOf, type RelayHistory, type RelayState } from "./history.js";
 import { RELAY_POLICY_VERSION, estimateTokens, resolveRelayBudget, type RelayBudget } from "./budget.js";
 import { dataRegion, firstLine, type RelayLanguage } from "./escape.js";
 import { ITEM_KINDS, LEAST, Narrator, OUTPUT_LINES, candidatesOf, kindOf, opsLabel, relayUnits, type Candidate, type ItemKind, type RelayToolDetail, type RelayUnit } from "./narration.js";
@@ -27,7 +28,8 @@ import { reportedWindow } from "./windows.js";
 
 /** What the packet's rendering needs beyond the snapshot. */
 export interface RelayRenderInput {
-  readonly state: SessionSnapshot;
+  /** The conversation as the renderer reads it (src/contexts/session/domain/relay/history.ts), or the old whole shape of one. */
+  readonly state: RelayState;
   /** The Run that sends the packet; its input is the user's current words. */
   readonly current: PublicRun;
   /** The Runs it owes, validated and in conversation order. */
@@ -117,7 +119,7 @@ function packetIdOf(text: string): string {
 const PLACEHOLDER = "relay-" + "0".repeat(20);
 
 /** The binding the packet goes to: the current selection's native session, when it is not a managed Provider's. */
-function targetBinding(state: SessionSnapshot, current: PublicRun): NativeSessionBinding | undefined {
+function targetBinding(state: Pick<RelayHistory, "nativeBindings">, current: PublicRun): NativeSessionBinding | undefined {
   if (current.selection.provider !== undefined) return undefined;
   return state.nativeBindings?.find(row => row.harnessId === current.selection.harnessId && row.controlId === current.selection.controlId && row.status !== "archived");
 }
@@ -319,7 +321,7 @@ interface Draft {
  * which is returned whatever the cap (the caller sees `tokens` above `budget.cap`).
  */
 function compose(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, first: { readonly line: string; readonly blank: boolean } | null,
-  input: { readonly delta: boolean; readonly repeat: boolean; readonly target: string; readonly state: SessionSnapshot }): Draft {
+  input: { readonly delta: boolean; readonly repeat: boolean; readonly target: string; readonly state: RelayHistory }): Draft {
   const frame = FRAME[n.language], count = units.length, { delta } = input;
   const head = (first === null ? "" : first.line + "\n" + (first.blank ? "\n" : "")) + frame.title(delta), end = frame.end(delta);
   const cands = units.map((unit, index) => candidatesOf(n, unit, index)), all = cands.flat();
@@ -434,7 +436,7 @@ function compose(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, 
  * `record.tokens` against `record.budget.cap` and can send the words alone.
  */
 export function renderRelay(input: RelayRenderInput): RelayRendering {
-  const { state, current } = input, language = languageOf(current.input), redactor = relayRedactor(input.secrets ?? []);
+  const { current } = input, state = historyOf(input.state), language = languageOf(current.input), redactor = relayRedactor(input.secrets ?? []);
   const n = new Narrator(language, redactor, input.names ?? (() => null), input.hubTools === true), units = relayUnits(state, input.sources, input.origin, input.details);
   const binding = targetBinding(state, current);
   const delta = binding !== undefined && (binding.throughRunId !== null || ((state.origin?.history.length ?? 0) > 0 && !input.origin));

@@ -157,6 +157,8 @@ export type PlaceInput =
   | { readonly kind: "event"; readonly event: ControlEvent; readonly at: number; readonly stored?: ContentRef }
   | { readonly kind: "flush"; readonly at: number }
   | { readonly kind: "detail"; readonly toolId: string; readonly ref: ContentRef; readonly at: number }
+  /** The content store could not keep a call's detail: the call's item says so (`DETAIL_NOT_SAVED`), and does until a detail is kept. */
+  | { readonly kind: "detail_lost"; readonly toolId: string; readonly at: number }
   | { readonly kind: "decided"; readonly id: string; readonly option: string; readonly input?: string; readonly by?: "user" | "policy"; readonly at: number }
   | { readonly kind: "expired"; readonly at: number }
   | { readonly kind: "notice"; readonly severity: "info" | "warning"; readonly title: string; readonly detail?: string; readonly code?: string; readonly at: number }
@@ -374,6 +376,8 @@ function placeTool(s: Draft, w: Writes, event: Extract<ControlEvent, { type: "to
   const clipped: string[] = [], id = scrub(str(event.id), "id", clipped), itemId = "tool:" + id, position = find(s, itemId), entry = position === undefined ? undefined : vecAt(s.entries, position);
   const given = record(event.detail) as NativeToolDetail | undefined, merged = given === undefined ? entry?.detail : mergeToolDetail(entry?.detail, given);
   const title = label(event.title, "title", "工具调用", clipped), word = scrub(str(event.status), "status", clipped);
+  // What the item says of its detail (that it could not be kept) stays until a detail is kept: it is not rebuilt from this event.
+  if (entry !== undefined) for (const mark of savedMarks(entry.item.fields.native?.clipped)) note(clipped, mark);
   const kind = merged?.kind === undefined ? undefined : scrub(str(merged.kind), "kind", clipped), name = merged?.name === undefined ? undefined : scrub(str(merged.name), "name", clipped);
   const parent = merged?.parentId === undefined ? undefined : scrub(str(merged.parentId), "parentId", clipped), exitCode = whole(merged?.exitCode, "exitCode", clipped);
   const call: PublicTool = { id, title, status: word, ...(kind === undefined ? {} : { kind }), ...(name === undefined ? {} : { name }), ...(parent === undefined ? {} : { parentId: parent }), ...(exitCode === undefined ? {} : { exitCode }) };
@@ -400,14 +404,29 @@ function placeTool(s: Draft, w: Writes, event: Extract<ControlEvent, { type: "to
     s.entries = vecSet(s.entries, find(s, itemId)!, rest);
   }
 }
+/**
+ * What an item of a call says in `native.clipped` when the content store could not keep its detail (disk full, a failed write): the call's input, output and diff are not
+ * kept, and a reader says so instead of listing the call as if it had none. A detail kept later takes the mark away.
+ */
+export const DETAIL_NOT_SAVED = "detail:not_saved";
+const savedMarks = (clipped: readonly string[] | undefined): readonly string[] => (clipped ?? []).filter(mark => mark.startsWith("detail:"));
 /** The content store gave a tool's detail this reference. */
 function placeDetail(s: Draft, w: Writes, toolId: string, ref: ContentRef): void {
   const position = find(s, "tool:" + scrub(str(toolId), "id", [])), entry = position === undefined ? undefined : vecAt(s.entries, position);
   if (position === undefined || entry === undefined || record(ref) === undefined) return;
-  const held = (entry.item.fields as { readonly detail?: ContentRef }).detail;
-  if (held?.id === ref.id) return;
-  change(s, w, position, { ...entry.item, fields: { ...entry.item.fields, detail: ref } as ItemFields }, entry);
-  w.refs.push({ contentId: ref.id, sessionId: s.run.sessionId, runId: s.run.runId, itemSeq: entry.item.seq, role: "tool_detail" });
+  const held = (entry.item.fields as { readonly detail?: ContentRef }).detail, native = entry.item.fields.native;
+  if (held?.id === ref.id && savedMarks(native?.clipped).length === 0) return;
+  const clipped = (native?.clipped ?? []).filter(mark => !mark.startsWith("detail:")), { clipped: _gone, ...facts } = native ?? {};
+  change(s, w, position, { ...entry.item, fields: { ...entry.item.fields, detail: ref, ...(native === undefined ? {} : { native: clipped.length === 0 ? facts : { ...facts, clipped } }) } as ItemFields }, entry);
+  if (held?.id !== ref.id) w.refs.push({ contentId: ref.id, sessionId: s.run.sessionId, runId: s.run.runId, itemSeq: entry.item.seq, role: "tool_detail" });
+}
+/** The content store could not keep a tool's detail: its item is marked. */
+function placeDetailLost(s: Draft, w: Writes, toolId: string): void {
+  const position = find(s, "tool:" + scrub(str(toolId), "id", [])), entry = position === undefined ? undefined : vecAt(s.entries, position);
+  if (position === undefined || entry === undefined) return;
+  const native = entry.item.fields.native ?? {}, clipped = native.clipped ?? [];
+  if (clipped.includes(DETAIL_NOT_SAVED)) return;
+  change(s, w, position, { ...entry.item, fields: { ...entry.item.fields, native: { ...native, clipped: [...clipped, DETAIL_NOT_SAVED] } } as ItemFields }, entry);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -675,6 +694,7 @@ export function place(turn: ActiveTurn, input: PlaceInput, env: PlaceEnv = {}): 
       }
       case "flush": flushWindow(s, w, false); break;
       case "detail": flushWindow(s, w, false); placeDetail(s, w, input.toolId, input.ref); break;
+      case "detail_lost": flushWindow(s, w, false); placeDetailLost(s, w, input.toolId); break;
       case "decided": flushWindow(s, w, false); decide(s, w, input.id, input.option, input.input, input.by ?? "user", input.at); break;
       case "expired": flushWindow(s, w, false); expire(s, w, input.at); break;
       case "notice": flushWindow(s, w, false); placeNotice(s, w, input, input.at, env, false); break;

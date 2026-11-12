@@ -75,7 +75,7 @@ import { ladderFaults, refusal, repeatedRunIds } from "./upgrade-check.js";
  * no unknown Run an open conversation holds is unacknowledged; and `verify` (the whole-conversation checker), when one is given, finds nothing. What a check reports is
  * where a difference is and what kind, never a value: the conversation's words do not go into a log.
  *
- * The full-text indexes are not written (derived data; `rebuildSearchIndex` makes them, as a step of its own), and nothing here runs a Harness or reads any other
+ * The full-text indexes are not written (derived data; the store fills them in small steps after it has started, `startSearchBackfill`), and nothing here runs a Harness or reads any other
  * file of the data root than the database and its backups. It is called by tests only until the cut.
  */
 

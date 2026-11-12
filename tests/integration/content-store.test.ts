@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { chmod, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import test from "node:test";
 import { SessionError } from "../../src/contracts/session.js";
@@ -94,4 +96,43 @@ test("uploads are staged once per command, typed by their bytes, admitted per wo
   assert.deepEqual(await readFile(copy!.path), PNG);
   assert.deepEqual(later.collect(new Set()), { records: 1, blobs: 1, files: 1, partial: 0 });
   assert.equal((await readdir(join(data, "content", "files"))).length, 0);
+});
+
+test("what a Harness made is kept whole, of any size, written as it comes; an upload still has its bounds", async t => {
+  const data = await root(t), store = new LocalContentStore(data, () => {});
+  const piece = Buffer.alloc(9 * 1024 * 1024, "a");
+  // Three pieces of 9 MiB: more than the 20 MiB an upload may hold, never joined into one buffer by the store's caller.
+  const ref = await store.storeOutput({ workspace: "/w", name: "big.json", mediaType: "application/json", data: [piece, Buffer.alloc(9 * 1024 * 1024, "b"), Buffer.alloc(9 * 1024 * 1024, "c")] });
+  assert.equal(ref.bytes, 27 * 1024 * 1024);
+  assert.equal(createHash("sha256").update(piece).update(Buffer.alloc(9 * 1024 * 1024, "b")).update(Buffer.alloc(9 * 1024 * 1024, "c")).digest("hex"), ref.sha256);
+  const read = store.read(ref.id);
+  assert.deepEqual(read.ref, ref); assert.equal((await stat(read.path)).size, ref.bytes);
+  const text = await store.readText(ref, 64 * 1024 * 1024);
+  assert.equal(text?.length, ref.bytes); assert.equal(text?.[0], "a"); assert.equal(text?.at(-1), "c");
+  // From a source that makes the pieces as it is read.
+  async function* made() { for (let n = 0; n < 5; n++) yield Buffer.from("x".repeat(5 * 1024 * 1024) + n); }
+  const second = await store.storeOutput({ workspace: "/w", name: "made.json", mediaType: "application/json", data: made() });
+  assert.equal(second.bytes, 5 * (5 * 1024 * 1024 + 1));
+  assert.equal(store.read(second.id).ref.id, second.id, "and a record of that size is read back");
+  // Nothing of nothing; a source that fails midway leaves no record and no partial file.
+  await assert.rejects(store.storeOutput({ workspace: "/w", name: "none.json", mediaType: "application/json", data: [] }), code("OUTPUT_LIMIT"));
+  async function* broken() { yield Buffer.from("half of it"); throw new Error("the disk filled up"); }
+  await assert.rejects(store.storeOutput({ workspace: "/w", name: "broken.json", mediaType: "application/json", data: broken() }), /the disk filled up/u);
+  assert.deepEqual(await readdir(join(data, "content", "partial")), [], "no partial file is left");
+  assert.equal(store.collect(new Set([ref.id, second.id])).records, 0, "nothing else was recorded");
+  // An upload is refused above what an upload may hold, as it always was.
+  async function* body(size: number) { yield Buffer.alloc(size, "u"); }
+  await assert.rejects(store.stage({ workspace: "/w", name: "up.bin", mediaType: "application/octet-stream", commandId: "up-big", declaredBytes: 20 * 1024 * 1024 + 1, source: body(1) }), code("ATTACHMENT_LIMIT"));
+});
+
+test("the store holds no total of its own: more records than it once allowed do not stop an output from being kept", async t => {
+  const data = await root(t), store = new LocalContentStore(data, () => {});
+  const database = new DatabaseSync(join(data, "content", "content.sqlite"));
+  try {
+    database.exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<262200)
+      INSERT INTO content(id,sha256,name,media_type,kind,bytes,origin,workspace,command_id,fingerprint,created_at,discarded) SELECT 'content-fill-'||i, printf('%064x', i), 'f.txt', 'text/plain', 'file', 1, 'output', '/w', NULL, NULL, 0, 0 FROM n`);
+    assert.equal(Number(database.prepare("SELECT COUNT(*) AS n FROM content").get()!.n), 262200);
+  } finally { database.close(); }
+  const ref = await store.storeOutput({ workspace: "/w", name: "after.json", mediaType: "application/json", data: Buffer.from("{}") });
+  assert.equal(store.read(ref.id).ref.id, ref.id);
 });

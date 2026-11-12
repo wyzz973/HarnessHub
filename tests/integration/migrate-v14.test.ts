@@ -8,7 +8,7 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import test, { type TestContext } from "node:test";
-import { EventRelayLedger, RelayLedger } from "../../src/contexts/session/application/relay-coordinator.js";
+import { RelayLedger } from "../../src/contexts/session/application/relay-coordinator.js";
 import { noticePrint } from "../../src/contexts/session/domain/items-place.js";
 import { renderRelay } from "../../src/contexts/session/domain/relay/packet.js";
 import { verify } from "../../src/contexts/session/domain/conversation-verify.js";
@@ -249,26 +249,10 @@ for (const [version, victim] of [[8, 1], [11, 2]] as const) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
-// The frozen ledger is the live one's
+// The frozen ledger is the one the Runtime's was
 // ---------------------------------------------------------------------------------------------------------------------------------
-test("the frozen ledger gives the facts the event ledger gives, on every binding of every fixture and every place a Run ran", () => {
-  let compared = 0;
-  for (const name of V13_FIXTURES) {
-    const fixture = loadV13Fixture(name);
-    for (const row of fixture.sessions) {
-      const state = liveParse(row.snapshot), events = row.events as readonly SessionEvent[];
-      const read = (_id: unknown, after: number, limit: number): readonly SessionEvent[] => events.filter(event => event.seq > after).slice(0, limit);
-      const index: RelayIndexRow[] = fixture.relay.index.filter(entry => entry.session_id === row.id).map(entry => ({ runId: entry.run_id as never, index: JSON.parse(String(entry.index_json)) as Record<string, unknown> }));
-      const places = [{ harnessId: "none", controlId: "none", nativeEpoch: 1 }, ...(state.nativeBindings ?? []).map(binding => ({ harnessId: binding.harnessId, controlId: binding.controlId, nativeEpoch: binding.relay?.epoch ?? 1 })),
-        ...state.runs.flatMap(run => run.relay?.executedOn == null ? [] : [run.relay.executedOn])];
-      for (const place of places) {
-        assert.deepStrictEqual(new LegacyRelayLedger(read).facts(state, index, place), new EventRelayLedger(read).facts(state, index, place), name + " " + row.id + " " + JSON.stringify(place));
-        compared++;
-      }
-    }
-  }
-  assert.ok(compared > 60);
-});
+// (The event-reading ledger the web server's relay view once had was the same code; it is gone now that the view reads the Runs' rows, and the frozen ledger is what is left of it:
+// the test below holds the rows' ledger to the frozen one on every binding of every fixture.)
 
 test("the Runtime's ledger reads the Runs' rows and gives the facts the frozen ledger gives, on every binding of every fixture and every place a Run ran (a Run made before v13 is placed by its row)", t => {
   let compared = 0, legacyPlaced = 0;

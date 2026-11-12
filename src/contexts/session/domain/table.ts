@@ -1,5 +1,5 @@
 import type { ContentRef } from "../../../contracts/content.js";
-import { SessionError, type PublicRun, type PublicTool, type RunId, type SessionSnapshot } from "../../../contracts/session.js";
+import { SessionError, type PublicRun, type PublicTool, type RunId, type SessionId, type SessionSnapshot } from "../../../contracts/session.js";
 import {
   TABLE_LIMITS, TABLE_PARTS, TABLE_TOOL_PARTS,
   type TablePart, type TableSearchHit, type TableSearchView, type TableSearchWhere, type TableTurnLine, type TableTurnRead, type TableTurnsView,
@@ -7,11 +7,15 @@ import {
 import { normalize } from "./relay/escape.js";
 import { changesOf, kindOf, parseToolDetail, withoutThinking, type FileChange, type RelayToolDetail } from "./relay/narration.js";
 import { namesCredentialFile, relayRedactor, restoreLabels } from "./relay/redaction.js";
+import type { DetailPolicy, DetailRead } from "./detail-read.js";
+import type { ConversationReader } from "../../../contracts/conversation.js";
+import { snapshotTurns, turnSource, type TurnRecord, type TurnSource } from "./turn-source.js";
 
 /**
  * The context table's read model (docs/decisions/LOG.md, 2026-11-11): what a conversation holds, as a Harness may read it back
  * for itself — a directory of the Turns, one Turn in full and in pieces, a search over all of it. Everything is derived from
- * the committed snapshot and from the tool details the caller read; nothing is decided here and nothing is read from a disk.
+ * the Turns the caller reads (one at a time, only the ones a request needs) and from the tool details it read; nothing is decided
+ * here and nothing is read from a disk.
  *
  * What it never gives: the reasoning of a Turn (`thinking`, inline `<think>` blocks, the tools of kind think). What it always
  * does: every text is cleaned of terminal control sequences and has its secrets hidden (the relay's redaction, relay/redaction.ts)
@@ -41,8 +45,44 @@ export function tableRedaction(secrets: readonly string[]): TableRedaction {
 // Tool details
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** A stored tool detail as read back: the relay's view of it, and whether the Hub cut it to its byte budget when it stored it. */
-export interface TableToolDetail extends RelayToolDetail { readonly truncated?: true }
+/**
+ * A stored tool detail as read back: the relay's view of it, and whether the Hub cut it to its byte budget when it stored it. A text the reader kept only the ends of (`cuts`) is its head, a
+ * line saying how much was not read, and its tail, so that a page of it and a search of it are over what was read, and the answer says so.
+ */
+export interface TableToolDetail extends RelayToolDetail { readonly truncated?: true; readonly cuts?: Readonly<Partial<Record<"input" | "output" | "diff", DetailCut>>> }
+/** How long a text was, and how many of its characters the reader did not keep. */
+export interface DetailCut { readonly chars: number; readonly omitted: number }
+/** The line that stands where the middle of a text is not shown. */
+export const omittedLine = (omitted: number): string => "\n[… " + omitted + " characters not read …]\n";
+function tableText(text: DetailRead["input"]): { readonly text: string; readonly cut?: DetailCut } | undefined {
+  if (text === undefined) return undefined;
+  if (!text.cut) return { text: text.text };
+  const omitted = Math.max(0, text.chars - text.head.length - text.tail.length);
+  return { text: text.head + omittedLine(omitted) + text.tail, cut: { chars: text.chars, omitted } };
+}
+/** A detail as read, in the table's terms. */
+export function tableDetailOf(read: DetailRead): TableToolDetail {
+  const input = tableText(read.input), output = tableText(read.output), diff = tableText(read.diff);
+  const cuts = { ...(input?.cut === undefined ? {} : { input: input.cut }), ...(output?.cut === undefined ? {} : { output: output.cut }), ...(diff?.cut === undefined ? {} : { diff: diff.cut }) };
+  return { ...(input === undefined ? {} : { input: input.text }), ...(output === undefined ? {} : { output: output.text }), ...(diff === undefined ? {} : { diff: diff.text }),
+    ...(read.locations === undefined ? {} : { locations: read.locations }), ...(read.truncated === true ? { truncated: true as const } : {}), ...(Object.keys(cuts).length ? { cuts } : {}) };
+}
+/**
+ * What the table keeps of a stored detail, by what is asked: to count the files a Turn changed (the directory, the overview, the files) the command, the paths and the diff; to read one
+ * text of one call (`input`, `output`, `diff`) that text up to 64 MiB and else its first and last MiB; to search, every text up to 8 MiB and else its first and last 256 KiB. Never "too large, not read".
+ */
+export type TableDetailUse = "files" | "input" | "output" | "diff" | "search";
+const MIB = 1024 * 1024, SKIP = { whole: 0, head: 0, tail: 0 } as const;
+export function tableDetailPolicy(use: TableDetailUse): DetailPolicy {
+  const base: DetailPolicy = { input: { whole: MIB, head: MIB, tail: 0 }, output: SKIP, diff: { whole: 16 * MIB, head: 0, tail: 0 } };
+  switch (use) {
+    case "files": return base;
+    case "input": return { ...base, input: { whole: 64 * MIB, head: MIB, tail: MIB } };
+    case "output": return { ...base, output: { whole: 64 * MIB, head: MIB, tail: MIB } };
+    case "diff": return { ...base, diff: { whole: 64 * MIB, head: MIB, tail: MIB } };
+    case "search": return { input: { whole: 8 * MIB, head: 256 * 1024, tail: 256 * 1024 }, output: { whole: 8 * MIB, head: 256 * 1024, tail: 256 * 1024 }, diff: { whole: 8 * MIB, head: 256 * 1024, tail: 256 * 1024 } };
+  }
+}
 /** The details a caller read, by `runId + "/" + toolId`; a tool whose detail is absent was not stored, or not read. */
 export type TableDetails = ReadonlyMap<string, TableToolDetail>;
 export function detailKey(runId: string, toolId: string): string { return runId + "/" + toolId; }
@@ -78,18 +118,46 @@ function size(bytes: number): string { return bytes < 1024 ? bytes + " B" : byte
 function plural(count: number, one: string, many = one + "s"): string { return count + " " + (count === 1 ? one : many); }
 const MODEL = /^[A-Za-z0-9._:/-]{1,128}$/u;
 function modelOf(run: PublicRun): string | undefined { const model = run.selection.nativeModel; return model !== undefined && MODEL.test(model) ? model : undefined; }
-function runAt(state: SessionSnapshot, n: number): PublicRun {
-  const run = Number.isInteger(n) && n >= 1 ? state.runs[n - 1] : undefined;
-  if (run === undefined) throw new SessionError("TABLE_TURN_NOT_FOUND", state.runs.length === 0 ? "This conversation has no turns yet."
-    : "There is no turn " + (Number.isInteger(n) ? n : "like that") + "; this conversation has " + plural(state.runs.length, "turn") + " (1-" + state.runs.length + ").");
-  return run;
+/**
+ * What the table reads of a conversation: a few facts of its head, and its Turns, which are read one at a time and only when a request asks for one (a directory of forty Turns reads forty,
+ * a search reads as many as it goes through to fill its page).
+ */
+export interface TableConversation {
+  readonly id: SessionId;
+  readonly workspace: string;
+  readonly activeRunId: RunId | null;
+  /** The earlier history the conversation began from, which the Turns do not include. */
+  readonly origin?: { readonly kind: "fork" | "import"; readonly messages: number };
+  readonly turns: TurnSource;
+  /** The Harnesses the conversation has run on, whose secrets the table hides. */
+  harnessIds(): readonly string[];
 }
-/** The replies of a conversation by message, so that reading many Turns reads the messages once. */
-function repliesOf(state: SessionSnapshot): ReadonlyMap<string, string> {
-  return new Map(state.messages.filter(message => message.role === "assistant").map(message => [message.id as string, message.text]));
+/** A conversation kept as rows, as the table reads it: its head now, its Turns when asked for. */
+export function rowsTable(reader: Pick<ConversationReader, "head" | "turnAt" | "runOrdinal" | "originHistory" | "harnessIds">, id: SessionId): TableConversation {
+  const head = reader.head(id), origin = head.head.origin;
+  // A branch that refers to its source instead of quoting it has no history of its own to count.
+  const quoted = origin !== undefined && (origin.kind === "import" || origin.quoted);
+  return { id, workspace: head.head.configuration.workspace, activeRunId: head.activeRunId, turns: turnSource(reader, id), harnessIds: () => reader.harnessIds?.(id) ?? [head.head.selection.harnessId],
+    ...(quoted ? { origin: { kind: origin.kind, messages: reader.originHistory?.(id).length ?? 0 } } : {}) };
+}
+/** A conversation in the old whole shape as the table's: for a caller that has the snapshot already. Nothing is read, and no Turn is `legacyOrder` (the old shape does not say). */
+export function snapshotTable(state: SessionSnapshot): TableConversation {
+  return { id: state.id, workspace: state.configuration.workspace, activeRunId: state.activeRunId, turns: snapshotTurns(state), harnessIds: () => [...new Set(state.runs.map(run => run.selection.harnessId))].sort(),
+    ...(state.origin === undefined ? {} : { origin: { kind: state.origin.kind, messages: state.origin.history.length } }) };
+}
+/** What the table's functions take: the conversation as the table reads it, or the old whole shape of one (read through `snapshotTable`). */
+export type TableState = TableConversation | SessionSnapshot;
+function conversationOf(state: TableState): TableConversation { return "turns" in state ? state : snapshotTable(state); }
+function turnAt(table: TableConversation, n: number): TurnRecord {
+  const turn = Number.isInteger(n) && n >= 1 ? table.turns.turn(n - 1) : null, total = table.turns.count;
+  if (turn === null) throw new SessionError("TABLE_TURN_NOT_FOUND", total === 0 ? "This conversation has no turns yet."
+    : "There is no turn " + (Number.isInteger(n) ? n : "like that") + "; this conversation has " + plural(total, "turn") + " (1-" + total + ").");
+  return turn;
 }
 /** The reply of a Turn without the reasoning an inline `<think>` block holds. */
-function replyOf(replies: ReadonlyMap<string, string>, run: PublicRun): string { return withoutThinking(replies.get(run.assistantMessageId) ?? ""); }
+function replyOf(turn: TurnRecord): string { return withoutThinking(turn.assistant?.text ?? ""); }
+/** What a Turn from before the Hub kept the order things happened in is told with: its parts stand in a fixed arrangement. */
+export const LEGACY_ORDER_NOTE = "The order of this turn is a fixed arrangement, not the order of occurrence.";
 
 /** One page of a text from `offset`, `limit` characters at most, ending at a line when it can and never inside a surrogate pair. */
 export function pageOf(text: string, offset: number, limit: number): { readonly text: string; readonly offset: number; readonly end: number; readonly size: number } {
@@ -180,29 +248,30 @@ function filesText(run: PublicRun, details: TableDetails, redaction: TableRedact
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** The window of Turns a directory request lists: `limit` from `from` (the latest Turns when `from` is absent), within the conversation. */
-export function directoryRange(state: SessionSnapshot, from: number | undefined, limit: number | undefined): { readonly from: number; readonly to: number } {
-  const total = state.runs.length, count = Math.min(Math.max(1, whole(limit, TABLE_LIMITS.turnsDefault)), TABLE_LIMITS.turnsMax);
+export function directoryRange(state: TableState, from: number | undefined, limit: number | undefined): { readonly from: number; readonly to: number } {
+  const total = conversationOf(state).turns.count, count = Math.min(Math.max(1, whole(limit, TABLE_LIMITS.turnsDefault)), TABLE_LIMITS.turnsMax);
   const first = from === undefined ? Math.max(1, total - count + 1) : Math.max(1, whole(from, 1));
   return { from: first, to: first > total ? first - 1 : Math.min(total, first + count - 1) };
 }
 /** The details the directory needs for the Turns `from`..`to`: the change tools' (their files are counted). */
-export function directoryNeeds(state: SessionSnapshot, from: number, to: number): readonly TableToolRef[] {
-  return state.runs.slice(Math.max(0, from - 1), Math.max(0, to)).flatMap(run => refsOf(run, tool => kindOf(tool) === "change"));
+export function directoryNeeds(state: TableState, from: number, to: number): readonly TableToolRef[] {
+  const table = conversationOf(state), refs: TableToolRef[] = [];
+  for (let n = Math.max(1, from); n <= Math.min(to, table.turns.count); n++) refs.push(...refsOf(table.turns.turn(n - 1)!.run, tool => kindOf(tool) === "change"));
+  return refs;
 }
 /** How many characters of a Turn's words and reply a directory line shows. The whole text is redacted first and cut after, so a cut never leaves part of a secret. */
 const LINE_CHARS = 80;
 function shown(redaction: TableRedaction, text: string): string { return clip(fold(redaction.redact(text, "text").slice(0, LINE_CHARS * 4)), LINE_CHARS); }
 
-export function turnsView(state: SessionSnapshot, from: number | undefined, limit: number | undefined, details: TableDetails, redaction: TableRedaction): TableTurnsView {
-  const range = directoryRange(state, from, limit), replies = repliesOf(state), lines: TableTurnLine[] = [];
+export function turnsView(state: TableState, from: number | undefined, limit: number | undefined, details: TableDetails, redaction: TableRedaction): TableTurnsView {
+  const table = conversationOf(state), range = directoryRange(table, from, limit), lines: TableTurnLine[] = [];
   for (let n = range.from; n <= range.to; n++) {
-    const run = state.runs[n - 1]!, model = modelOf(run), { files, unread } = filesOf(run, details, state.configuration.workspace);
-    lines.push({ n, harnessId: run.selection.harnessId, status: run.status, user: shown(redaction, run.input), reply: shown(redaction, replyOf(replies, run)),
+    const turn = table.turns.turn(n - 1)!, run = turn.run, model = modelOf(run), { files, unread } = filesOf(run, details, table.workspace);
+    lines.push({ n, harnessId: run.selection.harnessId, status: run.status, user: shown(redaction, run.input), reply: shown(redaction, replyOf(turn)),
       tools: toolsOf(run).length, files: files.length + unread.length, ...(model === undefined ? {} : { model }), ...(unread.length ? { filesApprox: true as const } : {}) });
   }
-  const active = state.activeRunId === null ? 0 : state.runs.findIndex(run => run.id === state.activeRunId) + 1;
-  return { total: state.runs.length, from: range.from, to: range.to, lines, ...(active > 0 ? { active } : {}),
-    ...(state.origin === undefined ? {} : { origin: { kind: state.origin.kind, messages: state.origin.history.length } }) };
+  const active = table.activeRunId === null ? 0 : (table.turns.ordinalOf(table.activeRunId) ?? -1) + 1;
+  return { total: table.turns.count, from: range.from, to: range.to, lines, ...(active > 0 ? { active } : {}), ...(table.origin === undefined ? {} : { origin: table.origin }) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -220,8 +289,8 @@ export interface TableReadQuery {
   readonly limit?: number;
 }
 /** The details reading `part` of Turn `n` needs: the Turn's change tools' for the overview and the files, the one tool's for `input`, `output` and `diff`. */
-export function turnNeeds(state: SessionSnapshot, n: number, part: TablePart | undefined, tool: number | undefined): readonly TableToolRef[] {
-  const run = runAt(state, n);
+export function turnNeeds(state: TableState, n: number, part: TablePart | undefined, tool: number | undefined): readonly TableToolRef[] {
+  const run = turnAt(conversationOf(state), n).run;
   if ((TABLE_TOOL_PARTS as readonly string[]).includes(part ?? "")) {
     const facts = toolsOf(run).find(item => item.k === tool);
     return facts?.tool.detail === undefined ? [] : [{ runId: run.id, toolId: facts.tool.id, ref: facts.tool.detail }];
@@ -248,11 +317,11 @@ function piece(text: string, max: number, part: "user" | "reply"): string {
   const head = pageOf(text, 0, max);
   return head.text.replace(/\n+$/u, "") + "\n[continues: part=" + part + " offset=" + head.end + "; " + (text.length - head.end) + " more characters]";
 }
-function overview(state: SessionSnapshot, n: number, run: PublicRun, replies: ReadonlyMap<string, string>, details: TableDetails, redaction: TableRedaction): string {
-  const model = modelOf(run), head = ["Turn " + n + " of " + state.runs.length + " · " + run.selection.harnessId + (model === undefined ? "" : " (" + model + ")") + " · " + run.status];
+function overview(table: TableConversation, n: number, turn: TurnRecord, details: TableDetails, redaction: TableRedaction): string {
+  const run = turn.run, model = modelOf(run), head = ["Turn " + n + " of " + table.turns.count + " · " + run.selection.harnessId + (model === undefined ? "" : " (" + model + ")") + " · " + run.status];
   if (run.error !== null) head.push("Error " + clip(fold(redaction.redact(run.error.code, "text")), 64) + ": " + clip(fold(redaction.redact(run.error.message, "text")), 400));
   const sections = [head.join("\n"), "## The user's words\n" + piece(userText(run, redaction), OVERVIEW.user, "user")];
-  const reply = redaction.redact(replyOf(replies, run), "text");
+  const reply = redaction.redact(replyOf(turn), "text");
   sections.push("## The reply" + (reply === "" ? "" : " (" + reply.length + " characters)") + "\n" + (reply === "" ? "(none)" : piece(reply, OVERVIEW.reply, "reply")));
   const tools = toolsOf(run);
   if (tools.length) {
@@ -260,7 +329,7 @@ function overview(state: SessionSnapshot, n: number, run: PublicRun, replies: Re
     sections.push("## Tool calls (" + tools.length + "; read one's input, output or diff with part and tool)\n" + shownLines.join("\n")
       + (lines.length > shownLines.length ? "\n[" + (lines.length - shownLines.length) + " more: part=tools offset=" + (shownLines.join("\n").length + 1) + "]" : ""));
   }
-  for (const section of filesSections(run, details, redaction, state.configuration.workspace))
+  for (const section of filesSections(run, details, redaction, table.workspace))
     sections.push("## " + section.title + "\n" + section.lines.slice(0, OVERVIEW.files).join("\n") + (section.lines.length > OVERVIEW.files ? "\n[" + (section.lines.length - OVERVIEW.files) + " more: part=files]" : ""));
   const plan = planText(run, redaction);
   if (plan !== "") sections.push("## The plan\n" + plan.split("\n").slice(0, OVERVIEW.plan + 1).join("\n") + (plan.split("\n").length > OVERVIEW.plan + 1 ? "\n[more: part=plan]" : ""));
@@ -268,23 +337,24 @@ function overview(state: SessionSnapshot, n: number, run: PublicRun, replies: Re
 }
 
 /** Reads one Turn, or one piece of it, as one page; throws SessionError (TABLE_TURN_NOT_FOUND, TABLE_TOOL_NOT_FOUND, TABLE_DETAIL_UNAVAILABLE, INVALID_INPUT). */
-export function readTurn(state: SessionSnapshot, n: number, query: TableReadQuery, details: TableDetails, redaction: TableRedaction): TableTurnRead {
-  const run = runAt(state, n), part = query.part ?? "overview", model = modelOf(run);
+export function readTurn(state: TableState, n: number, query: TableReadQuery, details: TableDetails, redaction: TableRedaction): TableTurnRead {
+  const table = conversationOf(state), turn = turnAt(table, n), run = turn.run, part = query.part ?? "overview", model = modelOf(run);
   if (!(TABLE_PARTS as readonly string[]).includes(part)) throw new SessionError("INVALID_INPUT", "part must be one of " + TABLE_PARTS.join(", "));
-  const base = { n, total: state.runs.length, harnessId: run.selection.harnessId, status: run.status, ...(model === undefined ? {} : { model }), part };
+  const base = { n, total: table.turns.count, harnessId: run.selection.harnessId, status: run.status, ...(model === undefined ? {} : { model }), part };
   const limit = Math.min(Math.max(1, whole(query.limit, TABLE_LIMITS.pageDefault)), TABLE_LIMITS.pageMax), offset = Math.max(0, whole(query.offset, 0));
-  const notes: string[] = [];
+  // A Turn kept from before the Hub recorded the order things happened in says so wherever its parts are listed in order: its overview, its tool calls, its files.
+  const notes: string[] = turn.legacyOrder && (part === "overview" || part === "tools" || part === "files") ? [LEGACY_ORDER_NOTE] : [];
   let text: string, tool: number | undefined;
   switch (part) {
     case "overview": {
-      text = overview(state, n, run, repliesOf(state), details, redaction);
-      return { ...base, text, offset: 0, end: text.length, size: text.length };
+      text = overview(table, n, turn, details, redaction);
+      return { ...base, text, offset: 0, end: text.length, size: text.length, ...(notes.length ? { notes } : {}) };
     }
     case "user": text = userText(run, redaction); break;
-    case "reply": text = redaction.redact(replyOf(repliesOf(state), run), "text"); break;
+    case "reply": text = redaction.redact(replyOf(turn), "text"); break;
     case "tools": text = toolsOf(run).map(facts => toolLine(facts, redaction)).join("\n"); break;
     case "files": {
-      text = filesText(run, details, redaction, state.configuration.workspace);
+      text = filesText(run, details, redaction, table.workspace);
       if (text === "") text = "(this turn changed no files)";
       break;
     }
@@ -304,6 +374,8 @@ export function readTurn(state: SessionSnapshot, n: number, query: TableReadQuer
       else {
         text = redaction.redact(value, part === "input" ? "text" : "output");
         if (detail.truncated === true) notes.push("The Hub cut this tool call's stored detail to its size limits (an output keeps its last 64 KiB, an input its first 16 KiB, a diff its first 64 KiB), so this " + part + " may be incomplete.");
+        const cut = detail.cuts?.[part];
+        if (cut !== undefined) notes.push("This " + part + " is " + cut.chars + " characters long; the middle " + cut.omitted + " were not read, so the text here is its beginning and its end with a line where the rest is.");
       }
       break;
     }
@@ -316,9 +388,11 @@ export function readTurn(state: SessionSnapshot, n: number, query: TableReadQuer
 // Search
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** The details a search reads, the newest Turn's first: every tool call's stored detail. */
-export function searchNeeds(state: SessionSnapshot): readonly TableToolRef[] {
-  return [...state.runs].reverse().flatMap(run => refsOf(run, () => true));
+/** The details a search through the whole conversation reads, the newest Turn's first: every tool call's stored detail. */
+export function searchNeeds(state: TableState): readonly TableToolRef[] {
+  const table = conversationOf(state), refs: TableToolRef[] = [];
+  for (let n = table.turns.count; n >= 1; n--) refs.push(...refsOf(table.turns.turn(n - 1)!.run, () => true));
+  return refs;
 }
 const SNIPPET = { before: 60, after: 100 } as const;
 function excerpt(text: string, at: number, length: number): string {
@@ -328,43 +402,132 @@ function excerpt(text: string, at: number, length: number): string {
   return (from > 0 ? "…" : "") + fold(text.slice(from, to)) + (to < text.length ? "…" : "");
 }
 
-/**
- * Finds `query` (a word or phrase, any case) in the user's words, the replies, the tool calls' titles and, for the details read,
- * their inputs, outputs and diffs; newest Turn first. A place counts only when the match is still there once the text is
- * redacted, so a search never confirms a hidden secret. `unread` is how many tool details the caller could not read; with the
- * outputs withheld they make `unsearched`.
- */
-export function searchTurns(state: SessionSnapshot, query: string, limit: number | undefined, details: TableDetails, redaction: TableRedaction, unread: number): TableSearchView {
+/** The words of a search, checked, and the patterns they are looked for with. */
+interface Search { readonly words: string; readonly probe: RegExp; readonly every: RegExp }
+function searchOf(query: string): Search {
   const words = query.trim();
   if (words === "" || words.length > TABLE_LIMITS.queryMax) throw new SessionError("INVALID_INPUT", "the search words must be 1 to " + TABLE_LIMITS.queryMax + " characters");
-  const source = words.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), probe = new RegExp(source, "iu"), every = new RegExp(source, "giu");
-  const most = Math.min(Math.max(1, whole(limit, TABLE_LIMITS.searchDefault)), TABLE_LIMITS.searchMax), replies = repliesOf(state), hits: TableSearchHit[] = [];
-  let total = 0, kept = 0;
-  const look = (n: number, where: TableSearchWhere, tool: number | undefined, raw: string, kind: "text" | "output"): void => {
+  const source = words.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return { words, probe: new RegExp(source, "iu"), every: new RegExp(source, "giu") };
+}
+/**
+ * The places one Turn has that match, in the order the table lists them (the user's words, the reply, then each tool call's title, input, output and diff), and how many outputs were withheld
+ * (a call that touches a credential file). A place counts only when the match is still there once the text is redacted, so a search never confirms a hidden secret.
+ */
+function turnPlaces(n: number, turn: TurnRecord, search: Search, details: TableDetails, redaction: TableRedaction, only?: "user" | "reply"): { readonly hits: readonly TableSearchHit[]; readonly kept: number } {
+  const run = turn.run, hits: TableSearchHit[] = [];
+  let kept = 0;
+  const look = (where: TableSearchWhere, tool: number | undefined, raw: string, kind: "text" | "output"): void => {
     const clean = redaction.clean(raw, kind);
-    if (!probe.test(clean)) return;
+    if (!search.probe.test(clean)) return;
     const text = redaction.hide(clean, kind);
     let at = -1, matches = 0;
-    for (const found of text.matchAll(every)) { if (at < 0) at = found.index; if (++matches >= 99) break; }
+    for (const found of text.matchAll(search.every)) { if (at < 0) at = found.index; if (++matches >= 99) break; }
     if (at < 0) return;
-    total++;
-    if (hits.length < most) hits.push({ n, where, ...(tool === undefined ? {} : { tool }), at, matches, snippet: excerpt(text, at, words.length) });
+    hits.push({ n, where, ...(tool === undefined ? {} : { tool }), at, matches, snippet: excerpt(text, at, search.words.length) });
   };
-  for (let n = state.runs.length; n >= 1; n--) {
-    const run = state.runs[n - 1]!;
-    look(n, "user", undefined, run.input, "text");
-    look(n, "reply", undefined, replyOf(replies, run), "text");
-    for (const facts of toolsOf(run)) {
-      look(n, "tool", facts.k, facts.tool.title, "text");
-      const detail = details.get(detailKey(run.id, facts.tool.id));
-      if (detail === undefined) continue;
-      if (detail.input !== undefined) look(n, "input", facts.k, detail.input, "text");
-      if (detail.output !== undefined || detail.diff !== undefined) {
-        if (withheld(facts.tool, detail)) { kept++; continue; }
-        if (detail.output !== undefined) look(n, "output", facts.k, detail.output, "output");
-        if (detail.diff !== undefined) look(n, "diff", facts.k, detail.diff, "output");
-      }
+  if (only !== "reply") look("user", undefined, run.input, "text");
+  if (only !== "user") look("reply", undefined, replyOf(turn), "text");
+  if (only !== undefined) return { hits, kept };
+  for (const facts of toolsOf(run)) {
+    look("tool", facts.k, facts.tool.title, "text");
+    const detail = details.get(detailKey(run.id, facts.tool.id));
+    if (detail === undefined) continue;
+    if (detail.input !== undefined) look("input", facts.k, detail.input, "text");
+    if (detail.output !== undefined || detail.diff !== undefined) {
+      if (withheld(facts.tool, detail)) { kept++; continue; }
+      if (detail.output !== undefined) look("output", facts.k, detail.output, "output");
+      if (detail.diff !== undefined) look("diff", facts.k, detail.diff, "output");
     }
   }
-  return { query: words, total, hits, turns: state.runs.length, unsearched: unread + kept };
+  return { hits, kept };
+}
+
+/**
+ * Finds `query` (a word or phrase, any case) in the user's words, the replies, the tool calls' titles and, for the details read,
+ * their inputs, outputs and diffs; newest Turn first, through the whole conversation. `unread` is how many tool details the caller
+ * could not read; with the outputs withheld they make `unsearched`. (The Turns are read one after the other; a request that pages
+ * through a conversation is `searchPage`.)
+ */
+export function searchTurns(state: TableState, query: string, limit: number | undefined, details: TableDetails, redaction: TableRedaction, unread: number): TableSearchView {
+  const table = conversationOf(state), search = searchOf(query), most = Math.min(Math.max(1, whole(limit, TABLE_LIMITS.searchDefault)), TABLE_LIMITS.searchMax), hits: TableSearchHit[] = [];
+  let total = 0, kept = 0;
+  for (let n = table.turns.count; n >= 1; n--) {
+    const found = turnPlaces(n, table.turns.turn(n - 1)!, search, details, redaction);
+    kept += found.kept;
+    for (const hit of found.hits) { total++; if (hits.length < most) hits.push(hit); }
+  }
+  return { query: search.words, total, hits, turns: table.turns.count, unsearched: unread + kept };
+}
+
+/** What the full-text indexes say of one match: the item (its id is the cursor), the Turn it is in, and what kind of item it is. */
+export interface WordsFound { readonly id: number; readonly ordinal: number; readonly type: string }
+/** The full-text search of one conversation, newest match first, `limit` at most, from below the item `after`. */
+export type WordsFinder = (words: string, scope: { readonly limit: number; readonly after?: number }) => readonly WordsFound[];
+/**
+ * One page of a search of the words alone — the user's and the replies, never the tool calls — found by the conversation's full-text indexes and not by reading the Turns: quick however long the
+ * conversation is. A place is the same as in a search of everything (a Turn's reply is one place, over its segments joined), so the matches the indexes find are looked at again in the Turn they
+ * are in and kept only if the match is still there once the text is redacted. The cursor is the last match consumed and the place it belonged to, so that a reply whose segments the page boundary
+ * falls between is not told twice.
+ */
+export function searchWordsPage(state: TableState, query: string, options: { readonly limit?: number | undefined; readonly after?: string | undefined }, find: WordsFinder, redaction: TableRedaction): TableSearchView {
+  const table = conversationOf(state), search = searchOf(query), most = Math.min(Math.max(1, whole(options.limit, TABLE_LIMITS.searchDefault)), TABLE_LIMITS.searchMax);
+  const cursor = options.after === undefined ? null : /^w([0-9]{1,15})\.([0-9]{1,9})(user|reply)$/u.exec(options.after);
+  if (options.after !== undefined && cursor === null) throw new SessionError("INVALID_INPUT", "after must be the cursor an earlier search gave");
+  let after = cursor === null ? undefined : Number(cursor[1]), last = cursor === null ? "" : cursor[2]! + cursor[3]!;
+  const hits: TableSearchHit[] = [], seen = new Set<string>(cursor === null ? [] : [last]);
+  let next: string | undefined;
+  for (;;) {
+    const found = find(search.words, { limit: Math.max(20, most * 4), ...(after === undefined ? {} : { after }) });
+    if (found.length === 0) break;
+    for (const hit of found) {
+      after = hit.id;
+      const where = hit.type === "user_message" ? "user" as const : hit.type === "assistant_message" ? "reply" as const : null;
+      if (where === null) continue;
+      const key = hit.ordinal + where;
+      if (seen.has(key)) continue;
+      // A page that is full ends at a place's end: the matches of the place it stopped at are the cursor's.
+      if (hits.length >= most) { next = "w" + (hit.id + 1) + "." + last; break; }
+      seen.add(key); last = key;
+      const turn = table.turns.turn(hit.ordinal);
+      if (turn === null) continue;
+      const place = turnPlaces(hit.ordinal + 1, turn, search, none(), redaction, where).hits[0];
+      if (place !== undefined) hits.push(place);
+    }
+    if (next !== undefined || found.length < Math.max(20, most * 4)) break;
+  }
+  return { query: search.words, total: hits.length, hits, turns: table.turns.count, unsearched: 0, scope: "words", ...(next === undefined ? {} : { next }) };
+}
+const NO_DETAILS: TableDetails = new Map();
+function none(): TableDetails { return NO_DETAILS; }
+
+/** Where a search goes on from: the Turn to look at next (counting down) and how many of its places were given already. */
+function searchStart(after: string | undefined, total: number): { readonly n: number; readonly skip: number } {
+  if (after === undefined) return { n: total, skip: 0 };
+  const found = /^([0-9]{1,9})\.([0-9]{1,9})$/u.exec(after);
+  if (found === null) throw new SessionError("INVALID_INPUT", "after must be the cursor an earlier search gave");
+  return { n: Math.min(Number(found[1]), total), skip: Number(found[2]) };
+}
+/** Reads the stored details a Turn's tool calls have, within the bounds of the request being answered; `unread` counts the ones that could not be. */
+export type SearchLoad = (refs: readonly TableToolRef[]) => Promise<{ readonly details: TableDetails; readonly unread: number }>;
+/**
+ * One page of a search: the places that match, newest Turn first, `limit` of them at most, from where `after` (the cursor of the page before) says, and `next` to go on from when
+ * the conversation has more. The Turns are read one at a time and the search stops reading when the page is full, so a conversation of any length is searched a page at a time.
+ */
+export async function searchPage(state: TableState, query: string, options: { readonly limit?: number | undefined; readonly after?: string | undefined }, load: SearchLoad, redaction: TableRedaction): Promise<TableSearchView> {
+  const table = conversationOf(state), search = searchOf(query), most = Math.min(Math.max(1, whole(options.limit, TABLE_LIMITS.searchDefault)), TABLE_LIMITS.searchMax);
+  const start = searchStart(options.after, table.turns.count), hits: TableSearchHit[] = [];
+  let unsearched = 0, next: string | undefined;
+  for (let n = start.n; n >= 1 && next === undefined; n--) {
+    const turn = table.turns.turn(n - 1);
+    if (turn === null) continue;
+    const loaded = await load(refsOf(turn.run, () => true)), found = turnPlaces(n, turn, search, loaded.details, redaction), skip = n === start.n ? start.skip : 0;
+    unsearched += loaded.unread + found.kept;
+    for (const [index, hit] of found.hits.entries()) {
+      if (index < skip) continue;
+      if (hits.length >= most) { next = n + "." + index; break; }
+      hits.push(hit);
+    }
+  }
+  return { query: search.words, total: hits.length, hits, turns: table.turns.count, unsearched, ...(next === undefined ? {} : { next }) };
 }

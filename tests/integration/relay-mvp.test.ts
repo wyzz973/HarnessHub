@@ -191,6 +191,24 @@ test("G070-MVP stored tool details are read back for the packet: the command and
   }
 });
 
+test("G070-MVP a call's detail of any size is read for the packet: the same command with 10 KiB, 300 KiB and 2 MiB of output is written with its failing output's end in all three", async t => {
+  const failure = " FAIL  tests/export.test.ts > rounds JPY totals\nAssertionError: expected '1234' to be '1235'\n Tests  1 failed | 17 passed (18)\n";
+  for (const size of [10 * 1024, 300 * 1024, 2 * 1024 * 1024]) {
+    const lines = Math.ceil(size / 10), output = "noise\n".repeat(lines - 3).padEnd(size - failure.length, "n\n").replace(/n\n$/u, "") + "\n" + failure;
+    const total = output.replace(/\n+$/u, "").split("\n").length;
+    const tools = (harnessId: string): readonly ControlEvent[] => harnessId !== "alpha" ? [] : [{ type: "tool", id: "build-1", title: "Terminal", status: "failed", detail: { kind: "execute", input: "make build-all --verbose", output, exitCode: 1 } }];
+    const f = await world(t), fake = new FakeHarnesses(undefined, [], [], tools), app = f.runtime(fake, { content: f.content }), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+    await sent(app, session.id, "把构建跑一遍", "a1");
+    assert.equal((app.read(session.id).runs[0]!.tools?.[0]?.detail?.bytes ?? 0) > size, true, size + ": the detail was kept whole");
+    await switched(app, session.id, "bravo", "to-b");
+    await sent(app, session.id, "看看哪里失败了", "b1");
+    const prompt = fake.to("bravo")[0]!;
+    assert.match(prompt, new RegExp("^- 执行 `make build-all --verbose` → 退出码 1\\n  Alpha Harness 记录的输出末尾（最后 20 行，共 " + total + " 行）：$", "mu"), size + ": the command from the stored input, and the true length of the output");
+    assert.ok(prompt.includes("  AssertionError: expected '1234' to be '1235'"), size + ": the end of the failing output is quoted");
+    assert.ok(!prompt.includes("工具详情没有读取"), size + ": the detail was read, not left to its title");
+  }
+});
+
 // Review of e0cf7de: the Session's known secrets (M1) and details that cannot be read (m7).
 
 test("G070-MVP M1: the Session's known secrets through the real binding factory: what each carried Harness's configuration references and its catalog controls' credentials, with the Gateway's own", async t => {

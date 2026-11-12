@@ -554,6 +554,17 @@ export interface ConversationReader {
    * last hit of the page before: the next page starts below it, and what is written meanwhile moves no page.
    */
   search(query: string, scope: { readonly sessionId?: SessionId; readonly after?: number; readonly limit: number }): readonly SearchHit[];
+  /**
+   * The content ids the conversation is registered to reference (`content_refs`, every role): what the content collector keeps its content by. `verify` holds what the rows
+   * themselves mention (an item's detail and content, a Run's attachments, the history a branch quoted) to this set. Optional: a reader that cannot say is not asked.
+   */
+  references?(id: SessionId): ReadonlySet<string>;
+  /** The history a branch or an import quoted, as its rows (`origin_history`), in order; none for a conversation that quotes nothing, or quotes its source by reference. Optional. */
+  originHistory?(id: SessionId): readonly OriginHistoryRow[];
+  /** The ordinal of a Run of the conversation by its identity (`runs.run_id`, unique); null when the conversation has none. Optional: a reader that cannot say is not asked. */
+  runOrdinal?(id: SessionId, runId: RunId): number | null;
+  /** The Harnesses the conversation has run on (the distinct `runs.harness_id`), sorted: whose secrets a reader of its history must hide. Optional. */
+  harnessIds?(id: SessionId): readonly string[];
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

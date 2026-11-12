@@ -1,5 +1,6 @@
 import type { ProtocolObservation } from "../contracts/control.js";
-import type { PublicRun, SessionEvent, SessionSnapshot } from "../contracts/session.js";
+import type { PublicMessage, PublicRun, SessionEvent, SessionSnapshot } from "../contracts/session.js";
+import type { TurnRecord } from "../contexts/session/domain/turn-source.js";
 
 /** The most a diagnostics text holds, and how much of a Turn's stderr it carries (ADR-037). */
 export const MAX_DIAGNOSTICS_BYTES = 64 * 1024, MAX_DIAGNOSTIC_STDERR_BYTES = 4096;
@@ -78,6 +79,13 @@ export interface RunDiagnosticsInput {
   readonly includeContent: boolean;
   readonly scrub: (text: string) => string;
 }
+/** What a Turn's report is made from when the Turns are read one at a time: the Turn, how many the conversation has, and (asked for only when a log is checked) the messages or the starts of them. */
+export interface TurnDiagnosticsInput extends Omit<RunDiagnosticsInput, "session" | "run"> {
+  readonly turn: TurnRecord;
+  readonly turns: number;
+  /** The messages of the conversation, or the starts of them (`messageStarts`): a program's log is checked against them when the report holds no conversation content. */
+  readonly messages: () => readonly string[];
+}
 function bytes(text: string): number { return Buffer.byteLength(text, "utf8"); }
 /** The last `limit` bytes of `text`, starting at a whole character. */
 function tail(text: string, limit: number): { readonly text: string; readonly cut: boolean } {
@@ -96,8 +104,14 @@ function ms(from: number | undefined, to: number | undefined): string { return f
  * it; without content it holds no prompt, reply, tool text or attachment. Nothing of it is stored by the Gateway.
  */
 export function runDiagnostics(input: RunDiagnosticsInput): string {
-  const { run, session, scrub } = input, timing = run.timing;
-  const index = session.runs.findIndex(item => item.id === run.id);
+  const { session, run, ...rest } = input, ordinal = session.runs.findIndex(item => item.id === run.id);
+  const user: PublicMessage = session.messages.find(message => message.id === run.userMessageId) ?? { id: run.userMessageId, runId: run.id, role: "user", text: run.input, seq: 0, status: run.status };
+  return turnDiagnostics({ ...rest, turn: { ordinal, run, user, assistant: session.messages.find(message => message.id === run.assistantMessageId), legacyOrder: false }, turns: session.runs.length,
+    messages: () => session.messages.map(message => message.text) });
+}
+/** The same report of a Turn read by itself from the rows, whatever the length of the conversation it is in. */
+export function turnDiagnostics(input: TurnDiagnosticsInput): string {
+  const { scrub } = input, run = input.turn.run, timing = run.timing, index = input.turn.ordinal;
   const protocol = input.events.filter(event => event.type === "run.protocol").map(event => (event.data as { observation?: ProtocolObservation }).observation).at(-1);
   const installation = input.events.filter(event => event.type === "run.installation_resolved").map(event => (event.data as { installation?: { source?: unknown; version?: unknown } }).installation).at(-1);
   const counts = new Map<string, number>();
@@ -115,7 +129,7 @@ export function runDiagnostics(input: RunDiagnosticsInput): string {
     "  原程序在本回合报告：" + (protocol ? scrub(protocol.agentName ?? "—") + " " + scrub(protocol.agentVersion ?? "—") + " · 协议版本 " + (protocol.protocolVersion ?? "—") : "（本回合没有建立连接）"),
     "  当前安装：产品 " + scrub(input.harness?.programVersion ?? "—") + " · 控制入口 " + scrub(input.harness?.installedVersion ?? "—")
       + (installation && typeof installation.source === "string" ? " · 来源 " + (installation.source === "managed" ? "HarnessHub 管理" : "本机") : ""),
-    "回合：" + run.id + "（第 " + (index + 1) + " 轮，共 " + session.runs.length + " 轮）· 状态 " + run.status,
+    "回合：" + run.id + "（第 " + (index + 1) + " 轮，共 " + input.turns + " 轮）· 状态 " + run.status,
     "  原生模型：" + (run.selection.nativeModel === undefined ? "跟随本机配置" : scrub(run.selection.nativeModel)) + (options ? " · 原生设置：" + scrub(options) : ""),
     "  复用保留的进程：" + (run.reused ? "是" : "否") + " · 交给对话保留：" + (run.retained ? "是" : "否"),
     "阶段（距受理）：" + (timing ? ["准备 " + ms(timing.acceptedAt, timing.preparingAt), "就绪 " + ms(timing.acceptedAt, timing.readyAt), "发送 " + ms(timing.acceptedAt, timing.dispatchedAt),
@@ -131,14 +145,14 @@ export function runDiagnostics(input: RunDiagnosticsInput): string {
   if (input.stderr === null) stderr = "（本次服务运行期间没有这一轮的记录，例如它在服务重启之前运行）";
   else if (!input.stderr.text.trim()) stderr = "（没有输出）";
   else {
-    const logged = input.includeContent ? input.stderr.text : withholdConversation(input.stderr.text, session.messages.map(message => message.text));
+    const logged = input.includeContent ? input.stderr.text : withholdConversation(input.stderr.text, input.messages());
     const kept = tail(scrub(logged), MAX_DIAGNOSTIC_STDERR_BYTES); stderr = (input.stderr.truncated || kept.cut ? "…（只保留最后 4 KiB）\n" : "") + kept.text;
   }
   lines.push("", "stderr（本回合，最后 4 KiB）：", stderr);
   let text = lines.join("\n") + "\n";
   if (input.includeContent) {
     // Only this Turn's prompt and reply: no attachment, tool text or other Turn. The reply gives way first.
-    const reply = session.messages.find(message => message.id === run.assistantMessageId)?.text ?? "";
+    const reply = input.turn.assistant?.text ?? "";
     const room = MAX_DIAGNOSTICS_BYTES - bytes(text) - 256;
     const prompt = head(scrub(run.input), Math.max(0, Math.min(16 * 1024, room)));
     const answer = head(scrub(reply), Math.max(0, room - bytes(prompt.text)));

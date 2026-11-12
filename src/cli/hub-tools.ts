@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import {
-  TABLE_ENV, TABLE_LIMITS, TABLE_MCP_NAME, TABLE_NOT_IN_SESSION, TABLE_PARTS, TABLE_TOOLS,
+  TABLE_ENV, TABLE_LIMITS, TABLE_MCP_NAME, TABLE_NOT_IN_SESSION, TABLE_PARTS, TABLE_SEARCH_SCOPES, TABLE_TOOLS,
   type TableSearchHit, type TableSearchView, type TableTool, type TableTurnRead, type TableTurnsView,
 } from "../contracts/table.js";
 
@@ -66,10 +66,12 @@ const TOOLS: readonly ToolDefinition[] = [
   { name: "hub_search", title: "Search this conversation",
     description: "Search this whole HarnessHub conversation (the user's words, replies, tool calls and their inputs, outputs and diffs) for a word or phrase, ignoring case. "
       + "Returns the places that match, newest turn first, each with its turn number, where it was found and an excerpt; read one in full with hub_read_turn. "
-      + "Use it to find where something was said, decided, run or changed.",
+      + "Use it to find where something was said, decided, run or changed. A long conversation is searched a page at a time: when there are more places, the result says how to go on with `after`.",
     inputSchema: { type: "object", properties: {
       query: { type: "string", minLength: 1, maxLength: TABLE_LIMITS.queryMax, description: "The word or phrase to look for." },
-      limit: whole("How many places to return (default " + TABLE_LIMITS.searchDefault + ").", 1, TABLE_LIMITS.searchMax) }, required: ["query"], additionalProperties: false },
+      limit: whole("How many places to return (default " + TABLE_LIMITS.searchDefault + ").", 1, TABLE_LIMITS.searchMax),
+      after: { type: "string", pattern: "^(w[0-9]{1,15}\\.[0-9]{1,9}(user|reply)|[0-9]{1,9}\\.[0-9]{1,9})$", description: "Where to go on from: the `after` value the previous result gave for its next page." },
+      in: { type: "string", enum: [...TABLE_SEARCH_SCOPES], description: "What to search: all (the default) is everything, read turn by turn; words is only the user's words and the replies, which is quick however long the conversation is." } }, required: ["query"], additionalProperties: false },
     annotations: { title: "Search this conversation", ...READ_ONLY } },
 ];
 
@@ -183,17 +185,22 @@ const WHERE: Readonly<Record<TableSearchHit["where"], (hit: TableSearchHit) => s
   user: () => "the user's words", reply: () => "the reply", tool: hit => "the title of tool call #" + hit.tool,
   input: hit => "the input of tool call #" + hit.tool, output: hit => "the output of tool call #" + hit.tool, diff: hit => "the diff of tool call #" + hit.tool,
 };
-function renderSearch(view: TableSearchView, surface: Surface): string {
+function nextSearch(surface: Surface, query: string, after: string, limit: number, scope: string | undefined): string {
+  return surface === "mcp" ? "hub_search " + JSON.stringify({ query, after, limit, ...(scope === undefined ? {} : { in: scope }) })
+    : "hub-tools search " + JSON.stringify(query) + " --after " + after + " --limit " + limit + (scope === undefined ? "" : " --in " + scope);
+}
+function renderSearch(view: TableSearchView, surface: Surface, asked: { readonly after: boolean }): string {
   const out: string[] = [];
-  if (view.total === 0) out.push("Nothing in this conversation matches \"" + view.query + "\" (" + count(view.turns, "turn") + " searched).");
-  else out.push(count(view.total, "place") + " in this conversation match \"" + view.query + "\"" + (view.hits.length < view.total ? "; the first " + view.hits.length + ", newest turn first:" : ", newest turn first:"));
+  if (view.total === 0) out.push(asked.after ? "No more places match \"" + view.query + "\" before that point." : "Nothing in this conversation matches \"" + view.query + "\" (" + count(view.turns, "turn") + " searched).");
+  else out.push(count(view.total, "place") + " " + (asked.after ? "more " : "in this conversation ") + "match \"" + view.query + "\"" + (view.next === undefined ? ", newest turn first:" : "; newest turn first, and there are more:"));
   for (const hit of view.hits) {
     out.push("#" + hit.n + " · " + WHERE[hit.where](hit) + (hit.matches > 1 ? " (" + hit.matches + " matches)" : ""));
     out.push("  " + hit.snippet);
     const part = hit.where === "tool" ? "tools" : hit.where;
     out.push("  read: " + nextRead(surface, { n: hit.n, part, ...(hit.tool === undefined || hit.where === "tool" ? {} : { tool: hit.tool }), ...(hit.where === "tool" ? {} : { offset: Math.max(0, hit.at - 200) }) }));
   }
-  if (view.hits.length < view.total) out.push("There are more places than were returned: use more specific words, or a larger limit.");
+  if (view.next !== undefined) out.push("More places match: " + nextSearch(surface, view.query, view.next, Math.max(1, view.hits.length), view.scope));
+  if (view.scope === "words") out.push("Note: only the user's words and the replies were searched; the tool calls and what they ran and printed were not.");
   if (view.unsearched > 0) out.push("Note: " + count(view.unsearched, "tool call detail") + " could not be searched (too many to read, unreadable, or withheld because the call touches a credential file).");
   for (const note of view.notes ?? []) out.push("Note: " + note);
   return out.join("\n");
@@ -235,8 +242,12 @@ export async function callTool(name: string, args: Readonly<Record<string, unkno
       case "hub_search": {
         const query = typeof args.query === "string" ? args.query.trim() : "";
         if (query === "" || query.length > TABLE_LIMITS.queryMax) throw new ToolError("query must be the word or phrase to look for, 1 to " + TABLE_LIMITS.queryMax + " characters.");
-        const view = await ask(connection, "/api/table/search", { q: query, limit: wholeArgument(args, "limit", 1, TABLE_LIMITS.searchMax) });
-        return { text: renderSearch(view as unknown as TableSearchView, surface), isError: false };
+        const after = args.after === undefined || args.after === null ? undefined : args.after;
+        if (after !== undefined && (typeof after !== "string" || !/^(w[0-9]{1,15}\.[0-9]{1,9}(user|reply)|[0-9]{1,9}\.[0-9]{1,9})$/u.test(after))) throw new ToolError("after must be the value a previous search gave for its next page.");
+        const scope = args.in === undefined || args.in === null ? undefined : args.in;
+        if (scope !== undefined && (typeof scope !== "string" || !(TABLE_SEARCH_SCOPES as readonly string[]).includes(scope))) throw new ToolError("in must be one of " + TABLE_SEARCH_SCOPES.join(", ") + ".");
+        const view = await ask(connection, "/api/table/search", { q: query, limit: wholeArgument(args, "limit", 1, TABLE_LIMITS.searchMax), after, in: scope });
+        return { text: renderSearch(view as unknown as TableSearchView, surface, { after: after !== undefined }), isError: false };
       }
       default: return { text: "Unknown tool: " + name + ".", isError: true };
     }
@@ -323,7 +334,8 @@ const USAGE = [
   "  hub-tools turn <n> [--part PART] [--tool K] [--offset N] [--limit N]",
   "                                                   read turn n; PART is one of " + TABLE_PARTS.join(", "),
   "                                                   (input, output and diff need --tool K, a tool call's number in the turn)",
-  "  hub-tools search <words> [--limit N]             find words in the whole conversation",
+  "  hub-tools search <words> [--limit N] [--after C] [--in all|words]",
+  "                                                   find words in the whole conversation, a page at a time (C: the cursor the page before gave); --in words searches only the user's words and the replies, quickly",
   "  hub-tools mcp                                    serve these three tools as an MCP server on stdio",
   "",
   "It reads " + TABLE_ENV.url + " and " + TABLE_ENV.session + " from the environment; HarnessHub sets them for the programs it starts.",
@@ -339,7 +351,7 @@ export async function main(args: readonly string[], io: ToolIo = { env: process.
   if (command !== "turns" && command !== "turn" && command !== "search") return misuse(io, command === undefined ? "" : "Unknown command: " + command);
   let values: Record<string, string | undefined>, positionals: string[];
   try {
-    const parsed = parseArgs({ args: rest, allowPositionals: true, strict: true, options: { from: { type: "string" }, limit: { type: "string" }, part: { type: "string" }, tool: { type: "string" }, offset: { type: "string" } } });
+    const parsed = parseArgs({ args: rest, allowPositionals: true, strict: true, options: { from: { type: "string" }, limit: { type: "string" }, part: { type: "string" }, tool: { type: "string" }, offset: { type: "string" }, after: { type: "string" }, in: { type: "string" } } });
     values = parsed.values; positionals = parsed.positionals;
   } catch (error) { return misuse(io, error instanceof Error ? error.message : "bad arguments"); }
   const only = (names: readonly string[]) => Object.fromEntries(names.flatMap(name => values[name] === undefined ? [] : [[name, values[name]]]));
@@ -352,7 +364,7 @@ export async function main(args: readonly string[], io: ToolIo = { env: process.
     tool = "hub_read_turn"; input = { n: positionals[0], ...only(["part", "tool", "offset", "limit"]) };
   } else {
     if (!positionals.length) return misuse(io, "search takes the words to look for: hub-tools search <words>.");
-    tool = "hub_search"; input = { query: positionals.join(" "), ...only(["limit"]) };
+    tool = "hub_search"; input = { query: positionals.join(" "), ...only(["limit", "after", "in"]) };
   }
   const result = await callTool(tool, input, "cli", io.env);
   (result.isError ? io.stderr : io.stdout).write(result.text + "\n");

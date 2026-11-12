@@ -1,10 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ContentPort } from "../contracts/content.js";
+import type { ConversationReader } from "../contracts/conversation.js";
 import { SessionError, type SessionConfiguration, type SessionId, type SessionSnapshot } from "../contracts/session.js";
-import { TABLE_LIMITS, TABLE_PARTS, type TableGrant, type TableGrants, type TablePart } from "../contracts/table.js";
+import { TABLE_LIMITS, TABLE_PARTS, TABLE_SEARCH_SCOPES, type TableGrant, type TableGrants, type TablePart, type TableSearchScope } from "../contracts/table.js";
+import { readDetail } from "../contexts/session/domain/detail-read.js";
 import {
-  detailKey, directoryNeeds, directoryRange, parseTableDetail, readTurn, searchNeeds, searchTurns, tableRedaction, turnNeeds, turnsView,
-  type TableDetails, type TableRedaction, type TableToolDetail, type TableToolRef,
+  detailKey, directoryNeeds, directoryRange, readTurn, rowsTable, searchPage, searchWordsPage, snapshotTable, tableDetailOf, tableDetailPolicy, tableRedaction, turnNeeds, turnsView,
+  type SearchLoad, type TableConversation, type TableDetails, type TableDetailUse, type TableRedaction, type TableToolDetail, type TableToolRef,
 } from "../contexts/session/domain/table.js";
 
 /**
@@ -13,7 +15,7 @@ import {
  *
  *   /api/table/turns           the directory: a window of the Turns, one line each
  *   /api/table/turns/:n        one Turn, or one piece of it, as one page
- *   /api/table/search?q=       a word or phrase over the whole conversation
+ *   /api/table/search?q=       a word or phrase over the whole conversation, a page of places at a time (`after` goes on from the `next` of the page before)
  *
  * The caller is a program on this computer, not a browser: it brings `Authorization: Bearer <token>`, a token the Hub minted for
  * the native process it started (TableGrants), and the token names the conversation, so there is no conversation in the path
@@ -28,10 +30,12 @@ export interface TableHttp {
 }
 export interface TableApiOptions {
   readonly grants: TableGrants;
-  /** The Session as the Runtime reads it (SESSION_NOT_FOUND for an identity it does not hold). */
-  readonly read: (id: SessionId) => SessionSnapshot;
+  /** The conversations as rows: the table reads the head and the Turns a request needs, one at a time (SESSION_NOT_FOUND for an identity it does not hold). */
+  readonly reader?: Pick<ConversationReader, "head" | "turnAt" | "runOrdinal" | "originHistory" | "harnessIds" | "search">;
+  /** Until the web server reads rows: the Session as the Runtime reads it in the old whole shape (SESSION_NOT_FOUND for an identity it does not hold). One of `reader` and `read` is given; `reader` wins. */
+  readonly read?: (id: SessionId) => SessionSnapshot;
   /** Where stored tool details are read back; absent: none can be, and what they hold is told as unread. */
-  readonly content?: Pick<ContentPort, "readText">;
+  readonly content?: Pick<ContentPort, "readText" | "readChunks">;
   /** The known secret values of these Harnesses (the factory's relaySecrets), hidden wherever the table quotes them; absent: only the shape rules hide. */
   readonly secrets?: (configuration: SessionConfiguration, harnessIds: readonly string[]) => Promise<readonly string[]>;
   readonly http: TableHttp;
@@ -60,7 +64,10 @@ function loopback(address: string | undefined): boolean {
 
 export class TableApi {
   private readonly secretsFor = new Map<string, { readonly values: readonly string[] | null; readonly until: number }>();
-  constructor(private readonly options: TableApiOptions) {}
+  constructor(private readonly options: TableApiOptions) {
+    if (options.reader === undefined && options.read === undefined) throw new SessionError("INVALID_INPUT", "the table needs a reader of conversations");
+  }
+  private conversation(id: SessionId): TableConversation { return this.options.reader !== undefined ? rowsTable(this.options.reader, id) : snapshotTable(this.options.read!(id)); }
 
   /**
    * Answers the table's routes; false for any other request. Called after the server's own Host check, before its login: a
@@ -79,12 +86,12 @@ export class TableApi {
     }
     if (method !== "GET") { response.setHeader("Allow", "GET"); http.json(response, 405, { code: "METHOD_NOT_ALLOWED", message: "The table is read with GET" }); return true; }
     if (request.headers.origin !== undefined) { http.json(response, 403, { code: "TABLE_LOCAL_ONLY", message: "The table is for programs on this computer, not for pages" }); return true; }
-    const state = this.options.read(grant.sessionId), hiding = await this.redaction(state, grant);
+    const state = this.conversation(grant.sessionId), hiding = await this.redaction(state, grant);
     const notes = hiding.known ? [] : [UNHIDDEN];
     if (turns) {
       http.queries(url, ["from", "limit"]);
       const from = whole(url, "from", 1, 1_000_000), limit = whole(url, "limit", 1, TABLE_LIMITS.turnsMax), range = directoryRange(state, from, limit);
-      const loaded = await this.load(directoryNeeds(state, range.from, range.to), TABLE_LIMITS.directoryDetails);
+      const loaded = await this.load(directoryNeeds(state, range.from, range.to), TABLE_LIMITS.directoryDetails, "files");
       const view = turnsView(state, from, limit, loaded.details, hiding.redaction);
       http.json(response, 200, { ...view, ...(notes.length ? { notes } : {}) }); return true;
     }
@@ -94,15 +101,20 @@ export class TableApi {
       if (part !== null && !(TABLE_PARTS as readonly string[]).includes(part)) invalid("part must be one of " + TABLE_PARTS.join(", "));
       const tool = whole(url, "tool", 1, 100_000), offset = whole(url, "offset", 0, 1_000_000_000), limit = whole(url, "limit", 1, TABLE_LIMITS.pageMax);
       const query = { ...(part === null ? {} : { part: part as TablePart }), ...(tool === undefined ? {} : { tool }), ...(offset === undefined ? {} : { offset }), ...(limit === undefined ? {} : { limit }) };
-      const loaded = await this.load(turnNeeds(state, n, query.part, tool), TABLE_LIMITS.turnDetails);
+      const loaded = await this.load(turnNeeds(state, n, query.part, tool), TABLE_LIMITS.turnDetails, query.part === "input" || query.part === "output" || query.part === "diff" ? query.part : "files");
       const view = readTurn(state, n, query, loaded.details, hiding.redaction);
       http.json(response, 200, { ...view, ...(notes.length ? { notes: [...(view.notes ?? []), ...notes] } : {}) }); return true;
     }
-    http.queries(url, ["q", "limit"]);
-    const words = url.searchParams.get("q");
+    http.queries(url, ["q", "limit", "after", "in"]);
+    const words = url.searchParams.get("q"), after = url.searchParams.get("after") ?? undefined, scope = (url.searchParams.get("in") ?? "all") as TableSearchScope;
+    if (!(TABLE_SEARCH_SCOPES as readonly string[]).includes(scope)) invalid("in must be one of " + TABLE_SEARCH_SCOPES.join(", "));
     if (words === null || words.trim() === "" || words.length > TABLE_LIMITS.queryMax) invalid("q must be the words to search for, 1 to " + TABLE_LIMITS.queryMax + " characters");
-    const limit = whole(url, "limit", 1, TABLE_LIMITS.searchMax), needs = searchNeeds(state), loaded = await this.load(needs, TABLE_LIMITS.searchDetails);
-    const view = searchTurns(state, words, limit, loaded.details, hiding.redaction, loaded.unread);
+    const limit = whole(url, "limit", 1, TABLE_LIMITS.searchMax), reader = this.options.reader;
+    if (scope === "words" && reader === undefined) invalid("this answer cannot search the words alone");
+    // The words alone are found by the conversation's full-text indexes; everything is read Turn by Turn.
+    const view = scope === "words"
+      ? searchWordsPage(state, words, { limit, ...(after === undefined ? {} : { after }) }, (query, range) => reader!.search(query, { sessionId: grant.sessionId, limit: range.limit, ...(range.after === undefined ? {} : { after: range.after }) }), hiding.redaction)
+      : await searchPage(state, words, { limit, ...(after === undefined ? {} : { after }) }, this.searchLoad(), hiding.redaction);
     http.json(response, 200, { ...view, ...(notes.length ? { notes } : {}) }); return true;
   }
 
@@ -117,14 +129,14 @@ export class TableApi {
    * The redaction for a conversation: the known secrets of every Harness it ran on and of the caller's (asked of the factory,
    * kept a minute), and the shape rules. When the known secrets cannot be read, the answer says so and goes on with the shapes.
    */
-  private async redaction(state: SessionSnapshot, grant: TableGrant): Promise<{ readonly redaction: TableRedaction; readonly known: boolean }> {
+  private async redaction(state: TableConversation, grant: TableGrant): Promise<{ readonly redaction: TableRedaction; readonly known: boolean }> {
     const provider = this.options.secrets;
     if (provider === undefined) return { redaction: tableRedaction([]), known: true };
-    const ids = [...new Set([...state.runs.map(run => run.selection.harnessId), grant.harnessId])].sort(), key = state.id + "\n" + ids.join(","), now = (this.options.now ?? Date.now)();
+    const ids = [...new Set([...state.harnessIds(), grant.harnessId])].sort(), key = state.id + "\n" + ids.join(","), now = (this.options.now ?? Date.now)();
     let entry = this.secretsFor.get(key);
     if (entry === undefined || entry.until <= now) {
       let values: readonly string[] | null;
-      try { values = await provider(state.configuration, ids); } catch { values = null; }
+      try { values = await provider(this.configuration(state.id), ids); } catch { values = null; }
       entry = { values, until: now + (values === null ? SECRETS_FAILED_MS : SECRETS_FRESH_MS) };
       this.secretsFor.set(key, entry);
       if (this.secretsFor.size > 64) this.secretsFor.delete(this.secretsFor.keys().next().value!);
@@ -132,25 +144,48 @@ export class TableApi {
     return { redaction: tableRedaction(entry.values ?? []), known: entry.values !== null };
   }
 
+  /** The configuration the secrets of a conversation's Harnesses are asked with: the head's, or the old shape's. */
+  private configuration(id: SessionId): SessionConfiguration {
+    return this.options.reader !== undefined ? this.options.reader.head(id).head.configuration : this.options.read!(id).configuration;
+  }
+
+  /** One stored detail, read by what it is wanted for; null when it is not stored any more, was changed, is not a detail, or cannot be read. */
+  private async detail(item: TableToolRef, use: TableDetailUse): Promise<TableToolDetail | null> {
+    const content = this.options.content;
+    if (content === undefined || (content.readText === undefined && content.readChunks === undefined)) return null;
+    try {
+      const read = await readDetail(content, item.ref, tableDetailPolicy(use));
+      return read === null ? null : tableDetailOf(read);
+    } catch { return null; }
+  }
   /**
-   * The stored details of these tool calls, read back in order within the bounds of one request (how many, how many bytes). A detail
-   * that is not stored any more, was changed, is too large or is not a detail is left out; `unread` counts the ones not read.
+   * The stored details of these tool calls, read back in order within the bounds of one request (how many, how many bytes in all: the first is always read, whatever its size, which the
+   * policy of `use` reduces to what the request can use). A detail that is not stored any more, was changed, or is not a detail is left out; `unread` counts the ones not read.
    */
-  private async load(refs: readonly TableToolRef[], most: number): Promise<{ readonly details: TableDetails; readonly unread: number }> {
-    const details = new Map<string, TableToolDetail>(), content = this.options.content;
-    if (content?.readText === undefined) return { details, unread: refs.length };
+  private async load(refs: readonly TableToolRef[], most: number, use: TableDetailUse): Promise<{ readonly details: TableDetails; readonly unread: number }> {
+    const details = new Map<string, TableToolDetail>();
     let tried = 0, bytes = 0;
     for (const item of refs) {
-      if (tried >= most || bytes + item.ref.bytes > TABLE_LIMITS.totalBytes) break;
+      if (tried >= most || (tried > 0 && bytes + item.ref.bytes > TABLE_LIMITS.totalBytes)) break;
       tried++; bytes += item.ref.bytes;
-      let text: string | null;
-      try { text = await content.readText(item.ref, TABLE_LIMITS.detailBytes); } catch { text = null; }
-      if (text === null) continue;
-      let value: unknown;
-      try { value = JSON.parse(text); } catch { continue; }
-      const detail = parseTableDetail(value);
+      const detail = await this.detail(item, use);
       if (detail !== null) details.set(detailKey(item.runId, item.toolId), detail);
     }
     return { details, unread: refs.length - details.size };
+  }
+  /** The details a search reads as it goes from Turn to Turn: within the bounds of the one request, newest Turn first. */
+  private searchLoad(): SearchLoad {
+    const spent = { tried: 0, bytes: 0 };
+    return async refs => {
+      const details = new Map<string, TableToolDetail>();
+      let unread = 0;
+      for (const item of refs) {
+        if (spent.tried >= TABLE_LIMITS.searchDetails || (spent.tried > 0 && spent.bytes + item.ref.bytes > TABLE_LIMITS.totalBytes)) { unread++; continue; }
+        spent.tried++; spent.bytes += item.ref.bytes;
+        const detail = await this.detail(item, "search");
+        if (detail !== null) details.set(detailKey(item.runId, item.toolId), detail); else unread++;
+      }
+      return { details, unread };
+    };
   }
 }

@@ -192,11 +192,13 @@ const TABLES: readonly string[] = [
   print TEXT NOT NULL,
   PRIMARY KEY(session_id, print)
 ) STRICT, WITHOUT ROWID`,
-  // Whether each derived index is complete; a reader that finds it not `ready` says so and scans instead.
+  // Whether each derived index is complete; a reader that finds it not `ready` says so and scans instead. `progress` is how far the backfill that fills an index after an
+  // upgrade has got: every finished item with an `items.id` up to it is in the index (0 before it begins); a restart goes on from there.
   `CREATE TABLE derived(
   name TEXT PRIMARY KEY,
   state TEXT NOT NULL CHECK(state IN('empty','building','ready')),
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  progress INTEGER NOT NULL DEFAULT 0 CHECK(progress>=0)
 ) STRICT, WITHOUT ROWID`,
 ];
 

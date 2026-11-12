@@ -1,13 +1,13 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import {
   PAGE,
-  type ConversationReader, type CursorPayload, type DeferredWork, type HeadRow, type ItemPage, type ReadOptions, type SearchHit, type SessionListCursor, type SessionListPage, type SessionListQuery,
+  type ConversationReader, type CursorPayload, type DeferredWork, type HeadRow, type ItemPage, type OriginHistoryRow, type ReadOptions, type SearchHit, type SessionListCursor, type SessionListPage, type SessionListQuery,
   type SessionListRow, type StartupSample, type TextRange, type TurnCursor, type TurnItems, type TurnWindow,
 } from "../../contracts/conversation.js";
 import { WORK_TYPES } from "../../contracts/protocol.js";
 import { SessionError, type HarnessSelection, type RunId, type SessionId } from "../../contracts/session.js";
 import { readItems } from "./load.js";
-import { headRowFrom, runRowFrom, utf8Length, type Rec } from "./rows.js";
+import { headRowFrom, originHistoryRowFrom, runRowFrom, utf8Length, type Rec } from "./rows.js";
 import { hasWords, indexStates, spread, type SearchIndexName } from "./search-index.js";
 import { all, one, prepared } from "./statements.js";
 
@@ -268,6 +268,27 @@ export class ConversationTables implements ConversationReader {
         UNION SELECT json_extract(a.value,'$.id') FROM sessions s, json_each(s.head,'$.runs') r, json_each(r.value,'$.attachments') a WHERE s.format<14
         UNION SELECT json_extract(a.value,'$.id') FROM sessions s, json_each(s.head,'$.origin.history') h, json_each(h.value,'$.attachments') a WHERE s.format<14`)) if (typeof row.id === "string") referenced.add(row.id);
     return referenced;
+  }
+
+  /** The content ids one conversation is registered to reference, whatever the role (`content_refs`): the references of a superseded detail are among them. */
+  references(id: SessionId): ReadonlySet<string> {
+    return new Set(all(this.db, "SELECT DISTINCT content_id FROM content_refs WHERE session_id=?", id).map(row => String(row.content_id)));
+  }
+
+  /** The ordinal of a Run of a conversation by its identity (`runs.run_id`, unique); null when the conversation has none. */
+  runOrdinal(id: SessionId, runId: RunId): number | null {
+    const row = one(this.db, "SELECT ordinal FROM runs WHERE session_id=? AND run_id=?", id, runId);
+    return row === undefined ? null : Number(row.ordinal);
+  }
+
+  /** The Harnesses a conversation has run on (the distinct `harness_id` of its Runs), sorted. */
+  harnessIds(id: SessionId): readonly string[] {
+    return all(this.db, "SELECT DISTINCT harness_id FROM runs WHERE session_id=? ORDER BY harness_id", id).map(row => String(row.harness_id));
+  }
+
+  /** The history a conversation quoted when it was made (`origin_history`), in the order it was quoted. */
+  originHistory(id: SessionId): readonly OriginHistoryRow[] {
+    return all(this.db, "SELECT * FROM origin_history WHERE session_id=? ORDER BY idx", id).map(originHistoryRowFrom);
   }
 
   /** The latest `perEntry` startups of every Harness entry (a Run that started its program and was not given a kept one): a seek per entry and a read of its newest few. */

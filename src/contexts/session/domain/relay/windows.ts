@@ -1,5 +1,5 @@
 import type { WINDOW_SOURCES } from "../../../../contracts/relay.js";
-import type { PublicRun, SessionSnapshot } from "../../../../contracts/session.js";
+import type { PublicRun } from "../../../../contracts/session.js";
 import { RELAY_BUDGET, resolveRelayBudget, type RelayBudget } from "./budget.js";
 
 /**
@@ -26,7 +26,7 @@ export interface ResolvedWindow {
   readonly fixedPrefix: number;
 }
 /** The latest context window the target reported: `usage.context.size` of the latest earlier Run on the same Harness control. */
-export function reportedWindow(state: SessionSnapshot, current: PublicRun): number | null {
+export function reportedWindow(state: { readonly runs: readonly Pick<PublicRun, "id" | "selection" | "usage">[] }, current: Pick<PublicRun, "id" | "selection">): number | null {
   for (let index = state.runs.length - 1; index >= 0; index--) {
     const run = state.runs[index]!;
     if (run.id === current.id || run.selection.harnessId !== current.selection.harnessId || run.selection.controlId !== current.selection.controlId) continue;
@@ -35,7 +35,7 @@ export function reportedWindow(state: SessionSnapshot, current: PublicRun): numb
   }
   return null;
 }
-export function resolveWindow(state: SessionSnapshot, current: PublicRun): ResolvedWindow {
+export function resolveWindow(state: { readonly runs: readonly Pick<PublicRun, "id" | "selection" | "usage">[] }, current: Pick<PublicRun, "id" | "selection">): ResolvedWindow {
   const reported = reportedWindow(state, current);
   return { size: reported ?? ASSUMED_WINDOW, source: reported === null ? "assumed" : "observed", fixedPrefix: FIXED_PREFIX };
 }

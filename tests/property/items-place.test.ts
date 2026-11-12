@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { verify, verifyTransition } from "../../src/contexts/session/domain/conversation-verify.js";
 import {
-  approvalRole, finalItemSeq, itemsOf, mergeToolDetail, noticePrint, openTurn, place, settleItems, type ActiveTurn, type PlaceEnv, type PlaceInput, type Placed, type TerminalStatus,
+  DETAIL_NOT_SAVED, approvalRole, finalItemSeq, itemsOf, mergeToolDetail, noticePrint, openTurn, place, settleItems, type ActiveTurn, type PlaceEnv, type PlaceInput, type Placed, type TerminalStatus,
 } from "../../src/contexts/session/domain/items-place.js";
 import { projectTurn } from "../../src/contexts/session/domain/protocol/index.js";
 import { runItemStatus } from "../../src/contexts/session/domain/protocol/index.js";
@@ -758,6 +758,34 @@ test("a call's detail is merged as the reports come and cut by nothing; the cont
   const made = out.event(bytes, image);
   assert.deepStrictEqual(made.changes.contentRefs, [{ contentId: "content-img", sessionId: SESSION, runId: RUN, itemSeq: 3, role: "output" }]);
   assert.deepStrictEqual([fieldsOf(out.item("output:2")).kind, fieldsOf(out.item("output:2")).name], ["image", "a.png"]);
+});
+
+test("a call whose detail could not be kept says so on its item, goes on saying it through its next reports, and stops when a detail is kept", () => {
+  const d = new Driver();
+  d.event(tool("c", "completed", { detail: { kind: "execute", name: "Bash", input: "ls", output: "files" } }));
+  const lost = d.input({ kind: "detail_lost", toolId: "c", at: 9 });
+  assert.deepStrictEqual((fieldsOf(d.item("tool:c")).native as { clipped?: string[] }).clipped, [DETAIL_NOT_SAVED]);
+  assert.equal(fieldsOf(d.item("tool:c")).detail, undefined, "no reference was made up");
+  assert.equal(lost.changes.contentRefs, undefined);
+  assert.equal(d.input({ kind: "detail_lost", toolId: "c", at: 10 }).turn, d.turn, "said once");
+  assert.equal(d.input({ kind: "detail_lost", toolId: "nobody", at: 10 }).turn, d.turn, "a call that is not there");
+  d.event(tool("c", "completed"));
+  assert.deepStrictEqual((fieldsOf(d.item("tool:c")).native as { clipped?: string[] }).clipped, [DETAIL_NOT_SAVED], "the next report does not take it away");
+  assert.equal(fieldsOf(d.item("tool:c")).command, "ls", "and the command the item knows is still there");
+  const kept = d.input({ kind: "detail", toolId: "c", ref: ref("one"), at: 12 });
+  assert.equal((fieldsOf(d.item("tool:c")).detail as ContentRef).id, "content-one");
+  assert.equal((fieldsOf(d.item("tool:c")).native as { clipped?: string[] }).clipped, undefined, "a detail that is kept takes the mark away");
+  assert.equal(kept.changes.contentRefs?.[0]?.contentId, "content-one");
+  d.event(tool("c", "completed"));
+  assert.equal((fieldsOf(d.item("tool:c")).native as { clipped?: string[] }).clipped, undefined);
+  // The marks that are about other things stay when it goes.
+  const other = new Driver();
+  other.event(tool("n\0", "completed", { detail: { input: "x" } }));
+  other.input({ kind: "detail_lost", toolId: "n", at: 9 });
+  assert.deepStrictEqual((fieldsOf(other.item("tool:n")).native as { clipped?: string[] }).clipped, ["id:nul", "title:nul", DETAIL_NOT_SAVED]);
+  other.input({ kind: "detail", toolId: "n", ref: ref("two"), at: 11 });
+  assert.deepStrictEqual((fieldsOf(other.item("tool:n")).native as { clipped?: string[] }).clipped, ["id:nul", "title:nul"]);
+  check(d, "unsaved"); check(other, "unsaved too");
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------

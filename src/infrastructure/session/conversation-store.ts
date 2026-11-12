@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -29,7 +30,7 @@ import { handoffNamed, handoffRows, logHandoff, readPrefs, writePref } from "./r
 import { readIndexRows, readPacket, readPacketBody, readPackets, repairRelayPrefs } from "./relay-tables.js";
 import { originHistoryRowFrom, runRowFrom, runRowOf, utf8Length } from "./rows.js";
 import { schemaV14Statements, RELAY_V14_REBUILD } from "./schema-v14.js";
-import { rebuildSearchIndex } from "./search-index.js";
+import { BACKFILL, backfillStep, indexProgress, indexStates, rebuildSearchIndex, type BackfillBudget, type BackfillStep, type SearchIndexName, type SearchIndexState } from "./search-index.js";
 import { all, insertInto, one, refused, updateRow } from "./statements.js";
 import { readEvents, drafts, pageLimit } from "./store-events.js";
 import {
@@ -166,6 +167,9 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
   private claimed = false;
   private closed = false;
   private failed: SessionError | null = null;
+  /** The backfill of the full-text indexes, while one runs (`startSearchBackfill`), and what stops it. */
+  private backfilling: Promise<void> | null = null;
+  private stopBackfill: (() => void) | null = null;
 
   /**
    * Opens `root` as its single owner (see the top of this file for what that takes and what the start does). `options.recover` and `options.recoverRelay` are the domain's
@@ -533,6 +537,10 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
     return this.read(() => one(this.database, "SELECT 1 AS found FROM notice_prints WHERE session_id=? AND print=?", id, print) !== undefined);
   }
   contentReferences(): ReadonlySet<string> { this.assertOwner(); return this.read(() => this.tables.contentReferences()); }
+  references(id: SessionId): ReadonlySet<string> { this.assertOwner(); sessionId(id); return this.read(() => this.tables.references(id)); }
+  originHistory(id: SessionId): readonly OriginHistoryRow[] { this.assertOwner(); sessionId(id); return this.read(() => this.tables.originHistory(id)); }
+  harnessIds(id: SessionId): readonly string[] { this.assertOwner(); sessionId(id); return this.read(() => this.tables.harnessIds(id)); }
+  runOrdinal(id: SessionId, runId: RunId): number | null { this.assertOwner(); sessionId(id); return this.read(() => this.tables.runOrdinal(id, runId)); }
   startupSamples(perEntry: number): readonly StartupSample[] { this.assertOwner(); return this.read(() => this.tables.startupSamples(perEntry)); }
 
   /** A page of the events of a conversation after `afterSeq` (store-events.ts for what a page is). */
@@ -570,6 +578,47 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
   acknowledgeFirstStart(): void { this.assertOwner(); this.transaction(() => { acknowledgeFirstStart(this.database); }); }
   /** Makes both full-text indexes again from the text chunks (search-index.ts); returns how many items were indexed. A maintenance command. */
   rebuildSearchIndex(): number { this.assertOwner(); return this.transaction(() => rebuildSearchIndex(this.database, this.stamp().getTime())); }
+  /** Whether each full-text index is complete, and how far the backfill of each has got (`items.id`). */
+  searchIndex(): { readonly states: Readonly<Record<SearchIndexName, SearchIndexState>>; readonly progress: Readonly<Record<SearchIndexName, number>> } {
+    this.assertOwner();
+    return this.read(() => ({ states: indexStates(this.database), progress: indexProgress(this.database) }));
+  }
+  /**
+   * Fills the full-text indexes of a root that was upgraded (the migration writes none), in the background and in small steps, and resolves when they are complete or the work was
+   * stopped (the store closed, or it lost its owner). Nothing is done on the caller's turn or on the start path: the first step comes after a pause. Each step is a short
+   * transaction (search-index.ts `backfillStep`: a few hundred KiB of text or a few milliseconds, whichever first) that records how far it got, and the event loop is given back
+   * between steps, so no commit or request waits longer than one step; a restart goes on from the recorded progress. Until the indexes are complete a search scans, and says so.
+   * A root whose indexes are complete (a new one, or one already filled) is not written. Calling it again while it runs returns the same promise.
+   */
+  startSearchBackfill(options: { readonly pauseMs?: number; readonly budget?: Partial<BackfillBudget>; readonly onStep?: (step: BackfillStep) => void } = {}): Promise<void> {
+    if (this.backfilling !== null) return this.backfilling;
+    const budget: BackfillBudget = { ...BACKFILL, ...options.budget };
+    let timer: ReturnType<typeof setTimeout> | null = null, wake: (() => void) | null = null, stopped = false;
+    const sleep = (ms: number): Promise<void> => new Promise<void>(resolve => {
+      wake = resolve;
+      timer = setTimeout(() => { timer = null; resolve(); }, ms);
+      timer.unref();
+    });
+    this.stopBackfill = () => { stopped = true; if (timer !== null) clearTimeout(timer); wake?.(); };
+    const work = async (): Promise<void> => {
+      await sleep(options.pauseMs ?? 5);
+      while (!stopped && !this.closed && this.failed === null) {
+        const began = performance.now();
+        let step: BackfillStep;
+        try {
+          this.assertOwner();
+          const states = this.read(() => indexStates(this.database));
+          if (states.search_fts === "ready" && states.search_chars === "ready") return;
+          step = this.transaction(() => backfillStep(this.database, this.stamp().getTime(), budget));
+        } catch { return; }
+        options.onStep?.(step);
+        if (step.done) return;
+        await sleep(options.pauseMs ?? Math.max(2, Math.round(performance.now() - began)));
+      }
+    };
+    this.backfilling = work().finally(() => { this.stopBackfill = null; this.backfilling = null; });
+    return this.backfilling;
+  }
   /** How the memory has been used, for diagnostics and tests. */
   cacheStats(): { readonly conversations: ConversationCacheStats; readonly oldTurns: TurnCacheStats } { return { conversations: this.cache.stats(), oldTurns: this.turns.stats() }; }
 
@@ -593,6 +642,7 @@ export class SqliteConversationStore implements ConversationStore, RelayStorePor
 
   close(): void {
     if (this.closed) return;
+    this.stopBackfill?.();
     let failure: unknown = null;
     try {
       this.assertOwner();

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { application } from "../../src/cli/session-application.js";
+import { CONVERSATION_FORMAT, type Conversation, type ConversationRun } from "../../src/contracts/conversation.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import {
   RELAY_PREF_DEFAULTS, RELAY_PREF_KEYS, RELAY_PREF_VALUES, parseDeliveryRecord, parseRelayPacket, relayPacketId,
@@ -612,9 +613,17 @@ test("the read model over rows made by hand: every sync state, each delivery out
     ] };
   const ends = [10, 20, 30, 40, 50].map((seq, index) => sessionEvent(id, seq, "run.ended", { runId: runs[index]!.id }));
   const events = [...ends, sessionEvent(id, 51, "run.native_command", { runId: runs[4]!.id })];
+  // The Runs' rows as the Runtime holds them: the seq of the event that ended each Run, and which Runs were native commands (of an effect nobody told).
+  const endedAt = new Map(events.filter(item => item.type === "run.ended").map(item => [String(item.data.runId), item.seq])), commandRuns = new Set(events.filter(item => item.type === "run.native_command").map(item => String(item.data.runId)));
+  const { schemaVersion: _version, runs: _runs, messages: _messages, origin: _origin, ...headOf } = snapshot;
+  const light: Conversation = { ...headOf, format: CONVERSATION_FORMAT, runs: snapshot.runs.map((run, ordinal): ConversationRun => {
+    const { input: _input, thinking: _thinking, tools: _tools, plan: _plan, notices: _notices, activities: _activities, outputs: _outputs, protocol: _protocol, ...rest } = run as typeof run & Record<string, unknown>;
+    return { ...rest, ordinal, userSeq: ordinal + 1, isCommand: commandRuns.has(run.id), ...(endedAt.has(run.id) ? { endedSeq: endedAt.get(run.id)! } : {}) } as ConversationRun;
+  }) };
   const reads: RelayReads = { relayDeliveries: () => rowsOf, relayPackets: () => Object.values(packets), relayPacket: () => { throw new Error("no packet here"); }, relayPacketBody: () => { throw new Error("no body here"); },
-    relayIndex: () => [], relayPrefs: () => ({}), setPref: () => { throw new Error("not written here"); }, handoffs: () => [], handoffUsed: () => false,
-    events: (_id, after, limit) => events.filter(item => item.seq > after).slice(0, limit ?? 100) };
+    relayPrefs: () => ({}), setPref: () => { throw new Error("not written here"); }, handoffs: () => [], handoffUsed: () => false,
+    events: (_id, after, limit) => events.filter(item => item.seq > after).slice(0, limit ?? 100),
+    get: () => light, head: () => ({ runCount: snapshot.runs.length }) as never, turnAt: () => null, runOrdinal: () => null, originHistory: () => [] };
   const api = new RelayApi({ reads, read: () => snapshot,
     declaration: selection => selection.harnessId === "alpha" ? codexRelayCapabilities : selection.harnessId === "bravo" ? codexRelayCapabilities : null,
     http: { json: () => { throw new Error("no HTTP here"); }, headers: () => {}, queries: () => {}, body: async () => { throw new Error("no HTTP here"); } } });

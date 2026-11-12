@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { RELAY_INDEX_BYTES, RELAY_MANIFEST_BYTES, RELAY_MAX_SEQ, packRunIndexes, parseBindingRelayState, parseRelayPacket, relayPacketId, type RelayIndexRow, type RelayPacket } from "../../src/contracts/relay.js";
+import { RELAY_INDEX_BYTES, RELAY_MANIFEST_BYTES, RELAY_MAX_SEQ, packRunIndexes, parseBindingRelayState, parseRelayPacket, relayPacketId, type RelayPacket } from "../../src/contracts/relay.js";
 import { SessionError, type PublicRun, type SessionSnapshot } from "../../src/contracts/session.js";
-import { EventRelayLedger, packetManifest } from "../../src/contexts/session/application/relay-coordinator.js";
+import { RelayLedger, packetManifest } from "../../src/contexts/session/application/relay-coordinator.js";
+import type { ConversationRun } from "../../src/contracts/conversation.js";
 import { migrateSession, type MigrationEvent } from "../../src/infrastructure/session/legacy/migrate.js";
 
 // The relay's parsers and its packet manifest on conversations past what the Session once held (16,384 events, 256 Turns): the
@@ -51,14 +52,17 @@ test("PR-06 a v12 conversation of 300 Turns and 20,000 events migrates: every st
   }
 });
 
-test("PR-07 the ledger reads a migration's index at any seq: a Turn's fact keeps the seq its events gave it past 16,384", () => {
+test("PR-07 the ledger reads a Run's row at any seq: a Turn's fact keeps the seq its events gave it past 16,384, and a Run no event placed is above every mark", () => {
   const { state, events } = longConversation(TURNS, STRIDE), migrated = migrateSession(state, events);
-  // No event is read (the page reader gives none), so each fact's seq is the index row's if the ledger accepts it, else the Session's last seq.
-  const ledger = new EventRelayLedger(() => []);
-  const index: RelayIndexRow[] = migrated.runs.map(row => ({ runId: row.runId, index: row as unknown as Readonly<Record<string, unknown>> }));
-  const facts = ledger.facts(state, index, { harnessId: "alpha", controlId: "alpha-acp", nativeEpoch: 99 });
+  // The Runs' rows as the migration writes them: the seq of the event that ended each Turn, its place (a Run made before v13 has no `relay` of its own), and for one Run no seq at all.
+  const unplaced = 7;
+  const rows = state.runs.map((run, ordinal): ConversationRun => {
+    const { input: _input, thinking: _thinking, tools: _tools, plan: _plan, notices: _notices, activities: _activities, outputs: _outputs, protocol: _protocol, relay: _relay, ...rest } = run as typeof run & Record<string, unknown>;
+    return { ...rest, ordinal, userSeq: ordinal + 1, isCommand: false, ...(ordinal === unplaced ? {} : { endedSeq: migrated.runs[ordinal]!.seq }) } as ConversationRun;
+  });
+  const facts = new RelayLedger().facts({ runs: rows, lastSeq: state.lastSeq }, { harnessId: "alpha", controlId: "alpha-acp", nativeEpoch: 99 });
   assert.equal(facts.length, TURNS, "with another epoch every Turn is foreign to the binding");
-  for (const [at, fact] of facts.entries()) assert.equal(fact.seq, migrated.runs[at]!.seq, "the fact at " + at + " has its own seq, not the Session's last");
+  for (const [at, fact] of facts.entries()) assert.equal(fact.seq, at === unplaced ? state.lastSeq : migrated.runs[at]!.seq, "the fact at " + at + " has its own seq" + (at === unplaced ? " — none: above every mark, never zero" : ", not the Session's last"));
   assert.ok(facts.filter(fact => fact.seq > 16_384).length >= 50, "the last Turns of the conversation lie past the old bound");
 });
 

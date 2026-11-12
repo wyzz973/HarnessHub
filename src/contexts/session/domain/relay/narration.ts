@@ -1,9 +1,11 @@
 import { ITEM_KINDS, type ItemKind } from "../../../../contracts/relay.js";
-import type { PublicRun, PublicTool, RunStatus, SessionSnapshot } from "../../../../contracts/session.js";
+import type { PublicRun, PublicTool, RunStatus } from "../../../../contracts/session.js";
+import { historyOf, type RelayHistory, type RelayState } from "./history.js";
 import { estimateTokens } from "./budget.js";
 import { characters, codeUnitsOf, fence, headUnits, neutralize, normalize, visible, type RelayLanguage } from "./escape.js";
 import { marksIn, namesCredentialFile, restoreLabels, type RelayRedactor } from "./redaction.js";
 import { changesFrom, classifyTool, commandTextOf, diffFiles, locationOf, normalizeTool, toolOutcome, type FileChange, type ToolFamily } from "../protocol/index.js";
+import type { DetailPolicy, DetailRead } from "../detail-read.js";
 
 /**
  * Narration of the record for the slim relay packet (relay/1-mvp.7, ADR-055 §5.2): what one turn of the history says, as
@@ -15,9 +17,37 @@ import { changesFrom, classifyTool, commandTextOf, diffFiles, locationOf, normal
 
 /**
  * What a tool's stored detail adds when its caller could read it (ADR-055 §6.4): the command, its output, its diff, where.
- * `truncated`: the Driver cut a preview to its byte budget when it stored it (an output keeps its last 64 KiB), so what is here is not all there was.
+ * `truncated`: what is here is not all there was — the Driver cut a preview to its byte budget when it stored it, or the reader kept only the end of an output too long to read (`outputLines`).
+ * `outputLines`: of such an output, how many lines the whole of it has, which `output` (its last lines) cannot say.
  */
-export interface RelayToolDetail { readonly input?: string; readonly output?: string; readonly diff?: string; readonly locations?: readonly string[]; readonly truncated?: true }
+export interface RelayToolDetail { readonly input?: string; readonly output?: string; readonly diff?: string; readonly locations?: readonly string[]; readonly truncated?: true; readonly outputLines?: number }
+
+/**
+ * What the packet keeps of a stored detail (finding 1 of the cut review): the command whole, a diff whole, an output whole up to 256 KiB and else its last 64 KiB (all the packet quotes of one is
+ * its last lines), whatever the detail's size.
+ */
+export const RELAY_DETAIL_POLICY: DetailPolicy = {
+  input: { whole: 1024 * 1024, head: 1024 * 1024, tail: 0 }, output: { whole: 256 * 1024, head: 0, tail: 64 * 1024 }, diff: { whole: 16 * 1024 * 1024, head: 0, tail: 0 },
+};
+/** A detail as read, in the packet's terms. A command too long to read whole cannot be checked for a credential file, so what it printed and changed is not carried; an output too long to keep whole is its last lines. */
+export function relayDetailOf(read: DetailRead): RelayToolDetail {
+  const input = read.input, output = read.output, diff = read.diff, inputCut = input?.cut === true;
+  const kept: { input?: string; output?: string; diff?: string; locations?: readonly string[]; truncated?: true; outputLines?: number } = {};
+  if (input !== undefined) kept.input = input.cut ? input.head : input.text;
+  if (!inputCut && output !== undefined) {
+    if (!output.cut) kept.output = output.text;
+    else {
+      // Its last lines, from the start of a line (the first of the kept characters is likely in the middle of one).
+      const line = output.tail.indexOf("\n");
+      kept.output = line >= 0 ? output.tail.slice(line + 1) : output.tail;
+      kept.outputLines = output.newlines + (output.tail.endsWith("\n") ? 0 : 1);
+    }
+  }
+  if (!inputCut && diff !== undefined && !diff.cut) kept.diff = diff.text;
+  if (read.locations !== undefined) kept.locations = read.locations;
+  if (read.truncated === true || inputCut || output?.cut === true || diff?.cut === true) kept.truncated = true;
+  return kept;
+}
 
 /**
  * A stored tool detail (the JSON the Runtime keeps for a tool, read back as `unknown`) as far as the packet uses it: its
@@ -58,7 +88,7 @@ function modelName(value: string | null | undefined): string | null {
  * reported at the end of its last dispatched Turn when this Run was that Turn (`latest`: the last dispatched Run of each
  * Harness and control); unknown otherwise.
  */
-function runModel(state: SessionSnapshot, run: PublicRun, latest: ReadonlyMap<string, PublicRun["id"]>): string | null {
+function runModel(state: Pick<RelayHistory, "nativeBindings">, run: PublicRun, latest: ReadonlyMap<string, PublicRun["id"]>): string | null {
   const selected = modelName(run.selection.nativeModel);
   if (selected !== null) return selected;
   const binding = state.nativeBindings?.find(row => row.harnessId === run.selection.harnessId && row.controlId === run.selection.controlId && row.status !== "archived");
@@ -71,8 +101,8 @@ function runModel(state: SessionSnapshot, run: PublicRun, latest: ReadonlyMap<st
  * user message and the replies after it make one turn), then `sources` in their order. `details` holds what callers read
  * of tool details, by `runId + "/" + toolId`.
  */
-export function relayUnits(state: SessionSnapshot, sources: readonly PublicRun[], origin: boolean, details: ReadonlyMap<string, RelayToolDetail> = new Map()): readonly RelayUnit[] {
-  const units: RelayUnit[] = [];
+export function relayUnits(given: RelayState, sources: readonly PublicRun[], origin: boolean, details: ReadonlyMap<string, RelayToolDetail> = new Map()): readonly RelayUnit[] {
+  const state = historyOf(given), units: RelayUnit[] = [];
   if (origin && state.origin !== undefined) {
     let turn: { user: string | null; status: RunStatus; harnessId: string | null; attachments: RelayUnit["attachments"]; replies: string[] } | null = null;
     const close = () => {
@@ -89,7 +119,6 @@ export function relayUnits(state: SessionSnapshot, sources: readonly PublicRun[]
     }
     close();
   }
-  const replies = new Map(state.messages.filter(message => message.role === "assistant").map(message => [message.id, message.text]));
   const index = new Map(state.runs.map((run, position) => [run.id, position])), latest = new Map<string, PublicRun["id"]>();
   for (const run of state.runs) if (run.timing?.dispatchedAt !== undefined || (run.timing === undefined && run.backend !== null)) latest.set(run.selection.harnessId + "\n" + run.selection.controlId, run.id);
   for (const run of sources) {
@@ -97,7 +126,7 @@ export function relayUnits(state: SessionSnapshot, sources: readonly PublicRun[]
     for (const tool of run.tools ?? []) { const detail = details.get(run.id + "/" + tool.id); if (detail !== undefined) own.set(tool.id, detail); }
     units.push({ key: run.id, turn: (index.get(run.id) ?? 0) + 1, origin: false, harnessId: run.selection.harnessId, model: runModel(state, run, latest), status: run.status,
       error: run.error, cancelRequested: run.cancelRequested, user: run.input,
-      attachments: (run.attachments ?? []).map(item => ({ name: item.name, mediaType: item.mediaType, bytes: item.bytes })), tools: run.tools ?? [], reply: replies.get(run.assistantMessageId) ?? "", details: own });
+      attachments: (run.attachments ?? []).map(item => ({ name: item.name, mediaType: item.mediaType, bytes: item.bytes })), tools: run.tools ?? [], reply: state.turn(index.get(run.id) ?? -1)?.assistant?.text ?? "", details: own });
   }
   return units;
 }
@@ -408,13 +437,14 @@ export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): reado
     } else if (kind === "execute") {
       const source = named ?? commandSource(unit, tool), exit = words.exit(tool), keptBack = namesCredentialFile(source), output = detail?.output;
       // With the Hub's tools the whole output can be read back, so the line says there is one the packet does not carry (never for a rule's withheld output: the table keeps it back too).
-      const lines = n.tools && !keptBack && typeof output === "string" ? linesOf(output) : 0;
+      const lines = n.tools && !keptBack && typeof output === "string" ? detail?.outputLines ?? linesOf(output) : 0;
       const command = add("calls", "ops", RANK.command, source.length, counted => { const code = n.code(source, counted); return code === null ? null : line("ran", code, exit); }, null, false,
         lines > 0 ? n.dot(exit) + words.unattached(lines, detail?.truncated === true) : null);
       if (commandFailed(tool) && typeof output === "string" && output.trim() !== "")
         add("outputs", "output", RANK.output, 0, counted => {
           const tail = n.tail(output, counted);
-          return tail === null || tail === "unfit" ? null : words.output(name, tail.shown, tail.total) + "\n" + tail.block;
+          // Of an output the reader kept only the end of, the whole's lines are the detail's count.
+          return tail === null || tail === "unfit" ? null : words.output(name, tail.shown, detail?.outputLines ?? tail.total) + "\n" + tail.block;
         }, command, keptBack);
     } else {
       const raw = named ?? (kind === "read" ? locationOf(detail) ?? unwrapped(tool.title)
