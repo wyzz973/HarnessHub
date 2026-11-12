@@ -84,8 +84,8 @@ const TABLES: readonly string[] = [
   opens_new INTEGER NOT NULL DEFAULT 0 CHECK(opens_new IN(0,1)),
   through_run_id TEXT,
   relay_epoch INTEGER NOT NULL DEFAULT 1 CHECK(relay_epoch>=1),
-  relay_mark INTEGER NOT NULL DEFAULT 0 CHECK(relay_mark>=0),
-  relay_floor INTEGER NOT NULL DEFAULT 0 CHECK(relay_floor>=0),
+  relay_mark INTEGER NOT NULL DEFAULT -1 CHECK(relay_mark>=-1),
+  relay_floor INTEGER NOT NULL DEFAULT -1 CHECK(relay_floor>=-1),
   binding_json TEXT NOT NULL CHECK(json_valid(binding_json)),
   PRIMARY KEY(session_id, ordinal)
 ) STRICT`,

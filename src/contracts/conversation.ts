@@ -41,6 +41,8 @@ export const PAGE = {
   olderTurns: 20,
   /** A Turn with more completed actions than this in one stretch tells the middle of it as a `DeferredWork` placeholder. */
   deferredAfter: 150,
+  /** How many items at each end of such a stretch stay in the window (the placeholder stands for the rest). */
+  deferredKeep: 25,
   /** The conversations of one list page. */
   sessions: 100,
   /** An item whose text or body is longer than this is sent with `bodyOmitted` and `textBytes`; its text is fetched by byte range. */
@@ -136,8 +138,13 @@ export interface ItemRow {
  * `byteOffset`, so that a byte range is read without adding up what comes before it.
  */
 export interface TextChunkRow { readonly runId: RunId; readonly itemSeq: number; readonly chunk: number; readonly byteOffset: number; readonly text: string; readonly bytes: number }
-/** An item as a conversation holds it: its row and its text as the chunks that were committed (text = chunks joined; none for an item without text). */
-export interface HeldItem extends ItemRow { readonly text: readonly string[] }
+/**
+ * An item as a conversation holds it: its row and its text as the chunks that were committed (text = chunks joined; none for an item without text).
+ * A page read (`ConversationReader`) leaves out a body longer than the page carries instead of loading it: `textOmitted` says the text is not in `text`
+ * (its size is `textBytes`; `ConversationReader.text` reads it by byte range), and `bodyOmitted` says the item's own JSON was longer than that, so `fields`
+ * holds only its `type` and the type's required fields emptied, and the item is read whole with `ConversationReader.items(…, { inlineBytes: Infinity })`.
+ */
+export interface HeldItem extends ItemRow { readonly text: readonly string[]; readonly textOmitted?: true; readonly bodyOmitted?: true }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Runs
@@ -340,7 +347,12 @@ export interface HeadWrite { readonly row: HeadRow }
 export interface RunWrite { readonly op: "insert" | "update"; readonly row: RunRow; readonly userSeqByEvent?: number; readonly endedByEvent?: number }
 /** `createdByEvent` names an entry of the Mutation's `events`. A writer leaves `textBytes` and `textChunks` at 0: the store counts the chunks it appends. */
 export interface ItemWrite { readonly op: "insert" | "update"; readonly row: ItemRow; readonly createdByEvent?: number }
-export interface TextAppend { readonly runId: RunId; readonly itemSeq: number; readonly chunk: number; readonly text: string }
+/**
+ * One chunk of an item's text, appended at the end. `byteOffset` is where the chunk starts in the item's text: a writer that knows it (the Runtime does,
+ * for the Turn in progress) gives it and the store checks it; the store always writes it, and the Mutation it returns has it, which is what a stream's
+ * frame carries as `from`.
+ */
+export interface TextAppend { readonly runId: RunId; readonly itemSeq: number; readonly chunk: number; readonly text: string; readonly byteOffset?: number }
 export interface BindingWrite { readonly op: "insert" | "update"; readonly row: BindingRow }
 export interface SwitchWrite { readonly op: "insert" | "update"; readonly row: SwitchRow }
 /**
@@ -434,12 +446,22 @@ export interface CursorPayload { readonly ordinal: number; readonly lastSeq: num
 export interface DeferredWork { readonly fromSeq: number; readonly toSeq: number; readonly count: number }
 /** One Turn of a window: its Run row and its items, with their text. */
 export interface TurnItems { readonly run: RunRow; readonly items: readonly HeldItem[]; readonly deferred?: DeferredWork }
+/** What a read does with a body longer than a page carries: `inlineBytes` is the length above which a text or an item's JSON is left out (see `HeldItem`). */
+export interface ReadOptions { readonly inlineBytes?: number }
 /** The newest Turns up to a size, or the page of Turns before a cursor. `older` is null when the first Turn is in it. */
 export interface TurnWindow { readonly turns: readonly TurnItems[]; readonly older: TurnCursor | null; readonly bytes: number; readonly lastSeq: number }
 export interface ItemPage { readonly items: readonly HeldItem[]; /** The `after` of the next page; null when this is the last. */ readonly next: number | null }
 /** A byte range of an item's text: `from` and `to` are byte offsets (on code point boundaries), `total` its size. */
 export interface TextRange { readonly text: string; readonly from: number; readonly to: number; readonly total: number }
-export interface SearchHit { readonly sessionId: SessionId; readonly runId: RunId; readonly ordinal: number; readonly itemSeq: number; readonly type: ItemType }
+/**
+ * A message or segment that holds the words. `id` is the item's stable number and the cursor of a search: the next page is `search(query, { after: id })`
+ * with the `id` of the last hit, newest first. `via` says how it was found: `trigram` and `chars` are the indexes; `scan` is the fallback (a query of
+ * one or two Latin characters, or an index not complete yet), which reads the joined text of every finished segment and folds only ASCII case.
+ */
+export interface SearchHit {
+  readonly id: number; readonly sessionId: SessionId; readonly runId: RunId; readonly ordinal: number; readonly itemSeq: number; readonly type: ItemType;
+  readonly via: "trigram" | "chars" | "scan";
+}
 
 /**
  * Every read the wire, the readers and the tools make of a conversation, by index and by page (the tables' line implements it; the
@@ -451,12 +473,21 @@ export interface ConversationReader {
   window(id: SessionId, options?: { readonly turns?: number; readonly bytes?: number }): TurnWindow;
   /** The page of Turns before `before`. */
   older(id: SessionId, before: TurnCursor, options?: { readonly turns?: number; readonly bytes?: number }): TurnWindow;
-  turnAt(id: SessionId, ordinal: number): TurnItems | null;
-  items(runId: RunId, afterSeq: number, limit: number): ItemPage;
+  /** One Turn, all its items. A body longer than `options.inlineBytes` (default `PAGE.itemInlineBytes`) is left out, as in a window; `Infinity` reads everything. */
+  turnAt(id: SessionId, ordinal: number, options?: ReadOptions): TurnItems | null;
+  /** The items of a Turn after `afterSeq` in place order, `limit` at most, bodies left out as in `turnAt`. */
+  items(runId: RunId, afterSeq: number, limit: number, options?: ReadOptions): ItemPage;
+  /**
+   * A byte range of an item's text (all of it when no range is given). A code point belongs to the range its first byte is in, so a `from` or a `to`
+   * that falls inside one moves on to the next code point and a range never cuts a character: ranges that follow one another (the `to` of one as the
+   * `from` of the next) give the text with no gap and no repeat. `from` and `to` of the answer are the offsets used.
+   */
   text(runId: RunId, itemSeq: number, range?: { readonly from: number; readonly to?: number }): TextRange;
   /**
-   * Full-text search over finished messages and segments: a term of three characters or more is the trigram index's; one or two Chinese
-   * characters are the per-character index's; one or two Latin characters scan the joined text of the segments.
+   * Full-text search over finished messages and segments, newest first, `limit` at most (no ceiling on `limit` or on how far a search can be continued):
+   * a term of three characters or more is the trigram index's; one or two Chinese characters are the per-character index's; one or two Latin characters
+   * (and any term while the index it needs is not complete) scan the joined text of the segments, which each hit's `via` tells. `after` is the `id` of the
+   * last hit of the page before: the next page starts below it, and what is written meanwhile moves no page.
    */
   search(query: string, scope: { readonly sessionId?: SessionId; readonly after?: number; readonly limit: number }): readonly SearchHit[];
 }

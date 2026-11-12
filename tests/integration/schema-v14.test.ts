@@ -217,6 +217,16 @@ test("one native session is held once, wherever; a conversation has one live bin
   assert.throws(() => change(db, "DELETE FROM bindings WHERE session_id='one' AND ordinal=1"), refuses(/binding is kept/u));
 });
 
+test("a new binding starts with no mark and no clear floor: -1 (none) is stored as it is, and goes forward from there", t => {
+  const db = fresh(t);
+  conversation(db, "one");
+  binding(db, "one", 0, { relay_mark: -1, relay_floor: -1 });
+  assert.deepEqual(rows(db, "SELECT relay_mark AS mark, relay_floor AS floor FROM bindings"), [{ mark: -1, floor: -1 }]);
+  change(db, "UPDATE bindings SET relay_mark=3 WHERE session_id='one' AND ordinal=0");
+  assert.throws(() => change(db, "UPDATE bindings SET relay_mark=-1 WHERE session_id='one' AND ordinal=0"), refuses(/only goes forward/u));
+  assert.throws(() => binding(db, "one", 1, { control_id: "other", checkpoint: "x", relay_mark: -2 }), refuses(/CHECK/u), "nothing is below none");
+});
+
 test("a binding's native position is a finished native Run of its own control, settled and closed", t => {
   const db = fresh(t);
   conversation(db, "one");

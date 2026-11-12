@@ -475,7 +475,14 @@ export interface WireItemUpsert { readonly runId: string; readonly item: WireIte
  * Text appended in a commit, at byte offset `from` of the item's text. The page applies it only if `from` is the length of the text it
  * holds; otherwise it missed a commit and fetches the conversation again (a snapshot), never guessing.
  */
-export interface WireTextAppend { readonly runId: string; readonly itemSeq: number; readonly from: number; readonly text: string }
+export interface WireTextAppend {
+  readonly runId: string; readonly itemSeq: number; readonly from: number; readonly text: string;
+  /**
+   * Set when the chunk is longer than a frame carries (`PAGE.itemInlineBytes`): `text` is then empty and this many bytes were appended at `from` that the
+   * frame does not hold. The page marks the item's body as left out (`textBytes` = `from` + this) and reads the range when it shows it.
+   */
+  readonly omittedBytes?: number;
+}
 /**
  * Everything one commit changed, in ONE frame: the head when it changed, the Runs that began or changed (with their Turn headers), the
  * items that are new or changed, the text appended. One frame per commit because a frame is applied if its `lastSeq` is above the page's
