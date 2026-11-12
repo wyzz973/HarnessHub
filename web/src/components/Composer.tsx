@@ -432,6 +432,13 @@ export function Composer(props: ComposerProps) {
   // The catalog shown when the Harness changed is the one before's (the page reads the new one after): it is never read as the new Harness's.
   const harnessAt = useRef<{ readonly id: string; readonly catalog: unknown }>({ id: draft.harnessId, catalog: props.nativeModels });
   if (harnessAt.current.id !== draft.harnessId) harnessAt.current = { id: draft.harnessId, catalog: props.nativeModels };
+  // A new conversation's permission is auto from the moment its Harness is known, not from when its catalog is read: the level is the Hub's
+  // key alone, so a message sent before the catalog arrives runs at it too. Once per Harness, so "follow its own settings" stays when chosen.
+  useEffect(() => {
+    if (session !== null || draft.providerId || !draft.harnessId || defaulted.current === draft.harnessId || carriedLevels.current !== null) return;
+    defaulted.current = draft.harnessId;
+    if (draft.nativeOptions[PERMISSION_KEY] === undefined) props.onDraft({ ...draft, nativeOptions: { ...draft.nativeOptions, [PERMISSION_KEY]: "auto" } });
+  }, [draft.harnessId, draft.providerId, session === null]);
   useEffect(() => {
     const want = carriedLevels.current;
     if (draft.providerId || !draft.harnessId || props.nativeModelsLoading || !props.nativeModels || props.nativeModels === harnessAt.current.catalog) return;

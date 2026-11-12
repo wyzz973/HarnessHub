@@ -3,6 +3,7 @@ import type { ApprovalItem, Executor, ItemStatus, SwitchItem } from "../../../..
 import type { ReadItem, ReadTurn } from "../../../../src/contracts/protocol-read.js";
 import { turnOver } from "./work.js";
 import { PERMISSION_WORDS } from "../../../../src/contracts/levels.js";
+import { TABLE_MCP_NAME, TABLE_TOOLS } from "../../../../src/contracts/table.js";
 
 /*
  * The lines a Turn is wrapped in, each written one way (docs/proposals/protocol/hub-protocol.html §13): the footer under a Turn, the
@@ -116,6 +117,8 @@ const BY: Readonly<Record<NonNullable<ApprovalItem["decision"]>["by"], string>> 
  * that has no line of its own here (an approval still waiting stands above the message box until it is decided). What the line
  * says is the item's own facts, and a state that is not done is said in the state's word.
  */
+/** A title that names one of the Hub's own tools, in any Harness's spelling (mcp__harnesshub__hub_wrap_up, mcp__editor_harnesshub_1a2b3c4d__hub_update_plan, harnesshub/hub_turns). */
+const HUB_TOOL = new RegExp(TABLE_MCP_NAME + "[\\w/.: -]*?(?:" + TABLE_TOOLS.join("|") + ")(?![a-z_])", "iu");
 export function quietLine(item: ReadItem): string | null {
   switch (item.type) {
     case "interrupt": return withState(item.by === "user" ? "你停止了这一轮" : "HarnessHub 停止了这一轮", item.status);
@@ -123,8 +126,9 @@ export function quietLine(item: ReadItem): string | null {
       if (item.kind === "compaction") return item.status === "running" || item.status === "pending" ? "正在压缩上下文" : item.status === "failed" ? "上下文压缩失败" : withState("上下文已压缩", item.status);
       return item.kind === "clear" ? withState("上下文已清空，下一条消息开新会话", item.status) : withState("已回退到这里", item.status);
     case "delegation": return item.status === "completed" ? `已交给 ${item.to.harness}：${item.task}` : withState(`交给 ${item.to.harness}：${item.task}`, item.status);
-    // What the Hub's policy decided says by which level: "按「自动改文件」自动允许：修改 a.js".
-    case "approval": return item.decision === undefined ? null : item.decision.by === "policy" && item.decision.level !== undefined
+    // What the Hub's policy decided says by which level: "按「自动改文件」自动允许：修改 a.js". The Hub allowing one of its own tools (the task
+    // list, the wrap-up, reading the conversation back) is no decision made for you about the Harness's work: it has no line (the record keeps it).
+    case "approval": return item.decision === undefined || item.decision.by === "policy" && item.decision.role !== "deny" && HUB_TOOL.test(item.title) ? null : item.decision.by === "policy" && item.decision.level !== undefined
       ? `按「${PERMISSION_WORDS[item.decision.level]}」${item.decision.role === "deny" ? "自动拒绝" : "自动允许"}：${item.title}` : `${DECIDED[item.decision.role]}${BY[item.decision.by]}：${item.title}`;
     case "question": return item.answer === undefined ? null : `已回答：${item.title}（${item.answer}）`;
     case "unrecognized": return "未识别的条目" + (item.nativeType ? `（${item.nativeType}）` : "");
