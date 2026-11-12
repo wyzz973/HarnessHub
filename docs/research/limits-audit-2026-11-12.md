@@ -278,7 +278,7 @@
 
 ## 4 对照 T3 Code
 
-T3 克隆在 `/private/tmp/claude-501/-Users-sd3-Desktop-project-HarnessHub--claude-worktrees-relay-stage2-7cb3e9/2eae1136-e8e6-4dbb-9732-78309e4fdb4d/scratchpad/research/t3code/`（提交 `b883156e`，2026-11-10）；下表出处相对其仓库根。“没找到”指在 `apps/server/src`、`packages/*` 里搜过相应模式没有命中，**不是证明它不存在**。
+T3 克隆在 `<草稿目录>/research/t3code/`（提交 `b883156e`，2026-11-10）；下表出处相对其仓库根。“没找到”指在 `apps/server/src`、`packages/*` 里搜过相应模式没有命中，**不是证明它不存在**。
 
 | 事项 | 我们现在 | T3 Code | T3 出处 | 参考价值 |
 |---|---|---|---|---|

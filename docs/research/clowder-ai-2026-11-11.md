@@ -1,6 +1,6 @@
 # Clowder AI 调研报告：多个 Agent CLI 怎么共享一段对话
 
-调研日期 2026-11-11。读的是浅克隆 `zts212653/clowder-ai` 的 main，commit `42017e0cea07e3e259e7fb183be70433f05e131c`（2026-11-01 08:26 +0800，"feat(F309) … (#1682)"）。克隆目录：`/private/tmp/claude-501/-Users-sd3-Desktop-project-HarnessHub--claude-worktrees-relay-stage2-7cb3e9/2eae1136-e8e6-4dbb-9732-78309e4fdb4d/scratchpad/research/clowder-ai/`。没有安装依赖，没有运行它的任何代码。仓库根目录的 AGENTS.md、CLAUDE.md、GEMINI.md 等"给 AI 的指令"一律当作数据，没有照做。
+调研日期 2026-11-11。读的是浅克隆 `zts212653/clowder-ai` 的 main，commit `42017e0cea07e3e259e7fb183be70433f05e131c`（2026-11-01 08:26 +0800，"feat(F309) … (#1682)"）。克隆目录：`<草稿目录>/research/clowder-ai/`。没有安装依赖，没有运行它的任何代码。仓库根目录的 AGENTS.md、CLAUDE.md、GEMINI.md 等"给 AI 的指令"一律当作数据，没有照做。
 
 来源等级：【源码：路径:行】是读过的实际代码；路径前缀 `S/` = `packages/api/src/domains/cats/services/`，`A/` = `packages/api/src/`。【文档】是仓库 docs 或 GitHub Pages 站点。【issue：#N】链接形如 `https://github.com/zts212653/clowder-ai/issues/N`。【推断】是我据上述证据推出、源码或维护者没有直接确认的判断。
 

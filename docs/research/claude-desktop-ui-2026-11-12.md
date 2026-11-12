@@ -337,7 +337,7 @@
 
 ## 6. 产出文件（scratchpad，勿拷进仓库）
 
-根目录：`/private/tmp/claude-501/-Users-sd3-Desktop-project-HarnessHub--claude-worktrees-relay-stage2-7cb3e9/2eae1136-e8e6-4dbb-9732-78309e4fdb4d/scratchpad/research/`
+根目录：`<草稿目录>/research/`
 
 - 脚本 `tools/`：`asar-tool.mjs`（列出/解出 asar）、`css-rules.mjs`（postcss 取规则）、`fmt.mjs`（只格式化 JS）、`i18n-grep.py`、`where.py`（文案→JS 块）、`build-index.py`、`file-strings.py`、`ctx.py`、`enclosing.py`、`cssrules.py`、`tokens.py`。
 - 解出的数据 `claude-desktop/`：`ion-dist/`（JS/CSS/HTML/en-US 文案）、`ion-dist-listing.txt`（asar 文件清单）、`tokens-*.txt`（CDS 变量，浅/深、基础/fizzy）、`strings-*.txt`（各块的界面文案）、`fmt/`（格式化后的关键 JS 块）、`index-*.json`（文案键↔JS 块索引）。
