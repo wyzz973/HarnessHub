@@ -8,7 +8,7 @@
   },
   "packageManager": "pnpm@10.12.3",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node tools/prune-dist.mjs",
     "test": "pnpm build && node --test dist/tests/*/*.test.js",
     "catalog": "node dist/src/cli/catalog.js",
     "discover": "node dist/src/cli/discover.js",
