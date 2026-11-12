@@ -10,10 +10,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { boundedWrite, MAX_CLI_INPUT_BYTES, MAX_CLI_OUTPUT_BYTES } from "../../src/cli/bounded-streams.js";
 import { commandId, messageId, runId, sessionId, type SessionId, type SessionSnapshot } from "../../src/contracts/session.js";
-import { SqliteSessionReader } from "../../src/infrastructure/session/session-reader.js";
+import { FileSessionReader } from "../../src/infrastructure/session/file-reader.js";
 import { appStore } from "../fixtures/runtime-store.js";
 import { Scenario, created, newConversation } from "../fixtures/store-helpers.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 
 const chatCli = fileURLToPath(new URL("../../src/cli/chat.js", import.meta.url));
 interface Fixture { readonly root: string; readonly data: string; readonly temporary: string; readonly home: string; readonly sentinel: string; readonly state: SessionSnapshot; readonly children: Set<ChildProcessWithoutNullStreams> }
@@ -71,7 +71,7 @@ function start(f: Fixture, json = true): { readonly child: ChildProcessWithoutNu
   return { child, result, stderr: pattern => pattern.test(stderr) ? Promise.resolve() : new Promise<void>((resolve, reject) => waiters.add({ pattern, resolve, reject })) };
 }
 function read(root: string, id: SessionId): SessionSnapshot {
-  const reader = new SqliteSessionReader(root);
+  const reader = new FileSessionReader(root);
   try { return reader.get(id); } finally { reader.close(); }
 }
 

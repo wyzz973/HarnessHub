@@ -8,10 +8,10 @@ import type { RelayCapabilities, RelayKeyPort } from "../../src/contracts/relay.
 import { SessionError, type HarnessSelection, type PreparedSessionBinding, type PublicRun, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type SessionSnapshot } from "../../src/contracts/session.js";
 import { SessionRuntime, type RelayChoice } from "../../src/contexts/session/application/runtime.js";
 import { appStore } from "./runtime-store.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { oldShape } from "./old-shape.js";
 
-// Fixture Harnesses and a world of real parts for the relay (slim.md): a real SqliteConversationStore with recoverRelay on a
+// Fixture Harnesses and a world of real parts for the relay (slim.md): a real FileConversationStore with recoverRelay on a
 // temporary data root, the formal SessionRuntime, and in-process fake Harnesses behind a binding factory that answers the
 // Drivers' static declarations (relayCapabilities), as the Gateway's own factory does. Each fake keeps a native history of the
 // user entries it was given (a prompt appends its flattened text; `/undo` removes the last, `/clear` empties it), so what a
@@ -134,7 +134,7 @@ export class Fakes implements SessionBindingFactory {
   async reached(harnessId: string, count: number): Promise<void> { for (let tries = 0; tries < 2000 && this.to(harnessId).length < count; tries++) await new Promise(resolve => setTimeout(resolve, 5)); }
 }
 
-export interface World { readonly data: string; store: SqliteConversationStore; readonly configuration: SessionConfiguration; runtime(factory: SessionBindingFactory, options?: { readonly keys?: RelayKeyPort }): SessionRuntime }
+export interface World { readonly data: string; store: FileConversationStore; readonly configuration: SessionConfiguration; runtime(factory: SessionBindingFactory, options?: { readonly keys?: RelayKeyPort }): SessionRuntime }
 /** A world of real parts on a temporary data root. */
 export function world(t: TestContext, prefix = "relay-flow-"): World {
   const root = temporary(t, prefix), workspace = join(root, "workspace"), data = join(root, "data");
@@ -163,17 +163,17 @@ export async function to(app: SessionRuntime, id: SessionId, harnessId: string, 
   app.switch(id, { harnessId }, key); await app.wait(id);
   if (oldShape(app, id).selection.harnessId !== harnessId) throw new Error("the switch to " + harnessId + " did not take effect");
 }
-export function events(store: SqliteConversationStore, id: SessionId): readonly SessionEvent[] {
+export function events(store: FileConversationStore, id: SessionId): readonly SessionEvent[] {
   const all: SessionEvent[] = [];
   for (let after = 0; ;) { const page = store.events(id, after, 100); if (!page.length) return all; all.push(...page); after = page.at(-1)!.seq; }
 }
-export function eventOf(store: SqliteConversationStore, id: SessionId, type: string, run: string): SessionEvent | undefined {
+export function eventOf(store: FileConversationStore, id: SessionId, type: string, run: string): SessionEvent | undefined {
   return events(store, id).findLast(row => row.type === type && row.data.runId === run);
 }
 /** The relay state of the active binding of a Harness. */
 export function relayOf(state: { readonly nativeBindings?: SessionSnapshot["nativeBindings"] }, harnessId: string) { return state.nativeBindings!.find(row => row.harnessId === harnessId && row.status !== "archived")!.relay!; }
 /** The relay decision a Turn recorded (`run.context_prepared.data.relay.decision`), or undefined when it recorded none. */
-export function decisionOf(store: SqliteConversationStore, id: SessionId, run: string): Record<string, unknown> | undefined {
+export function decisionOf(store: FileConversationStore, id: SessionId, run: string): Record<string, unknown> | undefined {
   const relay = eventOf(store, id, "run.context_prepared", run)?.data.relay as Record<string, unknown> | undefined;
   return relay?.decision as Record<string, unknown> | undefined;
 }

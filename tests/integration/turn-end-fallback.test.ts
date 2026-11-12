@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SessionError } from "../../src/contracts/session.js";
 import { verify } from "../../src/contexts/session/domain/conversation-verify.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { scriptedWorld } from "../fixtures/scripted-world.js";
 import { oldShape } from "../fixtures/old-shape.js";
 
@@ -17,10 +17,10 @@ class Gate<T> {
   constructor() { this.promise = new Promise(resolve => { this.resolve = resolve; }); }
 }
 /** The store, refusing the first `left` ends of the Run `state.runId` as the rules of its rows would (an INVALID_DATA the Runtime knows for a refusal of rows and not of the store). */
-function refusing(state: { runId: string; left: number; refused: number }): (store: SqliteConversationStore) => SqliteConversationStore {
+function refusing(state: { runId: string; left: number; refused: number }): (store: FileConversationStore) => FileConversationStore {
   return store => new Proxy(store, { get(target, property) {
     if (property === "transact") {
-      return (id: Parameters<SqliteConversationStore["transact"]>[0], version: number, mutate: Parameters<SqliteConversationStore["transact"]>[2]) => target.transact(id, version, current => {
+      return (id: Parameters<FileConversationStore["transact"]>[0], version: number, mutate: Parameters<FileConversationStore["transact"]>[2]) => target.transact(id, version, current => {
         const made = mutate(current);
         if (state.left > 0 && made.events.some(event => event.type === "run.ended" && event.data.runId === state.runId && event.data.unrecorded !== true)) {
           state.left--; state.refused++;

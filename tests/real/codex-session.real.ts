@@ -9,7 +9,7 @@ import type { Socket } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { type SessionEvent, type SessionId } from "../../src/contracts/session.js";
-import { SqliteSessionReader } from "../../src/infrastructure/session/session-reader.js";
+import { FileSessionReader } from "../../src/infrastructure/session/file-reader.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
 import { guardTest, snapshot, standaloneHeader, type SuiteEvidence } from "./guard.js";
 
@@ -174,7 +174,7 @@ test("real Codex preserves public history across two turns and a new formal chat
     const first = await invoke([...options, "--harness", "custom-session-codex"], PROMPTS.slice(0, 2), workspace, home, temporary);
     assertProvider(errors); assert.equal(first.code, 0, first.stderr); assert.equal(first.signal, null);
     let id: SessionId;
-    const reader = new SqliteSessionReader(data);
+    const reader = new FileSessionReader(data);
     try {
       const list = reader.list(10); assert.equal(list.length, 1); const state = reader.get(list[0]!.id); id = state.id;
       assert.equal(state.status, "open"); assert.equal(state.runs.length, 2); assert.ok(state.runs.every(run => run.status === "completed" && run.cleanup?.closed));
@@ -183,7 +183,7 @@ test("real Codex preserves public history across two turns and a new formal chat
     } finally { reader.close(); }
     const reopened = await invoke([...options, "--session", id], PROMPTS.slice(2), workspace, home, temporary);
     assertProvider(errors); assert.equal(reopened.code, 0, reopened.stderr); assert.equal(reopened.signal, null);
-    const finalReader = new SqliteSessionReader(data);
+    const finalReader = new FileSessionReader(data);
     try {
       const state = finalReader.get(id);
       assert.equal(state.runs.length, 3); assert.equal(state.messages.at(-1)?.text, ANSWERS[2]);

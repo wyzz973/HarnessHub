@@ -126,7 +126,7 @@ pnpm build && pnpm web:build
 pnpm web --cwd /path/to/your/project --data-dir data --port 4317
 ```
 
-Open the one-time link it prints. The token is exchanged for a local cookie and removed from the address bar; the service listens on `127.0.0.1` only. Closing the page does not cancel a reply, and <kbd>Ctrl</kbd>+<kbd>C</kbd> waits for running work to wind down and keeps the history. The service owns its `--data-dir` while it runs.
+Open the one-time link it prints. The token is exchanged for a local cookie and removed from the address bar; the service listens on `127.0.0.1` only. Closing the page does not cancel a reply, and <kbd>Ctrl</kbd>+<kbd>C</kbd> waits for running work to wind down and keeps the history. The service owns its `--data-dir` while it runs. Each conversation is one append-only JSONL file under `data/sessions/`, one readable line per finished fact.
 
 <details>
 <summary><b>Without the web page</b></summary>
@@ -135,8 +135,6 @@ Open the one-time link it prints. The token is exchanged for a local cookie and 
 pnpm discover                                    # official installs found here, with channels and versions
 pnpm chat --harness codex --data-dir data --cwd /path/to/project
 pnpm sessions list --data-dir data --json        # public conversations
-pnpm sessions check-upgrade --data-dir data      # before an upgrade: what it would do, read-only, nothing written
-pnpm sessions restore-backup --data-dir data     # after an upgrade: put the backup back as the library (service stopped; deletes nothing)
 ```
 
 In `pnpm chat`, `:harness opencode` switches harness, `:cancel` stops the current turn and `:history` prints the public history. See [engineering status](docs/engineering/status.md) for every command and flag.

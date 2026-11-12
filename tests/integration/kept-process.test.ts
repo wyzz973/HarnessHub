@@ -14,7 +14,7 @@ import { SessionError, type HarnessSelection, type PreparedSessionBinding, type 
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { PosixProcessGroups } from "../../src/infrastructure/control/process-group.js";
 import { appStore } from "../fixtures/runtime-store.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
 import { oldShape } from "../fixtures/old-shape.js";
 

@@ -18,8 +18,6 @@ const registered = [
   { rule: "B3", file: "src/contracts/control.ts", key: "src/contexts/catalog/domain/catalog.js" },
   { rule: "B3", file: "src/contracts/control.ts", key: "src/contexts/catalog/domain/discovery.js" },
   { rule: "B3", file: "src/contracts/management.ts", key: "src/contexts/catalog/domain/catalog.js" },
-  { rule: "B11", file: "src/infrastructure/session/migrate-v14.ts", key: "src/infrastructure/session/snapshot-adapter.js" },
-  { rule: "B11", file: "src/infrastructure/session/session-reader.ts", key: "src/infrastructure/session/snapshot-adapter.js" },
 ];
 
 interface Reported { readonly file: string; readonly line: number; readonly rule: string; readonly text: string }

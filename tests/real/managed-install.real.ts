@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import test from "node:test";
 import { appStore } from "../fixtures/runtime-store.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { LocalHarnessManagement } from "../../src/infrastructure/management/service.js";
 import { LocalProviderService } from "../../src/infrastructure/provider/service.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";

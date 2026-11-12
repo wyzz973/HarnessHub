@@ -10,7 +10,7 @@ import { nativeConversationId, singleText, type BackendResult, type ControlEvent
 import { SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionId } from "../../../src/contracts/session.js";
 import { LocalContentStore } from "../../../src/infrastructure/session/content-store.js";
 import { appStore } from "../../fixtures/runtime-store.js";
-import type { SqliteConversationStore } from "../../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../../src/infrastructure/session/file-store.js";
 import { TableApi } from "../../../src/web/table-routes.js";
 import { CLEAN, declared } from "../../fixtures/relay-fakes.js";
 import { listFiles, runTests } from "./judge.js";
@@ -244,7 +244,7 @@ function json(response: ServerResponse, status: number, value: unknown): void {
  * The Hub's /api/table routes (src/web/table-routes.ts, the same code) for one cell's Runtime on a loopback port of their own. The
  * dry run has no web server of the Hub's — its Runtime is made of scripted parts — so this is all of it the tool program needs.
  */
-async function serveTable(hub: { readonly store: SqliteConversationStore; readonly content: LocalContentStore }, mount: WatchedMount): Promise<{ readonly origin: string; close(): Promise<void> }> {
+async function serveTable(hub: { readonly store: FileConversationStore; readonly content: LocalContentStore }, mount: WatchedMount): Promise<{ readonly origin: string; close(): Promise<void> }> {
   const api = new TableApi({ grants: mount.grants, reader: hub.store, content: hub.content,
     http: { json, queries: (url, allowed) => { for (const key of url.searchParams.keys()) if (!allowed.includes(key)) throw new SessionError("INVALID_INPUT", "unknown query parameter " + key); } } });
   const server = createServer((request, response) => {

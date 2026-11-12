@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFileSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { createServer, request } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -17,7 +17,7 @@ import type { PublicRun } from "../../src/contracts/session.js";
 import type { SessionView, SessionViewV14 } from "../../src/contracts/web.js";
 import { readWhole, type ReadConversation } from "../fixtures/http-conversation.js";
 import { appStore } from "../fixtures/runtime-store.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { commandId, switchId, sessionId } from "../../src/contracts/session.js";
 
@@ -500,11 +500,12 @@ test("a binding that opens a new native session (opensNew) offers no continue co
   // The binding as a Turn leaves it that gave up its native session before any input reached a new one (I-1a, R4), written
   // while the Gateway is stopped, which then starts again on the same data.
   await f.gateway.close();
-  const db = new DatabaseSync(join(f.data, "gateway.sqlite"));
-  try {
-    // The binding is a row: its columns and its JSON say the same thing (no native position, and it opens a new native session).
-    db.prepare("UPDATE bindings SET through_run_id=NULL, opens_new=1, binding_json=json_set(binding_json,'$.throughRunId',NULL,'$.opensNew',json('true')) WHERE session_id=? AND status<>'archived'").run(id);
-  } finally { db.close(); }
+  // The binding is a line of the conversation's file: a later line says it again (no native position, and it opens a new native session).
+  const sessions = join(f.data, "sessions"), file = join(sessions, readdirSync(sessions, { recursive: true, encoding: "utf8" }).find(name => name.endsWith("_" + id + ".jsonl"))!);
+  const lines = readFileSync(file, "utf8").trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>), last = lines.at(-1)!;
+  const binding = lines.filter(line => line.type === "binding").at(-1)!;
+  appendFileSync(file, JSON.stringify({ type: "binding", id: (parseInt(String(last.id), 16) + 1).toString(16).padStart(8, "0"), parentId: last.id, timestamp: last.timestamp, seq: last.seq,
+    ordinal: binding.ordinal, binding: { ...(binding.binding as Record<string, unknown>), throughRunId: null, opensNew: true } }) + "\n");
   const configuration = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true });
   f.gateway = await startWebServer({ installations: "any", root: f.data, configuration, port: 0, assetsDirectory: f.assets, workspaceLockRoot: join(f.root, "locks"),
     application: (dataRoot, publish) => application(dataRoot, publish, { installations: "any", workspaceLockRoot: join(f.root, "locks") }) });

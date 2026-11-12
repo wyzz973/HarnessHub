@@ -1,7 +1,7 @@
 import { PAGE, type HeldItem, type ItemRow, type Mutation, type RunRow } from "../contracts/conversation.js";
 import { SessionError, type RunId } from "../contracts/session.js";
 import type { SessionCommitFrame, SessionHeadView, WireItem, WireItemUpsert, WireRun, WireTextAppend } from "../contracts/web.js";
-import { emptyFields } from "../infrastructure/session/load.js";
+import { emptyFields } from "../infrastructure/session/item-fields.js";
 
 /*
  * One commit, one frame (ADR-057 3.4). The stream's frames are applied by their watermark (web/src/session-stream.ts drops a frame whose `lastSeq` is not above

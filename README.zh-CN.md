@@ -128,7 +128,7 @@ pnpm build && pnpm web:build
 pnpm web --cwd /path/to/your/project --data-dir data --port 4317
 ```
 
-打开它打印的一次性链接。令牌会换成本机 cookie 并从地址栏移除；服务只监听 `127.0.0.1`。关掉页面不会取消回复，<kbd>Ctrl</kbd>+<kbd>C</kbd> 会等进行中的工作收尾并保留历史。服务运行期间独占它的 `--data-dir`。
+打开它打印的一次性链接。令牌会换成本机 cookie 并从地址栏移除；服务只监听 `127.0.0.1`。关掉页面不会取消回复，<kbd>Ctrl</kbd>+<kbd>C</kbd> 会等进行中的工作收尾并保留历史。服务运行期间独占它的 `--data-dir`。每个对话是 `data/sessions/` 下一个只追加的 JSONL 文件，一行一个完成的事实，人能直接读。
 
 <details>
 <summary><b>不用网页</b></summary>
@@ -137,8 +137,6 @@ pnpm web --cwd /path/to/your/project --data-dir data --port 4317
 pnpm discover                                    # 本机找到的官网安装，含渠道与版本
 pnpm chat --harness codex --data-dir data --cwd /path/to/project
 pnpm sessions list --data-dir data --json        # 公共对话
-pnpm sessions check-upgrade --data-dir data      # 升级前：只读地看这次升级会怎样，不写任何东西
-pnpm sessions restore-backup --data-dir data     # 升级后想退回：把备份放回成对话库（先停服务；不删任何东西）
 ```
 
 在 `pnpm chat` 里，`:harness opencode` 切换 Harness，`:cancel` 停止当前回合，`:history` 打印公共历史。全部命令与参数见 [工程现状](docs/engineering/status.md)。

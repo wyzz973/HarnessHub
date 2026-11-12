@@ -4,22 +4,21 @@ import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
-import { DatabaseSync } from "node:sqlite";
 import {
   CONVERSATION_FORMAT, type Conversation, type ConversationCommit, type ConversationRun, type HeldItem, type OriginHistoryRow, type RecoverConversation,
 } from "../../src/contracts/conversation.js";
 import { SessionError, commandId, sessionId, switchId, type CommandRecord, type EventDraft, type SessionId } from "../../src/contracts/session.js";
 import { verify, verifyTransition } from "../../src/contexts/session/domain/conversation-verify.js";
-import { SqliteConversationStore, type SqliteConversationStoreOptions } from "../../src/infrastructure/session/conversation-store.js";
+import { FileConversationStore, type FileConversationStoreOptions } from "../../src/infrastructure/session/file-store.js";
 import { NOW, event, item, replyItem, run, toolItem, userItem } from "./conversation-builder.js";
 
 /*
  * What the tests of the store of conversations share: temporary data roots that are removed after the test, a store opened on one, a way to build a conversation with a
  * name of its own and to drive Turns through the real store (accept, start, say, finish: the commits a Runtime makes, with a Harness and a model made up), and a small
- * recovery of the kind the domain injects. The rows are SQLite's; nothing here fakes the store.
+ * recovery of the kind the domain injects. The files are real; nothing here fakes the store.
  */
 
-export interface Opened { readonly root: string; readonly data: string; readonly store: SqliteConversationStore }
+export interface Opened { readonly root: string; readonly data: string; readonly store: FileConversationStore }
 /** A temporary directory, removed after the test. */
 export function temporary(t: TestContext, prefix = "harness-conversation-store-"): string {
   const root = mkdtempSync(join(tmpdir(), prefix));
@@ -41,15 +40,12 @@ export function treeDigest(directory: string, except: readonly string[] = [], pr
   return lines;
 }
 /** A store on a new data root in a temporary directory; closed after the test (a test that disabled it has asserted why). */
-export function openStore(t: TestContext, options: SqliteConversationStoreOptions = {}): Opened {
-  const root = temporary(t), data = join(root, "data"), store = new SqliteConversationStore(data, options);
+export function openStore(t: TestContext, options: FileConversationStoreOptions = {}): Opened {
+  const root = temporary(t), data = join(root, "data"), store = new FileConversationStore(data, options);
   t.after(() => { try { store.close(); } catch { /* the test asserted why the store was disabled */ } });
   return { root, data, store };
 }
-/** A second connection to the database (the way a tool or a reader looks at it), with a wait for a busy lock. */
-export function rawDatabase(data: string, readOnly = false): DatabaseSync { return new DatabaseSync(join(data, "gateway.sqlite"), { timeout: 1000, readOnly }); }
 export function code(expected: string): (error: unknown) => boolean { return error => error instanceof SessionError && error.code === expected; }
-export function count(db: DatabaseSync, table: string, where = "1=1"): number { return Number(db.prepare("SELECT COUNT(*) AS n FROM " + table + " WHERE " + where).get()?.n); }
 
 /** A conversation with an identity and a create command of its own, workspace given; Runs are named by `prefix` in `Scenario`. */
 export function newConversation(workspace: string, name: string, extra: Partial<Conversation> = {}): Conversation {
@@ -59,7 +55,7 @@ export function newConversation(workspace: string, name: string, extra: Partial<
     selection: { harnessId: "alpha", controlId: "alpha-acp" }, activeRunId: null, pendingSwitchId: null, runs: [], switches: [],
     commands: [{ id: commandId("create-" + name), kind: "create", fingerprint: "c".repeat(64), resultId: id }], ...extra };
 }
-export const created = (store: SqliteConversationStore, conversation: Conversation, events: readonly EventDraft[] = [event("session.created")], originHistory?: readonly OriginHistoryRow[]): ConversationCommit =>
+export const created = (store: FileConversationStore, conversation: Conversation, events: readonly EventDraft[] = [event("session.created")], originHistory?: readonly OriginHistoryRow[]): ConversationCommit =>
   store.create(conversation, events, originHistory);
 
 const completedBackend = { backend: { status: "completed" as const, reason: "done" }, cleanup: { closed: true as const, exitCode: 0, signal: null, protocolFailure: null } };
@@ -75,7 +71,7 @@ export class Scenario {
    * `verified` (the default): after every commit the whole-conversation check runs over what the store holds, and the check of the step runs over the conversation before and
    * after it, and both must find nothing. (They read every Turn, so a test of a very long conversation turns them off.)
    */
-  constructor(readonly store: SqliteConversationStore, readonly id: SessionId, readonly prefix = "run", readonly verified = true) {}
+  constructor(readonly store: FileConversationStore, readonly id: SessionId, readonly prefix = "run", readonly verified = true) {}
   get state(): Conversation { return this.store.get(this.id); }
   runId(ordinal: number): string { return this.prefix + "-" + ordinal; }
   private runAt(ordinal: number): ConversationRun { return this.state.runs[ordinal]!; }

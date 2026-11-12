@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { AcpControl } from "../../src/adapters/control/acp.js";
@@ -14,7 +14,7 @@ import { SessionRuntime } from "../../src/contexts/session/application/runtime.j
 import { verify } from "../../src/contexts/session/domain/conversation-verify.js";
 import { initialBindingRelay } from "../../src/contexts/session/domain/relay/delivery.js";
 import { appStore } from "../fixtures/runtime-store.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
@@ -29,7 +29,7 @@ class Gate<T> {
   reject!: (error: unknown) => void;
   constructor() { this.promise = new Promise((resolve, reject) => { this.resolve = resolve; this.reject = reject; }); }
 }
-interface Fixture { readonly root: string; readonly store: SqliteConversationStore; readonly stores: SqliteConversationStore[]; readonly configuration: SessionConfiguration; readonly runtimes: SessionRuntime[] }
+interface Fixture { readonly root: string; readonly store: FileConversationStore; readonly stores: FileConversationStore[]; readonly configuration: SessionConfiguration; readonly runtimes: SessionRuntime[] }
 async function fixture(t: test.TestContext): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), "harness-session-runtime-"));
   const workspace = join(root, "workspace"); await mkdir(workspace);
@@ -151,20 +151,30 @@ async function trace(path: string): Promise<readonly Record<string, unknown>[]> 
  * The rows are the only record (ADR-057 step 2): what the Runtime wrote of the Turns it ran holds none of the fields of the old display shape, neither in a Run's row nor in a
  * conversation's head. The words, the tools, the plan, the notices, the activities and the outputs are items.
  */
+/** The lines of every conversation file under the data root (`kind`: the main files, their WIP logs or their event logs). */
+function sessionLines(f: Fixture, kind: "main" | "wip" | "events" = "main"): Record<string, unknown>[] {
+  const dir = join(f.root, "data", "sessions"), found: Record<string, unknown>[] = [];
+  for (const folder of readdirSync(dir, { withFileTypes: true })) {
+    if (!folder.isDirectory()) continue;
+    for (const name of readdirSync(join(dir, folder.name))) {
+      const wanted = kind === "wip" ? name.endsWith(".wip.jsonl") : kind === "events" ? name.endsWith(".events.jsonl") : name.endsWith(".jsonl") && !name.endsWith(".wip.jsonl") && !name.endsWith(".events.jsonl");
+      if (!wanted) continue;
+      for (const line of readFileSync(join(dir, folder.name, name), "utf8").split("\n")) if (line !== "") found.push(JSON.parse(line) as Record<string, unknown>);
+    }
+  }
+  return found;
+}
 function assertRowsAreTheOnlyRecord(f: Fixture): void {
-  const db = new DatabaseSync(join(f.root, "data", "gateway.sqlite"), { readOnly: true });
-  try {
-    const runs = db.prepare("SELECT run_id, run_json FROM runs").all(), items = Number(db.prepare("SELECT COUNT(*) AS n FROM items").get()!.n);
-    assert.ok(runs.length > 0 && items > 0, "something was written");
-    for (const row of runs) {
-      const facts = JSON.parse(String(row.run_json)) as Record<string, unknown>;
-      for (const key of ["input", "tools", "thinking", "notices", "activities", "outputs", "plan", "protocol", "protocolProblem"]) assert.equal(key in facts, false, String(row.run_id) + ": a Run's row keeps no `" + key + "`");
-    }
-    for (const row of db.prepare("SELECT id, head FROM sessions").all()) {
-      const head = JSON.parse(String(row.head)) as Record<string, unknown>;
-      for (const key of ["messages", "runs", "schemaVersion"]) assert.equal(key in head, false, String(row.id) + ": a conversation's head keeps no `" + key + "`");
-    }
-  } finally { db.close(); }
+  const lines = sessionLines(f), runs = lines.filter(line => line.type === "turn"), items = lines.filter(line => line.type === "item");
+  assert.ok(runs.length > 0 && items.length > 0, "something was written");
+  for (const line of runs) {
+    const run = line.run as { readonly runId: string; readonly facts: Record<string, unknown> };
+    for (const key of ["input", "tools", "thinking", "notices", "activities", "outputs", "plan", "protocol", "protocolProblem"]) assert.equal(key in run.facts, false, run.runId + ": a Run's row keeps no `" + key + "`");
+  }
+  for (const line of lines.filter(entry => entry.type === "head")) {
+    const head = line.head as Record<string, unknown>;
+    for (const key of ["messages", "runs", "schemaVersion"]) assert.equal(key in head, false, "a conversation's head keeps no `" + key + "`");
+  }
 }
 
 test("cancelling during native command discovery never dispatches the command", async t => {
@@ -193,7 +203,7 @@ test("cancelling during native command discovery never dispatches the command", 
   assert.equal(peer.closeCount, 1); assert.equal(oldShape(app, session.id).status, "open");
 });
 
-test("real SQLite and ACP/Codex IPC retain one public Session through A to B to A with new connections", async (t) => {
+test("real files and ACP/Codex IPC retain one public Session through A to B to A with new connections", async (t) => {
   const f = await fixture(t), factory = new PeerFactory(f.root), published: SessionEvent[] = [], app = runtime(f, factory, value => {
     assert.ok(f.store.events(value.sessionId, value.seq - 1, 1).some(event => event.seq === value.seq), "event published before commit"); published.push(value);
   });
@@ -366,21 +376,6 @@ test("publication exception occurs after commit, stops resources and records blo
   assert.equal(oldShape(app, state.id).status, "blocked"); assert.ok(oldShape(app, state.id).messages.some(message => message.role === "assistant"));
 });
 
-test("real SQLite write failure does not publish output or dispatch later queued input and closes the external resource", async (t) => {
-  const f = await fixture(t), factory = new ControlledFactory([]), published: SessionEvent[] = [], app = runtime(f, factory, value => published.push(value));
-  t.after(async () => { try { await app.close(); } catch {} });
-  const state = await app.create(f.configuration, { harnessId: "alpha" }, "create");
-  const db = new DatabaseSync(join(f.root, "data", "gateway.sqlite"));
-  // A write the database cannot do at all (not a rule of the rows refusing it): a trigger that reads a JSON that is not one fails the statement with SQLite's own error, not a constraint's.
-  db.exec("CREATE TRIGGER fail_output BEFORE INSERT ON events WHEN json_extract(NEW.event_json,'$.type')='run.output' BEGIN SELECT json_extract('synthetic disk write rejection','$'); END");
-  app.send(state.id, "write failure input", "first"); app.send(state.id, "never replay this queued input", "second");
-  await assert.rejects(() => app.wait(state.id), /SQLite operation failed/);
-  assert.ok(!published.some(value => value.type === "run.output")); assert.equal(factory.prepared.length, 1); assert.equal(factory.prepared[0]?.peer.closeCount, 1);
-  const runs = db.prepare("SELECT status FROM runs WHERE session_id=? ORDER BY ordinal").all(state.id);
-  assert.equal(runs[0]?.status, "running"); assert.equal(db.prepare("SELECT COUNT(*) AS n FROM items i JOIN runs r ON r.run_id=i.run_id WHERE r.session_id=? AND i.type='assistant_message'").get(state.id)?.n, 0, "no reply was committed");
-  assert.throws(() => app.send(state.id, "retry", "retry"), /SQLite operation failed/); db.close();
-});
-
 test("Session close and runtime close cancel queued inputs, await active cleanup and preserve historical facts", async (t) => {
   const f = await fixture(t), first = controlled({ holdResult: true }), factory = new ControlledFactory([first]), app = runtime(f, factory);
   t.after(() => app.close());
@@ -527,17 +522,6 @@ test("creations are not limited in number: twenty-four hold validation resources
   assert.equal(calls, 24); assert.equal((await readdir(f.root)).filter(name => name.startsWith("validation-")).length, 24);
   const closing = app.close(); f.store.assertOwner(); release.resolve(); await Promise.all([closing, ...failures]);
   assert.equal((await readdir(f.root)).filter(name => name.startsWith("validation-")).length, 0); assert.equal(f.store.list().rows.length, 0);
-});
-
-test("a failed Store create never registers a nonexistent Session for shutdown", async (t) => {
-  const f = await fixture(t), app = new SessionRuntime(f.store, new ControlledFactory([]), {
-    id: () => "failed-create", now: () => new Date(), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"),
-  });
-  // The store refuses the new conversation's head (a rule of the rows): that ends this request, it does not stop the Runtime, and nothing is registered for shutdown.
-  const db = new DatabaseSync(join(f.root, "data", "gateway.sqlite")); db.exec("CREATE TRIGGER no_new_head BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT,'synthetic refusal'); END"); db.close();
-  await assert.rejects(() => app.create(f.configuration, { harnessId: "alpha" }, "create"), (error: unknown) => error instanceof SessionError && error.code === "INVALID_TRANSITION");
-  await app.close();
-  f.store.assertOwner(); assert.deepEqual(f.store.list().rows, []);
 });
 
 test("shutdown owns one Promise before committed-event callbacks can reenter close", async (t) => {
@@ -1365,13 +1349,9 @@ test("INV-06/INV-28 ADR-047: a window its timer commits is published after its c
   turn.result.resolve({ status: "cancelled", reason: "fixture" });
   await assert.rejects(app.wait(session.id), (error: unknown) => error instanceof SessionError && error.code === "OWNER_LOST");
   assert.equal(windows(), 1, "nothing was published after the owner was lost");
-  const db = new DatabaseSync(join(f.root, "data", "gateway.sqlite"));
-  try {
-    const count = db.prepare("SELECT COUNT(*) AS n FROM events WHERE session_id=? AND json_extract(event_json,'$.type')='run.output'").get(session.id);
-    assert.equal(count?.n, 1, "nothing was committed after the owner was lost");
-    // The reply that stands is the one chunk that was committed: the segment's text in its rows.
-    const chunks = db.prepare("SELECT t.text AS text FROM item_text t JOIN items i ON i.run_id=t.run_id AND i.seq=t.item_seq JOIN runs r ON r.run_id=i.run_id WHERE r.session_id=? AND i.type='assistant_message' ORDER BY i.seq, t.chunk").all(session.id);
-    assert.deepEqual(chunks.map(row => row.text), ["w1"]);
-  } finally { db.close(); }
+  // Nothing was committed after the owner was lost: one window in the event log, and the reply that stands is the one chunk that was committed.
+  assert.equal(sessionLines(f, "events").filter(line => line.type === "run.output").length, 1, "nothing was committed after the owner was lost");
+  const chunks = sessionLines(f, "wip").flatMap(line => (line.text as { text: string }[] | undefined) ?? []).map(piece => piece.text);
+  assert.deepEqual(chunks, ["w1"]);
   assert.equal(timers.pending, 0);
 });

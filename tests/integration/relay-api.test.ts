@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { DatabaseSync } from "node:sqlite";
 import { application } from "../../src/cli/session-application.js";
 import { CONVERSATION_FORMAT, type Conversation, type ConversationRun, type RunRow } from "../../src/contracts/conversation.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
@@ -381,28 +381,6 @@ test("after a restart the conversation's relay model and its packets read the sa
   const again = await view(f, id); assert.deepEqual(again.runs.map(run => run.relay?.delivery), conversation.runs.map(run => run.relay?.delivery), "the Runs say what they said");
 });
 
-test("a stored text that is gone or no longer what was sent is not served, and what is wrong is not described", async t => {
-  const f = await fixture(t), id = await stranded(f), [first, second] = (await relayOf(f, id)).packets as [RelayPacketView, RelayPacketView];
-  const path = (packet: RelayPacketView) => `/api/v1/sessions/${id}/relay/${packet.packetId}`;
-  assert.equal((await call(f, path(first))).status, 200); assert.equal((await call(f, path(second))).status, 200);
-  // The business database is damaged from outside (the way a restored backup or a foreign tool might leave it).
-  const damage = new DatabaseSync(join(f.data, "gateway.sqlite"), { enableForeignKeyConstraints: false, timeout: 5000 });
-  try {
-    const digests = damage.prepare("SELECT body_sha256 AS digest FROM relay_packets WHERE session_id=? AND packet_id=?");
-    const gone = String(digests.get(id, first.packetId)!.digest), changed = String(digests.get(id, second.packetId)!.digest);
-    damage.exec("DROP TRIGGER relay_bodies_immutable");
-    damage.prepare("DELETE FROM relay_bodies WHERE session_id=? AND sha256=?").run(id, gone);
-    damage.prepare("UPDATE relay_bodies SET body='tampered text that was never sent' WHERE session_id=? AND sha256=?").run(id, changed);
-  } finally { damage.close(); }
-  for (const packet of [first, second]) {
-    const reply = await call(f, path(packet));
-    assert.equal(reply.status, 502, packet.number + ": " + reply.text); assert.equal(row(reply.data).code, "INVALID_DATA");
-    assert.equal(reply.text.includes("tampered"), false, "the bytes that do not match are not served, quoted or described"); assert.equal(reply.headers.get("etag"), null);
-  }
-  // The rest of the model still reads: one packet's text being wrong does not take the conversation or its model with it.
-  assert.equal((await relayOf(f, id)).packets.length, 2); assert.equal((await view(f, id)).runs.length, 3);
-});
-
 // ---------------------------------------------------------------------------------------------------------------------
 // The answer a send gets when only the user can settle it
 // ---------------------------------------------------------------------------------------------------------------------
@@ -706,8 +684,8 @@ test("the state says the Gateway has the relay, and the events of the conversati
   const id = await create(f);
   assert.equal((await say(f, id, "alone, on purpose", "m1", 0, { attach: "none" })).status, 202);
   // The choice is in the event the Gateway keeps, with an HMAC of it; what the API shows has the choice and not the HMAC.
-  const kept = new DatabaseSync(join(f.data, "gateway.sqlite"), { readOnly: true });
-  let stored: string; try { stored = kept.prepare("SELECT event_json FROM events WHERE session_id=? AND event_json LIKE '%message.accepted%'").all(id).map(item => String(item.event_json)).join("\n"); } finally { kept.close(); }
+  const logs = join(f.data, "sessions"), stored = readdirSync(logs, { recursive: true, encoding: "utf8" }).filter(name => name.endsWith(".events.jsonl") && name.includes(id))
+    .flatMap(name => readFileSync(join(logs, name), "utf8").split("\n")).filter(line => line.includes("message.accepted")).join("\n");
   assert.match(stored, /"fingerprint":"/u, "the Gateway's own event holds the fingerprint of the request's choices");
   const page = row((await call(f, `/api/v1/sessions/${id}/events?limit=100`)).data), accepted = (page.events as { type: string; data: Record<string, unknown> }[]).filter(item => item.type === "message.accepted");
   assert.equal(accepted.length, 1); assert.deepEqual(row(accepted[0]!.data.relayRequest), { attach: "none" }, "what the user chose, and nothing that identifies it");

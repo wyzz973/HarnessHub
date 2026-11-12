@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { SessionError, type SessionId } from "../../src/contracts/session.js";
@@ -30,10 +29,6 @@ function made(t: TestContext): Root {
   } finally { store.close(); }
   return { scratch, data, locks, workspace, id };
 }
-function break_(root: Root, change: (db: DatabaseSync) => void): void {
-  const db = new DatabaseSync(join(root.data, "gateway.sqlite"));
-  try { change(db); } finally { db.close(); }
-}
 const env = (root: Root) => ({ PATH: join(root.scratch, "empty-path"), HOME: join(root.scratch, "home"), TMPDIR: root.scratch, LANG: "C" });
 interface Ran { readonly status: number | null; readonly stdout: string; readonly stderr: string }
 function run(entry: string, root: Root, args: readonly string[]): Ran {
@@ -49,34 +44,6 @@ function told(ran: Ran, root: Root, reason: RegExp): void {
   assert.equal(output.includes(root.scratch), false, "no path of the root, the workspace or the locks");
   assert.equal(/(?:^|[\s("'=:])\/(?:Users|home|private|var|tmp|opt|Volumes)\//u.test(output), false, "no absolute path at all: " + output);
 }
-
-test("the service that cannot open its data root says what failed: a table the database lacks is named, and the conversation and the paths are not", { timeout: 60_000 }, t => {
-  const root = made(t);
-  break_(root, db => { db.exec("PRAGMA foreign_keys=OFF"); db.exec("DROP TABLE runs"); });
-  const ran = run(web, root, ["--data-dir", root.data, "--workspace-lock-root", root.locks, "--cwd", root.workspace, "--port", "0"]);
-  assert.match(ran.stderr, /^HarnessGateway: STORAGE_UNAVAILABLE — local web application could not run: /mu, ran.stderr);
-  told(ran, root, /no such table: runs/u);
-});
-
-test("the commands that open the data root tell the reason too, in the words they always used for a code", { timeout: 60_000 }, t => {
-  const root = made(t);
-  break_(root, db => { db.exec("PRAGMA foreign_keys=OFF"); db.exec("DROP TABLE runs"); });
-  const closed = run(sessions, root, ["close", "--data-dir", root.data, "--workspace-lock-root", root.locks, "--session", root.id]);
-  assert.match(closed.stderr, /^HarnessGateway: STORAGE_UNAVAILABLE — SQLite operation failed; new dispatch is disabled \(no such table: runs\)$/mu, closed.stderr);
-  told(closed, root, /no such table: runs/u);
-  const chatted = run(chat, root, ["--session", root.id, "--data-dir", root.data, "--workspace-lock-root", root.locks, "--prompt", "hello"]);
-  told(chatted, root, /STORAGE_UNAVAILABLE — SQLite operation failed; new dispatch is disabled \(no such table: runs\)/u);
-  const json = run(chat, root, ["--session", root.id, "--data-dir", root.data, "--workspace-lock-root", root.locks, "--json"]);
-  told(json, root, /no such table: runs/u);
-});
-
-test("a structure of another build is told in full, with the two fingerprints and no path", { timeout: 60_000 }, t => {
-  const root = made(t);
-  break_(root, db => { db.prepare("UPDATE schema_stamp SET fingerprint=?").run("f".repeat(64)); });
-  const ran = run(web, root, ["--data-dir", root.data, "--workspace-lock-root", root.locks, "--cwd", root.workspace, "--port", "0"]);
-  assert.match(ran.stderr, /^HarnessGateway: SCHEMA_MISMATCH — this database's table structure is inconsistent with this build \(it was written by a build whose table structure has the fingerprint ffffffffffff/mu, ran.stderr);
-  told(ran, root, /SCHEMA_MISMATCH/u);
-});
 
 test("a failure that is not of the storage is told with its own words, not with its code alone", { timeout: 60_000 }, t => {
   const root = made(t);

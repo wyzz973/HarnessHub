@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 const [build, data, locks, workspace, peer, identify, mode = "keep"] = process.argv.slice(2);
 const load = path => import(pathToFileURL(join(build, path)).href);
 const { SessionRuntime } = await load("src/contexts/session/application/runtime.js");
-const { SqliteConversationStore } = await load("src/infrastructure/session/conversation-store.js");
+const { FileConversationStore } = await load("src/infrastructure/session/file-store.js");
 const { recoverConversation } = await load("src/contexts/session/domain/conversation-state.js");
 const { recoverConversationRelay } = await load("src/contexts/session/domain/relay/recover.js");
 const { SqliteWorkspaceLeaseProvider } = await load("src/infrastructure/session/workspace-lease.js");
@@ -33,7 +33,7 @@ const factory = {
     } };
   },
 };
-const store = new SqliteConversationStore(data, { recover: recoverConversation, recoverRelay: recoverConversationRelay });
+const store = new FileConversationStore(data, { recover: recoverConversation, recoverRelay: recoverConversationRelay });
 let id = 0;
 const app = new SessionRuntime(store, factory, { id: () => "owner-" + (++id), now: () => new Date(), publish: () => {}, fingerprint: value => createHash("sha256").update(value).digest("hex"),
   ...(identify === "1" ? { processes: new PosixProcessGroups() } : {}), ...(mode === "queue" ? { maxParallel: 1 } : {}) });

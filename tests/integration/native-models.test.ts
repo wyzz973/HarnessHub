@@ -9,7 +9,7 @@ import { DirectorySessionBindingFactory, prepareConfiguration } from "../../src/
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
 import { captureNativeEnvironment, referencedNativeValues, nativeDescriptorValues } from "../../src/infrastructure/session/native-environment.js";
 import { appStore } from "../fixtures/runtime-store.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { startWebServer } from "../../src/web/server.js";
 import { application } from "../../src/cli/session-application.js";

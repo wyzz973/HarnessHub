@@ -9,7 +9,7 @@ import { ManagementError, type SystemInstallationObservation } from "../../src/c
 import { observedPackageVersion, probeSystemVersion } from "../../src/infrastructure/management/system-version.js";
 import { LocalHarnessManagement } from "../../src/infrastructure/management/service.js";
 import { appStore } from "../fixtures/runtime-store.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 
 interface Fixture { readonly root: string; readonly path: string; readonly trace: string; readonly node: string; readonly cleanup: (() => Promise<void>)[] }
 async function fixture(t: test.TestContext, mode = "version", output = "Harness Fixture 1.2.3"): Promise<Fixture> {

@@ -6,10 +6,10 @@ import { BLIND, Fakes, LIVE, declared, decisionOf, eventOf, events, fromAlpha, r
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { appStore } from "../fixtures/runtime-store.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { oldShape } from "../fixtures/old-shape.js";
 
-// The relay through the formal Runtime and a real SqliteConversationStore (slim.md): what a Turn sends, what the binding records, and
+// The relay through the formal Runtime and a real FileConversationStore (slim.md): what a Turn sends, what the binding records, and
 // what a restart leaves. The Harnesses are in-process fakes that keep a native history; nothing here runs a Harness.
 
 const kinds = (state: SessionSnapshot) => state.runs.map(run => run.relay?.kind ?? null);

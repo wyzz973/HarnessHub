@@ -4,8 +4,7 @@ import {
   type OriginHistoryRow, type RunWrite, type SwitchWrite, type TextAppend,
 } from "../../contracts/conversation.js";
 import type { RelayRows } from "../../contracts/relay.js";
-import { SessionError, type EventDraft, type PublicSwitch, type SessionId } from "../../contracts/session.js";
-import type { Applied } from "./apply.js";
+import { SessionError, type EventDraft, type PublicSwitch, type SessionEvent, type SessionId } from "../../contracts/session.js";
 import { bindingRowOf, canonicalJson, commandRowOf, itemRowOf, runColumns, runRowOf, sourceThroughOrdinal, switchRowOf, utf8Length } from "./rows.js";
 
 /*
@@ -17,9 +16,11 @@ import { bindingRowOf, canonicalJson, commandRowOf, itemRowOf, runColumns, runRo
  * The cost of a commit is therefore the size of what changed and of the Turn in progress, not of the history.
  *
  * It refuses, as INVALID_TRANSITION, what no commit may do and what could only be written wrongly: a Run, a command, a binding or an item
- * taken away; a chunk of text that is not the one it was; a finished Run rewritten. (The triggers of schema-v14.ts refuse the same, and so does
- * `apply`; saying it here says it before anything is written, and in words about the conversation.)
+ * taken away; a chunk of text that is not the one it was; a finished Run rewritten. Saying it here says it before anything is written, and in words about the conversation.
  */
+
+/** A Mutation with the numbers the store gave it: the events as committed (their seqs), and the rows with the seqs, offsets and counts filled in. */
+export interface Applied { readonly events: readonly SessionEvent[]; readonly changes: Mutation }
 
 export interface DiffContext {
   /** The events of the commit, as the reducer returned them beside the conversation. */

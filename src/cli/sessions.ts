@@ -2,9 +2,7 @@ import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { sessionId, SessionError } from "../contracts/session.js";
-import { SqliteSessionReader } from "../infrastructure/session/session-reader.js";
-import { describeRestore, restoreBackup } from "../infrastructure/session/restore-backup.js";
-import { checkUpgrade, describeCheck } from "../infrastructure/session/upgrade-preflight.js";
+import { FileSessionReader } from "../infrastructure/session/file-reader.js";
 import { application, dataRoot, errorRecord, newCommand, selection } from "./session-application.js";
 import { boundedWrite } from "./bounded-streams.js";
 
@@ -13,60 +11,42 @@ function integer(value: string | undefined, fallback: number, minimum: number, m
   if (!Number.isSafeInteger(number) || number < minimum || number > maximum) throw new SessionError("INVALID_INPUT", "invalid cursor or page limit"); return number;
 }
 export async function main(args: readonly string[]): Promise<number> {
-  let reader: SqliteSessionReader | undefined;
+  let reader: FileSessionReader | undefined;
   let app: ReturnType<typeof application> | undefined;
   let code = 0;
   try {
     const action = args[0];
-    if (!["list", "show", "events", "close", "resume", "check-upgrade", "restore-backup"].includes(action ?? "")) throw new SessionError("INVALID_INPUT", "expected list/show/events/close/resume/check-upgrade/restore-backup");
+    if (!["list", "show", "events", "close", "resume"].includes(action ?? "")) throw new SessionError("INVALID_INPUT", "expected list/show/events/close/resume");
     const { values } = parseArgs({ args: [...args.slice(1)], options: {
       "data-dir": { type: "string" }, session: { type: "string" }, json: { type: "boolean" },
       "after-seq": { type: "string" }, limit: { type: "string" }, "command-id": { type: "string" }, help: { type: "boolean", short: "h" },
-      harness: { type: "string" }, "acknowledge-unknown": { type: "boolean" }, "workspace-lock-root": { type: "string" }, backup: { type: "string" },
+      harness: { type: "string" }, "acknowledge-unknown": { type: "boolean" }, "workspace-lock-root": { type: "string" },
     }, strict: true, allowPositionals: false });
-    if (values.help) { process.stdout.write("HarnessGateway sessions list/show/events/close/resume --data-dir <path> [--session <id>] [--json] [--workspace-lock-root <绝对目录>]\n读操作不取得writer owner；close保留历史。resume检查关闭证据并验证目标；可用--harness指定目标，结果未知时另需--acknowledge-unknown，不重跑旧任务。\nHarnessGateway sessions check-upgrade --data-dir <path> [--json]\n只读预检：在内存里把这个数据目录的升级整个走一遍（两个阶段、逐个对话），说出哪些对话会让升级停下以及原因；不写任何文件、不取得所有权，服务运行时也能跑；输出只有数目、对话 id 和规则名，不含对话内容。全部通过退出码 0，有对话不通过退出码 1，没能检查退出码 2。\nHarnessGateway sessions restore-backup --data-dir <path> [--backup <backups/ 里的文件名>] [--json]\n回退升级：把升级前的备份（backups/gateway-v<版本>-before-v14.sqlite）复制成对话库，并接上各库记着的所有者代数；要先停服务（命令自己取数据目录的锁，取不到就拒绝）。不删任何东西：在用的库挪到 backups/ 下一个 set-aside 名字，备份留在原处；中途被杀可以重跑。升级之后新增的对话和回合不在恢复后的库里。有多份备份时列出来，用 --backup 指定。\n"); return 0; }
-    if (action !== "list" && action !== "check-upgrade" && action !== "restore-backup" && values.session === undefined) throw new SessionError("INVALID_INPUT", "--session is required");
-    if (action !== "restore-backup" && values.backup !== undefined) throw new SessionError("INVALID_INPUT", "--backup is only used with restore-backup");
+    if (values.help) { process.stdout.write("HarnessGateway sessions list/show/events/close/resume --data-dir <path> [--session <id>] [--json] [--workspace-lock-root <绝对目录>]\n读操作不取得writer owner；close保留历史。resume检查关闭证据并验证目标；可用--harness指定目标，结果未知时另需--acknowledge-unknown，不重跑旧任务。\n对话存在数据目录的 sessions/ 下，一个对话一个 .jsonl 文件。\n"); return 0; }
+    if (action !== "list" && values.session === undefined) throw new SessionError("INVALID_INPUT", "--session is required");
     if (action !== "events" && values["after-seq"] !== undefined) throw new SessionError("INVALID_INPUT", "--after-seq is only used with events");
     if (action !== "resume" && (values.harness !== undefined || values["acknowledge-unknown"] !== undefined)) throw new SessionError("INVALID_INPUT", "recovery options are only used with resume");
     const root = dataRoot(values["data-dir"]), limit = integer(values.limit, 50, 1, 100);
     let output: unknown;
-    if (action === "check-upgrade") {
-      // Read-only and ownerless: neither the application nor a reader is opened; the check reads the library on its own.
-      if (values.session !== undefined || values["after-seq"] !== undefined) throw new SessionError("INVALID_INPUT", "check-upgrade takes only --data-dir and --json");
-      const check = checkUpgrade(root, process.stderr.isTTY ? { progress: (done, total) => { process.stderr.write("\r" + done + " of " + total + " conversations checked" + (done === total ? "\n" : "")); } } : {});
-      boundedWrite(process.stdout, values.json ? JSON.stringify(check) + "\n" : describeCheck(check).join("\n") + "\n");
-      return check.ok ? 0 : 1;
-    }
-    if (action === "restore-backup") {
-      // The service must be stopped: the command takes the lock of the data directory itself (and no generation); no application is opened.
-      if (values.session !== undefined || values["after-seq"] !== undefined) throw new SessionError("INVALID_INPUT", "restore-backup takes only --data-dir, --backup and --json");
-      const report = restoreBackup(root, values.backup === undefined ? {} : { backup: values.backup });
-      boundedWrite(process.stdout, values.json ? JSON.stringify(report) + "\n" : describeRestore(report).join("\n") + "\n");
-      return 0;
-    }
     if (action === "resume") {
-      app = application(root, () => {}, { searchBackfill: false, ...(values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] }) });
+      app = application(root, () => {}, { ...(values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] }) });
       // What it needs of the conversation is the Harness it selects now: the head says (the Turns are not read).
       const id = sessionId(values.session), selected = app.store.head(id).head.selection;
       output = app.runtime.resume(id, values.harness === undefined ? selected : selection(values.harness), values["command-id"] ?? newCommand("resume"), values["acknowledge-unknown"] ?? false);
       await app.runtime.wait(id);
     } else if (action === "close") {
-      app = application(root, () => {}, { searchBackfill: false, ...(values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] }) });
+      app = application(root, () => {}, { ...(values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] }) });
       const closed = await app.runtime.closeSession(sessionId(values.session), values["command-id"] ?? newCommand("close"));
       // What closing did: the conversation's head after it (its history is read with `show`).
       output = { id: closed.id, status: closed.status, epoch: closed.epoch, version: closed.version, lastSeq: closed.lastSeq, selection: closed.selection, runs: closed.runs.length };
     } else {
-      reader = new SqliteSessionReader(root);
-      // A database whose upgrade to the tables has not finished holds conversations of both kinds: each is read as it is, and the tool says the rest are not converted yet.
-      const upgrade = reader.upgrade();
-      if (upgrade.kind === "converting") process.stderr.write("HarnessGateway: UPGRADE_UNDER_WAY — " + upgrade.message + "\n");
+      reader = new FileSessionReader(root);
       output = action === "list" ? reader.list(limit)
         : action === "show" ? reader.get(sessionId(values.session))
         : reader.events(sessionId(values.session), integer(values["after-seq"], 0, 0, Number.MAX_SAFE_INTEGER), limit);
     }
     boundedWrite(process.stdout, JSON.stringify(output, null, values.json ? undefined : 2) + "\n");
-  } catch (error) { const fault = errorRecord(error); process.stderr.write("HarnessGateway: " + fault.code + " — " + fault.message + "\n"); code = args[0] === "check-upgrade" ? 2 : 1; }
+  } catch (error) { const fault = errorRecord(error); process.stderr.write("HarnessGateway: " + fault.code + " — " + fault.message + "\n"); code = 1; }
   finally {
     try { reader?.close(); }
     catch (error) { const fault = errorRecord(error); process.stderr.write("HarnessGateway: " + fault.code + " — " + fault.message + "\n"); code = 1; }

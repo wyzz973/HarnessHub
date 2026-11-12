@@ -8,9 +8,9 @@ import { fileURLToPath } from "node:url";
 import { application, resolveWorkspaceLockRoot } from "../../src/cli/session-application.js";
 import { sessionId, type SessionSnapshot } from "../../src/contracts/session.js";
 import { DirectorySessionBindingFactory, prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
-import { SqliteSessionReader } from "../../src/infrastructure/session/session-reader.js";
+import { FileSessionReader } from "../../src/infrastructure/session/file-reader.js";
 import { appStore } from "../fixtures/runtime-store.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
 
 const cli = fileURLToPath(new URL("../../src/cli/chat.js", import.meta.url));
@@ -112,7 +112,7 @@ function hasEvent(type: string, count = 1): (entry: Record<string, unknown>) => 
   return entry => { if (event(entry)?.type === type) ++seen; return seen === count; };
 }
 async function persisted(f: Fixture): Promise<SessionSnapshot> {
-  const reader = new SqliteSessionReader(f.data);
+  const reader = new FileSessionReader(f.data);
   try { const list = reader.list(100); assert.equal(list.length, 1); return reader.get(list[0]!.id); } finally { reader.close(); }
 }
 async function trace(f: Fixture): Promise<readonly Record<string, unknown>[]> { return records(await readFile(f.trace, "utf8")); }

@@ -6,7 +6,7 @@ import { rowsHistory } from "../../src/contexts/session/domain/relay/history.js"
 import { ITEM_KINDS } from "../../src/contracts/relay.js";
 import type { ConversationReader } from "../../src/contracts/conversation.js";
 import { OUTLINE_INLINE_BYTES } from "../../src/contexts/session/domain/turn-source.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { snapshotHistory } from "../fixtures/old-shape.js";
 import { appStore } from "../fixtures/runtime-store.js";
 import { Scenario, created, newConversation, temporary } from "../fixtures/store-helpers.js";
@@ -20,7 +20,7 @@ const names = (harnessId: string): string | null => ({ alpha: "Alpha Harness", b
 const TURNS = 2000, GIANT = new Set([10, 500, 1000, 1500, 1990]), BIG = (turn: number): boolean => turn % 97 === 0;
 
 /** The history: `TURNS` finished Turns of alpha, each with a tool call, and the input that asks for the packet, queued. */
-function longConversation(store: SqliteConversationStore): { readonly id: ReturnType<typeof created>["conversation"]["id"]; readonly bytes: number } {
+function longConversation(store: FileConversationStore): { readonly id: ReturnType<typeof created>["conversation"]["id"]; readonly bytes: number } {
   const id = created(store, newConversation("/work", "owed")).conversation.id, scenario = new Scenario(store, id, "run-owed", false);
   let bytes = 0;
   for (let turn = 0; turn < TURNS; turn++) {
@@ -38,7 +38,7 @@ function longConversation(store: SqliteConversationStore): { readonly id: Return
 }
 
 test("a packet for 2,000 owed Turns looks at each Turn once without its words, reads the words of the few it weighs, counts all of them on its ledger, and is the packet of the whole read", { timeout: 600_000 }, t => {
-  let opened: SqliteConversationStore | undefined;
+  let opened: FileConversationStore | undefined;
   t.after(() => opened?.close());
   const store = opened = appStore(join(temporary(t), "data")), { id, bytes: held } = longConversation(store);
   const conversation = store.get(id);
@@ -86,7 +86,7 @@ test("a packet for 2,000 owed Turns looks at each Turn once without its words, r
 });
 
 test("a packet that fits whole carries every Turn, and reads their words to write them: the same packet as the whole read", { timeout: 120_000 }, t => {
-  let opened: SqliteConversationStore | undefined;
+  let opened: FileConversationStore | undefined;
   t.after(() => opened?.close());
   const store = opened = appStore(join(temporary(t), "data")), id = created(store, newConversation("/work", "small")).conversation.id, scenario = new Scenario(store, id, "run-small", false);
   // Every fourth reply is longer than an outline carries (OUTLINE_INLINE_BYTES): its words are read when the packet writes them.

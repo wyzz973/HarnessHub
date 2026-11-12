@@ -11,10 +11,7 @@ import { SessionError, type SelectionRequest, type TurnLimits } from "../contrac
 import { HostTmpdirs, defaultHostTmpdirRoot } from "../infrastructure/session/host-tmpdir.js";
 import { RelayKeys, insideByIdentity } from "../infrastructure/session/relay-keys.js";
 import { SessionRuntime } from "../contexts/session/application/runtime.js";
-import { SqliteConversationStore } from "../infrastructure/session/conversation-store.js";
-import type { MigrationReport } from "../infrastructure/session/migrate-v14.js";
-import { ManagementError } from "../contracts/management.js";
-import { ProviderError } from "../contracts/provider.js";
+import { FileConversationStore } from "../infrastructure/session/file-store.js";
 import { recoverConversation } from "../contexts/session/domain/conversation-state.js";
 import { recoverConversationRelay } from "../contexts/session/domain/relay/recover.js";
 import { SqliteWorkspaceLeaseProvider } from "../infrastructure/session/workspace-lease.js";
@@ -41,34 +38,6 @@ export function builtinHarnessName(): (harnessId: string) => string | null {
     if (names === undefined) { try { names = new Map(loadBuiltinCatalog(catalogTarget()).map(definition => [definition.id, definition.name])); } catch { names = new Map(); } }
     return names.get(harnessId) ?? null;
   };
-}
-/**
- * The content collector, behind the gate of the upgrade (ADR-057 3.6, review M2): it is the one deletion a backup of the database cannot bring back (the content store is
- * not in it). It runs only when no conversation is waiting to be converted and the references of the converted ones were compared and found equal to what the old code
- * kept; the first start after an upgrade only reports what it would collect and deletes nothing; a database that never had an upgrade collects as it always did.
- */
-export function collectContent(store: Pick<SqliteConversationStore, "collectionGate" | "contentReferences" | "acknowledgeFirstStart">, content: Pick<LocalContentStore, "collect" | "wouldCollect">, report: (line: string) => void = line => { process.stderr.write(line + "\n"); }): void {
-  const gate = store.collectionGate();
-  if (gate.allowed) { content.collect(store.contentReferences()); return; }
-  if (gate.reportOnly) {
-    const found = content.wouldCollect(store.contentReferences());
-    report("HarnessGateway: CONTENT_COLLECTION (the first start after the upgrade only reports: " + found.records + " stored items, " + found.blobs + " blobs, " + found.files + " files and " + found.partial + " partial uploads would be collected; nothing was deleted)");
-    store.acknowledgeFirstStart();
-    return;
-  }
-  report("HarnessGateway: CONTENT_COLLECTION (nothing is collected: " + (gate.reason ?? "the upgrade is not finished") + ")");
-}
-/**
- * A failure of a step after the conversation library was opened, told for what it means when that start upgraded the library: the library is v14 now and the build before refuses
- * it, so the person must be told that and where the copy from before the upgrade is (a path relative to the data directory, which is not told). A start that upgraded nothing
- * fails as it did. The reason is the failing step's own words when it is one of the application's errors (they name a rule and no path), else the kind of the failure.
- */
-export function afterUpgrade(error: unknown, migration: Pick<MigrationReport, "from" | "backup"> | null): unknown {
-  if (migration === null || migration.backup === null || migration.from >= 14) return error;
-  const known = error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError;
-  const reason = known ? error.message : error instanceof Error ? "an unexpected " + error.name : "an unexpected failure";
-  return Object.assign(new SessionError("START_FAILED_AFTER_UPGRADE", reason + ". The conversation library was upgraded to v14 by this start and the start did not finish; the copy of the library from before the upgrade is backups/gateway-v"
-    + migration.from + "-before-v14.sqlite in the data directory (the build before this one opens that copy, not the upgraded library); with the program stopped, `sessions restore-backup --data-dir <the data directory>` puts it back and keeps the upgraded library beside it"), { cause: error });
 }
 export function dataRoot(value: string | undefined): string {
   const path = value === undefined ? resolve("data") : resolve(value);
@@ -159,29 +128,14 @@ export function application(root: string, publish: (commit: ConversationCommit) 
   /** The context table's tokens (src/contracts/table.ts): the instance whoever starts native processes mints from and the web server resolves with; a private in-memory one when not given. */
   readonly tableGrants?: TableGrants;
   /** The context table's mount (docs/decisions/LOG.md, 2026-11-11): the native processes the Sessions start carry its address and a token each. None: they carry neither. */
-  readonly table?: TableMount;
-  /**
-   * Whether the full-text indexes that an upgrade leaves empty are filled in the background once the application is composed (default: yes). A command that runs for a moment
-   * and exits has no use for it.
-   */
-  readonly searchBackfill?: boolean } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteConversationStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime; readonly grants: TableGrants } {
-  // What needs no ownership of the data directory is settled first: the workspace lock root (its shape, its owner and its mode) and the lease provider on it. Opening the root
-  // below may upgrade the conversation library for good, and the build before this one refuses what it leaves; a start that is going to fail on a thing like this fails here, with
-  // the data directory as it was.
+  readonly table?: TableMount } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: FileConversationStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime; readonly grants: TableGrants } {
+  // What needs no ownership of the data directory is settled first: the workspace lock root (its shape, its owner and its mode) and the lease provider on it.
   lockRootShape(options.workspaceLockRoot);
   let lockRoot = insideData(options.workspaceLockRoot, root) ? undefined : resolveWorkspaceLockRoot(options.workspaceLockRoot);
   let workspaces = lockRoot === undefined ? undefined : new SqliteWorkspaceLeaseProvider(lockRoot);
-  // Opening the root brings it to the tables (a backup first, each conversation converted and checked, none started on a store half trusted: a conversation that
-  // cannot be converted ends the start), then recovers what a previous owner left unfinished with the domain's recovery; the relay deliveries it left in flight are
-  // decided per conversation in a SAVEPOINT of its own (ADR-055 §9 S15; ADR-057 3.6).
-  // What the upgrade says as it goes (a conversation it stopped at, a native session two conversations held and one gave up) is told on the error stream, in the log of the service.
-  const store = new SqliteConversationStore(root, { recover: recoverConversation, recoverRelay: recoverConversationRelay, log: line => { process.stderr.write("HarnessGateway: UPGRADE (" + line + ")\n"); },
-    // A full-text index that cannot be used is derived data: it is told once in the log of the service, and searches scan.
-    report: problem => { process.stderr.write("HarnessGateway: SEARCH_INDEX_UNAVAILABLE (" + problem + ")\n"); } });
-  if (store.migration !== null && store.migration.backup !== null) {
-    process.stderr.write("HarnessGateway: UPGRADE (the conversation library was upgraded from version " + store.migration.from + " to 14, " + store.migration.converted + " conversation" + (store.migration.converted === 1 ? "" : "s")
-      + " converted; the copy from before is backups/gateway-v" + store.migration.from + "-before-v14.sqlite in the data directory)\n");
-  }
+  // Opening the root takes its ownership and recovers what a previous owner left unfinished with the domain's recovery (a WIP log laid over its file, the Turns whose result is
+  // unknown told so, nothing run again); the relay deliveries it left in flight are decided per conversation (ADR-055 §9 S15). Each conversation is one file (file-store.ts).
+  const store = new FileConversationStore(root, { recover: recoverConversation, recoverRelay: recoverConversationRelay });
   let providers: LocalProviderService | undefined;
   let management: LocalHarnessManagement | undefined;
   try {
@@ -202,9 +156,8 @@ export function application(root: string, publish: (commit: ConversationCommit) 
     tmpdirs.sweep();
     const factory = new DirectorySessionBindingFactory(workspaces, () => store.assertOwner(), options.installations ?? "official", providers, management, options.nativeEnvironment, nativeLocks,
       { budgets: hostBudgets, tmpdirs, ...(options.table === undefined ? {} : { table: options.table }) });
-    // The owner is exclusive and quiescent here, so unreferenced content from earlier owners can be collected safely.
+    // Content is not collected by itself any more (a cleaning command is for later): what the conversations do not mention stays.
     const content = new LocalContentStore(root, () => store.assertOwner());
-    collectContent(store, content);
     // Kept process groups are recognized across restarts on POSIX only; elsewhere a previous owner's kept process stays
     // unconfirmed and its workspace quarantined (ADR-030).
     // The relay names a Harness by its catalog name (ADR-055 §5.4); the built-in catalog is read once, at the first packet.
@@ -214,10 +167,8 @@ export function application(root: string, publish: (commit: ConversationCommit) 
     const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, ...(options.budgets ?? {}),
       ...(relayKeys === null ? {} : { relayKeys }),
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
-    // The full-text indexes an upgrade left empty are filled in small steps behind the work of the process; searches scan until they are complete (src/infrastructure/session/search-index.ts).
-    if (options.searchBackfill !== false) store.startSearchBackfill().catch(() => {});
     // Upgrades see and close this runtime's conversations' processes (ADR-043).
     management.attachProgramUsers({ list: harnessId => runtime.programUsers(harnessId), closeIdle: harnessId => runtime.releaseForUpgrade(harnessId) });
     return { store, content, factory, runtime, providers, management, grants: options.tableGrants ?? options.table?.grants ?? new MemoryTableGrants() };
-  } catch (error) { try { management?.close(); } finally { try { providers?.close(); } finally { store.close(); } } throw afterUpgrade(error, store.migration); }
+  } catch (error) { try { management?.close(); } finally { try { providers?.close(); } finally { store.close(); } } throw error; }
 }

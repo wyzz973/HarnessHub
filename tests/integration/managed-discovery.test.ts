@@ -8,7 +8,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { LocalHarnessManagement } from "../../src/infrastructure/management/service.js";
 import { appStore } from "../fixtures/runtime-store.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import type { ManagementRecipe } from "../../src/contracts/management.js";
 import { inventory } from "../../src/infrastructure/catalog/inventory-composition.js";
 const peer = fileURLToPath(new URL("../../../tests/fixtures/managed-inventory-peer.mjs", import.meta.url));

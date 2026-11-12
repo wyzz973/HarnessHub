@@ -12,7 +12,7 @@ import { LocalHarnessManagement } from "../../src/infrastructure/management/serv
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
 import { appStore } from "../fixtures/runtime-store.js";
 import { readWhole, type ReadConversation } from "../fixtures/http-conversation.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { LocalProviderService } from "../../src/infrastructure/provider/service.js";
 import { DirectorySessionBindingFactory } from "../../src/infrastructure/session/binding-factory.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";

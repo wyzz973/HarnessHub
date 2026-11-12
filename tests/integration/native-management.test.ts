@@ -7,7 +7,7 @@ import { LocalHarnessManagement } from "../../src/infrastructure/management/serv
 import { NativeManagement } from "../../src/infrastructure/management/native.js";
 import { NativeInstallationLocks } from "../../src/infrastructure/management/native-lock.js";
 import { appStore } from "../fixtures/runtime-store.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { ManagementError, type ManagementMetadataPort, type ManagementRecipe, type NativeProgramUsers } from "../../src/contracts/management.js";
 import { systemProgramHost, type ProgramHost } from "../../src/infrastructure/management/program-usage.js";
 import { compareReleases, isolatedSandboxProfile, isPrerelease, upgradeHops } from "../../src/infrastructure/management/native.js";

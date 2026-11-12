@@ -1,7 +1,7 @@
-// Invalid sample for B11 and B12: who may read a whole conversation in the old shape. The format is described in README.md. This file is never compiled, and the repository check does not scan tools/.
+// Invalid sample for B12: who may read a whole conversation in the old shape. The format is described in README.md. This file is never compiled, and the repository check does not scan tools/.
 
 // @@ file: src/web/export-leak.ts
-import { snapshotFromRows } from "../infrastructure/session/snapshot-adapter.js"; // expect: B11
+import { snapshotFromRows } from "../infrastructure/session/snapshot-adapter.js";
 import type { SessionSnapshot } from "../contracts/session.js";
 import { ConversationTables } from "../infrastructure/session/read.js";
 

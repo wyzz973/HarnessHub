@@ -11,7 +11,7 @@ import { deliveryView } from "../../src/web/relay-routes.js";
 /*
  * A conversation in its old whole shape (`SessionSnapshot`), for the tests that hold what a reader says to what the old store said, and for the ones that look at a Run's whole
  * record. Nothing in `src/` reads a conversation so any more (tools/check-boundaries.mjs, B11 and B12): the production readers read pages of rows and one Turn at a time. The shape is made by the
- * store's own adapter over the rows (`SqliteConversationStore.snapshot`, kept for this and for the migration's checks), so a test that reads it sees the rows through the conversion that
+ * store's own adapter over the rows (`FileConversationStore.snapshot`, kept for this and for the migration's checks), so a test that reads it sees the rows through the conversion that
  * is held to be the inverse of the one that wrote them. The adapters below are the ones the readers had for a caller that held the snapshot already; they stand here as the oracle the
  * readers over rows are compared with, and as a way to give a reader a conversation made by hand.
  */

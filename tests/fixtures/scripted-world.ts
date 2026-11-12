@@ -6,7 +6,7 @@ import { nativeConversationId, singleText, type BackendResult, type CleanupEvide
 import { SessionError, type HarnessSelection, type PreparedSessionBinding, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionId, type SessionRuntimeOptions } from "../../src/contracts/session.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { LocalContentStore } from "../../src/infrastructure/session/content-store.js";
-import type { SqliteConversationStore, SqliteConversationStoreOptions } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore, FileConversationStoreOptions } from "../../src/infrastructure/session/file-store.js";
 import { appStore } from "./runtime-store.js";
 import { temporary } from "./store-helpers.js";
 
@@ -53,7 +53,7 @@ export interface ScriptedWorld {
   readonly configuration: SessionConfiguration;
   readonly root: string;
   readonly data: string;
-  readonly store: SqliteConversationStore;
+  readonly store: FileConversationStore;
   readonly content: LocalContentStore;
   readonly app: SessionRuntime;
   readonly id: SessionId;
@@ -61,13 +61,13 @@ export interface ScriptedWorld {
   send(text: string): Promise<void>;
 }
 export async function scriptedWorld(t: TestContext, script: Script, options: {
-  readonly wrap?: (store: SqliteConversationStore) => SqliteConversationStore; readonly runtime?: Partial<SessionRuntimeOptions>;
+  readonly wrap?: (store: FileConversationStore) => FileConversationStore; readonly runtime?: Partial<SessionRuntimeOptions>;
   /** Runs on the data directory before the store opens it: a test that wants a data root as an earlier build, or a broken disk, left it makes it here. */
   readonly before?: (data: string) => void;
   /** More of what the store is opened with. */
-  readonly store?: SqliteConversationStoreOptions;
+  readonly store?: FileConversationStoreOptions;
 } = {}): Promise<ScriptedWorld> {
-  const open: { app?: SessionRuntime; store?: SqliteConversationStore } = {};
+  const open: { app?: SessionRuntime; store?: FileConversationStore } = {};
   t.after(async () => { await open.app?.close(); open.store?.close(); });
   const root = temporary(t), workspace = join(root, "workspace"), data = join(root, "data");
   mkdirSync(workspace);

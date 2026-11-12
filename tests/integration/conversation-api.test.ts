@@ -11,7 +11,7 @@ import { PAGE, type Conversation } from "../../src/contracts/conversation.js";
 import { sessionId, type SessionId } from "../../src/contracts/session.js";
 import type { ConversationChangesView, ItemTextView, RunItemsPageView, SessionListView, SessionViewV14, TurnPageView, WireItem } from "../../src/contracts/web.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
 import { applyCommit, openWindow, viewOf, type WindowState } from "../../web/src/lib/protocol/window.js";
 import { decodeSessionStreamFrameV14, decodeSessionViewV14 } from "../../web/src/lib/protocol/wire.js";
@@ -35,7 +35,7 @@ const sha = (data: Uint8Array): string => createHash("sha256").update(data).dige
 
 interface Seeded { readonly turns: SessionId; readonly reply: SessionId; readonly edits: SessionId; readonly queued: SessionId; readonly gone: SessionId; readonly many: readonly SessionId[]; readonly reply20: Buffer }
 /** The conversations of the tests, written through the store before the Gateway opens the data root. */
-function seed(store: SqliteConversationStore, configuration: Conversation["configuration"]): Seeded {
+function seed(store: FileConversationStore, configuration: Conversation["configuration"]): Seeded {
   // The conversations carry the configuration the Gateway was opened with, so that a Turn sent to one is run by the Harness that configuration names.
   const home: Home = { selection, configuration }, make = (name: string): SessionId => makeConversation(store, home, name);
   const turns = seedTurns(store, home, "turns", 2000), { id: reply, reply: reply20 } = seedReply(store, home, "reply");

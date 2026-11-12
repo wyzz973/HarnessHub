@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { EventDraft } from "../../src/contracts/session.js";
 import { SessionError, type SessionId } from "../../src/contracts/session.js";
-import type { SqliteConversationStore } from "../../src/infrastructure/session/conversation-store.js";
+import type { FileConversationStore } from "../../src/infrastructure/session/file-store.js";
 import { scriptedWorld, type ScriptedWorld } from "../fixtures/scripted-world.js";
 import { oldShape } from "../fixtures/old-shape.js";
 
@@ -18,11 +18,11 @@ class Gate<T = void> {
 }
 interface Refusals { refused: number; events: string[] }
 /** The store, refusing with a rule of the rows (never a storage failure) the first `times` commits whose events `match`, and the first `reads` readings (`get`) of the conversation `unreadable`. */
-function refusing(counter: Refusals, match: (events: readonly EventDraft[]) => boolean, times = 1, unreadable: { id: () => SessionId | null; reads: number } = { id: () => null, reads: 0 }): (store: SqliteConversationStore) => SqliteConversationStore {
+function refusing(counter: Refusals, match: (events: readonly EventDraft[]) => boolean, times = 1, unreadable: { id: () => SessionId | null; reads: number } = { id: () => null, reads: 0 }): (store: FileConversationStore) => FileConversationStore {
   let unread = unreadable.reads;
   return store => new Proxy(store, { get(target, property) {
     if (property === "transact") {
-      return (id: Parameters<SqliteConversationStore["transact"]>[0], version: number, mutate: Parameters<SqliteConversationStore["transact"]>[2]) => target.transact(id, version, current => {
+      return (id: Parameters<FileConversationStore["transact"]>[0], version: number, mutate: Parameters<FileConversationStore["transact"]>[2]) => target.transact(id, version, current => {
         const made = mutate(current);
         if (counter.refused < times && match(made.events)) {
           counter.refused++; counter.events.push(made.events.map(event => event.type).join(","));
