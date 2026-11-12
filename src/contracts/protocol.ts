@@ -38,11 +38,26 @@ export interface ItemBase {
   readonly nativeName?: string;
   /** The stored native detail (input, output, diff) a client fetches when the item is opened. */
   readonly detail?: ContentRef;
+  /**
+   * Added by ADR-057 (optional, so no reader that does not know it changes). A transfer set it when the item's body (its text, a long list)
+   * is longer than the transfer carries and was left out: the client fetches the item whole. A stored item never has it.
+   */
+  readonly bodyOmitted?: true;
+  /** ADR-057: the size in bytes of the item's whole text, when the transfer carries none of it or a part. */
+  readonly textBytes?: number;
 }
 
-export interface UserMessageItem extends ItemBase { readonly type: "user_message"; readonly messageId: MessageId }
+export interface UserMessageItem extends ItemBase {
+  readonly type: "user_message"; readonly messageId: MessageId;
+  /** ADR-057: the message's text, carried by the item; absent where a client reads it by `messageId` from the conversation's messages (the form before the store kept items). */
+  readonly text?: string;
+}
 /** `commentary`: said on the way; `final`: the Turn's answer. The text is the message's. */
-export interface AssistantMessageItem extends ItemBase { readonly type: "assistant_message"; readonly messageId: MessageId; readonly phase: "commentary" | "final" }
+export interface AssistantMessageItem extends ItemBase {
+  readonly type: "assistant_message"; readonly messageId: MessageId; readonly phase: "commentary" | "final";
+  /** ADR-057: the segment's text, carried by the item (see `UserMessageItem.text`). */
+  readonly text?: string;
+}
 /** `truncated`: the text is the first part of a longer one (the Hub caps what one Turn carries here); the whole stays in the Run's own `thinking`. */
 export interface ReasoningItem extends ItemBase { readonly type: "reasoning"; readonly text: string; readonly durationMs?: number; readonly truncated?: true }
 
@@ -66,7 +81,7 @@ export interface McpToolItem extends ItemBase { readonly type: "mcp_tool"; reado
 export interface ToolItem extends ItemBase { readonly type: "tool"; readonly name: string }
 export interface SubagentItem extends ItemBase { readonly type: "subagent"; readonly title: string }
 
-export interface PlanStep { readonly text: string; readonly status: "pending" | "in_progress" | "completed" }
+export interface PlanStep { readonly text: string; readonly status: "pending" | "in_progress" | "completed"; /** ADR-057: the priority a Harness gave the step; the interface does not show it. */ readonly priority?: "high" | "medium" | "low" }
 export interface PlanItem extends ItemBase { readonly type: "plan"; readonly steps: readonly PlanStep[]; readonly explanation?: string }
 export interface PlanProposalItem extends ItemBase { readonly type: "plan_proposal"; readonly markdown: string }
 export interface RecapItem extends ItemBase { readonly type: "recap"; readonly summary: string; readonly ask?: string; readonly actions?: readonly string[] }
@@ -78,8 +93,14 @@ export interface ApprovalItem extends ItemBase {
   readonly type: "approval"; readonly subject: typeof APPROVAL_SUBJECTS[number]; readonly title: string;
   readonly options: readonly { readonly id: string; readonly role: ApprovalRole; readonly label: string }[];
   readonly decision?: { readonly role: ApprovalRole; readonly by: "user" | "policy" | "timeout" | "harness"; readonly at: number };
+  /** ADR-057: the id of the action item the approval is about, when the Harness names the call. */
+  readonly forItem?: string;
 }
-export interface QuestionItem extends ItemBase { readonly type: "question"; readonly title: string; readonly answer?: string }
+export interface QuestionItem extends ItemBase {
+  readonly type: "question"; readonly title: string; readonly answer?: string;
+  /** ADR-057: the answer is a secret (a key, a password): it is never stored, so `answer` is absent whatever was answered. */
+  readonly secret?: true;
+}
 
 export interface NoticeItem extends ItemBase { readonly type: "notice"; readonly severity: "info" | "warning"; readonly code?: string; readonly text: string; readonly more?: string }
 export const ERROR_CLASSES = ["auth", "quota", "rate_limit", "context_overflow", "network", "harness_crash", "permission", "invalid_request", "unknown"] as const;
@@ -153,5 +174,7 @@ export interface ProtocolTurn {
   readonly usage: TurnUsage;
   readonly startedAt?: number;
   readonly durationMs?: number;
+  /** ADR-057: the items are in the fixed order a Turn from before the store kept item order is drawn in, not in the order things happened. */
+  readonly legacyOrder?: true;
   readonly items: readonly ProtocolItem[];
 }
