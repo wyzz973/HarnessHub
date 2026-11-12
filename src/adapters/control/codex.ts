@@ -15,6 +15,7 @@ import { type NativeExtensions, type NativeSessionImport, type NativeSessionPage
 import { checkInputs, fileMentions } from "../../infrastructure/control/attachments.js";
 import { randomUUID } from "node:crypto";
 import type { RelayCapabilities, RelayPacketId } from "../../contracts/relay.js";
+import { levelOptions, type ChosenLevels } from "../../contracts/flavor.js";
 import { CODEX_SKILL_INPUT as SKILL_INPUT, CODEX_THREAD_COMMANDS as THREAD_COMMANDS, codexClassify, codexNativeClassify, codexThreadOperation as threadOperation, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { singleText, type TurnText } from "../../contracts/control.js";
 import { bodyWithoutFirstLine, boundedRequests, carriesPacket, clearedNotice, COMMAND_REFUSED, exceedsInput, hubCleared, INPUT_LIMIT_REFUSED, TITLE_DEADLINE_MS, usageRequest, measureBy } from "./relay-turn.js";
@@ -143,6 +144,7 @@ function inputText(value: unknown): string {
  */
 const COLLABORATION_MODE = "collaboration_mode";
 const COLLABORATION_MODES: NativeOption["values"] = [{ value: "default", name: "默认" }, { value: "plan", name: "计划" }];
+const COLLABORATION_OPTION: NativeOption = { id: COLLABORATION_MODE, name: "协作模式", category: "mode", currentValue: "default", values: COLLABORATION_MODES };
 /** The app-server version its user agent states (`<originator>/<x.y.z> (…)`), kept as evidence only; null when it is not stated that way. */
 function userAgentVersion(userAgent: string): string | null {
   return /^[^/\s]+\/(\d{1,6}\.\d{1,6}\.\d{1,6})(?=$|[\s(;+-])/u.exec(userAgent)?.[1] ?? null;
@@ -292,8 +294,10 @@ export class CodexControl implements HarnessControl {
   private setupMs(): number { return Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs ?? SESSION_SETUP_MS)); }
   private async initializeOnce(): Promise<ProtocolObservation> {
     try {
-      // Experimental fields are accepted only when declared here, for this connection.
-      this.experimental = this.options.selectedOptions?.[COLLABORATION_MODE] !== undefined;
+      // Experimental fields are accepted only when declared here, for this connection: a mode chosen, or a level whose values name one (plan,
+      // or the neutral default a restored thread gets, which undoes an earlier plan), read from the options Codex always offers.
+      this.experimental = this.options.selectedOptions?.[COLLABORATION_MODE] !== undefined
+        || levelOptions(this.options.flavor, [COLLABORATION_OPTION, ...permissionOptions({})], undefined, this.levels(), true)?.[COLLABORATION_MODE] !== undefined;
       const response = object(await this.rpc.request("initialize", {
         clientInfo: { name: "harnessgateway", title: "HarnessGateway", version: "0.0.0" },
         capabilities: { experimentalApi: this.experimental, requestAttestation: false },
@@ -354,10 +358,14 @@ export class CodexControl implements HarnessControl {
     }
     const defaultModel = configured.model == null ? null : string(configured.model, "configured model", 1024);
     if (defaultModel !== null && !seen.has(defaultModel)) models.unshift({ id: defaultModel, name: defaultModel });
-    const options = [{ id: COLLABORATION_MODE, name: "协作模式", category: "mode", currentValue: "default", values: COLLABORATION_MODES }, ...permissionOptions(configured)];
+    const options = [COLLABORATION_OPTION, ...permissionOptions(configured)];
     return { models, defaultModel, options };
   }
   async checkpoint(): Promise<string | null> { return this.conversation; }
+  /** The levels this connection runs at (ControlOptions), which open() resolves against the thread's model. */
+  private levels(): ChosenLevels {
+    return { ...(this.options.permission === undefined ? {} : { permission: this.options.permission }), ...(this.options.effort === undefined ? {} : { effort: this.options.effort }) };
+  }
   private assertOwned(id: NativeConversationId): void {
     this.assertInitialized();
     if (!this.conversation || id !== this.conversation || this.opening) throw new ControlError("IDENTITY_MISMATCH", "thread is not owned by this connection");
@@ -429,11 +437,14 @@ export class CodexControl implements HarnessControl {
     try {
       // What the options of an earlier thread of this connection chose (after a clear) is not this thread's.
       this.effort = undefined; this.collaboration = null; this.confirmedMode = null;
-      const overrides: Record<string, string> = {};
+      const overrides: Record<string, string> = {}, levels = this.levels();
       let selected: NativeModelCatalog["models"][number] | undefined;
-      if (model !== undefined || Object.keys(native ?? {}).length) {
+      if (model !== undefined || Object.keys(native ?? {}).length || levels.permission !== undefined || levels.effort !== undefined) {
         const catalog = await this.nativeCatalog(); selected = catalog.models.find(row => row.id === (model ?? catalog.defaultModel));
         if (!selected) throw new ControlError("MODEL_UNAVAILABLE", "selected model is not in this Harness native catalog");
+        // The levels as this thread's model makes them (contracts/flavor.ts levelOptions): the thread settings and mode of the permission
+        // level, the model's own reasoning effort for the effort level, over the selection's own values.
+        native = levelOptions(this.options.flavor, [...catalog.options, ...(selected.options ?? [])], native, levels, checkpoint !== undefined);
         for (const [id, value] of Object.entries(native ?? {})) {
           if (id === COLLABORATION_MODE) {
             if (!catalog.options?.find(option => option.id === id)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "Codex has no such collaboration mode");
@@ -456,14 +467,20 @@ export class CodexControl implements HarnessControl {
         // Codex that refuses the list (-32601 when it has none) has no collaboration mode, which is said before any thread opens.
         let listed: unknown;
         try { listed = await this.rpc.request("collaborationMode/list", {}); }
-        catch (error) { throw error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null ? collaborationUnavailable(error) : error; }
-        const presets = object(listed, "collaboration modes");
-        if (!Array.isArray(presets.data)) throw new ControlError("INVALID_PROTOCOL", "invalid collaboration modes");
-        const preset = presets.data.map(value => object(value, "collaboration mode")).find(row => row.mode === mode);
-        const presetModel = typeof preset?.model === "string" && preset.model ? preset.model : undefined, presetEffort = typeof preset?.reasoning_effort === "string" ? preset.reasoning_effort : undefined;
-        const chosen = model ?? presetModel ?? selected?.id;
-        if (chosen === undefined) throw new ControlError("MODEL_UNAVAILABLE", "no model is configured for the collaboration mode");
-        this.collaboration = { mode, model: chosen, effort: this.effort ?? presetEffort ?? selected?.options?.find(option => option.id === "reasoning_effort")?.currentValue ?? null };
+        catch (error) {
+          // A Codex without collaboration modes has no plan to undo: the default a level asks for is what it runs anyway.
+          if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null && mode === "default" && this.options.selectedOptions?.[COLLABORATION_MODE] === undefined) listed = null;
+          else throw error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null ? collaborationUnavailable(error) : error;
+        }
+        if (listed !== null) {
+          const presets = object(listed, "collaboration modes");
+          if (!Array.isArray(presets.data)) throw new ControlError("INVALID_PROTOCOL", "invalid collaboration modes");
+          const preset = presets.data.map(value => object(value, "collaboration mode")).find(row => row.mode === mode);
+          const presetModel = typeof preset?.model === "string" && preset.model ? preset.model : undefined, presetEffort = typeof preset?.reasoning_effort === "string" ? preset.reasoning_effort : undefined;
+          const chosen = model ?? presetModel ?? selected?.id;
+          if (chosen === undefined) throw new ControlError("MODEL_UNAVAILABLE", "no model is configured for the collaboration mode");
+          this.collaboration = { mode, model: chosen, effort: this.effort ?? presetEffort ?? selected?.options?.find(option => option.id === "reasoning_effort")?.currentValue ?? null };
+        }
       }
       const instructions = await this.threadEntry(cwd);
       if (checkpoint !== undefined) this.conversation = nativeConversationId(checkpoint);

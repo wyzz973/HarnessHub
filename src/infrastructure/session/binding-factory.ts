@@ -32,7 +32,7 @@ const NATIVE_IMPORT_MS = 10 * 60_000;
  */
 const NATIVE_STARTUP_MS = 5 * 60_000;
 import type { NativeInstallationLocks, NativeUsageLease } from "../management/native-lock.js";
-import { nativeOnly, selectedPermission } from "../../contracts/flavor.js";
+import { nativeOnly, selectedLevels } from "../../contracts/flavor.js";
 
 export interface ConfigurationInput {
   readonly workspace: string;
@@ -294,7 +294,8 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       const options = { cwd: configuration.workspace, env: environment, requestTimeoutMs: 10000, startupTimeoutMs: NATIVE_STARTUP_MS,
         maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024, closeGraceMs: this.budgets.closeGraceMs,
         ...(nativeOnly(selection.nativeOptions) === undefined ? {} : { selectedOptions: nativeOnly(selection.nativeOptions)! }),
-        ...(selectedPermission(selection.nativeOptions) === undefined ? {} : { permission: selectedPermission(selection.nativeOptions)! }) };
+        // The levels by the Hub's keys: the Driver carries them out by the Harness's declaration (environment at start, native values at open).
+        ...selectedLevels(selection.nativeOptions) };
       this.assertOwner(); lease.assertOwned();
       control = await createNativeControl(selection.harnessId, launch, options);
       if (selection.provider !== undefined && this.providers) control = new RedactedHarnessControl(control, text => this.providers!.redact(text), () => this.providers!.createTextRedactor());

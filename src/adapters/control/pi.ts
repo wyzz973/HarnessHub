@@ -6,6 +6,7 @@ import { classifyRemoteFailure, ControlError, errorFrom, JsonRpcProcess, object,
 import { MAX_CONTENT_BYTES, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
 import { singleText, type TurnText } from "../../contracts/control.js";
+import { levelOptions } from "../../contracts/flavor.js";
 
 function piCodec(): RpcWireCodec {
  const commands = new Map<string, string>();
@@ -187,6 +188,8 @@ export class PiControl implements HarnessControl {
       if (selected !== undefined && this.catalog.defaultModel !== selected) throw new ControlError("MODEL_MISMATCH", "native Pi did not apply the requested model");
       if (restored !== undefined && (this.state.sessionId !== restored.id || this.state.sessionFile !== restored.path)) throw new ControlError("IDENTITY_MISMATCH", "native Pi recovery did not restore the owned session file");
     }
+    // The effort level as the running model's own thinking level (contracts/flavor.ts levelOptions); Pi has no permission setting.
+    if (this.options.effort !== undefined) native = levelOptions(this.options.flavor, this.catalog.models.find(row => row.id === (selected ?? this.catalog.defaultModel))?.options ?? [], native, { effort: this.options.effort });
     for (const [key, value] of Object.entries(native ?? {})) {
       if (key !== "thinking_level" || !this.catalog.models.find(row => row.id === (selected ?? this.catalog.defaultModel))?.options?.find(option => option.id === key)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "thinking level unavailable for native Pi model");
       await this.rpc.request("set_thinking_level", { level: value });

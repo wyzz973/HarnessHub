@@ -48,7 +48,7 @@ const REMOTE_CONTROL = "remote-control";
 const REMOTE_CONTROL_REFUSED: BackendResult = { status: "failed", reason: "command_unavailable", error: { code: "NATIVE_COMMAND_UNAVAILABLE",
   message: "/remote-control 没有发给 Claude：HarnessHub 默认在每个回合结束时关闭 Claude 的适配器进程，Remote Control 会随之断开；保持原生进程时，从 claude.ai 发来的回合也不属于这段对话。" }, input: "not_recorded" };
 /** Stop reasons claude-agent-acp gives only once Claude Code wrote the prompt to its transcript, which it does before calling the model. */
-const RECORDED_STOPS: ReadonlySet<string> = new Set(["end_turn", "max_tokens", "max_turn_requests"]);
+const RECORDED_STOPS: ReadonlySet<string> = new Set(["end_turn", "max_tokens", "max_turn_requests", "plan_kept"]);
 /**
  * claude-agent-acp's `errorKind` for a turn whose model call failed (0.99.1 `errorKindData(lastAssistantError)`, the Agent
  * SDK's SDKAssistantMessageError): the prompt was in the transcript before that call. authentication_failed and
@@ -146,6 +146,12 @@ export class ClaudeControl extends AcpControl {
     return super.readsAsContent(prompt, attachments);
   }
   protected override promptRecorded(reason: string): boolean { return RECORDED_STOPS.has(reason); }
+  /**
+   * claude-agent-acp asks to leave plan mode with ExitPlanMode's request (a `switch_mode` call titled "Approve Plan", or "Ready to code?" in
+   * permissions/presentation.js of 0.99.1); its "No, keep planning" ends the turn cancelled or refused, which here is the plan delivered (the
+   * "plan" level refuses it for the user).
+   */
+  protected override exitsPlan(tool: Record<string, unknown>): boolean { return super.exitsPlan(tool) || tool.title === "Approve Plan" || tool.title === "Ready to code?"; }
   protected override refusedPrompt(error: ControlError): "recorded" | "not_recorded" | null {
     if (error.remoteCode === SESSION_NOT_FOUND || error.remoteCode === -32603 && error.remoteMessage === SESSION_ENDED && error.remoteFields === undefined) return "not_recorded";
     return error.remoteCode === -32603 && MODEL_FAILURES.has(error.remoteFields?.errorKind ?? "") ? "recorded" : null;

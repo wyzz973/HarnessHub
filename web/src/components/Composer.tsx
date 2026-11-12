@@ -18,7 +18,7 @@ import { NativeSessionsPanel } from "./NativeSessions.js";
 import { SearchPicker, type PickerOption } from "./SearchPicker.js";
 import { EFFORT_WORDS, PERMISSION_MEANINGS, PERMISSION_WORDS } from "../../../src/contracts/levels.js";
 import { EFFORT_LEVELS, PERMISSION_LEVELS, type EffortLevel, type PermissionLevel } from "../../../src/contracts/protocol.js";
-import { carryLevels, levelState, withEffort, withPermission } from "../lib/levels.js";
+import { carryLevels, levelState, withEffort, withNativeOption, withPermission } from "../lib/levels.js";
 
 /** An approval that waits in the composer's place (ADR-054 §5), with what the dock needs to decide it. */
 export interface DockedApproval {
@@ -286,11 +286,13 @@ export function Composer(props: ComposerProps) {
   const modeInChip = mode !== undefined && thought === undefined && !level.ids.has(mode.id);
   // The program's own approval rule (Codex's approval policy) sits at the bottom left; its sandbox and the rest stay in the settings.
   const permission = nativeOptions.find(option => option.category === "permission");
-  const changeOption = (id: string, value: string) => { const choices = { ...draft.nativeOptions }; if (value) choices[id] = value; else delete choices[id]; props.onDraft({ ...draft, nativeOptions: Object.fromEntries(Object.entries(choices).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) }); };
+  // A native option a level sets, changed here, leaves that level (lib/levels.ts withNativeOption): the Harness then runs the value chosen.
+  const changeOption = (id: string, value: string) => { props.onDraft({ ...draft, nativeOptions: withNativeOption(level, draft.nativeOptions, id, value) }); };
   const valueName = (option: typeof nativeOptions[number], value: string) => (option.category === "thought_level" ? THINKING_NAMES[value] : undefined) ?? option.values.find(row => row.value === value)?.name ?? value;
   const optionChoices = (option: typeof nativeOptions[number], short: boolean): PickerOption[] => [{ value: "", label: `${valueName(option, option.currentValue)} · 本机默认`, ...(short ? { short: valueName(option, option.currentValue) } : {}), group: "跟随 Harness" },
     ...option.values.map(value => ({ value: value.value, label: option.category === "thought_level" ? THINKING_NAMES[value.value] ?? value.name : value.name, description: lastUsed(value.value, recalled?.nativeOptions?.[option.id]) ?? value.value, group: harness?.name ?? "原生选项" }))];
-  const optionPicker = (option: typeof nativeOptions[number], label: string, extra?: { readonly prefix?: string; readonly className?: string; readonly open?: boolean }) => <SearchPicker label={label} value={draft.nativeOptions[option.id] ?? ""} placeholder="跟随本机配置" {...extra}
+  // An option a chosen level sets shows the value the level gives it, which is what the Harness will run.
+  const optionPicker = (option: typeof nativeOptions[number], label: string, extra?: { readonly prefix?: string; readonly className?: string; readonly open?: boolean }) => <SearchPicker label={label} value={draft.nativeOptions[option.id] ?? level.applied[option.id] ?? ""} placeholder="跟随本机配置" {...extra}
     options={optionChoices(option, extra?.prefix !== undefined)} disabled={disabled || props.nativeModelsLoading} onChange={value => changeOption(option.id, value)}/>;
   // The native session's own values, as it reported them after its last Turn (ADR-028).
   const nativeState = provider ? undefined : session?.nativeStates?.find(state => state.harnessId === draft.harnessId && state.controlId === draft.controlId);
@@ -328,7 +330,8 @@ export function Composer(props: ComposerProps) {
     : session?.retention?.upgraded ? `升级 ${harnesses.find(row => row.id === session.retention!.upgraded!.harnessId)?.name ?? session.retention.upgraded.harnessId} 前，HarnessHub 关闭了这个对话保留的后台进程。下一条消息会用新版本重新启动原程序，并恢复原生会话。`
     // Processes the closed program had moved out of its own group are left alone; the conversation hears of them once.
     : session?.retention?.outside ? `原程序的后台任务可能仍在运行（${session.retention.outside.count} 个进程）：它们已离开原程序的进程组，HarnessHub 没有结束它们。`
-    : !draft.providerId && draft.nativeOptions.collaboration_mode === undefined && nativeState?.observed?.options.collaboration_mode === "plan" ? `这个 ${harness?.name ?? "Harness"} 线程仍为计划模式：跟随本机配置不会改回，把协作模式改为“默认”即可退出。`
+    // Only for the Harness's own setting: a level sets the mode itself (plan, or back to the default when a restored thread opens).
+    : !draft.providerId && level.permission === null && draft.nativeOptions.collaboration_mode === undefined && nativeState?.observed?.options.collaboration_mode === "plan" ? `这个 ${harness?.name ?? "Harness"} 线程仍为计划模式：跟随本机配置不会改回，把协作模式改为“默认”即可退出。`
     : active && props.queued === null && props.messageDraft.trim() ? "回复进行中：按 Enter 先暂存这条消息，本轮正常结束后自动发出。"
     : problem;
   // The pending or failed switch speaks for itself in its own strip, and the blocked conversation in its notice; before any

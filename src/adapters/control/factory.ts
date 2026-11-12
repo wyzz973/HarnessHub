@@ -51,6 +51,8 @@ export function levelEnvironment(harnessId: string, launch: ControlLaunch, optio
  * the Hub's tools and session instructions (ControlOptions.entry) from the adapter declaration, never from the Harness's name.
  */
 export async function createNativeControl(harnessId: string, launch: ControlLaunch, options: ControlOptions): Promise<HarnessControl> {
+  // The Driver resolves the levels by this Harness's declaration when it opens a session (contracts/flavor.ts levelOptions).
+  options = { ...options, flavor: options.flavor ?? flavorOf(harnessId) };
   launch = levelEnvironment(harnessId, await bindNativeDependencies(harnessId, launch), options);
   options = { ...options, entry: options.entry ?? sessionEntryOf(flavorOf(harnessId)) };
   if (launch.protocol === "pi-rpc") return new PiControl(launch, options);

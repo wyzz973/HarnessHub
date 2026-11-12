@@ -11,6 +11,7 @@ import { type NativeOutput, type NativeSessionImport, type NativeSessionPage, ty
 import { MAX_CONTENT_BYTES, textual, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
 import type { RelayCapabilities } from "../../contracts/relay.js";
+import { levelOptions } from "../../contracts/flavor.js";
 import { dshClassify, nativeReading, relayDeclaration, relayEntries } from "./relay-classify.js";
 import { type TurnText } from "../../contracts/control.js";
 import { bodyWithoutFirstLine, clearedNotice, COMMAND_REFUSED, exceedsInput, hubCleared, INPUT_LIMIT_REFUSED, placeTurn, type RelayTurn, measureBy } from "./relay-turn.js";
@@ -28,6 +29,8 @@ interface ActivePrompt {
   readonly tools: Map<string, { title: string; status: string }>;
   readonly compaction: Map<string, string>;
   stopping: boolean;
+  /** A request to leave the Harness's own plan mode was refused in this prompt (exitsPlan): the turn's end is its plan, kept. */
+  keptPlan?: boolean;
   settled: boolean;
   stop: Promise<StopRequestReceipt> | null;
 }
@@ -180,7 +183,9 @@ export class AcpControl implements HarnessControl {
    * `reply` maps the user's choice for a form question (otherwise the option is selected), and `dispose` ends what the
    * interaction holds (a deadline timer) when the agent withdraws its request and nothing is answered.
    */
-  private readonly permissions = new Map<string, { readonly request: string; readonly options: readonly string[]; readonly resolve: (value: unknown) => void; readonly reply?: (option: string, input?: string) => unknown; readonly dispose?: () => void }>();
+  private readonly permissions = new Map<string, { readonly request: string; readonly options: readonly string[]; readonly resolve: (value: unknown) => void; readonly reply?: (option: string, input?: string) => unknown; readonly dispose?: () => void;
+    /** For a request to leave the Harness's plan mode (exitsPlan): its refusing options, which keep the plan. */
+    readonly exitsPlan?: readonly string[] }>();
   private configuredDefault: string | null = null;
   /** The workspace the conversation was opened in. */
   private openedCwd: string | null = null;
@@ -622,6 +627,13 @@ export class AcpControl implements HarnessControl {
    * only lets go of its reference: nothing is sent to the gateway for a clear, not even a close.
    */
   protected get closesAbandoned(): boolean { return true; }
+  /**
+   * The session's options the levels are resolved against when it opens (levelOptions): the catalog's, unless the Driver knows that some of
+   * their values do not hold for this session (OpenClaw's thinking levels the Gateway refuses for the agent's model).
+   */
+  protected levelCatalog(options: readonly NativeOption[]): readonly NativeOption[] { return options; }
+  /** Whether a permission request's tool call asks to leave the Harness's mode (ACP's `switch_mode` kind): refusing it keeps the plan. */
+  protected exitsPlan(tool: Record<string, unknown>): boolean { return tool.kind === "switch_mode"; }
   /** The Harness's name as the Turn's notices say it. */
   protected get product(): string { return this.relayCapabilities === dshRelayCapabilities ? "DeepSeek Harness" : "原程序"; }
   /**
@@ -692,6 +704,10 @@ export class AcpControl implements HarnessControl {
           this.catalog = { ...this.catalog, defaultModel: model };
         }
       }
+      // The levels as this session's catalog makes them, for the model it now runs (contracts/flavor.ts levelOptions): the declaration's values
+      // over the selection's own, so a selection that names only a level gets that level's native values, and a model's own thinking value.
+      options = levelOptions(this.options.flavor, this.levelCatalog(this.catalog.options ?? []), options,
+        { ...(this.options.permission === undefined ? {} : { permission: this.options.permission }), ...(this.options.effort === undefined ? {} : { effort: this.options.effort }) }, checkpoint !== undefined);
       for (const [key, value] of Object.entries(options ?? {})) {
         const setting = this.catalog.options?.find(option => option.id === key);
         if (!setting || !setting.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "native option unavailable for selected Harness");
@@ -789,7 +805,9 @@ export class AcpControl implements HarnessControl {
         let status: BackendResult["status"];
         switch (reason) {
           case "end_turn": status = "completed"; break;
-          case "cancelled": status = "cancelled"; break;
+          // A Harness whose refusal to leave its plan mode ends the turn cancelled (Claude Code's "No, keep planning") delivered its
+          // plan: the turn completed, unless the Hub asked it to stop.
+          case "cancelled": if (active.keptPlan === true && !active.stopping) return { status: "completed", reason: "plan_kept" } as BackendResult; status = "cancelled"; break;
           case "max_tokens": case "max_turn_requests": case "refusal": status = "failed"; break;
           default: throw new ControlError("INVALID_PROTOCOL", "unknown ACP stop reason");
         }
@@ -805,6 +823,8 @@ export class AcpControl implements HarnessControl {
         throw error;
       }).catch((error: unknown): BackendResult => {
         if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) {
+          // The refusal to leave the plan mode can end the prompt with an error instead (claude-agent-acp 0.99.1, seen 2026-11-13): the plan stands.
+          if (active.keptPlan === true && !active.stopping) return { status: "completed", reason: "plan_kept", ...(content ? { input: "recorded" as const } : {}) };
           const named = this.refusal("session/prompt", error, active.event), stands = this.refusedPrompt(error);
           // Where the driver cannot place the refusal before or after insertion, only the agent's answer proves the prompt recorded.
           return { status: "failed", reason: "request_rejected", ...(named !== null ? { error: { code: named.code, message: named.message } } : error.remoteFailure ? { error: error.remoteFailure } : {}),
@@ -831,6 +851,7 @@ export class AcpControl implements HarnessControl {
   enablePermissions(): void { this.interactivePermissions = true; }
   async decidePermission(id: string, option: string, input?: string): Promise<void> {
     const pending = this.permissions.get(id); if (!pending || !pending.options.includes(option)) throw new ControlError("PERMISSION_UNAVAILABLE", "permission or actual option unavailable");
+    if (pending.exitsPlan !== undefined && pending.exitsPlan.includes(option) && this.active !== null) this.active.keptPlan = true;
     this.permissions.delete(id); pending.resolve(pending.reply ? pending.reply(option, input) : { outcome: { outcome: "selected", optionId: option } });
   }
   private cancelPermissions(): void { for (const pending of this.permissions.values()) pending.resolve(pending.reply ? pending.reply("cancel") : { outcome: { outcome: "cancelled" } }); this.permissions.clear(); }
@@ -1053,7 +1074,8 @@ export class AcpControl implements HarnessControl {
       return new Promise<unknown>(resolve => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const settle = (value: unknown): void => { clearTimeout(timer); resolve(value); };
-        this.permissions.set(id, { request: id, options: options.map(option => option.id), resolve: settle, dispose: () => clearTimeout(timer) });
+        const keeps = this.exitsPlan(tool) ? options.filter(option => option.kind.startsWith("reject")).map(option => option.id) : undefined;
+        this.permissions.set(id, { request: id, options: options.map(option => option.id), resolve: settle, dispose: () => clearTimeout(timer), ...(keeps === undefined ? {} : { exitsPlan: keeps }) });
         // The request names the call it is about (the id the program gave it in its `tool_call`): the Hub records a refusal on that call, whatever the program then reports of it.
         active.event({ type: "permission_requested", id, forCall: callId, ...(typeof tool.kind === "string" && tool.kind.length <= 64 ? { toolKind: tool.kind } : {}), title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", ...(detail ? { detail } : {}), options: options.map(({ id, name }) => ({ id, name })),
           ...requestExpiry(deadline === null ? null : Math.max(0, deadline - APPROVAL_DEADLINE_MARGIN_MS)) });

@@ -48,7 +48,8 @@
     "test:real:native-question": "pnpm build && node --test dist/tests/real/native-question.real.js",
     "test:real:native-thinking": "pnpm build && node --test dist/tests/real/native-thinking.real.js",
     "test:real:native-options": "pnpm build && node --test dist/tests/real/native-options.real.js",
-    "test:real:native-items": "pnpm build && node --test dist/tests/real/native-items.real.js"
+    "test:real:native-items": "pnpm build && node --test dist/tests/real/native-items.real.js",
+    "test:real:levels": "pnpm build && node --test dist/tests/real/levels.real.js"
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",

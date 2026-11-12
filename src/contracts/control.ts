@@ -3,7 +3,7 @@ import type { ResolvedCommand } from "../contexts/catalog/domain/catalog.js";
 import type { ContentKind, ContentRef, ControlAttachment } from "./content.js";
 import type { RelayCapabilities, RelayPacketId, TurnText } from "./relay.js";
 import type { HarnessFlavor, SessionEntry } from "./flavor.js";
-import type { PermissionLevel } from "./protocol.js";
+import type { EffortLevel, PermissionLevel } from "./protocol.js";
 export type { TurnText };
 
 declare const nativeConversationBrand: unique symbol;
@@ -56,8 +56,9 @@ export interface ControlOptions {
   readonly selectedOptions?: NativeOptions;
   /**
    * The Hub's permission level the connection's conversation runs at (contracts/flavor.ts), known before the program is started: the
-   * adapter carries out what its declaration says for it at start (environment) and at open (session parameters). Absent: no level was
-   * chosen, and the Harness's own setting stands. A level change starts a new process (the selection differs), so this is fixed per process.
+   * adapter carries out what its declaration says for it at start (environment), at open (session parameters, and the native values the
+   * Driver resolves against the session's catalog). Absent: no level was chosen, and the Harness's own setting stands. A level change starts
+   * a new process (the selection differs), so this is fixed per process.
    */
   readonly permission?: PermissionLevel;
   /**
@@ -66,6 +67,16 @@ export interface ControlOptions {
    * neither, and the Harness has only what its own configuration holds.
    */
   readonly entry?: SessionEntry;
+  /**
+   * The Hub's effort level the conversation runs at: the adapter makes it the running model's own thinking value once the session's catalog
+   * is known (the nearest it has where it lacks the level). Absent: the selection's own native value, else the Harness's own setting.
+   */
+  readonly effort?: EffortLevel;
+  /**
+   * The Harness's adapter declaration (src/adapters/flavors/<harnessId>.ts), set by createNativeControl: what the Driver resolves the levels by
+   * when it opens a session (contracts/flavor.ts levelOptions). The levels are the declaration's word over the selection's native values.
+   */
+  readonly flavor?: HarnessFlavor;
 }
 export interface ProtocolObservation {
   readonly protocol: ControlProtocol;

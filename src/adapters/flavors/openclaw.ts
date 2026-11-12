@@ -28,5 +28,5 @@ export const openclawFlavor: HarnessFlavor = {
   nativePlan: false,
   // docs/cli/acp.md: the bridge rejects per-session `mcpServers` (dist/server-*.mjs assertSupportedSessionSetup); sessions.patch has no
   // tool or prompt field (SessionsPatchMutationProperties), and a prompt's `_meta` takes only prefixCwd, thinking, deliver and timeoutMs.
-  capabilities: { sessionMcp: "none", systemPrompt: "none", planTool: "none", resume: "native", attachments: "native", usage: "turn" },
+  capabilities: { sessionMcp: "none", systemPrompt: "none", planTool: "none", resume: "native", fork: "none", attachments: "native", usage: "turn" },
 };

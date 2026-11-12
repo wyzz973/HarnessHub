@@ -40,7 +40,8 @@ import {
 } from "./relay-coordinator.js";
 import { assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
 import { nativeOnly, selectedPermission } from "../../../contracts/flavor.js";
-import { policyDecision, withPlanNote } from "./permission-policy.js";
+import { policyDecision, withPlanNote, type PolicyDecision } from "./permission-policy.js";
+import type { PermissionLevel } from "../../../contracts/protocol.js";
 
 interface ActiveExecution {
   readonly sessionId: SessionId;
@@ -331,18 +332,22 @@ export class SessionRuntime {
   private async answerByPolicy(execution: ActiveExecution, permission: string, run: ConversationRun, value: Extract<ControlEvent, { type: "permission_requested" }>): Promise<void> {
     const pending = this.permissions.get(permission), level = selectedPermission(run.selection.nativeOptions), control = execution.binding?.control;
     if (pending === undefined || level === undefined || !control?.decidePermission) return;
-    const call = value.forCall === undefined || execution.turn === null ? undefined : itemsOf(execution.turn).find(item => item.itemId === "tool:" + value.forCall)?.fields;
-    const named = call as { readonly title?: unknown; readonly name?: unknown; readonly hub?: unknown } | undefined;
-    const decision = policyDecision(this.options.flavor?.(run.selection.harnessId), level, { title: value.title, options: value.options, question: value.kind === "question" || value.input !== undefined },
-      [value.toolKind, call?.native?.kind], call === undefined ? undefined : { type: call.type, ...(typeof named?.title === "string" ? { title: named.title } : {}), ...(typeof named?.name === "string" ? { name: named.name } : {}), ...(named?.hub === true ? { hub: true } : {}) });
+    const decision = this.policyFor(execution, run, value, level);
     if (decision.option === null || pending.option !== null) return;
     pending.option = decision.option; pending.command = "policy"; pending.request = { ...pending.request, decided: true };
     this.placed(execution, { kind: "decided", id: pending.nativeId, option: decision.option, by: "policy", level, at: this.options.now().getTime() },
-      [event("permission.decided", { permissionId: permission, runId: execution.runId, optionId: decision.option, by: "policy", level })], { always: true });
+      [event("permission.decided", { permissionId: permission, runId: execution.runId, optionId: decision.option, by: "policy", level, kind: decision.kind, answer: decision.answer })], { always: true });
     this.leaveWait(execution);
     await control.decidePermission(pending.nativeId, decision.option); this.owned(execution);
     this.permissions.delete(permission);
     this.commit(execution.sessionId, current => ({ next: current, events: [event("permission.submitted", { permissionId: permission, runId: execution.runId, optionId: decision.option!, backendAcknowledged: false })] }));
+  }
+  /** The Hub's policy decision for a request under `level` (permission-policy.ts), by the request and the call it is about as this Turn placed it; undefined level: what it is about, the user deciding. */
+  private policyFor(execution: ActiveExecution, run: ConversationRun, value: Extract<ControlEvent, { type: "permission_requested" }>, level: PermissionLevel | undefined): PolicyDecision {
+    const call = value.forCall === undefined || execution.turn === null ? undefined : itemsOf(execution.turn).find(item => item.itemId === "tool:" + value.forCall)?.fields;
+    const named = call as { readonly title?: unknown; readonly name?: unknown; readonly hub?: unknown } | undefined;
+    return policyDecision(this.options.flavor?.(run.selection.harnessId), level, { title: value.title, options: value.options, question: value.kind === "question" || value.input !== undefined },
+      [value.toolKind, call?.native?.kind], call === undefined ? undefined : { type: call.type, ...(typeof named?.title === "string" ? { title: named.title } : {}), ...(typeof named?.name === "string" ? { name: named.name } : {}), ...(named?.hub === true ? { hub: true } : {}) });
   }
   /** The switch target each conversation is validating, at most one per conversation. */
   private readonly switchBindings = new Map<SessionId, { readonly binding: PreparedSessionBinding; close: Promise<CleanupEvidence> | null }>();
@@ -1506,7 +1511,9 @@ export class SessionRuntime {
       const id = "permission-" + this.options.id(), request: PermissionRequest = { id, runId: run.id, title: value.title, options: value.options, ...(value.detail===undefined?{}:{detail:value.detail}),...(value.input===undefined?{}:{input:value.input}), decided: false, requestedAt, ...expires, ...(value.kind === "question" ? { kind: "question" as const } : {}) };
       this.permissions.set(id, { request, nativeId: value.id, execution, option: null, command: null, harnessId: run.selection.harnessId });
       // The request is an item that waits, written with the event that tells it.
-      try { this.placed(execution, { kind: "event", event: value, at }, [event("permission.requested", { permissionId: id, runId: run.id, title: value.title, options: value.options, ...expires })], { always: true }); } catch (error) { this.permissions.delete(id); throw error; }
+      // What the request is about, as the Hub's policy tells it (read, edit, execute, …), kept with it as evidence of what was asked.
+      const kind = this.policyFor(execution, run, value, undefined).kind;
+      try { this.placed(execution, { kind: "event", event: value, at }, [event("permission.requested", { permissionId: id, runId: run.id, title: value.title, options: value.options, kind, ...expires })], { always: true }); } catch (error) { this.permissions.delete(id); throw error; }
       // The Hub's policy for the conversation's permission level answers what it can (permission-policy.ts); the rest waits for the user.
       void this.answerByPolicy(execution, id, run, value).catch(() => {}); return;
     }

@@ -4,6 +4,7 @@ import { ControlError, NATIVE_FRAME_BYTES, classifyRemoteFailure } from "../../i
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
 import type { ContentKind, ControlAttachment } from "../../contracts/content.js";
 import { AcpControl } from "./acp.js";
+import { levelOptions } from "../../contracts/flavor.js";
 import { gatewayRefusalMessage, hermesGatewayPreflight, type HermesGatewayPreflight } from "./hermes-gateway.js";
 import { HERMES_COMMAND_WORD as COMMAND_WORD, HERMES_EFFECTS as EFFECTS, HERMES_LEADING_SPACE as LEADING_SPACE, HERMES_REGISTRY as REGISTRY,
   hermesClassify, hermesCommand as commandOf, hermesNativeClassify, hermesReadsSlash as readsSlash, relayDeclaration } from "./relay-classify.js";
@@ -232,9 +233,11 @@ export class HermesControl extends AcpControl {
   protected override get restoreByLoad(): boolean { return true; }
   /**
    * A session opened here starts from nothing; one restored from a checkpoint has counters this connection never saw. The reasoning effort
-   * (REASONING) is not an option of Hermes's ACP: it is taken out of the options and set after the session is opened, with `/reasoning`.
+   * (REASONING) is not an option of Hermes's ACP: it is taken out of the options and set after the session is opened, with `/reasoning`;
+   * the effort level is resolved against it here (the base resolves the permission level against Hermes's own modes).
    */
   override async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
+    if (this.hermesOptions.effort !== undefined) options = levelOptions(this.hermesOptions.flavor, [this.reasoningOption()], options, { effort: this.hermesOptions.effort });
     const { [REASONING.id]: effort, ...native } = options ?? {};
     const id = await super.open(cwd, model, options === undefined ? undefined : native, checkpoint);
     this.counters.set(id, checkpoint === undefined ? {} : null);

@@ -5,10 +5,14 @@ import { policyLevels } from "./common.js";
 // sets it back to default (the neutral), since a thread keeps the mode it was last given.
 const CODEX = (approval: string, sandbox: string, plan = false): readonly NativeWant[] => [
   ...(plan ? [{ ids: ["collaboration_mode"], category: "mode", value: "plan" }] : []), { ids: ["approval_policy"], category: "permission", value: approval }, { ids: ["sandbox"], category: "permission", value: sandbox }];
-/** Codex: its thread settings (approval policy and sandbox) and its collaboration mode carry every level; it asks about commands and patches. */
+/**
+ * Codex: its thread settings (approval policy and sandbox) and its collaboration mode carry every level; it asks about commands and patches.
+ * "auto_edit" is "untrusted" like "ask" (on-request runs a sandboxed command unasked): Codex asks about every patch and untrusted command,
+ * and the Hub's policy allows the patches, so only the commands come to the user.
+ */
 export const codexFlavor: HarnessFlavor = {
   harnessId: "codex",
-  permission: policyLevels({ read: false, edit: true, execute: true }, { plan: CODEX("on-request", "read-only", true), ask: CODEX("untrusted", "workspace-write"), auto_edit: CODEX("on-request", "workspace-write"),
+  permission: policyLevels({ read: false, edit: true, execute: true }, { plan: CODEX("on-request", "read-only", true), ask: CODEX("untrusted", "workspace-write"), auto_edit: CODEX("untrusted", "workspace-write"),
     auto: CODEX("never", "workspace-write"), full: CODEX("never", "danger-full-access") }),
   neutral: [{ ids: ["collaboration_mode"], category: "mode", value: "default" }],
   effort: { option: { ids: ["reasoning_effort"], category: "thought_level" }, values: {} },

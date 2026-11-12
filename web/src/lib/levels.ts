@@ -1,12 +1,14 @@
 import type { NativeOption, NativeOptions } from "../../../src/contracts/control.js";
-import { levelOf, nativeLevels, PERMISSION_KEY, selectedPermission, type HarnessFlavor, type NativeLevels } from "../../../src/contracts/flavor.js";
+import { EFFORT_KEY, levelOf, levelOptions, nativeLevels, nativeOnly, PERMISSION_KEY, selectedEffort, selectedLevels, selectedPermission, type HarnessFlavor, type NativeLevels } from "../../../src/contracts/flavor.js";
 import { closestLevel, EFFORT_WORDS, PERMISSION_WORDS } from "../../../src/contracts/levels.js";
-import { EFFORT_LEVELS, PERMISSION_LEVELS, type EffortLevel, type PermissionLevel } from "../../../src/contracts/protocol.js";
+import { PERMISSION_LEVELS, type EffortLevel, type PermissionLevel } from "../../../src/contracts/protocol.js";
 
 /**
  * The composer's permission and effort lists, drawn from what the Harness's adapter declares (its flavor, sent with its catalog) and nothing
- * else: the page knows no Harness by name. `current` is a level, "custom" when the draft names native values that are no level (changed in the
- * Harness's own options), or null when it names none (the Harness's own setting).
+ * else: the page knows no Harness by name. The draft names a level by the Hub's keys alone (hub_permission, hub_effort); the Gateway's adapter
+ * makes them the Harness's native values when the session opens (contracts/flavor.ts levelOptions), so the page never writes those values.
+ * `current` is the level in effect: the one the draft names (for effort, the nearest the model has when it lacks it), "custom" when the draft
+ * names native values the levels set without naming a level (changed in the Harness's own options), or null for the Harness's own setting.
  */
 export interface LevelState {
   readonly levels: NativeLevels;
@@ -14,41 +16,58 @@ export interface LevelState {
   readonly effort: EffortLevel | "custom" | null;
   /** The ids of the native options the levels set: changed through the levels, and shown whole only among the Harness's own options. */
   readonly ids: ReadonlySet<string>;
+  /** The native values the draft's levels come to on this catalog, as the adapter will apply them: what the Harness's own options show for them. */
+  readonly applied: NativeOptions;
 }
-const withoutKey = (values: NativeOptions): NativeOptions => Object.fromEntries(Object.entries(values).filter(([id]) => id !== PERMISSION_KEY));
+const sorted = (values: Record<string, string>): NativeOptions => Object.fromEntries(Object.entries(values).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+function ids(levels: NativeLevels): { readonly permission: ReadonlySet<string>; readonly effort: ReadonlySet<string> } {
+  return { permission: new Set([...levels.permission.flatMap(entry => Object.keys(nativeOnly(entry.options) ?? {})), ...Object.keys(levels.permissionNeutral ?? {})]),
+    effort: new Set(levels.effort.flatMap(entry => Object.keys(entry.options))) };
+}
 export function levelState(flavor: HarnessFlavor | undefined, options: readonly NativeOption[], chosen: NativeOptions): LevelState {
-  const levels = nativeLevels(flavor, options);
-  const permissionIds = new Set([...levels.permission.flatMap(entry => Object.keys(withoutKey(entry.options))), ...Object.keys(levels.permissionNeutral ?? {})]);
-  const effortIds = new Set(levels.effort.flatMap(entry => Object.keys(entry.options)));
-  const now = (ids: ReadonlySet<string>) => Object.fromEntries([...ids].map(id => [id, chosen[id] ?? options.find(option => option.id === id)?.currentValue ?? ""]));
-  const named = (ids: ReadonlySet<string>) => [...ids].some(id => chosen[id] !== undefined);
-  // The level the selection names, while its native values are still that level's; a native value changed since makes it custom.
-  const kept = selectedPermission(chosen), byValues = levelOf(levels.permission.map(entry => ({ ...entry, options: withoutKey(entry.options) })), now(permissionIds));
-  const declared = kept === undefined ? undefined : levels.permission.find(entry => entry.level === kept);
-  const permission = kept !== undefined && declared !== undefined && Object.entries(withoutKey(declared.options)).every(([id, value]) => now(permissionIds)[id] === value) ? kept
-    : kept === undefined && byValues !== null && named(permissionIds) ? byValues : kept !== undefined || named(permissionIds) ? "custom" : null;
-  const effort = levelOf(levels.effort, now(effortIds)) ?? (named(effortIds) ? "custom" : null);
-  return { levels, permission, effort, ids: new Set([...permissionIds, ...effortIds]) };
+  const levels = nativeLevels(flavor, options), governed = ids(levels);
+  // A native value the draft names for an option the levels set, other than the neutral one (which only undoes a level): the Harness's own option, changed.
+  const named = (set: ReadonlySet<string>) => [...set].some(id => chosen[id] !== undefined && chosen[id] !== levels.permissionNeutral?.[id]);
+  const permission = selectedPermission(chosen) ?? (named(governed.permission) ? "custom" : null);
+  const effortKey = selectedEffort(chosen), effortEntry = effortKey === undefined ? undefined : levels.effort.find(entry => entry.level === effortKey);
+  // A selection written before the effort key named the model's own value: read as the level it is.
+  const effortValues = Object.fromEntries([...governed.effort].map(id => [id, chosen[id] ?? options.find(option => option.id === id)?.currentValue ?? ""]));
+  const effort = effortKey !== undefined ? effortEntry?.near ?? effortKey : named(governed.effort) ? levelOf(levels.effort, effortValues) ?? "custom" : null;
+  const applied = levelOptions(flavor, options, {}, selectedLevels(chosen)) ?? {};
+  return { levels, permission, effort, ids: new Set([...governed.permission, ...governed.effort]), applied };
 }
-function sorted(values: Record<string, string>): NativeOptions { return Object.fromEntries(Object.entries(values).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)); }
-/** The draft's native values with a permission level's (its native values and the Hub's key), or none: the Harness's own setting back. */
+/**
+ * The draft with a permission level (the Hub's key alone), or with none: the Harness's own setting back. The native values the levels set are
+ * left to the adapter; leaving a level for the Harness's own setting names the neutral's values for what that level set (a thread keeps its mode).
+ */
 export function withPermission(state: LevelState, chosen: NativeOptions, level: PermissionLevel | null): NativeOptions {
-  const ids = new Set([...state.levels.permission.flatMap(entry => Object.keys(entry.options)), ...Object.keys(state.levels.permissionNeutral ?? {})]);
-  const kept = Object.fromEntries(Object.entries(chosen).filter(([id]) => !ids.has(id)));
-  const values = level === null ? {} : state.levels.permission.find(entry => entry.level === level)?.options ?? {};
-  // A native value the level before named and this one does not is set back to the Harness's own (its neutral), never left as it was.
-  const undone = Object.fromEntries(Object.entries(state.levels.permissionNeutral ?? {}).filter(([id]) => values[id] === undefined && chosen[id] !== undefined));
-  return sorted({ ...kept, ...undone, ...values });
+  const governed = ids(state.levels).permission, before = state.levels.permission.find(entry => entry.level === selectedPermission(chosen));
+  const kept = Object.fromEntries(Object.entries(chosen).filter(([id]) => id !== PERMISSION_KEY && !governed.has(id)));
+  const undone = level !== null ? {} : Object.fromEntries(Object.entries(state.levels.permissionNeutral ?? {}).filter(([id]) => before?.options[id] !== undefined || chosen[id] !== undefined));
+  return sorted({ ...kept, ...undone, ...(level === null ? {} : { [PERMISSION_KEY]: level }) });
 }
+/** The draft with an effort level (the Hub's key), the one the model runs for it: a level it lacks is the nearest it has, as the list says. */
 export function withEffort(state: LevelState, chosen: NativeOptions, level: EffortLevel | null): NativeOptions {
-  const ids = new Set(state.levels.effort.flatMap(entry => Object.keys(entry.options)));
-  const kept = Object.fromEntries(Object.entries(chosen).filter(([id]) => !ids.has(id)));
-  return sorted({ ...kept, ...(level === null ? {} : state.levels.effort.find(entry => entry.level === level)?.options ?? {}) });
+  const governed = ids(state.levels).effort;
+  const kept = Object.fromEntries(Object.entries(chosen).filter(([id]) => id !== EFFORT_KEY && !governed.has(id)));
+  const used = level === null ? null : state.levels.effort.find(entry => entry.level === level)?.near ?? level;
+  return sorted({ ...kept, ...(used === null ? {} : { [EFFORT_KEY]: used }) });
+}
+/**
+ * A native option changed in the Harness's own options. Changing one a level sets leaves that level: the draft then names the native value,
+ * shown as "custom", and the Harness runs it (the adapter's levels would otherwise win over it).
+ */
+export function withNativeOption(state: LevelState, chosen: NativeOptions, id: string, value: string): NativeOptions {
+  const governed = ids(state.levels), choices: Record<string, string> = { ...chosen };
+  if (value) choices[id] = value; else delete choices[id];
+  if (governed.permission.has(id)) delete choices[PERMISSION_KEY];
+  if (governed.effort.has(id)) delete choices[EFFORT_KEY];
+  return sorted(choices);
 }
 /**
  * Carries the levels of the Harness left to the one chosen: every permission level is there on every Harness, so it goes as it is (only one its
  * declaration calls impossible gives way to the nearest, said in `notes`); a new conversation's permission defaults to auto. Effort goes to the
- * same level where the model has it, else to the nearest, said too.
+ * same level where the model has it, else to the nearest, said too; to a Harness with no thinking option it does not go.
  */
 export function carryLevels(state: LevelState, chosen: NativeOptions, wanted: { readonly permission?: PermissionLevel; readonly effort?: EffortLevel }, harness: string): { readonly options: NativeOptions; readonly notes: readonly string[] } {
   let options = chosen; const notes: string[] = [];
@@ -58,10 +77,13 @@ export function carryLevels(state: LevelState, chosen: NativeOptions, wanted: { 
     options = withPermission(state, options, used);
     if (used !== wanted.permission) notes.push(harness + " 做不到「" + PERMISSION_WORDS[wanted.permission] + "」，" + (used === null ? "按它自己的权限设置运行。" : "已用最接近的「" + PERMISSION_WORDS[used] + "」。"));
   }
-  if (wanted.effort !== undefined && state.levels.effort.length > 0) {
-    const used = closestLevel(EFFORT_LEVELS, state.levels.effort, wanted.effort);
-    options = withEffort(state, options, used);
-    if (used !== wanted.effort) notes.push(used === null ? harness + " 没有「" + EFFORT_WORDS[wanted.effort] + "」这一档思考强度，按它自己的默认。" : harness + " 没有「" + EFFORT_WORDS[wanted.effort] + "」这一档思考强度，已用最接近的「" + EFFORT_WORDS[used] + "」。");
+  if (wanted.effort !== undefined) {
+    if (state.levels.effort.length === 0) options = withEffort(state, options, null);
+    else {
+      options = withEffort(state, options, wanted.effort);
+      const used = selectedEffort(options);
+      if (used !== wanted.effort) notes.push(harness + " 没有「" + EFFORT_WORDS[wanted.effort] + "」这一档思考强度，" + (used === undefined ? "按它自己的默认。" : "已用最接近的「" + EFFORT_WORDS[used] + "」。"));
+    }
   }
   return { options, notes };
 }

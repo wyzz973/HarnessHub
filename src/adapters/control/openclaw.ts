@@ -345,6 +345,17 @@ export class OpenClawControl extends AcpControl {
   }
   /** The thinking levels the Gateway resolves for a new session's agent and its configured model; null when it did not say (or for a restored session). */
   private agentThinking: readonly string[] | null = null;
+  /** The model open() was asked for, while it opens: the agent's thinking levels hold only for the configured one. */
+  private openingModel: string | undefined;
+  /**
+   * The effort level is resolved against the thinking levels the Gateway takes for the agent's configured model (agentThinking), as models()
+   * offers them, never against the bridge's base list, whose levels the model may refuse; a chosen model keeps the bridge's list.
+   */
+  protected override levelCatalog(options: readonly NativeOption[]): readonly NativeOption[] {
+    const thinking = this.agentThinking;
+    if (thinking === null || thinking.length === 0 || this.openingModel !== undefined) return options;
+    return options.map(option => option.id !== "thought_level" ? option : { ...option, values: option.values.filter(row => thinking.includes(row.value)) });
+  }
   /** One Gateway call through the original CLI (`openclaw gateway call`), within the connection's request timeout. */
   private call(method: OpenClawMethod, params: Readonly<Record<string, unknown>>): Promise<unknown> {
     if (this.nativeRequest) return this.nativeRequest(method, params);
@@ -426,6 +437,7 @@ export class OpenClawControl extends AcpControl {
       if (Object.keys(value).some(key => !["conversation", "key"].includes(key)) || typeof value.key !== "string" || !HUB_KEY.test(value.key)) throw new ControlError("INVALID_CHECKPOINT", "native key is not a Hub-owned conversation");
       this.restoredKey = value.key; conversation = string(value.conversation, "native conversation");
     }
+    this.openingModel = model;
     const id = await super.open(cwd, undefined, options, conversation);
     if (model !== undefined) {
       const entry = (await this.readNativeModels()).find(row => row.id === model);

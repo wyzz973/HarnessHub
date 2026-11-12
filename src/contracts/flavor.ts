@@ -111,16 +111,32 @@ export function nativeOnly(values: NativeOptions | undefined): NativeOptions | u
   const kept = Object.entries(values).filter(([id]) => !id.startsWith("hub_"));
   return kept.length === Object.keys(values).length ? values : Object.fromEntries(kept);
 }
+/** The selection's effort level, kept the same way: the adapter makes it the running model's own value when the session opens. */
+export const EFFORT_KEY = "hub_effort";
 /** The permission level a selection names, when it names one. */
 export function selectedPermission(values: NativeOptions | undefined): PermissionLevel | undefined {
   const value = values?.[PERMISSION_KEY];
   return value !== undefined && (PERMISSION_LEVELS as readonly string[]).includes(value) ? value as PermissionLevel : undefined;
 }
+/** The effort level a selection names, when it names one. */
+export function selectedEffort(values: NativeOptions | undefined): EffortLevel | undefined {
+  const value = values?.[EFFORT_KEY];
+  return value !== undefined && (EFFORT_LEVELS as readonly string[]).includes(value) ? value as EffortLevel : undefined;
+}
+/** The levels a selection names by the Hub's keys; either absent: the Harness's own setting for it. */
+export interface ChosenLevels { readonly permission?: PermissionLevel; readonly effort?: EffortLevel }
+export function selectedLevels(values: NativeOptions | undefined): ChosenLevels {
+  const permission = selectedPermission(values), effort = selectedEffort(values);
+  return { ...(permission === undefined ? {} : { permission }), ...(effort === undefined ? {} : { effort }) };
+}
 
 // ---- reading a declaration with a catalog ------------------------------------------------------------------------------
 
-/** One level as this Harness's catalog makes it: its native values (with the Hub's key), how it falls short, or why it cannot be done. */
-export interface LevelValues<L extends string> { readonly level: L; readonly options: NativeOptions; readonly note?: string; readonly impossible?: string }
+/**
+ * One level as this Harness's catalog makes it: its native values (with the Hub's key), how it falls short, or why it cannot be done. `near`:
+ * the model lacks this effort level, and these are the values of the nearest level it has, which is the level that runs.
+ */
+export interface LevelValues<L extends string> { readonly level: L; readonly options: NativeOptions; readonly note?: string; readonly impossible?: string; readonly near?: L }
 export interface NativeLevels {
   readonly permission: readonly LevelValues<PermissionLevel>[];
   readonly permissionNeutral?: NativeOptions;
@@ -178,10 +194,30 @@ export function nativeLevels(flavor: HarnessFlavor | undefined, options: readonl
   const near = exact.length === 0 ? [] : EFFORT_LEVELS.filter(level => !exact.some(entry => entry.level === level)).map(level => {
     const at = EFFORT_LEVELS.indexOf(level);
     const best = [...exact].sort((left, right) => Math.abs(EFFORT_LEVELS.indexOf(left.level) - at) - Math.abs(EFFORT_LEVELS.indexOf(right.level) - at) || EFFORT_LEVELS.indexOf(right.level) - EFFORT_LEVELS.indexOf(left.level))[0]!;
-    return { level, options: best.options, note: "这个模型没有这一档，用最接近的“" + EFFORT_NAMES[best.level] + "”" };
+    return { level, options: best.options, note: "这个模型没有这一档，用最接近的“" + EFFORT_NAMES[best.level] + "”", near: best.level };
   });
   const effort = [...exact, ...near];
   return { permission, ...(neutral === null ? {} : { permissionNeutral: neutral }), effort, effortMissing: thought === undefined ? "这一家没有思考强度可选" : "这个模型没有这一档" };
+}
+/**
+ * The native values a session is opened with, as the adapter applies them once the session's catalog is known (its options, for the model it
+ * runs): the selection's own native values without the Hub's keys, and over them what its levels come to on this catalog. The permission
+ * level's are the declaration's (a restored session also gets the neutral's for an option the level names none of, undoing what an earlier
+ * level set); the effort level's are the model's own value for it, the nearest it has where it lacks it. A level wins over a native value of
+ * the same option. A level whose values this catalog lacks adds none: the permission level is then the Hub's answers alone, and an effort level
+ * on a model without a thinking option leaves the model's own. Undefined when there is nothing to apply and the selection named nothing.
+ */
+export function levelOptions(flavor: HarnessFlavor | undefined, options: readonly NativeOption[], selected: NativeOptions | undefined, levels: ChosenLevels, restored = false): NativeOptions | undefined {
+  const own = nativeOnly(selected);
+  if (levels.permission === undefined && levels.effort === undefined) return own;
+  const offered = nativeLevels(flavor, options), out: Record<string, string> = { ...own };
+  if (levels.permission !== undefined) {
+    const values = nativeOnly(offered.permission.find(entry => entry.level === levels.permission)?.options) ?? {};
+    if (restored) for (const [id, value] of Object.entries(offered.permissionNeutral ?? {})) if (values[id] === undefined) out[id] = value;
+    Object.assign(out, values);
+  }
+  if (levels.effort !== undefined) Object.assign(out, offered.effort.find(entry => entry.level === levels.effort)?.options ?? {});
+  return own === undefined && Object.keys(out).length === 0 ? undefined : out;
 }
 /** The level `values` are among `offered`, or null when they are none of them. */
 export function levelOf<L extends string>(offered: readonly LevelValues<L>[], values: NativeOptions): L | null {

@@ -50,5 +50,5 @@ export const opencodeFlavor: HarnessFlavor = {
   // packages/cli/src/acp/sessions.ts registerMcp: ACP `mcpServers` become runtime servers of the session's directory (experimental.mcp.add,
   // "until restart", nothing written). No per-session system prompt over ACP (an agent's `system` replaces its whole prompt), but MCP server
   // instructions go into the model's instructions as `<mcp_instructions>` (McpInstructions, core/mcp-guidance): the instructions go there.
-  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", resume: "native", attachments: "native", usage: "turn" },
+  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", resume: "native", fork: "native", attachments: "native", usage: "turn" },
 };
