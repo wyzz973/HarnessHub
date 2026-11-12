@@ -145,6 +145,8 @@ export interface RunRow {
   readonly epoch: number;
   readonly harnessId: string;
   readonly controlId: string;
+  /** The Run ran on a managed Provider (`facts.selection.provider`), not on a native session of its Harness. */
+  readonly managed: boolean;
   readonly acceptedAt: number | null;
   readonly preparingAt: number | null;
   readonly readyAt: number | null;
@@ -313,6 +315,7 @@ export interface Conversation extends Omit<SessionSnapshot, "schemaVersion" | "r
   readonly origin?: StoredOrigin;
 }
 
+/** The head after the commit; the store compares `version` and adds one. A new conversation's head is inserted first, by `create`, because the rows below it refer to it. */
 export interface HeadWrite { readonly row: HeadRow }
 /** `userSeqByEvent` and `endedByEvent` name an entry of the Mutation's `events`: the store writes the seq that event gets. */
 export interface RunWrite { readonly op: "insert" | "update"; readonly row: RunRow; readonly userSeqByEvent?: number; readonly endedByEvent?: number }
