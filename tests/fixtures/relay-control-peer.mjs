@@ -36,6 +36,8 @@
 //   turns (RELAY_TURNS_FAULT "refuse", "garbage" or "hang": never answered); thread/name/set stores the name (RELAY_NAME_FAULT
 //   "refuse", or "hang": never answered).
 //   RELAY_LATE_MS: that long after the first turn, an agent message and an approval request of its thread.
+//   RELAY_HOLD "1": a turn does not end by itself: it reports its user message and then runs (no reply, no end) until turn/interrupt, which Codex answers with {}
+//   and ends the turn as interrupted; an interrupt with no such turn is refused as Codex refuses it (-32600 "no active turn to interrupt"). A command that runs for a minute.
 //   RELAY_ECHO_VALUE echoes this identity instead of the one the turn was started with. RELAY_ECHO_EXTRA (a JSON object) adds
 //   fields to the user message, "$clientUserMessageId" in it standing for the identity the turn was started with (the installed
 //   Codex 0.166.0 echoes it as `clientId` only; a Codex that sent both names is played with this). RELAY_SKILL names one enabled
@@ -130,7 +132,7 @@ function transcript(sessionId, cwd, blocks, reply) {
   appendFileSync(file, lines.map(line => JSON.stringify(line)).join("\n") + "\n");
 }
 
-let turns = 0, started = 0;
+let turns = 0, started = 0, holding = null;
 function codex(message) {
   // thread/start answers a fresh thread each time, as Codex does: "thread-relay" first, then "thread-relay-2", … on one connection;
   // thread/resume and every request about a thread name their own.
@@ -152,12 +154,13 @@ function codex(message) {
     const echoed = env.RELAY_ECHO_VALUE ?? params.clientUserMessageId;
     const extra = env.RELAY_ECHO_EXTRA ? JSON.parse(env.RELAY_ECHO_EXTRA.replaceAll("$clientUserMessageId", params.clientUserMessageId ?? "")) : {};
     const user = { type: "userMessage", id: "user-" + turnId, content: params.input.filter(item => item.type === "text"), ...(field === "none" || echoed === undefined ? {} : { [field]: echoed }), ...extra };
-    const items = env.RELAY_HOOK === "1" ? [] : [user];
-    items.push({ type: "agentMessage", id: "agent-" + turnId, text: env.RELAY_REPLY ?? "ok" });
-    thread().turns.push({ id: turnId, status: "completed", items }); save(state);
+    const items = env.RELAY_HOOK === "1" ? [] : [user], hold = env.RELAY_HOLD === "1";
+    if (!hold) items.push({ type: "agentMessage", id: "agent-" + turnId, text: env.RELAY_REPLY ?? "ok" });
+    thread().turns.push({ id: turnId, status: hold ? "inProgress" : "completed", items }); save(state);
     send({ id: message.id, result: { turn: { id: turnId, status: "inProgress" } } });
     notify("turn/started", { threadId, turn: { id: turnId } });
     if (env.RELAY_HOOK !== "1") for (const method of ["item/started", "item/completed"]) notify(method, { threadId, turnId, item: user });
+    if (hold) { holding = { threadId, turnId }; return; }
     const requests = Number(env.RELAY_REQUESTS ?? 1);
     for (let index = 1; index <= requests; index++) {
       const last = { totalTokens: 110 * index, inputTokens: 100 * index, cachedInputTokens: 50 * index, cacheWriteInputTokens: index, outputTokens: 10, reasoningOutputTokens: 0 };
@@ -171,6 +174,18 @@ function codex(message) {
       notify("item/completed", { threadId, turnId, item: { type: "agentMessage", id: "late-" + turnId, text: "a late follow-up" } });
       send({ id: "late-" + randomUUID(), method: "item/commandExecution/requestApproval", params: { threadId, turnId, itemId: "late-item", command: "echo late" } });
     }, Number(env.RELAY_LATE_MS));
+    return;
+  }
+  if (message.method === "turn/interrupt") {
+    if (holding !== null && holding.turnId === params.turnId) {
+      const { threadId: held, turnId } = holding;
+      holding = null;
+      state = load();
+      const turn = state.threads[held]?.turns.find(item => item.id === turnId);
+      if (turn) { turn.status = "interrupted"; save(state); }
+      send({ id: message.id, result: {} });
+      notify("turn/completed", { threadId: held, turn: { id: turnId, status: "interrupted" } });
+    } else send({ id: message.id, error: { code: -32600, message: "no active turn to interrupt" } });
     return;
   }
   if (message.method === "config/read") { send({ id: message.id, result: { config: { model: env.RELAY_MODEL ?? "gpt-5.5" } } }); return; }

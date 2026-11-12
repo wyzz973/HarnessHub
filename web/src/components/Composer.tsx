@@ -122,6 +122,18 @@ function Pill({ children }: { readonly children: ReactNode }) {
 export function Composer(props: ComposerProps) {
   const { draft, harnesses, providers, session, active, dirty, pending, problem, blocked, inputRef, approval } = props;
   const sending = useRef(false);
+  /**
+   * The focus was just handed to the box by a choice in one of its lists (the Harness, Provider, model, thinking, mode and approval-rule lists, whether chosen with the pointer or
+   * the keyboard). The first Esc after that belongs to the list the user thinks is still open: it stops nothing. Anything the user does next clears this, the Esc itself included: a key
+   * or a letter in the box, a pointer press, the box losing the focus. Esc is then the stop key again, as it is when nothing was handed over.
+   */
+  const handedOver = useRef(false);
+  const afterChoice = { focusAfterChoice: inputRef, onFocusHandedOver: () => { handedOver.current = true; } };
+  useEffect(() => {
+    const moved = () => { handedOver.current = false; };
+    document.addEventListener("pointerdown", moved, true);
+    return () => document.removeEventListener("pointerdown", moved, true);
+  }, []);
   const picker = useRef<HTMLInputElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const dockLayer = useRef<HTMLDivElement>(null);
@@ -460,15 +472,21 @@ export function Composer(props: ComposerProps) {
             aria-controls={slashOpen || mentionOpen ? listId : undefined} aria-activedescendant={slashOpen && slashMatches.length ? `${listId}-${slashIndex}` : mentionOpen ? `${listId}-file` : undefined}
             className={cn("w-full resize-none border-none bg-transparent p-0 text-[15px] leading-6 text-fg outline-none placeholder:text-placeholder disabled:opacity-60", session ? "min-h-6" : "min-h-12")}
             onChange={event => {
+              handedOver.current = false;
               const value = event.target.value, caret = event.target.selectionStart;
               // "@" typed at the start of a word offers a file; anywhere else it stays text.
               setMention(value.length === props.messageDraft.length + 1 && /(?:^|\s)@$/u.test(value.slice(0, caret)) ? caret - 1 : null);
               props.onMessageDraft(value);
             }}
             onPaste={event => {
+              handedOver.current = false;
               // Pasted screenshots and files become attachments; pasted text keeps its normal behavior.
               if (event.clipboardData.files.length) { event.preventDefault(); attach(event.clipboardData.files); }
             }} onKeyDown={event => {
+              // Any key clears the hand-over (see `handedOver`); the first Esc after it is the user's, for the list they think is still open.
+              const handed = handedOver.current;
+              handedOver.current = false;
+              if (handed && event.key === "Escape") { event.preventDefault(); return; }
               if (event.nativeEvent.isComposing || event.keyCode === 229) return;
               const plain = !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey;
               if (slashOpen) {
@@ -481,10 +499,10 @@ export function Composer(props: ComposerProps) {
                 if (event.key === "Escape") { event.preventDefault(); setMention(null); return; }
               }
               if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); }
-              else if (event.key === "Escape" && active && !active.cancelRequested && props.mutation === null) { event.preventDefault(); props.onCancel(); }
+              else if (event.key === "Escape" && !event.repeat && active && !active.cancelRequested && props.mutation === null) { event.preventDefault(); props.onCancel(); }
               else if (event.key === "ArrowUp" && plain && props.messageDraft === "" && props.onEditLast) { event.preventDefault(); props.onEditLast(); }
             }}
-            onBlur={() => setMention(null)}/>
+            onBlur={() => { handedOver.current = false; setMention(null); }}/>
           <p id="composer-keyboard-hint" className="sr-only">Enter 发送，Shift+Enter 换行{commands.length ? "，/ 原生命令" : ""}，@ 添加文件，输入框为空时 ↑ 编辑上一条{active ? "，Esc 或 ⌘. 停止当前回复" : ""}</p>
           <input ref={picker} type="file" multiple hidden tabIndex={-1} aria-hidden="true" onChange={event => { attach(event.target.files); event.target.value = ""; }}/>
           <div className="flex flex-wrap items-center gap-x-1 gap-y-2">
@@ -497,7 +515,7 @@ export function Composer(props: ComposerProps) {
                 ...(props.sendAlone ? [{ separator: true as const }, { label: "只发这条消息", icon: <ArrowLeftRight size={15}/>, description: "不附之前的对话，只发你写的这一条", checked: props.sendAlone.checked, disabled: disabled, onSelect: props.sendAlone.onToggle }] : []),
               ]} footer={props.attachments.length >= 8 ? "每条消息最多 8 个附件" : undefined}/>
               {permission ? <SearchPicker side={popSide} {...listOpen("permission")} label={OPTION_NAMES[permission.id] ?? permission.name} value={draft.nativeOptions[permission.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(permission, true)}
-                disabled={disabled || props.nativeModelsLoading} onChange={value => changeOption(permission.id, value)} focusAfterChoice={inputRef} chevron className="gap-[5px] text-fg-2"
+                disabled={disabled || props.nativeModelsLoading} onChange={value => changeOption(permission.id, value)} {...afterChoice} chevron className="gap-[5px] text-fg-2"
                 trigger={selected => <><ShieldCheck size={15} className="flex-none" aria-hidden="true"/><span className="hidden max-w-[140px] truncate sm:inline">{selected?.short ?? selected?.label ?? valueName(permission, permission.currentValue)}</span></>}/> : null}
             </div>
             <div className="ml-auto flex max-w-full min-w-0 items-center gap-1">
@@ -505,7 +523,7 @@ export function Composer(props: ComposerProps) {
                 role="group" aria-label="由谁来做：Harness、模型与思考强度">
                 <SearchPicker side={popSide} label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
                   title={<span className="flex items-center gap-1">由谁来做 · <Kbd>⌘</Kbd><Kbd>J</Kbd></span>} open={agentPickerOpen && !docked} onOpenChange={onAgentPickerOpen} className={cn(SEGMENT, "flex-none gap-[7px] pl-1")}
-                  footer={agentFooter} triggerRef={agentButton} describedBy={outdated ? outdatedId : undefined} focusAfterChoice={inputRef}
+                  footer={agentFooter} triggerRef={agentButton} describedBy={outdated ? outdatedId : undefined} {...afterChoice}
                   empty={<>这台电脑上还没有找到可用的 Harness。<button type="button" className="link-btn" onClick={props.onHarnesses}>查看安装方式</button></>}
                   trigger={selected => selected && harness ? <>
                     {/* A newer version of the model connection in use waits in the advanced settings: its amber dot stays in sight here. */}
@@ -513,11 +531,11 @@ export function Composer(props: ComposerProps) {
                       {outdated ? <span className="outdated-dot absolute -top-0.5 -right-0.5 size-2 rounded-full bg-amber-dot shadow-[0_0_0_1.5px_var(--bg-surface)]" aria-hidden="true"/> : null}</span>
                     <span className="max-w-[150px] truncate font-medium text-fg max-sm:max-w-[80px]">{selected.label}</span></>
                     : <span className="text-fg-2">选择 Harness</span>} onChange={pickAgent}/>
-                {showProvider ? <SearchPicker side={popSide} {...listOpen("provider")} label="选择 Provider" value={draft.providerId} placeholder="选择 Provider" options={providerOptions} disabled={disabled} align="end" chevron={last === "provider"} className={cn(SEGMENT, "gap-1.5")} focusAfterChoice={inputRef}
+                {showProvider ? <SearchPicker side={popSide} {...listOpen("provider")} label="选择 Provider" value={draft.providerId} placeholder="选择 Provider" options={providerOptions} disabled={disabled} align="end" chevron={last === "provider"} className={cn(SEGMENT, "gap-1.5")} {...afterChoice}
                   trigger={selected => <>{selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}<span className="max-w-[140px] truncate text-fg-2">{selected?.short ?? selected?.label ?? "选择 Provider"}</span></>}
                   onChange={value => { const next = providers.find(row => row.id === value); props.onDraft({ ...draft, providerId: next?.id ?? "", providerRevision: next?.revision ?? null, model: next?.defaultModel ?? "", nativeOptions: {} }); }}
                   footer={<button type="button" className="link-btn text-caption" onClick={props.onProviders}>管理模型连接</button>}/> : null}
-                {draft.harnessId ? <SearchPicker side={popSide} {...listOpen("model")} label="选择模型" value={draft.model} placeholder="选择模型" options={modelOptions} disabled={disabled || !provider && !props.nativeModels?.canSelect} align="end" chevron={last === "model"} className={SEGMENT} focusAfterChoice={inputRef}
+                {draft.harnessId ? <SearchPicker side={popSide} {...listOpen("model")} label="选择模型" value={draft.model} placeholder="选择模型" options={modelOptions} disabled={disabled || !provider && !props.nativeModels?.canSelect} align="end" chevron={last === "model"} className={SEGMENT} {...afterChoice}
                   trigger={selected => <span className="max-w-[160px] truncate text-fg-3">{selected?.short ?? selected?.label ?? "选择模型"}</span>}
                   onChange={value => {
                     if (value === draft.model) return;
@@ -525,9 +543,9 @@ export function Composer(props: ComposerProps) {
                     props.onDraft({ ...draft, model: value, nativeOptions: independent });
                   }} footer={!provider ? <><span>{props.nativeModelsLoading ? "正在读取本机模型…" : "列表来自本机安装"}</span><button type="button" className="link-btn text-caption" onClick={props.onRefreshModels}>刷新本机模型</button></> : undefined}/> : null}
                 {thought ? <SearchPicker side={popSide} {...listOpen("thought")} label="思考强度" value={draft.nativeOptions[thought.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(thought, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "thought"}
-                  className={cn(SEGMENT, "flex-none")} focusAfterChoice={inputRef} trigger={() => <Pill>思考 {thinkingShown}</Pill>} onChange={value => changeOption(thought.id, value)}/> : null}
+                  className={cn(SEGMENT, "flex-none")} {...afterChoice} trigger={() => <Pill>思考 {thinkingShown}</Pill>} onChange={value => changeOption(thought.id, value)}/> : null}
                 {mode && modeInChip ? <SearchPicker side={popSide} {...listOpen("mode")} label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
-                  className={cn(SEGMENT, "flex-none")} focusAfterChoice={inputRef} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
+                  className={cn(SEGMENT, "flex-none")} {...afterChoice} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
               </div>
               {canQueue ? <Tip label="本轮结束后发送（Enter）"><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
                 aria-label="本轮结束后发送" onClick={() => props.onQueue?.()}><ListPlus size={16}/></button></Tip> : null}

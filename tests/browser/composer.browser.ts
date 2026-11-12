@@ -3,7 +3,7 @@ import test from "node:test";
 import { chromium, expect, type Browser, type Page } from "@playwright/test";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 import { readThrough } from "../fixtures/http-conversation.js";
-import { CLAUDE_REPLY, CODEX_REPLY, launch, prompts } from "./relay-fixture.js";
+import { CLAUDE_REPLY, CODEX_REPLY, launch, prompts, sent } from "./relay-fixture.js";
 
 /*
  * The message box keeps what is typed in it (2026-11-12): what the box shows is what will be sent, whatever the page does around it. The real Gateway with its real store, Runtime and
@@ -11,6 +11,10 @@ import { CLAUDE_REPLY, CODEX_REPLY, launch, prompts } from "./relay-fixture.js";
  * (`catalogDelayMs`: the picker says "读取模型…" meanwhile) and show the user's message late (`echoDelayMs`: the Turn is under way, so the page streams and the box is for the next
  * message). What is typed is typed through keys, as an input method commits it, and as an input method composes it; the box is looked at at every frame and at every input event, and
  * its value must only ever be a longer part of what was typed, in the same element, until the message is sent; the message that goes is that text once.
+ *
+ * Esc in the box stops a reply that is under way. A choice made in one of the box's lists hands the focus to the box, and the Esc pressed next belongs to the list the user thinks is still
+ * open: it stops nothing (the first Esc only; a key, a typed letter, a pointer press or the box losing the focus in between and the next Esc stops the reply as ever). The reply that is
+ * under way is one only the user can end (the fixture's RELAY_HOLD: a command that runs for a minute); whether a stop was asked is read from what Codex was sent (`turn/interrupt`).
  *
  * Run: `pnpm build && pnpm web:build && node --test dist/tests/browser/composer.browser.js` (it needs the built page and Chromium).
  */
@@ -311,4 +315,162 @@ test("a message sent with Enter while a reply runs is held, shown once in the he
   assert.deepEqual(await said(started), [...BEFORE, second, TEXT]);
   await expect(composer).toHaveValue("");
   assert.deepEqual(errors, [], "no console error");
+});
+
+/**
+ * A reply under way that only the user ends: the conversation is on Codex and its last message started a Turn that does not end by itself. `status` is that Run's state as the Gateway holds
+ * it, `stops` how many interrupts Codex was sent.
+ */
+async function running(started: Started) {
+  const { fixture, composer, model, root } = started;
+  await backOnClaude(started, 300);
+  await started.switchTo("Codex", "codex");
+  await expect(model).not.toContainText("读取模型…", { timeout: 20_000 });
+  await fixture.mode({ RELAY_HOLD: "1" });
+  await composer.fill("跑一个要很久的命令"); await composer.press("Enter");
+  await expect(composer).toHaveAttribute("placeholder", "回复进行中，可以先写下一条…", { timeout: 20_000 });
+  const status = async (): Promise<string | undefined> => (await started.current()).runs.at(-1)?.status;
+  const stops = async (): Promise<number> => (await sent(root, "codex")).filter(line => line.method === "turn/interrupt").length;
+  await expect.poll(status, { timeout: 20_000 }).toBe("running");
+  return { status, stops };
+}
+/**
+ * The page can take a stop now: the stop key is enabled, which it is not while the page is busy saving a choice (a pick of another Harness makes it switch, and an Esc in that moment is
+ * ignored whatever the box does with it). A test presses Esc only after this, so that what it sees is the box's doing.
+ */
+async function canStop(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "停止当前回复", exact: true })).toBeEnabled({ timeout: 20_000 });
+}
+/** Nothing was stopped: given the stop time to arrive, the Codex side was asked for none and the Run still runs. */
+async function assertGoesOn(page: Page, run: Awaited<ReturnType<typeof running>>, where: string): Promise<void> {
+  await page.waitForTimeout(700);
+  assert.equal(await run.stops(), 0, where + ": Codex was asked to interrupt");
+  assert.equal(await run.status(), "running", where + ": the reply is still under way");
+}
+/** The reply is stopped: Codex was asked once and the Run ends cancelled. */
+async function assertStopped(run: Awaited<ReturnType<typeof running>>, where: string): Promise<void> {
+  await expect.poll(run.stops, { message: where + ": Codex is asked to interrupt", timeout: 20_000 }).toBe(1);
+  await expect.poll(run.status, { message: where + ": the Run ends stopped", timeout: 20_000 }).toBe("cancelled");
+}
+
+test("an Esc pressed right after a choice in the Harness list stops nothing, and the next one stops the reply", { timeout: 120_000 }, async t => {
+  const started = await start(t);
+  const { page, composer, errors } = started;
+  const run = await running(started);
+  // The list closes with the choice and the focus is in the box; the Esc is the user's for the list they think is still open.
+  await started.pick("选择 Harness", "Claude Code");
+  await expect(composer).toBeFocused();
+  await canStop(page);
+  await page.keyboard.press("Escape");
+  await assertGoesOn(page, run, "the Esc after the choice");
+  // That Esc was the one; the next is the box's own.
+  await page.keyboard.press("Escape");
+  await assertStopped(run, "the second Esc");
+  assert.deepEqual(errors, [], "no console error");
+});
+
+test("a letter typed after a choice in the Harness list makes the next Esc stop the reply at once", { timeout: 120_000 }, async t => {
+  const started = await start(t);
+  const { page, composer, errors } = started;
+  const run = await running(started);
+  await started.pick("选择 Harness", "Claude Code");
+  await expect(composer).toBeFocused();
+  await canStop(page);
+  await page.keyboard.type("x");
+  await expect(composer).toHaveValue("x");
+  await page.keyboard.press("Escape");
+  await assertStopped(run, "the Esc after a letter");
+  assert.equal(await composer.inputValue(), "x", "what was typed stays");
+  assert.deepEqual(errors, [], "no console error");
+});
+
+test("an Esc pressed right after a choice in the model list stops nothing either, and the next one stops the reply", { timeout: 120_000 }, async t => {
+  const started = await start(t);
+  const { page, composer, model, errors } = started;
+  const run = await running(started);
+  await model.click();
+  await page.getByRole("option", { name: /gpt-5\.5/u }).first().click();
+  await expect(composer).toBeFocused();
+  await canStop(page);
+  await page.keyboard.press("Escape");
+  await assertGoesOn(page, run, "the Esc after the model choice");
+  await page.keyboard.press("Escape");
+  await assertStopped(run, "the second Esc");
+  assert.deepEqual(errors, [], "no console error");
+});
+
+test("the mode list is the same: an Esc pressed right after a choice in it stops nothing, and the next one stops the reply", { timeout: 120_000 }, async t => {
+  const started = await start(t);
+  const { page, composer, errors } = started;
+  const run = await running(started);
+  await page.getByRole("button", { name: "协作模式", exact: true }).click();
+  await page.getByRole("option", { name: "计划", exact: true }).click();
+  await expect(composer).toBeFocused();
+  await canStop(page);
+  await page.keyboard.press("Escape");
+  await assertGoesOn(page, run, "the Esc after the mode choice");
+  await page.keyboard.press("Escape");
+  await assertStopped(run, "the second Esc");
+  assert.deepEqual(errors, [], "no console error");
+});
+
+test("a choice made with the keyboard is the same: the Esc after it stops nothing, the next one stops the reply", { timeout: 120_000 }, async t => {
+  const started = await start(t);
+  const { page, composer, errors } = started;
+  const run = await running(started);
+  await composer.focus();
+  await page.keyboard.press("ControlOrMeta+J");
+  const search = page.getByRole("combobox", { name: "搜索 Harness", exact: true });
+  await expect(search).toBeFocused();
+  await search.fill("Claude"); await search.press("Enter");
+  await expect(composer).toBeFocused();
+  await canStop(page);
+  await page.keyboard.press("Escape");
+  await assertGoesOn(page, run, "the Esc after the keyboard choice");
+  await page.keyboard.press("Escape");
+  await assertStopped(run, "the second Esc");
+  assert.deepEqual(errors, [], "no console error");
+});
+
+test("a list closed with Esc and no choice stops nothing, and nothing was handed over: the Esc in the box afterwards stops the reply", { timeout: 120_000 }, async t => {
+  const started = await start(t);
+  const { page, composer } = started;
+  const run = await running(started);
+  // The Esc is the list's, the focus goes back to where it came from, and the reply goes on.
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "搜索 Harness", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("combobox", { name: "搜索 Harness", exact: true })).toHaveCount(0);
+  await assertGoesOn(page, run, "the Esc that closed the list");
+  await composer.focus();
+  await page.keyboard.press("Escape");
+  await assertStopped(run, "the Esc in the box after a list closed with Esc");
+});
+
+test("a pointer press after a choice leaves the next Esc to stop the reply", { timeout: 120_000 }, async t => {
+  const started = await start(t);
+  const { page, composer, log } = started;
+  const run = await running(started);
+  await started.pick("选择 Harness", "Claude Code");
+  await expect(composer).toBeFocused();
+  await canStop(page);
+  // A press on the page anywhere: the user has moved on; the box takes the focus back from the keyboard, not from a press.
+  await log.click({ position: { x: 5, y: 5 }, force: true });
+  await composer.focus();
+  await page.keyboard.press("Escape");
+  await assertStopped(run, "the Esc after a pointer press");
+});
+
+test("the box losing the focus after a choice leaves the next Esc to stop the reply", { timeout: 120_000 }, async t => {
+  const started = await start(t);
+  const { page, composer } = started;
+  const run = await running(started);
+  await started.pick("选择 Harness", "Claude Code");
+  await expect(composer).toBeFocused();
+  await canStop(page);
+  await page.keyboard.press("Shift+Tab");
+  await expect(composer).not.toBeFocused();
+  await composer.focus();
+  await page.keyboard.press("Escape");
+  await assertStopped(run, "the Esc after the box lost the focus");
 });

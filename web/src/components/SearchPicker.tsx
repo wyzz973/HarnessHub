@@ -27,10 +27,10 @@ const TONES = { success: "badge-accent", warning: "badge-amber", danger: "badge-
  * composition never selects. `open` and `onOpenChange` make it controlled, so a shortcut (⌘J) can open it; focus goes to
  * the search field and returns to the trigger when the list closes. A list closed by a choice gives the focus to `focusAfterChoice`
  * when there is one (the message box, for the composer's lists: what is typed next is the message, not a key pressed on the
- * control that opened the list); one closed without a choice still gives it back to where it came from.
+ * control that opened the list) and says so by `onFocusHandedOver`; one closed without a choice still gives it back to where it came from.
  */
 export function SearchPicker({ label, value, placeholder, options, onChange, disabled = false, footer, prefix, className, wide = false, side = "top", align = "start",
-  open: controlledOpen, onOpenChange, title, trigger, chevron = true, size = "md", empty, triggerRef: outerTrigger, describedBy, focusAfterChoice }: {
+  open: controlledOpen, onOpenChange, title, trigger, chevron = true, size = "md", empty, triggerRef: outerTrigger, describedBy, focusAfterChoice, onFocusHandedOver }: {
   label: string; value: string; placeholder: string; options: readonly PickerOption[];
   onChange: (value: string) => void; disabled?: boolean; footer?: ReactNode; prefix?: string; className?: string; wide?: boolean; side?: "top" | "bottom";
   align?: "start" | "end";
@@ -51,6 +51,8 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
   describedBy?: string | undefined;
   /** Where the focus goes when the list closes because a choice was made, in place of the trigger; used only while that element can take it. */
   focusAfterChoice?: RefObject<HTMLElement | null>;
+  /** Called when a choice handed the focus to `focusAfterChoice`: what the page does with the next key there (an Esc, say) can depend on it. */
+  onFocusHandedOver?: () => void;
 }) {
   const [ownOpen, setOwnOpen] = useState(false);
   const open = controlledOpen ?? ownOpen;
@@ -80,7 +82,9 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
     if (option.disabled) return;
     chosen.current = true; onChange(option.value); setOpen(false);
     // The keys pressed next are the message: the focus is there at once, not when the list has finished closing (a key pressed meanwhile would land on the row just chosen).
-    target()?.focus({ preventScroll: true });
+    const next = target();
+    next?.focus({ preventScroll: true });
+    if (next !== null && document.activeElement === next) onFocusHandedOver?.();
   };
   const name = label.replace(/^选择/u, "");
   const large = size === "lg";
@@ -102,7 +106,7 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
           const focused = document.activeElement;
           if (focused !== null && focused !== document.body && !popup.current?.contains(focused)) return false;
           const next = chosen.current ? target() : null;
-          if (next !== null) return next;
+          if (next !== null) { onFocusHandedOver?.(); return next; }
           return returnTo.current instanceof HTMLElement && returnTo.current.isConnected ? returnTo.current : true;
         }} className={cn("picker-popover surface-pop flex max-h-[min(460px,var(--available-height))] flex-col overflow-hidden",
           wide ? "w-[360px]" : "w-[320px]", "max-w-[calc(100vw-24px)]")}>
