@@ -1,5 +1,5 @@
 import { PAGE, type HeldItem, type ItemRow, type Mutation, type RunRow } from "../contracts/conversation.js";
-import { SessionError } from "../contracts/session.js";
+import { SessionError, type RunId } from "../contracts/session.js";
 import type { SessionCommitFrame, SessionHeadView, WireItem, WireItemUpsert, WireRun, WireTextAppend } from "../contracts/web.js";
 import { emptyFields } from "../infrastructure/session/load.js";
 
@@ -21,7 +21,20 @@ import { emptyFields } from "../infrastructure/session/load.js";
  * The Turn header of a Run (executor names, usage in the protocol's meaning) is the display layer's: `views.run` makes the WireRun.
  */
 
-export interface FrameViews { readonly run: (row: RunRow) => WireRun }
+export interface FrameViews {
+  readonly run: (row: RunRow) => WireRun;
+  /**
+   * The items of a Run that no row holds and that are made when the Run is read: its hand-over line, the lines that end it, and its answer marked `final` once it
+   * completed (src/web/turn-view.ts `derived`). They go in the frame beside the Run each time the Run is in it, so that a page that follows the stream has what a page
+   * that reads the Turn has. Absent: a frame without them.
+   */
+  readonly derived?: (row: RunRow) => readonly WireItem[];
+  /**
+   * The Run a delivery of the commit names, when the commit did not change the Run's own row: the hand-over line of a Turn says how its packet arrived, and that changes
+   * after the Turn, in a commit of its own (the page was told "sending", and is now told "confirmed"). Absent: only the Runs the commit wrote.
+   */
+  readonly runById?: (runId: RunId) => RunRow | null;
+}
 
 const TEXT_REQUIRED: ReadonlySet<string> = new Set(["reasoning", "notice"]);
 const utf8 = (text: string): number => Buffer.byteLength(text, "utf8");
@@ -31,14 +44,15 @@ const utf8 = (text: string): number => Buffer.byteLength(text, "utf8");
  * type's fields empty (its JSON was longer than the transfer carries); `bodyOmitted` says the item's body (its text, or the fields a stub stands in for) was
  * left out, and `textBytes` is the size of the text the transfer does not carry.
  */
-export function wireItem(row: ItemRow, options: { readonly text?: string; readonly stub?: boolean; readonly bodyOmitted?: boolean; readonly textBytes?: number } = {}): WireItem {
+export function wireItem(row: ItemRow, options: { readonly text?: string; readonly stub?: boolean; readonly bodyOmitted?: boolean; readonly textBytes?: number; readonly final?: boolean } = {}): WireItem {
   const source = options.stub === true ? emptyFields(row.type) : row.fields;
   const { native: _native, ...fields } = source as typeof source & { readonly native?: unknown };
   const item: Record<string, unknown> = { ...fields, id: row.itemId, seq: row.seq, status: row.status };
   if (row.startedAt !== null) item.startedAt = row.startedAt;
   if (row.endedAt !== null) item.endedAt = row.endedAt;
   if (row.parentId !== null) item.parentId = row.parentId;
-  if (row.type === "assistant_message") item.phase = (row.fields as { readonly phase?: string }).phase ?? "commentary";
+  // What the Harness said of it is kept; else a segment is said on the way, unless the reader found it to be the answer of a completed Turn (`final`).
+  if (row.type === "assistant_message") item.phase = (row.fields as { readonly phase?: string }).phase ?? (options.final === true ? "final" : "commentary");
   if (options.text !== undefined) item.text = options.text;
   else if (TEXT_REQUIRED.has(row.type)) item.text = "";
   if (options.bodyOmitted === true) item.bodyOmitted = true;
@@ -82,6 +96,27 @@ export function commitFrame(changes: Mutation, head: SessionHeadView, views: Fra
     upserts[at] = { runId: upsert.runId, item: { ...upsert.item, bodyOmitted: true, textBytes: size } };
   }
 
+  // The Runs of the frame: those the commit wrote, and those whose delivery it wrote. What a Run has that no row holds goes with it.
+  const runs = new Map<string, RunRow>();
+  for (const write of changes.runs ?? []) runs.set(write.row.runId, write.row);
+  if (views.runById !== undefined) {
+    for (const delivery of changes.relay?.deliveries ?? []) {
+      const runId = delivery.kind === "insert" ? delivery.record.runId : delivery.runId;
+      if (!runs.has(runId)) { const row = views.runById(runId); if (row !== null) runs.set(runId, row); }
+    }
+  }
+  if (views.derived !== undefined) {
+    for (const row of runs.values()) {
+      for (const made of views.derived(row)) {
+        const at = position.get(key(row.runId, made.seq));
+        if (at === undefined) { position.set(key(row.runId, made.seq), upserts.length); upserts.push({ runId: row.runId, item: made }); continue; }
+        // The item is also in the frame as a row that changed: it is that, as the reader marks it (the answer is the same item), and what the frame left out of it stays left out.
+        const prior = upserts[at]!.item;
+        upserts[at] = { runId: row.runId, item: { ...made, ...(prior.bodyOmitted === true ? { bodyOmitted: true as const } : {}), ...(prior.textBytes === undefined ? {} : { textBytes: prior.textBytes }) } };
+      }
+    }
+  }
+
   return { type: "commit", sessionId: head.id, version: head.version, lastSeq: head.lastSeq, ...(changes.head === undefined ? {} : { head }),
-    ...(changes.runs === undefined ? {} : { runs: changes.runs.map(write => views.run(write.row)) }), ...(upserts.length === 0 ? {} : { items: upserts }), ...(texts.length === 0 ? {} : { texts }) };
+    ...(runs.size === 0 ? {} : { runs: [...runs.values()].map(row => views.run(row)) }), ...(upserts.length === 0 ? {} : { items: upserts }), ...(texts.length === 0 ? {} : { texts }) };
 }
