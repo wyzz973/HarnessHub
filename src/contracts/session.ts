@@ -171,7 +171,7 @@ export interface PublicSwitch {
 }
 export interface CommandRecord {
   readonly id: CommandId;
-  readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission" | "native-reset" | "retention" | "native-close";
+  readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission" | "native-reset" | "retention" | "native-close" | "branch";
   readonly fingerprint: string;
   readonly resultId: string;
 }

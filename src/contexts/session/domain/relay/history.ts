@@ -1,4 +1,4 @@
-import type { Conversation, ConversationReader } from "../../../../contracts/conversation.js";
+import type { Conversation, ConversationReader, TurnRelayCounts } from "../../../../contracts/conversation.js";
 import type { NativeSessionBinding, PublicRun, SessionId, SessionOrigin } from "../../../../contracts/session.js";
 import { originFromRows } from "../store-conversion.js";
 import { outlineOfRecord, turnSource, type OutlineReads, type TurnOutline, type TurnRecord } from "../turn-source.js";
@@ -23,6 +23,8 @@ export interface RelayHistory {
   turn(ordinal: number): TurnRecord | null;
   /** The Turn at an ordinal without its bodies (turn-source.ts `TurnOutline`): what a packet counts every Turn it owes by; the words are read when a piece of the packet needs them. Absent: `turn` tells it. */
   outline?(ordinal: number): TurnOutline | null;
+  /** What the ledger counts of the finished Turn at an ordinal, recorded when it ended; null when nothing was recorded (the Turn is then read). Optional. */
+  counts?(ordinal: number): TurnRelayCounts | null;
 }
 /** The outline of a Turn of a history: its own when it has one, else made of the Turn read whole. */
 export function outlineOf(history: RelayHistory, ordinal: number): TurnOutline | null {
@@ -32,7 +34,8 @@ export function outlineOf(history: RelayHistory, ordinal: number): TurnOutline |
 }
 
 /** A conversation kept as rows, as the renderer reads it: the light rows of its Runs now, its Turns when asked for, the history it quoted when a packet owes it. */
-export function rowsHistory(conversation: Conversation, reader: Pick<ConversationReader, "head" | "turnAt" | "runOrdinal" | "originHistory"> & OutlineReads): RelayHistory {
+export function rowsHistory(conversation: Conversation, reader: Pick<ConversationReader, "head" | "turnAt" | "runOrdinal" | "originHistory"> & OutlineReads
+  & { readonly relayCounts?: (id: Conversation["id"], runId: Conversation["runs"][number]["id"]) => TurnRelayCounts | null }): RelayHistory {
   const turns = turnSource(reader, conversation.id);
   let origin: SessionOrigin | null | undefined;
   return {
@@ -44,5 +47,6 @@ export function rowsHistory(conversation: Conversation, reader: Pick<Conversatio
     },
     turn: ordinal => turns.turn(ordinal),
     outline: ordinal => turns.outline(ordinal),
+    counts: ordinal => { const run = conversation.runs[ordinal]; return run === undefined ? null : reader.relayCounts?.(conversation.id, run.id) ?? null; },
   };
 }

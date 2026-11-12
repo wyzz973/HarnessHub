@@ -414,7 +414,19 @@ export interface ConversationMutation {
   readonly originHistory?: readonly OriginHistoryRow[];
   readonly noticePrints?: readonly string[];
   readonly createdBy?: (run: ConversationRun, item: HeldItem) => number | undefined;
+  /**
+   * The commit goes on from an earlier place of the conversation instead of its end (a message edited and sent again, a reply tried again): the Turns from `at` on are left on
+   * the branch they were on, and `next.runs` is the conversation's new path (the Turns before `at` as they were, then what this commit adds). Nothing is erased.
+   */
+  readonly branch?: { readonly at: number };
 }
+/**
+ * What a relay packet's ledger counts of a finished Turn, worked out when it ended (relay/narration.ts `turnRelayCounts`, with no stored detail read): its items by kind, and its
+ * calls whose detail is not read. A packet that cannot carry an older Turn counts it by these and does not read it.
+ */
+export interface TurnRelayCounts { readonly userMessages: number; readonly replies: number; readonly outputs: number; readonly changes: number; readonly calls: number; readonly unread: number }
+/** Where a Turn stands among the alternatives of its place in the conversation (Turns sent again from the same place): `n` of `of`, and the ones before and after it. */
+export interface TurnBranch { readonly n: number; readonly of: number; readonly prev: RunId | null; readonly next: RunId | null }
 /** A committed transaction: the conversation as it is now, its events, and the rows that were written. */
 export interface ConversationCommit { readonly conversation: Conversation; readonly events: readonly SessionEvent[]; readonly changes: Mutation }
 
@@ -490,6 +502,14 @@ export interface ConversationStore extends ConversationReader {
   /** The latest `perEntry` startups of every Harness entry. */
   startupSamples(perEntry: number): readonly StartupSample[];
   transact(id: SessionId, expectedVersion: number, mutate: (current: Conversation) => ConversationMutation): ConversationCommit;
+  /**
+   * Makes another branch the conversation's current path: the one through the Turn `runId` (an alternative of a Turn on the path), at its latest line. The current place is
+   * written down (a `leaf` line), so the conversation opens there again; `mutate` is given the conversation as that path has it, and what it returns is written with it.
+   * Optional: a store without branches does not have it.
+   */
+  selectBranch?(id: SessionId, expectedVersion: number, runId: RunId, mutate: (current: Conversation) => ConversationMutation): ConversationCommit;
+  /** Where each Turn of the current path that has alternatives stands among them. Optional. */
+  branches?(id: SessionId): ReadonlyMap<RunId, TurnBranch>;
   events(id: SessionId, afterSeq: number, limit?: number): readonly SessionEvent[];
   close(): void;
 }

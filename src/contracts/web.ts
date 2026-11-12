@@ -449,6 +449,8 @@ export interface WireRun extends Omit<WebRun, "protocol" | "input"> {
   /** The seq of the event that accepted the input: where the message stands among the events. */
   readonly userSeq: number;
   readonly turn: WireTurnHeader;
+  /** Where the Turn stands among the alternatives of its place (its message edited and sent again, its reply tried again): absent when it has none. */
+  readonly branch?: { readonly n: number; readonly of: number; readonly prev: string | null; readonly next: string | null };
 }
 /** One Turn of a window: its Run, its items in place order, and the middle of a long stretch of work when the window left it out. */
 export interface WireTurn { readonly run: WireRun; readonly items: readonly WireItem[]; readonly deferred?: DeferredWork }

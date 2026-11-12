@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import type { RelayPacketKind } from "../../../../contracts/relay.js";
 import type { NativeSessionBinding, PublicRun, RunId } from "../../../../contracts/session.js";
-import type { RelayHistory } from "./history.js";
+import type { RelayHistory, RelayRun } from "./history.js";
 import { RELAY_POLICY_VERSION, estimateTokens, resolveRelayBudget, type RelayBudget } from "./budget.js";
 import { dataRegion, firstLine, type RelayLanguage } from "./escape.js";
-import { ITEM_KINDS, LEAST, Narrator, OUTPUT_LINES, candidatesOf, kindOf, opsLabel, relayUnits, type Candidate, type ItemKind, type RelayToolDetail, type RelayUnit } from "./narration.js";
+import { ITEM_KINDS, LEAST, Narrator, OUTPUT_LINES, candidatesOf, kindOf, opsLabel, relayUnits, unreadOf, type Candidate, type ItemKind, type RelayToolDetail, type RelayUnit } from "./narration.js";
 import { relayRedactor } from "./redaction.js";
 import { reportedWindow } from "./windows.js";
 
@@ -33,7 +33,7 @@ export interface RelayRenderInput {
   /** The Run that sends the packet; its input is the user's current words. */
   readonly current: PublicRun;
   /** The Runs it owes, validated and in conversation order. */
-  readonly sources: readonly PublicRun[];
+  readonly sources: readonly (PublicRun | RelayRun)[];
   /** Whether the history this Session started from (a branch's or an import's) is owed too. */
   readonly origin: boolean;
   /** Known secret values to replace wherever the packet quotes them (redaction.ts). */
@@ -334,25 +334,41 @@ function compose(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, 
   input: { readonly delta: boolean; readonly repeat: boolean; readonly target: string; readonly state: RelayHistory }): Draft {
   const frame = FRAME[n.language], count = units.length, { delta } = input;
   const head = (first === null ? "" : first.line + "\n" + (first.blank ? "\n" : "")) + frame.title(delta), end = frame.end(delta);
-  const cands = units.map((unit, index) => candidatesOf(n, unit, index)), all = cands.flat();
+  // A unit's candidates are made the first time the choice reaches it (which reads its Turn): a unit the choice never reaches is counted by what its end recorded (`counts`) and
+  // not read. The packet is the same either way: what the choice does not reach it does not carry, and the ledger's numbers are the recorded ones.
+  const made = new Map<number, readonly Candidate[]>();
+  const candsOf = (index: number): readonly Candidate[] => { let found = made.get(index); if (found === undefined) { found = candidatesOf(n, units[index]!, index); made.set(index, found); } return found; };
+  const counted = (index: number): boolean => made.has(index) || units[index]!.counts === undefined;
+  const restMade = new Map<number, readonly Candidate[]>();
+  const restOf = (index: number): readonly Candidate[] => { let found = restMade.get(index); if (found === undefined) { found = candsOf(index).filter(item => item.group !== "user").sort((a, b) => a.rank - b.rank || a.seq - b.seq); restMade.set(index, found); } return found; };
   const headings = units.map(unit => { const counted = { hits: 0 }, text = n.heading(unit, counted); return { text, tokens: estimateTokens(text) + 2, hits: counted.hits }; });
   const labels = units.map(unit => estimateTokens(opsLabel(n, unit)) + 1);
-  const users = cands.map(list => list.find(item => item.group === "user"));
-  const rest = cands.map(list => list.filter(item => item.group !== "user").sort((a, b) => a.rank - b.rank || a.seq - b.seq));
   const order = unitOrder(count);
   const who = count === 0 ? "" : didBy(n, units), turns = count === 0 ? "" : turnList(n, units);
   // The tools hold the Session's own turns, not the history it started from: with none of the former there is nothing to read back.
   const pull = n.tools && units.some(unit => !unit.origin), source = units.some(unit => unit.origin);
   const front = (tier: PacketTier, carried: boolean): string => ["〕", ...(input.repeat ? [frame.repeat] : []),
     ...(count === 0 ? [frame.none] : [frame.facts(delta, input.target, count, who, turns), frame.scope(count, tier, carried), ...(carried ? [frame.standing] : []), ...(pull ? [frame.pull(source)] : [])]), frame.reading].join("\n");
-  const unread = units.reduce((sum, unit) => sum + unit.tools.filter(tool => tool.parentId === undefined && ["read", "change", "search", "execute"].includes(kindOf(tool)) && !unit.details.has(tool.id)).length, 0);
-  const withheld = all.filter(item => item.withheld).length, imported = input.state.origin?.kind === "import" && units.some(unit => unit.origin) ? input.state.origin : undefined;
+  const imported = input.state.origin?.kind === "import" && units.some(unit => unit.origin) ? input.state.origin : undefined;
   const importParts = imported === undefined ? [] : [...(imported.omitted ? [frame.importOmitted(imported.omitted)] : []), ...(imported.complete ? [] : [frame.importPartial]), ...(imported.historyRead ? [] : [frame.importUnread])];
 
   // Which items are carried, in this order: the user's words (up to U, the latest one beyond it if it fits); the changes, commands,
   // errors, replies and failed commands' outputs, turn by turn; the user's words U left out; the reads and the like, turn by turn.
-  const words = order.flatMap(index => users[index] === undefined ? [] : [users[index]!]);
-  const major = order.flatMap(index => rest[index]!.filter(item => item.rank < LEAST)), minor = order.flatMap(index => rest[index]!.filter(item => item.rank >= LEAST));
+  // The lists the choice walks, unit by unit in `order`; a unit that its recorded counts say has none of a list is passed over unread.
+  function* words(): Generator<Candidate> {
+    for (const index of order) {
+      if (!counted(index) && units[index]!.counts!.userMessages === 0) continue;
+      const user = candsOf(index).find(item => item.group === "user");
+      if (user !== undefined) yield user;
+    }
+  }
+  function* others(major: boolean): Generator<Candidate> {
+    for (const index of order) {
+      const recorded = counted(index) ? undefined : units[index]!.counts!;
+      if (recorded !== undefined && recorded.calls + recorded.changes + recorded.outputs + recorded.replies === 0) continue;
+      for (const item of restOf(index)) if ((item.rank < LEAST) === major) yield item;
+    }
+  }
   const select = (available: number): Set<Candidate> => {
     const chosen = new Set<Candidate>(), paid = new Set<number>(), labelled = new Set<number>();
     let used = 0, userUsed = 0;
@@ -370,18 +386,21 @@ function compose(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, 
       return true;
     };
     // A walk ends when the room is gone, or when MISSES items in a row did not fit.
-    const walk = (items: readonly Candidate[], limit: (index: number) => number): void => {
+    // The next item is taken from the list only once the walk is to go on: a walk that ends reads no Turn past it.
+    const walk = (items: Iterator<Candidate>, limit: (index: number) => number): void => {
       let misses = 0;
-      for (const [index, item] of items.entries()) {
+      for (let index = 0; ; index++) {
         if (available - used < 3 || misses >= MISSES) return;
-        misses = take(item, limit(index)) ? 0 : misses + 1;
+        const next = items.next();
+        if (next.done === true) return;
+        misses = take(next.value, limit(index)) ? 0 : misses + 1;
       }
     };
     const share = Math.min(budget.user, available);
-    walk(words, index => index === 0 ? Number.POSITIVE_INFINITY : share);
-    walk(major, () => Number.POSITIVE_INFINITY);
-    walk(words.filter(item => !chosen.has(item)), () => Number.POSITIVE_INFINITY);
-    walk(minor, () => Number.POSITIVE_INFINITY);
+    walk(words(), index => index === 0 ? Number.POSITIVE_INFINITY : share);
+    walk(others(true), () => Number.POSITIVE_INFINITY);
+    walk((function* () { for (const item of words()) if (!chosen.has(item)) yield item; })(), () => Number.POSITIVE_INFINITY);
+    walk(others(false), () => Number.POSITIVE_INFINITY);
     return chosen;
   };
 
@@ -389,8 +408,12 @@ function compose(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, 
   const build = (chosen: ReadonlySet<Candidate>): Draft => {
     const sections: string[] = [], absent: RelayUnit[] = [];
     let hits = 0;
+    // A unit with no recorded counts is counted by its candidates, made now if the choice did not reach it.
+    units.forEach((_unit, index) => { if (counted(index)) candsOf(index); });
+    const unread = units.reduce((sum, unit, index) => sum + (made.has(index) ? unreadOf(unit) : unit.counts!.unread), 0);
+    const withheld = [...made.values()].reduce((sum, list) => sum + list.filter(item => item.withheld).length, 0);
     units.forEach((unit, index) => {
-      const mine = cands[index]!.filter(item => chosen.has(item));
+      const mine = made.has(index) ? candsOf(index).filter(item => chosen.has(item)) : [];
       if (mine.length === 0) { absent.push(unit); return; }
       hits += headings[index]!.hits;
       const lines = [headings[index]!.text], put = (item: Candidate, note = "") => { const piece = item.piece()!; lines.push(piece.text + note); hits += piece.hits; };
@@ -403,8 +426,12 @@ function compose(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, 
       sections.push(lines.join("\n"));
     });
     const items = Object.fromEntries(ITEM_KINDS.map(kind => {
-      const own = all.filter(item => item.kind === kind), included = own.filter(item => chosen.has(item)).length;
-      return [kind, { total: own.length, included, omitted: own.length - included }];
+      let total = 0, included = 0;
+      units.forEach((unit, index) => {
+        if (!made.has(index)) { total += unit.counts![kind]; return; }
+        for (const item of candsOf(index)) if (item.kind === kind) { total++; if (chosen.has(item)) included++; }
+      });
+      return [kind, { total, included, omitted: total - included }];
     })) as Record<ItemKind, ItemCount>;
     const tier: PacketTier = ITEM_KINDS.every(kind => items[kind].omitted === 0) ? "full" : "brief", held = ITEM_KINDS.filter(kind => items[kind].total > 0);
     const ledger = [frame.ledger.title];
@@ -412,7 +439,7 @@ function compose(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, 
     else {
       ledger.push(frame.ledger.some);
       for (const kind of held) {
-        const lost = units.filter((_unit, index) => cands[index]!.some(item => item.kind === kind && !chosen.has(item)));
+        const lost = units.filter((unit, index) => made.has(index) ? candsOf(index).some(item => item.kind === kind && !chosen.has(item)) : unit.counts![kind] > 0);
         ledger.push(frame.ledger.kind(kind, items[kind], turnList(n, lost)));
       }
     }

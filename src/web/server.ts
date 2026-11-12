@@ -1124,7 +1124,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (textRoute && method === "GET") { queries(url, ["from", "to"]); json(response, 200, conversations!.itemText(textRoute[1]!, textRoute[2]!, textRoute[3]!, { from: url.searchParams.get("from") ?? undefined, to: url.searchParams.get("to") ?? undefined })); return; }
     const changesRoute = /^\/api\/v1\/sessions\/([^/]+)\/changes$/u.exec(path);
     if (changesRoute && method === "GET") { queries(url, ["before", "limit"]); json(response, 200, conversations!.changes(changesRoute[1]!, { before: url.searchParams.get("before") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
-    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|retention|end-process|native-resume))?$/u.exec(path);
+    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|branch|retention|end-process|native-resume))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
       if (action === undefined && method === "GET") { queries(url, []); json(response, 200, conversations!.session(id)); return; }
@@ -1163,14 +1163,18 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (method === "POST") {
         queries(url, []);
         if (action === "messages") {
-          const input = record(await body(request, MAX_MESSAGE_BODY_BYTES), ["text", "commandId", "attachments", "relay"], ["text", "commandId"]); if (typeof input.text !== "string") throw new HttpError(400, "INVALID_INPUT", "Message text required");
+          const input = record(await body(request, MAX_MESSAGE_BODY_BYTES), ["text", "commandId", "attachments", "relay", "branchFrom"], ["text", "commandId"]); if (typeof input.text !== "string") throw new HttpError(400, "INVALID_INPUT", "Message text required");
+          if (input.branchFrom !== undefined && typeof input.branchFrom !== "string") throw new HttpError(400, "INVALID_INPUT", "Invalid branch point");
           if (input.attachments !== undefined && (!Array.isArray(input.attachments) || input.attachments.some(value => typeof value !== "string"))) throw new HttpError(400, "INVALID_INPUT", "Invalid attachments");
           // The user's relay choice (ADR-055 §12.4), checked before the Runtime sees it: it goes with the input, and so into the
           // command's fingerprint. The relay never refuses an input.
           const relay = parseSendRelay(input.relay);
-          json(response, 202, app.runtime.send(id, input.text, command(input.commandId), (input.attachments ?? []) as string[], relay.choices));
+          // `branchFrom`: the message goes from the place of that Turn (its message edited and sent again, or its reply tried again), on a branch of its own.
+          json(response, 202, app.runtime.send(id, input.text, command(input.commandId), (input.attachments ?? []) as string[], relay.choices, input.branchFrom as string | undefined));
           return;
         }
+        // Another branch of the conversation becomes its path (the alternative of a Turn: `runId`); nothing runs.
+        if (action === "branch") { const input = record(await body(request), ["runId", "commandId"], ["runId", "commandId"]); json(response, 200, conversations!.session(app.runtime.selectBranch(id, text(input.runId, "Run identity", 160), command(input.commandId)).id)); return; }
         if (action === "switches") { const input = record(await body(request), ["selection", "commandId"], ["selection", "commandId"]); json(response, 202, app.runtime.switch(id, select(input.selection), command(input.commandId))); return; }
         if (action === "fork") {
           const input = record(await body(request), ["commandId", "throughRunId"], ["commandId"]);

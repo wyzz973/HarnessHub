@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { sessionId, SessionError } from "../contracts/session.js";
 import { FileSessionReader } from "../infrastructure/session/file-reader.js";
 import { application, dataRoot, errorRecord, newCommand, selection } from "./session-application.js";
@@ -63,4 +64,12 @@ export async function main(args: readonly string[]): Promise<number> {
   }
   return code;
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) process.exitCode = await main(process.argv.slice(2));
+/** Whether this module is the program Node was started with, by real paths: an entry reached through a link (macOS's `/var` → `/private/var`, a linked checkout) runs too. */
+function started(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  if (import.meta.url === pathToFileURL(resolve(entry)).href) return true;
+  try { const self = realpathSync(fileURLToPath(import.meta.url)); return [resolve(entry), resolve(entry) + ".js"].some(candidate => { try { return realpathSync(candidate) === self; } catch { return false; } }); }
+  catch { return false; }
+}
+if (started()) process.exitCode = await main(process.argv.slice(2));

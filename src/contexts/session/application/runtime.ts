@@ -440,15 +440,23 @@ export class SessionRuntime {
    * Turn's open, where the input goes as typed and the Run says why (`relay.decision`). The choice is kept with the Run
    * (`relayRequest`, the choice and its HMAC).
    */
-  send(id: SessionId, text: string, key: string, attachmentIds: readonly string[] = [], relay?: RelayChoice): SendReceipt {
+  send(id: SessionId, text: string, key: string, attachmentIds: readonly string[] = [], relay?: RelayChoice, branchFrom?: string): SendReceipt {
     this.admit(); assertInput(text);
+    if (branchFrom !== undefined && (typeof branchFrom !== "string" || !/^run-[A-Za-z0-9-]{1,128}$/u.test(branchFrom))) throw new SessionError("INVALID_INPUT", "invalid branch point");
     if (!Array.isArray(attachmentIds) || attachmentIds.some(value => typeof value !== "string")) throw new SessionError("INVALID_INPUT", "attachments must be content identities");
     const choices = parseRelayChoices(relay);
     // Without attachments or relay choices the fingerprint keeps its earlier shape, so replayed commands from before still match.
-    const command = commandId(key), fingerprint = this.fingerprint({ ...(attachmentIds.length ? { kind: "send", text, attachments: attachmentIds } : { kind: "send", text }), ...(choices === undefined ? {} : { relay: choices }) }), state = this.load(id);
+    const command = commandId(key), fingerprint = this.fingerprint({ ...(attachmentIds.length ? { kind: "send", text, attachments: attachmentIds } : { kind: "send", text }), ...(choices === undefined ? {} : { relay: choices }),
+      ...(branchFrom === undefined ? {} : { branchFrom }) }), state = this.load(id);
     const prior = replayCommand(state, command, "send", fingerprint);
     if (prior) return { sessionId: id, runId: runId(prior.resultId), replayed: true };
     this.open(state);
+    // Sent again from an earlier place (the message of the Turn `branchFrom` edited, or its reply tried again): the new Turn takes that Turn's place on a branch of its own.
+    const branchAt = branchFrom === undefined ? undefined : state.runs.findIndex(run => run.id === branchFrom);
+    if (branchAt !== undefined) {
+      if (branchAt < 0) throw new SessionError("BRANCH_NOT_FOUND", "这个对话里没有这一轮");
+      this.idleForBranch(state);
+    }
     let attachments: readonly ContentRef[] = [];
     if (attachmentIds.length) {
       if (this.options.content === undefined) throw new SessionError("ATTACHMENT_UNAVAILABLE", "this Gateway has no content storage for attachments");
@@ -464,20 +472,63 @@ export class SessionRuntime {
     // What this owner found of a process kept under the previous one is shown until the conversation's next Turn.
     this.lost.delete(id); this.outside.delete(id); this.upgraded.delete(id);
     this.commit(id, current => {
+      const at = branchAt === undefined ? current.runs.length : branchAt;
+      if (branchAt !== undefined && current.runs[branchAt]?.id !== branchFrom) throw new SessionError("VERSION_CONFLICT", "the conversation moved before the branch");
       // The input is the Run's first item (its `user` message); the Run's ordinal is its place among the Runs, and its input is the first event of the commit.
       const run: ConversationRun = { id: nextId, commandId: command, userMessageId: userId, assistantMessageId: assistantId,
         selection: current.selection, epoch: current.epoch, status: "queued", cancelRequested: false, contextThroughSeq: 0,
         sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: current.pendingSwitchId, ...(attachments.length ? { attachments } : {}),
-        timing: { acceptedAt }, ...(relayRequest === undefined ? {} : { relayRequest }), ordinal: current.runs.length, userSeq: current.lastSeq + 1, isCommand: false, items: [userItemOf({ id: nextId, userMessageId: userId }, text, acceptedAt)] };
-      return { next: { ...current, runs: [...current.runs, run], commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] },
-        events: [event("message.accepted", { runId: nextId, messageId: userId, role: "user", text, ...(attachments.length ? { attachments } : {}), ...(choices === undefined ? {} : { relay: choices }), ...(relayRequest === undefined ? {} : { relayRequest }) })] };
+        timing: { acceptedAt }, ...(relayRequest === undefined ? {} : { relayRequest }), ordinal: at, userSeq: current.lastSeq + 1, isCommand: false, items: [userItemOf({ id: nextId, userMessageId: userId }, text, acceptedAt)] };
+      const accepted = event("message.accepted", { runId: nextId, messageId: userId, role: "user", text, ...(attachments.length ? { attachments } : {}), ...(choices === undefined ? {} : { relay: choices }), ...(relayRequest === undefined ? {} : { relayRequest }) });
+      if (branchAt === undefined) return { next: { ...current, runs: [...current.runs, run], commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] }, events: [accepted] };
+      const branched = this.branchedFrom(current);
+      return { next: { ...branched, runs: [...current.runs.slice(0, at), run], commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] },
+        events: [accepted, event("conversation.branched", { fromRunId: branchFrom, ordinal: at, runId: nextId })], branch: { at } };
     });
+    if (branchAt !== undefined && this.kept.has(id)) void this.requestRelease(id, "native_reset");
     this.acceptedRelay.set(nextId, choices ?? {});
     // Inputs cancelled before they run never read theirs: the oldest go first, so this stays bounded.
     if (this.acceptedRelay.size > 4096) this.acceptedRelay.delete(this.acceptedRelay.keys().next().value!);
     this.schedule(id); return { sessionId: id, runId: nextId, replayed: false };
   }
-  /** The installation's handoff log and preference of a Store that keeps them (SqliteConversationStore); none otherwise. */
+  /**
+   * Makes the branch through the Turn `target` (an alternative of a Turn on the path: its message edited and sent again, or its reply tried again) the conversation's path. Only
+   * the current place changes: nothing runs. The native sessions are given up, as after a branch from an earlier place, so the next Turn opens new ones and is handed the path's history.
+   */
+  selectBranch(id: SessionId, target: string, key: string): Conversation {
+    this.admit();
+    if (typeof target !== "string" || !/^run-[A-Za-z0-9-]{1,128}$/u.test(target)) throw new SessionError("INVALID_INPUT", "invalid branch");
+    const state = this.load(id), command = commandId(key), fingerprint = this.fingerprint({ kind: "branch", target });
+    if (replayCommand(state, command, "branch", fingerprint)) return this.load(id);
+    if (state.status === "closed") throw new SessionError("SESSION_CLOSED", "a closed conversation does not change branch");
+    this.idleForBranch(state);
+    const store = this.store as Partial<Pick<ConversationStore, "selectBranch">>;
+    if (typeof store.selectBranch !== "function") throw new SessionError("BRANCH_UNAVAILABLE", "this Gateway's store keeps no branches");
+    try {
+      this.store.assertOwner();
+      const committed = store.selectBranch(id, state.version, runId(target), current => {
+        const made: ConversationMutation = { next: { ...this.branchedFrom(current), commands: [...current.commands, { id: command, kind: "branch", fingerprint, resultId: target }] },
+          events: [event("conversation.branched", { toRunId: target })] };
+        assertConversationTransition(current, made.next, made.events);
+        return made;
+      });
+      this.versions.set(id, committed.conversation.version);
+      this.publish(committed);
+    } catch (error) { if (storeUntrusted(error)) this.fail(error, id); throw error; }
+    if (this.kept.has(id)) void this.requestRelease(id, "native_reset");
+    return this.load(id);
+  }
+  /** A branch is taken only while nothing goes on: no Turn open or queued, no switch waiting. */
+  private idleForBranch(state: Conversation): void {
+    if (state.activeRunId !== null || state.pendingSwitchId !== null || state.runs.some(run => !terminal(run.status)) || this.workers.has(state.id))
+      throw new SessionError("BRANCH_BUSY", "回合进行中不能切换分支或在旧位置重发：等这一轮结束或先停止它");
+  }
+  /** The conversation as a branch leaves it: every native session it held given up (they hold Turns the path no longer has), and a relay recovery failure cleared with them. */
+  private branchedFrom(current: Conversation): Conversation {
+    const { relayRecoveryFailed: _cleared, ...rest } = current;
+    return { ...rest, nativeBindings: current.nativeBindings?.map(binding => binding.status === "archived" ? binding : { ...binding, status: "archived" as const }) ?? [] };
+  }
+  /** The installation's handoff log and preference of a Store that keeps them (FileConversationStore); none otherwise. */
   private relayLog(): Partial<RelayLogPort> | null {
     const store = this.store as Partial<RelayLogPort>;
     return typeof store.relayPrefs === "function" ? store : null;

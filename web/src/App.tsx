@@ -882,6 +882,16 @@ export function App() {
     // Navigation waits for the operation to end; leaving a chat is refused while an operation is in flight.
     void api.forkSession(sessionId, requestKey(), runId).then(async created => { await refreshState().catch(() => {}); endOperation(); openFromPage(created.head.id); }, failure => { setError(errorMessage(failure)); endOperation(); });
   };
+  /** Sends a message again from the place of a Turn: a branch inside the conversation, which the stream then tells whole. */
+  const branchSend = async (runId: string, text: string, sent?: readonly ContentRef[]) => {
+    if (!sessionId || !startOperation("sending")) return;
+    try { await api.send(sessionId, text, requestKey(), (sent ?? []).map(ref => ref.id), undefined, runId); } catch (failure) { setError(errorMessage(failure)); } finally { endOperation(); }
+  };
+  /** Makes another branch the conversation's path; nothing runs. */
+  const selectBranch = async (runId: string) => {
+    if (!sessionId || !startOperation("branching")) return;
+    try { await api.selectBranch(sessionId, runId, requestKey()); } catch (failure) { setError(errorMessage(failure)); } finally { endOperation(); }
+  };
   /**
    * Asks the Gateway for the composer's choice (a switch, or a blocked conversation's recovery). Only after a user's action: a send, a pick in the lists, the
    * apply button. A request whose answer this page did not see is sent again with its own key only for the same choice, and only from this page (never after a reload).
@@ -1168,7 +1178,7 @@ export function App() {
           catch(failure){ setError(errorMessage(failure)); } }} onPermission={(permission,option,input)=>{ if(!sessionId||!startOperation("permission"))return; void api.decidePermission(sessionId,permission,option,requestKey(),input).then(()=>api.session(sessionId)).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={refreshNativeModels} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft}
         messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} hiddenHarnesses={hidden} readiness={state.readiness} rememberedChoice={rememberedChoice} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError}
-        onRetryConnection={() => setStreamAttempt(value => value + 1)} onLoadOlder={readOlder} reads={turnReads} {...(sessionId === null ? {} : { onLoadChanges: (before: string | undefined, signal: AbortSignal) => api.changes(sessionId, before, undefined, signal) })} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onOpenSession={openFromPage}
+        onRetryConnection={() => setStreamAttempt(value => value + 1)} onLoadOlder={readOlder} reads={turnReads} {...(sessionId === null ? {} : { onLoadChanges: (before: string | undefined, signal: AbortSignal) => api.changes(sessionId, before, undefined, signal) })} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
         sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued} onLoadNativeResume={session ? signal => api.nativeResume(session.id, signal) : undefined}
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
         onImportNative={importNative} focusOnOpen={sessionId !== null && openedFromPage === sessionId} onOpenFocused={() => setOpenedFromPage(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}

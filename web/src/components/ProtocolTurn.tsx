@@ -18,7 +18,7 @@ import { Spinner } from "../ui/primitives.js";
 import { NoticeList, OutputList, StoredDetail, type ToolDetailLoader } from "./Activity.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { StreamingMarkdown } from "./StreamingMarkdown.js";
-import { ActionButton, LiveIcon, QueuedTurn, UserMessage, useEntrance } from "./Turn.js";
+import { ActionButton, LiveIcon, QueuedTurn, UserMessage, useEntrance, type TurnBranchView, type UserMessageBranching } from "./Turn.js";
 
 /*
  * A Turn drawn from the protocol's items (docs/proposals/protocol/hub-protocol.html §13), the same for every Harness: each item in
@@ -347,6 +347,12 @@ export interface ProtocolTurnProps {
   readonly onRetry: ((text: string, attachments: PublicRun["attachments"]) => void) | undefined;
   readonly loadToolDetail?: ToolDetailLoader | undefined;
   readonly onBranch?: ((runId: string) => void) | undefined;
+  /** Sends this Turn's message again, edited, from its place: a branch of the conversation (ChatPage decides when it may). */
+  readonly onResend?: ((runId: string, text: string, attachments: PublicRun["attachments"]) => void) | undefined;
+  /** Makes another alternative of a Turn's place the conversation's path. */
+  readonly onSelectBranch?: ((runId: string) => void) | undefined;
+  /** A Turn goes on: neither of the two is taken now, and the page says why. */
+  readonly branchBusy?: boolean;
   readonly onDetails?: ((runId: string) => void) | undefined;
   readonly detailsOpen?: boolean;
   /** Opens the handoff packet of a hand-over line. */
@@ -388,7 +394,7 @@ export const ProtocolTurn = memo(function ProtocolTurn(props: ProtocolTurnProps)
   return props.run.protocol === undefined ? <UnreadableTurn run={props.run} message={props.message} arrived={props.arrived} onEdit={props.onEdit}/> : <TurnView {...props} turn={props.run.protocol}/>;
 });
 
-function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onDetails, detailsOpen, onViewPacket, startupHint, queue, waiting, reads, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
+function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onResend, onSelectBranch, branchBusy, onDetails, detailsOpen, onViewPacket, startupHint, queue, waiting, reads, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
   // The reply is a message of the conversation, which arrives on the stream apart from the Turn's other items: its words are shown at once.
   const replyMessage = message(run.assistantMessageId), turn = useMemo(() => withReply(given, replyMessage), [given, replyMessage]);
   const arrangement = useMemo(() => arrange(turn, { asking: waiting === "approval" }), [turn, waiting]), over = arrangement.over, cancelling = run.cancelRequested;
@@ -406,6 +412,8 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
   const reply = replies.filter(Boolean).join("\n\n");
   const copy = useCopy(reply);
   const retry = onRetry !== undefined && (turn.status === "failed" || turn.status === "cancelled");
+  // A reply that ended may be tried again: the same message sent again from its place, on a branch of its own.
+  const again = onRetry !== undefined && !retry && over;
   const quiet = !(copy.state !== "idle" || detailsOpen === true || retry);
   const harness = turn.executor.harness;
   return <Context.Provider value={context}>{pieces.map((piece, index) => {
@@ -413,7 +421,8 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
     if (piece.kind === "user") {
       const sent = message(piece.item.messageId);
       if (sent === undefined) return null;
-      const bubble = <UserMessage message={sent} run={run} onEdit={onEdit}/>;
+      const branching: UserMessageBranching = { branch: (run as { readonly branch?: TurnBranchView }).branch, onResend: onResend === undefined ? undefined : text => onResend(run.id, text, run.attachments), onSelectBranch, busy: branchBusy === true };
+      const bubble = <UserMessage message={sent} run={run} onEdit={onEdit} branching={branching}/>;
       return arrived(sent.id) ? <div key={"user:" + piece.item.id} className="motion-message-in">{bubble}</div> : <div key={"user:" + piece.item.id}>{bubble}</div>;
     }
     const last = index === pieces.length - 1;
@@ -430,6 +439,7 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
             {reply ? <ActionButton label={copy.state === "copied" ? "已复制回复" : "复制回复"} onClick={copy.write}>{copy.state === "copied" ? <Check size={14}/> : <Copy size={14}/>}</ActionButton> : null}
             {onBranch && (turn.status === "completed" || turn.status === "failed" || turn.status === "cancelled") ? <ActionButton label="从这里分支" onClick={() => onBranch(run.id)}><GitBranch size={14}/></ActionButton> : null}
             {onDetails ? <ActionButton label="执行详情" pressed={detailsOpen ?? false} onClick={() => onDetails(run.id)}><Info size={14}/></ActionButton> : null}
+            {again ? <ActionButton label="重试这条回复" onClick={() => onRetry(run.input, run.attachments)}><RotateCcw size={14}/></ActionButton> : null}
             {retry ? <button type="button" className="btn btn-ghost btn-sm retry-response ml-1 min-w-24" onClick={() => onRetry(run.input, run.attachments)}><RotateCcw size={13}/>重试回复</button> : null}
           </div>
           {copy.state === "failed" ? <span className="text-red" role="status">无法使用剪贴板，可选中文本后复制。</span> : copy.state === "copied" ? <span role="status">已复制</span> : null}

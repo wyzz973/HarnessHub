@@ -1,10 +1,11 @@
 import { ITEM_KINDS, type ItemKind } from "../../../../contracts/relay.js";
 import type { PublicRun, PublicTool, RunStatus } from "../../../../contracts/session.js";
-import { outlineOf, type RelayHistory } from "./history.js";
+import type { TurnRelayCounts } from "../../../../contracts/conversation.js";
+import { outlineOf, type RelayHistory, type RelayRun } from "./history.js";
 import { plainReply, plainWords, type TextSize, type TurnOutline, type TurnWords } from "../turn-source.js";
 import { estimateTokens } from "./budget.js";
 import { characters, codeUnitsOf, fence, headUnits, neutralize, normalize, visible, type RelayLanguage } from "./escape.js";
-import { marksIn, namesCredentialFile, restoreLabels, type RelayRedactor } from "./redaction.js";
+import { marksIn, namesCredentialFile, relayRedactor, restoreLabels, type RelayRedactor } from "./redaction.js";
 import { changesFrom, classifyTool, commandTextOf, diffFiles, locationOf, normalizeTool, toolOutcome, type FileChange, type ToolFamily } from "../protocol/index.js";
 import type { DetailPolicy, DetailRead } from "../detail-read.js";
 
@@ -79,6 +80,12 @@ export interface RelayUnit {
   /** The reply, inline `<think>` blocks and all, read when a piece needs it; `visible`: something is left of it once they are taken out. */
   readonly reply: TurnOutline["reply"];
   readonly details: ReadonlyMap<string, RelayToolDetail>;
+  /**
+   * What the ledger counts of the Turn, recorded when it ended (absent for a turn of a quoted history, or a Turn whose end recorded none): a packet that does not reach the
+   * Turn counts it by these. `user`, `tools` and `reply` read the Turn the first time they are asked for; `read()` says whether that happened.
+   */
+  readonly counts?: TurnRelayCounts;
+  readonly read?: () => boolean;
 }
 
 /** A model name as the packet may show it (ADR-055 §5.1); anything else is an unknown model. */
@@ -90,7 +97,7 @@ function modelName(value: string | null | undefined): string | null {
  * reported at the end of its last dispatched Turn when this Run was that Turn (`latest`: the last dispatched Run of each
  * Harness and control); unknown otherwise.
  */
-function runModel(state: Pick<RelayHistory, "nativeBindings">, run: PublicRun, latest: ReadonlyMap<string, PublicRun["id"]>): string | null {
+function runModel(state: Pick<RelayHistory, "nativeBindings">, run: PublicRun | RelayRun, latest: ReadonlyMap<string, PublicRun["id"]>): string | null {
   const selected = modelName(run.selection.nativeModel);
   if (selected !== null) return selected;
   const binding = state.nativeBindings?.find(row => row.harnessId === run.selection.harnessId && row.controlId === run.selection.controlId && row.status !== "archived");
@@ -103,7 +110,7 @@ function runModel(state: Pick<RelayHistory, "nativeBindings">, run: PublicRun, l
  * user message and the replies after it make one turn), then `sources` in their order. `details` holds what callers read
  * of tool details, by `runId + "/" + toolId`.
  */
-export function relayUnits(state: RelayHistory, sources: readonly PublicRun[], origin: boolean, details: ReadonlyMap<string, RelayToolDetail> = new Map()): readonly RelayUnit[] {
+export function relayUnits(state: RelayHistory, sources: readonly (PublicRun | RelayRun)[], origin: boolean, details: ReadonlyMap<string, RelayToolDetail> = new Map()): readonly RelayUnit[] {
   const units: RelayUnit[] = [];
   if (origin && state.origin !== undefined) {
     let turn: { user: string | null; status: RunStatus; harnessId: string | null; attachments: RelayUnit["attachments"]; replies: string[] } | null = null;
@@ -124,13 +131,17 @@ export function relayUnits(state: RelayHistory, sources: readonly PublicRun[], o
   const index = new Map(state.runs.map((run, position) => [run.id, position])), latest = new Map<string, PublicRun["id"]>();
   for (const run of state.runs) if (run.timing?.dispatchedAt !== undefined || (run.timing === undefined && run.backend !== null)) latest.set(run.selection.harnessId + "\n" + run.selection.controlId, run.id);
   for (const run of sources) {
-    const own = new Map<string, RelayToolDetail>();
-    for (const tool of run.tools ?? []) { const detail = details.get(run.id + "/" + tool.id); if (detail !== undefined) own.set(tool.id, detail); }
-    // The words of a Turn are not read here: its outline says how big they are and whether the reply has anything to read, and the words come when a piece of the packet is written.
-    const outline = outlineOf(state, index.get(run.id) ?? -1);
-    units.push({ key: run.id, turn: (index.get(run.id) ?? 0) + 1, origin: false, harnessId: run.selection.harnessId, model: runModel(state, run, latest), status: run.status,
-      error: run.error, cancelRequested: run.cancelRequested, user: outline?.user ?? plainWords(run.input),
-      attachments: (run.attachments ?? []).map(item => ({ name: item.name, mediaType: item.mediaType, bytes: item.bytes })), tools: run.tools ?? [], reply: outline?.reply ?? plainReply(""), details: own });
+    const position = index.get(run.id) ?? -1, own = new Map<string, RelayToolDetail>(), prefix = run.id + "/";
+    for (const [key, detail] of details) if (key.startsWith(prefix)) own.set(key.slice(prefix.length), detail);
+    // The Turn is read the first time its words or its calls are asked for, and not before: a packet that does not reach it counts it by what its end recorded (`counts`).
+    // The words themselves come when a piece of the packet is written (its outline says how big they are and whether the reply has anything to read).
+    let outline: TurnOutline | null | undefined;
+    const read = (): TurnOutline | null => { if (outline === undefined) outline = outlineOf(state, position); return outline; };
+    const counts = own.size === 0 ? state.counts?.(position) ?? undefined : undefined;
+    units.push({ key: run.id, turn: position + 1, origin: false, harnessId: run.selection.harnessId, model: runModel(state, run, latest), status: run.status,
+      error: run.error, cancelRequested: run.cancelRequested, get user() { return read()?.user ?? plainWords((run as Partial<PublicRun>).input ?? ""); },
+      attachments: (run.attachments ?? []).map(item => ({ name: item.name, mediaType: item.mediaType, bytes: item.bytes })), get tools() { return read()?.run.tools ?? (run as Partial<PublicRun>).tools ?? []; },
+      get reply() { return read()?.reply ?? plainReply(""); }, details: own, ...(counts === undefined ? {} : { counts }), read: () => outline !== undefined });
   }
   return units;
 }
@@ -465,6 +476,22 @@ export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): reado
   const reply = unit.reply;
   if (reply.visible) add("replies", "reply", RANK.reply, reply.size, counted => words.reply(name) + "\n" + (n.block(withoutThinking(reply.text()), "text", counted) ?? words.empty));
   return out;
+}
+/**
+ * What a packet's ledger counts of a finished Turn read whole, with no stored detail: what its end records for packets that will not reach it (`RelayUnit.counts`). The same
+ * candidates a packet makes of it, counted by kind; and its calls whose detail is not read.
+ */
+export function turnRelayCounts(outline: TurnOutline): TurnRelayCounts {
+  const run = outline.run;
+  const unit: RelayUnit = { key: run.id, turn: outline.ordinal + 1, origin: false, harnessId: run.selection.harnessId, model: null, status: run.status, error: run.error, cancelRequested: run.cancelRequested,
+    user: outline.user, attachments: (run.attachments ?? []).map(item => ({ name: item.name, mediaType: item.mediaType, bytes: item.bytes })), tools: run.tools ?? [], reply: outline.reply, details: new Map() };
+  const counts = { userMessages: 0, replies: 0, outputs: 0, changes: 0, calls: 0 };
+  for (const item of candidatesOf(new Narrator("zh", relayRedactor([]), () => null), unit, 0)) counts[item.kind]++;
+  return { ...counts, unread: unreadOf(unit) };
+}
+/** A unit's calls of the families whose detail a packet quotes, with no detail read for them: the ledger says how many. */
+export function unreadOf(unit: Pick<RelayUnit, "tools" | "details">): number {
+  return unit.tools.filter(tool => tool.parentId === undefined && ["read", "change", "search", "execute"].includes(kindOf(tool)) && !unit.details.has(tool.id)).length;
 }
 /** The line that opens a unit's operations. */
 export function opsLabel(n: Narrator, unit: RelayUnit): string { return WORDS[n.language].ops(n.name(unit.harnessId)); }

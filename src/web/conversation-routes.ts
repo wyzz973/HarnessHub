@@ -134,6 +134,8 @@ export class ConversationRoutes {
    */
   needsSnapshot(commit: ConversationCommit): boolean {
     const changes = commit.changes;
+    // A branch changes which Turns the conversation has: it is told whole.
+    if (commit.events.some(event => event.type === "conversation.branched")) return true;
     for (const write of changes.items ?? []) if ((write.row.itemId === "plan" && write.op === "insert") || isTaskListCall(write.row)) return true;
     if ((changes.bindings ?? []).length > 0) return true;
     for (const write of changes.runs ?? []) {
@@ -158,7 +160,9 @@ export class ConversationRoutes {
   observe(commit: ConversationCommit): void {
     const written = commit.changes.head?.row;
     if (written === undefined) return;
-    const id = written.id as SessionId, summary = this.summaries.get(id);
+    const id = written.id as SessionId;
+    if (commit.events.some(event => event.type === "conversation.branched")) { this.summaries.delete(id); this.editLists.delete(id); return; }
+    const summary = this.summaries.get(id);
     if (summary !== undefined) {
       if (summary.version === written.version - 1 && (commit.changes.runs ?? []).length === 0) summary.version = written.version; else this.summaries.delete(id);
     }

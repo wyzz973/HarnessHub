@@ -4,7 +4,7 @@ import type { HeldItem } from "../../contracts/conversation.js";
 import { SessionError, sessionId, type HarnessSelection, type PublicMessage, type PublicRun, type SessionEvent, type SessionId, type SessionSnapshot } from "../../contracts/session.js";
 import { runRowOf } from "../../contexts/session/domain/run-row.js";
 import { fromItems, originFromRows } from "../../contexts/session/domain/store-conversion.js";
-import { conversationOf, isMainFile, lines, loadSession, readRunItems, sessionsDir, type Loaded } from "./session-file.js";
+import { conversationOf, isMainFile, lines, loadSession, readOrigin, readRunItems, sessionsDir, type Loaded } from "./session-file.js";
 import { pageLimit } from "./store-events.js";
 import { inspectRoot } from "./store-root.js";
 
@@ -59,7 +59,7 @@ export class FileSessionReader {
       runs.push(made.run); messages.push(...made.messages);
     });
     messages.sort((left, right) => left.seq - right.seq);
-    const origin = conversation.origin === undefined ? null : originFromRows(conversation.origin, loaded.origin);
+    const origin = conversation.origin === undefined ? null : originFromRows(conversation.origin, readOrigin(loaded.paths.main, conversation.id, loaded.origin));
     return { schemaVersion: 13, id: conversation.id, version: conversation.version, lastSeq: conversation.lastSeq, epoch: conversation.epoch, status: conversation.status, configuration: conversation.configuration,
       selection: conversation.selection, activeRunId: conversation.activeRunId, pendingSwitchId: conversation.pendingSwitchId, runs, messages, switches: conversation.switches, commands: conversation.commands,
       ...(conversation.nativeBindings === undefined ? {} : { nativeBindings: conversation.nativeBindings }), ...(origin === null ? {} : { origin }) } as SessionSnapshot;

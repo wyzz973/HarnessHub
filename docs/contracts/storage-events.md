@@ -1,5 +1,7 @@
 # 持久事实、事件和恢复
 
+> 已被文件存储取代（2026-11-12），仅作历史。现行格式见 [对话文件](session-files.md)。
+>
 > **2026-11-12：对话不再存在 SQLite 里。** 一个对话一个只追加的 JSONL 文件（`<数据根>/sessions/<工作目录>/<时间>_<对话 id>.jsonl`，格式见 `src/infrastructure/session/session-file.ts`），旧的 `gateway.sqlite` 不再读取、不迁移。本文里关于业务库的表、迁移、备份与回退的部分只作历史参考；`sessions check-upgrade` 与 `sessions restore-backup` 两个命令已删除。
 
 > **2026-11-11：本文里与接力有关的部分已过时。** 接力做了大幅减法：现状以 [slim.md](../proposals/relay/slim.md) 与代码为准；本文描述的事后核对、待核状态、同意与厂商识别、探针门控、严格设置、多档交接单等机制大多已删除，只作历史参考。

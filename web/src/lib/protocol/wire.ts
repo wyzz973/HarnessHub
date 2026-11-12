@@ -206,6 +206,11 @@ export function decodeWireRun(value: unknown): ClientRun {
   const cleanup = nullable(row.cleanup, item => { const made = rec(item, "a cleanup"); if (made.closed !== true) return fail("a cleanup is not closed"); return { closed: true as const, exitCode: nullable(made.exitCode, number => int(number, "an exit code")), signal: nullable(made.signal, word => str(word, "a signal")), protocolFailure: fault(made.protocolFailure) }; });
   const attachments = maybe(row.attachments, item => many(item, content, "attachments")), timed = maybe(row.timing, timing), retained = maybe(row.retained, item => flag(item, "retained")), reused = maybe(row.reused, item => flag(item, "reused"));
   const relay = row.relay === undefined || row.relay === null ? undefined : decodeRunRelay(row.relay) ?? undefined;
+  // Where the Turn stands among the alternatives of its place; a reading that is not one is left out (the Turn stays).
+  let branch: WireRun["branch"];
+  try {
+    branch = maybe(row.branch, item => { const made = rec(item, "a branch"); return { n: nat(made.n, "n"), of: nat(made.of, "of"), prev: nullable(made.prev, word => str(word, "a Run")), next: nullable(made.next, word => str(word, "a Run")) }; });
+  } catch { branch = undefined; }
   let turn: WireTurnHeader | undefined, problem: string | undefined;
   if (row.turn === undefined || row.turn === null) problem = "服务没有给出这一轮的协议数据";
   else { try { turn = header(row.turn); } catch (error) { problem = error instanceof WireError ? error.told ? error.message : "这一轮的协议数据读不出来：" + error.message : "这一轮的协议数据读不出来"; } }
@@ -214,7 +219,7 @@ export function decodeWireRun(value: unknown): ClientRun {
     contextThroughSeq: nat(row.contextThroughSeq, "contextThroughSeq"), sourceRunIds: words(row.sourceRunIds, "a source Run") as never[], backend, cleanup, error: fault(row.error),
     ...(attachments === undefined ? {} : { attachments }), ...(timed === undefined ? {} : { timing: timed }), ...(retained === undefined ? {} : { retained }), ...(reused === undefined ? {} : { reused }),
     ...(relay === undefined ? {} : { relay: relay as never }), stopRequested: bool(row.stopRequested, "stopRequested"), awaitingSwitchId: nullable(row.awaitingSwitchId, item => str(item, "a switch id")) as never,
-    ordinal: nat(row.ordinal, "an ordinal"), userSeq: nat(row.userSeq, "userSeq"), ...(turn === undefined ? {} : { turn }), ...(problem === undefined ? {} : { protocolProblem: problem }) };
+    ordinal: nat(row.ordinal, "an ordinal"), userSeq: nat(row.userSeq, "userSeq"), ...(turn === undefined ? {} : { turn }), ...(problem === undefined ? {} : { protocolProblem: problem }), ...(branch === undefined ? {} : { branch }) };
 }
 
 /** One Turn of a window or a page: its Run, its items in place order, and the middle of a long stretch of work when it was left out. */

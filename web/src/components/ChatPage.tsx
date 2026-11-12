@@ -120,6 +120,10 @@ export interface ChatProps {
   attachments: readonly AttachmentDraft[];
   /** Branches after a finished reply, then opens the branch as `onOpenSession` does; omitted while branching is unavailable. */
   onBranch?: (runId: string) => void;
+  /** Sends a message again from the place of the Turn `runId` (edited, or the same to try the reply again): a branch inside this conversation. */
+  onBranchSend?: (runId: string, text: string, attachments?: readonly ContentRef[]) => Promise<void>;
+  /** Makes the branch through the Turn `runId` this conversation's path; nothing runs. */
+  onSelectBranch?: (runId: string) => Promise<void>;
   /**
    * Opens another conversation in place of this page, from an action on it (打开原对话, the conversation that holds the
    * workspace, a native session's conversation); it opens with `focusOnOpen`.
@@ -422,7 +426,9 @@ export function ChatPage(props: ChatProps) {
   const transcriptItems = (current: ConversationView): ReactNode[] => current.runs.map(run => {
     const open = (current.permissions ?? []).filter(request => request.runId === run.id && !request.decided);
     return <ProtocolTurn key={"turn:" + run.id} run={run} message={messageOf} arrived={arrived} detailed={detailed} onEdit={fillDraft}
-      onRetry={canRetry ? (text, sent) => { void send(text, sent ?? []).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
+      onRetry={canRetry ? (text, sent) => { void (props.onBranchSend ? props.onBranchSend(run.id, text, sent ?? []) : send(text, sent ?? [])).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
+      onResend={props.onBranchSend && session?.status === "open" ? (runId, text, sent) => { void props.onBranchSend!(runId, text, sent ?? []).catch(() => {}); } : undefined}
+      onSelectBranch={props.onSelectBranch ? runId => { void props.onSelectBranch!(runId).catch(() => {}); } : undefined} branchBusy={!canRetry}
       onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? current.runs.at(-1)?.id) === run.id} onViewPacket={relay ? viewPacket : undefined} reads={props.reads}
       startupHint={startupHints.get(run.id)} queue={queue?.runId === run.id ? queueNotice : undefined}
       waiting={open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{turnRequests(run.id)}</ProtocolTurn>;

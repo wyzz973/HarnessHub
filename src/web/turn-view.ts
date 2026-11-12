@@ -1,5 +1,5 @@
 import type { ContentRef } from "../contracts/content.js";
-import type { HeldItem, ItemFields, ItemRow, RunRow, TurnItems } from "../contracts/conversation.js";
+import type { HeldItem, ItemFields, ItemRow, RunRow, TurnBranch, TurnItems } from "../contracts/conversation.js";
 import {
   PROTOCOL_VERSION,
   type ContextEventItem, type ErrorItem, type Executor, type ItemStatus, type PlanItem, type PlanStep, type SwitchItem,
@@ -53,6 +53,8 @@ export interface TurnFacts {
   relay(row: RunRow): RunRelayReading;
   /** The row of the item that is the Turn's answer once the Turn completed, without its text; null when there is none. */
   answer?(row: RunRow): ItemRow | null;
+  /** Where each Turn of the path that has alternatives stands among them. */
+  branches?(): ReadonlyMap<RunId, TurnBranch>;
 }
 /** The names and the details the display layer brings. */
 export interface TurnEnv {
@@ -68,6 +70,8 @@ export interface ConversationFactsPort {
   runAt(id: SessionId, ordinal: number): RunRow | null;
   lastDispatched(id: SessionId, harnessId: string, controlId: string, options?: { readonly native?: boolean }): RunRow | null;
   bindings(id: SessionId): readonly NativeSessionBinding[];
+  /** Where each Turn of the path that has alternatives stands among them; optional. */
+  branches?(id: SessionId): ReadonlyMap<RunId, TurnBranch>;
   finalSeq(runId: RunId): number | null;
   item(runId: RunId, seq: number): ItemRow | null;
 }
@@ -79,6 +83,7 @@ export function turnFactsOf(id: SessionId, facts: ConversationFactsPort, relay: 
     bindings: () => facts.bindings(id),
     relay,
     answer: row => { const seq = facts.finalSeq(row.runId); return seq === null ? null : facts.item(row.runId, seq); },
+    branches: () => facts.branches?.(id) ?? new Map(),
   };
 }
 
@@ -165,6 +170,7 @@ function switchOf(run: WireRun, from: Executor, to: Executor): SwitchItem {
 export class TurnView {
   private readonly dispatched = new Map<string, number | null>();
   private bound: readonly NativeSessionBinding[] | undefined;
+  private branched: ReadonlyMap<RunId, TurnBranch> | undefined;
   constructor(private readonly facts: TurnFacts, private readonly env: TurnEnv) {}
 
   private lastDispatched(harnessId: string, controlId: string): number | null {
@@ -204,7 +210,13 @@ export class TurnView {
       sourceRunIds: facts.sourceRunIds, backend: facts.backend, cleanup: facts.cleanup, error: facts.error, userMessageId: facts.userMessageId, assistantMessageId: facts.assistantMessageId,
       ...(facts.attachments === undefined ? {} : { attachments: facts.attachments }), ...(facts.timing === undefined ? {} : { timing: facts.timing }),
       ...(facts.retained === undefined ? {} : { retained: facts.retained }), ...(facts.reused === true || row.reused ? { reused: true as const } : {}), ...(relay === undefined ? {} : { relay }),
-      stopRequested: row.stopRequested, awaitingSwitchId: facts.awaitingSwitchId, ordinal: row.ordinal, userSeq: row.userSeq, turn: this.header(row, waiting) };
+      stopRequested: row.stopRequested, awaitingSwitchId: facts.awaitingSwitchId, ordinal: row.ordinal, userSeq: row.userSeq, turn: this.header(row, waiting), ...this.branchOf(row) };
+  }
+  /** Where the Turn stands among the alternatives of its place, when it has any. */
+  private branchOf(row: RunRow): { readonly branch?: TurnBranch } {
+    this.branched ??= this.facts.branches?.() ?? new Map();
+    const found = this.branched.get(row.runId);
+    return found === undefined ? {} : { branch: found };
   }
 
   /** The hand-over line of a Run, when it has one: the executor changed, or the same one went on and the message still carried the conversation (again, or what a clear had cut off) or went alone though something was owed. */

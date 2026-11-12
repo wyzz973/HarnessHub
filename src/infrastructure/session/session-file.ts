@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   CONVERSATION_FORMAT,
-  type Conversation, type HeadJson, type HeldItem, type ItemFields, type OriginHistoryRow, type RunRow, type StoredOrigin,
+  type Conversation, type HeadJson, type HeldItem, type ItemFields, type OriginHistoryRow, type RunRow, type StoredOrigin, type TurnRelayCounts,
 } from "../../contracts/conversation.js";
 import type { ItemStatus, ItemType } from "../../contracts/protocol.js";
 import type { DeliveryRecord, RelayPacket } from "../../contracts/relay.js";
@@ -88,11 +88,11 @@ export function workspaceSlug(cwd: string): string {
   return "--" + cwd.replace(/^[/\\]/u, "").replace(/[/\\:\0]/gu, "-").slice(0, 96) + "-" + createHash("sha256").update(cwd).digest("hex").slice(0, 12) + "--";
 }
 export function fileStamp(at: Date): string { return at.toISOString().replace(/[:.]/gu, "-"); }
-export interface SessionPaths { readonly main: string; readonly wip: string; readonly events: string }
-/** The three files of a conversation from its main file's path. */
+export interface SessionPaths { readonly main: string; readonly wip: string; readonly events: string; readonly index: string }
+/** The files of a conversation from its main file's path (the cache of its fold is `.index.json`). */
 export function pathsOf(main: string): SessionPaths {
   const base = main.endsWith(".jsonl") ? main.slice(0, -".jsonl".length) : main;
-  return { main, wip: base + ".wip.jsonl", events: base + ".events.jsonl" };
+  return { main, wip: base + ".wip.jsonl", events: base + ".events.jsonl", index: base + ".index.json" };
 }
 export function isMainFile(name: string): boolean { return name.endsWith(".jsonl") && !name.endsWith(".wip.jsonl") && !name.endsWith(".events.jsonl"); }
 export function sessionsDir(root: string): string { return join(root, "sessions"); }
@@ -170,8 +170,28 @@ export interface LoadedRun {
   span: { from: number; to: number } | null;
   /** The id of the line that ended the Run. */
   endEntry: string | null;
+  /** What the conversation's views ask of a finished Turn without reading it: its edits, its latest plan, the content it mentions. */
+  facts: TurnLineFacts;
 }
+/** A Turn's file changes with a stored detail (their places), the place of its latest plan with steps, and the content ids its items mention. */
+export interface TurnLineFacts { edits: number[]; plan: number | null; refs: string[]; relay?: TurnRelayCounts }
+export const noFacts = (): TurnLineFacts => ({ edits: [], plan: null, refs: [] });
+/** What one item adds to its Turn's facts. */
+export function addItemFacts(facts: TurnLineFacts, item: Pick<HeldItem, "seq" | "type" | "fields">): void {
+  const fields = item.fields as { readonly detail?: { readonly id?: unknown }; readonly content?: { readonly id?: unknown }; readonly steps?: unknown };
+  if (item.type === "file_change" && fields.detail !== undefined && !facts.edits.includes(item.seq)) facts.edits.push(item.seq);
+  if (item.type === "plan" && Array.isArray(fields.steps) && fields.steps.length > 0 && (facts.plan === null || item.seq > facts.plan)) facts.plan = item.seq;
+  for (const id of [fields.detail?.id, fields.content?.id]) if (typeof id === "string" && !facts.refs.includes(id)) facts.refs.push(id);
+}
+export function factsOfItems(items: readonly HeldItem[]): TurnLineFacts { const facts = noFacts(); for (const item of items) addItemFacts(facts, item); facts.edits.sort((left, right) => left - right); return facts; }
+/** Where a quoted message of a branch or an import is in the file (its words are read when asked for), and the content it attaches. */
+export interface OriginPlace { readonly idx: number; readonly kind: "fork" | "import"; readonly offset: number; readonly length: number; readonly refs: readonly string[] }
 export interface PacketPlace { readonly offset: number; readonly length: number; readonly index: number }
+/**
+ * Where a Turn starts in the tree, for every Turn of the file whether on the current path or not: its `turn start` line, and the line its commit was written under (the
+ * anchor). Turns with one anchor are the alternatives of one place in the conversation (a message edited and sent again, a reply tried again).
+ */
+export interface TurnStart { readonly runId: string; readonly anchor: string | null; readonly entry: string }
 export interface Loaded {
   readonly paths: SessionPaths;
   readonly header: SessionHeader;
@@ -181,16 +201,18 @@ export interface Loaded {
   readonly runs: LoadedRun[];
   readonly bindings: NativeSessionBinding[];
   readonly switches: PublicSwitch[];
-  readonly origin: OriginHistoryRow[];
+  readonly origin: OriginPlace[];
   readonly prints: Set<string>;
   readonly packets: Map<string, { readonly runId: RunId; readonly packet: RelayPacket }>;
   /** Where the text of each packet body is: the line and the packet's place in it (texts are read when asked for, not held). */
   readonly bodies: Map<string, PacketPlace>;
   readonly deliveries: Map<string, DeliveryRecord>;
+  readonly starts: TurnStart[];
   lastSeq: number;
   leaf: string | null;
   nextEntry: number;
   size: number;
+  mtimeMs: number;
   /** Whether the file ends in a newline (a write cut short leaves it without one; the next write starts a line first). */
   endsInNewline: boolean;
   updatedAt: number;
@@ -198,87 +220,171 @@ export interface Loaded {
   skipped: number;
   /** Whether a WIP log was found and laid over the file. */
   wip: boolean;
+  /** Whether the fold came from the cache beside the file. */
+  fromCache: boolean;
+  /** The seq of the commit the fold is in, and the line its first line was written under (the anchor of a Turn whose line does not say it). */
+  commitSeq: number;
+  commitParent: string | null;
 }
 
 function invalid(message: string): never { throw new SessionError("INVALID_DATA", message); }
+/** The lines that make up the conversation's Turns, which only the current path holds; every other line is a fact of the whole conversation, whichever branch it was written on. */
+const PATH_TYPES: ReadonlySet<string> = new Set(["turn", "item"]);
+interface LineHead { readonly id: string; readonly parent: string | null; readonly type: string }
+function headOf(text: string): LineHead | null {
+  const found = HEAD_OF_LINE.exec(text.slice(0, 96));
+  if (found !== null) return { type: found[1]!, id: found[2]!, parent: found[3] === "null" ? null : found[3]!.slice(1, -1) };
+  const value = parse(text);
+  return value !== null && typeof value.id === "string" ? { type: String(value.type), id: value.id, parent: typeof value.parentId === "string" ? value.parentId : null } : null;
+}
+/** The ids of a file's lines and the line each was written under, in file order. */
+export function lineHeads(buffer: Buffer, base = 0): (LineHead & { readonly offset: number })[] {
+  const heads: (LineHead & { offset: number })[] = [];
+  for (const line of lines(buffer, base)) { const head = headOf(line.text); if (head !== null) heads.push({ ...head, offset: line.offset }); }
+  return heads;
+}
 
-/** Reads a conversation's file, and its WIP log laid over it, into what the store holds. Only the Turns not finished keep their items; a finished one keeps the range of its lines. */
-export function loadSession(main: string): Loaded {
-  const paths = pathsOf(main);
-  const buffer = readFileSync(main);
-  const all = [...lines(buffer)];
-  const first = all[0];
-  const header = first === undefined ? null : parse(first.text);
-  if (header === null || header.type !== "session" || typeof header.id !== "string" || typeof header.cwd !== "string") invalid("the conversation file has no header");
-  // The path from the leaf to the root: what the conversation is now. The lines are one chain unless a branch was written, so the common case looks at no more than ids.
-  const parents = new Map<string, string | null>(), order: string[] = [];
-  for (const line of all.slice(1)) {
-    const found = HEAD_OF_LINE.exec(line.text.slice(0, 96));
-    let id: string | undefined, parent: string | null | undefined;
-    if (found !== null) { id = found[2]; parent = found[3] === "null" ? null : found[3]!.slice(1, -1); }
-    else { const value = parse(line.text); if (value !== null && typeof value.id === "string") { id = value.id; parent = typeof value.parentId === "string" ? value.parentId : null; } }
-    if (id === undefined) continue;
-    parents.set(id, parent ?? null); order.push(id);
+function emptyLoaded(paths: SessionPaths, header: SessionHeader): Loaded {
+  return { paths, header, head: null as unknown as HeadState, title: "", commands: [], runs: [], bindings: [], switches: [], origin: [], prints: new Set(), packets: new Map(), bodies: new Map(),
+    deliveries: new Map(), starts: [], lastSeq: 0, leaf: null, nextEntry: 1, size: 0, mtimeMs: 0, endsInNewline: true, updatedAt: Date.parse(String(header.timestamp)) || 0, skipped: 0, wip: false,
+    fromCache: false, commitSeq: -1, commitParent: null };
+}
+/** One line folded into what is read: `onPath` null when every line is on the path. */
+function foldLine(loaded: Loaded, byRun: Map<string, LoadedRun>, value: Record<string, unknown>, line: { readonly offset: number; readonly length: number }, onPath: ReadonlySet<string> | null): void {
+  const seq = typeof value.seq === "number" ? value.seq : 0, id = String(value.id);
+  if (seq !== loaded.commitSeq) { loaded.commitSeq = seq; loaded.commitParent = typeof value.parentId === "string" ? value.parentId : null; }
+  if (seq > loaded.lastSeq) loaded.lastSeq = seq;
+  const at = Date.parse(String(value.timestamp));
+  if (Number.isFinite(at) && at > loaded.updatedAt) loaded.updatedAt = at;
+  if (value.type === "turn" && value.phase === "start") {
+    const runId = String((value.run as { runId?: unknown }).runId);
+    loaded.starts.push({ runId, anchor: typeof value.anchor === "string" ? value.anchor : loaded.commitParent, entry: id });
   }
-  const leaf = order.at(-1) ?? null;
-  let onPath: Set<string> | null = null;
-  // One chain: every line follows the one before it. Otherwise walk from the leaf.
-  for (let index = 0; index < order.length; index++) if (parents.get(order[index]!) !== (index === 0 ? null : order[index - 1])) { onPath = new Set(); break; }
-  if (onPath !== null) { for (let at: string | null = leaf; at !== null && !onPath.has(at); at = parents.get(at) ?? null) onPath.add(at); }
-  let nextEntry = 1;
-  for (const id of order) { const number = parseInt(id, 16); if (Number.isSafeInteger(number) && number >= nextEntry) nextEntry = number + 1; }
-
-  const sessionId = header.id as SessionId;
-  const loaded: Loaded = { paths, header: header as unknown as SessionHeader, head: null as unknown as HeadState, title: "", commands: [], runs: [], bindings: [], switches: [], origin: [], prints: new Set(),
-    packets: new Map(), bodies: new Map(), deliveries: new Map(), lastSeq: 0, leaf, nextEntry, size: buffer.length, endsInNewline: buffer.length === 0 || buffer[buffer.length - 1] === 10,
-    updatedAt: Date.parse(String(header.timestamp)) || 0, skipped: 0, wip: false };
-  const byRun = new Map<string, LoadedRun>();
-  let head: HeadState | null = null;
-  for (const line of all.slice(1)) {
+  if (PATH_TYPES.has(String(value.type)) && onPath !== null && !onPath.has(id)) return;
+  const sessionId = loaded.header.id as SessionId;
+  switch (value.type) {
+    case "head": loaded.head = value.head as HeadState; break;
+    case "session_info": if (typeof value.name === "string") loaded.title = value.name; break;
+    case "command": loaded.commands[Number(value.ordinal)] = value.command as CommandRecord; break;
+    case "binding": loaded.bindings[Number(value.ordinal)] = value.binding as NativeSessionBinding; break;
+    case "switch": loaded.switches[Number(value.ordinal)] = value.switch as PublicSwitch; break;
+    case "origin": loaded.origin.push({ idx: Number(value.idx), kind: value.kind === "import" ? "import" : "fork", offset: line.offset, length: line.length,
+      refs: ((value.message as ForkedMessage | undefined)?.attachments ?? []).map(attachment => attachment.id) }); break;
+    case "custom": if (value.customType === "notice_prints" && Array.isArray((value.data as { prints?: unknown })?.prints)) for (const print of (value.data as { prints: unknown[] }).prints) loaded.prints.add(String(print)); break;
+    case "turn": {
+      const row = { ...(value.run as StoredRun), sessionId } as RunRow;
+      let run = byRun.get(row.runId);
+      if (run === undefined) { run = { row, ended: false, items: new Map(), span: null, endEntry: null, facts: noFacts() }; byRun.set(row.runId, run); loaded.runs[row.ordinal] = run; }
+      run.row = row;
+      if (value.phase === "end" || runFinished(row.status)) { run.ended = true; run.items = null; if (value.phase === "end") run.endEntry = id; }
+      if (value.phase === "end" && value.counts !== null && typeof value.counts === "object") run.facts.relay = value.counts as TurnRelayCounts;
+      break;
+    }
+    case "item": {
+      const run = byRun.get(String(value.runId));
+      if (run === undefined) { loaded.skipped++; break; }
+      run.span = run.span === null ? { from: line.offset, to: line.offset + line.length } : { from: Math.min(run.span.from, line.offset), to: Math.max(run.span.to, line.offset + line.length) };
+      const item = heldItemOf(run.row.runId, value.item as StoredItem);
+      addItemFacts(run.facts, item);
+      if (run.items !== null) run.items.set(item.seq, { item, mainSeq: seq, dirty: false });
+      break;
+    }
+    case "relay": {
+      const packets = Array.isArray(value.packets) ? value.packets as StoredPacket[] : [];
+      packets.forEach((stored, index) => {
+        if (!loaded.packets.has(stored.packet.id)) loaded.packets.set(stored.packet.id, { runId: stored.runId, packet: stored.packet });
+        if (!loaded.bodies.has(stored.packet.body.sha256)) loaded.bodies.set(stored.packet.body.sha256, { offset: line.offset, length: line.length, index });
+      });
+      for (const record of Array.isArray(value.deliveries) ? value.deliveries as DeliveryRecord[] : []) loaded.deliveries.set(record.runId, record);
+      break;
+    }
+    default: break;
+  }
+}
+/** Folds the lines of `buffer` (at `base` in the file) into `loaded`. */
+function foldBuffer(loaded: Loaded, buffer: Buffer, base: number, onPath: ReadonlySet<string> | null, skipFirst: boolean): void {
+  const byRun = new Map<string, LoadedRun>(loaded.runs.map(run => [run.row.runId as string, run]));
+  let first = skipFirst;
+  for (const line of lines(buffer, base)) {
+    if (first) { first = false; continue; }
     const value = parse(line.text);
     if (value === null) { loaded.skipped++; continue; }
-    if (onPath !== null && !onPath.has(String(value.id))) continue;
-    if (typeof value.seq === "number" && value.seq > loaded.lastSeq) loaded.lastSeq = value.seq;
-    const at = Date.parse(String(value.timestamp));
-    if (Number.isFinite(at) && at > loaded.updatedAt) loaded.updatedAt = at;
-    const seq = typeof value.seq === "number" ? value.seq : 0;
-    switch (value.type) {
-      case "head": head = value.head as HeadState; break;
-      case "session_info": if (typeof value.name === "string") loaded.title = value.name; break;
-      case "command": loaded.commands[Number(value.ordinal)] = value.command as CommandRecord; break;
-      case "binding": loaded.bindings[Number(value.ordinal)] = value.binding as NativeSessionBinding; break;
-      case "switch": loaded.switches[Number(value.ordinal)] = value.switch as PublicSwitch; break;
-      case "origin": loaded.origin.push({ sessionId, idx: Number(value.idx), kind: value.kind === "import" ? "import" : "fork", message: value.message as ForkedMessage }); break;
-      case "custom": if (value.customType === "notice_prints" && Array.isArray((value.data as { prints?: unknown })?.prints)) for (const print of (value.data as { prints: unknown[] }).prints) loaded.prints.add(String(print)); break;
-      case "turn": {
-        const row = { ...(value.run as StoredRun), sessionId } as RunRow;
-        let run = byRun.get(row.runId);
-        if (run === undefined) { run = { row, ended: false, items: new Map(), span: null, endEntry: null }; byRun.set(row.runId, run); loaded.runs[row.ordinal] = run; }
-        run.row = row;
-        if (value.phase === "end" || runFinished(row.status)) { run.ended = true; run.items = null; if (value.phase === "end") run.endEntry = String(value.id); }
-        break;
-      }
-      case "item": {
-        const run = byRun.get(String(value.runId));
-        if (run === undefined) { loaded.skipped++; break; }
-        run.span = run.span === null ? { from: line.offset, to: line.offset + line.length } : { from: Math.min(run.span.from, line.offset), to: Math.max(run.span.to, line.offset + line.length) };
-        if (run.items !== null) { const item = heldItemOf(run.row.runId, value.item as StoredItem); run.items.set(item.seq, { item, mainSeq: seq, dirty: false }); }
-        break;
-      }
-      case "relay": {
-        const packets = Array.isArray(value.packets) ? value.packets as StoredPacket[] : [];
-        packets.forEach((stored, index) => {
-          if (!loaded.packets.has(stored.packet.id)) loaded.packets.set(stored.packet.id, { runId: stored.runId, packet: stored.packet });
-          if (!loaded.bodies.has(stored.packet.body.sha256)) loaded.bodies.set(stored.packet.body.sha256, { offset: line.offset, length: line.length, index });
-        });
-        for (const record of Array.isArray(value.deliveries) ? value.deliveries as DeliveryRecord[] : []) loaded.deliveries.set(record.runId, record);
-        break;
-      }
-      default: break;
-    }
+    foldLine(loaded, byRun, value, line, onPath);
   }
-  if (head === null) invalid("the conversation file has no head");
-  loaded.head = head;
+}
+/** The path from `leaf` to the root, or null when every line is on it (each line written under the one before it). */
+function pathOf(heads: readonly LineHead[], leaf: string | null, given: boolean): ReadonlySet<string> | null {
+  let linear = !given;
+  if (linear) for (let index = 0; index < heads.length; index++) if (heads[index]!.parent !== (index === 0 ? null : heads[index - 1]!.id)) { linear = false; break; }
+  if (linear) return null;
+  const parents = new Map(heads.map(head => [head.id, head.parent] as const)), path = new Set<string>();
+  for (let at: string | null = leaf; at !== null && !path.has(at); at = parents.get(at) ?? null) path.add(at);
+  return path;
+}
+
+/** The fold kept beside a file (`.index.json`): what reading it up to `size` gave, for a conversation with no Turn open. A cache: a reader that cannot use it reads the file. */
+interface Sidecar {
+  readonly version: 2; readonly size: number; readonly mtimeMs: number; readonly header: SessionHeader; readonly head: HeadState; readonly title: string;
+  readonly commands: readonly CommandRecord[]; readonly runs: readonly { readonly row: StoredRun; readonly span: LoadedRun["span"]; readonly endEntry: string | null; readonly facts: TurnLineFacts }[];
+  readonly bindings: readonly NativeSessionBinding[]; readonly switches: readonly PublicSwitch[]; readonly origin: readonly OriginPlace[]; readonly prints: readonly string[];
+  readonly packets: readonly (readonly [string, { readonly runId: RunId; readonly packet: RelayPacket }])[]; readonly bodies: readonly (readonly [string, PacketPlace])[];
+  readonly deliveries: readonly (readonly [string, DeliveryRecord])[]; readonly starts: readonly TurnStart[];
+  readonly lastSeq: number; readonly leaf: string | null; readonly nextEntry: number; readonly endsInNewline: boolean; readonly updatedAt: number;
+}
+export function sidecarOf(loaded: Pick<Loaded, "header" | "head" | "title" | "commands" | "bindings" | "switches" | "origin" | "prints" | "packets" | "bodies" | "deliveries" | "starts" | "lastSeq" | "leaf"
+  | "nextEntry" | "endsInNewline" | "updatedAt" | "size" | "mtimeMs"> & { readonly runs: readonly { readonly row: RunRow; readonly span: LoadedRun["span"]; readonly endEntry: string | null; readonly facts: TurnLineFacts }[] }): string {
+  const sidecar: Sidecar = { version: 2, size: loaded.size, mtimeMs: loaded.mtimeMs, header: loaded.header, head: loaded.head, title: loaded.title, commands: loaded.commands,
+    runs: loaded.runs.map(run => { const { sessionId: _session, ...row } = run.row; return { row, span: run.span, endEntry: run.endEntry, facts: run.facts }; }), bindings: loaded.bindings, switches: loaded.switches,
+    origin: loaded.origin, prints: [...loaded.prints], packets: [...loaded.packets], bodies: [...loaded.bodies], deliveries: [...loaded.deliveries], starts: loaded.starts, lastSeq: loaded.lastSeq,
+    leaf: loaded.leaf, nextEntry: loaded.nextEntry, endsInNewline: loaded.endsInNewline, updatedAt: loaded.updatedAt };
+  return JSON.stringify(sidecar) + "\n";
+}
+/** What the cache beside the file says, carried on over what was written after it when that is one chain from where it stopped; null when the file must be read whole. */
+function fromSidecar(paths: SessionPaths, size: number, mtimeMs: number): Loaded | null {
+  if (!existsSync(paths.index)) return null;
+  let cached: Sidecar;
+  try { cached = JSON.parse(readFileSync(paths.index, "utf8")) as Sidecar; } catch { return null; }
+  if (cached.version !== 2 || typeof cached.size !== "number" || cached.size > size || (cached.size === size && cached.mtimeMs !== mtimeMs) || !cached.endsInNewline) return null;
+  const tail = cached.size === size ? Buffer.alloc(0) : readRange(paths.main, cached.size, size - cached.size);
+  const heads = lineHeads(tail, cached.size);
+  for (let index = 0; index < heads.length; index++) if (heads[index]!.type === "leaf" || heads[index]!.parent !== (index === 0 ? cached.leaf : heads[index - 1]!.id)) return null;
+  const sessionId = cached.header.id as SessionId;
+  const loaded: Loaded = { ...emptyLoaded(paths, cached.header), head: cached.head, title: cached.title, commands: [...cached.commands],
+    runs: cached.runs.map(run => ({ row: { ...run.row, sessionId } as RunRow, ended: true, items: null, span: run.span, endEntry: run.endEntry, facts: run.facts ?? noFacts() })), bindings: [...cached.bindings], switches: [...cached.switches],
+    origin: [...cached.origin], prints: new Set(cached.prints), packets: new Map(cached.packets), bodies: new Map(cached.bodies), deliveries: new Map(cached.deliveries), starts: [...cached.starts],
+    lastSeq: cached.lastSeq, leaf: cached.leaf, nextEntry: cached.nextEntry, size: cached.size, endsInNewline: true, updatedAt: cached.updatedAt, fromCache: true };
+  if (tail.length > 0) {
+    loaded.fromCache = false;
+    foldBuffer(loaded, tail, cached.size, null, false);
+    loaded.leaf = heads.at(-1)?.id ?? loaded.leaf; loaded.size = size; loaded.endsInNewline = tail[tail.length - 1] === 10;
+    for (const head of heads) { const number = parseInt(head.id, 16); if (Number.isSafeInteger(number) && number >= loaded.nextEntry) loaded.nextEntry = number + 1; }
+  }
+  return loaded;
+}
+/** The whole file read: its lines folded along the path from `leaf` (the last line when none is given). */
+function scanWhole(paths: SessionPaths, buffer: Buffer, leafGiven: string | undefined): Loaded {
+  const first = lines(buffer).next();
+  const header = first.done === true ? null : parse(first.value.text);
+  if (header === null || header.type !== "session" || typeof header.id !== "string" || typeof header.cwd !== "string") invalid("the conversation file has no header");
+  const heads = lineHeads(buffer).filter(head => head.type !== "session");
+  const leaf = leafGiven ?? heads.at(-1)?.id ?? null;
+  if (leafGiven !== undefined && !heads.some(head => head.id === leafGiven)) invalid("the conversation file has no line " + leafGiven);
+  const loaded = emptyLoaded(paths, header as unknown as SessionHeader);
+  loaded.leaf = leaf; loaded.size = buffer.length; loaded.endsInNewline = buffer.length === 0 || buffer[buffer.length - 1] === 10;
+  for (const head of heads) { const number = parseInt(head.id, 16); if (Number.isSafeInteger(number) && number >= loaded.nextEntry) loaded.nextEntry = number + 1; }
+  foldBuffer(loaded, buffer, 0, pathOf(heads, leaf, leafGiven !== undefined), true);
+  return loaded;
+}
+
+/**
+ * Reads a conversation's file, and its WIP log laid over it, into what the store holds. Only the Turns not finished keep their items; a finished one keeps the range of its lines.
+ * The cache beside the file is used when it is the file's (or the file only grew in one chain after it); `leaf` reads the conversation as the branch that ends at that line.
+ */
+export function loadSession(main: string, options: { readonly leaf?: string } = {}): Loaded {
+  const paths = pathsOf(main), stat = statSync(main);
+  const loaded = (options.leaf === undefined ? fromSidecar(paths, stat.size, stat.mtimeMs) : null) ?? scanWhole(paths, readFileSync(main), options.leaf);
+  loaded.mtimeMs = stat.mtimeMs;
+  if (loaded.head === null) invalid("the conversation file has no head");
   if (loaded.runs.some(run => run === undefined)) invalid("the conversation file misses a Turn");
   if (existsSync(paths.wip)) { overlayWip(loaded, paths.wip); loaded.wip = true; }
   loaded.lastSeq = Math.max(loaded.lastSeq, lastEventSeq(paths.events));
@@ -341,6 +447,38 @@ export function readRunItems(path: string, runId: RunId, span: { readonly from: 
     found.set(item.seq, item);
   }
   return [...found.values()].sort((left, right) => left.seq - right.seq);
+}
+/** The quoted messages a conversation started from, read from their places in its file. */
+export function readOrigin(path: string, sessionId: SessionId, places: readonly OriginPlace[]): OriginHistoryRow[] {
+  if (places.length === 0) return [];
+  const from = Math.min(...places.map(place => place.offset)), to = Math.max(...places.map(place => place.offset + place.length)), rows: OriginHistoryRow[] = [];
+  for (const line of lines(readRange(path, from, to - from), from)) {
+    const value = parse(line.text);
+    if (value === null || value.type !== "origin") continue;
+    rows.push({ sessionId, idx: Number(value.idx), kind: value.kind === "import" ? "import" : "fork", message: value.message as ForkedMessage });
+  }
+  return rows.sort((left, right) => left.idx - right.idx);
+}
+/** The lines of a file from its end to its start, a piece at a time: a reader that stops early reads no more than it needed. */
+export function* linesBackward(path: string, piece = 1024 * 1024): Generator<{ readonly offset: number; readonly length: number; readonly text: string }> {
+  const fd = openSync(path, "r");
+  try {
+    let end = fstatSync(fd).size, carry = Buffer.alloc(0);
+    while (end > 0) {
+      const start = Math.max(0, end - piece), chunk = Buffer.alloc(end - start);
+      readSync(fd, chunk, 0, chunk.length, start);
+      let buffer = carry.length === 0 ? chunk : Buffer.concat([chunk, carry]), stop = buffer.length;
+      // Every line that starts inside this piece is whole now; what comes before the first newline joins the piece before it.
+      for (let at = buffer.lastIndexOf(10, stop - 1); at >= 0; at = stop > 0 ? buffer.lastIndexOf(10, stop - 1) : -1) {
+        if (stop - at - 1 > 0) yield { offset: start + at + 1, length: stop - at - 1, text: buffer.toString("utf8", at + 1, stop) };
+        stop = at;
+        if (at === 0) break;
+      }
+      carry = buffer.subarray(0, stop); end = start;
+      if (start === 0 && carry.length > 0) { yield { offset: 0, length: carry.length, text: carry.toString("utf8") }; carry = Buffer.alloc(0); }
+      buffer = Buffer.alloc(0);
+    }
+  } finally { closeSync(fd); }
 }
 /** The text of one packet body from the `relay` line that holds it. */
 export function readPacketBody(path: string, place: PacketPlace): string | null {

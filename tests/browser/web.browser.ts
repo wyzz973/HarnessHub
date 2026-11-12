@@ -648,16 +648,25 @@ test("unavailable native authentication keeps the same conversation usable, show
   assert.equal((await current()).id, first.id);
   await composer.fill("FAIL_ONCE：由用户明确重试"); await expect(page.getByRole("button",{name:"发送消息",exact:true})).toBeEnabled(); await composer.press("Enter");
   await expect.poll(async () => (await current()).runs[2]?.status).toBe("failed");
+  const failedRun = (await current()).runs[2].id;
+  // Trying the reply again sends the same message from its place: the new Turn takes the failed one's place on a branch of its own, and the failed one stays on the other.
   await page.locator(".assistant-message").last().hover(); await page.getByRole("button", { name: "重试回复", exact: true }).last().click();
-  await expect.poll(async () => (await current()).runs[3]?.status).toBe("completed");
-  const retried = await current(); assert.equal(retried.runs[2].status, "failed"); assert.notEqual(retried.runs[2].id, retried.runs[3].id);
+  await expect.poll(async () => { const runs = (await current()).runs; return runs[2]?.id !== failedRun ? runs[2]?.status : undefined; }).toBe("completed");
+  const retried = await current(); assert.equal(retried.runs.length, 3); assert.notEqual(retried.runs[2].id, failedRun);
+  assert.deepEqual([retried.runs[2].branch?.n, retried.runs[2].branch?.of, retried.runs[2].branch?.prev], [2, 2, failedRun]);
+  // The page shows where the message stands among its branches, and moves to the other one and back; nothing runs.
+  await expect(page.locator(".branch-nav").last()).toContainText("2/2");
+  await page.getByRole("button", { name: "上一个分支", exact: true }).last().click();
+  await expect.poll(async () => (await current()).runs[2]?.id).toBe(failedRun); await expect(page.locator(".branch-nav").last()).toContainText("1/2");
+  await page.getByRole("button", { name: "下一个分支", exact: true }).last().click();
+  await expect.poll(async () => (await current()).runs[2]?.id).toBe(retried.runs[2].id); assert.equal((await current()).runs.length, 3);
   await composer.fill("第一段对话的未发送草稿");
   await page.getByRole("button", { name: "新对话", exact: true }).click();
   await agent("Codex"); await pick("选择 Provider", "可用模型连接");
   await composer.fill("SECOND_CONVERSATION"); await composer.press("Enter"); await expect(page).toHaveURL(/#session=/u); await expect.poll(async () => (await current()).runs[0]?.status).toBe("completed");
   const second = await current(); assert.notEqual(second.id, first.id); await composer.fill("第二段对话的未发送草稿");
   await page.getByRole("button", { name: "FIRST_CONVERSATION", exact: true }).click();
-  await expect(composer).toHaveValue("第一段对话的未发送草稿"); assert.equal((await current()).runs.length, 4);
+  await expect(composer).toHaveValue("第一段对话的未发送草稿"); assert.equal((await current()).runs.length, 3, "the failed Turn tried again is on its own branch");
   await page.getByRole("button", { name: "SECOND_CONVERSATION", exact: true }).click();
   await expect(composer).toHaveValue("第二段对话的未发送草稿"); assert.equal((await current()).runs.length, 1);
   await page.reload(); await expect(composer).toHaveValue("第二段对话的未发送草稿"); assert.equal((await current()).runs.length, 1);

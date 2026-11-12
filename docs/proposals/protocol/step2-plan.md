@@ -1,5 +1,7 @@
 # 第 2 步实施计划（第三版）：对话改存表，条目为唯一记录
 
+> 已被文件存储取代（2026-11-12），仅作历史。现行格式见 [对话文件](../../contracts/session-files.md)。
+
 对应 [ADR-057](../../decisions/0057-ordered-turn-items.md)（第三稿，proposed）；依据[独立审查](../../research/store-review-2026-11-12.md)与[上限清点](../../research/limits-audit-2026-11-12.md)。各线用各的 worktree 与分支，合并前对齐。AGENTS.md 的底线都适用：提交前 `pnpm check`、`pnpm test`，动了界面再 `pnpm test:web`；汇报分“代码完成、合成测试通过、真机通过”；升级 4317 与动真实数据先问用户；测试用临时数据根，不复制真实数据。接缝已写好：类型 `src/contracts/conversation.ts`、`web.ts` 的 v14 类型、SQL `src/infrastructure/session/schema-v14.ts` 与 `tests/integration/schema-v14.test.ts`；除 `protocol.ts` 的几个可选字段外不改任何现有行为。
 
 ## 一、规模与风险

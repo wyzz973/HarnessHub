@@ -6,7 +6,7 @@ import {
   CONVERSATION_FORMAT, PAGE,
   type Conversation, type ConversationCommit, type ConversationMutation, type ConversationRun, type ConversationStore, type ConversationStoreOptions, type DeferredWork, type HeadRow, type HeldItem,
   type ItemPage, type ItemRow, type ItemWrite, type Mutation, type OriginHistoryRow, type ReadOptions, type RunRow, type RunWrite, type SearchHit, type SessionListCursor, type SessionListPage,
-  type SessionListQuery, type SessionListRow, type StartupSample, type TextAppend, type TextRange, type TurnCursor, type TurnItems, type TurnWindow,
+  type SessionListQuery, type SessionListRow, type StartupSample, type TextAppend, type TextRange, type TurnBranch, type TurnRelayCounts, type TurnCursor, type TurnItems, type TurnWindow,
 } from "../../contracts/conversation.js";
 import { WORK_TYPES, type ItemType } from "../../contracts/protocol.js";
 import {
@@ -21,6 +21,8 @@ import {
 import { conversationTitle } from "../../contracts/web.js";
 import { isDispatched, runRowOf } from "../../contexts/session/domain/run-row.js";
 import { fromItems, originFromRows } from "../../contexts/session/domain/store-conversion.js";
+import { turnRelayCounts } from "../../contexts/session/domain/relay/narration.js";
+import { outlineOfRecord } from "../../contexts/session/domain/turn-source.js";
 import { diffConversation, settleConversation, type Applied } from "./diff.js";
 import { readJson, readOwner, seedGeneration, writeOwner, writeWhole, type OwnerFile } from "./file-owner.js";
 import { emptyFields } from "./item-fields.js";
@@ -28,7 +30,7 @@ import { canonicalJson, itemRowOf, utf8Length } from "./rows.js";
 import {
   SESSION_FILE_VERSION, conversationOf, entryId, entryLine, fileStamp, headJsonOf, headStateOf, itemFinished, lines, loadSession, pathsOf, readPacketBody, readRange, readRunItems, runFinished,
   sessionsDir, storedItemOf, workspaceSlug,
-  type Loaded, type PacketPlace, type ParentSession, type SessionHeader, type SessionPaths, type StoredPacket, type StoredRun,
+  factsOfItems, lineHeads, linesBackward, noFacts, readOrigin, sidecarOf, type Loaded, type OriginPlace, type TurnLineFacts, type PacketPlace, type ParentSession, type SessionHeader, type SessionPaths, type StoredPacket, type StoredRun, type TurnStart,
 } from "./session-file.js";
 import { SessionIndex, handoffsOf, indexRowOf, type IndexRow } from "./session-index.js";
 import { drafts, pageLimit, PAGE_BYTES } from "./store-events.js";
@@ -71,7 +73,7 @@ export interface RunSummary {
   readonly ran: readonly { readonly harnessId: string; readonly controlId: string; readonly turns: number }[];
 }
 
-interface RunPlace { ordinal: number; span: { from: number; to: number } | null; endEntry: string | null }
+interface RunPlace { ordinal: number; span: { from: number; to: number } | null; endEntry: string | null; facts: TurnLineFacts }
 interface EventPlaces { readonly seqs: number[]; readonly offsets: number[]; readonly lengths: number[]; size: number }
 interface Held {
   readonly id: SessionId;
@@ -86,10 +88,13 @@ interface Held {
   size: number;
   endsInNewline: boolean;
   updatedAt: number;
+  mtimeMs: number;
   readonly runs: Map<string, RunPlace>;
+  /** Where every Turn of the file starts in the tree, on the current path or not. */
+  readonly starts: TurnStart[];
   /** For each Turn not finished, its items whose file line says what memory holds (by the object memory holds). */
   readonly mainItems: Map<string, Map<number, HeldItem>>;
-  readonly origin: OriginHistoryRow[];
+  readonly origin: OriginPlace[];
   readonly prints: Set<string>;
   readonly packets: Map<string, { readonly runId: RunId; readonly packet: RelayPacket }>;
   readonly bodies: Map<string, PacketPlace>;
@@ -115,7 +120,11 @@ interface Plan {
   readonly placed: ReadonlyMap<string, number>;
   readonly written: ReadonlyMap<string, ReadonlySet<number>>;
   readonly finished: ReadonlySet<string>;
-  readonly origin: readonly OriginHistoryRow[];
+  readonly starts: readonly TurnStart[];
+  /** The Turns a branch left on the path they were on (no more the conversation's). */
+  readonly left: readonly string[];
+  readonly origin: readonly OriginPlace[];
+  readonly facts: ReadonlyMap<string, TurnLineFacts>;
   readonly prints: readonly string[];
   readonly packets: readonly StoredPacket[];
   readonly packetLine: { readonly offset: number; readonly length: number } | null;
@@ -182,6 +191,15 @@ function prepareFailed(reason: "render" | "render_mismatch" | "storage", message
 function asRender<T>(check: () => T, message: string): T {
   try { return check(); }
   catch (error) { if (error instanceof SessionError && error.code === "INVALID_DATA") throw prepareFailed("render", message + ": " + error.message); throw error; }
+}
+/** What a relay packet's ledger counts of a finished Turn (relay/narration.ts); null when it cannot be worked out (the Turn is then read when a packet needs it). */
+function relayCountsOf(row: RunRow, items: readonly HeldItem[]): TurnRelayCounts | null {
+  try {
+    const { run, messages } = fromItems({ row, items: [...items], contentRefs: [] });
+    const user = messages.find(message => message.role === "user"), assistant = messages.find(message => message.role === "assistant");
+    if (user === undefined) return null;
+    return turnRelayCounts(outlineOfRecord({ ordinal: row.ordinal, run, user, assistant, legacyOrder: row.legacyOrder }));
+  } catch { return null; }
 }
 /** Whether an item says what the line written for it says (the Runtime may hold an equal item as another object). */
 function sameAsWritten(written: HeldItem | undefined, item: HeldItem): boolean {
@@ -274,6 +292,8 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
   private readonly createKeys = new Map<string, SessionId>();
   private readonly turnCache = new Map<string, { readonly items: readonly HeldItem[]; readonly bytes: number }>();
   private turnCacheBytes = 0;
+  private readonly sidecars = new Set<SessionId>();
+  private sidecarTimer: ReturnType<typeof setTimeout> | null = null;
   private handoffLog: HandoffRecord[] = [];
   private prefs: Partial<Record<RelayPrefKey, string>> = {};
   private closed = false;
@@ -454,8 +474,14 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
   }
 
   /** Works a commit out whole: what changed, the numbers, the relay's checks, the lines. Writes nothing and changes no memory; a throw refuses the commit. */
-  private prepare(held: Held | null, mutation: ConversationMutation, at: Date, create?: Plan["create"]): Plan {
-    const before = held?.conversation ?? null, next = mutation.next;
+  private prepare(held: Held | null, mutation: ConversationMutation, at: Date, create?: Plan["create"], options: { readonly leafTo?: string } = {}): Plan {
+    const whole = held?.conversation ?? null, next = mutation.next, branchAt = mutation.branch?.at;
+    // A commit that goes on from an earlier place is compared with the conversation up to that place: the Turns after it stay on the branch they were on.
+    if (branchAt !== undefined) {
+      if (whole === null || !Number.isSafeInteger(branchAt) || branchAt < 0 || branchAt > whole.runs.length) throw new SessionError("INVALID_INPUT", "a branch starts at a Turn of the conversation");
+      if (whole.runs.some(run => !runFinished(run.status)) || whole.pendingSwitchId !== null) throw new SessionError("BRANCH_BUSY", "回合进行中不能在旧位置重发：等这一轮结束或先停止它");
+    }
+    const before = whole === null || branchAt === undefined ? whole : { ...whole, runs: whole.runs.slice(0, branchAt) };
     if (next === null || typeof next !== "object" || next.format !== CONVERSATION_FORMAT) throw new SessionError("INVALID_DATA", "a mutation gives the conversation in the new shape");
     if (before !== null && next.id !== before.id) throw new SessionError("INVALID_DATA", "transaction cannot replace Session identity");
     if (before !== null && next.commands !== before.commands) {
@@ -473,17 +499,25 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
 
     // The lines, in the order a reader takes them in: the conversation's name and quoted history, its commands, the Turns, the bindings and switches, the relay, the head.
     const base = (held?.size ?? 0) + (held !== null && !held.endsInNewline ? 1 : 0);
-    let text = held !== null && !held.endsInNewline ? "\n" : "", offset = base, leaf = held?.leaf ?? null, nextEntry = held?.nextEntry ?? 1;
+    // The lines of a branch are written under the line the Turn it replaces was written under; a change of branch first writes where the conversation now is.
+    const branchAnchor = branchAt === undefined || whole === null || branchAt === whole.runs.length ? undefined : held!.starts.find(start => start.runId === whole.runs[branchAt]!.id)?.anchor;
+    if (branchAt !== undefined && whole !== null && branchAt < whole.runs.length && branchAnchor === undefined) throw new SessionError("INVALID_DATA", "the Turn a branch replaces has no start in the file");
+    let text = held !== null && !held.endsInNewline ? "\n" : "", offset = base, leaf = branchAnchor !== undefined ? branchAnchor : options.leafTo ?? held?.leaf ?? null, nextEntry = held?.nextEntry ?? 1;
     if (create !== null && create !== undefined) { const line = JSON.stringify(create.header) + "\n"; text += line; offset += Buffer.byteLength(line, "utf8"); }
-    const placed = new Map<string, number>();
+    const placed = new Map<string, number>(), anchor = leaf, starts: TurnStart[] = [];
     const add = (type: string, rest: Readonly<Record<string, unknown>>): { readonly id: string; readonly offset: number; readonly length: number } => {
       const id = entryId(nextEntry++), line = entryLine(type, id, leaf, timestamp, seq, rest), length = Buffer.byteLength(line, "utf8");
       const where = { id, offset, length };
       text += line + "\n"; offset += length + 1; leaf = id;
       return where;
     };
+    if (options.leafTo !== undefined) add("leaf", { targetId: options.leafTo });
     if (held === null || title !== held.title) add("session_info", { name: title });
-    for (const row of mutation.originHistory ?? []) add("origin", { idx: row.idx, kind: row.kind, message: row.message });
+    const originPlaces: OriginPlace[] = [];
+    for (const row of mutation.originHistory ?? []) {
+      const where = add("origin", { idx: row.idx, kind: row.kind, message: row.message });
+      originPlaces.push({ idx: row.idx, kind: row.kind, offset: where.offset, length: where.length, refs: (row.message.attachments ?? []).map(attachment => attachment.id) });
+    }
     for (const row of changes.commands ?? []) add("command", { ordinal: row.ordinal, command: row.command });
 
     const runWrites = new Map((changes.runs ?? []).map(write => [write.row.runId as string, write]));
@@ -492,7 +526,7 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     for (const piece of changes.text ?? []) { let map = textWrites.get(piece.runId); if (map === undefined) { map = new Map(); textWrites.set(piece.runId, map); } const list = map.get(piece.itemSeq) ?? []; list.push(piece); map.set(piece.itemSeq, list); }
     const touched = new Set<string>([...runWrites.keys(), ...itemWrites.keys(), ...textWrites.keys()]);
     const ordinals = [...touched].map(runId => ({ runId, ordinal: runWrites.get(runId)?.row.ordinal ?? held?.runs.get(runId)?.ordinal ?? -1 })).sort((left, right) => left.ordinal - right.ordinal);
-    const spans = new Map<string, { from: number; to: number }>(), ends = new Map<string, string>(), written = new Map<string, Set<number>>(), finished = new Set<string>();
+    const spans = new Map<string, { from: number; to: number }>(), ends = new Map<string, string>(), written = new Map<string, Set<number>>(), finished = new Set<string>(), facts = new Map<string, TurnLineFacts>();
     const wipRuns: StoredRun[] = [], wipItems: { runId: string; item: Omit<ReturnType<typeof storedItemOf>, "text"> }[] = [], wipText: { runId: string; itemSeq: number; text: string }[] = [];
     const spanOf = (runId: string, where: { offset: number; length: number }): void => {
       const was = spans.get(runId) ?? held?.runs.get(runId)?.span ?? null;
@@ -503,14 +537,17 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
       if (run === undefined || run.id !== runId) throw new SessionError("INVALID_DATA", "a commit changed a Run it does not hold");
       placed.set(runId, ordinal);
       if (was !== undefined && runFinished(was.status)) { if (row !== undefined) add("turn", { phase: "update", run: storedRun(row) }); continue; }
-      if (was === undefined) add("turn", { phase: "start", run: storedRun(row ?? runRowOf(next.id, run)) });
+      // A Turn's start says the line its commit was written under: the Turns of one anchor are the alternatives of one place in the conversation.
+      if (was === undefined) starts.push({ runId, anchor, entry: add("turn", { phase: "start", anchor, run: storedRun(row ?? runRowOf(next.id, run)) }).id });
       const endsNow = runFinished(run.status), inMain = held?.mainItems.get(runId), changedItems = itemWrites.get(runId), changedText = textWrites.get(runId);
       const wroteHere = new Set<number>();
       for (const item of run.items ?? (endsNow ? was?.items : undefined) ?? []) {
         const changed = changedItems?.has(item.seq) === true || changedText?.has(item.seq) === true;
         if (!changed && (!endsNow || sameAsWritten(inMain?.get(item.seq), item))) continue;
         const createdSeq = changedItems?.get(item.seq)?.row.createdSeq ?? item.createdSeq;
-        if (endsNow || itemFinished(item.status) || item.type === "user_message") {
+        // One line per item: the user's message the moment it is accepted, every other item once, when its Turn ends. An item's own end is not its last change (a call's
+        // stored detail is put on it by a later commit: items-place.ts asks the content store for it when the call ends), so until the Turn ends it lives in the WIP log.
+        if (endsNow || item.type === "user_message") {
           spanOf(runId, add("item", { runId, item: storedItemOf(item, createdSeq) })); wroteHere.add(item.seq);
           continue;
         }
@@ -520,7 +557,10 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
       }
       if (endsNow) {
         if (row === undefined) throw new SessionError("INVALID_DATA", "a Run ended without its row");
-        ends.set(runId, add("turn", { phase: "end", run: storedRun(row) }).id); finished.add(runId);
+        // What a packet's ledger counts of the Turn is recorded with its end, so that a packet that does not reach it need not read it.
+        const items = run.items ?? was?.items ?? [], counts = relayCountsOf(row, items);
+        ends.set(runId, add("turn", { phase: "end", run: storedRun(row), ...(counts === null ? {} : { counts }) }).id); finished.add(runId);
+        facts.set(runId, { ...factsOfItems(items), ...(counts === null ? {} : { relay: counts }) });
       } else {
         if (was !== undefined && row !== undefined) wipRuns.push(storedRun(row));
         written.set(runId, wroteHere);
@@ -545,7 +585,7 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     const eventLines = applied.events.map(event => JSON.stringify({ seq: event.seq, type: event.type, sessionId: event.sessionId, ownerGeneration: event.ownerGeneration, timestamp: event.timestamp, data: event.data }) + "\n");
     const frozen = freezeConversation(settled, before);
     return { held, create: create ?? null, settled: frozen, commit: { conversation: frozen, events: applied.events, changes }, title, headJson, main: text, wipLine, endWip, eventLines, leaf, nextEntry,
-      spans, ends, placed, written, finished, origin: mutation.originHistory ?? [], prints, packets: relay.packets, packetLine, deliveries: relay.deliveries };
+      spans, ends, placed, written, finished, starts, origin: originPlaces, facts, left: branchAt === undefined || whole === null ? [] : whole.runs.slice(branchAt).map(run => run.id as string), prints, packets: relay.packets, packetLine, deliveries: relay.deliveries };
   }
 
   /** Writes a commit worked out by `prepare` (the file first, then the WIP log, then the events), then takes it into memory. A write that fails fails the store. */
@@ -566,14 +606,18 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
       throw this.failed;
     }
     const held: Held = plan.held ?? { id: plan.settled.id, paths, file: plan.create!.file, header: plan.create!.header, conversation: plan.settled, title: plan.title, headJson: plan.headJson, leaf: null,
-      nextEntry: 1, size: 0, endsInNewline: true, updatedAt: 0, runs: new Map(), mainItems: new Map(), origin: [], prints: new Set(), packets: new Map(), bodies: new Map(), deliveries: new Map(), wip: false, events: null };
+      nextEntry: 1, size: 0, endsInNewline: true, updatedAt: 0, mtimeMs: 0, runs: new Map(), starts: [], mainItems: new Map(), origin: [], prints: new Set(), packets: new Map(), bodies: new Map(), deliveries: new Map(),
+      wip: false, events: null };
     const base = held.size;
     held.conversation = plan.settled; held.title = plan.title; held.headJson = plan.headJson; held.leaf = plan.leaf; held.nextEntry = plan.nextEntry;
     held.size = base + Buffer.byteLength(plan.main, "utf8"); held.endsInNewline = true; held.updatedAt = Date.parse(plan.commit.events[0]?.timestamp ?? "") || Date.now();
-    for (const [runId, ordinal] of plan.placed) { if (!held.runs.has(runId)) held.runs.set(runId, { ordinal, span: null, endEntry: null }); this.runOwner.set(runId, held.id); }
+    for (const runId of plan.left) held.runs.delete(runId);
+    for (const [runId, ordinal] of plan.placed) { if (!held.runs.has(runId)) held.runs.set(runId, { ordinal, span: null, endEntry: null, facts: noFacts() }); this.runOwner.set(runId, held.id); }
+    for (const [runId, made] of plan.facts) held.runs.get(runId)!.facts = made;
     for (const [runId, span] of plan.spans) held.runs.get(runId)!.span = span;
     for (const [runId, entry] of plan.ends) held.runs.get(runId)!.endEntry = entry;
     for (const runId of plan.finished) held.mainItems.delete(runId);
+    held.starts.push(...plan.starts);
     for (const [runId, seqs] of plan.written) {
       if (seqs.size === 0) continue;
       const map = held.mainItems.get(runId) ?? new Map<number, HeldItem>(), run = plan.settled.runs[held.runs.get(runId)!.ordinal];
@@ -599,9 +643,8 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     if (plan.create !== null) this.createKeys.set(plan.create.header.createKey!, held.id);
     // The list's row follows every commit in memory; it is written out when the file it describes moved (a commit of the WIP log alone moves nothing it holds to).
     const was = this.index.rows.get(held.id), moved = plan.main !== "" || was === undefined || was.unfinished !== (held.wip || plan.settled.runs.some(run => !runFinished(run.status)) || plan.settled.pendingSwitchId !== null);
-    let mtimeMs = was?.mtimeMs ?? 0;
-    if (moved) { try { mtimeMs = statSync(paths.main).mtimeMs; } catch { /* derived */ } }
-    const row = indexRowOf(held.conversation, held.file, { title: held.title, updatedAt: held.updatedAt, createKey: held.header.createKey ?? null, handoffs: handoffsOf(held), size: held.size, mtimeMs });
+    if (plan.main !== "") { try { held.mtimeMs = statSync(paths.main).mtimeMs; } catch { /* derived */ } this.sidecarSoon(held.id); }
+    const row = indexRowOf(held.conversation, held.file, { title: held.title, updatedAt: held.updatedAt, createKey: held.header.createKey ?? null, handoffs: handoffsOf(held), size: held.size, mtimeMs: held.mtimeMs || (was?.mtimeMs ?? 0) });
     this.index.put(held.wip ? { ...row, unfinished: true } : row, moved);
   }
 
@@ -611,16 +654,22 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     if (found !== undefined) return found;
     const row = this.index.rows.get(id);
     if (row === undefined) throw new SessionError("SESSION_NOT_FOUND", "public Session was not found");
-    const main = join(sessionsDir(this.root), row.file);
     let loaded: Loaded;
-    try { loaded = loadSession(main); } catch (error) { if (error instanceof SessionError) throw error; throw storageFailure(error); }
+    try { loaded = loadSession(join(sessionsDir(this.root), row.file)); } catch (error) { if (error instanceof SessionError) throw error; throw storageFailure(error); }
+    const held = this.heldFrom(id, row.file, loaded);
+    this.held.set(id, held);
+    // A file read whole (no cache, or one the file had gone past) leaves its fold beside it for the next start.
+    if (!loaded.fromCache) this.sidecarSoon(id);
+    return held;
+  }
+  private heldFrom(id: SessionId, file: string, loaded: Loaded, version?: number): Held {
     if (loaded.header.id !== id) throw new SessionError("INVALID_DATA", "the conversation file holds another conversation");
-    const conversation = freezeConversation(conversationOf(loaded), null);
-    const held: Held = { id, paths: loaded.paths, file: row.file, header: loaded.header, conversation, title: loaded.title, headJson: JSON.stringify(headStateOf(conversation)), leaf: loaded.leaf,
-      nextEntry: loaded.nextEntry, size: loaded.size, endsInNewline: loaded.endsInNewline, updatedAt: loaded.updatedAt, runs: new Map(), mainItems: new Map(), origin: loaded.origin, prints: loaded.prints,
+    const read = conversationOf(loaded), conversation = freezeConversation(version === undefined ? read : { ...read, version }, null);
+    const held: Held = { id, paths: loaded.paths, file, header: loaded.header, conversation, title: loaded.title, headJson: JSON.stringify(headStateOf(conversation)), leaf: loaded.leaf,
+      nextEntry: loaded.nextEntry, size: loaded.size, endsInNewline: loaded.endsInNewline, updatedAt: loaded.updatedAt, mtimeMs: loaded.mtimeMs, runs: new Map(), starts: loaded.starts, mainItems: new Map(), origin: loaded.origin, prints: loaded.prints,
       packets: loaded.packets, bodies: loaded.bodies, deliveries: loaded.deliveries, wip: loaded.wip, events: null };
     loaded.runs.forEach((run, ordinal) => {
-      held.runs.set(run.row.runId, { ordinal, span: run.span, endEntry: run.endEntry });
+      held.runs.set(run.row.runId, { ordinal, span: run.span, endEntry: run.endEntry, facts: run.facts });
       this.runOwner.set(run.row.runId, id);
       if (run.items === null) return;
       // The items the file says as memory holds them: those the WIP log did not change since.
@@ -628,8 +677,89 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
       for (const item of items) { const found = run.items.get(item.seq); if (found !== undefined && found.mainSeq > 0 && !found.dirty) map.set(item.seq, item); }
       held.mainItems.set(run.row.runId, map);
     });
-    this.held.set(id, held);
     return held;
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------------
+  // Branches inside a conversation
+  // ---------------------------------------------------------------------------------------------------------------------
+
+  /**
+   * Makes the branch through the Turn `runId` the conversation's path, at the latest line written on it: the conversation as that path has it is given to `mutate`, and the
+   * commit is written after a `leaf` line that says where the conversation now is (so it opens there again). Only while no Turn is open and no switch waits.
+   */
+  selectBranch(id: SessionId, expectedVersion: number, runId: RunId, mutate: (current: Conversation) => ConversationMutation): ConversationCommit {
+    this.assertOwner(); sessionId(id);
+    return this.transaction(() => {
+      const held = this.entry(id), current = held.conversation;
+      if (current.version !== expectedVersion) throw new SessionError("VERSION_CONFLICT", "Session version changed before the mutation");
+      if (current.runs.some(run => !runFinished(run.status)) || current.pendingSwitchId !== null || held.wip) throw new SessionError("BRANCH_BUSY", "回合进行中不能切换分支：等这一轮结束或先停止它");
+      const start = held.starts.find(entry => entry.runId === runId);
+      if (start === undefined) throw new SessionError("BRANCH_NOT_FOUND", "这个对话里没有这一轮");
+      let alternative: Held;
+      try { alternative = this.heldFrom(id, held.file, loadSession(held.paths.main, { leaf: this.latestUnder(held, start.entry) }), current.version); }
+      catch (error) { if (error instanceof SessionError) throw error; throw storageFailure(error); }
+      const mutation = mutate(alternative.conversation);
+      if (mutation === null || typeof mutation !== "object" || "then" in mutation) throw new SessionError("INVALID_DATA", "Session mutation must be synchronous");
+      const plan = this.prepare(alternative, mutation, this.stamp(), undefined, { leafTo: alternative.leaf! });
+      this.apply(plan);
+      for (const runId of current.runs.map(run => run.id)) if (!alternative.runs.has(runId)) this.turnCache.delete(runId);
+      return plan.commit;
+    });
+  }
+  /** The latest line of the file under the line `entry` (the line itself when nothing was written under it). */
+  private latestUnder(held: Held, entry: string): string {
+    let heads: ReturnType<typeof lineHeads>;
+    try { heads = lineHeads(readFileSync(held.paths.main)); } catch (error) { throw storageFailure(error); }
+    const parents = new Map(heads.map(head => [head.id, head.parent] as const)), under = new Map<string, boolean>([[entry, true]]);
+    for (let index = heads.length - 1; index >= 0; index--) {
+      const walked: string[] = [];
+      let at: string | null = heads[index]!.id, found = false;
+      while (at !== null) {
+        const known = under.get(at);
+        if (known !== undefined) { found = known; break; }
+        walked.push(at); at = parents.get(at) ?? null;
+      }
+      for (const id of walked) under.set(id, found);
+      if (found) return heads[index]!.id;
+    }
+    return entry;
+  }
+  /** Where each Turn of the current path that has alternatives stands among them (the Turns written under one line, in the order they were written). */
+  branches(id: SessionId): ReadonlyMap<RunId, TurnBranch> {
+    this.assertOwner(); sessionId(id);
+    const held = this.entry(id), byAnchor = new Map<string, string[]>(), found = new Map<RunId, TurnBranch>();
+    for (const start of held.starts) { const key = start.anchor ?? ""; const list = byAnchor.get(key) ?? []; list.push(start.runId); byAnchor.set(key, list); }
+    for (const start of held.starts) {
+      if (!held.runs.has(start.runId)) continue;
+      const list = byAnchor.get(start.anchor ?? "")!;
+      if (list.length < 2) continue;
+      const at = list.indexOf(start.runId);
+      found.set(start.runId as RunId, { n: at + 1, of: list.length, prev: (list[at - 1] ?? null) as RunId | null, next: (list[at + 1] ?? null) as RunId | null });
+    }
+    return found;
+  }
+
+  /** The fold of a conversation is written beside its file soon (a cache: a start without it reads the file). */
+  private sidecarSoon(id: SessionId): void {
+    this.sidecars.add(id);
+    if (this.sidecarTimer !== null) return;
+    this.sidecarTimer = setTimeout(() => { this.sidecarTimer = null; this.flushSidecars(); }, 2000);
+    this.sidecarTimer.unref();
+  }
+  private flushSidecars(): void {
+    if (this.sidecarTimer !== null) { clearTimeout(this.sidecarTimer); this.sidecarTimer = null; }
+    for (const id of this.sidecars) {
+      const held = this.held.get(id);
+      // Only a conversation with no Turn open: what an open Turn holds is the WIP log's, and the next start reads it from there with the file.
+      if (held === undefined || held.wip || held.conversation.runs.some(run => !runFinished(run.status))) continue;
+      try {
+        const runs = held.conversation.runs.map(run => { const place = held.runs.get(run.id); return { row: runRowOf(id, run), span: place?.span ?? null, endEntry: place?.endEntry ?? null, facts: place?.facts ?? noFacts() }; });
+        writeWhole(held.paths.index, sidecarOf({ ...held, head: headStateOf(held.conversation), commands: [...held.conversation.commands], runs, bindings: [...(held.conversation.nativeBindings ?? [])],
+          switches: [...held.conversation.switches], lastSeq: held.conversation.lastSeq }));
+      } catch { /* derived: the next start reads the file */ }
+    }
+    this.sidecars.clear();
   }
 
   // ---------------------------------------------------------------------------------------------------------------------
@@ -700,8 +830,9 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     for (const packetId of wanted) if (held?.packets.has(packetId) !== true && !fresh.some(stored => stored.packet.id === packetId))
       throw new SessionError("INVALID_DATA", "a relay state names a packet this conversation does not keep");
   }
+  /** The deliveries of the Turns on the current path, in their order. */
   private deliveriesOf(held: Held): DeliveryRecord[] {
-    return [...held.deliveries.values()].sort((left, right) => (held.runs.get(left.runId)?.ordinal ?? 0) - (held.runs.get(right.runId)?.ordinal ?? 0) || (left.runId < right.runId ? -1 : 1));
+    return [...held.deliveries.values()].filter(record => held.runs.has(record.runId)).sort((left, right) => (held.runs.get(left.runId)?.ordinal ?? 0) - (held.runs.get(right.runId)?.ordinal ?? 0) || (left.runId < right.runId ? -1 : 1));
   }
 
   // ---------------------------------------------------------------------------------------------------------------------
@@ -834,10 +965,9 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     const hits: SearchHit[] = [];
     if (scope.sessionId !== undefined) {
       const held = this.entry(scope.sessionId);
-      for (const hit of this.scan(held)) {
+      for (const hit of this.scan(held, words)) {
         const id = hit.offset + 1;
         if (after !== undefined && id >= after) continue;
-        if (!hit.text.toLowerCase().includes(words)) continue;
         hits.push({ id, sessionId: held.id, runId: hit.runId, ordinal: hit.ordinal, itemSeq: hit.seq, type: hit.type, via: "scan" });
         if (hits.length >= limit) break;
       }
@@ -848,8 +978,7 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     for (const row of rows) {
       let held: Held;
       try { held = this.entry(row.id); } catch { continue; }
-      for (const hit of this.scan(held)) {
-        if (!hit.text.toLowerCase().includes(words)) continue;
+      for (const hit of this.scan(held, words)) {
         place++;
         const id = Number.MAX_SAFE_INTEGER - place;
         if (after !== undefined && id >= after) continue;
@@ -859,22 +988,26 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     }
     return hits;
   }
-  /** The finished messages and segments of a file, newest first (the last line of an item wins). */
-  private scan(held: Held): { readonly offset: number; readonly runId: RunId; readonly ordinal: number; readonly seq: number; readonly type: ItemType; readonly text: string }[] {
-    let buffer: Buffer;
-    try { buffer = readFileSync(held.paths.main); } catch (error) { throw storageFailure(error); }
-    const found = new Map<string, { offset: number; runId: RunId; ordinal: number; seq: number; type: ItemType; text: string }>();
-    for (const line of lines(buffer)) {
+  /**
+   * The finished messages and segments of the current path that hold the words, newest first: the file read from its end a piece at a time, so a search that has its page stops
+   * reading (the last line of an item is the one that counts, and it is the first met from the end).
+   */
+  private *scan(held: Held, words: string): Generator<{ readonly offset: number; readonly runId: RunId; readonly ordinal: number; readonly seq: number; readonly type: ItemType }> {
+    const seen = new Set<string>();
+    let reader: Generator<{ readonly offset: number; readonly text: string }>;
+    try { reader = linesBackward(held.paths.main); } catch (error) { throw storageFailure(error); }
+    for (const line of reader) {
       if (!line.text.startsWith('{"type":"item"')) continue;
       let value: { runId?: unknown; item?: { seq?: unknown; type?: unknown; status?: unknown; text?: unknown } };
       try { value = JSON.parse(line.text) as typeof value; } catch { continue; }
-      const item = value.item, runId = String(value.runId) as RunId;
-      if (item === undefined || !SEARCHED.has(String(item.type)) || !itemFinished(String(item.status)) || typeof item.text !== "string" || item.text === "") continue;
+      const item = value.item, runId = String(value.runId) as RunId, key = runId + "\u0000" + String(item?.seq);
+      if (item === undefined || seen.has(key)) continue;
+      seen.add(key);
+      if (!SEARCHED.has(String(item.type)) || !itemFinished(String(item.status)) || typeof item.text !== "string" || item.text === "") continue;
       const ordinal = held.runs.get(runId)?.ordinal;
-      if (ordinal === undefined) continue;
-      found.set(runId + "\u0000" + String(item.seq), { offset: line.offset, runId, ordinal, seq: Number(item.seq), type: item.type as ItemType, text: item.text });
+      if (ordinal === undefined || !item.text.toLowerCase().includes(words)) continue;
+      yield { offset: line.offset, runId, ordinal, seq: Number(item.seq), type: item.type as ItemType };
     }
-    return [...found.values()].sort((left, right) => right.offset - left.offset);
   }
 
   // ---------------------------------------------------------------------------------------------------------------------
@@ -919,22 +1052,26 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     for (const row of this.index.rows.values()) { try { for (const id of this.references(row.id)) all.add(id); } catch { /* a file that cannot be read keeps nothing from here */ } }
     return all;
   }
-  /** The content ids the conversation mentions: the details and outputs of its items, the attachments of its Turns and of the history it quoted. */
+  /** The content ids the conversation mentions: the details and outputs of its items, the attachments of its Turns and of the history it quoted (from what each Turn's end recorded). */
   references(id: SessionId): ReadonlySet<string> {
     this.assertOwner(); sessionId(id);
     const held = this.entry(id), found = new Set<string>();
-    for (const row of held.origin) for (const attachment of row.message.attachments ?? []) found.add(attachment.id);
+    for (const place of held.origin) for (const ref of place.refs) found.add(ref);
     for (const run of held.conversation.runs) {
       for (const attachment of run.attachments ?? []) found.add(attachment.id);
-      for (const item of this.allItems(held, run)) {
-        const fields = item.fields as { readonly detail?: { readonly id?: unknown }; readonly content?: { readonly id?: unknown } };
-        if (typeof fields.detail?.id === "string") found.add(fields.detail.id);
-        if (typeof fields.content?.id === "string") found.add(fields.content.id);
-      }
+      for (const ref of this.factsOf(held, run).refs) found.add(ref);
     }
     return found;
   }
-  originHistory(id: SessionId): readonly OriginHistoryRow[] { this.assertOwner(); sessionId(id); return [...this.entry(id).origin].sort((left, right) => left.idx - right.idx); }
+  /** A Turn's facts: recorded at its end, or worked out from the items memory holds while it goes on. */
+  private factsOf(held: Held, run: ConversationRun): TurnLineFacts { return run.items !== undefined ? factsOfItems(run.items) : held.runs.get(run.id)?.facts ?? noFacts(); }
+  /** What a packet's ledger counts of a finished Turn of the path, as its end recorded it; null when it recorded none (or the Turn is not finished). */
+  relayCounts(id: SessionId, runId: RunId): TurnRelayCounts | null { this.assertOwner(); sessionId(id); return this.entry(id).runs.get(runId)?.facts.relay ?? null; }
+  originHistory(id: SessionId): readonly OriginHistoryRow[] {
+    this.assertOwner(); sessionId(id);
+    const held = this.entry(id);
+    try { return readOrigin(held.paths.main, id, held.origin); } catch (error) { throw storageFailure(error); }
+  }
   harnessIds(id: SessionId): readonly string[] { this.assertOwner(); sessionId(id); return [...new Set(this.entry(id).conversation.runs.map(run => run.selection.harnessId))].sort(); }
   runOrdinal(id: SessionId, runId: RunId): number | null { this.assertOwner(); sessionId(id); return this.entry(id).runs.get(runId)?.ordinal ?? null; }
 
@@ -1048,21 +1185,18 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
   edits(id: SessionId): readonly EditRef[] {
     this.assertOwner(); sessionId(id);
     const held = this.entry(id), found: EditRef[] = [];
-    held.conversation.runs.forEach((run, ordinal) => {
-      for (const item of this.allItems(held, run)) if (item.type === "file_change" && (item.fields as { readonly detail?: unknown }).detail !== undefined) found.push({ ordinal, runId: run.id, harnessId: run.selection.harnessId, seq: item.seq });
-    });
+    held.conversation.runs.forEach((run, ordinal) => { for (const seq of this.factsOf(held, run).edits) found.push({ ordinal, runId: run.id, harnessId: run.selection.harnessId, seq }); });
     return found;
   }
   latestPlan(id: SessionId): { readonly ordinal: number; readonly runId: RunId; readonly harnessId: string; readonly row: ItemRow } | null {
     this.assertOwner(); sessionId(id);
     const held = this.entry(id), runs = held.conversation.runs;
     for (let ordinal = runs.length - 1; ordinal >= 0; ordinal--) {
-      const run = runs[ordinal]!, items = this.allItems(held, run);
-      for (let index = items.length - 1; index >= 0; index--) {
-        const item = items[index]!;
-        if (item.type === "plan" && Array.isArray((item.fields as { readonly steps?: unknown }).steps) && (item.fields as { readonly steps: readonly unknown[] }).steps.length > 0)
-          return { ordinal, runId: run.id, harnessId: run.selection.harnessId, row: itemRowOf(item) };
-      }
+      const run = runs[ordinal]!, seq = this.factsOf(held, run).plan;
+      if (seq === null) continue;
+      // Only the Turn that has it is read.
+      const item = this.allItems(held, run).find(entry => entry.seq === seq);
+      if (item !== undefined) return { ordinal, runId: run.id, harnessId: run.selection.harnessId, row: itemRowOf(item) };
     }
     return null;
   }
@@ -1099,7 +1233,7 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
       const trash = join(this.root, "trash", dirname(held.file));
       try {
         mkdirSync(trash, { recursive: true, mode: 0o700 });
-        for (const path of [held.paths.main, held.paths.wip, held.paths.events]) if (existsSync(path)) renameSync(path, join(trash, path.split("/").at(-1)!));
+        for (const path of [held.paths.main, held.paths.wip, held.paths.events, held.paths.index]) if (existsSync(path)) renameSync(path, join(trash, path.split("/").at(-1)!));
       } catch (error) { throw storageFailure(error); }
       this.held.delete(id); this.index.drop(id);
       if (held.header.createKey !== undefined) this.createKeys.delete(held.header.createKey);
@@ -1152,7 +1286,8 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
   close(): void {
     if (this.closed) return;
     let failure: unknown = null;
-    try { this.index.close(); } catch (error) { failure = error; }
+    try { this.flushSidecars(); } catch (error) { failure = error; }
+    try { this.index.close(); } catch (error) { failure ??= error; }
     try {
       const owner: OwnerFile | null = readOwner(this.root);
       if (owner !== null && owner.generation === this.generation && owner.token === this.token) writeOwner(this.root, { ...owner, active: false });

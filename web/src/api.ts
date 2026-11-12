@@ -699,9 +699,14 @@ export class GatewayApi {
    * Sends one message. `relay` is what the user chose about the history for this message (stage3 §3); a message that
    * chose nothing sends nothing of it, so a Gateway without the relay API sees the body it always did.
    */
-  async send(id: string, value: string, key: string, attachments: readonly string[] = [], relay?: RelayRequest): Promise<void> {
+  async send(id: string, value: string, key: string, attachments: readonly string[] = [], relay?: RelayRequest, branchFrom?: string): Promise<void> {
     const choices = relayBody(relay);
-    await this.request(`/sessions/${encodeURIComponent(id)}/messages`, "POST", { text: value, commandId: key, ...(attachments.length ? { attachments } : {}), ...(choices === null ? {} : { relay: choices }) }, value => acknowledge(value, id, "runId"));
+    await this.request(`/sessions/${encodeURIComponent(id)}/messages`, "POST", { text: value, commandId: key, ...(attachments.length ? { attachments } : {}), ...(choices === null ? {} : { relay: choices }),
+      ...(branchFrom === undefined ? {} : { branchFrom }) }, value => acknowledge(value, id, "runId"));
+  }
+  /** Makes the branch through the Turn `runId` (an alternative of a Turn: its message sent again, its reply tried again) the conversation's path; nothing runs. */
+  selectBranch(id: string, runId: string, key: string): Promise<ClientSessionView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/branch`, "POST", { runId, commandId: key }, decodeSessionViewV14);
   }
   /** Branches a conversation after a finished reply; the server answers with the new conversation. */
   forkSession(id: string, key: string, throughRunId?: string): Promise<ClientSessionView> {

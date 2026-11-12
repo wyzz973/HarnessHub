@@ -1,5 +1,5 @@
 import { SessionError, type PublicRun, type RunId } from "../../../contracts/session.js";
-import { outlineOf, type RelayHistory } from "./relay/history.js";
+import { outlineOf, type RelayHistory, type RelayRun } from "./relay/history.js";
 import { dispatched } from "./relay/advance.js";
 import type { RelayToolDetail } from "./relay/narration.js";
 import { renderRelay, type RelayRecord } from "./relay/packet.js";
@@ -68,12 +68,13 @@ export interface PublicContextOptions {
  */
 export function buildPublicContext(state: RelayHistory, current: PublicRun, sourceRunIds?: readonly RunId[], options: PublicContextOptions = {}): PublicContext {
   const currentSeq = currentSeqOf(state, current), position = new Map(state.runs.map((run, index) => [run.id, index]));
-  // A source is read as the Turn it is, with its tool calls and without its words: only the sources are read, and the words only of those whose pieces are written (relay/narration.ts).
-  const sourceOf = (id: RunId): PublicRun => {
-    const at = position.get(id), light = at === undefined ? undefined : state.runs[at], outline = at === undefined ? null : outlineOf(state, at);
-    if (!light || outline === null || !terminal(light.status) || light.id === current.id || light.userSeq === undefined || light.userSeq >= currentSeq)
+  // A source is its light row: the Turn itself (its calls, its words) is read only when the packet's choice reaches it, and an older one it does not reach is counted by what its end
+  // recorded (relay/narration.ts, packet.ts). A source the history holds no Turn for is no fact.
+  const sourceOf = (id: RunId): RelayRun => {
+    const at = position.get(id), light = at === undefined ? undefined : state.runs[at];
+    if (!light || !terminal(light.status) || light.id === current.id || light.userSeq === undefined || light.userSeq >= currentSeq || (state.counts?.(at!) === null && outlineOf(state, at!) === null))
       throw new SessionError("INVALID_DATA", "public context source is not a completed public fact");
-    return outline.run;
+    return light;
   };
   const sources = (sourceRunIds === undefined ? publicSources(state, current) : sourceRunIds).map(sourceOf);
   if (new Set(sources.map(run => run.id)).size !== sources.length) throw new SessionError("INVALID_DATA", "duplicate public context sources");

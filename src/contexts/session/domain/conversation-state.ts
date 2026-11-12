@@ -160,6 +160,8 @@ export function assertConversationTransition(before: Conversation, after: Conver
   const added = after.commands.slice(before.commands.length);
   const writer = runIn(after, before.activeRunId ?? after.activeRunId ?? "");
   const nativeCleared = writer !== undefined && events.some(event => event.type === "run.ended" && event.data.runId === writer.id && clearedNative(event.data.native));
+  // A branch inside the conversation (a message sent again from an earlier place, another branch chosen) gives up every native session: they hold Turns the path no longer has.
+  const branched = events.some(event => event.type === "conversation.branched");
   if (before.nativeBindings !== after.nativeBindings) {
     for (let index = 0; index < newBindings.length; index++) {
       const old: NativeSessionBinding | undefined = oldBindings[index], next = newBindings[index]!;
@@ -167,7 +169,8 @@ export function assertConversationTransition(before: Conversation, after: Conver
       if (old?.status === "archived" || old !== undefined && (old.harnessId !== next.harnessId || old.controlId !== next.controlId)) throw transition("native state ownership or archived state changed");
       // An archived binding keeps the relay state it had: archiving freezes it (ADR-055 §4).
       const frozen = old !== undefined && same(old.relay, next.relay);
-      const reset = old !== undefined && frozen && next.status === "archived" && next.checkpoint === old.checkpoint && next.throughRunId === old.throughRunId && after.selection.harnessId === next.harnessId && after.selection.controlId === next.controlId && added.some(command => command.kind === "native-reset");
+      const reset = old !== undefined && frozen && next.status === "archived" && next.checkpoint === old.checkpoint && next.throughRunId === old.throughRunId
+        && (branched || after.selection.harnessId === next.harnessId && after.selection.controlId === next.controlId && added.some(command => command.kind === "native-reset"));
       // A branch's native fork advances without a Run: pending → dispatched → ready with the new reference, or archived unchanged.
       const forked = old !== undefined && frozen && next.throughRunId === null && (old.status === "fork-pending" && next.status === "forking" && next.checkpoint === old.checkpoint
         || old.status === "forking" && next.status === "ready" || (old.status === "fork-pending" || old.status === "forking") && next.status === "archived" && next.checkpoint === old.checkpoint);
@@ -183,7 +186,7 @@ export function assertConversationTransition(before: Conversation, after: Conver
     // Recorded by recovery, or by a writer Run's end committed without the relay part the Store refused (`relay.failed`, R6).
     const failedEnd = (event: EventDraft) => event.type === "run.ended" && writer !== undefined && event.data.runId === writer.id && relayFailed(event.data.relay);
     const recorded = after.relayRecoveryFailed !== undefined && events.some((event, index) => (event.type === "session.recovered" || failedEnd(event)) && before.lastSeq + index + 1 === after.relayRecoveryFailed);
-    const renewed = added.some(entry => entry.kind === "native-reset") || newBindings.length > oldBindings.length;
+    const renewed = added.some(entry => entry.kind === "native-reset") || newBindings.length > oldBindings.length || branched;
     if (after.relayRecoveryFailed !== undefined ? !recorded : !renewed) throw transition("a relay recovery failure is recorded by recovery and cleared by a new native session");
   }
 
