@@ -34,6 +34,8 @@ export interface LiveStatus {
   readonly wrap: boolean;
   /** Thinking: the words breathe after 3 s and change at 15, 30, 45 and 60 s (Motion board #04). */
   readonly thinking: boolean;
+  /** Nothing needs saying: the reply is being written before the reader's eyes, or the Turn is only closing. The line is not drawn. */
+  readonly quiet?: true;
 }
 const THINKING: readonly (readonly [number, string])[] = [[60_000, "快想好了"], [45_000, "想得更深"], [30_000, "再想想"], [15_000, "还在想"]];
 function clip(text: string, limit = 80): string { const characters = [...text]; return characters.length > limit ? characters.slice(0, limit - 1).join("") + "…" : text; }
@@ -84,11 +86,13 @@ export function liveStatus(input: LiveInput): LiveStatus {
   }
   if (turn.status === "preparing") return { ...plain, text: "正在启动 " + harness + (startupHint !== undefined && startupHint.seconds >= 2 ? (startupHint.usual ? "（通常约 " : "（上次约 ") + Math.round(startupHint.seconds) + " 秒）" : "") };
   // The Turn is running while its program is closed; the phase has no word of its own in the protocol.
-  if (run.status === "settling") return { ...plain, text: "正在结束执行" };
+  if (run.status === "settling") return { ...plain, quiet: true, text: "正在结束执行" };
   if (turn.status === "waiting") return { ...plain, tone: "wait", text: TURN_STATUS_WORDS.waiting };
   if (turn.status === "running") {
     if (running !== undefined) return { ...plain, text: said(running, "running") };
-    if (input.replying) return { ...plain, text: "正在回复" };
+    // Text being written says so itself (its end dot breathes). Text already written, with nothing running after it, is thought again.
+    const last = turn.items.at(-1);
+    if (last !== undefined && last.type === "assistant_message" && (last.status === "running" || last.status === "pending")) return { ...plain, quiet: true, text: "正在回复" };
     const timing = run.timing;
     if (timing !== undefined && timing.dispatchedAt === undefined) return { ...plain, text: "已连接 " + harness + "，正在发送" };
     const waited = timing?.dispatchedAt !== undefined && timing.firstOutputAt === undefined ? now - timing.dispatchedAt : 0;

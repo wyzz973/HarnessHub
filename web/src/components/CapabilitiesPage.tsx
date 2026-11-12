@@ -30,7 +30,7 @@ const KIND_HEAD: Readonly<Record<CapabilityKind, string>> = { skill: "技能 · 
 const KIND_HINT: Readonly<Record<CapabilityKind, string>> = { skill: "各 Harness 读到的技能，以及经由哪里读到。", mcp: "各 Harness 读到的 MCP 服务器；读取时不启动它们。下方的统一清单可以按每家的写法写入。",
   instructions: "各 Harness 读的用户级指令文件。下方可以写一份共享指令，以带标记的区块写进去。", subagent: "各 Harness 读到的子 Agent。下方的统一清单可以按每家的格式写进去。",
   plugin: "各 Harness 装的插件；这里只读。", hook: "各 Harness 在用户级配置里登记的 Hooks；这里只读。", command: "各 Harness 的自定义命令；这里只读。" };
-const PICK_HINT = "点空着的格子就能启用；写入前会给你看每个文件改哪几行。";
+const PICK_HINT = "点格子启用，写入前先给你看改动。";
 const MECHANISM_LABEL: Readonly<Record<CapabilityMechanism, string>> = { "native-shared": "共享目录", linked: "链接", "own-copy": "自有目录", "compat-root": "兼容读取", "external-dir": "外加目录",
   plugin: "插件", bundled: "内置", synced: "账户同步", config: "配置" };
 const STATUS_LABEL: Readonly<Record<CapabilityStatus, string>> = { active: "生效", disabled: "已停用", shadowed: "被覆盖", duplicate: "重复", rejected: "被跳过", "broken-link": "链接失效", invalid: "无效" };
@@ -697,7 +697,6 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
       <div className={cn("mb-[18px] flex min-w-0 items-center gap-1", shellButton ? "ml-0" : "ml-2.5")}>{shellButton}{title}{reload}</div>
       {ready ? <KindNav kinds={kinds} value={kind} counts={counts} onChange={choose}/> : null}
       <span className="min-h-6 flex-1"/>
-      <p className="m-0 px-2.5 text-caption text-fg-3">只配置一次，按每家的格式写进它们自己的用户级配置。</p>
     </nav> : null}
     <div className="flex min-w-0 flex-1 flex-col">
       {wide ? null : <header className="flex h-14 flex-none items-center gap-2 pr-3.5 pl-3 sm:pl-[18px]">{shellButton}{title}{reload}</header>}

@@ -73,6 +73,11 @@ export function turnFooter(turn: Pick<ReadTurn, "executor" | "usage" | "duration
   return [turn.executor.harness, turn.executor.model?.label, permission, effort, ...turnFacts(turn)].filter(Boolean).join(" · ");
 }
 
+/** The footer as it is shown: who ran the Turn, with which model, and how long it took ("Claude Code · Haiku 5.5 · 24 秒"); turnFooter's whole line is its hint. */
+export function turnByline(turn: Pick<ReadTurn, "executor" | "durationMs">): string {
+  return [turn.executor.harness, turn.executor.model?.label, turn.durationMs === undefined ? null : spentText(turn.durationMs)].filter(Boolean).join(" · ");
+}
+
 /**
  * How a Turn stands and, when it ended otherwise than by finishing, why, in the table's sentence: "已停止 · 你停止了这一轮". A reason that
  * only points at the error item ("见这一轮的错误条目") or says nothing was reported is not written, and an unknown outcome says what that

@@ -644,35 +644,33 @@ function ChangeBadge({ count, news }: { readonly count: number; readonly news: b
  * waiting in the queue is not the active Run (only a started one is), and is named 排队中 as the Turn names it (ruling N).
  */
 function HeaderState({ session, active, harnessName }: { readonly session: ConversationView; readonly active: PublicRun | null; readonly harnessName: (id: string) => string }) {
-  const now = useNow(active !== null);
   const latest = active ?? session.runs.at(-1) ?? null;
   // Who works is the Turn's executor; a Run whose Turn could not be read is named by the selection it was sent with.
   const name = latest?.protocol?.executor.harness ?? harnessName((latest ?? session).selection.harnessId);
-  const started = active?.protocol?.startedAt ?? active?.timing?.acceptedAt, since = started === undefined ? null : clock(now - started);
   const state: { readonly text: string; readonly tone: "neutral" | "accent" | "amber" | "red"; readonly live?: boolean } = (() => {
     if (active) {
       const open = session.permissions?.filter(request => request.runId === active.id && !request.decided) ?? [];
       if (active.cancelRequested) return { text: "正在停止", tone: "neutral" };
       if (open.length) return { text: open.some(dockedRequest) ? "等你批准" : "等你回答", tone: "amber" };
-      const clockText = since ? " · " + since : "";
       switch (stateOf(active)) {
         case "queued": return { text: TURN_STATUS_WORDS.queued, tone: "neutral" };
-        case "preparing": return { text: TURN_STATUS_WORDS.preparing + clockText, tone: "accent", live: true };
-        default: return { text: TURN_STATUS_WORDS.running + clockText, tone: "accent", live: true };
+        case "preparing": return { text: TURN_STATUS_WORDS.preparing, tone: "accent", live: true };
+        default: return { text: TURN_STATUS_WORDS.running, tone: "accent", live: true };
       }
     }
     if (!latest) return { text: "", tone: "neutral" };
     const status = stateOf(latest);
     switch (status) {
       case "queued": return { text: latest.cancelRequested ? "正在停止" : TURN_STATUS_WORDS.queued, tone: "neutral" };
-      case "completed": case "cancelled": return { text: TURN_STATUS_WORDS[status], tone: "neutral" };
+      case "completed": case "cancelled": return { text: "", tone: "neutral" };
       case "failed": return { text: TURN_STATUS_WORDS.failed, tone: "red" };
       case "unknown": return { text: TURN_STATUS_WORDS.unknown, tone: "amber" };
       default: return { text: "", tone: "neutral" };
     }
   })();
-  return <StatusPill tone={state.tone} live={state.live ?? false} size="lg" className="hidden max-w-[260px] min-w-0 sm:inline-flex" title={state.text ? `${name} ${state.text}` : name}>
-    <span className="min-w-0 truncate">{name}{state.text ? " " + state.text : ""}</span>
+  if (!state.text) return null;
+  return <StatusPill tone={state.tone} live={state.live ?? false} size="lg" className="hidden max-w-[260px] min-w-0 sm:inline-flex" title={`${name} ${state.text}`}>
+    <span className="min-w-0 truncate">{name} {state.text}</span>
   </StatusPill>;
 }
 

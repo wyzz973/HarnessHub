@@ -187,10 +187,10 @@
   --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, "PingFang SC", monospace;
   /* Weights: 400, 500 and 600 only; `font-bold` means 600 here */
   --font-weight-*: initial; --font-weight-normal: 400; --font-weight-medium: 500; --font-weight-semibold: 600; --font-weight-bold: 600;
-  --text-greeting: 32px; --text-greeting--line-height: 42px; --text-greeting--font-weight: 500; --text-greeting--letter-spacing: -0.02em;
-  --text-title: 28px; --text-title--line-height: 36px; --text-title--font-weight: 600; --text-title--letter-spacing: -0.02em;
-  --text-section: 20px; --text-section--line-height: 28px; --text-section--font-weight: 600; --text-section--letter-spacing: -0.01em;
-  --text-panel: 16px; --text-panel--line-height: 22px; --text-panel--font-weight: 600;
+  --text-greeting: 26px; --text-greeting--line-height: 34px; --text-greeting--font-weight: 500; --text-greeting--letter-spacing: -0.015em;
+  --text-title: 20px; --text-title--line-height: 26px; --text-title--font-weight: 600; --text-title--letter-spacing: -0.01em;
+  --text-section: 15px; --text-section--line-height: 22px; --text-section--font-weight: 600; --text-section--letter-spacing: 0;
+  --text-panel: 14px; --text-panel--line-height: 20px; --text-panel--font-weight: 600;
   --text-reading: 14px; --text-reading--line-height: 22px;
   --text-ui: 13px; --text-ui--line-height: 20px;
   --text-ui-sm: 13px; --text-ui-sm--line-height: 20px;
@@ -404,13 +404,6 @@
   }
   @starting-style { .floating-bar { opacity: 0; transform: translateY(16px); } }
   .floating-bar[data-state="closing"] { opacity: 0; transform: translateY(16px); transition-duration: var(--dur-base); pointer-events: none; }
-
-  /*
-   * What stands above the message box is not said twice (the app keeps the task list and the next step in the bottom stack, never in the
-   * timeline): the latest Turn's task list and wrap-up have no line of their own while the bar or the box shows them. Earlier Turns keep theirs.
-   */
-  .chat-page:has(.next-step) .transcript > .protocol-turn:last-of-type .quiet-line[data-item="recap"],
-  .chat-page:has(.plan-bar) .transcript > .protocol-turn:last-of-type .quiet-line[data-item="plan"] { display: none; }
 
   /* Buttons: blue primary, grey secondary (default), outline, ghost, danger; md 30, sm 26, lg 34. #30 hover 120 ms */
   .btn {

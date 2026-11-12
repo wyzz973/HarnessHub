@@ -193,7 +193,7 @@ export function Sidebar(props: SidebarProps) {
     <div className="flex-none pt-1">
       <button type="button" className="nav-row w-full disabled:opacity-60" disabled={interactionBusy} aria-current={page === "settings" ? "page" : undefined} aria-label="设置" onClick={() => props.onPage("settings")}>
         {icon(<Settings size={16}/>)}<span className="flex-1">设置</span>
-        <span className="service-status flex items-center gap-1.5 text-[11px] leading-4 text-fg-3" title={service} aria-hidden="true"><StatusDot tone={props.connected ? "run" : "idle"} live={false} size={6}/>{port}</span></button>
+        <span className="service-status flex items-center gap-1.5 text-[11px] leading-4 text-fg-3" title={service} aria-hidden="true"><StatusDot tone={props.connected ? "run" : "fail"} live={false} size={6}/></span></button>
       <span className="sr-only" role="status">{props.connected ? "" : "与本机服务的连接中断"}</span>
     </div>
   </aside>;

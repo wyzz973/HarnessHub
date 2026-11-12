@@ -110,19 +110,15 @@ export interface StatusPart { readonly text: string; readonly share?: number }
  * is written: input only when the Hub counted the whole Turn, the context share only when the Harness gave its size, the cost under its scope
  * and only when something was spent.
  */
-export function statusParts(turn: ReadTurn, now?: number): readonly StatusPart[] {
-  const parts: StatusPart[] = [{ text: `第 ${turn.n} 轮` }], steps = stepCount(turn);
-  if (steps > 0) parts.push({ text: `${steps} 步` });
-  if (turn.durationMs !== undefined) parts.push({ text: "用时 " + spentText(turn.durationMs) });
-  else if (now !== undefined && !over(turn) && turn.startedAt !== undefined) parts.push({ text: "已用 " + elapsed(now - turn.startedAt) });
-  if (turn.usage.completeness === "complete" && turn.usage.input !== undefined) parts.push({ text: `输入 ${compact(turn.usage.input)}` });
+export function statusParts(turn: ReadTurn, _now?: number): readonly StatusPart[] {
+  // Only how full the context is stands under the message box: the Turn's time is on its own line while it goes on and in its footer after,
+  // and its tokens and cost are in the footer's hint and the details.
+  const parts: StatusPart[] = [];
   const context = turn.usage.context;
   if (context !== undefined) {
     const share = context.size ? Math.min(100, Math.round(context.used / context.size * 100)) : undefined;
     parts.push(share === undefined ? { text: `上下文 ${compact(context.used)}` } : { text: `上下文 ${share}%`, share });
   }
-  const cost = costWords(turn.usage.cost);
-  if (cost !== null) parts.push({ text: cost });
   return parts;
 }
 

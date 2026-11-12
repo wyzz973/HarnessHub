@@ -8,7 +8,7 @@ import { failureMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { elapsed } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
-import { endLine, quietLine, switchLine, turnFooter } from "../lib/protocol/lines.js";
+import { endLine, quietLine, switchLine, turnByline, turnFooter } from "../lib/protocol/lines.js";
 import { liveStatus, type QueueNotice } from "../lib/protocol/live.js";
 import { hubRecordOf } from "../lib/protocol/runs.js";
 import { arrange, gapOf, isGap, lay, opensByDefault, reasoningLabel, summarizeGroup, withReply, workLabel, type Block, type GapRow, type WorkBlock } from "../lib/protocol/work.js";
@@ -214,13 +214,8 @@ function ItemView({ item }: { readonly item: ReadItem }) {
         {rest > 0 ? <MoreText runId={ctx.run.id} seq={item.seq} rest={rest} label={text ? "显示更多" : "显示这段回复"}/> : null}</> : null;
     }
     case "plan_proposal": return <div className="plan-proposal flex min-w-0 flex-col gap-1"><span className="px-1.5 text-caption text-fg-3">方案</span><StreamingMarkdown text={item.markdown} isStreaming={false} className="text-reading"/></div>;
-    // The task list and the wrap-up are one line each here; they are shown whole above the message box (the plan bar, the next-step box).
-    case "plan": {
-      if (item.steps.length === 0) return null;
-      const done = item.steps.filter(step => step.status === "completed").length, now = item.steps.find(step => step.status === "in_progress");
-      return <QuietLine item="plan" icon={<ListChecks size={14}/>}><span className="task-list-line">任务清单 · {done}/{item.steps.length}{now ? " · 正在：" + now.text : done === item.steps.length ? " · 全部完成" : ""}</span></QuietLine>;
-    }
-    case "recap": return <QuietLine item="recap" icon={<MessageSquareText size={14}/>}><span className="recap-line line-clamp-1" title={item.summary + (item.ask ? "\n" + item.ask : "")}>小结：{item.summary}</span></QuietLine>;
+    // The task list and the wrap-up stand above the message box (the plan bar, the next-step box) and nowhere in the timeline, as in the app.
+    case "plan": case "recap": return null;
     case "notice": return <NoticeList notices={[{ severity: item.severity, title: item.text, ...(item.more ? { detail: item.more } : {}) }]}/>;
     case "error": {
       return <div className="run-error flex items-start gap-2 rounded-block bg-surface px-3 py-2.5 text-ui-sm text-fg shadow-hairline" role="status" data-class={item.class}>
@@ -304,7 +299,8 @@ function LiveLine({ queue, startupHint, waiting, replying }: { readonly queue: Q
   const { run, turn } = useTurn(), now = useNow(true);
   const state = liveStatus({ turn, run, now, startupHint, queue, waiting, replying });
   const since = turn.startedAt === undefined ? null : elapsed(now - turn.startedAt);
-  return <div className="live-line flex min-w-0 items-start gap-[7px] px-1.5 text-ui-sm text-fg-3" data-state={state.tone}>
+  if (state.quiet) return null;
+  return <div className="live-line motion-fade-in flex min-w-0 items-start gap-[7px] px-1.5 text-ui-sm text-fg-3" data-state={state.tone}>
     <LiveIcon tone={state.tone} className="mt-[2.5px]"/>
     <span className={cn("response-status min-w-0", state.thinking && "motion-breathe")} role="status">{state.wrap ? state.text : <SwapText text={state.text} shimmer={state.tone === "run"} className="max-w-full"/>}</span>
     {state.timer && since !== null ? <span className="flex-none whitespace-nowrap">· 已用 {since}</span> : null}
@@ -455,7 +451,7 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
         {over ? <WorkspaceLine turn={turn}/> : null}
         {over ? <EndView turn={turn}/> : null}
         <div className="turn-meta -mt-1 flex min-h-7 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-caption text-fg-3">
-          <span className="turn-footer flex min-w-0 items-center gap-1.5"><BrandIcon brand={turn.executor.harnessId} name={harness} size={16}/><span className="min-w-0 break-words">{turnFooter(turn)}</span></span>
+          <span className="turn-footer flex min-w-0 items-center gap-1.5"><BrandIcon brand={turn.executor.harnessId} name={harness} size={16}/><span className="min-w-0 break-words" title={turnFooter(turn)}>{turnByline(turn)}</span></span>
           <div className={cn("message-actions flex items-center gap-0.5 transition-opacity duration-150", quiet && "[@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100")}>
             {reply ? <ActionButton label={copy.state === "copied" ? "已复制回复" : "复制回复"} onClick={copy.write}>{copy.state === "copied" ? <Check size={14}/> : <Copy size={14}/>}</ActionButton> : null}
             {onBranch && (turn.status === "completed" || turn.status === "failed" || turn.status === "cancelled") ? <ActionButton label="从这里分支" onClick={() => onBranch(run.id)}><GitBranch size={14}/></ActionButton> : null}
@@ -463,7 +459,7 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
             {again ? <ActionButton label="重试这条回复" onClick={() => onRetry(run.input, run.attachments)}><RotateCcw size={14}/></ActionButton> : null}
             {retry ? <button type="button" className="btn btn-ghost btn-sm retry-response ml-1 min-w-24" onClick={() => onRetry(run.input, run.attachments)}><RotateCcw size={13}/>重试回复</button> : null}
           </div>
-          {copy.state === "failed" ? <span className="text-red" role="status">无法使用剪贴板，可选中文本后复制。</span> : copy.state === "copied" ? <span role="status">已复制</span> : null}
+          {copy.state === "failed" ? <span className="text-red" role="status">无法使用剪贴板，可选中文本后复制。</span> : copy.state === "copied" ? <span className="sr-only" role="status">已复制</span> : null}
         </div>
       </> : null}
     </article>;

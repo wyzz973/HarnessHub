@@ -401,7 +401,7 @@ export function HarnessesPage(props: HarnessProps) {
   // The page leaves out the hidden Harnesses; details, tasks and names still find every one.
   const listed = harnesses.filter(harness => !props.hidden.has(harness.id)), hiddenCount = harnesses.length - listed.length;
   const mine = listed.filter(onMachine).sort(byTierAndName);
-  const catalog = listed.flatMap(harness => { if (onMachine(harness)) return []; const way = installWay(harness); return way ? [{ harness, way }] : []; })
+  const catalog = listed.flatMap(harness => { if (onMachine(harness) || harness.tier !== "focus") return []; const way = installWay(harness); return way ? [{ harness, way }] : []; })
     .sort((a, b) => byTierAndName(a.harness, b.harness));
   /**
    * The card's own action: install its missing adapter, or upgrade it when the Gateway reports a newer version (Agent
@@ -435,8 +435,7 @@ export function HarnessesPage(props: HarnessProps) {
   // 补充 D). While the details sit beside the cards, the body (and its scrollbar) ends where the sheet begins.
   return <><PageShell ref={frame} title="Harness" titleId="harnesses-title" wide bodyClassName={cn("harness-management-body", room && "mr-[360px]")}
     onMenu={props.onMenu} sidebarHidden={props.sidebarHidden} onExpandSidebar={props.onExpandSidebar}
-    description={mine.length ? `这台 Mac 上的 ${mine.length} 个 Harness。用它们原来的安装和登录；升级、卸载都按官网的方式来。`
-      : "这台 Mac 上还没有找到 Harness。装好以后，HarnessHub 用它们原来的安装和登录；安装、升级、卸载都按官网的方式来。"}
+    description={mine.length ? `这台 Mac 上的 ${mine.length} 个 Harness` : "这台 Mac 上还没有找到 Harness"}
     actions={<>
       {jobs.length ? <button type="button" className={cn("btn btn-ghost", active.length > 0 && "text-accent-text")} onClick={() => setShowTasks(value => !value)} aria-expanded={showTasks} aria-controls="installation-tasks">
         {active.length ? <Spinner size={14} tone="run" label=""/> : <Clock3 size={15}/>}安装任务<span className={active.length ? "" : "text-fg-3"}>{active.length || jobs.length}</span></button> : null}
@@ -473,7 +472,6 @@ export function HarnessesPage(props: HarnessProps) {
     {catalog.length ? <section aria-labelledby="agents-catalog-title" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
         <h2 id="agents-catalog-title" className="m-0 text-panel">还可以安装</h2>
-        <span className="text-ui-sm text-fg-3">{catalog.length} 个，按官网的方式安装</span>
         <span className="flex-1"/>
         {catalog.length > CATALOG_ROWS ? <button type="button" className="link-btn text-ui-sm" aria-expanded={allCatalog} aria-controls="agents-catalog-more" aria-label={allCatalog ? "收起" : `显示全部 ${catalog.length} 个`} onClick={() => setAllCatalog(value => !value)}>{allCatalog ? "收起" : "全部"}</button> : null}
       </div>
@@ -541,7 +539,8 @@ function AgentCard({ harness, state, action, selected, onOpen }: {
   // When the details make the cards reflow beside them, the chosen card stays in view (at once, not scrolled smoothly).
   const self = useRef<HTMLElement>(null);
   useEffect(() => { if (selected) self.current?.scrollIntoView({ block: "nearest" }); }, [selected]);
-  return <article ref={self} aria-labelledby={nameId} data-selected={selected ? "true" : "false"} className="agent-entry agent-card card card-interactive flex min-w-0 cursor-pointer flex-col gap-3 p-4 sm:p-[18px]" onClick={open}>
+  return <article ref={self} role="button" tabIndex={0} aria-label={`查看 ${harness.name} 详情`} aria-haspopup="dialog" data-selected={selected ? "true" : "false"} className="agent-entry agent-card card card-interactive flex min-w-0 cursor-pointer flex-col gap-3 p-4" onClick={open}
+    onKeyDown={event => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpen(); } }}>
     <div className="flex items-start gap-2.5 sm:gap-3">
       <BrandIcon brand={harness.id} name={harness.name} size={44}/>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -554,12 +553,8 @@ function AgentCard({ harness, state, action, selected, onOpen }: {
         <span className="agent-meta trunc text-caption leading-4 text-fg-3" title={`${version ?? "版本未知"} · ${placeOf(harness, true)}`}>{version ?? "版本未知"} · {placeOf(harness, false)}</span>
       </div>
     </div>
-    <p className="agent-summary m-0 line-clamp-2 min-h-10 text-ui-sm text-fg-2" title={state.summary}>{state.summary}</p>
-    <div className="flex items-center gap-2 pt-0.5">
-      <span className="trunc flex-1 text-caption text-fg-3">{products > 1 ? `本机有 ${products} 份安装` : ""}</span>
-      {action ? <button type="button" className="btn btn-sm btn-primary" onClick={action.run}>{action.label}</button> : null}
-      <button type="button" className="btn btn-sm" aria-haspopup="dialog" aria-label={`查看 ${harness.name} 详情`} onClick={onOpen}>详情</button>
-    </div>
+    {state.kind !== "ready" ? <p className="agent-summary m-0 line-clamp-2 text-ui-sm text-fg-2" title={state.summary}>{state.summary}</p> : null}
+    {action ? <div className="flex items-center justify-end"><button type="button" className="btn btn-sm btn-primary" onClick={action.run}>{action.label}</button></div> : null}
   </article>;
 }
 
