@@ -359,3 +359,58 @@ test("a packet that was on its way when the Hub went away is waited for by the n
   // A packet that never left is no packet: a Run recovered before it was dispatched changes nothing.
   fakes.release();
 });
+
+// A new native session in the place of one that cannot go on (2026-11-13), and the state said again after a Harness compacted its own session.
+
+test("a native session its Harness no longer has is replaced by a new one that is handed the conversation; a command to it still fails", async t => {
+  const w = world(t), fakes = new Fakes({ alpha: declared() }), app = w.runtime(fakes), id = (await app.create(w.configuration, { harnessId: "alpha" }, "create")).id;
+  await turn(app, id, "one fact", "k1");
+  const lost = fakes.to("alpha")[0]!.session;
+  fakes.gone.add(lost);
+  // A command is meant for the session as it is: nothing takes its place for it.
+  assert.equal((await turn(app, id, "/status", "k2")).status, "failed");
+  const second = await turn(app, id, "two", "k3");
+  assert.equal(second.status, "completed");
+  const sent = fakes.to("alpha").at(-1)!, prompt = readRelayPrompt(sent.text);
+  assert.notEqual(sent.session, lost);
+  assert.equal(prompt.packet, true); assert.deepEqual(prompt.history.map(row => row.user.text), ["one fact"]);
+  assert.match(prompt.currentInput.text, /找不回来了[\s\S]*two$/u);
+  assert.equal(eventOf(w.store, id, "native.binding_reseated", second.id)?.data.reason, "lost");
+  assert.deepEqual(oldShape(app, id).nativeBindings!.map(row => [row.status, row.relay!.epoch]), [["archived", 1], ["ready", 2]]);
+  // The new session holds the conversation: the next Turn goes as typed.
+  await turn(app, id, "three", "k4");
+  assert.equal(fakes.to("alpha").at(-1)!.text, "three");
+});
+
+test("after a Turn that failed over the model's window, the next one runs in a new native session that is handed the conversation", async t => {
+  const w = world(t), fakes = new Fakes({ alpha: declared() }), app = w.runtime(fakes), id = (await app.create(w.configuration, { harnessId: "alpha" }, "create")).id;
+  await turn(app, id, "one fact", "k1");
+  fakes.script = (_harnessId, input) => input === "too much" ? { result: "overflow" } : {};
+  assert.equal((await turn(app, id, "too much", "k2")).status, "failed");
+  const third = await turn(app, id, "go on", "k3");
+  assert.equal(third.status, "completed");
+  const sent = fakes.to("alpha").at(-1)!, prompt = readRelayPrompt(sent.text);
+  assert.notEqual(sent.session, fakes.to("alpha")[0]!.session);
+  assert.equal(prompt.packet, true); assert.deepEqual(prompt.history.map(row => row.user.text), ["one fact", "too much"]);
+  assert.match(prompt.currentInput.text, /上下文满了[\s\S]*go on$/u);
+  assert.equal(eventOf(w.store, id, "native.binding_reseated", third.id)?.data.reason, "overflow");
+  // Nothing of it without the failure: the Turn after goes as typed, into the session the Hub opened.
+  await turn(app, id, "and on", "k4");
+  assert.deepEqual([fakes.to("alpha").at(-1)!.text, fakes.to("alpha").at(-1)!.session], ["and on", sent.session]);
+});
+
+test("a Harness that compacts its session in the middle of a Turn is told the state with the answer of the next Hub tool it calls, once; with no call, its next Turn says it", async t => {
+  const w = world(t), fakes = new Fakes({ alpha: declared() });
+  const app = w.runtime(fakes, { context: { place: () => ({ dir: "/nowhere/context/c-000000", self: "c-000000" }), ensure: async () => {}, state: () => "STATE AS IT STANDS" } });
+  const id = (await app.create(w.configuration, { harnessId: "alpha" }, "create")).id, from = { harnessId: "alpha", controlId: "alpha-acp" };
+  fakes.script = (_harnessId, input) => input === "work" ? { result: "hold", compacts: true } : input === "work again" ? { compacts: true } : {};
+  app.send(id, "work", "k1"); await fakes.reached("alpha", 1);
+  assert.match(app.signalsFor(id, from) ?? "", /你的上下文刚被压缩过[\s\S]*STATE AS IT STANDS/u);
+  assert.equal(app.signalsFor(id, from), null, "said once in the Turn");
+  fakes.release(); await app.wait(id);
+  await turn(app, id, "next", "k2");
+  assert.equal(fakes.to("alpha").at(-1)!.text, "next", "the Turn after does not say it a second time");
+  // A Turn that compacted and called no tool of the Hub's: the state goes with the next Turn.
+  await turn(app, id, "work again", "k3"); await turn(app, id, "after", "k4");
+  assert.match(fakes.to("alpha").at(-1)!.text, /STATE AS IT STANDS[\s\S]*after$/u);
+});

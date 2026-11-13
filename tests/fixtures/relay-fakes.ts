@@ -50,7 +50,9 @@ export const COMMANDS: readonly NativeCommand[] = [{ name: "compact", descriptio
 
 /** How one prompt ends. `result`: the Driver knows it recorded, knows nothing, knows it refused it, loses its connection, or holds until released. */
 export interface Script {
-  readonly result?: "recorded" | "unrecorded" | "not_recorded" | "lost" | "hold";
+  readonly result?: "recorded" | "unrecorded" | "not_recorded" | "lost" | "hold" | "overflow";
+  /** true: the Harness compacts its own session in this Turn, and says so before it answers. */
+  readonly compacts?: boolean;
   /** true: the Driver reports the input as an event (E1) before it answers. */
   readonly live?: boolean;
   /** false: the native side does not write the prompt (a lost Turn that never arrived). */
@@ -67,6 +69,8 @@ export class Fakes implements SessionBindingFactory {
   /** The user entries each native session holds. */
   readonly history = new Map<string, string[]>();
   script: (harnessId: string, input: string) => Script = () => ({});
+  /** Native sessions their Harness does not have any more: opening one is refused as a session it does not have. */
+  readonly gone = new Set<string>();
   /** What closing a Harness's program reports (the program's end, as the Runtime's close sees it): clean unless set here. */
   closing: Partial<Record<string, CleanupEvidence | Error>> = {};
   prepared = 0;
@@ -97,7 +101,11 @@ export class Fakes implements SessionBindingFactory {
     const control: HarnessControl = {
       ...(declaration === null || declaration === undefined ? {} : { relayCapabilities: declaration }),
       initialize: async () => ({ protocol: "acp-v1", protocolVersion: 1, agentName: "fake", agentVersion: "1", authenticationMethods: [], capabilities: {} }),
-      open: async (_cwd, _model, _options, checkpoint) => { this.opens.push({ harnessId, checkpoint }); session = checkpoint ?? "native-" + harnessId + "-" + ++this.opened; return nativeConversationId(session); },
+      open: async (_cwd, _model, _options, checkpoint) => {
+        this.opens.push({ harnessId, checkpoint });
+        if (checkpoint !== undefined && this.gone.has(checkpoint)) throw Object.assign(new Error("the Harness has no session with this identity"), { code: "NATIVE_SESSION_NOT_FOUND" });
+        session = checkpoint ?? "native-" + harnessId + "-" + ++this.opened; return nativeConversationId(session);
+      },
       checkpoint: async () => session, healthy: () => true,
       models: async () => ({ models: [{ id: "model-a", name: "A" }], defaultModel: "model-a", authentication: "ready", canSelect: true, commands: COMMANDS }),
       setTitle: async (_id, title) => { this.titles.push({ harnessId, title }); },
@@ -108,6 +116,7 @@ export class Fakes implements SessionBindingFactory {
         const rows = entries(), name = /^\/(\S+)/u.exec(input)?.[1];
         if (name === "undo") rows.pop(); else if (name === "clear") rows.length = 0; else if (plan.insert !== false) rows.push(singleText(turn));
         if (plan.live === true) output({ type: "input_recorded", ...(typeof turn === "object" ? { packetId: turn.relay.packetId } : {}) });
+        if (plan.compacts === true) output({ type: "activity", id: "compaction-" + this.prompts.length, kind: "compaction", title: "上下文压缩", status: "completed" });
         output({ type: "text", text: "reply from " + harnessId });
         if (this.usage[harnessId] !== undefined) output({ type: "usage", usage: this.usage[harnessId]! });
         const extra: Partial<BackendResult> = plan.cleared === true ? { native: { cleared: true } } : {};
@@ -116,6 +125,7 @@ export class Fakes implements SessionBindingFactory {
           case "recorded": result = Promise.resolve({ status: "completed", reason: "fake", input: "recorded", ...extra }); break;
           case "unrecorded": result = Promise.resolve({ status: "completed", reason: "fake", ...extra }); break;
           case "not_recorded": result = Promise.resolve({ status: "failed", reason: "refused", input: "not_recorded", error: { code: "REMOTE_ERROR", message: "the native side refused the input" } }); break;
+          case "overflow": result = Promise.resolve({ status: "failed", reason: "failed", input: "recorded", error: { code: "CONTEXT_WINDOW_EXCEEDED", message: "the conversation is over the model's window" } }); break;
           case "lost": result = new Promise<BackendResult>((_resolve, reject) => { setImmediate(() => reject(new SessionError("CONTROL_FAILED", "the connection ended without a result"))); }); break;
           case "hold": result = new Promise<BackendResult>(resolve => { this.held.push({ stop: () => resolve({ status: "cancelled", reason: "stopped" }), release: () => resolve({ status: "completed", reason: "fake" }) }); }); break;
         }
@@ -134,7 +144,8 @@ export class Fakes implements SessionBindingFactory {
   async reached(harnessId: string, count: number): Promise<void> { for (let tries = 0; tries < 2000 && this.to(harnessId).length < count; tries++) await new Promise(resolve => setTimeout(resolve, 5)); }
 }
 
-export interface World { readonly data: string; store: FileConversationStore; readonly configuration: SessionConfiguration; runtime(factory: SessionBindingFactory, options?: { readonly keys?: RelayKeyPort }): SessionRuntime }
+export interface World { readonly data: string; store: FileConversationStore; readonly configuration: SessionConfiguration;
+  runtime(factory: SessionBindingFactory, options?: { readonly keys?: RelayKeyPort; readonly context?: NonNullable<ConstructorParameters<typeof SessionRuntime>[2]["context"]> }): SessionRuntime }
 /** A world of real parts on a temporary data root. */
 export function world(t: TestContext, prefix = "relay-flow-"): World {
   const root = temporary(t, prefix), workspace = join(root, "workspace"), data = join(root, "data");
@@ -145,7 +156,7 @@ export function world(t: TestContext, prefix = "relay-flow-"): World {
     runtime(factory, options = {}) {
       let next = 0;
       const app = new SessionRuntime(w.store, factory, { id: () => "flow-" + ++next + "-" + runtimes.length, now: () => new Date(NOW), publish: () => {},
-        fingerprint: value => createHash("sha256").update(value).digest("hex"), ...(options.keys === undefined ? {} : { relayKeys: options.keys }) });
+        fingerprint: value => createHash("sha256").update(value).digest("hex"), ...(options.keys === undefined ? {} : { relayKeys: options.keys }), ...(options.context === undefined ? {} : { context: options.context }) });
       runtimes.push(app); return app;
     } };
   t.after(async () => {

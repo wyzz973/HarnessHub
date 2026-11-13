@@ -74,7 +74,7 @@ export function hubCommandInstructions(command: string, progress: boolean): stri
     run("task") + "                   这件任务的全貌：有哪些对话在做、各自被交代了什么、回复了什么、改了哪些文件；turns、turn、search 加 --conversation <标签> 可读其中另一段对话",
     ...(progress ? [run("plan \"[x] 做完的一步\" \"[~] 正在做的一步\" \"[ ] 还没做的一步\"") + "   任务要做好几步时，把全部步骤列给用户看，每开始或做完一步再调用一次",
       run("wrap-up \"<两三句小结>\" [--ask \"<一个问题>\" --action \"<回答>\"]") + "   每一轮结束前调用一次：做完了什么、还有什么没做或没验证；需要用户拿主意时带上问题和一到两个回答"] : []),
-    "别人交给你的记录是摘要：需要更早的细节时先用 turns、turn、search 查。只规划（只读）时你不能运行命令，这条命令也用不了，那时以随消息给你的内容为准。" + (progress ? "plan 和 wrap-up 是这个界面显示进度和下一步的唯一途径，它们不代替你的正文回复。" : "")].join("\n");
+    "别人交给你的记录是摘要：需要更早的细节时先用 turns、turn、search 查。你的上下文被压缩过、或者记不清这件任务的目标和要遵守的约束时，先运行 task 和 board 看一遍，再接着做。只规划（只读）时你不能运行命令，这条命令也用不了，那时以随消息给你的内容为准。" + (progress ? "plan 和 wrap-up 是这个界面显示进度和下一步的唯一途径，它们不代替你的正文回复。" : "")].join("\n");
 }
 
 /**
@@ -86,7 +86,7 @@ const DELEGATE_WORDS = "要把一段活交给这台电脑上的另一个 Harness
   + "这样它在自己的对话里做，用户在界面里看得到、接得上。需要它的结果时用 hub_delegations（可带 wait 等它做完）。\n"
   + "用户说了要一直遵守的要求（“以后都……”“记住……”）、定下了别人也得照办的决定，或者任务的目标定了、变了，就调用 hub_remember 记到任务板上（一条一句话）："
   + "这件任务里别的 Harness 接手或被委派时会先看到它，不用用户再说一遍。用户让你这一轮什么都别做、只回一句话时，记到任务板这一步也照做。";
-export const HUB_DELEGATION_INSTRUCTIONS = DELEGATE_WORDS + "不确定现在还算数的约束有哪些时，用 hub_board 看。";
+export const HUB_DELEGATION_INSTRUCTIONS = DELEGATE_WORDS + "不确定现在还算数的约束有哪些时，用 hub_board 看。你的上下文被压缩过、或者记不清这件任务的目标和要遵守的约束时，先用 hub_task 和 hub_board 看一遍，再接着做。";
 /**
  * Whether a path (or a command line that names one) is inside the record's directory as the Hub lays it out (`context/<task>/…`, 2026-11-13): what a Harness
  * reads there is the conversation's own record, and the page says so in place of a file's name.
@@ -103,7 +103,8 @@ export function hubRecordInstructions(dir: string, self: string): string {
     + "这件任务的完整记录在一个只读目录里：" + dir + " 。你这段对话是其中的 " + self + "/ ：" + self + "/STATE.md 是 HarnessHub 整理的现状（目标、要遵守的、做到哪、改过的文件），" + self + "/index.md 每一轮一条，" + self + "/turns/NNN.md 是第 N 轮的全文（用户原话、回复、每次工具调用的输入和完整输出、改动的文件）。"
     + "task.md 列着这件任务里的每段对话（各自在做什么、改了哪些文件），每段对话一个目录；board.md 是任务板。"
     + "需要更早的细节、别的 Harness 做过什么时，用你自己读文件、搜文件的工具到那里查（比如先 grep），不要猜，也不要改那个目录。"
-    + "只在这个目录里面找：它的上级目录里是别的任务的记录，和这件事无关，不要去翻。";
+    + "只在这个目录里面找：它的上级目录里是别的任务的记录，和这件事无关，不要去翻。"
+    + "你的上下文被压缩过、或者记不清这件任务的目标和要遵守的约束时，先读 " + self + "/STATE.md 和 board.md，再接着做。";
 }
 
 /** What the tool process answers when it was not started inside a Hub session. */

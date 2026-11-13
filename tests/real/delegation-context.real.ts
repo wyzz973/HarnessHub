@@ -7,7 +7,6 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { parse as parseToml } from "smol-toml";
 import { application as composeApplication } from "../../src/cli/session-application.js";
-import { RESEAT_AT } from "../../src/contexts/session/application/runtime.js";
 import { PERMISSION_KEY } from "../../src/contracts/flavor.js";
 import { WORK_TYPES, type ProtocolItem } from "../../src/contracts/protocol.js";
 import type { SessionId } from "../../src/contracts/session.js";
@@ -61,6 +60,8 @@ interface Work { readonly type: string; readonly label: string; readonly hub: bo
 interface Turn {
   readonly sessionId: string; readonly workspace: string; readonly role: Role; readonly harnessId: string; readonly ordinal: number; readonly status: string; readonly error: string | null;
   readonly user: string; readonly reply: string; readonly work: readonly Work[]; readonly notices: readonly string[]; readonly ms: number | null;
+  /** The Harness compacted its own session in this Turn. */
+  readonly compacted: boolean;
 }
 interface Judged { readonly verdict: Verdict; readonly reason: string; readonly note?: string; readonly checks?: Readonly<Record<string, unknown>> }
 interface Scenario { readonly id: string; readonly name: string; readonly measures: string; readonly roles: readonly Role[]; run(ruler: Ruler): Promise<Judged> }
@@ -354,7 +355,8 @@ class Ruler {
     }
     const text = (type: "user_message" | "assistant_message") => items.flatMap(item => item.type === type ? [item.text ?? ""] : []).join("\n");
     const turn: Turn = { sessionId: id, workspace: view.head.workspace, role, harnessId: wire.run.turn.executor.harnessId, ordinal, status: wire.run.status, error: wire.run.error?.code ?? null,
-      user: text("user_message"), reply: text("assistant_message"), work, notices: items.flatMap(item => item.type === "notice" ? [item.code ?? item.text] : []), ms: wire.run.turn.durationMs ?? null };
+      user: text("user_message"), reply: text("assistant_message"), work, notices: items.flatMap(item => item.type === "notice" ? [item.code ?? item.text] : []), ms: wire.run.turn.durationMs ?? null,
+      compacted: items.some(item => item.type === "context_event" && item.kind === "compaction") };
     this.turns.push(turn);
     return turn;
   }
@@ -550,9 +552,9 @@ const SCENARIOS: readonly Scenario[] = [
       need(await r.say(a, "A", "这个任务里有一条约定：所有新建的文件，文件名都必须以 rr_ 开头。把这条约定记到任务板上，然后只回答“记住了”。"));
       let at = await r.window(a, 0), ordinal = 0;
       if (at === null) throw new Voided("这家 Harness 没有报窗口大小");
-      // The mark the Hub waits for is set for this scenario so that some 90,000 tokens of material reach it, whatever the window (at the Runtime's own mark a window of a
-      // million tokens would take three quarters of a million); what is measured is what happens at the mark, not where it stands.
-      const share = Math.min(RESEAT_AT, (at.used + 90_000) / at.size);
+      // The Hub opens a new native session at a level only where an operator set one (off by default): the scenario sets it, so that some 90,000 tokens of material
+      // reach it whatever the window. What is measured is what happens at the level, not where it stands.
+      const share = Math.min(0.9, (at.used + 90_000) / at.size);
       // Material without any regularity (a model works a regular one out from its beginning): plain words in a random order, with one line in its middle that is asked for at the end.
       const material = (chars: number, marked: boolean): string => {
         const rows: string[] = [];
@@ -591,6 +593,56 @@ const SCENARIOS: readonly Scenario[] = [
         if (again) return fail("换了新会话之后，下一轮又换了一次", note, checks);
         return knew ? pass("换了新会话、腾出了地方，新建的 " + made.join("、") + " 以 rr_ 开头，很早以前的校验码也答对了", note, checks) : fail("换了新会话、约束照做，但很早以前的校验码没答出来", note, checks);
       } finally { r.reseatAt(undefined); }
+    } },
+  { id: "S13", name: "自己压还是 Hub 换", roles: ["A"], measures: "同一件做到一半的事，一边让这家 Harness 用它自己的命令压缩，一边由 Hub 给它换一个新的原生会话：之后问两个只在早先工具输出里出现过的细节，各答不答得出、用了什么工具、等多久、窗口各剩多少",
+    async run(r) {
+      const percent = (window: { readonly used: number; readonly size: number } | null) => window === null ? "没报" : window.used + "（" + (Math.round(1000 * window.used / window.size) / 10) + "%）";
+      const arm = async (how: "native" | "hub") => {
+        const line = mark("LINE"), ws = await r.workspace("s13-" + how, { "notes.txt": "第 1 行：这是一份临时笔记\n第 2 行：" + line + "\n第 3 行：结束\n" }), a = await r.open("A", ws);
+        // Two details that are in no one's words: a line of a file that is then deleted, and what a command printed (random, so it cannot be worked out).
+        const did = need(await r.say(a, "A", "依次做三件事：先读当前工作目录里的 notes.txt；再在命令行运行 printf 'OUT-%s\\n' \"$(head -c 6 /dev/urandom | xxd -p)\" ；最后把 notes.txt 删掉。做完只回答“做完了”，回复里不要写出文件内容和命令的输出。"));
+        // What it printed names itself (OUT- and twelve hex digits), so it is found whatever the Harness shows of the call around it.
+        const printed = did.work.filter(work => work.type === "command").flatMap(work => work.text.match(/OUT-[0-9a-f]{12}/gu) ?? []).at(-1);
+        if (printed === undefined) throw new Voided((how === "native" ? "自己压" : "Hub 换") + "这一边：没找到那条命令的输出");
+        if (did.reply.includes(line) || did.reply.includes(printed)) throw new Voided("回复里说出了要问的细节");
+        need(await r.say(a, "A", "在当前工作目录里新建 a.txt，写一行 one。做完只回答“好”。"));
+        const before = await r.window(a, 1);
+        if (how === "native") {
+          const squeezed = await r.say(a, "A", r.harness("A") === "hermes" ? "/compress" : "/compact");
+          if (squeezed.status !== "completed") throw new Voided("这家 Harness 没有完成它自己的压缩（" + squeezed.status + (squeezed.error ? " " + squeezed.error : "") + "）");
+        } else {
+          if (before === null) throw new Voided("这家 Harness 没有报窗口大小，Hub 没法按位置换");
+          r.reseatAt(Math.max(0.0005, 0.5 * before.used / before.size));
+        }
+        try {
+          const asked = need(await r.say(a, "A", "notes.txt 已经删了。它的第 2 行原来写的是什么？最开始那条 printf 命令输出了什么？可以查你查得到的记录，但不要重新运行那条命令。分两行回答。"));
+          const tools = informing(asked), after = await r.window(a, asked.ordinal);
+          return { how, line: asked.reply.includes(line), printed: asked.reply.includes(printed), tools: tools.length, used: listed(tools), ms: asked.ms, before, after,
+            reseated: asked.notices.includes("NATIVE_RESEATED"), stated: asked.notices.includes("TASK_STATE_TOLD") };
+        } finally { r.reseatAt(undefined); }
+      };
+      const native = await arm("native"), hub = await arm("hub");
+      if (!hub.reseated) throw new Voided("Hub 换的这一边没有换成新的原生会话");
+      const told = (side: typeof native) => (side.how === "native" ? "自己压" : "Hub 换") + "：文件那一行" + (side.line ? "答对" : "没答出") + "，命令输出" + (side.printed ? "答对" : "没答出")
+        + "，" + (side.tools === 0 ? "没用工具" : "用了 " + side.tools + " 次工具（" + side.used + "）") + "，" + (side.ms === null ? "用时没报" : (Math.round(side.ms / 100) / 10) + " 秒") + "，窗口 " + percent(side.before) + " → " + percent(side.after);
+      const note = told(native) + "。" + told(hub), checks = { native, hub };
+      const score = (side: typeof native) => Number(side.line) + Number(side.printed);
+      return score(native) === 2 && score(hub) === 2 ? pass("两边都答对了两个细节", note, checks) : fail("自己压答对 " + score(native) + "/2，Hub 换答对 " + score(hub) + "/2", note, checks);
+    } },
+  { id: "S14", name: "干到一半被压缩", roles: ["A"], measures: "一轮做到一半，这家 Harness 自己压缩了上下文：这一轮里它下一次调 Hub 的工具时，任务现在的状态有没有跟着送回去，后面的步骤还照不照任务板上的约束做",
+    async run(r) {
+      const rows = (count: number) => Array.from({ length: count }, () => Array.from({ length: 14 }, () => WORDS[randomBytes(1)[0]! % WORDS.length]!).join(" ")).join("\n") + "\n";
+      const ws = await r.workspace("s14", { "big1.txt": rows(1100), "big2.txt": rows(1100) }), a = await r.open("A", ws), before = await files(ws);
+      await r.note(a, "这件任务里所有新建的文件，文件名都必须以 pp_ 开头。");
+      const turn = need(await r.say(a, "A", "分四步做，开始时先用 HarnessHub 的任务清单列出这四步，每做完一步都更新一次清单：\n1. 把当前工作目录里的 big1.txt 从头到尾读完（可以分几次读）\n2. 把 big2.txt 从头到尾读完（可以分几次读）\n3. 在命令行运行 sleep 2\n4. 在当前工作目录里新建一个文件，写一行 hello，文件名你自己起\n四步都做完后回复一句话。"));
+      // Its own compaction is its own to trigger: the scenario only measures a Turn in which it happened (an early one can be had with the Harness's own switch for it, in this run's environment).
+      if (!turn.compacted) throw new Voided("这一轮里它没有压缩上下文");
+      const made = added(before, await files(ws)), told = turn.notices.includes("TASK_STATE_TOLD"), window = await r.window(a, turn.ordinal);
+      if (made.length === 0) throw new Voided("这一轮没有新建文件");
+      const off = made.filter(path => !basename(path).startsWith("pp_")), note = (told ? "压缩之后这一轮里带上了任务现在的状态" : "压缩之后这一轮里没有带状态") + (window === null ? "" : "；这一轮结束时窗口 " + window.used + "/" + window.size);
+      const checks = { made, told, window };
+      if (!told) return fail("它压缩之后，这一轮里状态没有送回去（新建的是 " + made.join("、") + "）", note, checks);
+      return off.length === 0 ? pass("压缩之后状态送回去了，新建的 " + made.join("、") + " 以 pp_ 开头", note, checks) : fail("状态送回去了，但新建的 " + made.join("、") + " 没有以 pp_ 开头", note, checks);
     } },
 ];
 

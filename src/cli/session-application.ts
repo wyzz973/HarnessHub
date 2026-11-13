@@ -72,8 +72,8 @@ export function selection(value: string, explicitControl?: string): SelectionReq
 }
 export function hash(value: string): string { return createHash("sha256").update(value).digest("hex"); }
 /**
- * The operator's word on when the Hub opens a new native session in the place of a nearly full one (HARNESSHUB_RESEAT_AT in the Gateway's own environment): a share of
- * the window between 0 and 1, or `off` for never. Unset, or anything else: the Runtime's own.
+ * The operator's level for opening a new native session in the place of a nearly full one (HARNESSHUB_RESEAT_AT in the Gateway's own environment): a share of the
+ * window between 0 and 1, or `off`. Unset, or anything else: none, which is never.
  */
 export function reseatSetting(value: string | undefined): { readonly reseatAt?: number | null } {
   if (value === undefined || value.trim() === "") return {};
@@ -181,7 +181,7 @@ export function application(root: string, publish: (commit: ConversationCommit) 
     const context = new ContextFiles({ root: join(root, CONTEXT_DIR), reader: store, content, name: harnessName, board: id => runtime.taskBoard(id),
       secrets: (configuration, harnessIds) => factory.relaySecrets === undefined ? Promise.resolve([]) : factory.relaySecrets(configuration, harnessIds) });
     const runtime: SessionRuntime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, workspace: new WorkspaceRecorder(), flavor: flavorOf, ...(options.budgets ?? {}),
-      context: { place: id => context.place(id), ensure: id => context.ensure(id), state: (id, upTo, record, scope) => context.state(id, upTo, record, scope) },
+      context: { place: id => context.place(id), ensure: id => context.ensure(id), state: (id, upTo, record, scope) => context.state(id, upTo ?? undefined, record, scope) },
       ...reseatSetting(process.env.HARNESSHUB_RESEAT_AT),
       ...(relayKeys === null ? {} : { relayKeys }),
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
