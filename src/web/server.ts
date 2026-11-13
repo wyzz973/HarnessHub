@@ -11,7 +11,7 @@ import { ManagementError } from "../contracts/management.js";
 import type { ConversationCommit, StartupSample } from "../contracts/conversation.js";
 import { BOARD_KINDS, SessionError, parseNativeOptions, runId, sessionId, type BoardKind, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type TurnLimits } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES } from "../contracts/content.js";
-import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, MaintenanceView, NativeSessionListView, TaskView, UninstallCheckView, InstallCheckView, WebState } from "../contracts/web.js";
+import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, MaintenanceView, NativeSessionListView, TaskView, UninstallCheckView, InstallCheckView, WebState, WorkspaceView } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
@@ -22,6 +22,8 @@ import { harnessTier } from "../adapters/catalog.js";
 import type { InstallationJobView } from "../contracts/management.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { chooseFolder, FolderDialogUnavailable, scratchFolder } from "../infrastructure/workspace/choose-folder.js";
+import { revealInFinder } from "../infrastructure/workspace/finder.js";
+import { workspaceGit } from "../infrastructure/workspace/git-status.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
@@ -1170,10 +1172,33 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (textRoute && method === "GET") { queries(url, ["from", "to"]); json(response, 200, conversations!.itemText(textRoute[1]!, textRoute[2]!, textRoute[3]!, { from: url.searchParams.get("from") ?? undefined, to: url.searchParams.get("to") ?? undefined })); return; }
     const changesRoute = /^\/api\/v1\/sessions\/([^/]+)\/changes$/u.exec(path);
     if (changesRoute && method === "GET") { queries(url, ["before", "limit"]); json(response, 200, conversations!.changes(changesRoute[1]!, { before: url.searchParams.get("before") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
-    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|branch|delegate|task|retention|end-process|native-resume))?$/u.exec(path);
+    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|branch|delegate|task|retention|end-process|native-resume|reveal|workspace))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
       if (action === undefined && method === "GET") { queries(url, []); json(response, 200, conversations!.session(id)); return; }
+      // The user renames the conversation or archives it (2026-11-14): one commit, which every page that has it open is told by its head; the answer is its row of the list.
+      if (action === undefined && method === "PATCH") {
+        queries(url, []); const input = record(await body(request), ["title", "archived"]);
+        if (input.title === undefined && input.archived === undefined) throw new HttpError(400, "INVALID_INPUT", "Expected a title or whether the conversation is archived");
+        if (input.title !== undefined && typeof input.title !== "string") throw new HttpError(400, "INVALID_INPUT", "Invalid title");
+        if (input.archived !== undefined && typeof input.archived !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Invalid archived");
+        conversations!.head(id);
+        app.runtime.updateSession(id, { ...(input.title === undefined ? {} : { title: input.title as string }), ...(input.archived === undefined ? {} : { archived: input.archived as boolean }) });
+        json(response, 200, conversations!.summary(id)); return;
+      }
+      // The workspace and where it stands in Git, for the page's header: read-only, and a Git that does not answer leaves `git` out.
+      if (action === "workspace" && method === "GET") {
+        queries(url, []); const workspace = conversations!.head(id).workspace, git = await workspaceGit(workspace);
+        json(response, 200, { path: workspace, ...(git === null ? {} : { git }) } satisfies WorkspaceView); return;
+      }
+      // Shows the workspace, or a file in it, in the Finder of this Mac.
+      if (action === "reveal" && method === "POST") {
+        queries(url, []); const input = record(await body(request), ["path"]);
+        if (input.path !== undefined && (typeof input.path !== "string" || input.path === "" || input.path.includes("\0"))) throw new HttpError(400, "INVALID_INPUT", "Invalid path");
+        await revealInFinder(conversations!.head(id).workspace, input.path as string | undefined);
+        if (!response.destroyed && !response.writableEnded) { headers(response); response.statusCode = 204; response.end(); }
+        return;
+      }
       if (action === "export" && method === "GET") {
         // A download of the public conversation; private native state and stored bytes stay out.
         queries(url, ["format"]); const format = url.searchParams.get("format") ?? "markdown";

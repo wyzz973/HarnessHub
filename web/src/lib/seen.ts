@@ -40,6 +40,8 @@ export function markSeen(rows: readonly Row[], onlyNew = false): void {
 export function startSeen(rows: readonly Row[]): void { read(); if (!started) write(Object.fromEntries(rows.map(row => [row.id, row.updatedSeq]))); }
 /** Whether a conversation has moved on since it was last seen here (one nothing is remembered of has). */
 export function unseen(seen: Seen, row: Row): boolean { const known = seen[row.id]; return known === undefined || known < row.updatedSeq; }
+/** Whether a conversation counts as unread right now, read outside a component (before a change this page makes itself, which is not news to it). */
+export function unseenNow(row: Row): boolean { return unseen(read(), row); }
 /** What has been seen, kept current for a component. */
 export function useSeen(): Seen {
   return useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, read, read);

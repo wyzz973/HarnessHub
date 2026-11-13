@@ -713,3 +713,38 @@ test("G050-NC10 a domain error whose message names the home across the 512th cha
   assert.equal(String(answer.message).includes(resolved.slice(0, 7)), false, "no part of the home is left");
   assert.deepEqual(homePathsIn(answer, [home, resolved]), []);
 });
+
+test("over HTTP a conversation is renamed and archived by PATCH, answered with its row of the list, and its head and the list say so; its workspace tells where it stands in Git; a reveal outside the workspace or of a file not there is refused before Finder is asked", async t => {
+  const f = await fixture(t); await auth(f); const id = await create(f);
+  const renamed = await call(f, `/api/v1/sessions/${id}`, "PATCH", { title: " Ship\nit " });
+  assert.equal(renamed.status, 200, renamed.text);
+  assert.deepEqual([row(renamed.data).id, row(renamed.data).title, row(renamed.data).archived, typeof row(renamed.data).updatedAt], [id, "Ship it", undefined, "number"]);
+  const archived = await call(f, `/api/v1/sessions/${id}`, "PATCH", { archived: true });
+  assert.equal(archived.status, 200, archived.text); assert.deepEqual([row(archived.data).title, row(archived.data).archived], ["Ship it", true]);
+  for (const bad of [{}, { title: "  " }, { title: 3 }, { archived: "yes" }, { title: "x", other: 1 }]) assert.equal((await call(f, `/api/v1/sessions/${id}`, "PATCH", bad)).status, 400, JSON.stringify(bad));
+  assert.equal((await call(f, "/api/v1/sessions/session-nowhere", "PATCH", { title: "x" })).status, 404);
+  const head = row(row((await call(f, `/api/v1/sessions/${id}`)).data).head);
+  assert.deepEqual([head.title, head.archived, typeof head.updatedAt], ["Ship it", true, "number"]);
+  const listed = (row((await call(f, "/api/v1/sessions")).data).sessions as Record<string, unknown>[]).find(entry => entry.id === id)!;
+  assert.deepEqual([listed.title, listed.archived, listed.updatedAt], ["Ship it", true, row(archived.data).updatedAt]);
+  // A message sent to it takes the mark off; the name stays.
+  assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "first" })).status, 202);
+  await waitFor(f, id, value => value.runs[0]?.status === "completed");
+  const after = row(row((await call(f, `/api/v1/sessions/${id}`)).data).head);
+  assert.deepEqual([after.title, after.archived], ["Ship it", undefined]);
+  // The workspace: not a repository, then one with a branch and a file not yet committed.
+  const plain = row((await call(f, `/api/v1/sessions/${id}/workspace`)).data);
+  assert.deepEqual(plain, { path: f.workspace });
+  const { execFileSync } = await import("node:child_process");
+  execFileSync("git", ["init", "-q", "-b", "trunk"], { cwd: f.workspace });
+  await writeFile(join(f.workspace, "new.txt"), "x");
+  assert.deepEqual(row((await call(f, `/api/v1/sessions/${id}/workspace`)).data), { path: f.workspace, git: { branch: "trunk", dirty: 1 } });
+  // Reveal: what is not in the workspace is refused, and a file not there is not found; neither reaches the Finder.
+  await writeFile(join(f.root, "outside.txt"), "x");
+  assert.equal((await call(f, `/api/v1/sessions/${id}/reveal`, "POST", { path: "../outside.txt" })).status, 400);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/reveal`, "POST", { path: join(f.root, "outside.txt") })).status, 400);
+  await symlink(join(f.root, "outside.txt"), join(f.workspace, "link.txt"));
+  assert.equal((await call(f, `/api/v1/sessions/${id}/reveal`, "POST", { path: "link.txt" })).status, 400, "a link that leads out is refused by its real path");
+  assert.equal((await call(f, `/api/v1/sessions/${id}/reveal`, "POST", { path: "missing.txt" })).status, 404);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/reveal`, "POST", { path: "" })).status, 400);
+});

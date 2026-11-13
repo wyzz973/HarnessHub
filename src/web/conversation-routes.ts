@@ -1,12 +1,12 @@
 import {
-  PAGE, type ConversationCommit, type ConversationReader, type HeadRow, type ItemRow, type RunRow, type SessionListCursor, type SessionListPage, type SessionListQuery, type TurnCursor,
+  PAGE, type ConversationCommit, type ConversationReader, type HeadRow, type ItemRow, type RunRow, type SessionListCursor, type SessionListPage, type SessionListQuery, type SessionListRow, type TurnCursor,
 } from "../contracts/conversation.js";
 import type { HarnessSelection, NativeConfiguration, NativeSessionBinding, PublicSwitch, RunId, SessionId, SessionOrigin } from "../contracts/session.js";
 import { SessionError, sessionId } from "../contracts/session.js";
 import type { NativeOptions } from "../contracts/control.js";
 import type { PlanStep } from "../contracts/protocol.js";
 import type {
-  ConversationChangesView, ConversationEdit, ItemTextView, ItemView, KeptProcessView, NativeStateView, RunItemsPageView, SessionFacts, SessionHeadView, SessionListView, SessionView, SessionViewV14, TurnPageView, TurnWindowView,
+  ConversationChangesView, ConversationEdit, ItemTextView, ItemView, KeptProcessView, NativeStateView, RunItemsPageView, SessionFacts, SessionHeadView, SessionListView, SessionSummary, SessionView, SessionViewV14, TurnPageView, TurnWindowView,
 } from "../contracts/web.js";
 import { summaryLine } from "../contracts/web.js";
 import type { FrameViews } from "./commit-frame.js";
@@ -277,7 +277,15 @@ export class ConversationRoutes {
       pendingSwitchId: row.pendingSwitchId, permissions: live.permissions ?? [], nativeStates, ...(origin === null ? {} : { origin }), ...(json.delegation === undefined ? {} : { parent: { sessionId: json.delegation.parentId, afterRunId: json.delegation.afterRunId, ...(json.delegation.by === undefined ? {} : { by: json.delegation.by }) } }), ...(json.delegationsTold === undefined ? {} : { delegationsTold: json.delegationsTold }), ...(live.queue === undefined ? {} : { queue: live.queue }),
       retention: { enabled: json.retainNative === true, process: kept?.process ?? null, ...(kept?.lost === undefined ? {} : { lost: kept.lost }), ...(kept?.outside === undefined ? {} : { outside: kept.outside }),
         ...(kept?.upgraded === undefined ? {} : { upgraded: kept.upgraded }) },
-      title: row.title, runCount: row.runCount, ...(last === null ? {} : { lastSwitch: last }), facts: this.factsOf(id, row.version), ...this.progressOf(id) };
+      title: row.title, runCount: row.runCount, ...(json.archived === true ? { archived: true as const } : {}), updatedAt: row.updatedAt, ...this.activeSinceOf(row),
+      ...(last === null ? {} : { lastSwitch: last }), facts: this.factsOf(id, row.version), ...this.progressOf(id) };
+  }
+  /** When the active Run of a head was accepted (`SessionSummary.activeSince`); nothing when none is active or its row cannot be read. */
+  private activeSinceOf(row: HeadRow): { readonly activeSince?: number } {
+    if (row.activeRunId === null) return {};
+    let at: number | null = null;
+    try { at = this.options.facts.runById(row.activeRunId)?.acceptedAt ?? null; } catch { at = null; }
+    return at === null ? {} : { activeSince: at };
   }
   /** The latest task list and the latest Turn's wrap-up, from what each Turn's end recorded (only the Turns that hold them are read). */
   private progressOf(id: SessionId): Pick<SessionHeadView, "plan" | "recap"> {
@@ -382,12 +390,24 @@ export class ConversationRoutes {
     return line || undefined;
   }
   private readonly lines = new Map<SessionId, { readonly seq: number; readonly active: RunId | null; readonly line: string | undefined }>();
+  /** A row of the list as the page has it, from a row of the store's list or from a head (`summary`). */
+  private listRow(row: SessionListRow): SessionSummary {
+    return { id: row.id, title: row.title, status: row.status, workspace: row.workspace, selection: row.selection, updatedSeq: row.updatedSeq, updatedAt: row.updatedAt, activeRunId: row.activeRunId,
+      ...(row.activeRunId === null || row.activeSince === undefined ? {} : { activeSince: row.activeSince }),
+      ...(line => line === undefined ? {} : { line })(this.lineOf(row.id, row.updatedSeq, row.activeRunId)), ...(row.parent === undefined ? {} : { parent: { sessionId: row.parent.parentId, afterRunId: row.parent.afterRunId, ...(row.parent.by === undefined ? {} : { by: row.parent.by }) } }),
+      ...(row.archived === true ? { archived: true as const } : {}) };
+  }
   /** GET /api/v1/sessions?after=<cursor>&limit= */
   sessions(query: { readonly after?: string | undefined; readonly limit?: string | number | undefined }): SessionListView {
     const limit = whole(query.limit, "limit", 1);
     const page = asked(() => this.options.reader.list({ ...(query.after === undefined ? {} : { after: query.after as SessionListCursor }), ...(limit === undefined ? {} : { limit }) }));
-    return { sessions: page.rows.map(row => ({ id: row.id, title: row.title, status: row.status, workspace: row.workspace, selection: row.selection, updatedSeq: row.updatedSeq, activeRunId: row.activeRunId,
-      ...(line => line === undefined ? {} : { line })(this.lineOf(row.id, row.updatedSeq, row.activeRunId)), ...(row.parent === undefined ? {} : { parent: { sessionId: row.parent.parentId, afterRunId: row.parent.afterRunId, ...(row.parent.by === undefined ? {} : { by: row.parent.by }) } }) })), next: page.next };
+    return { sessions: page.rows.map(row => this.listRow(row)), next: page.next };
+  }
+  /** One conversation's row of the list as it is now, made from its head (the answer of `PATCH /api/v1/sessions/:id`). A conversation not there, or deleted, is not found. */
+  summary(id: string): SessionSummary {
+    const row = this.headRow(id), json = row.head;
+    return this.listRow({ id: row.id, title: row.title, status: row.status, workspace: json.configuration.workspace, selection: json.selection, updatedSeq: row.lastSeq, updatedAt: row.updatedAt,
+      activeRunId: row.activeRunId, ...this.activeSinceOf(row), runCount: row.runCount, ...(json.delegation === undefined ? {} : { parent: json.delegation }), ...(json.archived === true ? { archived: true as const } : {}) });
   }
 
   // ---- the stream ---------------------------------------------------------------------------------------------------

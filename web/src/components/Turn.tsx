@@ -1,8 +1,9 @@
 import { ChevronLeft, ChevronRight, CircleDashed, Pencil, PencilLine } from "lucide-react";
-import { memo, useLayoutEffect, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { PublicMessage, PublicRun } from "../../../src/contracts/session.js";
 import { cn } from "../lib/cn.js";
+import { messageTime } from "../lib/format.js";
 import { noteMount } from "../lib/turn.js";
 import type { LiveStatus, QueueNotice } from "../lib/protocol/live.js";
 import { Spinner, StatusDot, Tip } from "../ui/primitives.js";
@@ -48,12 +49,18 @@ export interface UserMessageBranching {
 }
 const BUSY = "回合进行中：等这一轮结束或先停止它，再改发或切换分支";
 
-/** Your message: a light grey bubble on the right of the reading column (Conversation board), with the way to edit it again. */
+/**
+ * Your message: a light grey bubble on the right of the reading column (Conversation board), with the way to edit it again and — when pointed at — when it was sent.
+ * A long one (pasted material) shows its start and opens whole when asked, so the answer under it is not a screen away (both after T3 Code).
+ */
 export const UserMessage = memo(function UserMessage({ message, run, onEdit, branching }: {
   readonly message: PublicMessage; readonly run: PublicRun | undefined; readonly onEdit: (text: string) => void; readonly branching?: UserMessageBranching | undefined;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const branch = branching?.branch, busy = branching?.busy === true;
+  const bubble = useRef<HTMLDivElement>(null), [long, setLong] = useState(false), [whole, setWhole] = useState(false);
+  useLayoutEffect(() => { const element = bubble.current; if (element !== null) setLong(element.scrollHeight > 352); }, [message.text, editing === null]);
+  const sent = run?.timing?.acceptedAt;
   // Whether it rises into place (Motion board #15) is the conversation's call: ChatPage wraps a message that arrived after
   // the conversation opened, so a message never rises twice and history never moves.
   if (editing !== null && branching?.onResend) {
@@ -74,11 +81,15 @@ export const UserMessage = memo(function UserMessage({ message, run, onEdit, bra
     {run?.attachments?.length ? <MessageAttachments attachments={run.attachments}/> : null}
     <div className="flex w-full min-w-0 items-end justify-end gap-1">
       <div className="flex h-7 flex-none items-center transition-opacity duration-150 [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
+        {/* Drawn from an attribute: when it was sent is beside the message, not part of its words (a selection or a copy takes the message alone). */}
+        {sent !== undefined ? <time className="message-time mr-1.5 text-caption whitespace-nowrap text-fg-3 tabular-nums" dateTime={new Date(sent).toISOString()} title={new Date(sent).toLocaleString()} data-time={messageTime(sent)}/> : null}
         <ActionButton label="放回输入框" onClick={() => onEdit(message.text)}><PencilLine size={14}/></ActionButton>
         {branching?.onResend ? <ActionButton label={busy ? BUSY : "编辑并重发"} onClick={() => { if (!busy) setEditing(message.text); }}><Pencil size={14}/></ActionButton> : null}
       </div>
-      <div className="user-bubble max-w-[85%] min-w-0 rounded-card bg-subtle px-3 py-2 text-reading whitespace-pre-wrap break-words text-fg transition-colors hover:bg-hover"><span className="sr-only">你：</span>{message.text}</div>
+      <div ref={bubble} className={cn("user-bubble max-w-[85%] min-w-0 rounded-card bg-subtle px-3 py-2 text-reading whitespace-pre-wrap break-words text-fg transition-colors hover:bg-hover",
+        long && !whole && "max-h-[264px] overflow-hidden [mask-image:linear-gradient(#000_calc(100%-64px),transparent)]")} {...(long ? { "data-long": whole ? "whole" : "cut" } : {})}><span className="sr-only">你：</span>{message.text}</div>
     </div>
+    {long ? <button type="button" className="link-btn -mt-0.5 text-caption" aria-expanded={whole} onClick={() => setWhole(value => !value)}>{whole ? "收起" : "显示全部"}</button> : null}
     {branch !== undefined ? <div className="branch-nav flex items-center gap-0.5 text-caption text-fg-3" role="group" aria-label={"第 " + branch.n + " 个分支，共 " + branch.of + " 个"}>
       <Tip label={busy ? BUSY : "上一个分支"} side="bottom"><button type="button" className="icon-btn size-6" aria-label="上一个分支" disabled={branch.prev === null || busy || !branching?.onSelectBranch}
         onClick={() => { if (branch.prev !== null) branching?.onSelectBranch?.(branch.prev); }}><ChevronLeft size={14}/></button></Tip>

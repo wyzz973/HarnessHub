@@ -269,6 +269,8 @@ class FakeGateway {
     // What the details panel's overview reads of any conversation: the task it belongs to (an empty board, itself alone) and its changes (none here).
     if (action === "task" && method === "GET") return this.json(response, 200, { board: { version: 0, entries: [] }, members: [] });
     if (action === "changes" && method === "GET") return this.json(response, 200, { edits: [], next: null });
+    // Where it works: a folder that is no repository.
+    if (action === "workspace" && method === "GET") return this.json(response, 200, { path: this.session.workspace });
     const before = action === "turns" ? url.searchParams.get("before") : null;
     if (before !== null && method === "GET") return this.json(response, 200, turnsBefore(this.old(), before, Number(url.searchParams.get("limit") ?? 20)));
     const range = /^runs\/(\d+)\/items\/(\d+)\/text$/u.exec(action);

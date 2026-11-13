@@ -202,12 +202,16 @@ test("a Turn is drawn from its items in the order they came: a thought, an actio
   await expect(log).not.toContainText("首字"); await expect(log).not.toContainText("其他工具");
   const first = log.locator("article.assistant-message").nth(0);
   await expect(first).toHaveAttribute("data-run-status", "completed");
-  // In the order they came: the thought, the one read, the notice, the run (folded, with its three lines inside), the answer.
-  const order = await first.locator(".reasoning-row, .action-row, .native-notice, .action-group, .markdown").evaluateAll(nodes => nodes.map(node => node.className.split(" ")[0]));
-  assert.deepEqual(order, ["reasoning-row", "action-row", "native-notice", "action-group", "markdown"], "the run with a failure in it is folded: its lines are not in the page until it is opened");
+  // The Turn ended well: what it did before its answer is one line (2026-11-14), and what must stay in sight — the notice — stands under it, before the answer.
+  const parts = () => first.locator(".reasoning-row, .action-row, .native-notice, .action-group, .markdown").evaluateAll(nodes => nodes.map(node => node.className.split(" ")[0]));
+  const fold = first.locator(".turn-fold > button");
+  await expect(fold).toHaveText("运行了 2 条命令（1 个失败），读取并修改了 cart.js"); await expect(fold).toHaveAttribute("aria-expanded", "false");
+  assert.deepEqual(await parts(), ["native-notice", "markdown"], "its lines are not in the page until it is opened");
+  // Opened, in the order they came: the thought, the one read, the run (folded, with its three lines inside).
+  await fold.click();
+  assert.deepEqual(await parts(), ["reasoning-row", "action-row", "action-group", "native-notice", "markdown"], "the run with a failure in it is folded: its lines are not in the page until it is opened");
   await first.locator(".action-group").getByRole("button").first().click();
-  const opened = await first.locator(".reasoning-row, .action-row, .native-notice, .action-group, .markdown").evaluateAll(nodes => nodes.map(node => node.className.split(" ")[0]));
-  assert.deepEqual(opened, ["reasoning-row", "action-row", "native-notice", "action-group", "action-row", "action-row", "action-row", "markdown"]);
+  assert.deepEqual(await parts(), ["reasoning-row", "action-row", "action-group", "action-row", "action-row", "action-row", "native-notice", "markdown"]);
   await expect(first.locator(".reasoning-row")).toContainText("思考了 3 秒");
   await expect(first.locator(".action-row").first()).toHaveText("读取了 cart.js");
   await expect(first.locator(".native-notice")).toContainText("先看一眼购物车的实现");
@@ -219,6 +223,7 @@ test("a Turn is drawn from its items in the order they came: a thought, an actio
 test("a thought is one line that opens to what was thought", async t => {
   const { log, errors } = await open(t, mixed());
   const first = log.locator("article.assistant-message").nth(0);
+  await first.locator(".turn-fold > button").click();
   const thought = first.getByRole("button", { name: /^思考了 3 秒/u });
   await expect(thought).toHaveAttribute("aria-expanded", "false");
   await expect(first.getByText("折扣和税的先后顺序可能反了。")).toHaveCount(0);
@@ -233,6 +238,7 @@ test("a thought is one line that opens to what was thought", async t => {
 test("a run with something that failed is folded like any other, says what failed after the words it belongs to, and each line opens its input, output or diff", async t => {
   const { log, errors } = await open(t, mixed());
   const first = log.locator("article.assistant-message").nth(0), group = first.locator(".action-group");
+  await first.locator(".turn-fold > button").click();
   // Two commands and one edit of one file: counted, with the failure after the words it belongs to; folded, as Claude's desktop app folds it.
   const header = group.getByRole("button", { name: "运行了 2 条命令（1 个失败），修改了 cart.js", exact: true });
   await expect(header).toHaveAttribute("aria-expanded", "false");

@@ -1,4 +1,4 @@
-import { Bot, Brain, Check, ChevronRight, CircleAlert, CircleDashed, CircleHelp, CircleStop, Copy, FilePen, FilePlus, FileText, GitBranch, Globe, Info, ListChecks, MessageSquareText, Plug, RotateCcw, Search, SquareTerminal, Wrench } from "lucide-react";
+import { Bot, Brain, Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleDashed, CircleHelp, CircleStop, Copy, FilePen, FilePlus, FileText, GitBranch, Globe, Info, ListChecks, MessageSquareText, Plug, RotateCcw, Search, SquareTerminal, Wrench } from "lucide-react";
 import { createContext, memo, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { ReadItem, ReadTurn } from "../../../src/contracts/protocol-read.js";
@@ -10,14 +10,15 @@ import { elapsed } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
 import { endLine, quietLine, switchLine, turnByline, turnFooter } from "../lib/protocol/lines.js";
 import { liveStatus, type QueueNotice } from "../lib/protocol/live.js";
-import { hubRecordOf } from "../lib/protocol/runs.js";
-import { arrange, gapOf, isGap, lay, opensByDefault, reasoningLabel, summarizeGroup, withReply, workLabel, type Block, type GapRow, type WorkBlock } from "../lib/protocol/work.js";
+import { changesTree, samePath, turnChanges, type TurnChanges } from "../lib/protocol/changes.js";
+import { arrange, gapOf, isGap, lay, opensByDefault, reasoningLabel, summarizeGroup, turnFold, withReply, workLabel, type Block, type GapRow, type TurnFold, type WorkBlock } from "../lib/protocol/work.js";
 import { utf8Length } from "../lib/protocol/window.js";
 import { rememberShown, shownSteps } from "../lib/turn.js";
 import { Collapsible, motionStyle, SwapText } from "../ui/motion.js";
 import { Spinner } from "../ui/primitives.js";
 import { NoticeList, OutputList, StoredDetail, type ToolDetailLoader } from "./Activity.js";
 import { BrandIcon } from "./BrandIcon.js";
+import { FileMark, FilePath, Lines } from "./FileBits.js";
 import { StreamingMarkdown } from "./StreamingMarkdown.js";
 import { ActionButton, LiveIcon, QueuedTurn, UserMessage, useEntrance, type TurnBranchView, type UserMessageBranching } from "./Turn.js";
 
@@ -60,6 +61,8 @@ interface TurnContext {
   /** The ids of the items the reader has already seen: only others come in. */
   readonly seen: ReadonlySet<string>;
   readonly onViewPacket: ((packetId: string) => void) | undefined;
+  /** The reader opened or closed something of the Turn by hand. */
+  readonly touch: () => void;
 }
 const Context = createContext<TurnContext | null>(null);
 function useTurn(): TurnContext {
@@ -128,7 +131,7 @@ function ActionRow({ item }: { readonly item: WorkItem }) {
     {expandable ? <Chevron open={open}/> : null}
   </>;
   return <li className={cn("action-row min-w-0", entering && "motion-row-in")} data-type={item.type} data-state={item.status}>
-    {expandable ? <button type="button" className={cn(ROW, "row border-none bg-transparent text-fg hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => setOpen(value => !value)}>{content}</button>
+    {expandable ? <button type="button" className={cn(ROW, "row border-none bg-transparent text-fg hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => { ctx.touch(); setOpen(value => !value); }}>{content}</button>
       : <div className={ROW}>{content}</div>}
     {expandable ? <Collapsible open={open} id={panel}>
       {item.detail !== undefined && ctx.loadDetail !== undefined ? <StoredDetail content={item.detail} fallback={item.type === "file_change" ? item.changes[0]?.path ?? label.title : label.title} load={ctx.loadDetail} native={item.nativeName}/> : null}
@@ -149,7 +152,7 @@ function ReasoningRow({ item }: { readonly item: ReasoningItem }) {
     {has ? <Chevron open={open}/> : null}
   </>;
   return <li className={cn("reasoning-row min-w-0", entering && "motion-row-in")} data-state={item.status}>
-    {has ? <button type="button" className={cn(ROW, "row border-none bg-transparent hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => setChoice(!open)}>{content}</button> : <div className={ROW}>{content}</div>}
+    {has ? <button type="button" className={cn(ROW, "row border-none bg-transparent hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => { ctx.touch(); setChoice(!open); }}>{content}</button> : <div className={ROW}>{content}</div>}
     {has ? <Collapsible open={open} id={panel}><div className="native-thinking mt-0.5 mb-2 ml-[30px] border-l border-line-strong pl-3 text-ui-sm text-fg-2"><StreamingMarkdown text={item.text} isStreaming={running}/>
       {leftOut(item, item.text) > 0 ? <MoreText runId={ctx.run.id} seq={item.seq} rest={leftOut(item, item.text)}/> : null}</div></Collapsible> : null}
   </li>;
@@ -165,23 +168,31 @@ function GapRowView({ gap }: { readonly gap: GapRow }) {
       <span className="min-w-0 flex-1">{busy ? "正在读取中间的 " : "展开中间的 "}{gap.count} 项</span></button></li>;
 }
 
+/** The lines of a run of actions, one under the other beside a hairline. */
+function ActionRows({ block, className }: { readonly block: WorkBlock; readonly className?: string }) {
+  return <ul className={cn("m-0 flex min-w-0 list-none flex-col gap-px p-0", className)} aria-label="这一组的动作">
+    {block.rows.map(row => { const gap = gapOf(row); return gap !== undefined ? <GapRowView key={row.id} gap={gap}/> : row.type === "reasoning" ? <ReasoningRow key={row.id} item={row}/> : <ActionRow key={row.id} item={row as WorkItem}/>; })}
+  </ul>;
+}
+/** The words of a summary line: the kinds counted, a kind that failed whole in red, and what the window left out. */
+function SummaryWords({ parts, gap }: { readonly parts: ReturnType<typeof summarizeGroup>["parts"]; readonly gap: number }) {
+  return <>{parts.map((part, index) => <span key={index} className={part.failed ? "text-red-on-tint" : undefined}>{index ? "，" : ""}{part.text}</span>)}
+    {gap > 0 ? <span className="font-normal text-fg-3">，中间 {gap} 项未载入</span> : null}</>;
+}
+const gapCount = (block: WorkBlock): number => block.rows.reduce((sum, row) => sum + (gapOf(row)?.count ?? 0), 0);
+
 /** Several actions in a row as one summary line ("运行了 6 条命令，读取了 7 个文件"), folded; it opens to each action's line. */
 function ActionGroup({ block }: { readonly block: WorkBlock }) {
   const ctx = useTurn(), summary = useMemo(() => summarizeGroup(block.work), [block.work]), panel = useId();
   const [choice, setChoice] = useState<boolean | null>(null);
   const open = choice ?? opensByDefault(block, !ctx.over, ctx.detailed), live = block.work.some(item => item.status === "running");
   return <div className="action-group min-w-0" data-open={open ? "true" : "false"} data-problems={summary.problems || undefined}>
-    <button type="button" className={cn(ROW, "row group/step !w-fit max-w-full border-none bg-transparent pr-2 text-fg hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => setChoice(!open)}>
+    <button type="button" className={cn(ROW, "row group/step !w-fit max-w-full border-none bg-transparent pr-2 text-fg hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => { ctx.touch(); setChoice(!open); }}>
       {live ? <span className="flex size-[15px] flex-none items-center justify-center"><Spinner size={14} tone="run" label=""/></span> : null}
-      <span className={cn("min-w-0 trunc transition-colors group-hover/step:text-fg", open ? "text-fg" : "text-fg-2")}>{summary.parts.map((part, index) => <span key={index} className={part.failed ? "text-red-on-tint" : undefined}>{index ? "，" : ""}{part.text}</span>)}
-        {block.rows.some(isGap) ? <span className="font-normal text-fg-3">，中间 {block.rows.map(gapOf).find(gap => gap !== undefined)?.count} 项未载入</span> : null}</span>
+      <span className={cn("min-w-0 trunc transition-colors group-hover/step:text-fg", open ? "text-fg" : "text-fg-2")}><SummaryWords parts={summary.parts} gap={gapCount(block)}/></span>
       <ChevronRight size={12} strokeWidth={2.2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
     </button>
-    <Collapsible open={open} id={panel}>
-      <ul className="m-0 mt-0.5 mb-1.5 ml-[7px] flex min-w-0 list-none flex-col gap-px border-l border-line-strong p-0 pl-[9px]" aria-label="这一组的动作">
-        {block.rows.map(row => { const gap = gapOf(row); return gap !== undefined ? <GapRowView key={row.id} gap={gap}/> : row.type === "reasoning" ? <ReasoningRow key={row.id} item={row}/> : <ActionRow key={row.id} item={row as WorkItem}/>; })}
-      </ul>
-    </Collapsible>
+    <Collapsible open={open} id={panel}><ActionRows block={block} className="mt-0.5 mb-1.5 ml-[7px] border-l border-line-strong pl-[9px]"/></Collapsible>
   </div>;
 }
 /** One action stands as its own line; several are a group. */
@@ -270,19 +281,72 @@ function SwitchView({ item, fresh }: { readonly item: SwitchItem; readonly fresh
 }
 
 /**
- * What the Turn changed in its workspace as the Hub saw it, compared at its start and its end: "这一轮改了 3 个文件 +12 −4"; one that shared the
- * workspace with another conversation's Turn says the changes may include that one's. The diff is in the details panel's 改动 tab.
+ * What a Turn that ended well did before its answer, as one line (after T3 Code's "Worked for 41s"): the kinds of its actions counted, as a run of actions is summed up.
+ * It opens to all of it in the order it came — what it said on the way, each run of actions, each thought. `settle`: the Turn ended in front of the reader, so it is
+ * drawn open and closes, and the answer rises to the line.
  */
-function WorkspaceLine({ turn }: { readonly turn: ReadTurn }) {
-  const record = hubRecordOf(turn);
-  if (record === undefined || record.changes.length === 0) return null;
-  // Not said twice: when the Harness's own lines already show every changed file with its counts, the Hub's record adds nothing to read.
-  const shown = turn.items.flatMap(item => item.type === "file_change" && item.by !== "hub" ? item.changes.filter(change => change.added !== undefined || change.removed !== undefined).map(change => change.path) : []);
-  if (!record.shared && record.changes.every(change => shown.some(path => path === change.path || path.endsWith("/" + change.path) || change.path.endsWith("/" + path)))) return null;
-  const added = record.changes.reduce((sum, change) => sum + (change.added ?? 0), 0), removed = record.changes.reduce((sum, change) => sum + (change.removed ?? 0), 0);
-  const counted = added || removed ? " +" + added + " −" + removed : "";
-  const files = record.changes.length === 1 ? record.changes[0]!.path : record.changes.length + " 个文件";
-  return <QuietLine item="workspace" icon={<FilePen size={14}/>}><span title={record.changes.map(change => change.path).join("\n")}>{record.shared ? "这段时间工作区里的改动（可能含别的对话的）：" + files + counted : "这一轮改了 " + files + counted}</span></QuietLine>;
+function TurnFoldView({ fold, settle }: { readonly fold: TurnFold; readonly settle: boolean }) {
+  const summary = useMemo(() => summarizeGroup(fold.work), [fold.work]), panel = useId();
+  const [open, setOpen] = useState(settle);
+  // Decided when it is first drawn, and never taken back by a later drawing: the closing that was begun runs.
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => setOpen(false));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  const runs = fold.folded.filter((block): block is WorkBlock => block.kind === "work"), gap = runs.reduce((sum, block) => sum + gapCount(block), 0);
+  return <div className="turn-fold min-w-0" data-open={open ? "true" : "false"} data-problems={summary.problems || undefined}>
+    <button type="button" className={cn(ROW, "row group/step !w-fit max-w-full border-none bg-transparent pr-2 text-fg hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => setOpen(!open)}>
+      <span className={cn("min-w-0 trunc transition-colors group-hover/step:text-fg", open ? "text-fg" : "text-fg-2")}><SummaryWords parts={summary.parts} gap={gap}/></span>
+      <ChevronRight size={12} strokeWidth={2.2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
+    </button>
+    <Collapsible open={open} id={panel}>
+      <div className="mt-1 mb-1.5 ml-[7px] flex min-w-0 flex-col gap-2.5 border-l border-line-strong pl-[9px]" role="group" aria-label="这一轮的过程">
+        {/* The line above already summed up the one run of actions there is: its lines stand here without a second summary. */}
+        {fold.folded.map(block => block.kind !== "work" ? <ItemView key={block.item.id} item={block.item}/> : runs.length === 1 && block.work.length > 1 ? <ActionRows key={block.key} block={block}/> : <ActionBlock key={block.key} block={block}/>)}
+      </div>
+    </Collapsible>
+  </div>;
+}
+
+/**
+ * What the Turn changed in its workspace, under its answer (after the changed-files card of T3 Code): how many files, the lines they gained and lost, and the files as a
+ * tree — folders first, a folder's total beside it. A file opens its diff in the details panel; so does 查看改动, for all of them. A Turn that shared the workspace with
+ * another conversation's says the changes may include that one's. One file is one line.
+ */
+function ChangesCard({ changes, workspace, onOpen }: { readonly changes: TurnChanges; readonly workspace: string; readonly onOpen: ((path?: string) => void) | undefined }) {
+  const folders = useMemo(() => changesTree(changes.files, new Set()).filter(row => row.kind === "folder"), [changes.files]);
+  // A long list opens at its top folders, each with its total; a short one is open whole.
+  const [closed, setClosed] = useState<ReadonlySet<string>>(() => new Set(changes.files.length > 8 ? folders.filter(row => row.depth === 0).map(row => row.key) : []));
+  const rows = useMemo(() => changesTree(changes.files, closed), [changes.files, closed]);
+  const shared = changes.shared ? "这段时间别的对话也在这个工作区里，可能含它的改动" : undefined;
+  if (changes.files.length === 1) {
+    const file = changes.files[0]!, body = <><FileMark created={file.op === "create"} removed={file.op === "delete"}/><FilePath path={file.path} workspace={workspace}/><Lines add={file.added} del={file.removed}/></>;
+    const look = "turn-changes flex h-9 w-full min-w-0 items-center gap-2 rounded-block bg-surface px-3 text-left font-mono text-code text-fg shadow-hairline";
+    return onOpen ? <button type="button" className={cn(look, "group/changes border-none transition-colors duration-120 ease-standard hover:bg-subtle")} title={shared ?? "查看改动"} aria-label={"查看改动：" + file.shown} onClick={() => onOpen(file.path)}>{body}
+      <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className="flex-none text-fg-3"/></button> : <div className={look} title={shared}>{body}</div>;
+  }
+  const every = closed.size === 0;
+  const toggle = (key: string) => setClosed(current => { const next = new Set(current); if (!next.delete(key)) next.add(key); return next; });
+  return <section className="turn-changes min-w-0 overflow-hidden rounded-block bg-surface shadow-hairline" aria-label="这一轮的改动">
+    <header className="flex h-9 min-w-0 items-center gap-2 pr-1.5 pl-3 text-ui-sm">
+      <span className="min-w-0 trunc" title={shared}>{changes.shared ? "工作区里 " + changes.files.length + " 个文件有改动" : "改了 " + changes.files.length + " 个文件"}</span>
+      <Lines add={changes.added} del={changes.removed}/>
+      <span className="min-w-1 flex-1"/>
+      {folders.length > 0 ? <button type="button" className="icon-btn size-7 flex-none text-fg-3" aria-label={every ? "收起文件夹" : "展开文件夹"} title={every ? "收起文件夹" : "展开文件夹"} onClick={() => setClosed(every ? new Set(folders.map(row => row.key)) : new Set())}>
+        {every ? <ChevronsDownUp size={14} strokeWidth={2}/> : <ChevronsUpDown size={14} strokeWidth={2}/>}</button> : null}
+      {onOpen ? <button type="button" className="btn btn-ghost btn-sm flex-none" onClick={() => onOpen()}>查看改动</button> : null}
+    </header>
+    <ul className="m-0 flex list-none flex-col gap-px p-1.5 pt-1.5 hairline-t" aria-label="改动的文件">{rows.map(row => {
+      const look = "flex h-7 w-full min-w-0 items-center gap-1.5 pr-1.5 text-left font-mono text-code", indent = { paddingLeft: 6 + row.depth * 16 };
+      if (row.kind === "folder") { const open = !closed.has(row.key); return <li key={row.key}><button type="button" className={cn("row border-none bg-transparent text-fg-2 hover:bg-subtle", look)} style={indent} aria-expanded={open} onClick={() => toggle(row.key)}>
+        <span className="flex size-[14px] flex-none items-center justify-center"><ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("text-fg-3 motion-rotate", open && "rotate-90")}/></span>
+        <span className="min-w-0 flex-1 trunc">{row.name}</span>{open ? null : <Lines add={row.added} del={row.removed}/>}</button></li>; }
+      const body = <><FileMark created={row.file.op === "create"} removed={row.file.op === "delete"}/><span className="min-w-0 flex-1 trunc">{row.name}</span><Lines add={row.file.added} del={row.file.removed}/></>;
+      return <li key={row.key}>{onOpen ? <button type="button" className={cn("row border-none bg-transparent text-fg hover:bg-subtle", look)} style={indent} title={"查看改动：" + row.file.shown} onClick={() => onOpen(row.file.path)}>{body}</button>
+        : <div className={cn("text-fg", look)} style={indent} title={row.file.shown}>{body}</div>}</li>;
+    })}</ul>
+  </section>;
 }
 
 /** How a Turn that is over ended, when that needs saying: "失败 · 模型拒绝了这个请求", "已停止 · 你停止了这一轮". */
@@ -384,6 +448,10 @@ export interface ProtocolTurnProps {
   readonly children?: ReactNode;
   /** What the Turn reads of itself when shown; absent where nothing can be read (the details panel). */
   readonly reads?: TurnReads | undefined;
+  /** The conversation's workspace: the files a Turn changed are named from it. */
+  readonly workspace?: string | undefined;
+  /** Opens the diffs of what a Turn changed in the details panel: all of them, or one file's. */
+  readonly onOpenChanges?: ((runId: string, path?: string) => void) | undefined;
 }
 
 /**
@@ -413,7 +481,7 @@ export const ProtocolTurn = memo(function ProtocolTurn(props: ProtocolTurnProps)
   return props.run.protocol === undefined ? <UnreadableTurn run={props.run} message={props.message} arrived={props.arrived} onEdit={props.onEdit}/> : <TurnView {...props} turn={props.run.protocol}/>;
 });
 
-function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onResend, onSelectBranch, branchBusy, onDetails, detailsOpen, onViewPacket, startupHint, queue, waiting, reads, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
+function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onResend, onSelectBranch, branchBusy, onDetails, detailsOpen, onViewPacket, startupHint, queue, waiting, reads, workspace, onOpenChanges, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
   // The reply is a message of the conversation, which arrives on the stream apart from the Turn's other items: its words are shown at once.
   const replyMessage = message(run.assistantMessageId), turn = useMemo(() => withReply(given, replyMessage), [given, replyMessage]);
   const arrangement = useMemo(() => arrange(turn, { asking: waiting === "approval" }), [turn, waiting]), over = arrangement.over, cancelling = run.cancelRequested;
@@ -425,9 +493,25 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
   const [seen] = useState<Set<string>>(() => shownSteps(run.id) ?? new Set(turn.items.map(item => item.id)));
   useLayoutEffect(() => { rememberShown(run.id, seen); }, [run.id, seen]);
   useLayoutEffect(() => { for (const item of turn.items) seen.add(item.id); }, [turn.items, seen]);
-  const context = useMemo<TurnContext>(() => ({ turn, run, reads, over, cancelling, detailed, children: arrangement.children, message, loadDetail: loadToolDetail, seen, onViewPacket }),
+  // A Turn the reader had opened something of while it ran is left as it stands when it ends: what they are reading is not folded away under them.
+  // One that ends in front of the reader folds in front of them, once: drawn open, then closing.
+  const touched = useRef(false), wasLive = useRef(!over), stays = useRef(false), settling = useRef(false);
+  if (wasLive.current && over) { wasLive.current = false; stays.current = touched.current; settling.current = !touched.current; }
+  const context = useMemo<TurnContext>(() => ({ turn, run, reads, over, cancelling, detailed, children: arrangement.children, message, loadDetail: loadToolDetail, seen, onViewPacket, touch: () => { touched.current = true; } }),
     [turn, run, reads, over, cancelling, detailed, arrangement.children, message, loadToolDetail, seen, onViewPacket]);
   const pieces = useMemo(() => segments(arrangement.blocks), [arrangement.blocks]);
+  // A Turn that ended well folds what it did before its answer behind one line; one that failed or was stopped stays as it stands, where it went wrong in sight.
+  const tail = pieces.at(-1), folds = over && !detailed && turn.status === "completed" && !stays.current;
+  const fold = useMemo(() => folds && tail?.kind === "assistant" ? turnFold(tail.blocks) : null, [folds, tail]);
+  useEffect(() => { if (fold !== null) settling.current = false; }, [fold !== null]);
+  const changed = useMemo(() => over && workspace !== undefined ? turnChanges(turn, workspace) : null, [over, turn, workspace]);
+  // Not said twice: a changed file whose own line stands in sight with its counts needs no card under the answer.
+  const card = useMemo(() => {
+    if (changed === null) return null;
+    const insight = pieces.flatMap(piece => piece.kind !== "assistant" ? [] : piece === tail && fold !== null ? [...fold.kept, ...fold.answer] : piece.blocks);
+    const alone = insight.flatMap(block => block.kind === "work" && block.rows.length === 1 && block.work[0]?.type === "file_change" ? block.work[0].changes.map(change => change.path) : []);
+    return !changed.shared && changed.files.every(file => alone.some(path => samePath(path, file.path))) ? null : changed;
+  }, [changed, pieces, tail, fold]);
   // What the Harness said in this Turn, for copying and for the line that says the Turn is replying: its segments, which stand between its actions, one after another.
   const replies = [...new Set(turn.items.flatMap(item => item.type === "assistant_message" ? [item.messageId] : []))].map(id => message(id)?.text ?? "");
   const reply = replies.filter(Boolean).join("\n\n");
@@ -448,12 +532,13 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
     }
     const last = index === pieces.length - 1;
     return <article key={"turn:" + run.id + ":" + index} className={cn("message assistant-message protocol-turn group flex min-w-0 flex-col gap-2.5", !over && "is-active")} data-run-status={run.status} aria-busy={!over} aria-label={harness + " 的回复" + (over ? "" : "（进行中）")}>
-      <Blocks blocks={piece.blocks}/>
+      {last && fold !== null ? <TurnFoldView fold={fold} settle={settling.current}/> : null}
+      <Blocks blocks={last && fold !== null ? [...fold.kept, ...fold.answer] : piece.blocks}/>
       {last ? <>
         {!over ? <LiveLine queue={queue} startupHint={startupHint} waiting={waiting} replying={reply !== ""}/> : null}
         {queue !== undefined && run.status === "queued" && !cancelling ? <QueuedLine queue={queue}/> : null}
         {children}
-        {over ? <WorkspaceLine turn={turn}/> : null}
+        {card !== null && workspace !== undefined ? <ChangesCard changes={card} workspace={workspace} onOpen={onOpenChanges === undefined ? undefined : path => onOpenChanges(run.id, path)}/> : null}
         {over ? <EndView turn={turn}/> : null}
         {over ? <div className={cn("turn-meta -mt-1 flex min-h-7 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-caption text-fg-3", watched && "motion-fade-in")}>
           <span className="turn-footer flex min-w-0 items-center gap-1.5"><BrandIcon brand={turn.executor.harnessId} name={harness} size={16}/><span className="min-w-0 break-words" title={turnFooter(turn)}>{turnByline(turn)}</span></span>
@@ -480,7 +565,7 @@ export function TurnSteps({ run, turn, loadDetail, asking }: { readonly run: Pub
   const [seen] = useState<Set<string>>(() => new Set(turn.items.map(item => item.id)));
   useLayoutEffect(() => { for (const item of turn.items) seen.add(item.id); }, [turn.items, seen]);
   const blocks = useMemo(() => arrangement.blocks.filter(block => block.kind === "work" || block.item.type === "reasoning" || block.item.type === "context_event"), [arrangement.blocks]);
-  const context = useMemo<TurnContext>(() => ({ turn, run, reads: undefined, over: arrangement.over, cancelling: false, detailed: true, children: arrangement.children, message: () => undefined, loadDetail, seen, onViewPacket: undefined }),
+  const context = useMemo<TurnContext>(() => ({ turn, run, reads: undefined, over: arrangement.over, cancelling: false, detailed: true, children: arrangement.children, message: () => undefined, loadDetail, seen, onViewPacket: undefined, touch: () => { /* nothing folds in the panel */ } }),
     [turn, run, arrangement, loadDetail, seen]);
   if (blocks.length === 0) return null;
   return <Context.Provider value={context}><div className="turn-steps flex min-w-0 flex-col gap-px" role="group" aria-label="这一轮的步骤"><Blocks blocks={blocks}/></div></Context.Provider>;

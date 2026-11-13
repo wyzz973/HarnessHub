@@ -48,7 +48,8 @@ function headOf(after: Conversation): HeadJson {
   return { configuration: after.configuration, selection: after.selection, ...(after.retainNative === undefined ? {} : { retainNative: after.retainNative }),
     ...(after.retained === undefined ? {} : { retained: after.retained }), ...(after.relayRecoveryFailed === undefined ? {} : { relayRecoveryFailed: after.relayRecoveryFailed }),
     ...(after.origin === undefined ? {} : { origin: after.origin }), ...(after.delegation === undefined ? {} : { delegation: after.delegation }), ...(after.delegationsTold === undefined ? {} : { delegationsTold: after.delegationsTold }),
-    ...(after.taskBoard === undefined ? {} : { taskBoard: after.taskBoard }), ...(after.taskBoardTold === undefined ? {} : { taskBoardTold: after.taskBoardTold }), ...(after.taskEditsTold === undefined ? {} : { taskEditsTold: after.taskEditsTold }), ...(after.parentWordsTold === undefined ? {} : { parentWordsTold: after.parentWordsTold }) };
+    ...(after.taskBoard === undefined ? {} : { taskBoard: after.taskBoard }), ...(after.taskBoardTold === undefined ? {} : { taskBoardTold: after.taskBoardTold }), ...(after.taskEditsTold === undefined ? {} : { taskEditsTold: after.taskEditsTold }), ...(after.parentWordsTold === undefined ? {} : { parentWordsTold: after.parentWordsTold }),
+    ...(after.archived === true ? { archived: true as const } : {}) };
 }
 function eventIndex(events: readonly EventDraft[], accept: (event: EventDraft) => boolean): number | undefined {
   const index = events.findIndex(accept);

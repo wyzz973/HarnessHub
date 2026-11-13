@@ -128,3 +128,12 @@ relay: { packetId: "relay-…" | null, kind: "packet" | "delta" | null,
 `GET|HEAD …/relay/:packetId` → 交接单存储的正文，即发出时的字节（不在返回时复扫）：`Content-Type: text/plain; charset=utf-8`，`ETag: "<正文字节的 sha256>"`，`Cache-Control: private, no-cache`，`X-Content-Type-Options: nosniff`，`Content-Security-Policy: default-src 'none'; sandbox`；`If-None-Match` 命中得 304。本会话没有这份交接单——包括别的会话的、不存在的——一律 404 `RELAY_PACKET_NOT_FOUND`，应答逐字相同；会话不存在 404 `SESSION_NOT_FOUND`。页面判“这个网关没有接力 API”的依据只有一条：读 `GET …/relay` 得 404 且 `code` 为 `NOT_FOUND`（统一的路由缺失）或没有 `code`（或 405、501）。
 
 `GET /api/v1/relay/prefs` → `{ "prefs": { "relay.attach": "auto" } }`；`PUT /api/v1/relay/prefs`，请求体 `{ "key": "relay.attach", "value": "auto"｜"off" }`，成功回 200 与写后的 `{ prefs }`；未知键、越界值、多余或缺少的字段 400 `INVALID_INPUT`，什么都不写。这是安装级设置，只有这一项：`auto`（默认）在换 Harness 后的第一条消息自动附上它没看过的部分，`off` 只发原话（用户仍可逐条 `attach:"full"`）。设置页只露出它。
+
+## 对话的改名、归档与工作区（2026-11-14）
+
+状态：代码完成，合成测试通过（真实 HTTP、真实文件存储、夹具 Harness）；没有真机验证。类型在 `src/contracts/web.ts`（`SessionSummary`、`SessionHeadView`、`SessionChange`、`WorkspaceView`），路由在 `src/web/server.ts`。下文 `…` 仍指 `/api/v1/sessions/:id`。
+
+- 列表行 `SessionSummary` 多了 `updatedAt`（最近一次提交的毫秒时间，列表按它从新到旧）、`activeSince`（进行中的那一轮被受理的时间，没有就不带）、`archived: true`（归档了才带）。对话头 `SessionHeadView` 也带 `archived`、`updatedAt`、`activeSince`。列表照旧返回全部对话，归档的也在，分页不变。
+- `PATCH …`，请求体 `{ "title"?: string, "archived"?: boolean }`，至少一个，多余字段 400。标题去首尾空白、换行压成空格，空串 400 `INVALID_INPUT`；用户给的标题此后不再被第一句话算出的标题覆盖（第一轮之前改的也一样）。归档只是列表上的标记，和 `status`（结束会话）无关：归档的对话照样打开、照样发消息，新的一轮被受理时在同一次提交里自动取消归档。返回 200 与改后的 `SessionSummary`。改名、归档各是一次提交（事件 `session.renamed`、`session.archived`），和别的提交一样经事实流的提交帧（带 `head`）到达开着这个对话的页面，`lastSeq` 与 `updatedAt` 随之前移；什么都没变的请求不提交。
+- `POST …/reveal`，请求体 `{ "path"?: string }`：不带时在访达里打开工作区文件夹，带时在访达里选中这个文件（相对工作区或绝对路径）。路径取真实路径后必须在工作区里（就是工作区时打开它），否则 400；文件不在 404 `FILE_NOT_FOUND`，工作区不在 404 `WORKSPACE_NOT_FOUND`；非 macOS 409 `REVEAL_UNSUPPORTED`。成功 204。
+- `GET …/workspace` → `{ "path": "/…", "git"?: { "branch": "main" | null, "dirty": 3 } }`：工作区在 Git 仓库里时带 `git`，`branch` 在分离头指针时为 null，`dirty` 是 `git status --porcelain` 的条数（含未跟踪）。只读：一次 `git status --porcelain=v2 --branch`，`GIT_OPTIONAL_LOCKS=0`，3 秒没答完或失败就不带 `git`，不报错。

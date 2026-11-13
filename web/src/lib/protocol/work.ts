@@ -363,6 +363,22 @@ export function opensByDefault(block: WorkBlock, active: boolean, detailed: bool
   return block.work.some(item => item.status === "pending" || item.status === "running" || item.status === "waiting") || active && block.tail;
 }
 
+/**
+ * What a Turn that is over folds behind one line (2026-11-14, after T3 Code's "Worked for 1m 3s"): everything it did before its final answer — its runs of actions, the
+ * thoughts and the words it said between them — when that is more than the one line a single run of actions already is. The answer stays below it, and so does whatever
+ * must stay in sight (`kept`: a failure, a notice, something it made, a plan it proposes, an interruption, what happened to the context), in the order it came.
+ * Null when there is nothing to fold.
+ */
+export interface TurnFold { readonly folded: readonly Block[]; readonly kept: readonly Block[]; readonly answer: readonly Block[]; readonly work: readonly WorkItem[] }
+export function turnFold(blocks: readonly Block[]): TurnFold | null {
+  const last = blocks.findLastIndex(block => block.kind === "item" && block.item.type === "assistant_message");
+  const before = last < 0 ? blocks : blocks.slice(0, last), answer = last < 0 ? [] : blocks.slice(last);
+  const folds = (block: Block): boolean => block.kind === "work" || block.item.type === "assistant_message" || block.item.type === "reasoning";
+  const folded = before.filter(folds), work = folded.flatMap(block => block.kind === "work" ? block.work : []);
+  if (work.length === 0 || folded.length < 2) return null;
+  return { folded, kept: before.filter(block => !folds(block)), answer, work };
+}
+
 /** An item's state from a Run's: its reply is running while the Run is, and over when it is. */
 function replyStatus(status: PublicMessage["status"]): ItemStatus {
   switch (status) {

@@ -4,7 +4,7 @@ import { WireError, decodeConversationChanges, decodeItemTextView, decodeItemVie
   type ClientRunItemsPage, type ClientSessionList, type ClientSessionView, type ClientStreamFrame, type ClientWindow } from "./lib/protocol/wire.js";
 import { createRelayApi, decodeRelayFrame, relayBody, type RelayApi, type RelayEvent, type RelayReply, type RelayRequest, type RelayTransport } from "./relay.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState } from "../../src/contracts/web.js";
+import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState, WorkspaceView } from "../../src/contracts/web.js";
 import { HARNESS_TIERS } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput, RuntimeRequirement, UpgradeSequenceCheck } from "../../src/contracts/management.js";
 import type { AttentionItem, BoardKind, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest, TaskBoard } from "../../src/contracts/session.js";
@@ -378,9 +378,17 @@ function decodeLogPage(value: unknown): InstallationLogPage {
 }
 function decodeSummary(value: unknown): SessionSummary {
   const row = record(value);
+  const activeRunId = nullableText(row.activeRunId);
+  // A row without a time (a Gateway from before 2026-11-14) is the oldest, not a failure; the time a Turn began only goes with a Turn in progress.
   return { id: text(row.id), title: text(row.title), status: choice(row.status, SESSION_STATES), workspace: text(row.workspace),
-    selection: selection(row.selection), updatedSeq: number(row.updatedSeq), activeRunId: nullableText(row.activeRunId), ...(typeof row.line === "string" && row.line !== "" ? { line: row.line } : {}),
-    ...(row.parent === undefined ? {} : { parent: (parent => ({ sessionId: text(parent.sessionId), afterRunId: nullableText(parent.afterRunId), ...(parent.by === "harness" ? { by: "harness" as const } : {}) }))(record(row.parent)) }) };
+    selection: selection(row.selection), updatedSeq: number(row.updatedSeq), updatedAt: row.updatedAt === undefined ? 0 : number(row.updatedAt), activeRunId,
+    ...(activeRunId === null || row.activeSince === undefined ? {} : { activeSince: number(row.activeSince) }), ...(typeof row.line === "string" && row.line !== "" ? { line: row.line } : {}),
+    ...(row.parent === undefined ? {} : { parent: (parent => ({ sessionId: text(parent.sessionId), afterRunId: nullableText(parent.afterRunId), ...(parent.by === "harness" ? { by: "harness" as const } : {}) }))(record(row.parent)) }),
+    ...(row.archived === true ? { archived: true as const } : {}) };
+}
+function decodeWorkspace(value: unknown): WorkspaceView {
+  const row = record(value), git = row.git === undefined ? undefined : record(row.git);
+  return { path: text(row.path), ...(git === undefined ? {} : { git: { branch: nullableText(git.branch), dirty: number(git.dirty) } }) };
 }
 function contentRef(value: unknown): ContentRef { try { return parseContentRef(value); } catch { return invalid(); } }
 function nativeInputs(value: unknown): NativeInputs { const row = record(value); return { image: bool(row.image), audio: bool(row.audio), file: bool(row.file) }; }
@@ -780,6 +788,19 @@ export class GatewayApi {
   /** Cancels one named Turn, such as one still waiting for its workspace (ADR-036). */
   async cancelRun(id: string, run: string, key: string): Promise<void> { await this.request(`/sessions/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key, runId: run }, value => acknowledge(value, id, "target")); }
   closeSession(id: string, key: string): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/close`, "POST", { commandId: key }, decodeSessionViewV14); }
+  /**
+   * Renames a conversation or archives it (or takes the mark off); the answer is its row of the list after the change. A page that has the conversation open is also told
+   * by its stream (the commit's head), so no other read follows.
+   */
+  updateSession(id: string, change: { title?: string; archived?: boolean }): Promise<SessionSummary> {
+    return this.request(`/sessions/${encodeURIComponent(id)}`, "PATCH", { ...(change.title === undefined ? {} : { title: change.title }), ...(change.archived === undefined ? {} : { archived: change.archived }) }, decodeSummary);
+  }
+  /** Shows the conversation's workspace in the Finder, or, given `path` (relative to the workspace or absolute, inside it), selects that file there. */
+  async reveal(id: string, path?: string): Promise<void> {
+    await this.request(`/sessions/${encodeURIComponent(id)}/reveal`, "POST", path === undefined ? {} : { path }, () => undefined);
+  }
+  /** The conversation's workspace and where it stands in Git (branch, uncommitted entries); `git` is absent when it is not a repository or Git did not answer. */
+  workspace(id: string, signal?: AbortSignal): Promise<WorkspaceView> { return this.request(`/sessions/${encodeURIComponent(id)}/workspace`, "GET", undefined, decodeWorkspace, signal); }
   /** Keeps this conversation's native process between Turns, or stops keeping it (which closes a kept process). */
   setRetention(id: string, enabled: boolean, key: string): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/retention`, "POST", { enabled, commandId: key }, decodeSessionViewV14); }
   /** Ends the conversation's kept native process; resolves once its close is recorded. */

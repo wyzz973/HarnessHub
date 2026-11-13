@@ -72,7 +72,6 @@ export function CommandPalette({ open, onOpenChange, commands, onClosed }: { rea
               if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); if (filtered.length) setActive((current + (event.key === "ArrowDown" ? 1 : -1) + filtered.length) % filtered.length); }
               else if (event.key === "Enter") { event.preventDefault(); run(filtered[current]); }
             }}/>
-          <Kbd>esc</Kbd>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5" id={listId} role="listbox" aria-label="搜索结果">
           {filtered.length ? filtered.map((command, index) => <Fragment key={command.id}>
@@ -83,6 +82,10 @@ export function CommandPalette({ open, onOpenChange, commands, onClosed }: { rea
               <span className="min-w-0 flex-1 trunc">{command.label}</span>{command.hint ? <span className="max-w-[40%] flex-none trunc text-caption text-fg-3">{command.hint}</span> : null}
               {command.shortcut ? <Keys keys={shortcutKeys(command.shortcut)}/> : null}
             </button></Fragment>) : <p className="m-0 px-3 py-8 text-center text-ui-sm text-fg-3">没有匹配的结果</p>}
+        </div>
+        {/* The keys that work here, said once at the foot (after the palette of T3 Code). */}
+        <div className="palette-keys flex h-9 flex-none items-center gap-4 hairline-t px-4 text-caption text-fg-3" aria-hidden="true">
+          <span className="flex items-center gap-1.5"><Kbd>↑</Kbd><Kbd>↓</Kbd>移动</span><span className="flex items-center gap-1.5"><Kbd>⏎</Kbd>打开</span><span className="flex items-center gap-1.5"><Kbd>esc</Kbd>关闭</span>
         </div>
       </BaseDialog.Popup>
     </BaseDialog.Portal>
@@ -98,7 +101,7 @@ interface ShortcutRow { readonly label: string; readonly keys: readonly string[]
  */
 export const SHORTCUT_GROUPS: readonly { readonly title: string; readonly rows: readonly ShortcutRow[] }[] = [
   { title: "通用", rows: [
-    { label: "新对话", keys: ["⇧", "⌘", "O"] }, { label: "搜索与命令", keys: ["⌘", "K"] }, { label: "下一件“等你处理”", keys: ["⌥", "⌘", "↓"] },
+    { label: "新对话", keys: ["⇧", "⌘", "O"] }, { label: "搜索与命令", keys: ["⌘", "K"] }, { label: "下一件“等你处理”", keys: ["⌥", "⌘", "↓"] }, { label: "上一个对话", keys: ["⌥", "⌘", "["] }, { label: "下一个对话", keys: ["⌥", "⌘", "]"] },
     { label: "收起或展开侧栏", keys: ["⌘", "B"] }, { label: "全部快捷键", keys: ["⌘", "/"] }, { label: "关闭弹出层", keys: ["esc"] },
   ] },
   { title: "对话", rows: [

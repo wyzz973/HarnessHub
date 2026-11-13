@@ -219,8 +219,12 @@ function append(path: string, text: string, sync: boolean): void {
   try { writeAll(fd, text); if (sync) fsyncSync(fd); } finally { closeSync(fd); }
 }
 
-/** The title the head keeps: worked out when the first Turn arrives and never again (`conversationTitle`). */
+/**
+ * The title the head keeps: the one the user gave it, whenever it was given (before the first Turn included, which then does not replace it); else worked out when the
+ * first Turn arrives and never again (`conversationTitle`).
+ */
 function titleOf(previous: Held | null, next: Conversation, history: readonly OriginHistoryRow[] | undefined): string {
+  if (next.userTitle !== undefined) return next.userTitle;
   if (previous !== null && previous.conversation.runs.length > 0) return previous.title;
   const first = next.runs[0]?.items?.find(item => item.itemId === "user")?.text.join("");
   if (previous !== null && history === undefined && (first === undefined || first.trim() === "")) return previous.title;
@@ -1022,7 +1026,8 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     const rows = [...this.index.rows.values()].sort((left, right) => right.updatedAt - left.updatedAt || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
       .filter(row => after === undefined || row.updatedAt < after.updatedAt || (row.updatedAt === after.updatedAt && row.id > after.id));
     const page = rows.slice(0, limit).map((row): SessionListRow => ({ id: row.id, title: row.title, status: row.status, workspace: row.workspace, selection: row.selection, updatedSeq: row.lastSeq,
-      updatedAt: row.updatedAt, activeRunId: row.activeRunId, runCount: row.runCount, ...(row.parent === undefined ? {} : { parent: row.parent }) }));
+      updatedAt: row.updatedAt, activeRunId: row.activeRunId, ...(row.activeRunId === null || row.activeSince === undefined ? {} : { activeSince: row.activeSince }), runCount: row.runCount,
+      ...(row.parent === undefined ? {} : { parent: row.parent }), ...(row.archived === true ? { archived: true as const } : {}) }));
     const last = page[page.length - 1];
     return { rows: page, next: rows.length > limit && last !== undefined ? encodeListCursor(last.updatedAt, last.id) : null };
   }

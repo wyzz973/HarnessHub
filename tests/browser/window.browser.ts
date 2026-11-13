@@ -125,9 +125,13 @@ test("a conversation of 2,000 Turns opens as its newest ten, the older ones are 
   await expect(turn).toContainText(/总结：[\s\S]*还有一个问题/u, { timeout: 20_000 });
   await expect(turn).toContainText("带上了任务现在的状态");
   assert.equal((await heldTurns(w.page)).length, 51, "the older Turns already read are still held, and the new one with them");
-  // The Turn is drawn in the order it happened: what was said, the work (a command, a file read: folded into one line), then the summary.
-  const said = await turn.innerText(), order = ["先看一下目录。", "运行了 1 条命令，读取了 README.md", "总结："].map(text => said.indexOf(text));
-  assert.ok(order.every(at => at >= 0), "the Turn shows what was said, the work and the summary: " + JSON.stringify(said.slice(0, 600)));
+  // The Turn ended well: what it did before its summary is one line (2026-11-14), which opens to it in the order it happened — what was said, then the work —
+  // and the summary stands under the line.
+  const fold = turn.locator(".turn-fold > button");
+  await expect(fold).toHaveText("运行了 1 条命令，读取了 README.md"); await expect(fold).toHaveAttribute("aria-expanded", "false");
+  await fold.click(); await expect(turn.getByText("先看一下目录。")).toBeVisible();
+  const said = await turn.innerText(), order = ["运行了 1 条命令，读取了 README.md", "先看一下目录。", "总结："].map(text => said.indexOf(text));
+  assert.ok(order.every(at => at >= 0), "the Turn shows the line of its work, what was said and the summary: " + JSON.stringify(said.slice(0, 600)));
   assert.deepEqual([...order].sort((a, b) => a - b), order, "in the order they happened: " + order.join(","));
   // And the work, opened, is the command and then the file, between the two things said.
   await turn.getByRole("button", { name: /运行了 1 条命令/u }).click();

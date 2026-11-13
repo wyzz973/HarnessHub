@@ -47,7 +47,12 @@ export interface HeadState {
   readonly configuration: SessionConfiguration; readonly selection: HarnessSelection;
   readonly retainNative?: true; readonly retained?: RetainedProcess; readonly relayRecoveryFailed?: number; readonly origin?: StoredOrigin;
   readonly delegation?: Conversation["delegation"]; readonly delegationsTold?: Conversation["delegationsTold"]; readonly taskBoard?: Conversation["taskBoard"]; readonly taskBoardTold?: number; readonly taskEditsTold?: Conversation["taskEditsTold"]; readonly parentWordsTold?: number;
+  /** What the user named and marked (2026-11-14); a file written before has neither, and its conversation is then neither named by the user nor archived. */
+  readonly userTitle?: string; readonly archived?: true;
 }
+/** The user's name and mark of a conversation, as the head line keeps them and the conversation carries them. */
+const userMarks = (from: { readonly userTitle?: string | undefined; readonly archived?: true | undefined }): { readonly userTitle?: string; readonly archived?: true } =>
+  ({ ...(typeof from.userTitle === "string" ? { userTitle: from.userTitle } : {}), ...(from.archived === true ? { archived: true as const } : {}) });
 /** A Run's row as a `turn` line holds it (the conversation's id is the file's). */
 export type StoredRun = Omit<RunRow, "sessionId">;
 /** An item as an `item` line holds it: the row with its whole text, without the counts (they are the text's). */
@@ -62,13 +67,15 @@ export function headStateOf(conversation: Conversation): HeadState {
     configuration: conversation.configuration, selection: conversation.selection, ...(conversation.retainNative === undefined ? {} : { retainNative: conversation.retainNative }),
     ...(conversation.retained === undefined ? {} : { retained: conversation.retained }), ...(conversation.relayRecoveryFailed === undefined ? {} : { relayRecoveryFailed: conversation.relayRecoveryFailed }),
     ...(conversation.origin === undefined ? {} : { origin: conversation.origin }), ...(conversation.delegation === undefined ? {} : { delegation: conversation.delegation }), ...(conversation.delegationsTold === undefined ? {} : { delegationsTold: conversation.delegationsTold }),
-    ...(conversation.taskBoard === undefined ? {} : { taskBoard: conversation.taskBoard }), ...(conversation.taskBoardTold === undefined ? {} : { taskBoardTold: conversation.taskBoardTold }), ...(conversation.taskEditsTold === undefined ? {} : { taskEditsTold: conversation.taskEditsTold }), ...(conversation.parentWordsTold === undefined ? {} : { parentWordsTold: conversation.parentWordsTold }) };
+    ...(conversation.taskBoard === undefined ? {} : { taskBoard: conversation.taskBoard }), ...(conversation.taskBoardTold === undefined ? {} : { taskBoardTold: conversation.taskBoardTold }), ...(conversation.taskEditsTold === undefined ? {} : { taskEditsTold: conversation.taskEditsTold }), ...(conversation.parentWordsTold === undefined ? {} : { parentWordsTold: conversation.parentWordsTold }),
+    ...userMarks(conversation) };
 }
 export function headJsonOf(conversation: Conversation): HeadJson {
   return { configuration: conversation.configuration, selection: conversation.selection, ...(conversation.retainNative === undefined ? {} : { retainNative: conversation.retainNative }),
     ...(conversation.retained === undefined ? {} : { retained: conversation.retained }), ...(conversation.relayRecoveryFailed === undefined ? {} : { relayRecoveryFailed: conversation.relayRecoveryFailed }),
     ...(conversation.origin === undefined ? {} : { origin: conversation.origin }), ...(conversation.delegation === undefined ? {} : { delegation: conversation.delegation }), ...(conversation.delegationsTold === undefined ? {} : { delegationsTold: conversation.delegationsTold }),
-    ...(conversation.taskBoard === undefined ? {} : { taskBoard: conversation.taskBoard }), ...(conversation.taskBoardTold === undefined ? {} : { taskBoardTold: conversation.taskBoardTold }), ...(conversation.taskEditsTold === undefined ? {} : { taskEditsTold: conversation.taskEditsTold }), ...(conversation.parentWordsTold === undefined ? {} : { parentWordsTold: conversation.parentWordsTold }) };
+    ...(conversation.taskBoard === undefined ? {} : { taskBoard: conversation.taskBoard }), ...(conversation.taskBoardTold === undefined ? {} : { taskBoardTold: conversation.taskBoardTold }), ...(conversation.taskEditsTold === undefined ? {} : { taskEditsTold: conversation.taskEditsTold }), ...(conversation.parentWordsTold === undefined ? {} : { parentWordsTold: conversation.parentWordsTold }),
+    ...(conversation.archived === true ? { archived: true as const } : {}) };
 }
 export function storedItemOf(item: HeldItem, createdSeq: number | null): StoredItem {
   return { seq: item.seq, itemId: item.itemId, type: item.type, status: item.status, startedAt: item.startedAt, endedAt: item.endedAt, parentId: item.parentId, createdSeq,
@@ -439,7 +446,7 @@ export function conversationOf(loaded: Loaded): Conversation {
     configuration: head.configuration, selection: head.selection, activeRunId: head.activeRunId, pendingSwitchId: head.pendingSwitchId, runs,
     switches: loaded.switches.filter(change => change !== undefined), commands: loaded.commands.filter(command => command !== undefined),
     ...(bindings.length === 0 ? {} : { nativeBindings: bindings }), ...(head.origin === undefined ? {} : { origin: head.origin }), ...(head.delegation === undefined ? {} : { delegation: head.delegation }), ...(head.delegationsTold === undefined ? {} : { delegationsTold: head.delegationsTold }), ...(head.taskBoard === undefined ? {} : { taskBoard: head.taskBoard }), ...(head.taskBoardTold === undefined ? {} : { taskBoardTold: head.taskBoardTold }), ...(head.taskEditsTold === undefined ? {} : { taskEditsTold: head.taskEditsTold }), ...(head.parentWordsTold === undefined ? {} : { parentWordsTold: head.parentWordsTold }), ...(head.retainNative === undefined ? {} : { retainNative: head.retainNative }),
-    ...(head.retained === undefined ? {} : { retained: head.retained }), ...(head.relayRecoveryFailed === undefined ? {} : { relayRecoveryFailed: head.relayRecoveryFailed }) };
+    ...(head.retained === undefined ? {} : { retained: head.retained }), ...(head.relayRecoveryFailed === undefined ? {} : { relayRecoveryFailed: head.relayRecoveryFailed }), ...userMarks(head) };
 }
 
 /** The items of one Turn from the lines in `span` of the file: the Run's own, the last line of each item winning, in place order. */

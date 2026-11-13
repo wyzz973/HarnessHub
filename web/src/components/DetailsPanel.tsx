@@ -1,5 +1,5 @@
 import { BoardAdd, BoardEntries, TaskRoster, useTask, type TaskBoardAccess, type TaskSnapshot } from "./TaskBoard.js";
-import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Circle, CircleDollarSign, Clock, FileText, Folder, Plug, Plus, Shrink, SquareDot, SquarePlus, Timer, X } from "lucide-react";
+import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Circle, CircleDollarSign, Clock, Copy, FileText, Folder, FolderOpen, GitBranch, Plug, Plus, Shrink, Timer, WrapText, X } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { ITEM_STATUS_WORDS, TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
@@ -15,13 +15,15 @@ import { errorMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { duration, elapsed, folderName, homePath, spentText, workspacePath } from "../lib/format.js";
 import { useNow } from "../lib/prefs.js";
-import { changeCount, editsOf, latestPlan, ownWork, planRows, stateOf, statusText } from "../lib/protocol/runs.js";
+import { editsOf, latestPlan, ownWork, planRows, stateOf, statusText } from "../lib/protocol/runs.js";
+import { samePath } from "../lib/protocol/changes.js";
 import { oneLine, summarizeGroup } from "../lib/protocol/work.js";
 import { packetFacts } from "../lib/relay-state.js";
 import { finished, knownToolDetail, parseUnifiedDiff, readToolDetail, type DiffFile } from "../lib/turn.js";
 import { Collapsible } from "../ui/motion.js";
 import { EmptyState, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitives.js";
 import { DiffLines, type ToolDetailLoader } from "./Activity.js";
+import { FileMark, FilePath, Lines } from "./FileBits.js";
 import { dockedRequest } from "./Approval.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { TurnSteps } from "./ProtocolTurn.js";
@@ -40,6 +42,14 @@ export interface ChangedFile {
   readonly runIds: ReadonlySet<string>;
   /** The Harnesses whose Turns made these edits, in the order they first did. */
   readonly harnessIds: readonly string[];
+  /** The same, Turn by Turn: what each Turn that touched the file did to it. */
+  readonly parts: readonly FilePart[];
+}
+export interface FilePart { readonly runId: string; readonly add: number; readonly del: number; readonly created: boolean; readonly diffs: readonly DiffFile[] }
+/** A file as one Turn changed it: that Turn's lines and diffs alone. */
+function fileIn(file: ChangedFile, runId: string): ChangedFile {
+  const parts = file.parts.filter(part => part.runId === runId);
+  return { ...file, add: parts.reduce((sum, part) => sum + part.add, 0), del: parts.reduce((sum, part) => sum + part.del, 0), created: parts.some(part => part.created), diffs: parts.flatMap(part => part.diffs), parts };
 }
 export interface ConversationChanges {
   /** Files with a diff, merged by path, in the order they were first changed. */
@@ -111,7 +121,15 @@ export function useConversationChanges(session: ConversationView, wanted: boolea
   const every = useMemo(() => {
     const all = new Map<string, Edit>(read?.id === session.id ? read.edits : []);
     for (const run of session.runs) if (run.protocol !== undefined) for (const item of editsOf(run.protocol)) all.set(editKey({ runId: run.id, item }), { runId: run.id, ordinal: run.ordinal, harnessId: run.protocol.executor.harnessId, item });
-    return [...all.values()].sort(sameOrder);
+    // A Turn is listed one way: by the Hub's record of it once there is one, else by its Harness's own edits (the rule of `editsOf`, and the Gateway's). What was read
+    // while the Turn ran — its Harness's edits, before the record was made — would otherwise stay beside the record, and every file be listed twice.
+    const turns = new Map<string, Edit[]>();
+    for (const edit of all.values()) turns.set(edit.runId, [...(turns.get(edit.runId) ?? []), edit]);
+    const kept = [...turns.values()].flatMap(edits => {
+      const record = edits.find(edit => edit.item.by === "hub"), own = edits.filter(edit => edit.item.by !== "hub");
+      return record === undefined || (record.item.detail === undefined && own.some(edit => edit.item.detail !== undefined)) ? own : [record];
+    });
+    return kept.sort(sameOrder);
   }, [read, session.runs, session.id]);
   const [failures, setFailures] = useState<ReadonlyMap<string, string>>(new Map());
   const [version, setVersion] = useState(0);
@@ -131,14 +149,20 @@ export function useConversationChanges(session: ConversationView, wanted: boolea
     return found === null || found === undefined || found.item.type !== "plan" ? null : { steps: (found.item as PlanItem).steps, explanation: (found.item as PlanItem).explanation, owner: found.harnessId };
   }, [read, session.id]);
   return useMemo(() => {
-    const merged = new Map<string, { path: string; add: number; del: number; created: boolean; diffs: DiffFile[]; runIds: Set<string>; harnessIds: string[] }>();
+    // A file is one row however it was named: a Harness names it from the disk's root, the Hub's record from the workspace's.
+    const rows = new Map<string, { path: string; add: number; del: number; created: boolean; diffs: DiffFile[]; runIds: Set<string>; harnessIds: string[]; parts: { runId: string; add: number; del: number; created: boolean; diffs: DiffFile[] }[] }>();
+    const part = (entry: NonNullable<ReturnType<typeof rows.get>>, runId: string, add: number, del: number, created: boolean, diff?: DiffFile) => {
+      const held = entry.parts.find(row => row.runId === runId) ?? (() => { const made = { runId, add: 0, del: 0, created, diffs: [] as DiffFile[] }; entry.parts.push(made); return made; })();
+      held.add += add; held.del += del; if (diff !== undefined) held.diffs.push(diff);
+    };
+    const merged = { get: (path: string) => rows.get(workspacePath(path, session.workspace)), set: (path: string, entry: NonNullable<ReturnType<typeof rows.get>>) => { rows.set(workspacePath(path, session.workspace), entry); }, values: () => rows.values() };
     for (const { runId, item, harnessId } of every) {
       const detail = item.detail ? knownToolDetail(item.detail.id) : undefined;
       // The Hub's record without a diff (a workspace that is not a repository, a binary file) still names its files and counts.
       if (item.by === "hub" && item.detail === undefined) {
         for (const change of item.changes) {
-          const entry = merged.get(change.path) ?? { path: change.path, add: 0, del: 0, created: change.op === "create", diffs: [], runIds: new Set<string>(), harnessIds: [] };
-          entry.add += change.added ?? 0; entry.del += change.removed ?? 0; entry.runIds.add(runId);
+          const entry = merged.get(change.path) ?? { path: change.path, add: 0, del: 0, created: change.op === "create", diffs: [], runIds: new Set<string>(), harnessIds: [], parts: [] };
+          entry.add += change.added ?? 0; entry.del += change.removed ?? 0; entry.runIds.add(runId); part(entry, runId, change.added ?? 0, change.removed ?? 0, change.op === "create");
           if (!entry.harnessIds.includes(harnessId)) entry.harnessIds.push(harnessId);
           merged.set(change.path, entry);
         }
@@ -147,8 +171,8 @@ export function useConversationChanges(session: ConversationView, wanted: boolea
       // An edit whose Harness gave no diff (none was reported, or its detail holds none) still names the files it changed.
       if (item.detail === undefined || detail !== undefined && !detail.diff) {
         for (const change of item.changes) {
-          const entry = merged.get(change.path) ?? { path: change.path, add: 0, del: 0, created: change.op === "create", diffs: [], runIds: new Set<string>(), harnessIds: [] };
-          entry.add += change.added ?? 0; entry.del += change.removed ?? 0; entry.runIds.add(runId);
+          const entry = merged.get(change.path) ?? { path: change.path, add: 0, del: 0, created: change.op === "create", diffs: [], runIds: new Set<string>(), harnessIds: [], parts: [] };
+          entry.add += change.added ?? 0; entry.del += change.removed ?? 0; entry.runIds.add(runId); part(entry, runId, change.added ?? 0, change.removed ?? 0, change.op === "create");
           if (!entry.harnessIds.includes(harnessId)) entry.harnessIds.push(harnessId);
           merged.set(change.path, entry);
         }
@@ -156,16 +180,19 @@ export function useConversationChanges(session: ConversationView, wanted: boolea
       }
       if (!detail?.diff) continue;
       for (const file of parseUnifiedDiff(detail.diff, detail.locations?.[0] ?? item.changes[0]?.path ?? "改动")) {
-        const entry = merged.get(file.path) ?? { path: file.path, add: 0, del: 0, created: file.created, diffs: [], runIds: new Set<string>(), harnessIds: [] };
-        entry.add += file.add; entry.del += file.del; entry.diffs.push(file); entry.runIds.add(runId);
+        const entry = merged.get(file.path) ?? { path: file.path, add: 0, del: 0, created: file.created, diffs: [], runIds: new Set<string>(), harnessIds: [], parts: [] };
+        entry.add += file.add; entry.del += file.del; entry.diffs.push(file); entry.runIds.add(runId); part(entry, runId, file.add, file.del, file.created, file);
         if (!entry.harnessIds.includes(harnessId)) entry.harnessIds.push(harnessId);
         merged.set(file.path, entry);
       }
     }
     const loading = reading || every.some(({ item }) => item.detail !== undefined && knownToolDetail(item.detail.id) === undefined && !failures.has(item.detail.id));
-    return { files: [...merged.values()], edits: every.length, unread: Math.max(0, total - every.length), more, loading, failures: [...failures.values(), ...(problem === null ? [] : [problem])], plan };
+    // Counted as the head counts them (a record is its files, an edit of a Harness is one): what is not listed yet is the rest, and nothing once the Gateway has no earlier page.
+    const counted = every.reduce((sum, { item }) => sum + (item.by === "hub" ? Math.max(1, item.changes.length) : 1), 0), known = read?.id === session.id ? read : null;
+    const unread = known === null ? Math.max(0, total - counted) : known.cursor === null ? 0 : Math.max(1, total - counted);
+    return { files: [...merged.values()], edits: every.length, unread, more, loading, failures: [...failures.values(), ...(problem === null ? [] : [problem])], plan };
     // `version` changes when a detail arrives in the shared store, which this reads.
-  }, [every, more, failures, version, reading, problem, plan, total]);
+  }, [every, more, failures, version, reading, problem, plan, total, read, session.id, session.workspace]);
 }
 
 /**
@@ -210,10 +237,18 @@ interface PanelProps {
   readonly onOpenSession?: ((id: string) => void) | undefined;
   /** What the overview brings into view when it is shown: the chosen Turn's facts, asked for from the Turn itself. */
   readonly focus?: "run" | null | undefined;
+  /** What the Changes page is asked to show from the conversation: a Turn's changes, or one of its files. */
+  readonly want?: ChangesWant | null | undefined;
+  /** Shows the workspace, or a file in it, in the Finder. */
+  readonly onReveal?: ((path?: string) => void) | undefined;
+  /** Reads where the conversation works: its folder and, when that is a repository, its branch and how many files are not committed. */
+  readonly loadWorkspace?: ((signal: AbortSignal) => Promise<WorkspaceFacts>) | undefined;
 }
-/** What the Changes page is asked to show from elsewhere in the panel: a scope, a file, or both; `at` tells one asking from the next. */
-interface ChangesWant { readonly scope?: ChangesScope; readonly path?: string; readonly at: number }
-type ChangesScope = "turn" | "all" | "task";
+/** Where a conversation works, as the Gateway reads it when asked. */
+export interface WorkspaceFacts { readonly path: string; readonly git?: { readonly branch: string | null; readonly dirty: number } | undefined }
+/** What the Changes page is asked to show from elsewhere: a scope, a file, or both; `at` tells one asking from the next. */
+export interface ChangesWant { readonly scope?: ChangesScope; readonly path?: string; readonly at: number }
+export type ChangesScope = "turn" | "all" | "task";
 
 /**
  * The conversation's details beside it. One page says where things stand — the task list and the latest wrap-up, who works on the task and what they go by, the files
@@ -239,8 +274,10 @@ export function DetailsPanel(props: PanelProps) {
   const task = useTask(props.board, session.id + ":" + runs.length + ":" + (runs.at(-1)?.status ?? ""));
   const members = task.task?.members ?? [];
   const window = contextOf(runs);
-  const [want, setWant] = useState<ChangesWant | null>(null);
+  const [own, setWant] = useState<ChangesWant | null>(null);
   useEffect(() => { setWant(null); }, [session.id]);
+  // The later asking of the two: the panel's own (a section of the overview), or the conversation's (a Turn's card).
+  const asked = props.want ?? null, want = own === null ? asked : asked === null || own.at >= asked.at ? own : asked;
   const showChanges = (asked: Omit<ChangesWant, "at"> = {}) => { setWant({ ...asked, at: Date.now() }); props.onTab("changes"); };
   const tabs = [
     { id: "overview" as const, label: "概览" },
@@ -256,8 +293,8 @@ export function DetailsPanel(props: PanelProps) {
       {props.onClose ? <button type="button" className="icon-btn size-7 self-center text-fg-3" aria-label="关闭详情栏" title="关闭详情栏" onClick={props.onClose}><X size={14} strokeWidth={2}/></button> : null}
     </div>
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${shown}`}>
-      {shown === "changes" ? <Changes changes={changes} counts={{ turn: selected ? changeCount([selected]) : 0, all: total }} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}
-          members={members} want={want} onOpenSession={props.onOpenSession}/>
+      {shown === "changes" ? <Changes changes={changes} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}
+          members={members} want={want} onOpenSession={props.onOpenSession} onReveal={props.onReveal}/>
         : shown === "process" ? <>
           {kept || background.length || session.retention?.upgraded || session.retention?.outside ? <div className="hairline-b"><Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/></div> : null}
           {selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <EmptyState icon={<Clock size={22}/>} title="还没有执行记录"/>}
@@ -319,18 +356,6 @@ function Section({ title, heading, figure, onOpen, children, className, label }:
     {children}
   </section>;
 }
-/** What happened to a file, as a mark before its name: made new, or changed (after the diff panel of T3 Code). */
-function FileMark({ created }: { readonly created: boolean }) {
-  return created ? <SquarePlus size={14} strokeWidth={1.9} className="flex-none text-add-on-tint" role="img" aria-label="新建"/> : <SquareDot size={14} strokeWidth={1.9} className="flex-none text-fg-3" role="img" aria-label="修改"/>;
-}
-/** A file's place in the workspace: the folders quiet, the name plain. */
-function FilePath({ path, workspace }: { readonly path: string; readonly workspace: string }) {
-  const shown = workspacePath(path, workspace), cut = shown.lastIndexOf("/") + 1;
-  return <span className="min-w-0 flex-1 trunc"><span className="text-fg-3">{shown.slice(0, cut)}</span>{shown.slice(cut)}</span>;
-}
-function Lines({ add, del }: { readonly add: number; readonly del: number }) {
-  return <>{add ? <span className="flex-none font-mono text-[11px] text-add-on-tint tabular-nums">+{add}</span> : null}{del ? <span className="flex-none font-mono text-[11px] text-del-on-tint tabular-nums">−{del}</span> : null}</>;
-}
 /** A file row: the mark of what happened to it, its place in the workspace and the lines it gained and lost, when they are known. */
 function FileRow({ path, workspace, add = 0, del = 0, created = false, onChoose }: { readonly path: string; readonly workspace: string; readonly add?: number; readonly del?: number; readonly created?: boolean; readonly onChoose?: (() => void) | undefined }) {
   const body = <><FileMark created={created}/><FilePath path={path} workspace={workspace}/><Lines add={add} del={del}/></>;
@@ -377,14 +402,33 @@ function Overview(props: PanelProps & { readonly selected: PublicRun | null; rea
     {window !== null ? <ContextSection window={window} runs={runs} relay={props.relay?.view} name={props.name} onOpen={() => props.onTab("context")}/> : null}
     {props.kept || active.length > 0 || session.retention?.upgraded || session.retention?.outside ? <Section title="后台" figure={props.kept || active.length > 0 ? (active.length + (props.kept ? 1 : 0)) + " 项在跑" : null} onOpen={() => props.onTab("process")}>
       <div className="-mx-4 -mb-3"><Background session={session} kept={props.kept} items={active} busy={props.busy} onEndProcess={props.onEndProcess} name={props.name}/></div></Section> : null}
-    {selected ? <div ref={facts}><RunSection {...props} run={selected} runs={runs}/></div>
-      : <Section title="环境"><div className="mt-1 flex flex-col">
-        <Line icon={<BrandIcon brand={session.selection.harnessId} name={props.name(session.selection.harnessId)} size={16}/>}><span className="text-fg">{props.name(session.selection.harnessId)}</span></Line>
-        <WorkspaceLine path={session.workspace}/></div></Section>}
+    <EnvironmentSection session={session} stamp={session.id + ":" + runs.length + ":" + (last?.status ?? "")} load={props.loadWorkspace} onReveal={props.onReveal}
+      harness={selected ? null : <Line icon={<BrandIcon brand={session.selection.harnessId} name={props.name(session.selection.harnessId)} size={16}/>}><span className="text-fg">{props.name(session.selection.harnessId)}</span></Line>}/>
+    {selected ? <div ref={facts}><RunSection {...props} run={selected} runs={runs}/></div> : null}
   </div>;
 }
-function WorkspaceLine({ path }: { readonly path: string }) {
-  return <Line icon={<Folder size={14} aria-hidden="true"/>} title={path}><span className="mono text-caption">{homePath(path) || folderName(path)}</span></Line>;
+/**
+ * Where the conversation works (after the thread-details card of T3 Code): its folder, which opens in the Finder, and — when the folder is a repository — the branch
+ * it is on and how many files are not committed. Read when the panel shows it and again when a Turn begins or ends, which is when it may have changed; what was read
+ * stays while the next reading is on its way.
+ */
+function EnvironmentSection({ session, stamp, load, onReveal, harness }: { readonly session: ConversationView; readonly stamp: string; readonly load: PanelProps["loadWorkspace"]; readonly onReveal: PanelProps["onReveal"]; readonly harness: ReactNode }) {
+  const [read, setRead] = useState<{ readonly id: string; readonly facts: WorkspaceFacts } | null>(null), reader = useRef(load);
+  reader.current = load;
+  useEffect(() => {
+    if (reader.current === undefined) return;
+    const controller = new AbortController(), id = session.id;
+    reader.current(controller.signal).then(facts => { if (!controller.signal.aborted) setRead({ id, facts }); }, () => { /* what was read stays */ });
+    return () => controller.abort();
+  }, [stamp, session.id]);
+  const git = read?.id === session.id ? read.facts.git : undefined, path = session.workspace, shown = homePath(path) || folderName(path);
+  const folder = <><span className="flex size-4 flex-none items-center justify-center text-fg-3"><Folder size={14} aria-hidden="true"/></span><span className="mono min-w-0 flex-1 trunc text-caption text-fg-2">{shown}</span></>;
+  return <Section title="环境"><div className="mt-1 flex flex-col">
+    {harness}
+    {onReveal ? <button type="button" className="row -mx-2 flex min-h-7 min-w-0 items-center gap-2.5 border-none bg-transparent px-2 text-left text-ui-sm hover:bg-subtle" title={"在访达中显示 " + path} onClick={() => onReveal()}>{folder}</button>
+      : <div className="flex min-h-7 min-w-0 items-center gap-2.5 text-ui-sm" title={path}>{folder}</div>}
+    {git !== undefined ? <Line icon={<GitBranch size={14} aria-hidden="true"/>} value={git.dirty > 0 ? git.dirty + " 个文件未提交" : "没有未提交的改动"}><span className="mono text-caption">{git.branch ?? "不在分支上"}</span></Line> : null}
+  </div></Section>;
 }
 /** The task list: a mark per step (done, in hand, to do), the steps themselves, and what the latest Turn said it came to. */
 function ProgressSection({ plan, recap }: { readonly plan: Planned | undefined; readonly recap: RecapItem | undefined }) {
@@ -498,46 +542,70 @@ function RunTitle({ runs, run, onRun }: { readonly runs: readonly PublicRun[]; r
   </h3>;
 }
 
-/** One changed file: its row, and under it — when opened — its diff as the program reported it, read-only. */
-function FileDiff({ file, workspace, open, onToggle, name }: { readonly file: ChangedFile; readonly workspace: string; readonly open: boolean; readonly onToggle: () => void; readonly name: (id: string) => string }) {
-  const panel = useId(), row = useRef<HTMLLIElement>(null);
-  return <li ref={row} className="flex min-w-0 flex-col" data-path={file.path}>
+/**
+ * One changed file: its row, and under it — when opened — its diff as the program reported it, read-only. Under the pointer, or with the keyboard on it, the row's
+ * counts give their place to what is done with the file: its path copied, the file shown in the Finder.
+ */
+function FileDiff({ file, workspace, open, wrap, onToggle, name, onReveal }: { readonly file: ChangedFile; readonly workspace: string; readonly open: boolean; readonly wrap: boolean; readonly onToggle: () => void; readonly name: (id: string) => string;
+    readonly onReveal?: ((path: string) => void) | undefined }) {
+  const panel = useId(), row = useRef<HTMLLIElement>(null), shown = workspacePath(file.path, workspace);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => { if (!copied) return; const timer = setTimeout(() => setCopied(false), 1600); return () => clearTimeout(timer); }, [copied]);
+  return <li ref={row} className="group/file relative flex min-w-0 flex-col" data-path={file.path}>
     <button type="button" className="row flex h-8 w-full min-w-0 items-center gap-2 border-none bg-transparent px-2 text-left text-ui-sm text-fg hover:bg-subtle" aria-expanded={open} aria-controls={panel} onClick={onToggle} title={file.path}>
       <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
       <FileMark created={file.created}/><FilePath path={file.path} workspace={workspace}/>
-      <span className="flex flex-none items-center gap-1">{file.harnessIds.map(id => <BrandIcon key={id} brand={id} name={name(id)} size={16}/>)}</span>
-      <Lines add={file.add} del={file.del}/>
+      <span className="flex min-w-[52px] flex-none items-center justify-end gap-1.5 transition-opacity duration-120 ease-standard group-hover/file:opacity-0 group-has-[:focus-visible]/file:opacity-0">
+        {file.harnessIds.map(id => <BrandIcon key={id} brand={id} name={name(id)} size={16}/>)}<Lines add={file.add} del={file.del}/></span>
     </button>
+    <span className="absolute top-1 right-1.5 flex items-center opacity-0 transition-opacity duration-120 ease-standard group-hover/file:opacity-100 group-has-[:focus-visible]/file:opacity-100">
+      <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"复制路径：" + shown} title={copied ? "已复制" : "复制路径"} onClick={() => { void navigator.clipboard.writeText(shown).then(() => setCopied(true), () => undefined); }}>
+        {copied ? <Check size={13} strokeWidth={2} aria-hidden="true"/> : <Copy size={13} strokeWidth={2} aria-hidden="true"/>}</button>
+      {onReveal ? <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"在访达中显示：" + shown} title="在访达中显示" onClick={() => onReveal(file.path)}><FolderOpen size={13} strokeWidth={2} aria-hidden="true"/></button> : null}
+    </span>
     <Collapsible open={open} id={panel}>
-      <section className="mt-0.5 mb-2 min-w-0 overflow-hidden rounded-block bg-surface shadow-hairline" aria-label={"差异：" + workspacePath(file.path, workspace)}>
-        {file.diffs.length > 0 ? <div className="native-diff diff py-1.5" role="group" aria-label="差异">{file.diffs.map((diff, index) => <div key={index} className={cn(index > 0 && "hairline-t")}><DiffLines file={diff} headers={false}/></div>)}</div>
+      <section className="mt-0.5 mb-2 min-w-0 overflow-hidden rounded-block bg-surface shadow-hairline" aria-label={"差异：" + shown}>
+        {file.diffs.length > 0 ? <div className={cn("native-diff diff py-1.5", wrap && "is-wrapped")} role="group" aria-label="差异">{file.diffs.map((diff, index) => <div key={index} className={cn(index > 0 && "hairline-t")}><DiffLines file={diff} headers={false}/></div>)}</div>
           : <p className="m-0 px-3 py-2 text-caption text-fg-3">没有差异文本</p>}
       </section>
     </Collapsible>
   </li>;
 }
+const WRAP_KEY = "harnesshub:diff-wrap";
+/** Whether long lines of a diff fold to the panel's width in this browser: they do until the user says otherwise (the panel is narrow). */
+function readWrap(): boolean { try { return localStorage.getItem(WRAP_KEY) !== "0"; } catch { return true; } }
 /**
  * The changed files, each with its diff under it (2026-11-14, after the diff panel of T3 Code): this Turn's files, the whole conversation's, or — in a task with other
  * conversations — what each of those changed. Above them the scope, the lines the shown files gained and lost, and one control that opens or closes them all; a file opens
  * to its diff, read-only, and names the Harness that made it. The scopes carry the changes each holds, counted as the tab and the header's button count them. Another
  * conversation's files are named with the way to that conversation, where their diffs are.
  */
-function Changes({ changes, counts, selected, workspace, name, sessionId, members, want, onOpenSession }: { readonly changes: ConversationChanges; readonly counts: { readonly turn: number; readonly all: number }; readonly selected: PublicRun | null;
-    readonly workspace: string; readonly name: (id: string) => string; readonly sessionId: string; readonly members: TaskSnapshot["members"]; readonly want: ChangesWant | null; readonly onOpenSession?: ((id: string) => void) | undefined }) {
+function Changes({ changes, selected, workspace, name, sessionId, members, want, onOpenSession, onReveal }: { readonly changes: ConversationChanges; readonly selected: PublicRun | null;
+    readonly workspace: string; readonly name: (id: string) => string; readonly sessionId: string; readonly members: TaskSnapshot["members"]; readonly want: ChangesWant | null; readonly onOpenSession?: ((id: string) => void) | undefined;
+    readonly onReveal?: ((path: string) => void) | undefined }) {
   const [scope, setScope] = useState<ChangesScope>("all");
+  const [wrap, setWrap] = useState(readWrap);
+  const fold = () => setWrap(value => { try { localStorage.setItem(WRAP_KEY, value ? "0" : "1"); } catch { /* lasts for this page only */ } return !value; });
   // The files the user opened or closed by hand; until then a short list is open whole and a long one at its first file.
   const [chosen, setChosen] = useState<ReadonlySet<string> | null>(null);
   const list = useRef<HTMLUListElement>(null);
   useEffect(() => { setChosen(null); setScope("all"); }, [sessionId]);
+  // An asking is met once: at once for a scope, and for a file when the files are read (it names the file as its Turn does, which may be from another root).
+  const met = useRef(0);
   useEffect(() => {
-    if (want === null) return;
+    if (want === null || met.current === want.at) return;
     if (want.scope !== undefined) setScope(want.scope);
-    if (want.path !== undefined) { const path = want.path; setChosen(new Set([path])); requestAnimationFrame(() => { for (const item of list.current?.children ?? []) if ((item as HTMLElement).dataset.path === path) item.scrollIntoView({ block: "nearest" }); }); }
-  }, [want]);
+    const asked = want.path, found = asked === undefined ? undefined : changes.files.find(file => samePath(file.path, asked));
+    if (asked !== undefined && found === undefined && changes.loading) return;
+    met.current = want.at;
+    if (found === undefined) { if (asked !== undefined || want.scope !== undefined) setChosen(null); return; }
+    const path = found.path;
+    setChosen(new Set([path]));
+    requestAnimationFrame(() => { for (const item of list.current?.children ?? []) if ((item as HTMLElement).dataset.path === path) item.scrollIntoView({ block: "nearest" }); });
+  }, [want, changes.files, changes.loading]);
   const others = members.filter(member => member.sessionId !== sessionId && member.files.length > 0);
-  const elsewhere = new Set(others.flatMap(member => member.files)).size;
   if (!changes.edits && others.length === 0) return <EmptyState icon={<FileText size={22}/>} title="还没有改动"/>;
-  const turn = selected ? changes.files.filter(file => file.runIds.has(selected.id)) : [];
+  const turn = selected ? changes.files.filter(file => file.runIds.has(selected.id)).map(file => fileIn(file, selected.id)) : [];
   const shownScope: ChangesScope = scope === "task" && others.length === 0 ? "all" : scope;
   const files = shownScope === "turn" ? turn : changes.files;
   const open = chosen ?? new Set(files.length <= 3 ? files.map(file => file.path) : files.slice(0, 1).map(file => file.path));
@@ -546,9 +614,9 @@ function Changes({ changes, counts, selected, workspace, name, sessionId, member
   const add = files.reduce((sum, file) => sum + file.add, 0), del = files.reduce((sum, file) => sum + file.del, 0);
   return <div className="flex flex-col">
     <div className="flex min-h-11 items-center gap-2 pr-2.5 pl-3.5">
-      <Segmented label="改动范围" value={shownScope} onChange={setScope} options={[{ value: "turn" as const, label: "本轮 " + counts.turn }, { value: "all" as const, label: "这段对话 " + counts.all },
-        ...(others.length > 0 ? [{ value: "task" as const, label: "其他对话 " + elsewhere }] : [])]}/>
-      {shownScope !== "task" && files.length > 0 ? <span className="ml-auto flex flex-none items-center gap-1.5"><Lines add={add} del={del}/>
+      <Segmented label="改动范围" value={shownScope} onChange={setScope} options={[{ value: "turn" as const, label: "本轮" }, { value: "all" as const, label: "这段对话" }, ...(others.length > 0 ? [{ value: "task" as const, label: "其他对话" }] : [])]}/>
+      {shownScope !== "task" && files.length > 0 ? <span className="ml-auto flex flex-none items-center gap-1"><span className="mr-1 flex items-center gap-1.5"><Lines add={add} del={del}/></span>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap} title={wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14} strokeWidth={2}/></button>
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label={every ? "全部收起" : "全部展开"} title={every ? "全部收起" : "全部展开"} onClick={() => setChosen(every ? new Set() : new Set(files.map(file => file.path)))}>
           {every ? <ChevronsDownUp size={14} strokeWidth={2}/> : <ChevronsUpDown size={14} strokeWidth={2}/>}</button></span> : null}
     </div>
@@ -559,7 +627,7 @@ function Changes({ changes, counts, selected, workspace, name, sessionId, member
       <ul className="m-0 flex list-none flex-col gap-px p-0">{member.files.map(path => <li key={path}><FileRow path={path} workspace={workspace}/></li>)}</ul>
     </section>)}</div> : <>
       {files.length ? <ul ref={list} className="m-0 flex list-none flex-col gap-px px-2.5 pb-2" aria-label="改动的文件">{files.map(file =>
-        <FileDiff key={file.path} file={file} workspace={workspace} open={open.has(file.path)} onToggle={() => toggle(file.path)} name={name}/>)}</ul> : null}
+        <FileDiff key={file.path} file={file} workspace={workspace} open={open.has(file.path)} wrap={wrap} onToggle={() => toggle(file.path)} name={name} onReveal={onReveal}/>)}</ul> : null}
       {changes.unread > 0 ? <p className="m-0 flex items-center gap-2 px-4 pb-3 text-caption text-fg-3"><button type="button" className="link-btn text-caption" onClick={changes.more}>更早的 {changes.unread} 处编辑</button></p> : null}
       {changes.loading ? <p className="m-0 flex items-center gap-1.5 px-4 pb-3 text-caption text-fg-3"><Spinner size={12} label=""/>正在读取改动…</p> : null}
       {changes.failures.length ? <p className="m-0 px-4 pb-3 text-caption text-red">{changes.failures.length} 处改动读取失败：{changes.failures[0]}</p> : null}
@@ -651,7 +719,6 @@ function RunSection(props: PanelProps & { readonly run: PublicRun; readonly runs
       <Line icon={<BrandIcon brand={harnessId} name={turn?.executor.harness ?? harness?.name ?? harnessId} size={16}/>} value={model ? <span title={model.id}>{model.label}</span> : null}>
         <span className="text-fg">{turn?.executor.harness ?? harness?.name ?? harnessId}</span>{version ? <span className="text-fg-3"> {version}</span> : null}</Line>
       {provider ? <Line icon={<Plug size={14} aria-hidden="true"/>} value={<span>{provider.name}</span>}>模型连接</Line> : null}
-      <WorkspaceLine path={session.workspace}/>
       {turn?.durationMs !== undefined ? <Line icon={<Timer size={14} aria-hidden="true"/>} value={spentText(turn.durationMs)}>用时</Line> : null}
       {counted && usage!.input !== undefined ? <Line icon={<ArrowDownToLine size={14} aria-hidden="true"/>} title={usage!.input.toLocaleString() + " tokens" + (usage!.cachedInput !== undefined ? "，其中缓存 " + usage!.cachedInput.toLocaleString() : "")}
         value={tokens(usage!.input)}>{usage!.completeness === "complete" ? "输入" : "输入（可能不全）"}{usage!.cachedInput !== undefined && usage!.cachedInput > 0 ? <span className="text-fg-3">（其中缓存 {tokens(usage!.cachedInput)}）</span> : null}</Line> : null}

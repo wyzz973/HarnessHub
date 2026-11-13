@@ -16,6 +16,22 @@ export function ago(at: number, now = Date.now()): string {
   const minutes = Math.round((now - at) / 60000);
   return minutes < 1 ? "刚刚" : minutes < 60 ? minutes + " 分钟前" : minutes < 1440 ? Math.round(minutes / 60) + " 小时前" : Math.round(minutes / 1440) + " 天前";
 }
+/** When a message was sent, as it is said beside it: the time today ("14:03"), "昨天 14:03", else the day too ("11月2日 14:03"). */
+export function messageTime(at: number, now = Date.now()): string {
+  const day = new Date(at), today = new Date(now), time = String(day.getHours()).padStart(2, "0") + ":" + String(day.getMinutes()).padStart(2, "0");
+  const days = Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime() - new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime()) / 86_400_000);
+  return days <= 0 ? time : days === 1 ? "昨天 " + time : (day.getMonth() + 1) + "月" + day.getDate() + "日 " + time;
+}
+/** How long ago, as a list's narrow column says it: "刚刚", "5 分钟", "2 小时", "3 天", then the day ("11月2日"). */
+export function agoShort(at: number, now = Date.now()): string {
+  const minutes = Math.floor((now - at) / 60000);
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return minutes + " 分钟";
+  if (minutes < 1440) return Math.floor(minutes / 60) + " 小时";
+  if (minutes < 43200) return Math.floor(minutes / 1440) + " 天";
+  const day = new Date(at);
+  return (day.getMonth() + 1) + "月" + day.getDate() + "日";
+}
 /** Another conversation's title, short enough to name it within a sentence. */
 export function shortTitle(title: string | null | undefined): string {
   if (!title) return "另一个对话";

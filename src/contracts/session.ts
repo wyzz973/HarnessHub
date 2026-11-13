@@ -371,6 +371,16 @@ export interface SessionSnapshot {
    * would carry relay content is then refused until the user starts a new native session.
    */
   readonly relayRecoveryFailed?: number;
+  /**
+   * The title the user gave the conversation (2026-11-14). Once given, it is the conversation's title: the one worked out from its first message no longer replaces it.
+   * Absent: the title is the one worked out.
+   */
+  readonly userTitle?: string;
+  /**
+   * The user archived the conversation (2026-11-14): a mark of the list, kept until the user takes it off or a new Turn is accepted in it. It has nothing to do with
+   * `status`: an archived conversation opens and takes messages as any other.
+   */
+  readonly archived?: true;
 }
 export interface EventDraft { readonly type: string; readonly data: Readonly<Record<string, unknown>> }
 export interface SessionEvent extends EventDraft {

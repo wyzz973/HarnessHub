@@ -590,7 +590,9 @@ export class SessionRuntime {
     const acceptedAt = this.options.now().getTime();
     // What this owner found of a process kept under the previous one is shown until the conversation's next Turn.
     this.lost.delete(id); this.outside.delete(id); this.upgraded.delete(id);
-    this.commit(id, current => {
+    this.commit(id, withArchived => {
+      // A Turn accepted in an archived conversation takes the mark off, in the same commit: the conversation is at work again (2026-11-14).
+      const { archived: _archived, ...current } = withArchived;
       const at = branchAt === undefined ? current.runs.length : branchAt;
       if (branchAt !== undefined && current.runs[branchAt]?.id !== branchFrom) throw new SessionError("VERSION_CONFLICT", "the conversation moved before the branch");
       // The input is the Run's first item (its `user` message); the Run's ordinal is its place among the Runs, and its input is the first event of the commit.
@@ -1355,6 +1357,31 @@ export class SessionRuntime {
     });
     if (!enabled && this.kept.has(id)) void this.requestRelease(id, "disabled");
     return this.load(committed.conversation.id);
+  }
+  /**
+   * The user renames the conversation or archives it, or takes the mark off (2026-11-14). A title is trimmed and its line breaks made spaces; an empty one is refused.
+   * Once the user named it, the title worked out from its first message no longer replaces the name. The archive mark is the list's: it is not `status`, and an archived
+   * conversation opens and takes messages as any other (the next Turn accepted takes it off, `send`). One commit, published as every other, so that each page that has the
+   * conversation open is told by its head and the list's row moves on. A change that changes nothing commits nothing. Allowed in any state: a closed conversation is
+   * renamed and archived too.
+   */
+  updateSession(id: SessionId, change: { readonly title?: string; readonly archived?: boolean }): Conversation {
+    this.admit();
+    if (change.title === undefined && change.archived === undefined) throw new SessionError("INVALID_INPUT", "a change names a title, or whether the conversation is archived");
+    if (change.title !== undefined && typeof change.title !== "string") throw new SessionError("INVALID_INPUT", "a title is text");
+    if (change.archived !== undefined && typeof change.archived !== "boolean") throw new SessionError("INVALID_INPUT", "archived is true or false");
+    const title = change.title === undefined ? undefined : change.title.replace(/\s*[\r\n\u2028\u2029]+\s*/gu, " ").trim();
+    if (title === "") throw new SessionError("INVALID_INPUT", "a title cannot be empty");
+    const state = this.load(id);
+    const renamed = title !== undefined && title !== state.userTitle, marked = change.archived !== undefined && change.archived !== (state.archived === true);
+    if (!renamed && !marked) return state;
+    this.commit(id, current => {
+      const { userTitle: _title, archived: _archived, ...rest } = current;
+      const userTitle = title ?? current.userTitle, archived = change.archived ?? current.archived === true;
+      return { next: { ...rest, ...(userTitle === undefined ? {} : { userTitle }), ...(archived ? { archived: true as const } : {}) },
+        events: [...(renamed ? [event("session.renamed", { title })] : []), ...(marked ? [event("session.archived", { archived })] : [])] };
+    });
+    return this.load(id);
   }
   /** Closes this conversation's kept process at the user's request, with the normal stop chain; resolves once it is recorded. */
   async endKept(id: SessionId, key: string): Promise<Conversation> {

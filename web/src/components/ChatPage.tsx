@@ -1,7 +1,7 @@
 import type { TaskBoardAccess } from "./TaskBoard.js";
 import { ArrowDown, Check, ChevronUp, Circle, CircleDashed, FileDown, GitBranch, ListChecks, ListTree, Menu as MenuIcon, MoreHorizontal, PanelLeft, PanelRight, Split, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Dispatch, ReactNode, SetStateAction } from "react";
+import type { CSSProperties, Dispatch, ReactNode, SetStateAction } from "react";
 import type { ContentRef } from "../../../src/contracts/content.js";
 import type { NativeExtensions, NativeModelCatalog } from "../../../src/contracts/control.js";
 import type { ProviderView } from "../../../src/contracts/provider.js";
@@ -11,7 +11,7 @@ import type { HarnessReadinessView, HarnessView, NativeSessionListView, SessionS
 import type { ConversationView } from "../lib/conversation.js";
 import { failureMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
-import { clock, folderName, inScratch, shortTitle } from "../lib/format.js";
+import { clock, folderName, homePath, inScratch, shortTitle } from "../lib/format.js";
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
 import { bannerOf, installationNotices, relayHasStory, relayLine } from "../lib/relay-state.js";
 import { useClosedNotices } from "../lib/use-relay.js";
@@ -27,7 +27,7 @@ import { decisionRole, dockedRequest, PermissionCard, type Decision, type Permis
 import type { AttachmentDraft } from "./Attachments.js";
 import { BranchOrigin } from "./BranchOrigin.js";
 import { Composer, type DockedApproval } from "./Composer.js";
-import { DetailsPanel, type ChangesLoader, type PanelTab } from "./DetailsPanel.js";
+import { DetailsPanel, type ChangesLoader, type ChangesWant, type PanelTab, type WorkspaceFacts } from "./DetailsPanel.js";
 import { RelayPacketDialog, type PacketTarget } from "./RelayDetails.js";
 import { RelayCard, RelayInstallation, SEND_ALONE, type RelayNext } from "./RelayCard.js";
 import { ProtocolTurn, type TurnReads } from "./ProtocolTurn.js";
@@ -167,6 +167,12 @@ export interface ChatProps {
   /** Why the page put a held message back into the composer instead of sending it. */
   queueNotice?: string | null; onDismissQueueNotice?: () => void;
   preferences: Preferences; onPreference: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void;
+  /** Gives the open conversation another title; resolves once the Gateway kept it. Absent where it cannot be renamed. */
+  onRename?: ((title: string) => Promise<void>) | undefined;
+  /** Shows the open conversation's workspace, or a file in it, in the Finder. */
+  onReveal?: ((path?: string) => void) | undefined;
+  /** Reads where the open conversation works: its folder and its repository's branch and uncommitted files. */
+  onLoadWorkspace?: ((signal: AbortSignal) => Promise<WorkspaceFacts>) | undefined;
   sidebarHidden: boolean; onExpandSidebar: () => void; onHarnesses: () => void;
   /** How many conversations exist; none means this is the first use and the welcome says what was found. */
   conversations: number; onSettings: () => void; onRescan: () => void; scanning: boolean;
@@ -189,6 +195,42 @@ interface ShortcutState { readonly stop: (() => void) | null; readonly togglePan
 /** A local decision on an approval, kept until the page leaves the conversation, to write its result back into the Turn. */
 type DecisionRecord = Decision & { readonly runId: string };
 
+const PANEL_MIN = 360, PANEL_KEY = "harnesshub:panel-width";
+/** The width the user dragged the details panel to in this browser; null until they did. */
+function readPanelWidth(): number | null {
+  try { const value = Number(localStorage.getItem(PANEL_KEY)); return Number.isFinite(value) && value >= PANEL_MIN && value <= 4000 ? value : null; } catch { return null; }
+}
+function writePanelWidth(value: number | null): void { try { if (value === null) localStorage.removeItem(PANEL_KEY); else localStorage.setItem(PANEL_KEY, String(value)); } catch { /* lasts for this page only */ } }
+
+/**
+ * The details panel's left edge, which is dragged to make it wider or narrower (after the right panel of T3 Code): a hairline that thickens under the pointer, the
+ * arrow keys for the keyboard, and a double click back to the width it had before anyone dragged it. The width is kept when the drag ends, not on every move.
+ */
+function PanelEdge({ width, dragging, onDrag, onWidth }: { readonly width: number; readonly dragging: boolean; readonly onDrag: (on: boolean) => void; readonly onWidth: (width: number | null, keep: boolean) => void }) {
+  const from = useRef<{ readonly x: number; readonly width: number } | null>(null), latest = useRef(width);
+  latest.current = width;
+  return <div role="separator" aria-orientation="vertical" aria-label="调整详情栏宽度" aria-valuenow={width} aria-valuemin={PANEL_MIN} tabIndex={0} title="拖动调整宽度，双击恢复"
+    className={cn("panel-edge group/edge absolute inset-y-0 left-0 z-10 w-[7px] cursor-col-resize touch-none outline-none", dragging && "is-dragging")}
+    onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); from.current = { x: event.clientX, width }; onDrag(true); }}
+    onPointerMove={event => { const start = from.current; if (start !== null) onWidth(start.width + start.x - event.clientX, false); }}
+    onPointerUp={event => { if (from.current === null) return; from.current = null; event.currentTarget.releasePointerCapture(event.pointerId); onDrag(false); onWidth(latest.current, true); }}
+    onPointerCancel={() => { from.current = null; onDrag(false); }}
+    onDoubleClick={() => onWidth(null, true)}
+    onKeyDown={event => { const step = event.key === "ArrowLeft" ? 24 : event.key === "ArrowRight" ? -24 : 0; if (step !== 0) { event.preventDefault(); onWidth(width + step, true); } }}>
+    <span aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-accent opacity-0 transition-opacity duration-120 ease-standard group-hover/edge:opacity-100 group-focus-visible/edge:opacity-100 group-[.is-dragging]/edge:opacity-100"/>
+  </div>;
+}
+
+/** The conversation's title as a field, in the title's place: Enter or leaving it keeps what was typed, Escape leaves the title as it was. */
+function TitleField({ value, onDone }: { readonly value: string; readonly onDone: (next: string | null) => void }) {
+  const [draft, setDraft] = useState(value), field = useRef<HTMLInputElement>(null), done = useRef(false);
+  useLayoutEffect(() => { field.current?.focus(); field.current?.select(); }, []);
+  const finish = (next: string | null) => { if (done.current) return; done.current = true; onDone(next); };
+  return <input ref={field} className="title-field m-0 h-7 min-w-0 flex-1 rounded-row border-none bg-subtle px-1.5 text-ui font-medium text-fg shadow-focus outline-none" value={draft} aria-label="对话标题" maxLength={200}
+    onChange={event => setDraft(event.target.value)} onBlur={() => finish(draft)}
+    onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); finish(draft); } else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finish(null); } }}/>;
+}
+
 export function ChatPage(props: ChatProps) {
   const { session, draft, harnesses, providers, mutation, error, preferences } = props;
   const [followBottom, setFollowBottom] = useState(true);
@@ -198,6 +240,7 @@ export function ChatPage(props: ChatProps) {
   const [panelRun, setPanelRun] = useState<string | null>(null);
   // What the panel's overview brings into view: a Turn's facts, asked for from that Turn's own button; any other way into the panel asks for nothing.
   const [panelFocus, setPanelFocus] = useState<"run" | null>(null);
+  const [changesWant, setChangesWant] = useState<ChangesWant | null>(null);
   const [overlay, setOverlay] = useState(false);
   const [agentPicker, setAgentPicker] = useState(false);
   const [decisions, setDecisions] = useState<ReadonlyMap<string, DecisionRecord>>(() => new Map());
@@ -222,7 +265,12 @@ export function ChatPage(props: ChatProps) {
   const canRetry = session?.status === "open" && active === null && !dirty && !pending && problem === null && mutation === null;
   const canBranch = session !== null && session.activeRunId === null && session.pendingSwitchId === null && mutation === null;
   const branchedTitle = session?.origin?.history.find(message => message.role === "user")?.text;
-  const title = session !== null ? session.title : branchedTitle ? "分支 · " + branchedTitle : props.sessionRequested || props.sessionError ? "打开对话" : "新对话";
+  // A title the user just gave stands at once; the conversation's head brings the same one when the Gateway kept it.
+  const [renaming, setRenaming] = useState<string | null>(null), [renamed, setRenamed] = useState<{ readonly id: string; readonly title: string } | null>(null);
+  useEffect(() => { setRenaming(null); }, [session?.id]);
+  useEffect(() => { if (renamed !== null && (session === null || session.id !== renamed.id || session.title === renamed.title)) setRenamed(null); }, [session?.id, session?.title, renamed]);
+  const place = session === null ? "" : inScratch(session.workspace, props.scratchRoot) ? "临时对话" : folderName(session.workspace);
+  const title = session !== null ? renamed?.id === session.id ? renamed.title : session.title : branchedTitle ? "分支 · " + branchedTitle : props.sessionRequested || props.sessionError ? "打开对话" : "新对话";
   const runs = useMemo(() => new Map(session?.runs.map(run => [run.id, run])), [session?.runs]);
   const harnessName = (id: string) => harnesses.find(row => row.id === id)?.name ?? id;
   // How long the same Harness took to start in the latest earlier Run of this conversation, shown while a Run starts;
@@ -279,7 +327,7 @@ export function ChatPage(props: ChatProps) {
     return () => watch.disconnect();
   }, [olderCursor, loadOlder, firstOrdinal, session?.id]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useLayoutEffect(() => { following.current = true; setFollowBottom(true); if (session) scrollToLatest(); else scroll.current?.scrollTo({ top: 0 }); setTab(null); setPanelRun(null); setPanelFocus(null); setOverlay(false); setDecisions(new Map()); setViewing(null); }, [session?.id, scrollToLatest]);
+  useLayoutEffect(() => { following.current = true; setFollowBottom(true); if (session) scrollToLatest(); else scroll.current?.scrollTo({ top: 0 }); setTab(null); setPanelRun(null); setPanelFocus(null); setChangesWant(null); setOverlay(false); setDecisions(new Map()); setViewing(null); }, [session?.id, scrollToLatest]);
   useLayoutEffect(() => { if (following.current && session) scrollToLatest(); }, [session?.version, followBottom, scrollToLatest, props.queued]);
   useEffect(() => {
     const element = scroll.current, content = transcript.current;
@@ -370,6 +418,18 @@ export function ChatPage(props: ChatProps) {
   // remembered by this browser.
   const inline = wide && session !== null;
   const panelOpen = session !== null && (inline ? preferences.panel : overlay);
+  const [panelWidth, setPanelWidth] = useState(readPanelWidth), [dragging, setDragging] = useState(false), row = useRef<HTMLDivElement>(null);
+  // As wide as it was dragged to, within what the row has: the conversation keeps 360 px, the panel is never under 360 px nor over seven tenths of the row.
+  const fit = useCallback((width: number): number => { const room = row.current?.clientWidth ?? window.innerWidth; return Math.round(Math.max(PANEL_MIN, Math.min(width, room - 360, room * .7))); }, []);
+  const [rowWidth, setRowWidth] = useState(0);
+  useLayoutEffect(() => {
+    const element = row.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(() => setRowWidth(element.clientWidth));
+    watch.observe(element); return () => watch.disconnect();
+  }, []);
+  const shownWidth = useMemo(() => fit(panelWidth ?? (window.innerWidth >= 1440 ? 420 : 400)), [fit, panelWidth, rowWidth]);
+  const resize = (width: number | null, keep: boolean) => { const next = width === null ? null : fit(width); setPanelWidth(next); if (keep) writePanelWidth(next); };
   // How many changes the conversation made, from the tools' summaries: the button, its 改动 tab and the tab's scopes say this
   // one number, and nothing is read while the panel is closed.
   const changes = session?.facts.changes ?? 0;
@@ -386,6 +446,10 @@ export function ChatPage(props: ChatProps) {
   const openDetails = (runId: string) => {
     if (panelOpen && panelTab === "overview" && panelFocus === "run" && (panelRun ?? session?.runs.at(-1)?.id) === runId) { setPanel(false); return; }
     setPanelRun(runId); setTab("overview"); setPanelFocus("run"); setPanel(true);
+  };
+  // From a Turn's card of changed files: the panel's Changes page at that Turn, and at one file of it when a file was chosen.
+  const openChanges = (runId: string, path?: string) => {
+    setPanelRun(runId); setTab("changes"); setPanelFocus(null); setChangesWant({ scope: "turn", ...(path === undefined ? {} : { path }), at: Date.now() }); setPanel(true);
   };
   const detailed = preferences.density === "detailed";
   // Approvals wait in the composer's place, oldest first (ADR-054 §5); questions and forms stay in their Turn.
@@ -446,7 +510,7 @@ export function ChatPage(props: ChatProps) {
       onRetry={canRetry ? (text, sent) => { void (props.onBranchSend ? props.onBranchSend(run.id, text, sent ?? []) : send(text, sent ?? [])).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
       onResend={props.onBranchSend && session?.status === "open" ? (runId, text, sent) => { void props.onBranchSend!(runId, text, sent ?? []).catch(() => {}); } : undefined}
       onSelectBranch={props.onSelectBranch ? runId => { void props.onSelectBranch!(runId).catch(() => {}); } : undefined} branchBusy={!canRetry}
-      onDetails={openDetails} detailsOpen={panelOpen && panelTab === "overview" && panelFocus === "run" && (panelRun ?? current.runs.at(-1)?.id) === run.id} onViewPacket={relay ? viewPacket : undefined} reads={props.reads}
+      onDetails={openDetails} detailsOpen={panelOpen && panelTab === "overview" && panelFocus === "run" && (panelRun ?? current.runs.at(-1)?.id) === run.id} onViewPacket={relay ? viewPacket : undefined} reads={props.reads} workspace={current.workspace} onOpenChanges={openChanges}
       startupHint={startupHints.get(run.id)} queue={queue?.runId === run.id ? queueNotice : undefined}
       waiting={open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{turnRequests(run.id)}</ProtocolTurn>,
       // What was handed to another Harness after this Turn stands right after it.
@@ -529,7 +593,7 @@ export function ChatPage(props: ChatProps) {
     : TURN_STATUS_WORDS[stateOf(current)];
   const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史"
     : currentState ?? (pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话");
-  const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} loadChanges={props.onLoadChanges} tab={panelTab} onTab={value => { setTab(value); setPanelFocus(null); }} runId={panelRun} onRun={setPanelRun} onOpenSession={props.onOpenSession} focus={panelFocus}
+  const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} loadChanges={props.onLoadChanges} tab={panelTab} onTab={value => { setTab(value); setPanelFocus(null); }} runId={panelRun} onRun={setPanelRun} onOpenSession={props.onOpenSession} focus={panelFocus} want={changesWant} onReveal={props.onReveal} loadWorkspace={props.onLoadWorkspace}
     loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)} board={props.taskBoard}
     relay={relay?.view && relayHasStory(relay.view) ? { view: relay.view, onViewPacket: viewPacket } : undefined}/> : null;
   // #23: the panel opens by widening (300 ms) and pushes the conversation aside; its content follows 60 ms later from 24 px to
@@ -544,9 +608,14 @@ export function ChatPage(props: ChatProps) {
     <header className={cn("flex h-[54px] flex-none items-center gap-2 bg-app pr-3 pl-3 sm:gap-2.5", session ? "hairline-b sm:pl-6" : "sm:pl-4")}>
       {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={props.onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
         : props.sidebarHidden ? <Tip label="展开侧栏 ⌘B"><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts="Meta+B" onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
-      <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
-        <h1 ref={heading} id="chat-title" tabIndex={-1} className={cn("m-0 min-w-0 truncate text-ui font-semibold outline-none", !session && "sr-only")} title={title}>{title}{session && session.status !== "open" ? <span className="ml-2 text-caption font-medium text-fg-3">{session.status === "closed" ? "已结束" : "需要核实"}</span> : null}</h1>
-        {session ? <span className="hidden min-w-0 flex-none truncate text-caption text-fg-3 sm:inline sm:max-w-[40%]" title={session.workspace}>{inScratch(session.workspace, props.scratchRoot) ? "临时对话" : folderName(session.workspace)}</span> : null}
+      {/* Where the conversation runs, then what it is called (after the header of T3 Code): the folder quiet, the title plain, one line. */}
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        {session ? <>{props.onReveal ? <Tip label={<>在访达中显示 <span className="text-fg-3">{homePath(session.workspace)}</span></>}><button type="button" className="crumb hidden max-w-[34%] min-w-0 flex-none truncate rounded-row border-none bg-transparent px-1.5 py-1 text-ui text-fg-3 transition-colors duration-120 ease-standard hover:bg-subtle hover:text-fg-2 sm:block" onClick={() => props.onReveal?.()}>{place}</button></Tip>
+          : <span className="hidden max-w-[34%] min-w-0 flex-none truncate px-1.5 text-ui text-fg-3 sm:block" title={session.workspace}>{place}</span>}
+          <span className="hidden flex-none text-ui text-fg-3 opacity-50 sm:block" aria-hidden="true">/</span></> : null}
+        {renaming !== null && session ? <TitleField value={renaming} onDone={next => { setRenaming(null); const text = next?.trim().replace(/\s+/gu, " "); if (text && text !== session.title) { setRenamed({ id: session.id, title: text }); props.onRename?.(text).catch(() => setRenamed(null)); } }}/> : null}
+        <h1 ref={heading} id="chat-title" tabIndex={-1} className={cn("m-0 min-w-0 truncate rounded-row px-1.5 py-1 text-ui font-medium outline-none", !session && "sr-only", renaming !== null && "sr-only", session && props.onRename && "cursor-text")} title={props.onRename && session ? "双击改名" : title}
+          onDoubleClick={session && props.onRename ? () => setRenaming(title) : undefined}>{title}{session && session.status !== "open" ? <span className="ml-2 text-caption font-normal text-fg-3">{session.status === "closed" ? "已结束" : "需要核实"}</span> : null}</h1>
       </div>
       {session ? <>
         <HeaderState session={session} active={active} harnessName={harnessName}/>
@@ -582,7 +651,7 @@ export function ChatPage(props: ChatProps) {
         action={<button className="btn btn-sm" type="button" disabled={mutation !== null || pending} onClick={() => { props.onDraft(selectionDraft(session.selection)); setDismissedSwitch(failedSwitch.id); }}>继续使用当前选择</button>}>
         {failedSwitch.error ? failureMessage(failedSwitch.error) : "目标连接没有通过验证。"} 当前选择仍是 {harnessName(session.selection.harnessId)}。</Notice></div> : null}
     </div>
-    <div className="flex min-h-0 flex-1">
+    <div ref={row} className="flex min-h-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className={cn("chat-scroll scroll-area min-h-0 flex-1 px-4 sm:px-8", session === null ? "welcome-scroll" : "pt-[30px] pb-5")} ref={scroll} onScroll={() => {
           const element = scroll.current;
@@ -620,9 +689,10 @@ export function ChatPage(props: ChatProps) {
           {composer}
         </div></footer> : null}
       </div>
-      {inline && asidePresence !== "closed" ? <aside className={cn("details-aside flex-none overflow-hidden bg-app hairline-l transition-[width] ease-panel keyboard:duration-0",
-        panelOpen ? "w-[400px] duration-300 starting:w-0 min-[1440px]:w-[420px]" : "w-0 duration-200")} aria-label="详情栏" aria-hidden={!panelOpen || undefined} inert={!panelOpen}>
-        <div className={cn("flex h-full w-[400px] min-[1440px]:w-[420px]", !panelFromKeyboard && "motion-panel-in")}>{panel}</div>
+      {inline && asidePresence !== "closed" ? <aside className={cn("details-aside relative flex-none overflow-hidden bg-app hairline-l ease-panel keyboard:duration-0", dragging ? "transition-none" : "transition-[width]",
+        panelOpen ? "w-(--panel-width) duration-300 starting:w-0" : "w-0 duration-200")} style={{ "--panel-width": shownWidth + "px" } as CSSProperties} aria-label="详情栏" aria-hidden={!panelOpen || undefined} inert={!panelOpen}>
+        <div className={cn("flex h-full w-(--panel-width)", !panelFromKeyboard && "motion-panel-in")}>{panel}</div>
+        <PanelEdge width={shownWidth} dragging={dragging} onDrag={setDragging} onWidth={resize}/>
       </aside> : null}
     </div>
     {!inline && session ? <Dialog open={overlay} onOpenChange={setOverlay} title="详情栏" kind={narrow ? "sheet" : "drawer"} className={narrow ? "h-[80dvh]" : ""}><aside className="flex min-h-0 flex-1 flex-col" aria-label="详情栏">{panel}</aside></Dialog> : null}

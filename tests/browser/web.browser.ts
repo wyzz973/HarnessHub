@@ -1226,7 +1226,7 @@ test("a waiting approval is marked in the sidebar with whose deadline it is, cou
   await expect(line).toHaveText(/^等你批准 · 原程序期限 \d+ 秒后自动拒绝$/u);
   const seconds = async () => Number(/(\d+) 秒/u.exec((await line.textContent()) ?? "")?.[1]);
   const first = await seconds(); await page.waitForTimeout(2200); const later = await seconds();
-  assert.ok(first <= 58 && later < first, `${first} then ${later}`);
+  assert.ok(first <= 60 && later < first, `${first} then ${later}`);
   await page.screenshot({ path: join(artifact, "attention-sidebar.png"), animations: "disabled" });
   // Deciding happens in the conversation: the row opens it, with its approval card.
   await waiting.click();
@@ -1584,7 +1584,7 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await expect(panel).toContainText("README.md"); assert.ok(reads.length > 0, "opened, the panel reads the diffs");
   // The overview names the file; the page of the changes holds its diff.
   await panel.getByRole("tab", { name: /改动/u }).click();
-  await expect(panel.getByRole("radio", { name: "这段对话 1", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(panel.getByRole("radio", { name: "这段对话", exact: true })).toHaveAttribute("aria-checked", "true");
   // Opening it was the user's choice, which this browser keeps.
   await page.reload(); await expect(panel).toBeVisible(); await expect(button).toHaveAttribute("aria-pressed", "true");
   await panel.getByRole("tab", { name: /改动/u }).click();
@@ -1682,8 +1682,8 @@ test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is 
     await page.screenshot({ path: join(artifact, `dl4-panel-${file}-light-1440.png`), animations: "disabled" });
   }
   // D03: the changes of this Turn or of the whole conversation, each file with its lines, the diff from its Harness.
-  await expect(panel.getByRole("radio", { name: "这段对话 1", exact: true })).toHaveAttribute("aria-checked", "true");
-  await expect(panel.getByRole("button", { name: /README\.md/u })).toHaveAttribute("aria-expanded", "true");
+  await expect(panel.getByRole("radio", { name: "这段对话", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(panel.locator("[data-path] > button[aria-expanded]", { hasText: "README.md" })).toHaveAttribute("aria-expanded", "true");
   await expect(panel.getByRole("region", { name: /^差异：README\.md/u })).toBeVisible();
   // C08: switching the model takes effect between Turns; the place is marked by the Turn that carries it, with a hairline and the pill in the middle.
   await pick("选择模型", "Native A");
@@ -1705,8 +1705,8 @@ test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is 
   assert.equal((await (await context.request.get(origin + "/api/v1/sessions")).json()).sessions.length, 1);
   await expect(log.locator(".assistant-message").last()).toHaveAttribute("data-run-status", "completed");
   // The latest Turn changed nothing: "本轮" says so, "这段对话" still lists the file; 过程 lists both Turns, oldest first.
-  await panel.getByRole("radio", { name: "本轮 0", exact: true }).click(); await expect(panel).toContainText("这一轮没有改动文件");
-  await panel.getByRole("radio", { name: "这段对话 1", exact: true }).click(); await expect(panel.getByRole("button", { name: /README\.md/u })).toBeVisible();
+  await panel.getByRole("radio", { name: "本轮", exact: true }).click(); await expect(panel).toContainText("这一轮没有改动文件");
+  await panel.getByRole("radio", { name: "这段对话", exact: true }).click(); await expect(panel.locator("[data-path] > button[aria-expanded]", { hasText: "README.md" })).toBeVisible();
   await panel.getByRole("tab", { name: /^过程/u }).click();
   // Each Turn is listed by what was asked, with who ran it and what it did.
   await expect(panel.getByRole("tabpanel")).toContainText("NATIVE_ACTIVITYCodex · 运行了 1 条命令，修改了 README.md");

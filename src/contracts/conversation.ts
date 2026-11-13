@@ -294,6 +294,8 @@ export interface HeadJson {
   readonly taskBoardTold?: number;
   readonly taskEditsTold?: Readonly<Record<string, number>>;
   readonly parentWordsTold?: number;
+  /** The user archived the conversation (`SessionSnapshot.archived`). */
+  readonly archived?: true;
 }
 /** One row of `sessions` of a converted conversation. */
 export interface HeadRow {
@@ -446,9 +448,13 @@ export interface SessionListRow {
   readonly updatedSeq: number;
   readonly updatedAt: number;
   readonly activeRunId: RunId | null;
+  /** When the active Run was accepted (milliseconds since the epoch); absent when no Run is active. */
+  readonly activeSince?: number;
   readonly runCount: number;
   /** The conversation that delegated this one its work, when one did. */
   readonly parent?: import("./session.js").DelegationOrigin;
+  /** The user archived it (`SessionSnapshot.archived`). */
+  readonly archived?: true;
 }
 /** Opaque. A list reads on from it; there is no ceiling on how many conversations a list reaches. */
 export type SessionListCursor = string & { readonly __sessionListCursor: true };

@@ -23,8 +23,12 @@ export interface IndexRow {
   readonly lastSeq: number;
   readonly runCount: number;
   readonly activeRunId: RunId | null;
+  /** When the active Run was accepted; absent when none is active (or the cache was written before this was kept, until its file moves again). */
+  readonly activeSince?: number;
   /** The conversation that delegated this one its work, when one did. */
   readonly parent?: Conversation["delegation"];
+  /** The user archived it; a cache written before this was kept has no archived conversation, as no file then had one. */
+  readonly archived?: true;
   readonly kept: boolean;
   /** A Turn not finished or a switch pending: what recovery visits. */
   readonly unfinished: boolean;
@@ -50,8 +54,12 @@ export function indexRowOf(conversation: Conversation, file: string, facts: { re
     if (list.length >= SAMPLES_PER_ENTRY) continue;
     list.push({ harnessId: run.selection.harnessId, controlId: run.selection.controlId, preparingAt: timing.preparingAt, readyAt: timing.readyAt }); samples.set(key, list);
   }
+  // The active Run is the latest or near it: looked for from the end.
+  let activeSince: number | undefined;
+  if (conversation.activeRunId !== null) for (let index = conversation.runs.length - 1; index >= 0; index--) if (conversation.runs[index]!.id === conversation.activeRunId) { activeSince = conversation.runs[index]!.timing?.acceptedAt; break; }
   return { id: conversation.id, file, title: facts.title, status: conversation.status, workspace: conversation.configuration.workspace, selection: conversation.selection, updatedAt: facts.updatedAt,
-    lastSeq: conversation.lastSeq, runCount: conversation.runs.length, activeRunId: conversation.activeRunId, ...(conversation.delegation === undefined ? {} : { parent: conversation.delegation }), kept: conversation.retained !== undefined,
+    lastSeq: conversation.lastSeq, runCount: conversation.runs.length, activeRunId: conversation.activeRunId, ...(activeSince === undefined ? {} : { activeSince }),
+    ...(conversation.delegation === undefined ? {} : { parent: conversation.delegation }), ...(conversation.archived === true ? { archived: true as const } : {}), kept: conversation.retained !== undefined,
     unfinished: conversation.pendingSwitchId !== null || conversation.runs.some(run => !runFinished(run.status)),
     bindings: (conversation.nativeBindings ?? []).map(binding => ({ harnessId: binding.harnessId, controlId: binding.controlId, checkpoint: binding.checkpoint, status: binding.status, ...(binding.opensNew === true ? { opensNew: true as const } : {}) })),
     createKey: facts.createKey, handoffs: facts.handoffs, samples: [...samples.values()].flat(), size: facts.size, mtimeMs: facts.mtimeMs };

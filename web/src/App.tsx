@@ -30,7 +30,7 @@ import type { UninstallConsent } from "./components/UninstallDialog.js";
 import { ProvidersPage } from "./components/ProvidersPage.js";
 import type { ProviderProbeState } from "./components/ProvidersPage.js";
 import { byUrgency, InboxList, Sidebar } from "./components/Sidebar.js";
-import type { InboxSource, Page } from "./components/Sidebar.js";
+import type { InboxSource, Page, SessionActions } from "./components/Sidebar.js";
 import { SettingsPage } from "./components/SettingsPage.js";
 import { CapabilitiesPage } from "./components/CapabilitiesPage.js";
 import { CommandPalette, ShortcutsDialog, type PaletteCommand } from "./components/CommandPalette.js";
@@ -44,8 +44,8 @@ import { hiddenHarnesses, readPreferences, useMedia, useNow, usePreferences } fr
 import { endedAt, over, userStopped } from "./lib/protocol/runs.js";
 import { finished } from "./lib/turn.js";
 import { cn } from "./lib/cn.js";
-import { inScratch } from "./lib/format.js";
-import { markSeen } from "./lib/seen.js";
+import { inScratch, shortTitle } from "./lib/format.js";
+import { markSeen, unseenNow } from "./lib/seen.js";
 import { summaryLine } from "../../src/contracts/web.js";
 import { backgroundOutcome, enableNotifications, markNotificationAsked, notificationsOfferable, notifyTurnEnded } from "./lib/notify.js";
 import { useToast } from "./ui/overlay.js";
@@ -460,8 +460,11 @@ export function App() {
     setState(current => {
       if (!current) return current;
       // Titled as the Gateway titles it: nothing reads the state again to correct it (ADR-050).
-      const summary = { id: value.id, title: value.title,
+      const known = current.sessions.find(item => item.id === value.id);
+      const summary: SessionSummary = { id: value.id, title: value.title,
         status: value.status, workspace: value.workspace, selection: value.selection, updatedSeq: value.lastSeq, activeRunId: value.activeRunId, ...(value.parent === undefined ? {} : { parent: value.parent }),
+        // When it last moved and since when its Turn runs, as its head says; a head that does not say keeps what the list knew.
+        updatedAt: value.updatedAt ?? known?.updatedAt ?? 0, ...(value.activeRunId === null ? {} : (since => since === undefined ? {} : { activeSince: since })(value.activeSince ?? known?.activeSince)), ...(value.archived === true ? { archived: true as const } : {}),
         // The list's second line, as the Gateway makes it for the others: the step in progress while a Turn goes on, the wrap-up's first sentence after.
         ...(line => line ? { line: summaryLine(line) } : {})(value.activeRunId !== null ? (value.plan?.runId === value.activeRunId ? value.plan.steps.find(step => step.status === "in_progress")?.text : undefined) : value.recap?.summary) };
       return { ...current, sessions: current.sessions.some(item => item.id === value.id)
@@ -738,6 +741,32 @@ export function App() {
    * ⌥⌘↓: opens the next conversation waiting for the user, in the inbox's order (most urgent first), after the one open
    * now; with nothing waiting, or only the open one, a short note says so.
    */
+  /**
+   * What a conversation's row, and the open conversation's header, do to it: another title, put away or brought back. The list has the Gateway's answer at once;
+   * putting one away says so with the way back for a few seconds, and asks nothing first (after T3 Code).
+   */
+  const changeSession = useCallback((id: string, change: { readonly title?: string; readonly archived?: boolean }): Promise<void> => {
+    // A change this page makes itself is not news to it: a conversation that was read stays read, though the change moved it on.
+    const before = state?.sessions.find(item => item.id === id), read = before !== undefined && !unseenNow(before);
+    return api.updateSession(id, change).then(row => { if (read) markSeen([row]); setState(current => current ? { ...current, sessions: current.sessions.map(item => item.id === row.id ? row : item) } : current); });
+  }, [api, state?.sessions]);
+  const sessionActions = useMemo<SessionActions>(() => ({
+    rename: (id, title) => { changeSession(id, { title }).catch((failure: unknown) => toast.show({ title: "没有改成", description: errorMessage(failure) })); },
+    archive: (id, archived) => {
+      changeSession(id, { archived }).then(() => {
+        if (!archived) return;
+        const note = toast.show({ title: "已归档", action: { label: "撤销", onClick: () => { toast.close(note); changeSession(id, { archived: false }).catch(() => undefined); } }, timeout: 5000 });
+      }, (failure: unknown) => toast.show({ title: archived ? "没有归档" : "没有取消归档", description: errorMessage(failure) }));
+    },
+    reveal: id => { api.reveal(id).catch((failure: unknown) => toast.show({ title: "无法在访达中显示", description: errorMessage(failure) })); },
+  }), [api, changeSession, toast]);
+  /** Opens the conversation listed before or after the open one; from another page, or with none open, the newest. The ends of the list are where it stops. */
+  const stepSession = (by: -1 | 1) => {
+    const list = state?.sessions ?? [];
+    if (list.length === 0) return;
+    const here = page === "chat" ? list.findIndex(item => item.id === sessionIdRef.current) : -1, next = here < 0 ? list[0] : list[here + by];
+    if (next !== undefined && next.id !== sessionIdRef.current) selectSession(next.id);
+  };
   const nextWaiting = () => {
     setPalette(false); setShortcuts(false); setInboxOpen(false);
     const order: readonly string[] = [...new Set([...liveItems(attention?.items ?? [], Date.now())].sort(byUrgency).map(item => String(item.sessionId)))];
@@ -770,7 +799,7 @@ export function App() {
     (document.querySelector<HTMLElement>(preferences.sidebar ? "aside[aria-label='主导航'] button[aria-label='收起侧栏']" : "#main-content button[aria-label='展开侧栏']")
       ?? document.getElementById("main-content"))?.focus();
   }, [preferences.sidebar]);
-  // The application's shortcuts (ADR-054 §5): ⇧⌘O, ⌘K, ⌘/, ⌥⌘↓ and ⌘B. The composer, approval dock and details panel
+  // The application's shortcuts (ADR-054 §5): ⇧⌘O, ⌘K, ⌘/, ⌥⌘↓, ⌥⌘[, ⌥⌘] and ⌘B. The composer, approval dock and details panel
   // handle ⌘J, ⌘., ⌘\, ⏎, esc and ↑ themselves. An input method's composition never triggers one, and ⌘N, ⌘T and ⌘W
   // stay the browser's.
   useEffect(() => {
@@ -781,6 +810,8 @@ export function App() {
       if (!event.shiftKey && !event.altKey && key === "k") { event.preventDefault(); if (!narrow) setInboxOpen(false); if (palette) setPalette(false); else openLayer(() => setPalette(true)); return; }
       if (!event.altKey && event.key === "/") { event.preventDefault(); if (!narrow) setInboxOpen(false); if (shortcuts) setShortcuts(false); else openLayer(() => setShortcuts(true)); return; }
       if (event.altKey && !event.shiftKey && event.key === "ArrowDown") { event.preventDefault(); nextWaiting(); return; }
+      // ⌥⌘[ and ⌥⌘]: the conversation before and after the open one, in the list's order (⇧⌘[ and ⇧⌘] are the browser's own, for its tabs). Read by the key's place: ⌥ changes what it types.
+      if (event.altKey && !event.shiftKey && (event.code === "BracketLeft" || event.code === "BracketRight")) { event.preventDefault(); stepSession(event.code === "BracketLeft" ? -1 : 1); return; }
       if (!event.shiftKey && !event.altKey && key === "b" && !(event.target instanceof Element && event.target.closest(SHORTCUT_TARGETS))) { event.preventDefault(); if (narrow) setSidebarOpen(value => !value); else showSidebar(!preferences.sidebar); return; }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
@@ -1193,7 +1224,7 @@ export function App() {
           if (current === null) return current;
           const fresh = new Map(page.sessions.map(row => [row.id, row]));
           let changed = false;
-          const sessions = current.sessions.map(row => { const now = fresh.get(row.id); if (now === undefined || now.updatedSeq < row.updatedSeq || (now.updatedSeq === row.updatedSeq && now.activeRunId === row.activeRunId && now.title === row.title)) return row; changed = true; return now; });
+          const sessions = current.sessions.map(row => { const now = fresh.get(row.id); if (now === undefined || now.updatedSeq < row.updatedSeq || (now.updatedSeq === row.updatedSeq && now.activeRunId === row.activeRunId && now.title === row.title && now.archived === row.archived)) return row; changed = true; return now; });
           const added = page.sessions.filter(row => !current.sessions.some(known => known.id === row.id));
           return changed || added.length ? { ...current, sessions: [...added, ...sessions] } : current;
         });
@@ -1203,6 +1234,21 @@ export function App() {
     if (working) timer = setTimeout(() => void read(), 2_500); else void read();
     return () => { stopped = true; if (timer !== null) clearTimeout(timer); controller.abort(); };
   }, [working, api]);
+  // A conversation that is not the one shown, whose Turn ended while the page is in sight, says so in a corner with the way to it (after T3 Code). One that was
+  // delegated its work says nothing here: the conversation that delegated it is told, and shows it. Out of sight, the system notification is what speaks.
+  const wasActive = useRef<ReadonlyMap<string, string | null> | null>(null);
+  useEffect(() => {
+    const rows = state?.sessions;
+    if (rows === undefined) return;
+    const before = wasActive.current;
+    wasActive.current = new Map(rows.map(row => [row.id, row.activeRunId]));
+    if (before === null || document.visibilityState === "hidden") return;
+    for (const row of rows) {
+      const ran = before.get(row.id);
+      if (ran === undefined || ran === null || row.activeRunId !== null || row.parent !== undefined || (page === "chat" && row.id === sessionIdRef.current)) continue;
+      const id = toast.show({ title: harnessName(row.selection.harnessId) + " 这一轮结束了", description: shortTitle(row.title || "新对话"), action: { label: "打开", onClick: () => { toast.close(id); selectSession(row.id); } }, timeout: 6000 });
+    }
+  }, [state?.sessions]);
   // The folders of earlier conversations, newest first, then the Gateway's own; those the Gateway made for a 临时对话 are not projects.
   const recentFolders = useMemo(() => [...new Set([...(state?.sessions ?? []).map(item => item.workspace), state?.workspace ?? ""].filter(path => path !== "" && !inScratch(path, state?.scratchRoot)))].slice(0, 8), [state?.sessions, state?.workspace, state?.scratchRoot]);
   const failed = useMemo(() => new Set((state?.sessions ?? []).flatMap(item => {
@@ -1261,9 +1307,9 @@ export function App() {
   const sidebar = <Sidebar providerManagement={state.providerManagement !== false} page={shown} sessions={state.sessions} harnesses={state.harnesses} currentId={sessionId} scratchRoot={state.scratchRoot}
     interactionBusy={mutation !== null} activeJobs={state.jobs.filter(installationActive).length} updates={state.harnesses.filter(harness => !hidden.has(harness.id) && hasUpdate(harness)).length}
     failed={failed} connected={connectionError === null && managementConnectionError === null && !attentionDown} inbox={inbox} inboxOpen={inboxOpen && !narrow} onInboxOpenChange={setInboxOpen}
-    more={state.sessionsNext != null} onMore={() => void loadMoreSessions()} onCollapse={() => showSidebar(false)} {...(narrow ? { onClose: () => setSidebarOpen(false), onInbox: openInbox } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => openLayer(() => setPalette(true))}/>;
+    more={state.sessionsNext != null} onMore={() => void loadMoreSessions()} actions={sessionActions} onCollapse={() => showSidebar(false)} {...(narrow ? { onClose: () => setSidebarOpen(false), onInbox: openInbox } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => openLayer(() => setPalette(true))}/>;
   const shell = { onMenu: () => setSidebarOpen(value => !value), sidebarHidden: !preferences.sidebar, onExpandSidebar: () => showSidebar(true), onChat: () => navigate("chat") };
-  return <TipProvider delay={500}><div className="app-shell flex h-dvh overflow-hidden bg-app text-fg" data-page={shown}>
+  return <TipProvider delay={500}><div className="app-shell relative flex h-dvh overflow-hidden bg-app text-fg" data-page={shown}>
     <WaitingTitle items={attentionItems}/>
     <a className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[80] focus:rounded-control focus:bg-surface focus:px-3 focus:py-2 focus:text-ui-sm focus:shadow-pop" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a>
     {narrow ? <Layer open={sidebarOpen} onOpenChange={setSidebarOpen} onClosed={layerClosed} title="主导航" className="drawer-left-pop">{sidebar}</Layer>
@@ -1279,7 +1325,10 @@ export function App() {
           catch(failure){ setError(errorMessage(failure)); } }} onPermission={(permission,option,input)=>{ if(!sessionId||!startOperation("permission"))return; void api.decidePermission(sessionId,permission,option,requestKey(),input).then(()=>api.session(sessionId)).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={refreshNativeModels} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft}
         messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} hiddenHarnesses={hidden} readiness={state.readiness} rememberedChoice={rememberedChoice} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError}
-        onRetryConnection={() => setStreamAttempt(value => value + 1)} onLoadOlder={readOlder} reads={turnReads} {...(sessionId === null ? {} : { onLoadChanges: (before: string | undefined, signal: AbortSignal) => api.changes(sessionId, before, undefined, signal) })} onDraft={changeSelection} place={{ scratch, workspace }} onPlace={choosePlace} recentFolders={recentFolders} onChooseFolder={start => api.chooseFolder(start)} scratchRoot={state.scratchRoot} delegations={delegations} onLoadDelegation={loadDelegation} onDelegate={delegate} taskBoard={taskBoard} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
+        onRetryConnection={() => setStreamAttempt(value => value + 1)} onLoadOlder={readOlder} reads={turnReads} {...(sessionId === null ? {} : { onLoadChanges: (before: string | undefined, signal: AbortSignal) => api.changes(sessionId, before, undefined, signal),
+          onRename: (title: string) => changeSession(sessionId, { title }).catch((failure: unknown) => { toast.show({ title: "没有改成", description: errorMessage(failure) }); throw failure; }),
+          onReveal: (path?: string) => { api.reveal(sessionId, path).catch((failure: unknown) => toast.show({ title: "无法在访达中显示", description: errorMessage(failure) })); },
+          onLoadWorkspace: (signal: AbortSignal) => api.workspace(sessionId, signal) })} onDraft={changeSelection} place={{ scratch, workspace }} onPlace={choosePlace} recentFolders={recentFolders} onChooseFolder={start => api.chooseFolder(start)} scratchRoot={state.scratchRoot} delegations={delegations} onLoadDelegation={loadDelegation} onDelegate={delegate} taskBoard={taskBoard} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
         sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued}
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
         onImportNative={importNative} focusOnOpen={sessionId !== null && openedFromPage === sessionId} onOpenFocused={() => setOpenedFromPage(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}

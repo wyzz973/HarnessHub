@@ -1355,3 +1355,37 @@ test("INV-06/INV-28 ADR-047: a window its timer commits is published after its c
   assert.deepEqual(chunks, ["w1"]);
   assert.equal(timers.pending, 0);
 });
+
+test("a name the user gave and an archive mark are one commit each, survive a restart from the files, and a Turn accepted in an archived conversation takes the mark off", async t => {
+  const f = await fixture(t), factory = new ControlledFactory([controlled(), controlled()]), told: string[] = [];
+  const app = runtime(f, factory, event => { if (event.type === "session.renamed" || event.type === "session.archived") told.push(event.type + " " + JSON.stringify(event.data)); });
+  const state = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  // Named before its first Turn, with line breaks and spaces around: the name is kept as given, and the first message does not replace it.
+  app.updateSession(state.id, { title: "  Plan\n the  launch \r\n" });
+  assert.equal(f.store.head(state.id).title, "Plan the  launch");
+  assert.throws(() => app.updateSession(state.id, { title: " \n " }), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT");
+  assert.throws(() => app.updateSession(state.id, {}), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT");
+  app.updateSession(state.id, { archived: true });
+  assert.equal(f.store.get(state.id).archived, true); assert.equal(f.store.head(state.id).head.archived, true);
+  assert.equal(f.store.list().rows.find(row => row.id === state.id)?.archived, true);
+  // A change that changes nothing commits nothing.
+  const version = f.store.head(state.id).version;
+  app.updateSession(state.id, { archived: true, title: "Plan the  launch" }); assert.equal(f.store.head(state.id).version, version);
+  // A Turn accepted in it takes the mark off in the commit that accepts it; the name stays.
+  app.send(state.id, "the first question", "first");
+  assert.equal(f.store.get(state.id).archived, undefined); assert.equal(f.store.list().rows.find(row => row.id === state.id)?.archived, undefined);
+  await app.wait(state.id);
+  assert.equal(f.store.head(state.id).title, "Plan the  launch");
+  app.updateSession(state.id, { title: "Launch plan", archived: true });
+  assert.deepEqual(told, ['session.renamed {"title":"Plan the  launch"}', 'session.archived {"archived":true}', 'session.renamed {"title":"Launch plan"}', 'session.archived {"archived":true}']);
+  // Read again from the files by a new owner: the name and the mark are there, in the head, the conversation and the list.
+  await app.close(); f.store.close();
+  const reopened = appStore(join(f.root, "data")); f.stores.push(reopened);
+  assert.equal(reopened.head(state.id).title, "Launch plan"); assert.equal(reopened.get(state.id).archived, true); assert.equal(reopened.get(state.id).userTitle, "Launch plan");
+  const row = reopened.list().rows.find(entry => entry.id === state.id);
+  assert.deepEqual([row?.title, row?.archived], ["Launch plan", true]);
+  // A second Turn, under the new owner: the mark comes off and the name the user gave is still the title.
+  const next = runtime({ ...f, store: reopened }, factory, () => {}, "restart-");
+  next.send(state.id, "a second question", "second"); await next.wait(state.id);
+  assert.equal(reopened.get(state.id).archived, undefined); assert.equal(reopened.head(state.id).title, "Launch plan");
+});

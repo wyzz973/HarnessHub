@@ -311,7 +311,9 @@ export function decodeHead(value: unknown): SessionHeadView {
   return { id: str(row.id, "a conversation id"), version: nat(row.version, "version"), lastSeq: nat(row.lastSeq, "lastSeq"), epoch: nat(row.epoch, "epoch"), status: pick(row.status, ["open", "closed", "blocked"] as const, "a conversation's state"),
     workspace: str(row.workspace, "a workspace"), selection: selection(row.selection), activeRunId: nullable(row.activeRunId, item => str(item, "a Run")), pendingSwitchId: nullable(row.pendingSwitchId, item => str(item, "a switch")),
     ...(permissions === undefined ? {} : { permissions }), ...(states === undefined ? {} : { nativeStates: states }), ...(quoted === undefined ? {} : { origin: quoted }), ...(parent === undefined ? {} : { parent }), ...(told === undefined ? {} : { delegationsTold: told }), ...(queue === undefined ? {} : { queue }), ...(retention === undefined ? {} : { retention }),
-    title: str(row.title, "a title"), runCount: nat(row.runCount, "runCount"), ...(last === undefined ? {} : { lastSwitch: last }), facts: sessionFacts(row.facts),
+    title: str(row.title, "a title"), runCount: nat(row.runCount, "runCount"), ...(row.archived === true ? { archived: true as const } : {}),
+    ...(row.updatedAt === undefined ? {} : { updatedAt: amount(row.updatedAt, "updatedAt") }), ...(row.activeSince === undefined || row.activeRunId === null ? {} : { activeSince: amount(row.activeSince, "activeSince") }),
+    ...(last === undefined ? {} : { lastSwitch: last }), facts: sessionFacts(row.facts),
     ...(plan === undefined ? {} : { plan }), ...(recap === undefined ? {} : { recap }) };
 }
 
@@ -339,9 +341,13 @@ export function decodeItemTextView(value: unknown): TextRange {
 export interface ClientSessionList { readonly sessions: readonly SessionSummary[]; readonly next: string | null }
 export function decodeSessionListView(value: unknown): ClientSessionList {
   const row = rec(value, "a list of conversations");
-  return { sessions: many(row.sessions, item => { const made = rec(item, "a conversation"); return { id: str(made.id, "an id"), title: str(made.title, "a title"), status: pick(made.status, ["open", "closed", "blocked"] as const, "a state"), workspace: str(made.workspace, "a workspace"),
-    selection: selection(made.selection), updatedSeq: nat(made.updatedSeq, "updatedSeq"), activeRunId: nullable(made.activeRunId, entry => str(entry, "a Run")), ...(typeof made.line === "string" && made.line !== "" ? { line: made.line } : {}),
-    ...(made.parent === undefined ? {} : { parent: (parent => ({ sessionId: str(parent.sessionId, "a conversation id"), afterRunId: nullable(parent.afterRunId, entry => str(entry, "a Run")), ...(parent.by === "harness" ? { by: "harness" as const } : {}) }))(rec(made.parent, "a delegating conversation")) }) }; }, "conversations"), next: nullable(row.next, item => str(item, "a cursor")) };
+  return { sessions: many(row.sessions, item => { const made = rec(item, "a conversation"), activeRunId = nullable(made.activeRunId, entry => str(entry, "a Run")), activeSince = maybe(made.activeSince, entry => amount(entry, "activeSince"));
+    // A row without a time (a Gateway from before 2026-11-14) is the oldest, not a failure.
+    return { id: str(made.id, "an id"), title: str(made.title, "a title"), status: pick(made.status, ["open", "closed", "blocked"] as const, "a state"), workspace: str(made.workspace, "a workspace"),
+    selection: selection(made.selection), updatedSeq: nat(made.updatedSeq, "updatedSeq"), updatedAt: maybe(made.updatedAt, entry => amount(entry, "updatedAt")) ?? 0, activeRunId,
+    ...(activeRunId === null || activeSince === undefined ? {} : { activeSince }), ...(typeof made.line === "string" && made.line !== "" ? { line: made.line } : {}),
+    ...(made.parent === undefined ? {} : { parent: (parent => ({ sessionId: str(parent.sessionId, "a conversation id"), afterRunId: nullable(parent.afterRunId, entry => str(entry, "a Run")), ...(parent.by === "harness" ? { by: "harness" as const } : {}) }))(rec(made.parent, "a delegating conversation")) }),
+    ...(made.archived === true ? { archived: true as const } : {}) }; }, "conversations"), next: nullable(row.next, item => str(item, "a cursor")) };
 }
 
 /** `GET …/changes?before=&limit=`: the changes of the whole conversation that have a stored detail, newest first; the first page also names the newest plan. */

@@ -11,10 +11,20 @@ import type { DeliveryEvidence, DeliveryStatus, EvidenceClass, RelayAttention, R
  * folded, at most 80 characters. The page names a conversation it opens itself this way, with no state read to correct it.
  */
 export function conversationTitle(conversation: { readonly messages: readonly { readonly role: string; readonly text: string }[]; readonly origin?: SessionOrigin | undefined }): string {
-  const first = conversation.messages.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
+  const first = titleWords(conversation.messages.find(message => message.role === "user")?.text);
   const origin = conversation.origin, quoted = origin?.history.find(message => message.role === "user")?.text.replace(/\s+/gu, " ").trim();
   const inherited = origin?.kind === "import" ? "接续 · " + (origin.title ?? quoted ?? origin.harnessId) : quoted ? "分支 · " + quoted : null;
   return first ? cutTitle(first) : inherited ? cutTitle(inherited) : "新对话";
+}
+/**
+ * The words a title is made of (2026-11-14): the message's first line when it says enough to name the conversation — a sentence of its own above a list or pasted
+ * material, without the colon that led to them — else the whole message, spaces folded. A title is a name, and the user may give another (`SessionChange`).
+ */
+function titleWords(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined;
+  const folded = text.replace(/\s+/gu, " ").trim();
+  const line = text.split(/\r?\n/u).map(part => part.replace(/\s+/gu, " ").trim()).find(part => part !== "")?.replace(/[：:，,、；;]+$/u, "").trim();
+  return line !== undefined && line !== folded && [...line].length >= 6 ? line : folded;
 }
 /**
  * At most 80 UTF-16 units, never ending in half a character, and with no half character anywhere: a title is stored in a UTF-8 column that keeps U+FFFD in place of half a pair,
@@ -118,7 +128,11 @@ export interface SessionSummary {
   readonly workspace: string;
   readonly selection: HarnessSelection;
   readonly updatedSeq: number;
+  /** When the conversation's latest commit was made (milliseconds since the epoch): what the list is ordered by, newest first. A rename or an archive is a commit too. */
+  readonly updatedAt: number;
   readonly activeRunId: string | null;
+  /** When the Turn in progress (`activeRunId`) was accepted, in milliseconds since the epoch; absent when none is in progress. */
+  readonly activeSince?: number;
   /** The conversation that delegated this one its work (2026-11-13), and the Turn of it the work was handed after (null: before any finished Turn). */
   readonly parent?: DelegationParent;
   /**
@@ -126,7 +140,19 @@ export interface SessionSummary {
    * sentence of its wrap-up. Absent when the Turn gave neither.
    */
   readonly line?: string;
+  /** The user archived it (2026-11-14). The list still carries it; it opens and takes messages as any other, and a new Turn accepted in it takes the mark off. */
+  readonly archived?: true;
 }
+/**
+ * `PATCH /api/v1/sessions/:id`: the user renames the conversation or archives it (at least one of the two). A title is trimmed and its line breaks made spaces; an empty
+ * one is refused. The answer is the conversation's `SessionSummary` after the change, which also reaches every page that has it open as a commit (its head).
+ */
+export interface SessionChange { readonly title?: string; readonly archived?: boolean }
+/**
+ * `GET /api/v1/sessions/:id/workspace`: the conversation's workspace and, when it is a Git repository or inside one, where that stands: the current branch (null on a
+ * detached head) and how many entries `git status --porcelain` lists (changed, staged and untracked files). Read-only; a Git that fails or is slow leaves `git` out.
+ */
+export interface WorkspaceView { readonly path: string; readonly git?: { readonly branch: string | null; readonly dirty: number } }
 /** The first sentence of a wrap-up, or the step in progress of a task list, cut to what one line of a list holds. */
 export function summaryLine(text: string): string {
   const flat = text.replace(/\s+/gu, " ").trim(), end = /[。！？!?]|\.(?=\s|$)/u.exec(flat);
@@ -518,6 +544,12 @@ export interface SessionFacts {
 export interface SessionHeadView extends Omit<SessionView, "messages" | "runs" | "switches"> {
   readonly title: string;
   readonly runCount: number;
+  /** The user archived the conversation (`SessionSummary.archived`). */
+  readonly archived?: true;
+  /** When the commit this head is of was made (`SessionSummary.updatedAt`); this Gateway always sends it. */
+  readonly updatedAt?: number;
+  /** When the Turn in progress was accepted (`SessionSummary.activeSince`); absent when none is. */
+  readonly activeSince?: number;
   /**
    * The conversation's latest switch, whatever its state: the one asked for and not yet effective (`pendingSwitchId` names it), or the one that failed last, which the page
    * says. The page needs these two, not the list of switches (a Turn's `switch` line is read from its Run).
