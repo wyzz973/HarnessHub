@@ -10,5 +10,6 @@ export const claudeFlavor: HarnessFlavor = {
   nativePlan: true,
   // claude-agent-acp 0.99.1 acp-agent.js createSession: `mcpServers` go to the SDK as the session's own servers; `_meta.systemPrompt`
   // as an object keeps Claude Code's preset and adds `append`.
-  capabilities: { sessionMcp: "acp", systemPrompt: "acp-meta", planTool: "hub", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native" },
+  // The record is read as files with its own file tools (2026-11-13; verified on the installed program: it read the directory and answered from it).
+  capabilities: { sessionMcp: "acp", systemPrompt: "acp-meta", planTool: "hub", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native", record: "files" },
 };

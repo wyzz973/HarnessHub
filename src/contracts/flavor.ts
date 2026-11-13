@@ -74,6 +74,11 @@ export interface FlavorCapabilities {
   readonly resume?: "native" | "none";
   readonly fork?: "native" | "none";
   readonly attachments?: "native" | "pointer" | "none";
+  /**
+   * How the Harness reads the record of its task (2026-11-13): with its own file tools on the directory the Hub keeps (`files`: nothing to learn, no tool definition to pay
+   * for), or with the Hub's reading tools (`tools`, the default: hub_turns, hub_read_turn, hub_search, hub_task, hub_board, or the conversation's command).
+   */
+  readonly record?: "files" | "tools";
 }
 export interface HarnessFlavor {
   readonly harnessId: string;

@@ -19,7 +19,9 @@ const KIND_OF_FAMILY: Readonly<Record<string, RequestKind>> = { read: "read", se
  */
 export interface RequestCall { readonly type: string; readonly title?: string; readonly name?: string; readonly hub?: boolean;
   /** The command line of a call that runs one. */
-  readonly command?: string }
+  readonly command?: string;
+  /** The path of a call that reads or changes one file. */
+  readonly path?: string }
 /**
  * Whether a request is about one of the Hub's own tools (they read this conversation back or tell the Hub how the Turn goes, and touch
  * nothing of the user's): the Hub allows those itself at every level ("plan" included), so that a Harness that asks about MCP tools does
@@ -29,6 +31,35 @@ function aboutHubTool(title: string, call: RequestCall | undefined): boolean {
   if (call?.hub === true) return true;
   // The same tools as a command of the conversation (HubToolsEntry `cli`): a line that is that command's call and nothing else.
   return [title, call?.name, call?.title, call?.command].some(text => text !== undefined && text.trim() !== "" && (isHubToolCall({ title: text }) || hubCommandOnly(text) !== null));
+}
+const RECORD_VERBS = new Set(["cd", "cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "ls", "find", "wc", "nl", "sort", "uniq", "cut", "echo", "printf"]);
+/**
+ * Whether a command only reads the record's directory (2026-11-13): reading commands alone (one after another, or one into the next), with nothing else a shell would
+ * do, at least one path inside the directory and no path anywhere else. What a Harness runs to read what the Hub told it to read is not something to ask the user about.
+ */
+export function readsRecordOnly(command: string, dir: string): boolean {
+  // Errors thrown away, or told with the output, change nothing of what is read.
+  const line = command.trim().replace(/\s2>\s?\/dev\/null/gu, "").replace(/\s2>&1/gu, "");
+  if (line === "" || /[`<>\n]|\$\(|\|\||(^|[^&])&($|[^&])/u.test(line)) return false;
+  const root = dir.endsWith("/") ? dir : dir + "/", paths: string[] = [];
+  for (const stage of line.split(/;|&&|\|/u)) {
+    const words = stage.trim().split(/\s+/u).map(word => word.replace(/^['"]|['"]$/gu, "")).filter(Boolean);
+    if (words.length === 0) continue;
+    const verb = words[0]!.split("/").pop()!;
+    if (!RECORD_VERBS.has(verb) || (verb === "find" && words.some(word => /^-(delete|exec|execdir|ok|okdir|fprint|fprintf|fls)$/u.test(word)))) return false;
+    // What an echo says between two reads names no file.
+    if (verb !== "echo" && verb !== "printf") paths.push(...words.slice(1).filter(word => word.startsWith("/") || word.startsWith("~") || word.includes("..")));
+  }
+  return paths.length > 0 && paths.every(path => (path + "/").startsWith(root) && !path.includes(".."));
+}
+/**
+ * Whether a request is about reading the record's directory: a command that only reads it, or any other call that names a path inside it and is not a change.
+ * The Hub allows those itself at every level, as it does its own tools.
+ */
+function aboutRecord(title: string, call: RequestCall | undefined, kind: RequestKind, dir: string | undefined): boolean {
+  if (dir === undefined || dir === "" || kind === "edit" || kind === "network") return false;
+  if (kind === "execute") return [call?.command, title, call?.title].some(text => text !== undefined && readsRecordOnly(text.replace(/^[`$\s]+|`+$/gu, ""), dir));
+  return [title, call?.title, call?.name, call?.path].some(text => text !== undefined && text.includes(dir));
 }
 function kindOfTitle(title: string): RequestKind {
   switch (subjectOf(title)) {
@@ -55,8 +86,10 @@ export function requestKind(title: string, toolKinds: readonly (string | undefin
   const byTitle = kindOfTitle(title);
   return byTitle !== "other" || call === undefined ? byTitle : kindOfCall(call);
 }
-export function policyDecision(flavor: HarnessFlavor | undefined, level: PermissionLevel | undefined, request: { readonly title: string; readonly options: readonly { readonly id: string; readonly name: string }[]; readonly question: boolean }, toolKinds: readonly (string | undefined)[], call?: RequestCall): PolicyDecision {
-  const hub = !request.question && aboutHubTool(request.title, call), kind = hub ? "read" : requestKind(request.title, toolKinds, call);
+export function policyDecision(flavor: HarnessFlavor | undefined, level: PermissionLevel | undefined, request: { readonly title: string; readonly options: readonly { readonly id: string; readonly name: string }[]; readonly question: boolean }, toolKinds: readonly (string | undefined)[], call?: RequestCall, recordDir?: string): PolicyDecision {
+  const own = !request.question && aboutHubTool(request.title, call), asked = own ? "read" : requestKind(request.title, toolKinds, call);
+  // The record's directory is the Hub's own too: what only reads it is allowed as the Hub's tools are.
+  const hub = own || (!request.question && aboutRecord(request.title, call, asked, recordDir)), kind = hub ? "read" : asked;
   if (request.question || level === undefined) return { answer: "ask", option: null, kind };
   const answer = hub ? "allow" : (flavor?.permission[level].policy ?? HUB_POLICIES[level])[kind];
   if (answer === "ask") return { answer, option: null, kind };

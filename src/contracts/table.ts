@@ -82,10 +82,29 @@ export function hubCommandInstructions(command: string, progress: boolean): stri
  * through the Hub's tool, not through that Harness's own command line (some Harnesses carry skills that start one), so that it runs as a
  * conversation the user sees and can take up.
  */
-export const HUB_DELEGATION_INSTRUCTIONS = "要把一段活交给这台电脑上的另一个 Harness（Codex、Claude Code、OpenCode、Hermes 等）时，调用 harnesshub 的 hub_delegate，不要自己去启动它们的命令行："
+const DELEGATE_WORDS = "要把一段活交给这台电脑上的另一个 Harness（Codex、Claude Code、OpenCode、Hermes 等）时，调用 harnesshub 的 hub_delegate，不要自己去启动它们的命令行："
   + "这样它在自己的对话里做，用户在界面里看得到、接得上。需要它的结果时用 hub_delegations（可带 wait 等它做完）。\n"
   + "用户说了要一直遵守的要求（“以后都……”“记住……”）、定下了别人也得照办的决定，或者任务的目标定了、变了，就调用 hub_remember 记到任务板上（一条一句话）："
-  + "这件任务里别的 Harness 接手或被委派时会先看到它，不用用户再说一遍。用户让你这一轮什么都别做、只回一句话时，记到任务板这一步也照做。不确定现在还算数的约束有哪些时，用 hub_board 看。";
+  + "这件任务里别的 Harness 接手或被委派时会先看到它，不用用户再说一遍。用户让你这一轮什么都别做、只回一句话时，记到任务板这一步也照做。";
+export const HUB_DELEGATION_INSTRUCTIONS = DELEGATE_WORDS + "不确定现在还算数的约束有哪些时，用 hub_board 看。";
+/**
+ * Whether a path (or a command line that names one) is inside the record's directory as the Hub lays it out (`context/<task>/…`, 2026-11-13): what a Harness
+ * reads there is the conversation's own record, and the page says so in place of a file's name.
+ */
+export function inRecord(text: string): boolean { return /\/context\/c-[0-9a-f]{6}(?:\/|$|[\s'"`;|&)])/u.test(text); }
+/** The environment variable that tells the Hub's tool server its session's Harness reads the record as files: the server then leaves its reading tools out. */
+export const TABLE_RECORD_ENV = "HARNESSHUB_RECORD";
+/**
+ * What a session whose Harness reads the record as files is told (2026-11-13): where the directory is, what is in it, and to read it with its own tools. `dir` is the
+ * task's directory, `self` the name of the conversation's own directory inside it.
+ */
+export function hubRecordInstructions(dir: string, self: string): string {
+  return DELEGATE_WORDS + "不确定现在还算数的约束有哪些时，看记录目录里的 board.md。\n"
+    + "这件任务的完整记录在一个只读目录里：" + dir + " 。你这段对话是其中的 " + self + "/ ：" + self + "/index.md 每一轮一条，" + self + "/turns/NNN.md 是第 N 轮的全文（用户原话、回复、每次工具调用的输入和完整输出、改动的文件）。"
+    + "task.md 列着这件任务里的每段对话（各自在做什么、改了哪些文件），每段对话一个目录；board.md 是任务板。"
+    + "需要更早的细节、别的 Harness 做过什么时，用你自己读文件、搜文件的工具到那里查（比如先 grep），不要猜，也不要改那个目录。"
+    + "只在这个目录里面找：它的上级目录里是别的任务的记录，和这件事无关，不要去翻。";
+}
 
 /** What the tool process answers when it was not started inside a Hub session. */
 export const TABLE_NOT_IN_SESSION = "Not inside a HarnessHub conversation: there is nothing to read here.";

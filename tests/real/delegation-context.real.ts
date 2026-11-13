@@ -10,7 +10,7 @@ import { application as composeApplication } from "../../src/cli/session-applica
 import { PERMISSION_KEY } from "../../src/contracts/flavor.js";
 import { WORK_TYPES, type ProtocolItem } from "../../src/contracts/protocol.js";
 import type { SessionId } from "../../src/contracts/session.js";
-import { TABLE_COMMAND_DIR, TABLE_PROGRESS_TOOLS } from "../../src/contracts/table.js";
+import { TABLE_COMMAND_DIR, TABLE_PROGRESS_TOOLS, inRecord } from "../../src/contracts/table.js";
 import type { HarnessView, ItemView, RunItemsPageView, SessionListView, SessionSummary, SessionViewV14 } from "../../src/contracts/web.js";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { captureNativeEnvironment } from "../../src/infrastructure/session/native-environment.js";
@@ -88,7 +88,17 @@ function need(turn: Turn): Turn {
  */
 const META_TOOLS = new Set(["ToolSearch"]);
 const informing = (turn: Turn): readonly Work[] => turn.work.filter(work => !work.progress && !(work.type === "tool" && META_TOOLS.has(work.label)));
-const listed = (works: readonly Work[]): string => works.map(work => work.type + (work.label ? " " + clip(work.label, 60) : "")).join("；");
+/**
+ * Whether a command line is the conversation's own Hub command and nothing else (a Harness that has the Hub's tools as a command, HubToolsEntry `cli`): each part of it
+ * calls that command, a variable that holds its path, or says a line between two calls.
+ */
+function commandOnly(line: string): boolean {
+  const tool = new RegExp("/" + TABLE_COMMAND_DIR + "/[0-9a-f]{16}/hub(\\s|;|$)", "u");
+  if (!tool.test(line) || /[`<>]|\$\(/u.test(line)) return false;
+  return line.split(/;|&&|\|/u).map(part => part.trim()).filter(Boolean).every(part => tool.test(part) || /^\$\{?[A-Za-z_]\w*\}?(\s|$)/u.test(part) || /^(echo|printf|head|tail)(\s|$)/u.test(part));
+}
+/** A call by its type and what it names; a path inside the record's directory from the directory on, which is what tells one read from another. */
+const listed = (works: readonly Work[]): string => works.map(work => work.type + (work.label ? " " + clip(work.label.replace(/\S*\/context\/(c-[0-9a-f]{6}\/)/gu, "记录:$1"), 80) : "")).join("；");
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The workspace on disk
@@ -316,8 +326,12 @@ class Ruler {
       const label = item.type === "command" ? item.command || item.raw || "" : item.type === "file_read" ? item.path ?? "" : item.type === "file_change" ? item.changes.map(change => change.path).join(", ")
         : item.type === "search" ? [item.scope, item.query ?? "", item.path ?? ""].filter(Boolean).join(" ") : item.type === "web" ? item.url ?? item.query ?? "" : item.type === "mcp_tool" ? item.server + "." + item.tool
         : item.type === "tool" ? item.name : item.type === "subagent" ? item.title : "";
-      const hub = item.type === "mcp_tool" && item.hub === true, progress = hub && item.type === "mcp_tool" && (TABLE_PROGRESS_TOOLS as readonly string[]).includes(item.tool);
       const call = JSON.stringify(fields);
+      // The Hub's own tools, and a read of the record's directory by a Harness that reads the record as files (2026-11-13): both are the Hub's context, not the file system.
+      // (A Harness may shorten the command it shows: what it ran is whole in the stored detail.)
+      const hub = (item.type === "mcp_tool" && item.hub === true) || (item.type !== "file_change" && item.type !== "mcp_tool" && inRecord(label + " " + call + " " + detail.slice(0, 4000)))
+        || (item.type === "command" && commandOnly(label));
+      const progress = hub && item.type === "mcp_tool" && (TABLE_PROGRESS_TOOLS as readonly string[]).includes(item.tool);
       work.push({ type: item.type, label, hub, progress, call, text: call + "\n" + detail });
     }
     const text = (type: "user_message" | "assistant_message") => items.flatMap(item => item.type === type ? [item.text ?? ""] : []).join("\n");
@@ -356,7 +370,7 @@ const SCENARIOS: readonly Scenario[] = [
       const b = need((await r.delegate(a, "B", "之前那一轮读过的文件里有一个记号，它是什么？不要再去读那个文件，从对话记录里查。只回答记号本身；查不到就说查不到。")).turn);
       const answered = b.reply.includes(token), touched = b.work.filter(work => !work.hub && (work.text.includes(token) || /secret/iu.test(work.call)));
       const hubReads = b.work.filter(work => work.hub && !work.progress);
-      const note = (hubReads.length ? "B 用了 Hub 工具：" + listed(hubReads) : "B 没用 Hub 工具") + (touched.length ? "；B 的工具碰了文件或记号：" + listed(touched) : "");
+      const note = (hubReads.length ? "B 查了 Hub 的记录：" + listed(hubReads) : "B 没查 Hub 的记录") + (touched.length ? "；B 的工具碰了文件或记号：" + listed(touched) : "");
       if (answered && touched.length === 0) return pass("B 答出了记号，没有去读文件", note, { answered, touched: touched.length });
       return fail(answered ? "B 答出了记号，但是靠工具拿到的" : "B 答不出记号", note, { answered, touched: touched.length });
     } },
@@ -392,7 +406,7 @@ const SCENARIOS: readonly Scenario[] = [
       const looked: Work[] = [];
       for (const work of c.work) if (await lists(work, ws)) looked.push(work);
       const hubReads = c.work.filter(work => work.hub && !work.progress);
-      const note = (looked.length ? "C 列了目录或搜了文件系统：" + listed(looked) : "C 没有列目录") + (hubReads.length ? "；C 用了 Hub 工具：" + listed(hubReads) : "") + (b.reply.includes(stem(made[0]!)) ? "；B 的回复说出了文件名" : "");
+      const note = (looked.length ? "C 列了目录或搜了文件系统：" + listed(looked) : "C 没有列目录") + (hubReads.length ? "；C 查了 Hub 的记录：" + listed(hubReads) : "") + (b.reply.includes(stem(made[0]!)) ? "；B 的回复说出了文件名" : "");
       const checks = { file: made[0], lines: now, listed: looked.length, hubReads: hubReads.length };
       if (one >= 0 && two > one) return pass("B 的 " + made[0] + " 里有 one、two 两行" + (looked.length ? "（C 靠列目录找到）" : ""), note, checks);
       return fail("B 的 " + made[0] + " 里没有加上 two", note, checks);

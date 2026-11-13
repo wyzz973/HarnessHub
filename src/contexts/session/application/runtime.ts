@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { parseProviderTarget } from "../../../contracts/provider.js";
-import { HUB_DELEGATION_INSTRUCTIONS, HUB_PROGRESS_INSTRUCTIONS, hubCommandCall, hubCommandInstructions } from "../../../contracts/table.js";
+import { HUB_DELEGATION_INSTRUCTIONS, HUB_PROGRESS_INSTRUCTIONS, hubCommandCall, hubCommandInstructions, hubRecordInstructions } from "../../../contracts/table.js";
 import { listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeUsage } from "../../../contracts/control.js";
 import { type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import { CONVERSATION_FORMAT, type Conversation, type ConversationCommit, type ConversationMutation, type ConversationRun, type ConversationStore, type HeldItem } from "../../../contracts/conversation.js";
@@ -248,6 +248,16 @@ function asCommand(note: string, command: string | undefined): string {
   const word = (tool: string) => tool === "read_turn" ? "turn" : tool === "update_plan" ? "plan" : tool === "wrap_up" ? "wrap-up" : tool;
   return note.replace(/harnesshub 的 hub_([a-z_]+)/gu, (_all, tool: string) => "命令 " + command + " " + word(tool)).replace(/hub_([a-z_]+)/gu, (_all, tool: string) => command + " " + word(tool));
 }
+/** A note of the Hub's as a Harness that reads the record as files reads it (2026-11-13): where it named the reading tools, it names the directory. */
+function asFiles(note: string, place: { readonly dir: string; readonly self: string } | null): string {
+  if (place === null) return note;
+  const at = "记录目录 " + place.dir + " ";
+  return note
+    .replace("先用 harnesshub 的 hub_task 看全貌，再用 hub_turns、hub_read_turn、hub_search 带上对话标签去读。", "先看" + at + "里的 task.md，再到那段对话的目录里读 index.md 和 turns/NNN.md（目录名就是对话标签）。只在这个目录里面找，不要去它的上级目录。")
+    .replace("用 harnesshub 的 hub_task 看全貌，或用 hub_read_turn、hub_search 带上那段对话的标签去读。", "到" + at + "里那段对话的目录读（目录名就是它的标签；index.md、turns/NNN.md）。")
+    .replace("用 harnesshub 的 hub_read_turn 带上对话标签去读。", "到" + at + "里那段对话的目录读（目录名就是对话标签；index.md、turns/NNN.md）。")
+    .replace("用 harnesshub 的 hub_turns 带上这个对话标签去读。", "在" + at + "里这段对话的 index.md 里。");
+}
 /** What the Harness of a delegated conversation reads before its task: that this is a part of a larger task, and how the rest of it is read. */
 const DELEGATED_NOTE = "（HarnessHub：下面是从另一段对话委派给你的任务，是一件更大的事的一部分。那段对话正在进行的一轮、以及这件事里其他 Harness 做了什么和改了哪些文件，都能读到："
   + "先用 harnesshub 的 hub_task 看全貌，再用 hub_turns、hub_read_turn、hub_search 带上对话标签去读。任务里提到“之前”“别人做的”“本轮”这类你手上没有的内容时，先去那里查，不要猜；动别人可能在改的文件前也先看一眼。）";
@@ -374,9 +384,11 @@ export class SessionRuntime {
   /** The Hub's policy decision for a request under `level` (permission-policy.ts), by the request and the call it is about as this Turn placed it; undefined level: what it is about, the user deciding. */
   private policyFor(execution: ActiveExecution, run: ConversationRun, value: Extract<ControlEvent, { type: "permission_requested" }>, level: PermissionLevel | undefined): PolicyDecision {
     const call = value.forCall === undefined || execution.turn === null ? undefined : itemsOf(execution.turn).find(item => item.itemId === "tool:" + value.forCall)?.fields;
-    const named = call as { readonly title?: unknown; readonly name?: unknown; readonly hub?: unknown; readonly command?: unknown } | undefined;
+    const named = call as { readonly title?: unknown; readonly name?: unknown; readonly hub?: unknown; readonly command?: unknown; readonly path?: unknown } | undefined;
     return policyDecision(this.options.flavor?.(run.selection.harnessId), level, { title: value.title, options: value.options, question: value.kind === "question" || value.input !== undefined },
-      [value.toolKind, call?.native?.kind], call === undefined ? undefined : { type: call.type, ...(typeof named?.title === "string" ? { title: named.title } : {}), ...(typeof named?.name === "string" ? { name: named.name } : {}), ...(named?.hub === true ? { hub: true } : {}), ...(typeof named?.command === "string" ? { command: named.command } : {}) });
+      [value.toolKind, call?.native?.kind], call === undefined ? undefined : { type: call.type, ...(typeof named?.title === "string" ? { title: named.title } : {}), ...(typeof named?.name === "string" ? { name: named.name } : {}), ...(named?.hub === true ? { hub: true } : {}), ...(typeof named?.command === "string" ? { command: named.command } : {}), ...(typeof named?.path === "string" ? { path: named.path } : {}) },
+      // Reading the record's directory is the Hub's own business, like its tools.
+      this.recordPlace(execution.sessionId, execution.binding)?.dir);
   }
   /** The switch target each conversation is validating, at most one per conversation. */
   private readonly switchBindings = new Map<SessionId, { readonly binding: PreparedSessionBinding; close: Promise<CleanupEvidence> | null }>();
@@ -626,11 +638,18 @@ export class SessionRuntime {
    * What the binding's Driver adds to the system prompt of the native session it opens (HarnessControl.setSessionInstructions): how to
    * use the task list and the wrap-up, when its process has the Hub's tools and the user leaves `hub.progress` on; nothing otherwise.
    */
-  private sessionInstructions(binding: PreparedSessionBinding | null): string | null {
+  private sessionInstructions(binding: PreparedSessionBinding | null, id: SessionId): string | null {
     if (binding?.hubTools !== true) return null;
     // A Harness whose tools are a command is told the command either way: nothing else would say it is there.
     if (binding.hubCommand !== undefined) return hubCommandInstructions(binding.hubCommand, this.settings().progress === "on");
-    return this.settings().progress === "on" ? HUB_PROGRESS_INSTRUCTIONS + "\n" + HUB_DELEGATION_INSTRUCTIONS : HUB_DELEGATION_INSTRUCTIONS;
+    // A Harness that reads the record as files is told where the directory is in place of the reading tools.
+    const place = this.recordPlace(id, binding), rest = place === null ? HUB_DELEGATION_INSTRUCTIONS : hubRecordInstructions(place.dir, place.self);
+    return this.settings().progress === "on" ? HUB_PROGRESS_INSTRUCTIONS + "\n" + rest : rest;
+  }
+  /** Where the Harness of a binding reads the record as files: when it does (recordFiles) and the Hub keeps the directory; null otherwise. */
+  private recordPlace(id: SessionId, binding: PreparedSessionBinding | null | undefined): { readonly dir: string; readonly self: string } | null {
+    if (binding?.recordFiles !== true || this.options.context === undefined) return null;
+    try { return this.options.context.place(id); } catch { return null; }
   }
 
   switch(id: SessionId, selection: SelectionRequest, key: string): SwitchReceipt {
@@ -1230,6 +1249,8 @@ export class SessionRuntime {
    * Stops owned work and admission, then ends what the binding factory still does in the background (its own bound, ADR-056
    * §4.12). Public Sessions and Store remain available to the next owner.
    */
+  /** The writes of the record's directory that a Turn's end began and did not wait for: the close waits for them. */
+  private readonly recordWork = new Set<Promise<void>>();
   close(): Promise<void> {
     if (this.shutdown) return this.shutdown;
     this.accepting = false;
@@ -1261,6 +1282,8 @@ export class SessionRuntime {
       problem ??= result.reason; this.fail(result.reason);
     }
     this.work.clear();
+    // What was still being written of the record's directory is written before the owner goes.
+    await Promise.allSettled([...this.recordWork]);
     // Last, once no binding runs: the factory's background work, such as removing host TMPDIRs moved aside (bounded).
     try { await this.factory.close?.(); } catch (error) { problem ??= error; this.fail(error); }
     if (problem) throw problem;
@@ -2050,8 +2073,10 @@ export class SessionRuntime {
         const details = await this.relayDetails(history, sources), secrets = [...(execution.binding?.secrets ?? []), ...await this.relaySecretsOf(history, configuration, run, sources, origin)];
         this.continue(execution);
         // The binding says whether its process has the Hub's tools (it was started with the table's environment and its Harness holds the tool entry): a fact of this Turn's process, which the packet may then repeat.
-        return { origin, secrets, firstLine: reading.kind === "content", details, hubTools: toolsUsable(), ...(execution.binding?.hubCommand === undefined ? {} : { hubCommand: execution.binding.hubCommand }), ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
+        return { origin, secrets, firstLine: reading.kind === "content", details, hubTools: toolsUsable(), ...(execution.binding?.hubCommand === undefined ? {} : { hubCommand: execution.binding.hubCommand }), ...(recordAt() === null ? {} : { contextFiles: recordAt()!.dir + "/" + recordAt()!.self }), ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
       };
+      // Where this Turn's Harness reads the record as files, when it does.
+      const recordAt = () => this.recordPlace(id, execution.binding);
       // Whether this Turn's Harness can call the Hub's tools: its process has them, and where they are a command of the conversation the level lets it run one
       // (a Harness in its read-only mode refuses every command, the Hub's with them: nothing is then promised to be read back, and nothing is held back for it).
       const toolsUsable = (): boolean => execution.binding?.hubTools === true && !(execution.binding.hubCommand !== undefined && selectedPermission(run.selection.nativeOptions) === "plan");
@@ -2067,7 +2092,7 @@ export class SessionRuntime {
         // abandoned session, never resumed.
         const resumeFrom = previousNative?.opensNew === true ? undefined : previousNative?.checkpoint;
         const open = (on: HarnessControl, from: string | undefined) => {
-          on.setSessionInstructions?.(this.sessionInstructions(execution.binding));
+          on.setSessionInstructions?.(this.sessionInstructions(execution.binding, id));
           return on.open(execution.binding!.workspace, carriedConfiguration?.model ?? run.selection.nativeModel, nativeOptions, from);
         };
         try { native = await open(control, resumeFrom); }
@@ -2309,7 +2334,9 @@ export class SessionRuntime {
       if (words !== null && words.line !== null) this.placed(execution, { kind: "notice", severity: "info", title: words.line, code: "PARENT_WORDS_TOLD", at: this.options.now().getTime() },
         [event("run.parent_words_told", { runId: target, through: words.through })], { always: true, patch: current => ({ ...current, parentWordsTold: words.through }) });
       else if (words !== null) this.commit(id, current => ({ next: { ...current, parentWordsTold: words.through }, events: [event("run.parent_words_marked", { runId: target, through: words.through })] }));
-      const notes = [board?.text ?? null, delegated, words?.text ?? null, edits?.text ?? null, told?.text ?? null].filter((note): note is string => note !== null).map(note => asCommand(note, execution.binding?.hubCommand));
+      const notes = [board?.text ?? null, delegated, words?.text ?? null, edits?.text ?? null, told?.text ?? null].filter((note): note is string => note !== null).map(note => asCommand(asFiles(note, recordAt()), execution.binding?.hubCommand));
+      // The directory is brought up to the record before a Harness that reads it starts: what it is told is there is there.
+      if (recordAt() !== null) { await this.options.context!.ensure(id).catch(() => undefined); this.continue(execution); }
       execution.run = await control.startText(native, notes.length === 0 ? planned : withHubNote(planned, notes.join("\n\n")), value => this.output(execution, value), ...(files.length ? [files] : []));
       this.owned(execution);
       void execution.run.result.then(() => { execution.backendSettled = true; }, () => { execution.backendSettled = true; });
@@ -2529,6 +2556,13 @@ export class SessionRuntime {
       }
       if (this.actives.get(id) === execution) this.actives.delete(id);
       this.acceptedRelay.delete(target);
+      // The record's directory takes the Turn as it ended, for whoever of the task reads it next. A Turn's end does not wait for files; the Runtime's close does
+      // (recordWork), and once it closes nothing more is written.
+      if (this.options.context !== undefined && this.accepting) {
+        const work: Promise<void> = this.options.context.ensure(id).catch(() => undefined);
+        this.recordWork.add(work);
+        void work.finally(() => this.recordWork.delete(work));
+      }
       execution.clock.budget?.(); execution.clock.hint?.();
       if (execution.grace !== null) clearTimeout(execution.grace);
       this.discardStream(execution);

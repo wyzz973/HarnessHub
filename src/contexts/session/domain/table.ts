@@ -10,6 +10,7 @@ import { namesCredentialFile, relayRedactor, restoreLabels } from "./relay/redac
 import type { DetailPolicy, DetailRead } from "./detail-read.js";
 import type { ConversationReader } from "../../../contracts/conversation.js";
 import { turnSource, type TurnRecord, type TurnSource } from "./turn-source.js";
+import { contextBlobPath, contextTurnPath } from "./context-paths.js";
 
 /**
  * The context table's read model (docs/decisions/LOG.md, 2026-11-11): what a conversation holds, as a Harness may read it back
@@ -383,6 +384,82 @@ export function readTurn(table: TableConversation, n: number, query: TableReadQu
   }
   const slice = pageOf(text, offset, limit);
   return { ...base, ...(tool === undefined ? {} : { tool }), text: slice.text, offset: slice.offset, end: slice.end, size: slice.size, ...(notes.length ? { notes } : {}) };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The conversation as files (2026-11-13)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * The record as a Harness reads it with its own file tools (docs/decisions/LOG.md, 2026-11-13): every Turn is a file that holds the whole of it — the user's words, the
+ * reply, each tool call with what it took and gave, the files changed, the plan — and the conversation has an index of one entry a Turn. Everything has an address: the
+ * path of its file inside the conversation's directory. A text too long to stand in its Turn's file stands there as its first and last lines, and whole in a file of its own
+ * the Turn's file names; nothing is left out, only told at another resolution. Pure: the same Turn gives the same files.
+ */
+export interface ContextFile { readonly path: string; readonly text: string }
+const padded = (n: number, width: number): string => String(n).padStart(width, "0");
+export { contextBlobPath, contextTurnPath };
+/** A text stands whole in its Turn's file up to this; a longer one as its first and last lines, whole in its own file. */
+const INLINE = { lines: 40, chars: 4000, head: 8, tail: 20 } as const;
+const indented = (text: string): string => text.split("\n").map(line => "    " + line).join("\n");
+/** The details a Turn's files need: every tool call's. */
+export function contextNeeds(table: TableConversation, n: number): readonly TableToolRef[] { return refsOf(turnAt(table, n).run, () => true); }
+/** What a stored detail is read as for the files: every text whole up to 64 MiB, else its first and last MiB with a line between. */
+export const CONTEXT_DETAIL_POLICY: DetailPolicy = { input: { whole: 64 * MIB, head: MIB, tail: MIB }, output: { whole: 64 * MIB, head: MIB, tail: MIB }, diff: { whole: 64 * MIB, head: MIB, tail: MIB } };
+
+/** The files of one Turn: its own, then one for each text too long to stand in it. */
+export function contextTurn(table: TableConversation, n: number, details: TableDetails, redaction: TableRedaction): readonly ContextFile[] {
+  const turn = turnAt(table, n), run = turn.run, model = modelOf(run), blobs: ContextFile[] = [];
+  const head = ["# Turn " + n + " · " + run.selection.harnessId + (model === undefined ? "" : " (" + model + ")") + " · " + run.status];
+  if (run.error !== null) head.push("Error " + clip(fold(redaction.redact(run.error.code, "text")), 64) + ": " + clip(fold(redaction.redact(run.error.message, "text")), 400));
+  if (turn.legacyOrder) head.push(LEGACY_ORDER_NOTE);
+  const user = userText(run, redaction), reply = redaction.redact(replyOf(turn), "text");
+  const sections = [head.join("\n"), "## The user's words\n" + (user === "" ? "(empty)" : user), "## The reply\n" + (reply === "" ? "(none)" : reply)];
+  const tools = toolsOf(run);
+  if (tools.length) {
+    const blocks = tools.map(facts => {
+      const detail = details.get(detailKey(run.id, facts.tool.id)), lines = [toolLine(facts, redaction)];
+      if (detail === undefined) return lines[0]!;
+      for (const part of ["input", "output", "diff"] as const) {
+        const value = part === "input" ? detail.input : part === "output" ? detail.output : detail.diff;
+        if (value === undefined || value.trim() === "") continue;
+        // What it took is its line already when the line holds all of it (a command, a path).
+        if (part === "input" && fold(value) === fold(facts.tool.title)) continue;
+        const text = part !== "input" && withheld(facts.tool, detail) ? WITHHELD : redaction.redact(value, part === "input" ? "text" : "output").replace(/\n+$/u, "");
+        const rows = text.split("\n"), cut = detail.cuts?.[part];
+        const note = (detail.truncated === true ? " The Hub stored only a part of it." : "") + (cut === undefined ? "" : " The middle " + cut.omitted + " characters were not read.");
+        if (rows.length <= INLINE.lines && text.length <= INLINE.chars) { lines.push(part + ":" + note + "\n" + indented(text)); continue; }
+        const path = contextBlobPath(n, facts.k, part);
+        blobs.push({ path, text: text + "\n" });
+        const shown = rows.length > INLINE.head + INLINE.tail ? [...rows.slice(0, INLINE.head), "[… " + (rows.length - INLINE.head - INLINE.tail) + " lines: the whole is in " + path + " …]", ...rows.slice(-INLINE.tail)] : rows;
+        lines.push(part + " (" + plural(rows.length, "line") + ", " + text.length + " characters; whole in " + path + "):" + note + "\n" + indented(shown.map(row => clip(row, 400)).join("\n")));
+      }
+      return lines.join("\n");
+    });
+    sections.push("## Tool calls (" + tools.length + ")\n" + blocks.join("\n\n"));
+  }
+  for (const section of filesSections(run, details, redaction, table.workspace)) sections.push("## " + section.title + "\n" + section.lines.join("\n"));
+  const plan = planText(run, redaction);
+  if (plan !== "") sections.push("## The plan\n" + plan);
+  return [{ path: contextTurnPath(n), text: sections.join("\n\n") + "\n" }, ...blobs];
+}
+/** How many characters of a Turn's words and of its reply the index gives. */
+const INDEX_CHARS = 400;
+/** The index of a conversation: what it is, and one entry a Turn — who ran it, how it ended, what was asked and answered in short, and where the whole is. */
+export function contextIndex(table: TableConversation, label: string, redaction: TableRedaction): string {
+  const total = table.turns.count, active = table.activeRunId === null ? 0 : (table.turns.ordinalOf(table.activeRunId) ?? -1) + 1;
+  const head = ["# Conversation " + label + ": every turn, one entry each", "Workspace: " + table.workspace,
+    "Turns: " + total + (active > 0 ? " (turn " + active + " is in progress)" : ""), "The whole of a turn is in " + contextTurnPath(1).replace("001", "NNN") + ": the user's words, the reply, every tool call with its input and output, the files changed.",
+    ...(table.origin === undefined ? [] : ["It began from " + plural(table.origin.messages, "earlier message") + " (" + (table.origin.kind === "fork" ? "a branch of another conversation" : "an imported session") + "), which the turns do not include."])];
+  const entries: string[] = [];
+  for (let n = 1; n <= total; n++) {
+    const turn = table.turns.turn(n - 1)!, run = turn.run, model = modelOf(run), calls = toolsOf(run).length;
+    const changed = run.workspace !== undefined ? run.workspace.changes.length : (run.tools ?? []).filter(tool => kindOf(tool) === "change").length;
+    const text = (value: string) => clip(fold(redaction.redact(value, "text").slice(0, INDEX_CHARS * 4)), INDEX_CHARS);
+    entries.push(["## " + padded(n, 3) + " · " + run.selection.harnessId + (model === undefined ? "" : " (" + model + ")") + " · " + run.status + " · " + plural(calls, "tool call") + " · " + plural(changed, "file") + " changed · " + contextTurnPath(n),
+      "user: " + (text(run.input) || "(empty)"), "reply: " + (text(replyOf(turn)) || "(none)")].join("\n"));
+  }
+  return head.join("\n") + "\n\n" + entries.join("\n\n") + "\n";
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

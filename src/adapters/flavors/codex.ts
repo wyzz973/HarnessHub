@@ -20,5 +20,6 @@ export const codexFlavor: HarnessFlavor = {
   nativePlan: true,
   // app-server 0.166.0 ThreadStartParams / ThreadResumeParams: `config` (dotted overrides of this thread alone, as `-c`) carries
   // `mcp_servers.harnesshub` (stdio, `env_vars` forwarded, default_tools_approval_mode "approve"); `developerInstructions` the instructions.
-  capabilities: { sessionMcp: "thread-config", systemPrompt: "developer-instructions", planTool: "hub", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native" },
+  // The record is read as files with its own file tools (2026-11-13; verified on the installed program: it read the directory and answered from it).
+  capabilities: { sessionMcp: "thread-config", systemPrompt: "developer-instructions", planTool: "hub", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native", record: "files" },
 };

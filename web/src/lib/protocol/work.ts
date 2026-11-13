@@ -2,7 +2,7 @@ import { ITEM_STATUS_WORDS } from "../../../../src/contracts/protocol-words.js";
 import { WORK_TYPES, type FileOp, type ItemStatus, type ReasoningItem, type WorkItem } from "../../../../src/contracts/protocol.js";
 import type { ReadItem, ReadTurn } from "../../../../src/contracts/protocol-read.js";
 import type { PublicMessage } from "../../../../src/contracts/session.js";
-import { TABLE_MCP_NAME, TABLE_PROGRESS_TOOLS, hubCommandOnly } from "../../../../src/contracts/table.js";
+import { TABLE_MCP_NAME, TABLE_PROGRESS_TOOLS, hubCommandOnly, inRecord } from "../../../../src/contracts/table.js";
 
 /*
  * What the page says of the actions of a Turn, from the protocol's items alone (docs/proposals/protocol/hub-protocol.html §13): one
@@ -69,10 +69,11 @@ function specOf(item: WorkItem): Spec {
     case "command": {
       const text = item.command.trim();
       // The Hub's tools as a command of the conversation (a Harness that takes no tool entry runs it): said as the tools are.
-      if (hubCommandOnly(text) !== null) return plain(HUB, HUB, null, item.command);
+      if (hubCommandOnly(text) !== null || inRecord(text)) return plain(HUB, HUB, null, item.command);
       return { ...plain(RUN, RUN_ONE, text ? oneLine(text) : null, item.command, true), ...(item.exitCode === undefined ? {} : { exit: item.exitCode }) };
     }
-    case "file_read": return plain(READ, READ_ONE, item.path ? baseName(item.path) : null, item.path ?? "", true);
+    // The record's directory, read by a Harness that reads the record as files: the conversation's own record, not a file of the project.
+    case "file_read": return item.path && inRecord(item.path) ? plain(HUB, HUB, null, item.path) : plain(READ, READ_ONE, item.path ? baseName(item.path) : null, item.path ?? "", true);
     case "file_change": {
       const changes = item.changes, ops = new Set(changes.map(change => change.op)), op: FileOp = ops.size === 1 ? [...ops][0]! : "modify";
       const added = changes.reduce((sum, change) => sum + (change.added ?? 0), 0), removed = changes.reduce((sum, change) => sum + (change.removed ?? 0), 0);
@@ -211,13 +212,13 @@ export function summarizeGroup(items: readonly WorkItem[]): GroupSummary {
     targets.keys.set(key, statuses.add(status));
   };
   for (const item of items) switch (item.type) {
-    case "command": add(hubCommandOnly(item.command) !== null ? "hub" : "command", "id:" + item.id, item.status); break;
+    case "command": add(hubCommandOnly(item.command) !== null || inRecord(item.command) ? "hub" : "command", "id:" + item.id, item.status); break;
     case "file_change":
       if (item.changes.length === 0) { add("change", "id:" + item.id, item.status); ops.add("modify"); }
       else for (const change of item.changes) { add("change", "path:" + change.path, item.status); ops.add(change.op); }
       break;
     case "subagent": add("subagent", "id:" + item.id, item.status); break;
-    case "file_read": add("read", item.path === null ? "id:" + item.id : "path:" + item.path, item.status); break;
+    case "file_read": if (item.path !== null && inRecord(item.path)) add("hub", "id:" + item.id, item.status); else add("read", item.path === null ? "id:" + item.id : "path:" + item.path, item.status); break;
     case "search": add("search", "id:" + item.id, item.status); break;
     case "web": if (item.action === "search") add("web_search", "id:" + item.id, item.status); else add("web_fetch", item.url ? "url:" + item.url : "id:" + item.id, item.status); break;
     case "mcp_tool": add(item.hub ? "hub" : "tool", "id:" + item.id, item.status); break;

@@ -37,5 +37,6 @@ export const hermesFlavor: HarnessFlavor = {
   // `editor.mcp_servers`, gateway/session_local_mcp.py; a changed spec on resume is re-bound). No system prompt entry: session.create takes no
   // prompt from the viewer (HERMES_EPHEMERAL_SYSTEM_PROMPT is read from a shell client's client_env, which the viewer does not send),
   // `/personality` writes config.yaml, and its MCP client never reads a server's instructions (tools/mcp_tool*.py): first-prompt.
-  capabilities: { sessionMcp: "acp", systemPrompt: "first-prompt", planTool: "hub", resume: "native", fork: "native", attachments: "pointer", usage: "turn" },
+  // The record is read as files with its own file tools (2026-11-13; verified on the installed program: it read the directory and answered from it).
+  capabilities: { sessionMcp: "acp", systemPrompt: "first-prompt", planTool: "hub", resume: "native", fork: "native", attachments: "pointer", usage: "turn", record: "files" },
 };

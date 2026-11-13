@@ -434,6 +434,11 @@ export interface PreparedSessionBinding {
   readonly hubTools?: boolean;
   /** The conversation's Hub command, when this process's Harness has the Hub's tools as a command it runs (HubToolsEntry `cli`); absent otherwise. */
   readonly hubCommand?: string;
+  /**
+   * Whether this process's Harness reads the record as files with its own file tools (FlavorCapabilities.record `files`, 2026-11-13): it is then told the directory and
+   * not the Hub's reading tools, which its tool server leaves out. Absent is no.
+   */
+  readonly recordFiles?: boolean;
   assertOwned(): void;
   close(): Promise<CleanupEvidence>;
 }
@@ -548,6 +553,12 @@ export interface SessionRuntimeOptions {
    * shown when absent or when it returns null. Must be synchronous and side-effect free.
    */
   readonly harnessName?: (harnessId: string) => string | null;
+  /**
+   * The record as a directory (src/web/context-files.ts, 2026-11-13): where the directory of a conversation's task is and which directory inside it is the
+   * conversation's (`place`, which reads nothing and writes nothing), and what brings it up to the record before a Harness is told to read it (`ensure`).
+   * Absent: no Harness is told of a directory.
+   */
+  readonly context?: { place(id: SessionId): { readonly dir: string; readonly self: string }; ensure(id: SessionId): Promise<void> };
   /**
    * The installation's relay key (ADR-055 §10.2, D5; relay-keys.ts): the HMACs of delivery rows and of a request's relay
    * choice. Without it the Runtime keys them under a key it keeps only in memory and names EPHEMERAL_KEY_ID (A17), which no

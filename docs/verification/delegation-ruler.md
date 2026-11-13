@@ -52,6 +52,21 @@ RUN HH_REAL_MODEL_CLAUDE=haiku node --test dist/tests/real/delegation-context.re
 
 同一天交接单的总预算也放开了（原来最多 8,000 token，现在是对方窗口的一半，策略 `relay/1-mvp.8`），放开后又跑了一轮：8 项全过，证据 `delegation-ruler-2026-11-13T05-39-12-199Z.json`。
 
+### 读目录（2026-11-13）
+
+记录摆成只读目录以后（决定记录同日一条），五家用自己的读文件工具去读，不再有读回工具。尺子把“读记录目录”和 OpenClaw 调对话的命令都算作查 Hub 的记录，不算越出工作区；翻到任务目录的上一层仍算越出。让各家轮流当读记录的一方：
+
+| 读的一方 | 场景 | 结果 | 它怎么读的 |
+|---|---|---|---|
+| DeepSeek Harness | S2 | 过（3 次） | `ls`、`cat task.md`、`cat index.md`、`cat turns/001.md` |
+| Codex | S2、S4 | 过、过 | `cat task.md`、`cat <对话>/index.md <对话>/turns/001.md` |
+| OpenCode | S2、S4 | 过、过 | 读文件工具读 `task.md`、`index.md`、`turns/001.md` |
+| Hermes | S2、S4 | 过、过 | 读文件工具读两段对话的 `index.md`、`turns/001.md` |
+| Claude Code | S2 | 第 1 次不过，之后 2 次过 | 第 1 次 `cd` 到 `context/` 上一层去搜，搜到了别的任务的记录；说明里加了“只在这个目录里面找”后，只在任务目录里 `cat` |
+| OpenClaw | S2 | 过 | 对话的命令：`hub turn 1 --conversation …`、`hub search …` |
+
+按声明的默认读法（五家读目录、OpenClaw 走命令）跑整轮，A = Claude Code、B = DeepSeek Harness、C = Codex：S1、S2、S4、S5、S7、S8 过；S3、S6 判不过，都是 B 自己多跑了和上下文无关的命令被“越出工作区”规则判掉的（S3 里用 python 建文件，S6 里往 `/tmp` 写了一个核对用的文件），要量的内容本身送到了（A 说出了两个文件名；`pw.txt` 里有口令）。证据 `delegation-ruler-2026-11-13T08-*.json`。每个格子只跑了一到三次。
+
 S4 用 C = OpenCode 补量了一次。OpenCode 没有用户级的 harnesshub 一项，用的是这次构建的工具。结果是不过：它的 `hub_turns`、`hub_search`、`hub_read_turn` 只看得到自己的对话，于是去翻了 Gateway 的数据目录（`ls`、`find`，再 `cat` 对话文件），从里面找到 B 的文件名，加上了 two。尺子按“越出工作区”判它不过。证据见 `delegation-ruler-2026-11-13T04-20-30-711Z.json`。
 
 ## 量的时候发现的

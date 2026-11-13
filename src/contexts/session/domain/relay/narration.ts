@@ -1,3 +1,4 @@
+import { contextTurnPath } from "../context-paths.js";
 import { ITEM_KINDS, type ItemKind } from "../../../../contracts/relay.js";
 import type { PublicRun, PublicTool, RunStatus } from "../../../../contracts/session.js";
 import type { TurnRelayCounts } from "../../../../contracts/conversation.js";
@@ -178,7 +179,9 @@ export class Narrator {
    */
   constructor(readonly language: RelayLanguage, private readonly redactor: RelayRedactor, private readonly naming: (harnessId: string) => string | null, readonly tools = false,
     /** The conversation's Hub command, when the target has the tools as a command it runs: what the packet names instead of the tools. */
-    readonly command?: string) {}
+    readonly command?: string,
+    /** The conversation's directory in the record, when the target reads the record as files (2026-11-13): what the packet names instead of either, and where a Turn left out is whole. */
+    readonly files?: string) {}
   get zh(): boolean { return this.language === "zh"; }
   /** A Harness's display name: its catalog name when known, else its id; an unknown one for none. Always a name, never "the other". */
   name(harnessId: string | null): string {
@@ -347,6 +350,8 @@ interface Words {
   readonly exit: (tool: PublicTool) => string;
   /** What a command's line says of its output when the packet does not carry it: how many lines it has ("at least" when the stored output was cut), and that they are not attached. */
   readonly unattached: (lines: number, atLeast: boolean) => string;
+  /** Where a text the packet does not carry is whole, for a target that reads the record as files. */
+  readonly whole: (path: string) => string;
 }
 function countsOf(added: number | null, removed: number | null): string {
   return [added ? "+" + added : "", removed ? "−" + removed : ""].filter(Boolean).join(" ");
@@ -364,6 +369,7 @@ const WORDS: Readonly<Record<RelayLanguage, Words>> = {
     counts: (added, removed) => { const text = countsOf(added, removed); return text === "" ? "" : "（" + text + "）"; },
     exit: tool => tool.exitCode !== undefined ? " → 退出码 " + tool.exitCode : toolEnd(tool) === "failed" ? " → 失败（没有报告退出码）" : toolEnd(tool) === "open" ? "（未完成）" : "（没有报告退出码）",
     unattached: (lines, atLeast) => "输出" + (atLeast ? "至少" : "共") + " " + lines + " 行，未附",
+    whole: path => "，全文在 " + path,
   },
   en: {
     user: "The user's words:", empty: "(empty)",
@@ -377,6 +383,7 @@ const WORDS: Readonly<Record<RelayLanguage, Words>> = {
     counts: (added, removed) => { const text = countsOf(added, removed); return text === "" ? "" : " (" + text + ")"; },
     exit: tool => tool.exitCode !== undefined ? " → exit code " + tool.exitCode : toolEnd(tool) === "failed" ? " → failed (no exit code reported)" : toolEnd(tool) === "open" ? " (not finished)" : " (no exit code reported)",
     unattached: (lines, atLeast) => "output: " + (atLeast ? "at least " : "") + lines + (lines === 1 ? " line" : " lines") + ", not attached",
+    whole: path => "; whole in " + path,
   },
 };
 function bytesLabel(bytes: number): string { return bytes < 1024 ? bytes + " B" : bytes < 1048576 ? Math.round(bytes / 1024) + " KB" : (bytes / 1048576).toFixed(1) + " MB"; }
@@ -463,7 +470,7 @@ export function candidatesOf(n: Narrator, unit: RelayUnit, index: number): reado
       // With the Hub's tools the whole output can be read back, so the line says there is one the packet does not carry (never for a rule's withheld output: the table keeps it back too).
       const lines = n.tools && !keptBack && typeof output === "string" ? detail?.outputLines ?? linesOf(output) : 0;
       const command = add("calls", "ops", RANK.command, source.length, counted => { const code = n.code(source, counted); return code === null ? null : line("ran", code, exit); }, null, false,
-        lines > 0 ? n.dot(exit) + words.unattached(lines, detail?.truncated === true) : null);
+        lines > 0 ? n.dot(exit) + words.unattached(lines, detail?.truncated === true) + (n.files !== undefined && !unit.origin ? words.whole(contextTurnPath(unit.turn)) : "") : null);
       if (commandFailed(tool) && typeof output === "string" && output.trim() !== "")
         add("outputs", "output", RANK.output, 0, counted => {
           const tail = n.tail(output, counted);

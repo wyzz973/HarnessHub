@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { TABLE_ENV, TABLE_MCP_NAME } from "../../contracts/table.js";
+import { TABLE_ENV, TABLE_MCP_NAME, TABLE_RECORD_ENV } from "../../contracts/table.js";
 import { nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
@@ -403,7 +403,7 @@ export class CodexControl implements HarnessControl {
     if (this.options.entry?.tools !== "thread-config") return null;
     const tool = fileURLToPath(new URL("../../cli/hub-tools.js", import.meta.url));
     if (!this.options.env[TABLE_ENV.url] || !this.options.env[TABLE_ENV.session] || !existsSync(tool)) return null;
-    return { command: process.execPath, args: [tool, "mcp"], env_vars: [TABLE_ENV.url, TABLE_ENV.session], default_tools_approval_mode: "approve" };
+    return { command: process.execPath, args: [tool, "mcp"], env_vars: [TABLE_ENV.url, TABLE_ENV.session, ...(this.options.env[TABLE_RECORD_ENV] ? [TABLE_RECORD_ENV] : [])], default_tools_approval_mode: "approve" };
   }
   /** HarnessControl.sessionTools: every thread this connection opens or resumes is given the Hub's tool server (hubToolServer). */
   get sessionTools(): boolean { return this.hubToolServer() !== null; }

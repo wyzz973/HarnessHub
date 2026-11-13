@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { TABLE_ENV, TABLE_INSTRUCTIONS_ENV, TABLE_MCP_NAME } from "../../contracts/table.js";
+import { TABLE_ENV, TABLE_INSTRUCTIONS_ENV, TABLE_MCP_NAME, TABLE_RECORD_ENV } from "../../contracts/table.js";
 import { listedCommand, nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
@@ -463,7 +463,7 @@ export class AcpControl implements HarnessControl {
     const url = this.options.env[TABLE_ENV.url], token = this.options.env[TABLE_ENV.session], tool = fileURLToPath(new URL("../../cli/hub-tools.js", import.meta.url));
     if (!url || !token || !existsSync(tool)) return [];
     const said = this.instructions !== null && this.options.entry.instructions === "mcp-instructions" ? [{ name: TABLE_INSTRUCTIONS_ENV, value: this.instructions }] : [];
-    return [{ name: TABLE_MCP_NAME, command: process.execPath, args: [tool, "mcp"], env: [{ name: TABLE_ENV.url, value: url }, { name: TABLE_ENV.session, value: token }, ...said] }];
+    return [{ name: TABLE_MCP_NAME, command: process.execPath, args: [tool, "mcp"], env: [{ name: TABLE_ENV.url, value: url }, { name: TABLE_ENV.session, value: token }, ...(this.options.env[TABLE_RECORD_ENV] ? [{ name: TABLE_RECORD_ENV, value: this.options.env[TABLE_RECORD_ENV]! }] : []), ...said] }];
   }
   /** What setSessionInstructions gave for the sessions this connection opens from now on; null gives nothing. */
   private instructions: string | null = null;

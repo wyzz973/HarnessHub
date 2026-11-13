@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { parseArgs } from "node:util";
 import {
-  TABLE_ENV, TABLE_INSTRUCTIONS_ENV, TABLE_LIMITS, TABLE_MCP_NAME, TABLE_NOT_IN_SESSION, TABLE_PARTS, TABLE_SEARCH_SCOPES, TABLE_TOOLS,
+  TABLE_ENV, TABLE_INSTRUCTIONS_ENV, TABLE_LIMITS, TABLE_MCP_NAME, TABLE_NOT_IN_SESSION, TABLE_PARTS, TABLE_RECORD_ENV, TABLE_SEARCH_SCOPES, TABLE_TOOLS,
   type TableSearchHit, type TableSearchView, type TableTool, type TableTurnRead, type TableTurnsView,
 } from "../contracts/table.js";
 import { isMainModule } from "./main-module.js";
@@ -37,10 +37,20 @@ const INSTRUCTIONS = "HarnessHub keeps the whole history of this conversation. A
   + "hub_delegate hands a self-contained part of the work to another Harness on this computer, which does it in a conversation of its own; hub_delegations says how what you handed over stands. "
   + "hub_board is what everyone on the task goes by (its goal, the user's constraints, decisions); write on it with hub_remember when the user states something that must keep holding. "
   + "hub_task shows the whole task when several conversations work on it (who has what, what each changed); the three read tools take another conversation of the task as `conversation`.";
+/** The same for a session whose Harness reads the record as files (TABLE_RECORD_ENV): the reading tools are not offered, and the session instructions name the directory. */
+const INSTRUCTIONS_FILES = "HarnessHub keeps the whole record of this task as read-only files; the session instructions name the directory. Read it with your own file tools. "
+  + "hub_update_plan and hub_wrap_up show the user your task list and a short wrap-up above the message box; they do not replace your reply. "
+  + "hub_delegate hands a self-contained part of the work to another Harness on this computer, which does it in a conversation of its own; hub_delegations says how what you handed over stands. "
+  + "hub_remember writes on the task's board (its goal, the user's constraints, decisions) when the user states something that must keep holding.";
+/** The tools that only read the record: a session that reads it as files is not offered them. */
+const READING_TOOLS: readonly string[] = ["hub_turns", "hub_read_turn", "hub_search", "hub_task", "hub_board"];
+const recordFiles = (env: Readonly<Record<string, string | undefined>>): boolean => env[TABLE_RECORD_ENV] === "files";
+/** The tools this server offers its session. */
+export function offeredTools(env: Readonly<Record<string, string | undefined>>): readonly ToolDefinition[] { return recordFiles(env) ? TOOLS.filter(tool => !READING_TOOLS.includes(tool.name)) : TOOLS; }
 /** The server's instructions: what its tools are for, and the session instructions this session's process was given for it. */
 export function serverInstructions(env: Readonly<Record<string, string | undefined>>): string {
-  const session = env[TABLE_INSTRUCTIONS_ENV]?.trim();
-  return session ? INSTRUCTIONS + "\n\n" + session : INSTRUCTIONS;
+  const session = env[TABLE_INSTRUCTIONS_ENV]?.trim(), own = recordFiles(env) ? INSTRUCTIONS_FILES : INSTRUCTIONS;
+  return session ? own + "\n\n" + session : own;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -460,7 +470,7 @@ async function answer(message: unknown, env: ToolIo["env"]): Promise<object | nu
       return ok(id, { protocolVersion: version, capabilities: { tools: {} }, serverInfo: { name: TABLE_MCP_NAME, title: "HarnessHub", version: SERVER_VERSION }, instructions: serverInstructions(env) });
     }
     case "ping": return ok(id, {});
-    case "tools/list": return ok(id, { tools: TOOLS });
+    case "tools/list": return ok(id, { tools: offeredTools(env) });
     case "tools/call": {
       const name = params.name;
       if (typeof name !== "string" || !(TABLE_TOOLS as readonly string[]).includes(name)) return failure(id, -32602, "Unknown tool: " + (typeof name === "string" ? name.slice(0, 64) : "(no name)"));

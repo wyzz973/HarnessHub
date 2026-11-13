@@ -1,3 +1,4 @@
+import { CONTEXT_DIR, ContextFiles } from "../web/context-files.js";
 import type { NativeEnvironment } from "../infrastructure/session/native-environment.js";
 import { LocalHarnessManagement, type ManagementOptions } from "../infrastructure/management/service.js";
 import { LocalProviderService } from "../infrastructure/provider/service.js";
@@ -166,7 +167,11 @@ export function application(root: string, publish: (commit: ConversationCommit) 
     const harnessName = builtinHarnessName();
     // The relay's installation key (ADR-055 §10.2, INV-36).
     const relayKeys = options.relayKeyFile === undefined ? null : openRelayKeys(options.relayKeyFile, root);
-    const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, workspace: new WorkspaceRecorder(), flavor: flavorOf, ...(options.budgets ?? {}),
+    // The record as a directory (2026-11-13): what a Harness that reads the record as files is pointed at, kept under the data root and brought up to the record before each Turn.
+    const context = new ContextFiles({ root: join(root, CONTEXT_DIR), reader: store, content, name: harnessName, board: id => runtime.taskBoard(id),
+      secrets: (configuration, harnessIds) => factory.relaySecrets === undefined ? Promise.resolve([]) : factory.relaySecrets(configuration, harnessIds) });
+    const runtime: SessionRuntime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, workspace: new WorkspaceRecorder(), flavor: flavorOf, ...(options.budgets ?? {}),
+      context: { place: id => context.place(id), ensure: id => context.ensure(id) },
       ...(relayKeys === null ? {} : { relayKeys }),
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
     // Upgrades see and close this runtime's conversations' processes (ADR-043).
