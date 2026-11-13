@@ -56,6 +56,8 @@ interface ToolDefinition {
 const PROGRESS = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const whole = (description: string, minimum: number, maximum?: number) => ({ type: "integer", minimum, ...(maximum === undefined ? {} : { maximum }), description });
+/** The argument the three read tools share: another conversation of the task, by its label. Said once and briefly: every session pays for these words. */
+const CONVERSATION = { type: "string", pattern: "^c-[0-9a-f]{6}$", description: "Read another conversation of this task instead: its label from hub_task." } as const;
 const TOOLS: readonly ToolDefinition[] = [
   { name: "hub_turns", title: "List the turns of this conversation",
     description: "List the turns of this HarnessHub conversation, oldest first, one entry each: its number, which Harness (and model) ran it, how it ended, the user's words and the reply shortened, "
@@ -64,7 +66,7 @@ const TOOLS: readonly ToolDefinition[] = [
     inputSchema: { type: "object", properties: {
       from: whole("The number of the first turn to list. Default: the window ends at the latest turn.", 1),
       limit: whole("How many turns to list (default " + TABLE_LIMITS.turnsDefault + ").", 1, TABLE_LIMITS.turnsMax),
-      conversation: { type: "string", pattern: "^c-[0-9a-f]{6}$", description: "Another conversation of the same task to read instead of this one: its label from hub_task (the conversation that delegated this work to you, or one working beside you). Default: this conversation." } }, additionalProperties: false },
+      conversation: CONVERSATION }, additionalProperties: false },
     annotations: { title: "List the turns of this conversation", ...READ_ONLY } },
   { name: "hub_read_turn", title: "Read one turn of this conversation",
     description: "Read one turn of this HarnessHub conversation. By default you get an overview: the user's words, the reply, the numbered tool calls, the files changed and the plan, each cut at a sensible "
@@ -77,7 +79,7 @@ const TOOLS: readonly ToolDefinition[] = [
       tool: whole("The tool call's number in the turn's tool list (part tools, or the overview). Needed for input, output and diff.", 1),
       offset: whole("Where the page starts, in characters of that part; the previous page's result says where the next one starts.", 0),
       limit: whole("How many characters one page holds (default " + TABLE_LIMITS.pageDefault + ").", 1, TABLE_LIMITS.pageMax) ,
-      conversation: { type: "string", pattern: "^c-[0-9a-f]{6}$", description: "Another conversation of the same task to read instead of this one: its label from hub_task (the conversation that delegated this work to you, or one working beside you). Default: this conversation." } }, required: ["n"], additionalProperties: false },
+      conversation: CONVERSATION }, required: ["n"], additionalProperties: false },
     annotations: { title: "Read one turn of this conversation", ...READ_ONLY } },
   { name: "hub_search", title: "Search this conversation",
     description: "Search this whole HarnessHub conversation (the user's words, replies, tool calls and their inputs, outputs and diffs) for a word or phrase, ignoring case. "
@@ -88,7 +90,7 @@ const TOOLS: readonly ToolDefinition[] = [
       limit: whole("How many places to return (default " + TABLE_LIMITS.searchDefault + ").", 1, TABLE_LIMITS.searchMax),
       after: { type: "string", pattern: "^(w[0-9]{1,15}\\.[0-9]{1,9}(user|reply)|[0-9]{1,9}\\.[0-9]{1,9})$", description: "Where to go on from: the `after` value the previous result gave for its next page." },
       in: { type: "string", enum: [...TABLE_SEARCH_SCOPES], description: "What to search: all (the default) is everything, read turn by turn; words is only the user's words and the replies, which is quick however long the conversation is." } ,
-      conversation: { type: "string", pattern: "^c-[0-9a-f]{6}$", description: "Another conversation of the same task to read instead of this one: its label from hub_task (the conversation that delegated this work to you, or one working beside you). Default: this conversation." } }, required: ["query"], additionalProperties: false },
+      conversation: CONVERSATION }, required: ["query"], additionalProperties: false },
     annotations: { title: "Search this conversation", ...READ_ONLY } },
   { name: "hub_update_plan", title: "Update the task list",
     description: "Show the user your task list for this task, pinned above their message box in HarnessHub. Give the whole list every time; it replaces the one shown before. "

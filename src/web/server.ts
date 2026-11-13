@@ -9,9 +9,9 @@ import { application as composeApplication, builtinHarnessName } from "../cli/se
 import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
 import type { ConversationCommit, StartupSample } from "../contracts/conversation.js";
-import { SessionError, parseNativeOptions, runId, sessionId, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type TurnLimits } from "../contracts/session.js";
+import { BOARD_KINDS, SessionError, parseNativeOptions, runId, sessionId, type BoardKind, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type TurnLimits } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES } from "../contracts/content.js";
-import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, MaintenanceView, NativeSessionListView, UninstallCheckView, InstallCheckView, WebState } from "../contracts/web.js";
+import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, MaintenanceView, NativeSessionListView, TaskView, UninstallCheckView, InstallCheckView, WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
@@ -1168,7 +1168,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (textRoute && method === "GET") { queries(url, ["from", "to"]); json(response, 200, conversations!.itemText(textRoute[1]!, textRoute[2]!, textRoute[3]!, { from: url.searchParams.get("from") ?? undefined, to: url.searchParams.get("to") ?? undefined })); return; }
     const changesRoute = /^\/api\/v1\/sessions\/([^/]+)\/changes$/u.exec(path);
     if (changesRoute && method === "GET") { queries(url, ["before", "limit"]); json(response, 200, conversations!.changes(changesRoute[1]!, { before: url.searchParams.get("before") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
-    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|branch|delegate|retention|end-process|native-resume))?$/u.exec(path);
+    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|branch|delegate|task|retention|end-process|native-resume))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
       if (action === undefined && method === "GET") { queries(url, []); json(response, 200, conversations!.session(id)); return; }
@@ -1199,6 +1199,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         const git = binding === undefined ? false : await stat(join(snapshot.configuration.workspace, ".git")).then(() => true, () => false);
         json(response, 200, { resume: binding === undefined ? null : nativeResume(selection.harnessId, binding.checkpoint, { git }) }); return;
       }
+      // The board of the task this conversation belongs to (2026-11-13): what every Harness on the task goes by, as the page shows it.
+      if (action === "task" && method === "GET") { queries(url, []); json(response, 200, { board: app.runtime.taskBoard(id) } satisfies TaskView); return; }
       if (action === "events" && method === "GET") {
         queries(url, ["afterSeq", "limit"]); const after = cursor(url.searchParams.get("afterSeq"), 0, 0, Number.MAX_SAFE_INTEGER), limit = cursor(url.searchParams.get("limit"), 50, 1, 100);
         const events = app.store.events(id, after, limit).map(item => relayApi.publicEvent(item)), nextSeq = events.at(-1)?.seq ?? after;
@@ -1216,6 +1218,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
           // `branchFrom`: the message goes from the place of that Turn (its message edited and sent again, or its reply tried again), on a branch of its own.
           json(response, 202, app.runtime.send(id, input.text, command(input.commandId), (input.attachments ?? []) as string[], relay.choices, input.branchFrom as string | undefined));
           return;
+        }
+        // The user writes on the task's board, or takes an entry off it.
+        if (action === "task") {
+          const input = record(await body(request), ["kind", "text", "forget"]);
+          if (input.forget !== undefined) { json(response, 200, { board: app.runtime.writeBoard(id, "user", { forget: text(input.forget, "Board entry", 40) }) } satisfies TaskView); return; }
+          if (typeof input.kind !== "string" || !(BOARD_KINDS as readonly string[]).includes(input.kind)) throw new HttpError(400, "INVALID_INPUT", "Invalid board entry kind");
+          json(response, 200, { board: app.runtime.writeBoard(id, "user", { kind: input.kind as BoardKind, text: text(input.text, "Board entry", 4096) }) } satisfies TaskView); return;
         }
         // A part of the work goes to a Harness of its own (2026-11-13): a conversation that starts from this one's history, with the task as its first message.
         if (action === "delegate") {

@@ -1,3 +1,4 @@
+import { TaskBoardSection, type TaskBoardAccess } from "./TaskBoard.js";
 import { ChevronRight, Clock, File, FileText, ListChecks, X } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -190,6 +191,8 @@ interface PanelProps {
   readonly onEndProcess?: (() => void) | undefined; readonly busy: boolean; readonly onClose?: (() => void) | undefined;
   /** The conversation's relay state, when the Gateway gives one: it adds the "接续" tab (relay-architecture §12.1). */
   readonly relay?: { readonly view: RelayView; readonly onViewPacket: (packetId: string) => void } | undefined;
+  /** The board of the task the conversation belongs to, when the Gateway gives one: read and written at the head of the plan. */
+  readonly board?: TaskBoardAccess | undefined;
 }
 /**
  * The conversation's details beside it (ADR-054 §5): its changed files (this Turn or the whole conversation), the plan,
@@ -225,7 +228,10 @@ export function DetailsPanel(props: PanelProps) {
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${tab}`}>
       {tab === "changes" ? <Changes changes={changes} counts={{ turn: selected ? changeCount([selected]) : 0, all: total }} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}/>
         : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <Empty>还没有执行记录</Empty>
-        : tab === "plan" ? planned ? <div className="px-4 pt-3 pb-4"><PlanView steps={planned.steps} explanation={planned.explanation} owner={planned.owner}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划"/>
+        : tab === "plan" ? props.board
+          ? <div className="flex flex-col gap-4 px-4 pt-3 pb-4"><TaskBoardSection access={props.board} stamp={session.id + ":" + runs.length + ":" + (runs.at(-1)?.status ?? "")} name={name}/>
+            <div className="hairline-t pt-3.5">{planned ? <PlanView steps={planned.steps} explanation={planned.explanation} owner={planned.owner}/> : <p className="m-0 text-ui-sm text-fg-3">还没有计划</p>}</div></div>
+          : planned ? <div className="px-4 pt-3 pb-4"><PlanView steps={planned.steps} explanation={planned.explanation} owner={planned.owner}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划"/>
         : tab === "background" ? <Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/>
         : tab === "relay" && props.relay ? <RelayDetails view={props.relay.view} name={id => name(id)} onViewPacket={props.relay.onViewPacket}/>
         : selected ? <RunFacts {...props} run={selected} runs={runs}/> : <Empty>还没有执行记录</Empty>}

@@ -301,6 +301,8 @@ export interface CreateWebSession {
   readonly commandId: string;
 }
 export interface SwitchWebSession { readonly selection: SelectionRequest; readonly commandId: string }
+/** The task a conversation belongs to as the page shows it (2026-11-13): its board, what every Harness working on it goes by. */
+export interface TaskView { readonly board: import("./session.js").TaskBoard }
 /** `POST /api/v1/sessions/:id/delegate`: a conversation of its own for `selection` to do `text`, starting from this one's history. `messageCommandId` is the task message's own identity. */
 export interface DelegateWebSession { readonly selection: SelectionRequest; readonly text: string; readonly commandId: string; readonly messageCommandId: string }
 export interface WebError {

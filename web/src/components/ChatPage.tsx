@@ -1,3 +1,4 @@
+import type { TaskBoardAccess } from "./TaskBoard.js";
 import { ArrowDown, Check, ChevronUp, Circle, CircleDashed, FileDown, GitBranch, ListChecks, ListTree, Menu as MenuIcon, MoreHorizontal, PanelLeft, PanelRight, Split, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
@@ -177,6 +178,8 @@ export interface ChatProps {
   reads?: TurnReads;
   /** Reads a page of the conversation's changes (the details panel's 改动 tab lists the whole conversation's). */
   onLoadChanges?: ChangesLoader;
+  /** The board of the task the open conversation belongs to. */
+  taskBoard?: TaskBoardAccess | undefined;
   /** Filled by the page for the composer. */
   contextUsage?: number | null; onShowResume?: (() => void) | undefined; onSendDraft?: (text: string) => Promise<void>;
 }
@@ -525,7 +528,7 @@ export function ChatPage(props: ChatProps) {
   const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史"
     : currentState ?? (pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话");
   const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} loadChanges={props.onLoadChanges} tab={panelTab} onTab={setTab} runId={panelRun} onRun={setPanelRun}
-    loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)}
+    loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)} board={props.taskBoard}
     relay={relay?.view && relayHasStory(relay.view) ? { view: relay.view, onViewPacket: viewPacket } : undefined}/> : null;
   // #23: the panel opens by widening (300 ms) and pushes the conversation aside; its content follows 60 ms later from 24 px to
   // the right; it closes in 200 ms. From the keyboard (⌘\) it opens and closes at once.

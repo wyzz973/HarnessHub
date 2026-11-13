@@ -3947,12 +3947,12 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
 
   // Dark, and phone widths: the categories become a row of tabs, the matrix scrolls inside its frame, the bar stays on screen.
   await page.emulateMedia({ colorScheme: "dark" });
-  await expect.poll(() => beta.evaluate(element => getComputedStyle(element).boxShadow)).toMatch(/rgb\(138, 176, 255\) 0px 0px 0px 1\.5px inset$/u);
+  await expect.poll(() => beta.evaluate(element => getComputedStyle(element).boxShadow)).toMatch(/rgb\(106, 171, 241\) 0px 0px 0px 1\.5px inset$/u);
   await page.screenshot({ path: join(artifact, "dl8-capabilities-dark-1440.png"), animations: "disabled" });
   await bar.getByRole("button", { name: "预览写入", exact: true }).click();
   const darkPreview = page.getByRole("dialog", { name: "写入 1 个文件" });
   await expect(darkPreview.locator(".capability-diff .text-red")).toHaveText(["-    \"beta\": \"off\""]); await expect(darkPreview).toHaveCSS("opacity", "1");
-  assert.equal(await page.locator(".backdrop").evaluate(element => getComputedStyle(element).backgroundColor), "color(srgb 0.0666667 0.0705882 0.0784314 / 0.6)");
+  assert.equal(await page.locator(".backdrop").evaluate(element => getComputedStyle(element).backgroundColor), "color(srgb 0.121569 0.121569 0.121569 / 0.6)");
   await page.screenshot({ path: join(artifact, "dl8-capabilities-preview-dark-1440.png"), animations: "disabled" });
   const sent = posted.length;
   await darkPreview.getByRole("button", { name: "取消", exact: true }).click(); await expect(darkPreview).toBeHidden();

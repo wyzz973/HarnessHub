@@ -7,9 +7,9 @@ import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput
 import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState } from "../../src/contracts/web.js";
 import { HARNESS_TIERS } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput, RuntimeRequirement, UpgradeSequenceCheck } from "../../src/contracts/management.js";
-import type { AttentionItem, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
+import type { AttentionItem, BoardKind, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest, TaskBoard } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
-import { parseNativeOptions, commandId, messageId, runId, sessionId, switchId } from "../../src/contracts/session.js";
+import { BOARD_KINDS, parseNativeOptions, commandId, messageId, runId, sessionId, switchId } from "../../src/contracts/session.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
 import { RUN_STATUS_WORDS } from "../../src/contracts/protocol-words.js";
 import type { HarnessFlavor } from "../../src/contracts/flavor.js";
@@ -36,6 +36,13 @@ function text(value: unknown): string { return typeof value === "string" ? value
 function number(value: unknown): number { return typeof value === "number" && Number.isSafeInteger(value) ? value : invalid(); }
 function bool(value: unknown): boolean { return typeof value === "boolean" ? value : invalid(); }
 function nullableText(value: unknown): string | null { return value === null ? null : text(value); }
+function decodeTaskBoard(value: unknown): TaskBoard {
+  const board = record(record(value).board);
+  return { version: number(board.version), entries: list(board.entries, row => {
+    const item = record(row), kind = text(item.kind);
+    return (BOARD_KINDS as readonly string[]).includes(kind) ? { id: text(item.id), kind: kind as BoardKind, text: text(item.text), by: text(item.by), at: number(item.at) } : invalid();
+  }) };
+}
 function nullableNumber(value: unknown): number | null { return value === null ? null : number(value); }
 /** A list of any length (2026-11-12): the page mirrors no count bound the Gateway does not have. */
 function list<T>(value: unknown, decode: (row: unknown) => T): readonly T[] {
@@ -724,6 +731,12 @@ export class GatewayApi {
   /** Makes the branch through the Turn `runId` (an alternative of a Turn: its message sent again, its reply tried again) the conversation's path; nothing runs. */
   selectBranch(id: string, runId: string, key: string): Promise<ClientSessionView> {
     return this.request(`/sessions/${encodeURIComponent(id)}/branch`, "POST", { runId, commandId: key }, decodeSessionViewV14);
+  }
+  /** The board of the task a conversation belongs to: what every Harness working on it goes by. */
+  taskBoard(id: string, signal?: AbortSignal): Promise<TaskBoard> { return this.request(`/sessions/${encodeURIComponent(id)}/task`, "GET", undefined, decodeTaskBoard, signal); }
+  /** Writes on that board as the user, or takes an entry off it; the server answers with the board as it is then. */
+  writeTaskBoard(id: string, change: { readonly kind: BoardKind; readonly text: string } | { readonly forget: string }): Promise<TaskBoard> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/task`, "POST", change, decodeTaskBoard);
   }
   /** Hands `text` to `selection` in a conversation of its own that starts from this one's history; the server answers with that conversation. */
   delegate(id: string, selection: SelectionRequest, text: string, key: string, messageKey: string): Promise<ClientSessionView> {

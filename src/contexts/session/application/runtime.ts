@@ -239,7 +239,8 @@ export function boardText(board: TaskBoard, name: (harnessId: string) => string)
   const line = (entry: BoardEntry) => "- " + entry.text + "（" + (entry.by === "user" ? "用户" : name(entry.by)) + " 记）";
   const parts = [...of("goal").map(entry => "目标：" + entry.text),
     ...(["constraint", "decision", "note"] as const).flatMap(kind => of(kind).length === 0 ? [] : [BOARD_WORDS[kind] + "：\n" + of(kind).map(line).join("\n")])];
-  return "（HarnessHub 任务板：这件任务里所有 Harness 共同遵守的内容，由用户和各个 Harness 记下，对你同样有效，先照它做。用户又提了要一直遵守的要求、定了新的决定或目标变了，就用 harnesshub 的 hub_remember 记上去。\n" + parts.join("\n") + "\n）";
+  if (board.entries.length === 0) return "（HarnessHub 任务板：现在是空的，之前给过你的条目都已撤下，不必再照它们做。）";
+  return "（HarnessHub 任务板：这件任务里所有 Harness 共同遵守的内容，由用户和各个 Harness 记下，对你同样有效，先照它做。这是最新的一份：之前给过你、这里没有的条目已撤下。用户又提了要一直遵守的要求、定了新的决定或目标变了，就用 harnesshub 的 hub_remember 记上去。\n" + parts.join("\n") + "\n）";
 }
 /** A note of the Hub's as a Harness that has the Hub's tools as a command of the conversation reads it: each tool by its word of that command. */
 function asCommand(note: string, command: string | undefined): string {
@@ -835,8 +836,10 @@ export class SessionRuntime {
   private boardNews(state: Conversation): { readonly text: string; readonly line: string; readonly version: number } | null {
     let board: TaskBoard | undefined;
     try { board = this.load(this.taskRoot(state.id)).taskBoard; } catch { board = undefined; }
-    if (board === undefined || board.entries.length === 0 || board.version <= (state.taskBoardTold ?? 0)) return null;
-    return { version: board.version, line: "带上了任务板（" + board.entries.length + " 条）", text: boardText(board, harnessId => this.options.harnessName?.(harnessId) ?? harnessId) };
+    const told = state.taskBoardTold ?? 0;
+    // An empty board is told only to a Harness that was given entries before: that they are withdrawn.
+    if (board === undefined || board.version <= told || (board.entries.length === 0 && told === 0)) return null;
+    return { version: board.version, line: board.entries.length === 0 ? "任务板已清空，告知了这一点" : "带上了任务板（" + board.entries.length + " 条）", text: boardText(board, harnessId => this.options.harnessName?.(harnessId) ?? harnessId) };
   }
   /** The conversations of the task `id` belongs to, other than itself and those it delegated work to itself (what those come to reaches it with their outcome). */
   private taskOthers(id: SessionId): readonly SessionId[] {
