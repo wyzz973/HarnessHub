@@ -335,5 +335,9 @@ test("over HTTP a stream of a conversation of 2,000 Turns starts with its window
   assert.equal(read.head.runCount, 2001); assert.deepEqual([held.head.version, held.head.lastSeq], [read.head.version, read.head.lastSeq]);
   assert.deepEqual(JSON.parse(JSON.stringify(held.window.turns.slice(-read.window.turns.length))), JSON.parse(JSON.stringify(read.window.turns)));
   // The Turn has the hand-over line the relay put first (it began a native session for the conversation), the words sent, and the reply.
-  assert.deepEqual(read.window.turns.at(-1)!.items.map(entry => [entry.type, textOf(entry as unknown as WireItem)]), [["switch", undefined], ["user_message", "one more question"], ["assistant_message", "a:one more question"]]);
+  // The history is longer than a hand-over holds, so the Turn also says the task's state before the words, and says that it did (2026-11-13).
+  const last = read.window.turns.at(-1)!.items.map(entry => [entry.type, textOf(entry as unknown as WireItem)]);
+  assert.deepEqual(last.map(row => row[0]), ["switch", "user_message", "notice", "assistant_message"]);
+  assert.equal(last[1]![1], "one more question"); assert.equal(last[2]![1], "带上了任务现在的状态");
+  assert.match(String(last[3]![1]), /^a:（HarnessHub：这件任务现在的状态[\s\S]*one more question$/u);
 });

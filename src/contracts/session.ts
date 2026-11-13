@@ -558,7 +558,13 @@ export interface SessionRuntimeOptions {
    * conversation's (`place`, which reads nothing and writes nothing), and what brings it up to the record before a Harness is told to read it (`ensure`).
    * Absent: no Harness is told of a directory.
    */
-  readonly context?: { place(id: SessionId): { readonly dir: string; readonly self: string }; ensure(id: SessionId): Promise<void> };
+  readonly context?: { place(id: SessionId): { readonly dir: string; readonly self: string }; ensure(id: SessionId): Promise<void>;
+    /**
+     * The state of the task as the conversation stands in it (src/web/task-state.ts), as its Harness reads it before the Turn `upTo`; null when there is nothing to say.
+     * `record`: its Harness reads the record as files, so the state names the directory. `scope`: `task` when the Turn's handoff carries the whole conversation — then
+     * only what that handoff does not say (the board, the chain the work came down through, the other conversations of the task); `whole` otherwise.
+     */
+    state?(id: SessionId, upTo: RunId, record: boolean, scope: "whole" | "task"): string | null };
   /**
    * The installation's relay key (ADR-055 §10.2, D5; relay-keys.ts): the HMACs of delivery rows and of a request's relay
    * choice. Without it the Runtime keys them under a key it keeps only in memory and names EPHEMERAL_KEY_ID (A17), which no

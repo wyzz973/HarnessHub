@@ -261,6 +261,10 @@ class Ruler {
     await this.settle([id], new Map([[id, before + 1]]));
     return this.turnOf(id, role, before);
   }
+  /** Switches the conversation to the role's Harness as the page does (the user's switch): its next message goes to that Harness. */
+  async switchTo(id: string, role: Role): Promise<void> {
+    await this.api.post("/sessions/" + id + "/switches", { selection: this.selection(role), commandId: "switch-" + randomUUID() });
+  }
   /** Delegates from a conversation to the role's Harness as the page does (the user's delegation), and waits for the task's Turn to settle. */
   async delegate(from: string, role: Role, text: string): Promise<{ readonly id: string; readonly turn: Turn }> {
     const view = await this.api.post("/sessions/" + from + "/delegate", { selection: this.selection(role), text, commandId: "delegate-" + randomUUID(), messageCommandId: "task-" + randomUUID() }) as SessionViewV14;
@@ -475,6 +479,41 @@ const SCENARIOS: readonly Scenario[] = [
       const checks = { said, tools: tools.length, told };
       if (said && tools.length === 0) return pass("A 不用工具说出了命令输出", note, checks);
       return fail(said ? "A 用了工具才说出输出" : "A 说不出命令输出", note, checks);
+    } },
+  { id: "S9", name: "换回", roles: ["A", "B"], measures: "同一段对话里换到另一家做了一轮再换回来，原来那家不用工具知不知道那一轮改了什么",
+    async run(r) {
+      const ws = await r.workspace("s9"), a = await r.open("A", ws);
+      need(await r.say(a, "A", "这个任务是在当前工作目录里建几个小文件。这一轮什么都不用做，只回答“好”。"));
+      await r.switchTo(a, "B");
+      const before = await files(ws);
+      const b = need(await r.say(a, "B", "在当前工作目录里新建一个文本文件，文件名你自己起，文件名里带一段你随手想的 6 个小写字母，写一行 ok。做完只回复“完成”两个字，回复里不要提文件名。"));
+      const made = added(before, await files(ws));
+      if (made.length === 0) throw new Voided("B 没有新建文件");
+      if (made.some(path => b.reply.includes(stem(path)))) throw new Voided("B 的回复说出了文件名");
+      await r.switchTo(a, "A");
+      const back = need(await r.say(a, "A", "刚才换到另一个 Harness 的那一轮里，它新建了哪个文件？不要查看目录、不要用任何工具，只根据你现在知道的回答；不知道就说不知道。"));
+      const named = made.filter(path => back.reply.includes(stem(path))), tools = informing(back), stated = back.notices.includes("TASK_STATE_TOLD");
+      const note = (stated ? "换回这一轮带上了任务现在的状态" : "换回这一轮没有带状态") + (tools.length ? "；A 用了工具：" + listed(tools) : "");
+      const checks = { made, named, tools: tools.length, stated };
+      if (named.length === made.length && tools.length === 0) return pass("A 不用工具说出了 " + made.join("、"), note, checks);
+      return fail(tools.length ? "A 用了工具" + (named.length === made.length ? "才说出文件名" : "") : "A 说出 " + named.length + "/" + made.length + " 个文件名", note, checks);
+    } },
+  { id: "S10", name: "压缩之后", roles: ["C"], measures: "一家 Harness 压缩了自己的上下文之后，下一轮 Hub 有没有把状态重新给它，早先的约束它还照不照做",
+    async run(r) {
+      const ws = await r.workspace("s10"), c = await r.open("C", ws);
+      need(await r.say(c, "C", "这个任务里有一条约定：所有新建的文件，文件名都必须以 kk_ 开头。把这条约定记到任务板上，然后只回答“记住了”。"));
+      need(await r.say(c, "C", "只回答“在”。"));
+      // The Harness's own compaction, asked for as its user would: its session then holds a summary of its own making.
+      const squeezed = await r.say(c, "C", "/compact");
+      if (squeezed.status !== "completed") throw new Voided("这家 Harness 没有完成 /compact（" + squeezed.status + (squeezed.error ? " " + squeezed.error : "") + "）");
+      const before = await files(ws);
+      const after = need(await r.say(c, "C", "在当前工作目录里新建一个文件，写一行 hello，文件名你自己起。做完回复一句话。"));
+      const made = added(before, await files(ws)), stated = after.notices.includes("TASK_STATE_TOLD");
+      if (made.length === 0) throw new Voided("压缩之后的这一轮没有新建文件");
+      const off = made.filter(path => !basename(path).startsWith("kk_")), note = stated ? "压缩后的这一轮带上了任务现在的状态" : "压缩后的这一轮没有带状态";
+      const checks = { made, stated };
+      if (!stated) return fail("压缩之后 Hub 没有重新给状态（新建的是 " + made.join("、") + "）", note, checks);
+      return off.length === 0 ? pass("压缩之后新建的 " + made.join("、") + " 以 kk_ 开头", note, checks) : fail("压缩之后新建了 " + made.join("、") + "，没有以 kk_ 开头", note, checks);
     } },
 ];
 

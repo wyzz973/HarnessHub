@@ -646,6 +646,22 @@ export class SessionRuntime {
     const place = this.recordPlace(id, binding), rest = place === null ? HUB_DELEGATION_INSTRUCTIONS : hubRecordInstructions(place.dir, place.self);
     return this.settings().progress === "on" ? HUB_PROGRESS_INSTRUCTIONS + "\n" + rest : rest;
   }
+  /**
+   * Whether the Harness of the Turn `target` compacted its own session in the Turn before (2026-11-13): that Turn was its own too, and it told of a compaction (a
+   * compaction among its activities, or the command that asks for one), or — for a Harness that tells of none — its context was less than half as full at the end of
+   * that Turn as at the end of the one before. What it holds of the task after that the Hub cannot see, so the state is said again.
+   */
+  private compactedBefore(state: Conversation, target: RunId): boolean {
+    const at = state.runs.findIndex(run => run.id === target), run = state.runs[at], prev = at > 0 ? state.runs[at - 1] : undefined;
+    const same = (other: ConversationRun | undefined): other is ConversationRun => other !== undefined && run !== undefined && other.selection.harnessId === run.selection.harnessId && other.selection.controlId === run.selection.controlId;
+    if (!same(prev)) return false;
+    if ((prev as { readonly commandEffect?: unknown }).commandEffect === "compact") return true;
+    try { if (turnSource(this.store, state.id).turn(at - 1)?.run.activities?.some(activity => activity.kind === "compaction") === true) return true; } catch { /* told by the usage below, if at all */ }
+    const earlier = at > 1 ? state.runs[at - 2] : undefined, used = (row: ConversationRun) => row.usage?.context?.used;
+    if (!same(earlier)) return false;
+    const now = used(prev), before = used(earlier);
+    return typeof now === "number" && typeof before === "number" && before > 0 && now < 0.5 * before;
+  }
   /** Where the Harness of a binding reads the record as files: when it does (recordFiles) and the Hub keeps the directory; null otherwise. */
   private recordPlace(id: SessionId, binding: PreparedSessionBinding | null | undefined): { readonly dir: string; readonly self: string } | null {
     if (binding?.recordFiles !== true || this.options.context === undefined) return null;
@@ -2320,6 +2336,16 @@ export class SessionRuntime {
         { always: true, patch: current => ({ ...current, delegationsTold: { ...(current.delegationsTold ?? {}), ...told.told } }) });
       // The first Turn of a conversation that was delegated its work says so, and where the rest of the task is read (2026-11-13).
       const delegated = command === null && this.load(id).delegation !== undefined && this.load(id).runs[0]?.id === target && toolsUsable() ? DELEGATED_NOTE : null;
+      // The task's state, said whole where this Harness may not hold it any more (2026-11-13): it takes the conversation over or comes back to it (the Turn carries a
+      // packet), or its own session was compacted in the Turn before. It holds the board, which is then not said a second time.
+      const cause = command !== null ? null : packet !== null ? "handoff" : this.compactedBefore(this.load(id), target) ? "compaction" : null;
+      // A handoff that carries the whole conversation says the conversation's own part of the state already: only the task's part is added to it.
+      const standing = cause === null ? null : this.options.context?.state?.(id, target, recordAt() !== null, cause === "handoff" && packet?.record.complete === true ? "task" : "whole") ?? null;
+      if (standing !== null) {
+        const version = this.taskBoard(id).version;
+        this.placed(execution, { kind: "notice", severity: "info", title: cause === "compaction" ? "它压缩过上下文，重新带上了任务现在的状态" : "带上了任务现在的状态", code: "TASK_STATE_TOLD", at: this.options.now().getTime() },
+          [event("run.task_state_told", { runId: target, cause })], { always: true, patch: current => ({ ...current, taskBoardTold: Math.max(current.taskBoardTold ?? 0, version) }) });
+      }
       // The task's board, when it changed since this Harness was last told: what everyone on the task goes by, before anything else of the Hub's.
       const board = command === null ? this.boardNews(this.load(id)) : null;
       if (board !== null) this.placed(execution, { kind: "notice", severity: "info", title: board.line, code: "TASK_BOARD_TOLD", at: this.options.now().getTime() },
@@ -2334,7 +2360,7 @@ export class SessionRuntime {
       if (words !== null && words.line !== null) this.placed(execution, { kind: "notice", severity: "info", title: words.line, code: "PARENT_WORDS_TOLD", at: this.options.now().getTime() },
         [event("run.parent_words_told", { runId: target, through: words.through })], { always: true, patch: current => ({ ...current, parentWordsTold: words.through }) });
       else if (words !== null) this.commit(id, current => ({ next: { ...current, parentWordsTold: words.through }, events: [event("run.parent_words_marked", { runId: target, through: words.through })] }));
-      const notes = [board?.text ?? null, delegated, words?.text ?? null, edits?.text ?? null, told?.text ?? null].filter((note): note is string => note !== null).map(note => asCommand(asFiles(note, recordAt()), execution.binding?.hubCommand));
+      const notes = [standing, board?.text ?? null, delegated, words?.text ?? null, edits?.text ?? null, told?.text ?? null].filter((note): note is string => note !== null).map(note => asCommand(asFiles(note, recordAt()), execution.binding?.hubCommand));
       // The directory is brought up to the record before a Harness that reads it starts: what it is told is there is there.
       if (recordAt() !== null) { await this.options.context!.ensure(id).catch(() => undefined); this.continue(execution); }
       execution.run = await control.startText(native, notes.length === 0 ? planned : withHubNote(planned, notes.join("\n\n")), value => this.output(execution, value), ...(files.length ? [files] : []));

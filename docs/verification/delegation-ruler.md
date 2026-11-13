@@ -67,6 +67,19 @@ RUN HH_REAL_MODEL_CLAUDE=haiku node --test dist/tests/real/delegation-context.re
 
 按声明的默认读法（五家读目录、OpenClaw 走命令）跑整轮，A = Claude Code、B = DeepSeek Harness、C = Codex：S1、S2、S4、S5、S7、S8 过；S3、S6 判不过，都是 B 自己多跑了和上下文无关的命令被“越出工作区”规则判掉的（S3 里用 python 建文件，S6 里往 `/tmp` 写了一个核对用的文件），要量的内容本身送到了（A 说出了两个文件名；`pw.txt` 里有口令）。证据 `delegation-ruler-2026-11-13T08-*.json`。每个格子只跑了一到三次。
 
+### 状态块（2026-11-13）
+
+加了两项，量 Hub 在“这家可能已经不掌握状态”的地方有没有把状态重新给它（决定记录同日“第二步”）：
+
+| 场景 | 量什么 | 结果 |
+|---|---|---|
+| S9 换回 | A 聊一轮，换到 B 建一个文件（回复里不提文件名），再换回 A：A 不用工具说出文件名 | 过。换回的那一轮带了状态 |
+| S10 压缩之后 | C 记一条约定，跑 `/compact`，再让它新建文件：那一轮带了状态，文件名照约定 | 过（C = Codex）。压缩后的那一轮带了状态，建的是 `kk_hello.txt` |
+
+各跑了一次。S10 没有对照：Codex 自己的压缩摘要多半也留着约定，所以它说明的是机制通了，不是“没有状态块就会忘”。
+
+状态块做完后按默认设置跑了整轮（A = Claude Code、B = DeepSeek Harness、C = Codex，五家读目录）：S1 到 S10 十项全过，证据 `delegation-ruler-2026-11-13T10-04-38-078Z.json`。只跑了这一次。
+
 S4 用 C = OpenCode 补量了一次。OpenCode 没有用户级的 harnesshub 一项，用的是这次构建的工具。结果是不过：它的 `hub_turns`、`hub_search`、`hub_read_turn` 只看得到自己的对话，于是去翻了 Gateway 的数据目录（`ls`、`find`，再 `cat` 对话文件），从里面找到 B 的文件名，加上了 two。尺子按“越出工作区”判它不过。证据见 `delegation-ruler-2026-11-13T04-20-30-711Z.json`。
 
 ## 量的时候发现的

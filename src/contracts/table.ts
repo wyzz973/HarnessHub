@@ -100,7 +100,7 @@ export const TABLE_RECORD_ENV = "HARNESSHUB_RECORD";
  */
 export function hubRecordInstructions(dir: string, self: string): string {
   return DELEGATE_WORDS + "不确定现在还算数的约束有哪些时，看记录目录里的 board.md。\n"
-    + "这件任务的完整记录在一个只读目录里：" + dir + " 。你这段对话是其中的 " + self + "/ ：" + self + "/index.md 每一轮一条，" + self + "/turns/NNN.md 是第 N 轮的全文（用户原话、回复、每次工具调用的输入和完整输出、改动的文件）。"
+    + "这件任务的完整记录在一个只读目录里：" + dir + " 。你这段对话是其中的 " + self + "/ ：" + self + "/STATE.md 是 HarnessHub 整理的现状（目标、要遵守的、做到哪、改过的文件），" + self + "/index.md 每一轮一条，" + self + "/turns/NNN.md 是第 N 轮的全文（用户原话、回复、每次工具调用的输入和完整输出、改动的文件）。"
     + "task.md 列着这件任务里的每段对话（各自在做什么、改了哪些文件），每段对话一个目录；board.md 是任务板。"
     + "需要更早的细节、别的 Harness 做过什么时，用你自己读文件、搜文件的工具到那里查（比如先 grep），不要猜，也不要改那个目录。"
     + "只在这个目录里面找：它的上级目录里是别的任务的记录，和这件事无关，不要去翻。";

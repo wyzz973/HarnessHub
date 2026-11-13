@@ -3,13 +3,14 @@ import { chmod, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/
 import { dirname, join } from "node:path";
 import type { ContentPort } from "../contracts/content.js";
 import type { Conversation, ConversationReader } from "../contracts/conversation.js";
-import type { SessionConfiguration, SessionId, TaskBoard } from "../contracts/session.js";
+import type { RunId, SessionConfiguration, SessionId, TaskBoard } from "../contracts/session.js";
 import { readDetail } from "../contexts/session/domain/detail-read.js";
 import {
   CONTEXT_DETAIL_POLICY, contextIndex, contextNeeds, contextTurn, contextTurnPath, detailKey, rowsTable, tableDetailOf, tableRedaction,
   type ContextFile, type TableRedaction, type TableToolDetail,
 } from "../contexts/session/domain/table.js";
-import { taskFamily, taskLabel, type FamilyStore, type TaskMember } from "./task-family.js";
+import { taskFamily, taskLabel, type TaskMember } from "./task-family.js";
+import { hasState, stateText, taskState, type StateScope, type StateStore } from "./task-state.js";
 
 /**
  * The record as a directory (docs/decisions/LOG.md, 2026-11-13): what the Hub knows of a task, laid out as read-only files a Harness reads with its own file tools —
@@ -37,7 +38,7 @@ export interface ContextPlace {
 export interface ContextFilesOptions {
   /** Where the directories are kept (`<data>/context`). */
   readonly root: string;
-  readonly reader: Pick<ConversationReader, "head" | "turnAt" | "runOrdinal" | "originHistory" | "harnessIds"> & FamilyStore;
+  readonly reader: Pick<ConversationReader, "head" | "turnAt" | "runOrdinal" | "originHistory" | "harnessIds"> & StateStore;
   readonly content?: Pick<ContentPort, "readText" | "readChunks">;
   readonly secrets?: (configuration: SessionConfiguration, harnessIds: readonly string[]) => Promise<readonly string[]>;
   /** A Harness's display name by its id. */
@@ -57,6 +58,7 @@ export const CONTEXT_README = [
   "",
   "- task.md: the conversations working on the task, how each stands, the files each changed",
   "- board.md: what everyone on the task goes by (the goal, the user's constraints, decisions)",
+  "- <conversation>/STATE.md: where that conversation stands in the task, as HarnessHub puts it together (goal, what must hold, the task list, the files in play)",
   "- <conversation>/index.md: one entry a turn of that conversation (who ran it, how it ended, what was asked and answered in short)",
   "- <conversation>/turns/NNN.md: the whole of turn NNN: the user's words, the reply, every tool call with its input and output, the files changed",
   "- <conversation>/turns/NNN/tool-KK.output.txt: a text too long to stand in the turn's file, whole",
@@ -81,6 +83,13 @@ export class ContextFiles {
   /** Where the directory of a conversation's task is, whether or not it is written yet. */
   place(id: SessionId): ContextPlace { return { dir: join(this.options.root, taskLabel(this.rootOf(id))), self: taskLabel(id) }; }
 
+  /** The state of the task as the conversation `id` stands in it, as its Harness reads it before the Turn `upTo` (task-state.ts); null when there is nothing to say yet. */
+  state(id: SessionId, upTo?: RunId, record = false, scope: StateScope = "whole"): string | null {
+    try {
+      const state = taskState(this.options.reader, id, this.options.name, this.options.board(id), upTo);
+      return hasState(state, scope) ? stateText(state, this.options.name, record ? this.place(id) : undefined, scope) : null;
+    } catch { return null; }
+  }
   /** Brings the directory of the task `id` belongs to up to the record. One writer a task at a time; a failure leaves what was there and is the caller's to ignore. */
   ensure(id: SessionId): Promise<void> {
     const place = this.place(id), before = this.working.get(place.dir) ?? Promise.resolve();
@@ -98,6 +107,8 @@ export class ContextFiles {
     await this.put(join(dir, "board.md"), boardText(this.options.board(id), this.options.name));
     for (const member of members) {
       try { await this.conversation(member.sessionId, join(dir, member.label), member.label); } catch { /* a conversation that cannot be read now keeps what it had */ }
+      // Where each conversation stands in the task, as the Hub puts it together: the same state it says to a Harness, always as it is now.
+      await this.put(join(dir, member.label, "STATE.md"), (this.state(member.sessionId, undefined, false) ?? "（还没有可说的状态）") + "\n").catch(() => undefined);
     }
   }
 

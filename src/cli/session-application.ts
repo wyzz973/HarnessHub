@@ -171,7 +171,7 @@ export function application(root: string, publish: (commit: ConversationCommit) 
     const context = new ContextFiles({ root: join(root, CONTEXT_DIR), reader: store, content, name: harnessName, board: id => runtime.taskBoard(id),
       secrets: (configuration, harnessIds) => factory.relaySecrets === undefined ? Promise.resolve([]) : factory.relaySecrets(configuration, harnessIds) });
     const runtime: SessionRuntime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, workspace: new WorkspaceRecorder(), flavor: flavorOf, ...(options.budgets ?? {}),
-      context: { place: id => context.place(id), ensure: id => context.ensure(id) },
+      context: { place: id => context.place(id), ensure: id => context.ensure(id), state: (id, upTo, record, scope) => context.state(id, upTo, record, scope) },
       ...(relayKeys === null ? {} : { relayKeys }),
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
     // Upgrades see and close this runtime's conversations' processes (ADR-043).

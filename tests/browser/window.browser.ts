@@ -121,16 +121,18 @@ test("a conversation of 2,000 Turns opens as its newest ten, the older ones are 
   await composer.fill("还有一个问题"); await composer.press("Enter");
   await expect(userMessages(w.page).last()).toContainText("还有一个问题", { timeout: 20_000 });
   const turn = w.page.getByRole("log", { name: "对话历史" }).locator("article.protocol-turn").last();
-  await expect(turn).toContainText("总结：还有一个问题", { timeout: 20_000 });
+  // The history is longer than a hand-over holds, so the Turn says the task's state before the words (2026-11-13): this Harness gives back all it was given.
+  await expect(turn).toContainText(/总结：[\s\S]*还有一个问题/u, { timeout: 20_000 });
+  await expect(turn).toContainText("带上了任务现在的状态");
   assert.equal((await heldTurns(w.page)).length, 51, "the older Turns already read are still held, and the new one with them");
   // The Turn is drawn in the order it happened: what was said, the work (a command, a file read: folded into one line), then the summary.
-  const said = await turn.innerText(), order = ["先看一下目录。", "运行了 1 条命令，读取了 README.md", "总结：还有一个问题"].map(text => said.indexOf(text));
+  const said = await turn.innerText(), order = ["先看一下目录。", "运行了 1 条命令，读取了 README.md", "总结："].map(text => said.indexOf(text));
   assert.ok(order.every(at => at >= 0), "the Turn shows what was said, the work and the summary: " + JSON.stringify(said.slice(0, 600)));
   assert.deepEqual([...order].sort((a, b) => a - b), order, "in the order they happened: " + order.join(","));
   // And the work, opened, is the command and then the file, between the two things said.
   await turn.getByRole("button", { name: /运行了 1 条命令/u }).click();
   await expect(turn).toContainText("ls -la");
-  const opened = await turn.innerText(), steps = ["先看一下目录。", "ls -la", "总结：还有一个问题"].map(text => opened.indexOf(text));
+  const opened = await turn.innerText(), steps = ["先看一下目录。", "ls -la", "总结："].map(text => opened.indexOf(text));
   assert.deepEqual([...steps].sort((a, b) => a - b), steps, "opened, the command stands between the words: " + JSON.stringify(opened.slice(0, 800)));
   assert.ok(steps.every(at => at >= 0));
   assert.deepEqual(w.errors, []);
@@ -149,10 +151,10 @@ test("a page whose connection fails shows the Turns it missed once it is back, a
   const composer = w.page.getByRole("textbox", { name: "发送消息", exact: true });
   await composer.fill("断线时发的"); await composer.press("Enter");
   await w.page.waitForTimeout(1500);
-  await expect(w.page.getByRole("log", { name: "对话历史" }).locator("article.protocol-turn").filter({ hasText: "总结：断线时发的" })).toHaveCount(0);
+  await expect(w.page.getByRole("log", { name: "对话历史" }).locator("article.protocol-turn").filter({ hasText: /总结：[\s\S]*断线时发的/u })).toHaveCount(0);
   await w.page.evaluate(() => (Reflect.get(window, "__drop") as () => void)());
   await w.page.evaluate(() => (Reflect.get(window, "__hold") as (held: boolean) => void)(false));
-  await expect(w.page.getByRole("log", { name: "对话历史" }).locator("article.protocol-turn").filter({ hasText: "总结：断线时发的" })).toHaveCount(1, { timeout: 30_000 });
+  await expect(w.page.getByRole("log", { name: "对话历史" }).locator("article.protocol-turn").filter({ hasText: /总结：[\s\S]*断线时发的/u })).toHaveCount(1, { timeout: 30_000 });
   assert.ok(streams() > before, "the page asked for the stream again");
   assert.equal((await heldTurns(w.page)).length, held + 1, "the Turns read before are held, and the Turn it missed with them");
   assert.deepEqual(w.errors, []);
