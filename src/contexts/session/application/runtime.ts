@@ -251,8 +251,6 @@ function asCommand(note: string, command: string | undefined): string {
 /** What the Harness of a delegated conversation reads before its task: that this is a part of a larger task, and how the rest of it is read. */
 const DELEGATED_NOTE = "（HarnessHub：下面是从另一段对话委派给你的任务，是一件更大的事的一部分。那段对话正在进行的一轮、以及这件事里其他 Harness 做了什么和改了哪些文件，都能读到："
   + "先用 harnesshub 的 hub_task 看全貌，再用 hub_turns、hub_read_turn、hub_search 带上对话标签去读。任务里提到“之前”“别人做的”“本轮”这类你手上没有的内容时，先去那里查，不要猜；动别人可能在改的文件前也先看一眼。）";
-/** The most a delegated conversation's first Turn carries of the conversation it came from, in the packet's tokens, when its Harness can read the rest back. */
-const DELEGATED_CAP = 2000;
 /** One piece of delegated work as its conversation's Harness reads it: who had it, how it ended, the task and the reply, each cut at a length a note can carry. */
 export function delegationText(entry: DelegationState, ran: readonly string[] = []): string {
   const clip = (text: string, most: number) => { const units = [...text]; return units.length > most ? units.slice(0, most).join("") + "…（后面省略）" : text; };
@@ -803,7 +801,7 @@ export class SessionRuntime {
   }
   /**
    * Writes on the task's board, or takes an entry off it (`forget`). `by`: a Harness's id when its tool wrote it — only the Harness of the conversation's Turn in
-   * progress may — or `user` from the page. A goal replaces the goal; the board keeps its latest 60 entries. Returns the board as it is then.
+   * progress may — or `user` from the page. A goal replaces the goal; every entry is kept, whole, until someone takes it off. Returns the board as it is then.
    */
   writeBoard(id: SessionId, by: { readonly harnessId: string; readonly controlId: string } | "user", change: { readonly kind: BoardKind; readonly text: string } | { readonly forget: string }): TaskBoard {
     this.admit();
@@ -817,9 +815,9 @@ export class SessionRuntime {
       else {
         const text = change.text.replace(/\s+/gu, " ").trim();
         if (text === "") throw new SessionError("INVALID_INPUT", "要记下的内容不能为空");
-        const units = [...text], entry: BoardEntry = { id: "b" + (board.version + 1), kind: change.kind, text: units.length > 600 ? units.slice(0, 600).join("") + "…" : text, by: author, at };
+        const entry: BoardEntry = { id: "b" + (board.version + 1), kind: change.kind, text, by: author, at };
         // Said again in the same words, it stays one entry; a new goal takes the old one's place.
-        entries = [...board.entries.filter(item => !(item.kind === entry.kind && (item.text === entry.text || entry.kind === "goal"))), entry].slice(-60);
+        entries = [...board.entries.filter(item => !(item.kind === entry.kind && (item.text === entry.text || entry.kind === "goal"))), entry];
       }
       made = { version: board.version + 1, entries };
       // The Harness that wrote it knows it: where it had read the board as it was, its conversation stands as told.
@@ -2172,13 +2170,11 @@ export class SessionRuntime {
             // never fails, and when even its least packet is over the cap (below) the input goes as typed.
             const resolved = resolveWindow(history, asked), limit = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(typed, kinds) ?? [...typed].length;
             const cap = hardCap(resolved, estimateTokens(typed), limit, size);
-            const fitted: RelayBudget = packetBudget(resolved, cap), standard = packetBudget(resolved, Number.POSITIVE_INFINITY);
-            // Delegated work starts lean (2026-11-13): its task says what to do, the task's board what holds throughout, and its Harness reads the rest of the task with the
-            // Hub's tools as it needs it. So of the conversation it came from it carries the user's words and the latest of the work, not all the budget would take.
-            const lean = fresh.delegation !== undefined && fresh.runs[0]?.id === target && toolsUsable();
-            const budget: RelayBudget = lean && fitted.cap > DELEGATED_CAP ? { ...fitted, cap: DELEGATED_CAP, user: Math.min(fitted.user, Math.floor(DELEGATED_CAP / 2)) } : fitted;
+            // Delegated work is handed the history as any handoff is (2026-11-13: a tighter budget for it was taken out the day it was put in; what it saved was little,
+            // and a Harness that has to fetch what it was not given is slower and less sure than one that was given it).
+            const budget: RelayBudget = packetBudget(resolved, cap), standard = packetBudget(resolved, Number.POSITIVE_INFINITY);
             window = resolved;
-            if (fitted.cap < standard.cap) clamped = [limit !== null && hardCap(resolved, estimateTokens(typed), null, size) >= standard.cap ? "input_limit" : "window"];
+            if (budget.cap < standard.cap) clamped = [limit !== null && hardCap(resolved, estimateTokens(typed), null, size) >= standard.cap ? "input_limit" : "window"];
             // The renderer sees the binding as a native session that holds nothing when the packet must be a whole one: it carries
             // everything again, or the native session holds no part of the conversation (no mark).
             const options = await relayFor(history, fresh.configuration, runs, carrying.need.origin);
