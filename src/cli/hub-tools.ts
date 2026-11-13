@@ -342,7 +342,21 @@ function conversationArgument(args: Readonly<Record<string, unknown>>): string |
   return value;
 }
 /** Runs one tool. Never throws: what goes wrong is a result with isError. */
+/**
+ * Calls a tool, and says with its answer what changed in the task meanwhile (2026-11-13): the Hub is asked after every call but the wrap-up (the Turn's last, where
+ * nothing more is to be done with it). A Hub that has no such answer, or does not answer, leaves the tool's own answer as it is.
+ */
 export async function callTool(name: string, args: Readonly<Record<string, unknown>>, surface: Surface, env: Readonly<Record<string, string | undefined>>): Promise<ToolResult> {
+  const result = await runTool(name, args, surface, env);
+  if (result.isError || name === "hub_wrap_up") return result;
+  const connection = connect(env);
+  if (connection.kind !== "ready") return result;
+  try {
+    const text = (await ask(connection, "/api/table/signals", {})).text;
+    return typeof text === "string" && text.trim() !== "" ? { ...result, text: result.text + "\n\n" + text } : result;
+  } catch { return result; }
+}
+async function runTool(name: string, args: Readonly<Record<string, unknown>>, surface: Surface, env: Readonly<Record<string, string | undefined>>): Promise<ToolResult> {
   const connection = connect(env);
   if (connection.kind === "none") return { text: TABLE_NOT_IN_SESSION, isError: true };
   if (connection.kind === "refused") return { text: connection.message + ".", isError: true };

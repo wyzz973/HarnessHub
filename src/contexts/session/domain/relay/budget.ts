@@ -16,8 +16,10 @@
  * a tool its Harness gave a kind, and a tool nothing can tell, are worded as mvp.6 worded them, byte for byte.
  * relay/1-mvp.8 (2026-11-13): the cap is the target's window's alone — half of it — where it was 8,000 tokens and 5% of the window; and the user's earlier
  * words take up to half of the cap, where they took 2,500 tokens. A history that fits is carried whole; the text of a packet that fits both is what mvp.7 made.
+ * relay/1-mvp.9 (2026-11-13): a packet asked for the user's words only (a delegated conversation's first Turn) carries them and leaves the rest to the record; any other
+ * packet is what mvp.8 made.
  */
-export const RELAY_POLICY_VERSION = "relay/1-mvp.8";
+export const RELAY_POLICY_VERSION = "relay/1-mvp.9";
 
 /**
  * What the one cap of a packet is made of (2026-11-13: no number of our own caps a packet): T = half of the target's context window — the other half is the

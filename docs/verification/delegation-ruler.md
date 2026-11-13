@@ -80,6 +80,14 @@ RUN HH_REAL_MODEL_CLAUDE=haiku node --test dist/tests/real/delegation-context.re
 
 状态块做完后按默认设置跑了整轮（A = Claude Code、B = DeepSeek Harness、C = Codex，五家读目录）：S1 到 S10 十项全过，证据 `delegation-ruler-2026-11-13T10-04-38-078Z.json`。只跑了这一次。
 
+### 中途送达与 fork 式委派（2026-11-13）
+
+| 场景 | 量什么 | 结果 |
+|---|---|---|
+| S11 中途的变化 | C 分三步做、每步更新任务清单；第一步进行中用户往任务板加一条命名约束：这一轮里送没送到，第三步建的文件照不照做 | 过（C = Codex）。这一轮进行中带上了任务板，建的是 `mm_hello.txt` |
+
+同一天委派改成了 fork（被委派的第一轮只带用户原话、状态和记录目录的位置，不带原对话的工作过程）。之后按默认设置跑整轮十一项，全过，证据 `delegation-ruler-2026-11-13T10-58-48-822Z.json`。S1 到 S8 都经过委派，是 fork 之后的结果。只跑了这一次。
+
 S4 用 C = OpenCode 补量了一次。OpenCode 没有用户级的 harnesshub 一项，用的是这次构建的工具。结果是不过：它的 `hub_turns`、`hub_search`、`hub_read_turn` 只看得到自己的对话，于是去翻了 Gateway 的数据目录（`ls`、`find`，再 `cat` 对话文件），从里面找到 B 的文件名，加上了 two。尺子按“越出工作区”判它不过。证据见 `delegation-ruler-2026-11-13T04-20-30-711Z.json`。
 
 ## 量的时候发现的

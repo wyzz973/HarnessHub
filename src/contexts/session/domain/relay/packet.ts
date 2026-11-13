@@ -63,6 +63,11 @@ export interface RelayRenderInput {
   readonly hubCommand?: string;
   /** The conversation's directory in the record, when the target reads the record as files: the packet then names the directory, and says where what it leaves out is whole. */
   readonly contextFiles?: string;
+  /**
+   * Only the user's words are carried, whatever the budget (2026-11-13): a conversation delegated its work starts as a fork of the one that delegated it — it is told
+   * what the user said there, and reads what was done there from the record when it needs it. The ledger counts everything else as left out.
+   */
+  readonly wordsOnly?: boolean;
 }
 /** How many items of one kind the record holds, and how many of them the packet carries and leaves out: carried + left out = total. */
 export interface ItemCount { readonly total: number; readonly included: number; readonly omitted: number }
@@ -355,7 +360,7 @@ interface Draft {
  * which is returned whatever the cap (the caller sees `tokens` above `budget.cap`).
  */
 function compose(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, first: { readonly line: string; readonly blank: boolean } | null,
-  input: { readonly delta: boolean; readonly repeat: boolean; readonly target: string; readonly state: RelayHistory }): Draft {
+  input: { readonly delta: boolean; readonly repeat: boolean; readonly target: string; readonly state: RelayHistory; readonly wordsOnly?: boolean }): Draft {
   const frame = FRAME[n.language], count = units.length, { delta } = input;
   const head = (first === null ? "" : first.line + "\n" + (first.blank ? "\n" : "")) + frame.title(delta), end = frame.end(delta);
   // A unit's candidates are made the first time the choice reaches it (which reads its Turn): a unit the choice never reaches is counted by what its end recorded (`counts`) and
@@ -422,11 +427,12 @@ function compose(n: Narrator, units: readonly RelayUnit[], budget: RelayBudget, 
         misses = take(next.value, limit(index)) ? 0 : misses + 1;
       }
     };
-    const share = Math.min(budget.user, available);
+    // Work handed over as a fork (`wordsOnly`) carries what the user said and nothing of what was done: the user's words take all the room, the rest stays in the record.
+    const share = input.wordsOnly === true ? available : Math.min(budget.user, available);
     walk(words(), index => index === 0 ? Number.POSITIVE_INFINITY : share);
-    walk(others(true), () => Number.POSITIVE_INFINITY);
+    if (input.wordsOnly !== true) walk(others(true), () => Number.POSITIVE_INFINITY);
     walk((function* () { for (const item of words()) if (!chosen.has(item)) yield item; })(), () => Number.POSITIVE_INFINITY);
-    walk(others(false), () => Number.POSITIVE_INFINITY);
+    if (input.wordsOnly !== true) walk(others(false), () => Number.POSITIVE_INFINITY);
     return chosen;
   };
 
@@ -507,7 +513,7 @@ export function renderRelay(input: RelayRenderInput): RelayRendering {
   const delta = binding !== undefined && (binding.throughRunId !== null || ((state.origin?.history.length ?? 0) > 0 && !input.origin));
   const budget = input.budget ?? resolveRelayBudget(reportedWindow(state, current));
   const first = input.firstLine !== false && redactor.redact(current.input).hits === 0 ? firstLine(current.input, language) : null;
-  const repeat = input.repeat === true, draft = compose(n, units, budget, first, { delta, repeat, target: n.name(current.selection.harnessId), state });
+  const repeat = input.repeat === true, draft = compose(n, units, budget, first, { delta, repeat, target: n.name(current.selection.harnessId), state, ...(input.wordsOnly === true ? { wordsOnly: true } : {}) });
   const packetId = packetIdOf(draft.head + PLACEHOLDER + draft.body + PLACEHOLDER + draft.tail);
   const packet = draft.head + packetId + draft.body + packetId + draft.tail, text = packet + "\n" + current.input;
   const sources = input.sources;

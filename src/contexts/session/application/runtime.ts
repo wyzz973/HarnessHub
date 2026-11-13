@@ -46,6 +46,8 @@ import type { PermissionLevel } from "../../../contracts/protocol.js";
 interface ActiveExecution {
   readonly sessionId: SessionId;
   readonly runId: string;
+  /** How far each other conversation of the task was told of to this Turn's Harness while the Turn worked (signalsFor): none is told of twice in one Turn. */
+  signaled?: Map<string, number>;
   binding: PreparedSessionBinding | null;
   run: ControlRun | null;
   dispatched: boolean;
@@ -261,7 +263,7 @@ function asFiles(note: string, place: { readonly dir: string; readonly self: str
     .replace("用 harnesshub 的 hub_turns 带上这个对话标签去读。", "在" + at + "里这段对话的 index.md 里。");
 }
 /** What the Harness of a delegated conversation reads before its task: that this is a part of a larger task, and how the rest of it is read. */
-const DELEGATED_NOTE = "（HarnessHub：下面是从另一段对话委派给你的任务，是一件更大的事的一部分。那段对话正在进行的一轮、以及这件事里其他 Harness 做了什么和改了哪些文件，都能读到："
+const DELEGATED_NOTE = "（HarnessHub：下面是从另一段对话委派给你的任务，是一件更大的事的一部分。交到你手上的是任务、这件事现在的状态和用户在那段对话里说过的话；那里做过的事（回复、命令、改动的细节）没有带过来，要用就去读。那段对话正在进行的一轮、以及这件事里其他 Harness 做了什么和改了哪些文件，都能读到："
   + "先用 harnesshub 的 hub_task 看全貌，再用 hub_turns、hub_read_turn、hub_search 带上对话标签去读。任务里提到“之前”“别人做的”“本轮”这类你手上没有的内容时，先去那里查，不要猜；动别人可能在改的文件前也先看一眼。）";
 /** One piece of delegated work as its conversation's Harness reads it: who had it, how it ended, the task and the reply, each cut at a length a note can carry. */
 export function delegationText(entry: DelegationState, ran: readonly string[] = []): string {
@@ -615,6 +617,80 @@ export class SessionRuntime {
     }
     this.placed(execution, { kind: "recap", summary: made.summary, ...(made.ask === undefined ? {} : { ask: made.ask }), ...(made.actions === undefined ? {} : { actions: made.actions }), at },
       [event("run.recap", { runId: run.id, summary: made.summary, ...(made.ask === undefined ? {} : { ask: made.ask }), ...(made.actions === undefined ? {} : { actions: made.actions }) })], { always: true });
+  }
+  /**
+   * What changed in the task while the Turn in progress of `id` works (2026-11-13), for its Harness: said with the answer of a tool of the Hub's it calls, as a signal
+   * reaches a process when it comes back from a system call — it does not wait for the Harness's next Turn. The board when it changed, what the user said since in the
+   * conversation this one's work came from, and what the other conversations of the task changed among the files this one has read or changed. Each is then told (the
+   * Turn says so, and it is not said again with the next Turn); null when nothing changed, or the Turn in progress is not this Harness's.
+   */
+  signalsFor(id: SessionId, from: { readonly harnessId: string; readonly controlId: string }): string | null {
+    this.admit();
+    const execution = this.actives.get(id);
+    if (execution === undefined) return null;
+    const state = this.owned(execution), run = runIn(state, execution.runId);
+    if (run === undefined || run.status !== "running" || run.selection.harnessId !== from.harnessId || run.selection.controlId !== from.controlId) return null;
+    const notes: string[] = [], at = this.options.now().getTime();
+    this.flushStream(execution);
+    const board = this.boardNews(this.load(id));
+    if (board !== null) {
+      this.placed(execution, { kind: "notice", severity: "info", title: board.line, code: "TASK_BOARD_TOLD", at },
+        [event("run.task_board_told", { runId: run.id, version: board.version, during: true })], { always: true, patch: current => ({ ...current, taskBoardTold: board.version }) });
+      notes.push(board.text);
+    }
+    const words = this.parentWords(this.load(id));
+    if (words !== null && words.line !== null && words.text !== null) {
+      this.placed(execution, { kind: "notice", severity: "info", title: words.line, code: "PARENT_WORDS_TOLD", at },
+        [event("run.parent_words_told", { runId: run.id, through: words.through, during: true })], { always: true, patch: current => ({ ...current, parentWordsTold: words.through }) });
+      notes.push(words.text);
+    }
+    const edits = this.editSignals(execution, this.load(id));
+    if (edits !== null) {
+      this.placed(execution, { kind: "notice", severity: "info", title: edits.line, code: "TASK_EDITS_TOLD", at },
+        [event("run.task_edits_told", { runId: run.id, told: edits.told, during: true })], { always: true, patch: current => ({ ...current, taskEditsTold: { ...(current.taskEditsTold ?? {}), ...edits.told } }) });
+      notes.push(edits.text);
+    }
+    if (notes.length === 0) return null;
+    const place = this.recordPlace(id, execution.binding);
+    return notes.map(note => asCommand(asFiles(note, place), execution.binding?.hubCommand)).join("\n\n");
+  }
+  /**
+   * What the other conversations of the task changed, since this Turn's Harness was last told, among the files this conversation has read or changed (its interest):
+   * a file it never touched is not worth a word in the middle of its work, and is told with its next Turn. `told`: the conversations all of whose changes were said
+   * here, which the next Turn then does not say again.
+   */
+  private editSignals(execution: ActiveExecution, state: Conversation): { readonly text: string; readonly line: string; readonly told: Readonly<Record<string, number>> } | null {
+    const since = this.store.changedSince?.bind(this.store);
+    if (since === undefined) return null;
+    const prefix = state.configuration.workspace.endsWith("/") ? state.configuration.workspace : state.configuration.workspace + "/";
+    const short = (path: string) => path.startsWith(prefix) && path.length > prefix.length ? path.slice(prefix.length) : path;
+    // What this conversation has to do with: the files its Turns changed, and those this Turn has read or changed so far.
+    const interest = new Set<string>();
+    try { for (const path of this.store.changedFiles?.(state.id) ?? []) interest.add(short(path)); } catch { /* the Turn's own below */ }
+    if (execution.turn !== null) for (const item of itemsOf(execution.turn)) {
+      const fields = item.fields as { readonly type?: string; readonly path?: unknown; readonly changes?: readonly { readonly path?: unknown }[] };
+      if (fields.type === "file_read" && typeof fields.path === "string") interest.add(short(fields.path));
+      if (fields.type === "file_change") for (const change of fields.changes ?? []) if (typeof change.path === "string") interest.add(short(change.path));
+    }
+    if (interest.size === 0) return null;
+    const signaled = execution.signaled ??= new Map<string, number>(), told: Record<string, number> = {}, lines: string[] = [];
+    let count = 0;
+    for (const other of this.taskOthers(state.id)) {
+      try {
+        const known = Math.max(state.taskEditsTold?.[other] ?? 0, signaled.get(other) ?? 0), found = since(other, known);
+        if (found.through <= known || found.files.length === 0) continue;
+        const files = [...new Set(found.files.map(short))], mine = files.filter(path => interest.has(path));
+        if (mine.length === 0) continue;
+        signaled.set(other, found.through);
+        if (mine.length === files.length) told[other] = found.through;
+        const harnessId = (this.load(other).runs.at(-1) ?? this.load(other)).selection.harnessId;
+        lines.push("- " + (this.options.harnessName?.(harnessId) ?? harnessId) + "（对话 c-" + other.replace(/^session-/u, "").replace(/-/gu, "").slice(0, 6) + "）：" + mine.slice(0, 20).join("、") + (mine.length > 20 ? " 等 " + mine.length + " 个" : ""));
+        count += mine.length;
+      } catch { /* told with the next Turn */ }
+    }
+    if (lines.length === 0) return null;
+    return { told, line: "进行中带上了其他对话的改动（" + count + " 个文件）",
+      text: "（HarnessHub：你这一轮进行中，这件任务里别的对话改了你读过或改过的文件。你手上的内容可能已经过时：再读或再改它们之前先看磁盘上的最新内容，需要知道它们为什么改，用 harnesshub 的 hub_read_turn 带上对话标签去读。\n" + lines.join("\n") + "\n）" };
   }
   /** A branch is taken only while nothing goes on: no Turn open or queued, no switch waiting. */
   private idleForBranch(state: Conversation): void {
@@ -2227,7 +2303,10 @@ export class SessionRuntime {
             // everything again, or the native session holds no part of the conversation (no mark).
             const options = await relayFor(history, fresh.configuration, runs, carrying.need.origin);
             packetSecrets = options.secrets ?? [];
-            const context = buildPublicContext(renderView(history, h, c, carrying.whole || working.mark < 0), asked, runs, { ...options, budget, ...(carrying.repeat ? { repeat: true } : {}) });
+            // Work handed over starts as a fork (2026-11-13): it is told what the user said in the conversation it came from, and reads what was done there from the record —
+            // when its Harness can read the record. One that cannot is handed the history as any other is.
+            const forked = fresh.delegation !== undefined && fresh.runs[0]?.id === target && toolsUsable();
+            const context = buildPublicContext(renderView(history, h, c, carrying.whole || working.mark < 0), asked, runs, { ...options, budget, ...(carrying.repeat ? { repeat: true } : {}), ...(forked ? { wordsOnly: true } : {}) });
             this.continue(execution);
             // The least packet there is (the title line, the sentences, the ledger, the end line) is over the cap: the history cannot be carried at all.
             if (context.relay.tokens > context.relay.budget.cap) throw inputLimit(run.selection);

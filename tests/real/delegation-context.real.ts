@@ -261,6 +261,8 @@ class Ruler {
     await this.settle([id], new Map([[id, before + 1]]));
     return this.turnOf(id, role, before);
   }
+  /** Writes a constraint on the task's board as the user does from the page. */
+  async note(id: string, text: string): Promise<void> { await this.api.post("/sessions/" + id + "/task", { kind: "constraint", text }); }
   /** Switches the conversation to the role's Harness as the page does (the user's switch): its next message goes to that Harness. */
   async switchTo(id: string, role: Role): Promise<void> {
     await this.api.post("/sessions/" + id + "/switches", { selection: this.selection(role), commandId: "switch-" + randomUUID() });
@@ -514,6 +516,21 @@ const SCENARIOS: readonly Scenario[] = [
       const checks = { made, stated };
       if (!stated) return fail("压缩之后 Hub 没有重新给状态（新建的是 " + made.join("、") + "）", note, checks);
       return off.length === 0 ? pass("压缩之后新建的 " + made.join("、") + " 以 kk_ 开头", note, checks) : fail("压缩之后新建了 " + made.join("、") + "，没有以 kk_ 开头", note, checks);
+    } },
+  { id: "S11", name: "中途的变化", roles: ["C"], measures: "一轮进行到一半时任务板上多了一条约束，这一轮里它调 Hub 的工具时知不知道，后面的步骤照不照做",
+    async run(r) {
+      const ws = await r.workspace("s11"), c = await r.open("C", ws), before = await files(ws);
+      const ordinal = await r.send(c, "分三步做，开始时先用 HarnessHub 的任务清单列出这三步，每做完一步都更新一次清单：\n1. 在命令行运行 sleep 12\n2. 在命令行运行 sleep 12\n3. 在当前工作目录里新建一个文件，写一行 hello，文件名你自己起\n三步都做完后回复一句话。");
+      // While it works on the first step, the user writes a constraint on the task's board from the page.
+      await new Promise(done => setTimeout(done, 9000));
+      await r.note(c, "这件任务里所有新建的文件，文件名都必须以 mm_ 开头。");
+      await r.settle([c], new Map([[c, ordinal + 1]]));
+      const turn = need(await r.turnOf(c, "C", ordinal)), made = added(before, await files(ws)), told = turn.notices.includes("TASK_BOARD_TOLD");
+      if (made.length === 0) throw new Voided("这一轮没有新建文件");
+      const off = made.filter(path => !basename(path).startsWith("mm_")), note = told ? "这一轮进行中带上了任务板" : "这一轮里任务板没有送到";
+      const checks = { made, told };
+      if (!told) return fail("中途加的约束没有在这一轮里送到（新建的是 " + made.join("、") + "）", note, checks);
+      return off.length === 0 ? pass("中途加的约束送到了，新建的 " + made.join("、") + " 以 mm_ 开头", note, checks) : fail("约束送到了，但新建的 " + made.join("、") + " 没有以 mm_ 开头", note, checks);
     } },
 ];
 

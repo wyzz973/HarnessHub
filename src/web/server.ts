@@ -446,6 +446,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     progress: (grant, made) => { app.runtime.hubProgress(grant.sessionId, { harnessId: grant.harnessId, controlId: grant.controlId }, made); },
     // The task a conversation belongs to: what its Harness may read beside its own conversation (`hub_task`, and `conversation` on the reads).
     family: grant => taskFamily(app.store, grant.sessionId, harnessId => harnesses.find(item => item.id === harnessId)?.name ?? null),
+    // What changed in the task while a Turn works, told with the answer of a tool the Turn's Harness calls.
+    signals: grant => app.runtime.signalsFor(grant.sessionId, { harnessId: grant.harnessId, controlId: grant.controlId }),
     // The task's board (`hub_board`, `hub_remember`): what every Harness of the task goes by.
     board: { read: grant => app.runtime.taskBoard(grant.sessionId), write: (grant, change) => app.runtime.writeBoard(grant.sessionId, { harnessId: grant.harnessId, controlId: grant.controlId }, change) },
     // `hub_delegate`, `hub_delegations` (2026-11-13): the Turn's Harness hands a part of its work to another Harness of this computer, at the conversation's own permission level.

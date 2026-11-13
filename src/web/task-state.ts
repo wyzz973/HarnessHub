@@ -31,6 +31,8 @@ export interface TaskState {
   readonly chain: readonly { readonly label: string; readonly harness: string; readonly task: string }[];
   readonly board: TaskBoard;
   readonly plan: { readonly steps: readonly PlanStep[]; readonly harness: string; readonly turn: number } | null;
+  /** For delegated work with no Turn of its own yet: what the conversation it came from had come to when it handed the work over (its latest finished Turn then). */
+  readonly origin: { readonly label: string; readonly turn: number; readonly harness: string; readonly said: string; readonly recap: boolean } | null;
   /** The latest finished Turn: its wrap-up when its Harness gave one, else the beginning of its reply. */
   readonly last: { readonly turn: number; readonly harness: string; readonly status: string; readonly said: string; readonly recap: boolean } | null;
   /** The files this conversation changed, and those the other conversations of the task changed. */
@@ -75,6 +77,23 @@ export function taskState(store: StateStore, id: SessionId, name: (harnessId: st
     last = { turn: ordinal + 1, harness: named(run.selection.harnessId), status: run.status, said, recap };
   }
   // The files in play, and the work handed over that still runs: from the task's conversations as the family tells them.
+  // Work just handed over has no Turn of its own: where the conversation it came from stood then (the Turn the delegation followed; one before, when its Harness delegated within its own Turn).
+  let origin: TaskState["origin"] = null;
+  const parent = up.at(-1);
+  if (parent !== undefined && last === null && conversation.delegation !== undefined) {
+    const runs = parent.conversation.runs, at = runs.findIndex(run => run.id === conversation.delegation!.afterRunId), through = at < 0 ? runs.length - 1 : conversation.delegation.by === "harness" ? at - 1 : at;
+    for (let ordinal = through; ordinal >= 0 && origin === null; ordinal--) {
+      const run = runs[ordinal]!;
+      if (run.status !== "completed" && run.status !== "failed" && run.status !== "cancelled" && run.status !== "unknown") continue;
+      let said = "", recap = false;
+      try {
+        const found = store.latestRecap?.(parent.id) ?? null, fields = found?.row.fields as { readonly type?: string; readonly summary?: string } | undefined;
+        if (found !== null && found.ordinal === ordinal && fields?.type === "recap" && typeof fields.summary === "string") { said = clip(fields.summary, 600); recap = true; }
+        else said = clip(turnSource(store, parent.id).turn(ordinal)?.assistant?.text ?? "", 400);
+      } catch { /* told without its words */ }
+      origin = { label: taskLabel(parent.id), turn: ordinal + 1, harness: named(run.selection.harnessId), said, recap };
+    }
+  }
   // A file is told once, by its path inside the workspace (a Harness names it whole, the Hub's own record of the workspace from the workspace on).
   const tidy = (files: readonly string[], workspace: string): string[] => {
     const prefix = workspace.endsWith("/") ? workspace : workspace + "/";
@@ -90,7 +109,7 @@ export function taskState(store: StateStore, id: SessionId, name: (harnessId: st
   for (let ordinal = Math.max(0, before - 3); ordinal < before; ordinal++) {
     try { const text = (turns.turn(ordinal)?.user.text ?? "").trim(); if (text !== "") words.push({ turn: ordinal + 1, text: clip(text, 400) }); } catch { /* left out */ }
   }
-  return { label: taskLabel(id), goal, chain, board, plan, last, files: { own, others }, running, words };
+  return { label: taskLabel(id), goal, chain, board, plan, origin, last, files: { own, others }, running, words };
 }
 
 /**
@@ -115,6 +134,7 @@ export function stateText(state: TaskState, name: (harnessId: string) => string 
   const kept = (["constraint", "decision", "note"] as const).flatMap(kind => state.board.entries.filter(entry => entry.kind === kind).map(entry => "- " + BOARD_WORDS[kind] + "：" + entry.text + "（" + (entry.by === "user" ? "用户" : name(entry.by) ?? entry.by) + " 记）"));
   // The board as it is now is the whole of it: what stood on it before and is not here was taken off.
   if (kept.length > 0) lines.push("一直要遵守的（任务板现在的全部内容；之前出现过、这里没有的已经撤下）：", ...kept);
+  if (whole && state.origin !== null && state.origin.said !== "") lines.push("交出这段活之前，原对话（" + state.origin.label + "）的上一轮（第 " + state.origin.turn + " 轮，" + state.origin.harness + "）" + (state.origin.recap ? "的小结：" : "的回复开头：") + state.origin.said);
   if (whole && state.plan !== null) lines.push("做到哪（" + state.plan.harness + " 在第 " + state.plan.turn + " 轮列的清单）：", ...state.plan.steps.map(step => "  " + MARK[step.status] + " " + clip(step.text, 200)));
   if (whole && state.last !== null) lines.push("上一轮（第 " + state.last.turn + " 轮，" + state.last.harness + (state.last.status === "completed" ? "" : "，" + ENDED[state.last.status as keyof typeof ENDED] + "：动手前先核对它做到了哪一步，不要照着重做")
     + "）" + (state.last.said === "" ? "没有留下文字。" : (state.last.recap ? "的小结：" : "的回复开头：") + state.last.said));

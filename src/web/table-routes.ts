@@ -56,6 +56,8 @@ export interface TableApiOptions {
     readonly read: (grant: TableGrant) => import("../contracts/session.js").TaskBoard;
     readonly write: (grant: TableGrant, change: { readonly kind: import("../contracts/session.js").BoardKind; readonly text: string } | { readonly forget: string }) => import("../contracts/session.js").TaskBoard;
   };
+  /** What changed in the task while the Turn in progress of the token's conversation works, as its Harness is told with a tool's answer; null for nothing. Absent: nothing is told that way. */
+  readonly signals?: (grant: TableGrant) => string | null;
   readonly delegation?: {
     readonly start: (grant: TableGrant, harness: string, task: string) => Promise<{ readonly sessionId: string; readonly harness: string }>;
     readonly states: (grant: TableGrant) => readonly import("../contracts/session.js").DelegationState[];
@@ -122,7 +124,8 @@ export class TableApi {
     const turn = /^\/api\/table\/turns\/([0-9]{1,6})$/u.exec(path), turns = path === "/api/table/turns", search = path === "/api/table/search";
     const writes = path === "/api/table/plan" || path === "/api/table/wrap-up";
     const delegate = path === "/api/table/delegate", delegations = path === "/api/table/delegations", task = path === "/api/table/task", board = path === "/api/table/board";
-    if (!turn && !turns && !search && !writes && !delegate && !delegations && !task && !board) return false;
+    const signals = path === "/api/table/signals";
+    if (!turn && !turns && !search && !writes && !delegate && !delegations && !task && !board && !signals) return false;
     // In this order: only this computer; then the token (whatever else is wrong with a request, a token that is not valid is a 401); then what may be asked.
     if (!loopback(request.socket.remoteAddress)) { http.json(response, 403, { code: "TABLE_LOCAL_ONLY", message: "The table is for programs on this computer" }); return true; }
     const grant = this.authenticate(request);
@@ -131,6 +134,14 @@ export class TableApi {
       http.json(response, 401, { code: "TABLE_TOKEN_INVALID", message: "This conversation's token is missing, unknown or no longer valid" }); return true;
     }
     if (request.headers.origin !== undefined) { http.json(response, 403, { code: "TABLE_LOCAL_ONLY", message: "The table is for programs on this computer, not for pages" }); return true; }
+    // What changed in the task while this Turn works (2026-11-13): the tool process asks after each tool call and says it with the tool's answer.
+    if (signals) {
+      if (method !== "GET") { response.setHeader("Allow", "GET"); http.json(response, 405, { code: "METHOD_NOT_ALLOWED", message: "Signals are read with GET" }); return true; }
+      http.queries(url, []);
+      let text: string | null = null;
+      try { text = this.options.signals?.(grant) ?? null; } catch { text = null; }
+      http.json(response, 200, { text }); return true;
+    }
     if (writes) {
       if (method !== "POST") { response.setHeader("Allow", "POST"); http.json(response, 405, { code: "METHOD_NOT_ALLOWED", message: "The Turn's progress is told with POST" }); return true; }
       http.queries(url, []);

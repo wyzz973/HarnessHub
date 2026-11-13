@@ -60,6 +60,8 @@ export interface PublicContextOptions {
   readonly hubCommand?: string;
   /** The conversation's directory in the record, when the target reads it as files. */
   readonly contextFiles?: string;
+  /** Only the user's words are carried (RelayRenderInput.wordsOnly): a delegated conversation's first Turn. */
+  readonly wordsOnly?: boolean;
 }
 
 /**
@@ -85,6 +87,6 @@ export function buildPublicContext(state: RelayHistory, current: PublicRun, sour
   const ordered = [...sources].sort((a, b) => position.get(a.id)! - position.get(b.id)!);
   const rendered = renderRelay({ state, current, sources: ordered, origin: options.origin ?? false, ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
     ...(options.names === undefined ? {} : { names: options.names }), ...(options.firstLine === undefined ? {} : { firstLine: options.firstLine }), ...(options.details === undefined ? {} : { details: options.details }), ...(options.budget === undefined ? {} : { budget: options.budget }),
-    ...(options.repeat === undefined ? {} : { repeat: options.repeat }), ...(options.hubTools === undefined ? {} : { hubTools: options.hubTools }), ...(options.hubCommand === undefined ? {} : { hubCommand: options.hubCommand }), ...(options.contextFiles === undefined ? {} : { contextFiles: options.contextFiles }) });
+    ...(options.repeat === undefined ? {} : { repeat: options.repeat }), ...(options.hubTools === undefined ? {} : { hubTools: options.hubTools }), ...(options.hubCommand === undefined ? {} : { hubCommand: options.hubCommand }), ...(options.contextFiles === undefined ? {} : { contextFiles: options.contextFiles }), ...(options.wordsOnly === true ? { wordsOnly: true } : {}) });
   return { text: rendered.text, throughSeq: state.lastSeq, sourceRunIds: ordered.map(run => run.id), continuity: "public_context_rehydrate", relay: rendered.record };
 }
