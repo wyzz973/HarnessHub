@@ -278,8 +278,8 @@ export interface Arrangement {
  * each one line in the transcript and shown whole above the message box; the call itself would only say it again.
  */
 // The same goes for the Hub's delegation tools: the work handed over stands as a card after the Turn, and asking how it stands is not an action of the task.
-const PROGRESS: ReadonlySet<string> = new Set<string>([...TABLE_PROGRESS_TOOLS, "hub_delegate", "hub_delegations"]);
-const COMMAND_ELSEWHERE: ReadonlySet<string> = new Set(["plan", "wrap-up", "delegate", "delegations"]);
+const PROGRESS: ReadonlySet<string> = new Set<string>([...TABLE_PROGRESS_TOOLS, "hub_delegate", "hub_delegations", "hub_remember"]);
+const COMMAND_ELSEWHERE: ReadonlySet<string> = new Set(["plan", "wrap-up", "delegate", "delegations", "remember"]);
 const elsewhere = (item: ReadItem): boolean => item.type === "mcp_tool" ? item.server === TABLE_MCP_NAME && PROGRESS.has(item.tool)
   : item.type === "command" && COMMAND_ELSEWHERE.has(hubCommandOnly(item.command)?.verb ?? "");
 

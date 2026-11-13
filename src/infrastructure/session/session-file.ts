@@ -46,7 +46,7 @@ export interface HeadState {
   readonly status: SessionSnapshot["status"]; readonly epoch: number; readonly activeRunId: RunId | null; readonly pendingSwitchId: SwitchId | null;
   readonly configuration: SessionConfiguration; readonly selection: HarnessSelection;
   readonly retainNative?: true; readonly retained?: RetainedProcess; readonly relayRecoveryFailed?: number; readonly origin?: StoredOrigin;
-  readonly delegation?: Conversation["delegation"]; readonly delegationsTold?: Conversation["delegationsTold"];
+  readonly delegation?: Conversation["delegation"]; readonly delegationsTold?: Conversation["delegationsTold"]; readonly taskBoard?: Conversation["taskBoard"]; readonly taskBoardTold?: number; readonly taskEditsTold?: Conversation["taskEditsTold"];
 }
 /** A Run's row as a `turn` line holds it (the conversation's id is the file's). */
 export type StoredRun = Omit<RunRow, "sessionId">;
@@ -61,12 +61,14 @@ export function headStateOf(conversation: Conversation): HeadState {
   return { status: conversation.status, epoch: conversation.epoch, activeRunId: conversation.activeRunId, pendingSwitchId: conversation.pendingSwitchId,
     configuration: conversation.configuration, selection: conversation.selection, ...(conversation.retainNative === undefined ? {} : { retainNative: conversation.retainNative }),
     ...(conversation.retained === undefined ? {} : { retained: conversation.retained }), ...(conversation.relayRecoveryFailed === undefined ? {} : { relayRecoveryFailed: conversation.relayRecoveryFailed }),
-    ...(conversation.origin === undefined ? {} : { origin: conversation.origin }), ...(conversation.delegation === undefined ? {} : { delegation: conversation.delegation }), ...(conversation.delegationsTold === undefined ? {} : { delegationsTold: conversation.delegationsTold }) };
+    ...(conversation.origin === undefined ? {} : { origin: conversation.origin }), ...(conversation.delegation === undefined ? {} : { delegation: conversation.delegation }), ...(conversation.delegationsTold === undefined ? {} : { delegationsTold: conversation.delegationsTold }),
+    ...(conversation.taskBoard === undefined ? {} : { taskBoard: conversation.taskBoard }), ...(conversation.taskBoardTold === undefined ? {} : { taskBoardTold: conversation.taskBoardTold }), ...(conversation.taskEditsTold === undefined ? {} : { taskEditsTold: conversation.taskEditsTold }) };
 }
 export function headJsonOf(conversation: Conversation): HeadJson {
   return { configuration: conversation.configuration, selection: conversation.selection, ...(conversation.retainNative === undefined ? {} : { retainNative: conversation.retainNative }),
     ...(conversation.retained === undefined ? {} : { retained: conversation.retained }), ...(conversation.relayRecoveryFailed === undefined ? {} : { relayRecoveryFailed: conversation.relayRecoveryFailed }),
-    ...(conversation.origin === undefined ? {} : { origin: conversation.origin }), ...(conversation.delegation === undefined ? {} : { delegation: conversation.delegation }), ...(conversation.delegationsTold === undefined ? {} : { delegationsTold: conversation.delegationsTold }) };
+    ...(conversation.origin === undefined ? {} : { origin: conversation.origin }), ...(conversation.delegation === undefined ? {} : { delegation: conversation.delegation }), ...(conversation.delegationsTold === undefined ? {} : { delegationsTold: conversation.delegationsTold }),
+    ...(conversation.taskBoard === undefined ? {} : { taskBoard: conversation.taskBoard }), ...(conversation.taskBoardTold === undefined ? {} : { taskBoardTold: conversation.taskBoardTold }), ...(conversation.taskEditsTold === undefined ? {} : { taskEditsTold: conversation.taskEditsTold }) };
 }
 export function storedItemOf(item: HeldItem, createdSeq: number | null): StoredItem {
   return { seq: item.seq, itemId: item.itemId, type: item.type, status: item.status, startedAt: item.startedAt, endedAt: item.endedAt, parentId: item.parentId, createdSeq,
@@ -436,7 +438,7 @@ export function conversationOf(loaded: Loaded): Conversation {
   return { id: loaded.header.id as SessionId, version: Math.max(1, loaded.lastSeq), lastSeq: loaded.lastSeq, format: CONVERSATION_FORMAT, epoch: head.epoch, status: head.status,
     configuration: head.configuration, selection: head.selection, activeRunId: head.activeRunId, pendingSwitchId: head.pendingSwitchId, runs,
     switches: loaded.switches.filter(change => change !== undefined), commands: loaded.commands.filter(command => command !== undefined),
-    ...(bindings.length === 0 ? {} : { nativeBindings: bindings }), ...(head.origin === undefined ? {} : { origin: head.origin }), ...(head.delegation === undefined ? {} : { delegation: head.delegation }), ...(head.delegationsTold === undefined ? {} : { delegationsTold: head.delegationsTold }), ...(head.retainNative === undefined ? {} : { retainNative: head.retainNative }),
+    ...(bindings.length === 0 ? {} : { nativeBindings: bindings }), ...(head.origin === undefined ? {} : { origin: head.origin }), ...(head.delegation === undefined ? {} : { delegation: head.delegation }), ...(head.delegationsTold === undefined ? {} : { delegationsTold: head.delegationsTold }), ...(head.taskBoard === undefined ? {} : { taskBoard: head.taskBoard }), ...(head.taskBoardTold === undefined ? {} : { taskBoardTold: head.taskBoardTold }), ...(head.taskEditsTold === undefined ? {} : { taskEditsTold: head.taskEditsTold }), ...(head.retainNative === undefined ? {} : { retainNative: head.retainNative }),
     ...(head.retained === undefined ? {} : { retained: head.retained }), ...(head.relayRecoveryFailed === undefined ? {} : { relayRecoveryFailed: head.relayRecoveryFailed }) };
 }
 

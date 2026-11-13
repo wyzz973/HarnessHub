@@ -321,7 +321,7 @@ export function normalizeTool(tool: PublicTool, ctx: ToolContext): Normalized {
       // Hub's own tools is a use of those tools, told as one: a read of the conversation when it makes one, else the first tool it calls.
       const called = scriptCalls(inputField(detail?.input, ["code"]));
       if (called.length > 0 && called.every(call => call.server === TABLE_MCP_NAME && (TABLE_TOOLS as readonly string[]).includes(call.tool))) {
-        const shown = called.find(call => !(TABLE_PROGRESS_TOOLS as readonly string[]).includes(call.tool) && call.tool !== "hub_delegate" && call.tool !== "hub_delegations") ?? called[0]!;
+        const shown = called.find(call => !(TABLE_PROGRESS_TOOLS as readonly string[]).includes(call.tool) && call.tool !== "hub_delegate" && call.tool !== "hub_delegations" && call.tool !== "hub_remember") ?? called[0]!;
         const item: McpToolItem = { ...base(stateOf(tool, ctx, false)), type: "mcp_tool", server: TABLE_MCP_NAME, tool: shown.tool, hub: true as const };
         return done(item);
       }

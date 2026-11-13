@@ -18,7 +18,7 @@ export const TABLE_INSTRUCTIONS_ENV = "HARNESSHUB_INSTRUCTIONS";
 export const TABLE_MCP_NAME = "harnesshub";
 
 /** The read tools of the first slice. */
-export const TABLE_TOOLS = ["hub_turns", "hub_read_turn", "hub_search", "hub_update_plan", "hub_wrap_up", "hub_delegate", "hub_delegations", "hub_task"] as const;
+export const TABLE_TOOLS = ["hub_turns", "hub_read_turn", "hub_search", "hub_update_plan", "hub_wrap_up", "hub_delegate", "hub_delegations", "hub_task", "hub_board", "hub_remember"] as const;
 /** The Hub's tools that write: they tell the Hub how the Turn in progress goes (its task list, its wrap-up); the page shows these, and not the calls. */
 export const TABLE_PROGRESS_TOOLS = ["hub_update_plan", "hub_wrap_up"] as const;
 export type TableTool = typeof TABLE_TOOLS[number];
@@ -69,10 +69,12 @@ export function hubCommandInstructions(command: string, progress: boolean): stri
     run("search <词>") + "            在整段对话里搜索",
     run("delegate <harness> \"<任务>\"") + "   把一段独立的活交给这台电脑上的另一个 Harness（例如 codex、claude、opencode），它在自己的对话里做，立刻返回；任务要写全，它看不到这一轮",
     run("delegations --wait 25") + "  看交出去的活做得怎样，可以等它做完",
+    run("remember constraint \"<一句话>\"") + "   用户说了要一直遵守的要求、定了决定（decision）或目标（goal）时记到任务板，别的 Harness 接手或被委派时会先看到",
+    run("board") + "                  看任务板：目标、约束、决定",
     run("task") + "                   这件任务的全貌：有哪些对话在做、各自被交代了什么、回复了什么、改了哪些文件；turns、turn、search 加 --conversation <标签> 可读其中另一段对话",
     ...(progress ? [run("plan \"[x] 做完的一步\" \"[~] 正在做的一步\" \"[ ] 还没做的一步\"") + "   任务要做好几步时，把全部步骤列给用户看，每开始或做完一步再调用一次",
       run("wrap-up \"<两三句小结>\" [--ask \"<一个问题>\" --action \"<回答>\"]") + "   每一轮结束前调用一次：做完了什么、还有什么没做或没验证；需要用户拿主意时带上问题和一到两个回答"] : []),
-    "别人交给你的记录是摘要：需要更早的细节时先用 turns、turn、search 查。" + (progress ? "plan 和 wrap-up 是这个界面显示进度和下一步的唯一途径，它们不代替你的正文回复。" : "")].join("\n");
+    "别人交给你的记录是摘要：需要更早的细节时先用 turns、turn、search 查。只规划（只读）时你不能运行命令，这条命令也用不了，那时以随消息给你的内容为准。" + (progress ? "plan 和 wrap-up 是这个界面显示进度和下一步的唯一途径，它们不代替你的正文回复。" : "")].join("\n");
 }
 
 /**
@@ -81,7 +83,9 @@ export function hubCommandInstructions(command: string, progress: boolean): stri
  * conversation the user sees and can take up.
  */
 export const HUB_DELEGATION_INSTRUCTIONS = "要把一段活交给这台电脑上的另一个 Harness（Codex、Claude Code、OpenCode、Hermes 等）时，调用 harnesshub 的 hub_delegate，不要自己去启动它们的命令行："
-  + "这样它在自己的对话里做，用户在界面里看得到、接得上。需要它的结果时用 hub_delegations（可带 wait 等它做完）。";
+  + "这样它在自己的对话里做，用户在界面里看得到、接得上。需要它的结果时用 hub_delegations（可带 wait 等它做完）。\n"
+  + "用户说了要一直遵守的要求（“以后都……”“记住……”）、定下了别人也得照办的决定，或者任务的目标定了、变了，就调用 hub_remember 记到任务板上（一条一句话）："
+  + "这件任务里别的 Harness 接手或被委派时会先看到它，不用用户再说一遍。不确定现在还算数的约束有哪些时，用 hub_board 看。";
 
 /** What the tool process answers when it was not started inside a Hub session. */
 export const TABLE_NOT_IN_SESSION = "Not inside a HarnessHub conversation: there is nothing to read here.";

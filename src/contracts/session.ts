@@ -238,6 +238,17 @@ export type SessionOrigin = BranchOrigin | ImportOrigin;
 export interface DelegationOrigin { readonly parentId: SessionId; readonly afterRunId: RunId | null;
   /** The Harness of the delegating conversation asked for it with the Hub's tool, in the Turn `afterRunId`; absent: the user did. */
   readonly by?: "harness" }
+/**
+ * The task board (2026-11-13): what everyone working on a task goes by — its goal, the constraints the user set, the decisions made, and
+ * notes — kept by the Hub on the conversation the task began in, written by the user and by the Harnesses (the Hub's tool `hub_remember`),
+ * and told to each Harness of the task when it has changed since that Harness was last told. `version` counts its changes.
+ */
+export const BOARD_KINDS = ["goal", "constraint", "decision", "note"] as const;
+export type BoardKind = typeof BOARD_KINDS[number];
+export interface BoardEntry { readonly id: string; readonly kind: BoardKind; readonly text: string;
+  /** Who wrote it: a Harness's id, or `user`. */
+  readonly by: string; readonly at: number }
+export interface TaskBoard { readonly version: number; readonly entries: readonly BoardEntry[] }
 /** How one piece of delegated work stands: who has it, what was asked, its latest Turn's state (`running` while it goes on) and what it said. */
 export interface DelegationState { readonly sessionId: SessionId; readonly harnessId: string; readonly harness: string; readonly task: string; readonly runId: RunId | null;
   readonly status: "running" | "completed" | "failed" | "cancelled" | "unknown"; readonly reply: string;
@@ -331,6 +342,15 @@ export interface SessionSnapshot {
   readonly delegation?: DelegationOrigin;
   /** What this conversation's Harness was told of the work it delegated (see DelegationsTold). */
   readonly delegationsTold?: DelegationsTold;
+  /** The task's board, on the conversation the task began in. */
+  readonly taskBoard?: TaskBoard;
+  /** The version of the task's board this conversation's Harness was last told. */
+  readonly taskBoardTold?: number;
+  /**
+   * How far this conversation's Harness was told of what the other conversations of its task changed: for each of them, how many of its edits were told (or were there
+   * when this conversation began). What they change after that goes with this conversation's next Turn.
+   */
+  readonly taskEditsTold?: Readonly<Record<string, number>>;
   /** v11: the user chose to keep this conversation's native process between Turns for background work (ADR-030). */
   readonly retainNative?: true;
   /** v11: the native process this conversation holds now; cleared when it is closed. */

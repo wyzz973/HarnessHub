@@ -35,6 +35,7 @@ const INSTRUCTIONS = "HarnessHub keeps the whole history of this conversation. A
   + "or when you need what the user or an earlier Harness said or did, read it back with hub_turns, hub_read_turn and hub_search. "
   + "hub_update_plan and hub_wrap_up show the user your task list and a short wrap-up above the message box; they do not replace your reply. "
   + "hub_delegate hands a self-contained part of the work to another Harness on this computer, which does it in a conversation of its own; hub_delegations says how what you handed over stands. "
+  + "hub_board is what everyone on the task goes by (its goal, the user's constraints, decisions); write on it with hub_remember when the user states something that must keep holding. "
   + "hub_task shows the whole task when several conversations work on it (who has what, what each changed); the three read tools take another conversation of the task as `conversation`.";
 /** The server's instructions: what its tools are for, and the session instructions this session's process was given for it. */
 export function serverInstructions(env: Readonly<Record<string, string | undefined>>): string {
@@ -132,6 +133,21 @@ const TOOLS: readonly ToolDefinition[] = [
       + "did or changed (before touching a file someone else may be editing), or before reading another conversation: give its label as `conversation` to hub_turns, hub_read_turn or hub_search.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { title: "The whole task", ...READ_ONLY } },
+  { name: "hub_board", title: "Read the task board",
+    description: "The task board HarnessHub keeps for this task: its goal, the constraints the user set, the decisions made and notes, written by the user and by every Harness that worked on it. "
+      + "It is given to you when it changes; read it again when you are unsure what still holds, before a decision that others on the task must live with, or when you were handed a part of the task.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { title: "Read the task board", ...READ_ONLY } },
+  { name: "hub_remember", title: "Write on the task board",
+    description: "Write on the task board, which every Harness working on this task (now, or handed a part of it later) is given before it starts. Call it when the user states something that must keep holding "
+      + "(kind constraint: \"all new files start with zz_\", \"use pnpm, never npm\"), when a choice is made that others must follow (kind decision), when the goal of the task is set or changes (kind goal, "
+      + "which replaces the old one), or for a fact others will need (kind note). One short sentence per entry, in the user's language, standing on its own. Not for progress (that is the task list) and not for what only this turn needs. "
+      + "`forget` takes an entry off by its id (from hub_board) when the user withdrew it.",
+    inputSchema: { type: "object", properties: {
+      kind: { type: "string", enum: ["goal", "constraint", "decision", "note"], description: "goal (the task's goal; replaces the old one), constraint (what must keep holding), decision (a choice made), note (a fact others need)." },
+      text: { type: "string", minLength: 1, description: "One short sentence that stands on its own." },
+      forget: { type: "string", description: "Instead of kind and text: the id of an entry to take off the board." } }, additionalProperties: false },
+    annotations: { title: "Write on the task board", ...PROGRESS } },
 ];
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -300,6 +316,12 @@ function wholeArgument(args: Readonly<Record<string, unknown>>, name: string, mi
   if (typeof number !== "number" || !Number.isSafeInteger(number) || number < minimum || number > maximum) throw new ToolError(name + " must be a whole number from " + minimum + " to " + maximum + ".");
   return number;
 }
+/** The task board as words: each entry with its id, its kind and who wrote it. */
+function renderBoard(view: Readonly<Record<string, unknown>>): string {
+  const entries = Array.isArray(view.entries) ? view.entries as readonly Record<string, unknown>[] : [];
+  if (entries.length === 0) return "The task board is empty.";
+  return entries.map(entry => "[" + String(entry.id) + "] " + String(entry.kind) + ": " + String(entry.text) + " (by " + String(entry.by) + ")").join("\n");
+}
 /** The label of another conversation of the task, as the reads take it; undefined for this conversation. */
 function conversationArgument(args: Readonly<Record<string, unknown>>): string | undefined {
   const value = args.conversation;
@@ -363,6 +385,20 @@ export async function callTool(name: string, args: Readonly<Record<string, unkno
         };
         const how = surface === "mcp" ? "Read any of them with hub_turns, hub_read_turn or hub_search and conversation: \"<label>\"." : "Read any of them with turns, turn or search and --conversation <label>.";
         return { text: "This task spans " + members.length + " conversation(s):\n" + members.map(line).join("\n") + "\n" + how, isError: false };
+      }
+      case "hub_board": {
+        const view = await ask(connection, "/api/table/board", {});
+        return { text: renderBoard(view), isError: false };
+      }
+      case "hub_remember": {
+        const forget = typeof args.forget === "string" && args.forget.trim() !== "" ? args.forget.trim() : undefined;
+        if (forget === undefined && (typeof args.kind !== "string" || typeof args.text !== "string" || args.text.trim() === "")) throw new ToolError("give kind (goal, constraint, decision or note) and text, or forget with an entry's id.");
+        let reply: Awaited<ReturnType<typeof post>>;
+        try { reply = await post(connection, "/api/table/board", forget === undefined ? { kind: args.kind, text: args.text } : { forget }); } catch (error) { throw unreachable(connection.origin, error); }
+        const body = record(reply.body);
+        if (reply.status === 401) throw new ToolError("HarnessHub does not accept this conversation's token (the Hub may have been restarted since this program started, or the turn has ended).");
+        if (reply.status !== 200 || body === null) throw new ToolError(typeof body?.message === "string" ? body.message : "HarnessHub answered with status " + reply.status + ".");
+        return { text: (forget === undefined ? "Written on the task board; every Harness on this task is given it. " : "Taken off the task board. ") + "The board now:\n" + renderBoard(body), isError: false };
       }
       case "hub_delegate": {
         if (typeof args.harness !== "string" || args.harness.trim() === "") throw new ToolError("harness is required: the id or name of the Harness to hand the work to.");
@@ -478,6 +514,8 @@ const USAGE = [
   "                                                   show the user a short wrap-up of this turn, with one question and one or two answers when the next move is theirs",
   "  hub-tools delegate <harness> <task>              hand a self-contained part of the work to another Harness, which does it in a conversation of its own",
   "  hub-tools delegations [--wait N]                 how the work handed over stands; --wait N waits up to N seconds (25 at most) for what still runs",
+  "  hub-tools board                                  the task board: the goal, the user's constraints, decisions and notes everyone on the task goes by",
+  "  hub-tools remember <kind> <text>                 write on the task board (kind: goal, constraint, decision or note); remember --forget <id> takes an entry off",
   "  hub-tools task                                   the whole task: every conversation working on it, what each was asked, replied and changed",
   "                                                   (turns, turn and search take --conversation <label> to read another conversation of the task)",
   "  hub-tools mcp                                    serve these tools as an MCP server on stdio",
@@ -492,11 +530,11 @@ export async function main(args: readonly string[], io: ToolIo = { env: process.
   const [command, ...rest] = args;
   if (command === "--help" || command === "-h" || command === "help") { io.stdout.write(USAGE + "\n"); return 0; }
   if (command === "mcp") return serve(io);
-  if (!["turns", "turn", "search", "plan", "wrap-up", "delegate", "delegations", "task"].includes(command ?? "")) return misuse(io, command === undefined ? "" : "Unknown command: " + command);
+  if (!["turns", "turn", "search", "plan", "wrap-up", "delegate", "delegations", "task", "board", "remember"].includes(command ?? "")) return misuse(io, command === undefined ? "" : "Unknown command: " + command);
   let values: Record<string, string | undefined>, positionals: string[], actions: readonly string[] = [];
   try {
     const parsed = parseArgs({ args: rest, allowPositionals: true, strict: true, options: { from: { type: "string" }, limit: { type: "string" }, part: { type: "string" }, tool: { type: "string" }, offset: { type: "string" }, after: { type: "string" }, in: { type: "string" },
-      wait: { type: "string" }, ask: { type: "string" }, explanation: { type: "string" }, conversation: { type: "string" }, action: { type: "string", multiple: true } } });
+      wait: { type: "string" }, ask: { type: "string" }, explanation: { type: "string" }, conversation: { type: "string" }, forget: { type: "string" }, action: { type: "string", multiple: true } } });
     const { action, ...single } = parsed.values;
     values = single; positionals = parsed.positionals; actions = action ?? [];
   } catch (error) { return misuse(io, error instanceof Error ? error.message : "bad arguments"); }
@@ -524,6 +562,15 @@ export async function main(args: readonly string[], io: ToolIo = { env: process.
   } else if (command === "delegate") {
     if (positionals.length < 2) return misuse(io, "delegate takes the Harness and the task: hub-tools delegate <harness> \"<task>\".");
     tool = "hub_delegate"; input = { harness: positionals[0], task: positionals.slice(1).join(" ") };
+  } else if (command === "board") {
+    if (positionals.length) return misuse(io, "board takes no arguments.");
+    tool = "hub_board"; input = {};
+  } else if (command === "remember") {
+    if (values.forget !== undefined) { tool = "hub_remember"; input = { forget: values.forget }; }
+    else {
+      if (positionals.length < 2) return misuse(io, "remember takes the kind and the words: hub-tools remember constraint \"<text>\".");
+      tool = "hub_remember"; input = { kind: positionals[0], text: positionals.slice(1).join(" ") };
+    }
   } else if (command === "task") {
     if (positionals.length) return misuse(io, "task takes no arguments.");
     tool = "hub_task"; input = {};

@@ -8,7 +8,7 @@ import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, STOP_GRACE_MS, STREAM_WINDOW_BYTES, STREAM_WINDOW_MS,
   type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type OutsideEvidence, type OutsideProcess, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionConfiguration,
-  type SessionId, type SessionEvent, type SessionRuntimeOptions, type SwitchReceipt, type RunId, type DelegationsTold, type DelegationState,
+  type SessionId, type SessionEvent, type SessionRuntimeOptions, type SwitchReceipt, type RunId, type DelegationsTold, type DelegationState, type BoardEntry, type BoardKind, type TaskBoard,
 } from "../../../contracts/session.js";
 import { buildPublicContext, type PublicContext, type PublicContextOptions } from "../domain/context.js";
 import { assertConversationTransition, inputOf, runIn, settledItems, updatedRun, userItemOf, withItems } from "../domain/conversation-state.js";
@@ -232,9 +232,26 @@ function wroteRows(changes: Placed["changes"]): boolean {
   return (changes.items?.length ?? 0) > 0 || (changes.text?.length ?? 0) > 0 || (changes.contentRefs?.length ?? 0) > 0 || (changes.noticePrints?.length ?? 0) > 0;
 }
 function event(type: string, data: Readonly<Record<string, unknown>>): EventDraft { return { type, data }; }
+const BOARD_WORDS: Readonly<Record<BoardKind, string>> = { goal: "目标", constraint: "约束", decision: "决定", note: "备注" };
+/** The task's board as a Harness reads it: its goal, then the constraints, the decisions and the notes, each with who wrote it. */
+export function boardText(board: TaskBoard, name: (harnessId: string) => string): string {
+  const of = (kind: BoardKind) => board.entries.filter(entry => entry.kind === kind);
+  const line = (entry: BoardEntry) => "- " + entry.text + "（" + (entry.by === "user" ? "用户" : name(entry.by)) + " 记）";
+  const parts = [...of("goal").map(entry => "目标：" + entry.text),
+    ...(["constraint", "decision", "note"] as const).flatMap(kind => of(kind).length === 0 ? [] : [BOARD_WORDS[kind] + "：\n" + of(kind).map(line).join("\n")])];
+  return "（HarnessHub 任务板：这件任务里所有 Harness 共同遵守的内容，由用户和各个 Harness 记下，对你同样有效，先照它做。用户又提了要一直遵守的要求、定了新的决定或目标变了，就用 harnesshub 的 hub_remember 记上去。\n" + parts.join("\n") + "\n）";
+}
+/** A note of the Hub's as a Harness that has the Hub's tools as a command of the conversation reads it: each tool by its word of that command. */
+function asCommand(note: string, command: string | undefined): string {
+  if (command === undefined) return note;
+  const word = (tool: string) => tool === "read_turn" ? "turn" : tool === "update_plan" ? "plan" : tool === "wrap_up" ? "wrap-up" : tool;
+  return note.replace(/harnesshub 的 hub_([a-z_]+)/gu, (_all, tool: string) => "命令 " + command + " " + word(tool)).replace(/hub_([a-z_]+)/gu, (_all, tool: string) => command + " " + word(tool));
+}
 /** What the Harness of a delegated conversation reads before its task: that this is a part of a larger task, and how the rest of it is read. */
 const DELEGATED_NOTE = "（HarnessHub：下面是从另一段对话委派给你的任务，是一件更大的事的一部分。那段对话正在进行的一轮、以及这件事里其他 Harness 做了什么和改了哪些文件，都能读到："
   + "先用 harnesshub 的 hub_task 看全貌，再用 hub_turns、hub_read_turn、hub_search 带上对话标签去读。任务里提到“之前”“别人做的”“本轮”这类你手上没有的内容时，先去那里查，不要猜；动别人可能在改的文件前也先看一眼。）";
+/** The most a delegated conversation's first Turn carries of the conversation it came from, in the packet's tokens, when its Harness can read the rest back. */
+const DELEGATED_CAP = 2000;
 /** One piece of delegated work as its conversation's Harness reads it: who had it, how it ended, the task and the reply, each cut at a length a note can carry. */
 export function delegationText(entry: DelegationState): string {
   const clip = (text: string, most: number) => { const units = [...text]; return units.length > most ? units.slice(0, most).join("") + "…（后面省略）" : text; };
@@ -770,6 +787,94 @@ export class SessionRuntime {
       this.managedSessions.add(id); this.publish(committed);
       return this.load(id);
     } catch (error) { if (storeUntrusted(error)) this.fail(error, id); throw error; }
+  }
+  /** The conversation a task began in: up the chain of delegations from `id` (a chain is short; the bound is against a ring). */
+  private taskRoot(id: SessionId): SessionId {
+    let root = id;
+    for (let hops = 0; hops < 16; hops++) { let parent: SessionId | undefined; try { parent = this.load(root).delegation?.parentId; } catch { parent = undefined; } if (parent === undefined) break; root = parent; }
+    return root;
+  }
+  /** The board of the task a conversation belongs to (session.ts TaskBoard): empty until something is written on it. */
+  taskBoard(id: SessionId): TaskBoard {
+    this.admit();
+    return this.load(this.taskRoot(id)).taskBoard ?? { version: 0, entries: [] };
+  }
+  /**
+   * Writes on the task's board, or takes an entry off it (`forget`). `by`: a Harness's id when its tool wrote it — only the Harness of the conversation's Turn in
+   * progress may — or `user` from the page. A goal replaces the goal; the board keeps its latest 60 entries. Returns the board as it is then.
+   */
+  writeBoard(id: SessionId, by: { readonly harnessId: string; readonly controlId: string } | "user", change: { readonly kind: BoardKind; readonly text: string } | { readonly forget: string }): TaskBoard {
+    this.admit();
+    if (by !== "user") this.runningFor(id, by);
+    const root = this.taskRoot(id), author = by === "user" ? "user" : by.harnessId, at = this.options.now().getTime();
+    let made: TaskBoard = { version: 0, entries: [] };
+    this.commit(root, current => {
+      const board = current.taskBoard ?? { version: 0, entries: [] };
+      let entries: readonly BoardEntry[];
+      if ("forget" in change) { if (!board.entries.some(entry => entry.id === change.forget)) throw new SessionError("INVALID_INPUT", "任务板上没有这一条"); entries = board.entries.filter(entry => entry.id !== change.forget); }
+      else {
+        const text = change.text.replace(/\s+/gu, " ").trim();
+        if (text === "") throw new SessionError("INVALID_INPUT", "要记下的内容不能为空");
+        const units = [...text], entry: BoardEntry = { id: "b" + (board.version + 1), kind: change.kind, text: units.length > 600 ? units.slice(0, 600).join("") + "…" : text, by: author, at };
+        // Said again in the same words, it stays one entry; a new goal takes the old one's place.
+        entries = [...board.entries.filter(item => !(item.kind === entry.kind && (item.text === entry.text || entry.kind === "goal"))), entry].slice(-60);
+      }
+      made = { version: board.version + 1, entries };
+      // The Harness that wrote it knows it: where it had read the board as it was, its conversation stands as told.
+      const knows = by !== "user" && root === id && (current.taskBoardTold ?? 0) >= board.version;
+      return { next: { ...current, taskBoard: made, ...(knows ? { taskBoardTold: made.version } : {}) }, events: [event("task.board_changed", { version: made.version, by: author, from: id, ...("forget" in change ? { forgot: change.forget } : { kind: change.kind }) })] };
+    });
+    if (by !== "user" && root !== id && (this.load(id).taskBoardTold ?? 0) >= made.version - 1)
+      this.commit(id, current => ({ next: { ...current, taskBoardTold: made.version }, events: [event("run.task_board_told", { version: made.version, wrote: true })] }));
+    return made;
+  }
+  /**
+   * The task's board as the Harness of `state` reads it before the user's words, when it has changed since that Harness was last told (2026-11-13); null when there is
+   * nothing new. `version` is what the conversation then remembers as told.
+   */
+  private boardNews(state: Conversation): { readonly text: string; readonly line: string; readonly version: number } | null {
+    let board: TaskBoard | undefined;
+    try { board = this.load(this.taskRoot(state.id)).taskBoard; } catch { board = undefined; }
+    if (board === undefined || board.entries.length === 0 || board.version <= (state.taskBoardTold ?? 0)) return null;
+    return { version: board.version, line: "带上了任务板（" + board.entries.length + " 条）", text: boardText(board, harnessId => this.options.harnessName?.(harnessId) ?? harnessId) };
+  }
+  /** The conversations of the task `id` belongs to, other than itself and those it delegated work to itself (what those come to reaches it with their outcome). */
+  private taskOthers(id: SessionId): readonly SessionId[] {
+    const own = new Set<SessionId>(this.store.delegatedBy?.(id) ?? []), found: SessionId[] = [], seen = new Set<SessionId>();
+    const visit = (at: SessionId): void => {
+      if (seen.has(at) || found.length >= 64) return;
+      seen.add(at);
+      if (at !== id && !own.has(at)) found.push(at);
+      for (const child of this.store.delegatedBy?.(at) ?? []) visit(child);
+    };
+    visit(this.taskRoot(id));
+    return found;
+  }
+  /**
+   * What the other conversations of the task changed since this conversation's Harness was last told (2026-11-13): files it may be about to read or change itself.
+   * `told` is how far each of them stands now, which the conversation remembers; `text` and `line` are null when there is only that to remember (the first Turn of a
+   * conversation starts from the task as it is, and is told nothing of what was changed before it).
+   */
+  private editNews(state: Conversation): { readonly told: Readonly<Record<string, number>>; readonly text: string | null; readonly line: string | null } | null {
+    const since = this.store.changedSince?.bind(this.store);
+    if (since === undefined) return null;
+    const first = state.runs.length <= 1, told: Record<string, number> = {}, lines: string[] = [];
+    let count = 0;
+    for (const other of this.taskOthers(state.id)) {
+      try {
+        const known = state.taskEditsTold?.[other], found = since(other, known ?? 0);
+        if (found.through === known) continue;
+        told[other] = found.through;
+        if ((first && known === undefined) || found.files.length === 0) continue;
+        const harnessId = (this.load(other).runs.at(-1) ?? this.load(other)).selection.harnessId, shown = found.files.slice(0, 20);
+        lines.push("- " + (this.options.harnessName?.(harnessId) ?? harnessId) + "（对话 c-" + other.replace(/^session-/u, "").replace(/-/gu, "").slice(0, 6) + "）：" + shown.join("、") + (found.files.length > shown.length ? " 等 " + found.files.length + " 个" : ""));
+        count += found.files.length;
+      } catch { /* a conversation that cannot be read now is told of another time */ }
+    }
+    if (Object.keys(told).length === 0) return null;
+    if (lines.length === 0) return { told, text: null, line: null };
+    return { told, line: "带上了其他对话的改动（" + count + " 个文件）",
+      text: "（HarnessHub：这件任务里别的对话在你上一轮之后改了下面这些文件。你手上的内容可能已经过时：读或改它们之前先看磁盘上的最新内容，需要知道它们为什么改，用 harnesshub 的 hub_read_turn 带上对话标签去读。\n" + lines.join("\n") + "\n）" };
   }
   /** The Turn in progress of a conversation, when it is `from`'s: what the Hub's tools act within. */
   private runningFor(id: SessionId, from: { readonly harnessId: string; readonly controlId: string }): RunId {
@@ -1891,8 +1996,11 @@ export class SessionRuntime {
         const details = await this.relayDetails(history, sources), secrets = [...(execution.binding?.secrets ?? []), ...await this.relaySecretsOf(history, configuration, run, sources, origin)];
         this.continue(execution);
         // The binding says whether its process has the Hub's tools (it was started with the table's environment and its Harness holds the tool entry): a fact of this Turn's process, which the packet may then repeat.
-        return { origin, secrets, firstLine: reading.kind === "content", details, hubTools: execution.binding?.hubTools === true, ...(execution.binding?.hubCommand === undefined ? {} : { hubCommand: execution.binding.hubCommand }), ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
+        return { origin, secrets, firstLine: reading.kind === "content", details, hubTools: toolsUsable(), ...(execution.binding?.hubCommand === undefined ? {} : { hubCommand: execution.binding.hubCommand }), ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
       };
+      // Whether this Turn's Harness can call the Hub's tools: its process has them, and where they are a command of the conversation the level lets it run one
+      // (a Harness in its read-only mode refuses every command, the Hub's with them: nothing is then promised to be read back, and nothing is held back for it).
+      const toolsUsable = (): boolean => execution.binding?.hubTools === true && !(execution.binding.hubCommand !== undefined && selectedPermission(run.selection.nativeOptions) === "plan");
       if (native === null) {
         const observation = await control.initialize(); this.continue(execution);
         this.commit(id, current => ({ next: current, events: [event("run.protocol", { runId: target, observation })] }));
@@ -2008,9 +2116,13 @@ export class SessionRuntime {
             // never fails, and when even its least packet is over the cap (below) the input goes as typed.
             const resolved = resolveWindow(history, asked), limit = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(typed, kinds) ?? [...typed].length;
             const cap = hardCap(resolved, estimateTokens(typed), limit, size);
-            const budget: RelayBudget = packetBudget(resolved, cap), standard = packetBudget(resolved, Number.POSITIVE_INFINITY);
+            const fitted: RelayBudget = packetBudget(resolved, cap), standard = packetBudget(resolved, Number.POSITIVE_INFINITY);
+            // Delegated work starts lean (2026-11-13): its task says what to do, the task's board what holds throughout, and its Harness reads the rest of the task with the
+            // Hub's tools as it needs it. So of the conversation it came from it carries the user's words and the latest of the work, not all the budget would take.
+            const lean = fresh.delegation !== undefined && fresh.runs[0]?.id === target && toolsUsable();
+            const budget: RelayBudget = lean && fitted.cap > DELEGATED_CAP ? { ...fitted, cap: DELEGATED_CAP, user: Math.min(fitted.user, Math.floor(DELEGATED_CAP / 2)) } : fitted;
             window = resolved;
-            if (budget.cap < standard.cap) clamped = [limit !== null && hardCap(resolved, estimateTokens(typed), null, size) >= standard.cap ? "input_limit" : "window"];
+            if (fitted.cap < standard.cap) clamped = [limit !== null && hardCap(resolved, estimateTokens(typed), null, size) >= standard.cap ? "input_limit" : "window"];
             // The renderer sees the binding as a native session that holds nothing when the packet must be a whole one: it carries
             // everything again, or the native session holds no part of the conversation (no mark).
             const options = await relayFor(history, fresh.configuration, runs, carrying.need.origin);
@@ -2124,8 +2236,17 @@ export class SessionRuntime {
         [event("run.delegations_told", { runId: target, told: Object.entries(news.told).map(([sessionId, entry]) => ({ sessionId, runId: entry.runId })) })],
         { always: true, patch: current => ({ ...current, delegationsTold: { ...(current.delegationsTold ?? {}), ...news.told } }) });
       // The first Turn of a conversation that was delegated its work says so, and where the rest of the task is read (2026-11-13).
-      const delegated = command === null && this.load(id).delegation !== undefined && this.load(id).runs[0]?.id === target && execution.binding?.hubTools === true ? DELEGATED_NOTE : null;
-      const notes = [delegated, news?.text ?? null].filter((note): note is string => note !== null);
+      const delegated = command === null && this.load(id).delegation !== undefined && this.load(id).runs[0]?.id === target && toolsUsable() ? DELEGATED_NOTE : null;
+      // The task's board, when it changed since this Harness was last told: what everyone on the task goes by, before anything else of the Hub's.
+      const board = command === null ? this.boardNews(this.load(id)) : null;
+      if (board !== null) this.placed(execution, { kind: "notice", severity: "info", title: board.line, code: "TASK_BOARD_TOLD", at: this.options.now().getTime() },
+        [event("run.task_board_told", { runId: target, version: board.version })], { always: true, patch: current => ({ ...current, taskBoardTold: board.version }) });
+      // What the other conversations of the task changed since this Harness was last told; where there is only how far they stand to remember, it is remembered without a word.
+      const edits = command === null ? this.editNews(this.load(id)) : null;
+      if (edits !== null && edits.line !== null) this.placed(execution, { kind: "notice", severity: "info", title: edits.line, code: "TASK_EDITS_TOLD", at: this.options.now().getTime() },
+        [event("run.task_edits_told", { runId: target, told: edits.told })], { always: true, patch: current => ({ ...current, taskEditsTold: { ...(current.taskEditsTold ?? {}), ...edits.told } }) });
+      else if (edits !== null) this.commit(id, current => ({ next: { ...current, taskEditsTold: { ...(current.taskEditsTold ?? {}), ...edits.told } }, events: [event("run.task_edits_marked", { runId: target, told: edits.told })] }));
+      const notes = [board?.text ?? null, delegated, edits?.text ?? null, news?.text ?? null].filter((note): note is string => note !== null).map(note => asCommand(note, execution.binding?.hubCommand));
       execution.run = await control.startText(native, notes.length === 0 ? planned : withHubNote(planned, notes.join("\n\n")), value => this.output(execution, value), ...(files.length ? [files] : []));
       this.owned(execution);
       void execution.run.result.then(() => { execution.backendSettled = true; }, () => { execution.backendSettled = true; });

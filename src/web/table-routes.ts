@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ContentPort } from "../contracts/content.js";
 import type { ConversationReader } from "../contracts/conversation.js";
-import { SessionError, type SessionConfiguration, type SessionId } from "../contracts/session.js";
+import { BOARD_KINDS, SessionError, type SessionConfiguration, type SessionId } from "../contracts/session.js";
 import { TABLE_LIMITS, TABLE_PARTS, TABLE_SEARCH_SCOPES, type TableGrant, type TableGrants, type TablePart, type TableSearchScope } from "../contracts/table.js";
 import { readDetail } from "../contexts/session/domain/detail-read.js";
 import {
@@ -51,6 +51,11 @@ export interface TableApiOptions {
    * three reads take `c=<label>` for another conversation of the task, and `/api/table/task` gives the overview; absent, a token reads its own conversation only.
    */
   readonly family?: (grant: TableGrant) => readonly import("./task-family.js").TaskMember[];
+  /** The task's board (`hub_board`, `hub_remember`): read by any Harness of the task, written by the Harness of the conversation's Turn in progress. Absent, the route refuses. */
+  readonly board?: {
+    readonly read: (grant: TableGrant) => import("../contracts/session.js").TaskBoard;
+    readonly write: (grant: TableGrant, change: { readonly kind: import("../contracts/session.js").BoardKind; readonly text: string } | { readonly forget: string }) => import("../contracts/session.js").TaskBoard;
+  };
   readonly delegation?: {
     readonly start: (grant: TableGrant, harness: string, task: string) => Promise<{ readonly sessionId: string; readonly harness: string }>;
     readonly states: (grant: TableGrant) => readonly import("../contracts/session.js").DelegationState[];
@@ -116,8 +121,8 @@ export class TableApi {
     const { http } = this.options, path = url.pathname;
     const turn = /^\/api\/table\/turns\/([0-9]{1,6})$/u.exec(path), turns = path === "/api/table/turns", search = path === "/api/table/search";
     const writes = path === "/api/table/plan" || path === "/api/table/wrap-up";
-    const delegate = path === "/api/table/delegate", delegations = path === "/api/table/delegations", task = path === "/api/table/task";
-    if (!turn && !turns && !search && !writes && !delegate && !delegations && !task) return false;
+    const delegate = path === "/api/table/delegate", delegations = path === "/api/table/delegations", task = path === "/api/table/task", board = path === "/api/table/board";
+    if (!turn && !turns && !search && !writes && !delegate && !delegations && !task && !board) return false;
     // In this order: only this computer; then the token (whatever else is wrong with a request, a token that is not valid is a 401); then what may be asked.
     if (!loopback(request.socket.remoteAddress)) { http.json(response, 403, { code: "TABLE_LOCAL_ONLY", message: "The table is for programs on this computer" }); return true; }
     const grant = this.authenticate(request);
@@ -132,6 +137,18 @@ export class TableApi {
       if (this.options.progress === undefined || http.body === undefined) { http.json(response, 501, { code: "PROGRESS_UNAVAILABLE", message: "This HarnessHub does not take a Turn's progress" }); return true; }
       this.options.progress(grant, progressOf(path, await http.body(request)));
       http.json(response, 200, { ok: true }); return true;
+    }
+    if (board) {
+      const hooks = this.options.board;
+      if (hooks === undefined || http.body === undefined) { http.json(response, 501, { code: "BOARD_UNAVAILABLE", message: "This HarnessHub keeps no task board" }); return true; }
+      http.queries(url, []);
+      if (method === "GET") { http.json(response, 200, hooks.read(grant)); return true; }
+      if (method !== "POST") { response.setHeader("Allow", "GET, POST"); http.json(response, 405, { code: "METHOD_NOT_ALLOWED", message: "The board is read with GET and written with POST" }); return true; }
+      const value = await http.body(request), body = value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : invalid("the body must be a JSON object");
+      if (typeof body.forget === "string" && body.forget.trim() !== "") { http.json(response, 200, hooks.write(grant, { forget: body.forget.trim() })); return true; }
+      if (!(BOARD_KINDS as readonly unknown[]).includes(body.kind)) invalid("kind must be one of " + BOARD_KINDS.join(", "));
+      if (typeof body.text !== "string" || body.text.trim() === "") invalid("text must be what to remember");
+      http.json(response, 200, hooks.write(grant, { kind: body.kind as typeof BOARD_KINDS[number], text: body.text as string })); return true;
     }
     if (delegate || delegations) {
       const hooks = this.options.delegation;

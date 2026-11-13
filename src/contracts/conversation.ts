@@ -290,6 +290,9 @@ export interface HeadJson {
   readonly origin?: StoredOrigin;
   readonly delegation?: import("./session.js").DelegationOrigin;
   readonly delegationsTold?: import("./session.js").DelegationsTold;
+  readonly taskBoard?: import("./session.js").TaskBoard;
+  readonly taskBoardTold?: number;
+  readonly taskEditsTold?: Readonly<Record<string, number>>;
 }
 /** One row of `sessions` of a converted conversation. */
 export interface HeadRow {
@@ -504,6 +507,8 @@ export interface ConversationStore extends ConversationReader {
   delegatedBy?(id: SessionId): readonly SessionId[];
   /** The files a conversation's Turns changed (its edit items: the Hub's record of the workspace, and its Harness's own edits), in the order first changed. Optional. */
   changedFiles?(id: SessionId): readonly string[];
+  /** The files a conversation's edits changed after its first `after` edits, and how many edits it has now (`through`). Optional. */
+  changedSince?(id: SessionId, after: number): { readonly files: readonly string[]; readonly through: number };
   nativeOwners(harnessId: string, controlId: string): ReadonlyMap<string, SessionId>;
   /** Every content id any conversation references (`content_refs`, and the references of the conversations not yet converted), for the collector. */
   contentReferences(): ReadonlySet<string>;
