@@ -14,7 +14,7 @@ import { snapshotHistory } from "../fixtures/old-shape.js";
 import { endLines, fenced, readRelayPrompt, TITLE } from "../fixtures/relay-packet.js";
 import { conversation, longConversation, names, s1, s1Delta, s3, tool, type RunSpec, type Scenario } from "../fixtures/relay-scenarios.js";
 
-// The slim relay packet (relay/1-mvp.7, ADR-055 §5 as cut down on 2026-11-11) rendered from public snapshots: facts only, two
+// The slim relay packet (relay/1-mvp.8, ADR-055 §5 as cut down on 2026-11-11) rendered from public snapshots: facts only, two
 // tiers, whole items or none, a ledger that adds up, and never a failure. Pure domain code; the formal Runtime's use of it is
 // in tests/integration/relay-mvp.test.ts.
 
@@ -25,8 +25,8 @@ const renderRelay = (given: RenderInput) => renderOver({ ...given, state: snapsh
 function input(scenario: Scenario, extra: Partial<RenderInput> = {}): RenderInput {
   return { state: scenario.state, current: scenario.current, sources: scenario.sources, origin: false, names, details: scenario.details, ...extra };
 }
-/** A budget of `cap` tokens as windows.ts makes one for a window of 128k: the share of the user's words is half of it, at most 2,500. */
-function budgetOf(cap: number): RelayBudget { return { cap, user: Math.min(2500, Math.floor(0.5 * cap)), window: 128_000, windowSource: "assumed" }; }
+/** A budget of `cap` tokens as windows.ts makes one where the window or the channel leaves a packet that much: the share of the user's words is half of it. */
+function budgetOf(cap: number): RelayBudget { return { cap, user: Math.floor(0.5 * cap), window: 128_000, windowSource: "assumed" }; }
 /**
  * Compares a rendering with its golden file byte for byte; RELAY_GOLDEN=update rewrites the file instead (then review it).
  * The file holds the rendering and one final LF, as every Markdown file of the repository ends (tools/check_design.py).
@@ -224,10 +224,11 @@ test("G070-slim the first line: the user's first ≤200 characters, never a comm
   assert.equal(firstLine(" \n\t", "zh"), null);
 });
 
-test("G070-slim the budget: T = min(8,000, 5% of the window), U half of it at most 2,500; a window that is not a positive whole number is assumed", () => {
-  assert.deepEqual(resolveRelayBudget(null), { cap: 6400, user: 2500, window: 128000, windowSource: "assumed" });
-  assert.deepEqual(resolveRelayBudget(200000), { cap: 8000, user: 2500, window: 200000, windowSource: "observed" });
-  assert.deepEqual(resolveRelayBudget(32000), { cap: 1600, user: 800, window: 32000, windowSource: "observed" });
+test("G070-slim the budget: T = half of the window and no number of our own, U half of T; a window that is not a positive whole number is assumed", () => {
+  assert.deepEqual(resolveRelayBudget(null), { cap: 64000, user: 32000, window: 128000, windowSource: "assumed" });
+  assert.deepEqual(resolveRelayBudget(200000), { cap: 100000, user: 50000, window: 200000, windowSource: "observed" });
+  assert.deepEqual(resolveRelayBudget(1000000), { cap: 500000, user: 250000, window: 1000000, windowSource: "observed" });
+  assert.deepEqual(resolveRelayBudget(32000), { cap: 16000, user: 8000, window: 32000, windowSource: "observed" });
   for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(resolveRelayBudget(invalid).windowSource, "assumed", String(invalid));
   assert.equal(estimateTokens(""), 0); assert.equal(estimateTokens("abcd"), 2); assert.equal(estimateTokens("中文"), 3); assert.ok(estimateTokens("a".repeat(100) + "b") <= estimateTokens("a".repeat(100)) + estimateTokens("b"));
 });
@@ -346,7 +347,7 @@ test("G070-slim extremes never fail: a megabyte reply, 64 KiB words, a budget of
     assert.ok(rendered.record.tokens <= Math.max(cap, 700));
   }
   const words = "w".repeat(64 * 1024), bulky = conversation([...Array.from({ length: 8 }, (_, index): RunSpec => ({ input: words + index, harnessId: index % 2 ? "claude" : "codex", reply: "ok" })), { input: "next", harnessId: "dsh" }]);
-  const bulk = renderRelay(input(bulky)); assert.ok(bulk.record.tokens <= bulk.record.budget.cap); assert.equal(bulk.record.items.userMessages.included, 0, "words longer than the budget are left out whole too"); assert.equal(bulk.record.items.userMessages.omitted, 8);
+  const bulk = renderRelay(input(bulky, { budget: budgetOf(6400) })); assert.ok(bulk.record.tokens <= bulk.record.budget.cap); assert.equal(bulk.record.items.userMessages.included, 0, "words longer than the budget are left out whole too"); assert.equal(bulk.record.items.userMessages.omitted, 8);
   assert.ok(bulk.text.endsWith("\nnext"));
   const single = conversation([{ input: "only", harnessId: "claude", reply: "ok" }]);
   const none = renderRelay(input(single, { sources: [] }));
@@ -360,9 +361,10 @@ test("G070-slim extremes never fail: a megabyte reply, 64 KiB words, a budget of
 test("G070-slim 256 turns near 8 MiB never fail: the packet is brief, within its budget, and its ledger accounts for every turn", () => {
   const scenario = longConversation(255, { input: 800, reply: 27 * 1024, tools: 16 }, "Now review everything that was done.");
   assert.ok(Buffer.byteLength(JSON.stringify(scenario.state)) > 7 * 1024 * 1024, "the snapshot is near the 8 MiB Session limit");
-  const rendered = renderRelay(input(scenario)), packet = readRelayPrompt(rendered.text), record = rendered.record;
+  // A target whose window leaves a packet 6,400 tokens: far less than the history, so whole items are left out.
+  const rendered = renderRelay(input(scenario, { budget: budgetOf(6400) })), packet = readRelayPrompt(rendered.text), record = rendered.record;
   assert.ok(record.tokens <= record.budget.cap, record.tokens + " > " + record.budget.cap);
-  assert.equal(record.budget.cap, 6400, "min(8,000, 5% of the assumed 128k window)"); assert.equal(record.tier, "brief");
+  assert.equal(record.budget.cap, 6400); assert.equal(record.tier, "brief");
   assert.equal(record.items.userMessages.total, 255); assert.equal(record.items.replies.total, 255); assert.equal(record.items.replies.included, 0, "27 KiB replies fit no turn's share: left out whole");
   assert.equal(record.turns.shown + record.turns.absent, 255); assert.ok(record.turns.shown >= 8);
   for (const kind of ITEM_KINDS) assert.equal(record.items[kind].included + record.items[kind].omitted, record.items[kind].total);
@@ -373,7 +375,7 @@ test("G070-slim 256 turns near 8 MiB never fail: the packet is brief, within its
   // Whatever the target's window, from 4k to 1M tokens, it never fails and never exceeds max(its cap, the least packet).
   for (const window of [4000, 8000, 16000, 32000, 128000, 200000, 1000000]) {
     const shorter = longConversation(255, { input: 800, reply: 4 * 1024, tools: 8 }, "继续", "dsh", window), small = renderRelay(input(shorter)), least = renderRelay(input(shorter, { budget: budgetOf(0) })).record.tokens;
-    assert.equal(small.record.budget.cap, Math.min(8000, Math.floor(window * 0.05)));
+    assert.equal(small.record.budget.cap, Math.floor(window * 0.5), "half of the window, whatever its size");
     assert.ok(small.record.tokens <= Math.max(small.record.budget.cap, least), window + ": " + small.record.tokens);
   }
 });

@@ -38,9 +38,11 @@ export const MAX_RELAY_TIME = 8.64e15;
 export const MAX_BINDING_RELAY_BYTES = 256;
 /** The serialized relay fields of one Run (`{ relay, relayRequest }`); the snapshot also gains contextReadyAt and recordedAt (532 B at the largest values). */
 export const MAX_RUN_RELAY_BYTES = 576;
-/** Relay table bounds, checked on serialized bytes before any statement runs. */
-export const RELAY_BODY_BYTES = 262_144;
-export const RELAY_SESSION_BODY_BYTES = 64 * 1024 * 1024;
+/**
+ * Relay table bounds, checked on serialized bytes before any statement runs. A packet's text is as long as half the target's window lets it be (2026-11-13: it
+ * was held to 256 KiB while a packet was at most 8,000 tokens); the bound here only keeps one malformed record from being taken for a packet.
+ */
+export const RELAY_BODY_BYTES = 64 * 1024 * 1024;
 export const RELAY_MANIFEST_BYTES = 65_536;
 export const RELAY_INDEX_BYTES = 2048;
 export const RELAY_PREF_VALUE_BYTES = 64;

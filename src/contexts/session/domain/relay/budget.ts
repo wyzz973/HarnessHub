@@ -14,19 +14,21 @@
  * relay/1-mvp.7: and a tool that only the shared name table can tell (a DeepSeek Harness `bash`, `read`, `edit`, whose title is just its
  * name) is worded by what its stored detail says (the command, the path) where it is read, instead of as an operation of no known kind;
  * a tool its Harness gave a kind, and a tool nothing can tell, are worded as mvp.6 worded them, byte for byte.
+ * relay/1-mvp.8 (2026-11-13): the cap is the target's window's alone — half of it — where it was 8,000 tokens and 5% of the window; and the user's earlier
+ * words take up to half of the cap, where they took 2,500 tokens. A history that fits is carried whole; the text of a packet that fits both is what mvp.7 made.
  */
-export const RELAY_POLICY_VERSION = "relay/1-mvp.7";
+export const RELAY_POLICY_VERSION = "relay/1-mvp.8";
 
 /**
- * What the one cap of a packet is made of: T = min(8,000, 5% of the target's context window), the window assumed when the
- * target never reported one, and the share of T the user's earlier words may take before replies and outputs are chosen (U).
- * Only the window and the channel lower T (windows.ts hardCap); what a handoff costs in money or time decides nothing.
+ * What the one cap of a packet is made of (2026-11-13: no number of our own caps a packet): T = half of the target's context window — the other half is the
+ * Harness's own prompt, its tools and the work of the Turn, without which the Turn would fail outright — the window assumed when the target never reported one,
+ * and the share of T the user's earlier words may take before replies and outputs are chosen (U). Only the window and the channel decide T (windows.ts hardCap);
+ * what a handoff costs in money or time decides nothing.
  */
 export const RELAY_BUDGET = Object.freeze({
-  standardCap: 8000,
-  windowShare: 0.05,
+  windowShare: 0.5,
   assumedWindow: 128_000,
-  userCap: 2500,
+  userShare: 0.5,
 });
 
 /** A Han, kana, Hangul, CJK punctuation or full-width code point: what the estimate and the language choice count apart. */
@@ -74,13 +76,12 @@ export interface RelayBudget {
 
 /**
  * The budget for a target whose context window is `window` tokens (its latest reported `usage.context.size`), or the assumed
- * 128k when it reported none or reported something that is not a positive whole number. The cap never exceeds 8,000 tokens
- * nor 5% of the window; the history's length never enters it, so no history is too long for it (the packet leaves out whole
- * items instead).
+ * 128k when it reported none or reported something that is not a positive whole number. The cap is half of the window; the
+ * history's length never enters it, so no history is too long for it (one that does not fit leaves out whole items instead).
  */
 export function resolveRelayBudget(window: number | null): RelayBudget {
   const observed = window !== null && Number.isSafeInteger(window) && window > 0;
   const size = observed ? window : RELAY_BUDGET.assumedWindow;
-  const cap = Math.min(RELAY_BUDGET.standardCap, Math.floor(RELAY_BUDGET.windowShare * size));
-  return { cap, user: Math.min(RELAY_BUDGET.userCap, Math.floor(0.5 * cap)), window: size, windowSource: observed ? "observed" : "assumed" };
+  const cap = Math.floor(RELAY_BUDGET.windowShare * size);
+  return { cap, user: Math.floor(RELAY_BUDGET.userShare * cap), window: size, windowSource: observed ? "observed" : "assumed" };
 }

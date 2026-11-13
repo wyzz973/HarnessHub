@@ -4,8 +4,8 @@ import { RELAY_BUDGET, resolveRelayBudget, type RelayBudget } from "./budget.js"
 
 /**
  * The target's context window and what it leaves a packet (ADR-055 §6.2, slim.md): the window is what the target's own Turns
- * reported (`usage.context.size` of its latest Run on the same Harness control), else an assumed one; the hard cap is the least of
- * what the window leaves, what the Driver's channel leaves and the largest packet, and a packet is folded to it. When even the
+ * reported (`usage.context.size` of its latest Run on the same Harness control), else an assumed one; the hard cap is the lesser of
+ * what the window leaves and what the Driver's channel leaves, and a packet is folded to it. When even the
  * least packet the renderer makes does not fit (its `tokens` above its `budget.cap`), the input goes as typed. The history's
  * length never enters it. Pure.
  */
@@ -40,15 +40,15 @@ export function resolveWindow(state: { readonly runs: readonly Pick<PublicRun, "
   return { size: reported ?? ASSUMED_WINDOW, source: reported === null ? "assumed" : "observed", fixedPrefix: FIXED_PREFIX };
 }
 /**
- * hardCap (§6.2): what the window leaves a packet — at most 5% of it, and no more than remains after the fixed prefix, the
- * current words (`inputTokens`) and the reserve — and what the channel leaves it (`channel`'s bound less what the Turn takes
- * without a packet, `inputSize` in its unit, and the reserve, in tokens at the most units a token may take), never above the
- * largest packet's cap (RELAY_BUDGET.standardCap). Never negative.
+ * hardCap (§6.2): what the window leaves a packet — at most half of it (RELAY_BUDGET.windowShare), and no more than remains after
+ * the fixed prefix, the current words (`inputTokens`) and the reserve — and what the channel leaves it (`channel`'s bound less what
+ * the Turn takes without a packet, `inputSize` in its unit, and the reserve, in tokens at the most units a token may take). No number
+ * of our own is above it (2026-11-13). Never negative.
  */
 export function hardCap(window: ResolvedWindow, inputTokens: number, channel: { readonly limit: number } | null, inputSize: number): number {
-  const capWindow = Math.max(0, Math.min(Math.floor(0.05 * window.size), window.size - window.fixedPrefix - inputTokens - WINDOW_RESERVE));
+  const capWindow = Math.max(0, Math.min(Math.floor(RELAY_BUDGET.windowShare * window.size), window.size - window.fixedPrefix - inputTokens - WINDOW_RESERVE));
   const capChannel = channel === null ? Number.POSITIVE_INFINITY : Math.max(0, Math.floor((channel.limit - inputSize - WINDOW_RESERVE) / UNITS_PER_TOKEN));
-  return Math.max(0, Math.min(capWindow, capChannel, RELAY_BUDGET.standardCap));
+  return Math.max(0, Math.min(capWindow, capChannel));
 }
 /**
  * The budget the renderer folds a packet to (budget.ts): for a reported window its own; for an assumed one the renderer's own
@@ -58,5 +58,5 @@ export function packetBudget(window: ResolvedWindow, cap: number): RelayBudget {
   const base = resolveRelayBudget(window.source === "observed" ? window.size : null);
   if (cap >= base.cap) return base;
   const capped = Math.max(0, Math.floor(cap));
-  return { ...base, cap: capped, user: Math.min(RELAY_BUDGET.userCap, Math.floor(0.5 * capped)) };
+  return { ...base, cap: capped, user: Math.floor(RELAY_BUDGET.userShare * capped) };
 }

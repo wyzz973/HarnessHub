@@ -50,6 +50,8 @@ RUN HH_REAL_MODEL_CLAUDE=haiku node --test dist/tests/real/delegation-context.re
 
 这两轮跑的时候，被委派的第一轮带的历史还收在 2,000 token 以内（“去程瘦身”）。这道上限当天撤掉了（用户问“为什么要限制Token？”，见决定记录），撤掉后又跑了一轮：8 项全过，证据 `delegation-ruler-2026-11-13T04-55-19-657Z.json`。S2 里 B 这次调了 5 次 Hub 工具（收紧时那两轮各 6 次）——这个场景要的记号在工具输出里，交接单不带工具输出，带多带少它都得去读。
 
+同一天交接单的总预算也放开了（原来最多 8,000 token，现在是对方窗口的一半，策略 `relay/1-mvp.8`），放开后又跑了一轮：8 项全过，证据 `delegation-ruler-2026-11-13T05-39-12-199Z.json`。
+
 S4 用 C = OpenCode 补量了一次。OpenCode 没有用户级的 harnesshub 一项，用的是这次构建的工具。结果是不过：它的 `hub_turns`、`hub_search`、`hub_read_turn` 只看得到自己的对话，于是去翻了 Gateway 的数据目录（`ls`、`find`，再 `cat` 对话文件），从里面找到 B 的文件名，加上了 two。尺子按“越出工作区”判它不过。证据见 `delegation-ruler-2026-11-13T04-20-30-711Z.json`。
 
 ## 量的时候发现的

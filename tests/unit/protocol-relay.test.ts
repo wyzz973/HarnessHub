@@ -35,7 +35,7 @@ test("a DeepSeek Harness tool is worded by what its stored detail says, and as a
   const text = renderRelay({ state: snapshotHistory(scenario.state), current: scenario.current, sources: scenario.sources, origin: false, names, details: new Map() }).text;
   assert.deepEqual(text.split("\n").filter(line => /^- Other /u.test(line)), ["- Other `bash`", "- Other `read`", "- Other `edit`", "- Other `bash`", "- Other `grep`", "- Other `Brainstorm`", "- Other `web_fetch`", "- Other `bash` (failed)"]);
   // The packet's policy changed with its words.
-  assert.equal(RELAY_POLICY_VERSION, "relay/1-mvp.7");
+  assert.equal(RELAY_POLICY_VERSION, "relay/1-mvp.8");
 });
 
 test("a failing command of such a Harness now has its output tail carried, as any Harness's failing command does", () => {
