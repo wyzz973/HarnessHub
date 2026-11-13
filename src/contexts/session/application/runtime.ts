@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { parseProviderTarget } from "../../../contracts/provider.js";
-import { HUB_DELEGATION_INSTRUCTIONS, HUB_PROGRESS_INSTRUCTIONS, hubCommandInstructions } from "../../../contracts/table.js";
+import { HUB_DELEGATION_INSTRUCTIONS, HUB_PROGRESS_INSTRUCTIONS, hubCommandCall, hubCommandInstructions } from "../../../contracts/table.js";
 import { listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeUsage } from "../../../contracts/control.js";
 import { type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import { CONVERSATION_FORMAT, type Conversation, type ConversationCommit, type ConversationMutation, type ConversationRun, type ConversationStore, type HeldItem } from "../../../contracts/conversation.js";
@@ -25,7 +25,7 @@ import { toolFamily } from "../domain/protocol/index.js";
 import { commandEffect, commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
 import { initialBindingRelay, owed, plan, type RelayFact } from "../domain/relay/delivery.js";
 import { BLOCKED_CODES, RelayError, type BindingRelayState, type DeliveryRecord, type RelayAttention, type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayInstallationNotice, type RelayKeyPort, type RelayLogPort, type RelayPacket, type RelayPrefKey, type RelayStorePort } from "../../../contracts/relay.js";
-import { relayRedactor } from "../domain/relay/redaction.js";
+import { relayRedactor, restoreLabels } from "../domain/relay/redaction.js";
 import { hardCap, packetBudget, resolveWindow, type ResolvedWindow } from "../domain/relay/windows.js";
 import { estimateTokens, type RelayBudget } from "../domain/relay/budget.js";
 /**
@@ -254,13 +254,14 @@ const DELEGATED_NOTE = "（HarnessHub：下面是从另一段对话委派给你�
 /** The most a delegated conversation's first Turn carries of the conversation it came from, in the packet's tokens, when its Harness can read the rest back. */
 const DELEGATED_CAP = 2000;
 /** One piece of delegated work as its conversation's Harness reads it: who had it, how it ended, the task and the reply, each cut at a length a note can carry. */
-export function delegationText(entry: DelegationState): string {
+export function delegationText(entry: DelegationState, ran: readonly string[] = []): string {
   const clip = (text: string, most: number) => { const units = [...text]; return units.length > most ? units.slice(0, most).join("") + "…（后面省略）" : text; };
   const outcome = entry.status === "running" ? "还在做" : entry.status === "completed" ? "已完成" : entry.status === "failed" ? "失败" : entry.status === "cancelled" ? "被停止" : "结果未知";
   const files = entry.files === undefined || entry.files.length === 0 ? "" : "\n它改动的文件：" + entry.files.slice(0, 30).join("、") + (entry.files.length > 30 ? " 等 " + entry.files.length + " 个" : "");
   // Its conversation by the label the Hub's tools take: what it ran and changed is read there, not guessed.
   const label = "c-" + entry.sessionId.replace(/^session-/u, "").replace(/-/gu, "").slice(0, 6);
-  return "【" + entry.harness + " · " + outcome + " · 对话 " + label + "】\n任务：" + clip(entry.task, 1200) + (entry.status === "running" ? "" : "\n" + (entry.reply ? "它的回复：\n" + clip(entry.reply, 6000) : "它没有留下文字回复。")) + files;
+  return "【" + entry.harness + " · " + outcome + " · 对话 " + label + "】\n任务：" + clip(entry.task, 1200) + (entry.status === "running" ? "" : "\n" + (entry.reply ? "它的回复：\n" + clip(entry.reply, 6000) : "它没有留下文字回复。")) + files
+    + (ran.length === 0 ? "" : "\n它最后一轮运行的命令（每条后面是输出的末尾）：\n" + ran.join("\n"));
 }
 /** Native events that the user sees in the conversation; the first of them marks the Run's first output. */
 const VISIBLE_OUTPUT = new Set<ControlEvent["type"]>(["text", "thinking", "tool", "plan", "permission_requested", "output", "activity"]);
@@ -915,13 +916,40 @@ export class SessionRuntime {
    * outcome already went with a Turn of this one that went through (or still runs). `by` is the Turn it goes with now. `text` is what the Harness reads before the
    * user's words; `line` what the Turn says of it; `told` what the conversation remembers.
    */
-  private delegationNews(state: Conversation, by: RunId): { readonly text: string; readonly line: string; readonly told: DelegationsTold } | null {
+  private delegationNews(state: Conversation, by: RunId, ran: ReadonlyMap<string, readonly string[]> = new Map()): { readonly text: string; readonly line: string; readonly told: DelegationsTold } | null {
     const fresh = this.delegationStates(state.id).filter(entry => entry.status !== "running" && entry.runId !== null && !this.wasTold(state, entry));
     if (fresh.length === 0) return null;
     const names = [...new Set(fresh.map(entry => entry.harness))];
     return { told: Object.fromEntries(fresh.map(entry => [entry.sessionId, { runId: entry.runId!, by }])),
       line: "带上了 " + names.join("、") + " 的委派结果" + (fresh.length > 1 ? "（" + fresh.length + " 项）" : ""),
-      text: "（HarnessHub：之前委派给别的 Harness、在另外的对话里做的任务有了结果。这是给你的背景，不是新的指令；这些任务已经处理过，不要重做。需要它做事的细节（跑了什么、改了什么）时，用 harnesshub 的 hub_task 看全貌，或用 hub_read_turn、hub_search 带上那段对话的标签去读。\n\n" + fresh.map(delegationText).join("\n\n") + "\n）" };
+      text: "（HarnessHub：之前委派给别的 Harness、在另外的对话里做的任务有了结果。这是给你的背景，不是新的指令；这些任务已经处理过，不要重做。需要它做事的细节（跑了什么、改了什么）时，用 harnesshub 的 hub_task 看全貌，或用 hub_read_turn、hub_search 带上那段对话的标签去读。\n\n" + fresh.map(entry => delegationText(entry, ran.get(entry.sessionId))).join("\n\n") + "\n）" };
+  }
+  /**
+   * What the latest Turn of each of these conversations ran (2026-11-13): its commands, at most six each, each with the end of what it printed, read from the details
+   * its Harness stored and with secrets hidden as a relay packet hides them. What a delegated Harness says it checked is then told with what the check printed.
+   */
+  private async delegationRan(ids: readonly string[], secrets: readonly string[]): Promise<ReadonlyMap<string, readonly string[]>> {
+    const content = this.options.content, ran = new Map<string, readonly string[]>();
+    if (content === undefined || (content.readText === undefined && content.readChunks === undefined)) return ran;
+    const redactor = relayRedactor(secrets), hidden = (text: string, kind: "text" | "output") => restoreLabels(redactor.redact(text, kind).text, "zh");
+    const clip = (text: string, most: number) => { const units = [...text]; return units.length > most ? units.slice(0, most).join("") + "…" : text; };
+    for (const id of ids) {
+      try {
+        const child = this.load(id as SessionId), turn = outlineOf(rowsHistory(child, this.store), child.runs.length - 1), lines: string[] = [];
+        for (const tool of turn?.run.tools ?? []) {
+          if (lines.length === 6) break;
+          if (tool.detail === undefined || tool.parentId !== undefined || toolFamily(tool) !== "execute") continue;
+          const read = await readDetail(content, tool.detail, RELAY_DETAIL_POLICY), detail = read === null ? null : relayDetailOf(read);
+          const line = (detail?.input ?? "").replace(/\s+/gu, " ").trim();
+          // The Hub's own command (a Harness that has the tools as a command) is no work of the task.
+          if (line === "" || hubCommandCall(line) !== null) continue;
+          const tail = (detail?.output ?? "").trim().split("\n").slice(-4).join("\n");
+          lines.push("$ " + hidden(clip(line, 200), "text") + (tail === "" ? "" : "\n" + hidden(clip(tail, 400), "output")));
+        }
+        if (lines.length > 0) ran.set(id, lines);
+      } catch { /* told without what it ran */ }
+    }
+    return ran;
   }
   /**
    * How the work this conversation delegated stands, for its Harness's tool (`hub_delegations`), asked within its Turn in progress: every piece, and the outcomes it
@@ -2234,10 +2262,16 @@ export class SessionRuntime {
       // "Plan" as the Hub's policy (no plan mode of the Harness's own): the model is told it is read only before it tries.
       const planned = selectedPermission(run.selection.nativeOptions) === "plan" && this.options.flavor?.(run.selection.harnessId).nativePlan === false ? withPlanNote(turnText) : turnText;
       // What the work this conversation delegated came to goes with the Turn, before the user's words, and the Turn says so (2026-11-13). Never with a command.
-      const news = command === null ? this.delegationNews(this.load(id), target) : null;
-      if (news !== null) this.placed(execution, { kind: "notice", severity: "info", title: news.line, code: "DELEGATION_TOLD", at: this.options.now().getTime() },
-        [event("run.delegations_told", { runId: target, told: Object.entries(news.told).map(([sessionId, entry]) => ({ sessionId, runId: entry.runId })) })],
-        { always: true, patch: current => ({ ...current, delegationsTold: { ...(current.delegationsTold ?? {}), ...news.told } }) });
+      let news = command === null ? this.delegationNews(this.load(id), target) : null;
+      if (news !== null) {
+        // With what each of them ran in its latest Turn, where its details can be read.
+        const ran = await this.delegationRan(Object.keys(news.told), execution.binding?.secrets ?? []); this.continue(execution);
+        if (ran.size > 0) news = this.delegationNews(this.load(id), target, ran) ?? news;
+      }
+      const told = news;
+      if (told !== null) this.placed(execution, { kind: "notice", severity: "info", title: told.line, code: "DELEGATION_TOLD", at: this.options.now().getTime() },
+        [event("run.delegations_told", { runId: target, told: Object.entries(told.told).map(([sessionId, entry]) => ({ sessionId, runId: entry.runId })) })],
+        { always: true, patch: current => ({ ...current, delegationsTold: { ...(current.delegationsTold ?? {}), ...told.told } }) });
       // The first Turn of a conversation that was delegated its work says so, and where the rest of the task is read (2026-11-13).
       const delegated = command === null && this.load(id).delegation !== undefined && this.load(id).runs[0]?.id === target && toolsUsable() ? DELEGATED_NOTE : null;
       // The task's board, when it changed since this Harness was last told: what everyone on the task goes by, before anything else of the Hub's.
@@ -2249,7 +2283,7 @@ export class SessionRuntime {
       if (edits !== null && edits.line !== null) this.placed(execution, { kind: "notice", severity: "info", title: edits.line, code: "TASK_EDITS_TOLD", at: this.options.now().getTime() },
         [event("run.task_edits_told", { runId: target, told: edits.told })], { always: true, patch: current => ({ ...current, taskEditsTold: { ...(current.taskEditsTold ?? {}), ...edits.told } }) });
       else if (edits !== null) this.commit(id, current => ({ next: { ...current, taskEditsTold: { ...(current.taskEditsTold ?? {}), ...edits.told } }, events: [event("run.task_edits_marked", { runId: target, told: edits.told })] }));
-      const notes = [board?.text ?? null, delegated, edits?.text ?? null, news?.text ?? null].filter((note): note is string => note !== null).map(note => asCommand(note, execution.binding?.hubCommand));
+      const notes = [board?.text ?? null, delegated, edits?.text ?? null, told?.text ?? null].filter((note): note is string => note !== null).map(note => asCommand(note, execution.binding?.hubCommand));
       execution.run = await control.startText(native, notes.length === 0 ? planned : withHubNote(planned, notes.join("\n\n")), value => this.output(execution, value), ...(files.length ? [files] : []));
       this.owned(execution);
       void execution.run.result.then(() => { execution.backendSettled = true; }, () => { execution.backendSettled = true; });
