@@ -8,6 +8,7 @@ import type { PlanStep } from "../contracts/protocol.js";
 import type {
   ConversationChangesView, ConversationEdit, ItemTextView, ItemView, KeptProcessView, NativeStateView, RunItemsPageView, SessionFacts, SessionHeadView, SessionListView, SessionView, SessionViewV14, TurnPageView, TurnWindowView,
 } from "../contracts/web.js";
+import { summaryLine } from "../contracts/web.js";
 import type { FrameViews } from "./commit-frame.js";
 import { TurnView, isTaskListCall, turnFactsOf, type ConversationFactsPort, type RunRelayReading, type TurnEnv } from "./turn-view.js";
 import { wireItem } from "./commit-frame.js";
@@ -273,7 +274,7 @@ export class ConversationRoutes {
     });
     const kept = live.retention;
     return { id, version: row.version, lastSeq: row.lastSeq, epoch: row.epoch, status: row.status, workspace: json.configuration.workspace, selection: json.selection, activeRunId: row.activeRunId,
-      pendingSwitchId: row.pendingSwitchId, permissions: live.permissions ?? [], nativeStates, ...(origin === null ? {} : { origin }), ...(json.delegation === undefined ? {} : { parent: { sessionId: json.delegation.parentId, afterRunId: json.delegation.afterRunId } }), ...(live.queue === undefined ? {} : { queue: live.queue }),
+      pendingSwitchId: row.pendingSwitchId, permissions: live.permissions ?? [], nativeStates, ...(origin === null ? {} : { origin }), ...(json.delegation === undefined ? {} : { parent: { sessionId: json.delegation.parentId, afterRunId: json.delegation.afterRunId, ...(json.delegation.by === undefined ? {} : { by: json.delegation.by }) } }), ...(json.delegationsTold === undefined ? {} : { delegationsTold: json.delegationsTold }), ...(live.queue === undefined ? {} : { queue: live.queue }),
       retention: { enabled: json.retainNative === true, process: kept?.process ?? null, ...(kept?.lost === undefined ? {} : { lost: kept.lost }), ...(kept?.outside === undefined ? {} : { outside: kept.outside }),
         ...(kept?.upgraded === undefined ? {} : { upgraded: kept.upgraded }) },
       title: row.title, runCount: row.runCount, ...(last === null ? {} : { lastSwitch: last }), facts: this.factsOf(id, row.version), ...this.progressOf(id) };
@@ -357,11 +358,36 @@ export class ConversationRoutes {
     const plan = this.options.facts.latestPlan(row.id);
     return { edits: page, next, plan: plan === null ? null : { runId: plan.runId, ordinal: plan.ordinal, harnessId: plan.harnessId, item: wireItem(plan.row) } };
   }
+  /**
+   * The list's second line for a conversation (SessionSummary.line), kept for the state it was read at: the step in progress of the running Turn's task list, or
+   * the first sentence of the latest finished Turn's wrap-up. A conversation that cannot be read has none.
+   */
+  private lineOf(id: SessionId, seq: number, activeRunId: RunId | null): string | undefined {
+    const kept = this.lines.get(id);
+    if (kept !== undefined && kept.seq === seq && kept.active === activeRunId) return kept.line;
+    let line: string | undefined;
+    try {
+      const { facts } = this.options;
+      if (activeRunId !== null) {
+        const plan = facts.latestPlan(id), fields = plan === null ? null : plan.row.fields as { readonly steps?: readonly PlanStep[] };
+        const step = plan !== null && plan.runId === activeRunId && Array.isArray(fields?.steps) ? fields.steps.find(entry => entry.status === "in_progress") : undefined;
+        line = step === undefined ? undefined : summaryLine(step.text);
+      } else {
+        const recap = facts.latestRecap?.(id) ?? null, summary = recap === null ? undefined : (recap.row.fields as { readonly summary?: unknown }).summary;
+        line = typeof summary === "string" && summary.trim() !== "" ? summaryLine(summary) : undefined;
+      }
+    } catch { line = undefined; }
+    this.lines.delete(id); this.lines.set(id, { seq, active: activeRunId, line });
+    if (this.lines.size > 2000) this.lines.delete(this.lines.keys().next().value!);
+    return line || undefined;
+  }
+  private readonly lines = new Map<SessionId, { readonly seq: number; readonly active: RunId | null; readonly line: string | undefined }>();
   /** GET /api/v1/sessions?after=<cursor>&limit= */
   sessions(query: { readonly after?: string | undefined; readonly limit?: string | number | undefined }): SessionListView {
     const limit = whole(query.limit, "limit", 1);
     const page = asked(() => this.options.reader.list({ ...(query.after === undefined ? {} : { after: query.after as SessionListCursor }), ...(limit === undefined ? {} : { limit }) }));
-    return { sessions: page.rows.map(row => ({ id: row.id, title: row.title, status: row.status, workspace: row.workspace, selection: row.selection, updatedSeq: row.updatedSeq, activeRunId: row.activeRunId, ...(row.parent === undefined ? {} : { parent: { sessionId: row.parent.parentId, afterRunId: row.parent.afterRunId } }) })), next: page.next };
+    return { sessions: page.rows.map(row => ({ id: row.id, title: row.title, status: row.status, workspace: row.workspace, selection: row.selection, updatedSeq: row.updatedSeq, activeRunId: row.activeRunId,
+      ...(line => line === undefined ? {} : { line })(this.lineOf(row.id, row.updatedSeq, row.activeRunId)), ...(row.parent === undefined ? {} : { parent: { sessionId: row.parent.parentId, afterRunId: row.parent.afterRunId, ...(row.parent.by === undefined ? {} : { by: row.parent.by }) } }) })), next: page.next };
   }
 
   // ---- the stream ---------------------------------------------------------------------------------------------------

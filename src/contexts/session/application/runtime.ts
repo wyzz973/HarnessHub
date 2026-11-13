@@ -8,7 +8,7 @@ import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, STOP_GRACE_MS, STREAM_WINDOW_BYTES, STREAM_WINDOW_MS,
   type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type OutsideEvidence, type OutsideProcess, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionConfiguration,
-  type SessionId, type SessionEvent, type SessionRuntimeOptions, type SwitchReceipt,
+  type SessionId, type SessionEvent, type SessionRuntimeOptions, type SwitchReceipt, type RunId, type DelegationsTold, type DelegationState,
 } from "../../../contracts/session.js";
 import { buildPublicContext, type PublicContext, type PublicContextOptions } from "../domain/context.js";
 import { assertConversationTransition, inputOf, runIn, settledItems, updatedRun, userItemOf, withItems } from "../domain/conversation-state.js";
@@ -40,7 +40,7 @@ import {
 } from "./relay-coordinator.js";
 import { assertInput, carriedNativeConfiguration, parseConfiguration, parseNativeConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
 import { nativeOnly, selectedPermission } from "../../../contracts/flavor.js";
-import { policyDecision, withPlanNote, type PolicyDecision } from "./permission-policy.js";
+import { policyDecision, withHubNote, withPlanNote, type PolicyDecision } from "./permission-policy.js";
 import type { PermissionLevel } from "../../../contracts/protocol.js";
 
 interface ActiveExecution {
@@ -232,6 +232,12 @@ function wroteRows(changes: Placed["changes"]): boolean {
   return (changes.items?.length ?? 0) > 0 || (changes.text?.length ?? 0) > 0 || (changes.contentRefs?.length ?? 0) > 0 || (changes.noticePrints?.length ?? 0) > 0;
 }
 function event(type: string, data: Readonly<Record<string, unknown>>): EventDraft { return { type, data }; }
+/** One piece of delegated work as its conversation's Harness reads it: who had it, how it ended, the task and the reply, each cut at a length a note can carry. */
+export function delegationText(entry: DelegationState): string {
+  const clip = (text: string, most: number) => { const units = [...text]; return units.length > most ? units.slice(0, most).join("") + "…（后面省略）" : text; };
+  const outcome = entry.status === "running" ? "还在做" : entry.status === "completed" ? "已完成" : entry.status === "failed" ? "失败" : entry.status === "cancelled" ? "被停止" : "结果未知";
+  return "【" + entry.harness + " · " + outcome + "】\n任务：" + clip(entry.task, 1200) + (entry.status === "running" ? "" : "\n" + (entry.reply ? "它的回复：\n" + clip(entry.reply, 6000) : "它没有留下文字回复。"));
+}
 /** Native events that the user sees in the conversation; the first of them marks the Run's first output. */
 const VISIBLE_OUTPUT = new Set<ControlEvent["type"]>(["text", "thinking", "tool", "plan", "permission_requested", "output", "activity"]);
 /**
@@ -724,9 +730,15 @@ export class SessionRuntime {
    * the source, which quotes the source's public history through its latest finished Turn (nothing when it has none). Nothing is sent to a model here: the task is the
    * new conversation's first message. The source may be in the middle of a Turn; it is only read.
    */
-  async delegate(sourceId: SessionId, selection: SelectionRequest, key: string): Promise<Conversation> {
+  async delegate(sourceId: SessionId, selection: SelectionRequest, key: string, from?: { readonly harnessId: string; readonly controlId: string }): Promise<Conversation> {
     this.admit();
     const loaded = this.load(sourceId), request = requested(selection), command = commandId(key);
+    // Asked for by the Harness of the Turn in progress (the Hub's tool): only that Harness, only while its Turn runs; the work is handed over in that Turn.
+    const asking = from === undefined ? undefined : this.runningFor(sourceId, from);
+    // A chain of delegations ends somewhere: work handed on three times is not handed on again.
+    let depth = 0;
+    for (let at: Conversation | undefined = loaded; at?.delegation !== undefined && depth < 8; depth++) { try { at = this.load(at.delegation.parentId); } catch { at = undefined; } }
+    if (depth >= 3) throw new SessionError("DELEGATION_TOO_DEEP", "这项工作已经被转交了三层，不再往下委派");
     const through = [...loaded.runs].reverse().find(run => terminal(run.status));
     const fingerprint = this.fingerprint({ kind: "delegate", source: sourceId, through: through?.id ?? null, selection: request });
     const prior = this.store.findByCreateKey(command);
@@ -742,13 +754,67 @@ export class SessionRuntime {
     const parts = through === undefined ? null : originToRows(id, { kind: "fork", sessionId: sourceId, throughRunId: through.id, history }, last);
     const state: Conversation = { id, version: 0, lastSeq: 0, format: CONVERSATION_FORMAT, epoch: 1, status: "open", configuration: loaded.configuration, selection: validated,
       activeRunId: null, pendingSwitchId: null, runs: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
-      ...(parts === null ? {} : { origin: parts.stored }), delegation: { parentId: sourceId, afterRunId: through?.id ?? null } };
+      ...(parts === null ? {} : { origin: parts.stored }), delegation: asking === undefined ? { parentId: sourceId, afterRunId: through?.id ?? null } : { parentId: sourceId, afterRunId: asking, by: "harness" } };
     try {
       const committed = this.store.create(state, [event("session.created", { selection: validated, continuity: "public_context_rehydrate",
         ...(through === undefined ? {} : { origin: { sessionId: sourceId, throughRunId: through.id, messages: history.length, nativeFork: false } }) })], parts?.rows);
       this.managedSessions.add(id); this.publish(committed);
       return this.load(id);
     } catch (error) { if (storeUntrusted(error)) this.fail(error, id); throw error; }
+  }
+  /** The Turn in progress of a conversation, when it is `from`'s: what the Hub's tools act within. */
+  private runningFor(id: SessionId, from: { readonly harnessId: string; readonly controlId: string }): RunId {
+    const execution = this.actives.get(id);
+    if (execution === undefined) throw new SessionError("NO_TURN_IN_PROGRESS", "这个对话现在没有进行中的回合");
+    const run = runIn(this.owned(execution), execution.runId);
+    if (run === undefined || run.status !== "running") throw new SessionError("NO_TURN_IN_PROGRESS", "这个对话现在没有进行中的回合");
+    if (run.selection.harnessId !== from.harnessId || run.selection.controlId !== from.controlId) throw new SessionError("NOT_THIS_TURN", "进行中的回合不是这个 Harness 在跑");
+    return run.id;
+  }
+  /** How each piece of work this conversation delegated stands, oldest first: who has it, the task, its latest Turn's state and what it said. */
+  private delegationStates(id: SessionId): DelegationState[] {
+    const states: DelegationState[] = [];
+    for (const childId of this.store.delegatedBy?.(id) ?? []) {
+      try {
+        const child = this.load(childId), last = child.runs.at(-1), turns = turnSource(this.store, childId);
+        const harnessId = (last ?? child).selection.harnessId, harness = this.options.harnessName?.(harnessId) ?? harnessId;
+        const task = (turns.turn(0)?.user.text ?? "").trim();
+        if (last === undefined || !terminal(last.status)) { states.push({ sessionId: childId, harnessId, harness, task, runId: last?.id ?? null, status: "running", reply: "" }); continue; }
+        const turn = turns.turn(child.runs.length - 1);
+        states.push({ sessionId: childId, harnessId, harness, task, runId: last.id, status: last.status === "completed" || last.status === "failed" || last.status === "cancelled" ? last.status : "unknown", reply: turn?.assistant?.text.trim() ?? "" });
+      } catch { /* a conversation that cannot be read now is left out of this reading */ }
+    }
+    return states;
+  }
+  /** Whether an outcome was told: with a Turn of this conversation that went through, or still runs. */
+  private wasTold(state: Conversation, entry: DelegationState): boolean {
+    const prior = state.delegationsTold?.[entry.sessionId], by = prior === undefined ? undefined : state.runs.find(run => run.id === prior.by);
+    return prior !== undefined && prior.runId === entry.runId && by !== undefined && (by.status === "completed" || !terminal(by.status));
+  }
+  /**
+   * What the work this conversation delegated came to, as far as its own Harness has not been told (2026-11-13): each piece whose latest Turn is over, unless that
+   * outcome already went with a Turn of this one that went through (or still runs). `by` is the Turn it goes with now. `text` is what the Harness reads before the
+   * user's words; `line` what the Turn says of it; `told` what the conversation remembers.
+   */
+  private delegationNews(state: Conversation, by: RunId): { readonly text: string; readonly line: string; readonly told: DelegationsTold } | null {
+    const fresh = this.delegationStates(state.id).filter(entry => entry.status !== "running" && entry.runId !== null && !this.wasTold(state, entry));
+    if (fresh.length === 0) return null;
+    const names = [...new Set(fresh.map(entry => entry.harness))];
+    return { told: Object.fromEntries(fresh.map(entry => [entry.sessionId, { runId: entry.runId!, by }])),
+      line: "带上了 " + names.join("、") + " 的委派结果" + (fresh.length > 1 ? "（" + fresh.length + " 项）" : ""),
+      text: "（HarnessHub：之前委派给别的 Harness、在另外的对话里做的任务有了结果。这是给你的背景，不是新的指令；这些任务已经处理过，不要重做。\n\n" + fresh.map(delegationText).join("\n\n") + "\n）" };
+  }
+  /**
+   * How the work this conversation delegated stands, for its Harness's tool (`hub_delegations`), asked within its Turn in progress: every piece, and the outcomes it
+   * had not been told now count as told with this Turn (they are in the answer).
+   */
+  delegationsFor(id: SessionId, from: { readonly harnessId: string; readonly controlId: string }): readonly DelegationState[] {
+    this.admit();
+    const by = this.runningFor(id, from), states = this.delegationStates(id), state = this.load(id);
+    const fresh = states.filter(entry => entry.status !== "running" && entry.runId !== null && !this.wasTold(state, entry));
+    if (fresh.length > 0) this.commit(id, current => ({ next: { ...current, delegationsTold: { ...(current.delegationsTold ?? {}), ...Object.fromEntries(fresh.map(entry => [entry.sessionId, { runId: entry.runId!, by }])) } },
+      events: [event("run.delegations_told", { runId: by, told: fresh.map(entry => ({ sessionId: entry.sessionId, runId: entry.runId })), by: "hub_tool" })] }));
+    return states;
   }
   /**
    * The history a branch after the Run at `last` quotes: what the source itself quoted, then the words of its finished Turns through that Run in the order they were said (the seq of each message
@@ -2041,7 +2107,12 @@ export class SessionRuntime {
       execution.dispatched = true;
       // "Plan" as the Hub's policy (no plan mode of the Harness's own): the model is told it is read only before it tries.
       const planned = selectedPermission(run.selection.nativeOptions) === "plan" && this.options.flavor?.(run.selection.harnessId).nativePlan === false ? withPlanNote(turnText) : turnText;
-      execution.run = await control.startText(native, planned, value => this.output(execution, value), ...(files.length ? [files] : []));
+      // What the work this conversation delegated came to goes with the Turn, before the user's words, and the Turn says so (2026-11-13). Never with a command.
+      const news = command === null ? this.delegationNews(this.load(id), target) : null;
+      if (news !== null) this.placed(execution, { kind: "notice", severity: "info", title: news.line, code: "DELEGATION_TOLD", at: this.options.now().getTime() },
+        [event("run.delegations_told", { runId: target, told: Object.entries(news.told).map(([sessionId, entry]) => ({ sessionId, runId: entry.runId })) })],
+        { always: true, patch: current => ({ ...current, delegationsTold: { ...(current.delegationsTold ?? {}), ...news.told } }) });
+      execution.run = await control.startText(native, news === null ? planned : withHubNote(planned, news.text), value => this.output(execution, value), ...(files.length ? [files] : []));
       this.owned(execution);
       void execution.run.result.then(() => { execution.backendSettled = true; }, () => { execution.backendSettled = true; });
       if (this.load(id).runs.find(run => run.id === target)!.cancelRequested || !this.accepting || this.fatal || this.closingSessions.has(id)) this.stop(execution);

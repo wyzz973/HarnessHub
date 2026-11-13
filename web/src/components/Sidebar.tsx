@@ -10,6 +10,7 @@ import { errorMessage } from "../api.js";
 import { attentionKind, liveItems, mostUrgent, remaining } from "../attention.js";
 import { cn } from "../lib/cn.js";
 import { ago, folderName, homePath, inScratch } from "../lib/format.js";
+import { markSeen, startSeen, unseen, useSeen } from "../lib/seen.js";
 import { useNotificationChoice } from "../lib/notify.js";
 import { useNow } from "../lib/prefs.js";
 import { Collapsible } from "../ui/motion.js";
@@ -68,7 +69,9 @@ interface SidebarProps {
 type RowState = "wait" | "run" | "unknown" | "closed" | "fail" | "idle";
 interface Row { readonly session: SessionSummary; readonly items: readonly AttentionItem[]; readonly state: RowState;
   /** A conversation another one in the list delegated work to: it stands right under that one, set in. */
-  readonly child?: true }
+  readonly child?: true;
+  /** How many of the conversations it delegated work to are at work now. */
+  readonly delegating?: number }
 interface Project { readonly key: string; readonly name: string; readonly detail: string | null; readonly rows: readonly Row[]; readonly scratch: boolean }
 /** The group of the conversations started without a folder: each has a folder of its own, and they are listed together. */
 const SCRATCH_KEY = "\u0000scratch";
@@ -105,7 +108,13 @@ function nested(rows: readonly Row[]): readonly Row[] {
   for (const row of rows) { const parent = row.session.parent?.sessionId; if (parent !== undefined && parent !== row.session.id && listed.has(parent)) under.set(parent, [...(under.get(parent) ?? []), { ...row, child: true }]); }
   if (under.size === 0) return rows;
   const placed = new Set<string>(), out: Row[] = [];
-  const put = (row: Row): void => { if (placed.has(row.session.id)) return; placed.add(row.session.id); out.push(row); for (const child of under.get(row.session.id) ?? []) put(child); };
+  const put = (row: Row): void => {
+    if (placed.has(row.session.id)) return;
+    placed.add(row.session.id);
+    const children = under.get(row.session.id) ?? [], busy = children.filter(child => child.state === "run" || child.state === "wait").length;
+    out.push(busy > 0 ? { ...row, delegating: busy } : row);
+    for (const child of children) put(child);
+  };
   for (const row of rows) { const parent = row.session.parent?.sessionId; if (parent === undefined || parent === row.session.id || !listed.has(parent)) put(row); }
   // A ring of parents would leave rows out: whatever is left is listed as it was.
   for (const row of rows) put(row);
@@ -142,6 +151,10 @@ export function Sidebar(props: SidebarProps) {
   const waiting = useMemo(() => liveItems(attention, now), [attention, now]);
   const bySession = useMemo(() => { const map = new Map<string, AttentionItem[]>(); for (const item of waiting) map.set(item.sessionId, [...(map.get(item.sessionId) ?? []), item]); return map; }, [waiting]);
   const groups = useMemo(() => groupProjects(sessions, bySession, props.failed, props.scratchRoot), [sessions, bySession, props.failed, props.scratchRoot]);
+  // What this browser has seen of each conversation: the first list is all seen, the open conversation is seen as it moves, and the rest are unread once they move on.
+  const looked = useSeen(), openRow = page === "chat" ? sessions.find(session => session.id === currentId) : undefined;
+  useEffect(() => { if (sessions.length > 0) startSeen(sessions); }, [sessions.length > 0]);
+  useEffect(() => { if (openRow !== undefined) markSeen([openRow]); }, [openRow?.id, openRow?.updatedSeq]);
   const name = (id: string) => props.harnesses.find(harness => harness.id === id)?.name ?? id;
   // Opened and closed projects, remembered per workspace; without a choice a project is open when it holds the open
   // conversation, one waiting for you, or the newest conversation, and once shown open it stays open until closed, so a
@@ -206,7 +219,7 @@ export function Sidebar(props: SidebarProps) {
       <nav className="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-2" aria-label="对话列表">
         {sessions.length === 0 ? null
           : groups.map((project, index) => <ProjectGroup key={project.key} project={project} open={isOpen(project, index)} onToggle={open => choose(project.key, open)}
-            now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} arrivals={arriving} harness={name} onSession={props.onSession}/>)}
+            now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} arrivals={arriving} harness={name} onSession={props.onSession} unread={session => unseen(looked, session)}/>)}
         {props.more ? <MoreSessions onMore={props.onMore}/> : null}
       </nav>
     </div>
@@ -232,9 +245,9 @@ function MoreSessions({ onMore }: { readonly onMore: (() => void) | undefined })
   return <button ref={end} type="button" className="more-sessions btn btn-ghost btn-sm mx-1 my-1 flex-none" onClick={onMore}>更多对话</button>;
 }
 
-function ProjectGroup({ project, open, onToggle, now, currentId, disabled, arrivals, harness, onSession }: {
+function ProjectGroup({ project, open, onToggle, now, currentId, disabled, arrivals, harness, onSession, unread }: {
   readonly project: Project; readonly open: boolean; readonly onToggle: (open: boolean) => void; readonly now: number; readonly currentId: string | null; readonly disabled: boolean;
-  readonly arrivals: ReadonlySet<string>; readonly harness: (id: string) => string; readonly onSession: (id: string) => void;
+  readonly arrivals: ReadonlySet<string>; readonly harness: (id: string) => string; readonly onSession: (id: string) => void; readonly unread: (session: SessionSummary) => boolean;
 }) {
   const listId = useId(), summaryId = listId + "-summary";
   // A closed project still shows the most pressing state inside it, so nothing waiting for you hides in it.
@@ -250,7 +263,8 @@ function ProjectGroup({ project, open, onToggle, now, currentId, disabled, arriv
     </button></Tip>
     <Collapsible open={open} id={listId}>
       <div className="flex flex-col gap-0.5">{project.rows.map(row => <div key={row.session.id} className={cn(arrivals.has(row.session.id) && "motion-list-insert")}><div>
-        <SessionRow row={row} now={now} harness={harness(row.session.selection.harnessId)} current={currentId === row.session.id} disabled={disabled} onOpen={() => onSession(row.session.id)}/>
+        <SessionRow row={row} now={now} harness={harness(row.session.selection.harnessId)} current={currentId === row.session.id} disabled={disabled} onOpen={() => onSession(row.session.id)}
+          unread={currentId !== row.session.id && row.state === "idle" && unread(row.session)}/>
       </div></div>)}</div>
     </Collapsible>
   </div>;
@@ -261,12 +275,15 @@ function ProjectGroup({ project, open, onToggle, now, currentId, disabled, arriv
  * for you, red when its latest Turn failed, a question mark when the result is unknown). One waiting for you also says
  * for what and whose deadline runs; deciding happens in the conversation or the inbox.
  */
-function SessionRow({ row, now, harness, current, disabled, onOpen }: { readonly row: Row; readonly now: number; readonly harness: string; readonly current: boolean; readonly disabled: boolean; readonly onOpen: () => void }) {
+function SessionRow({ row, now, harness, current, disabled, onOpen, unread }: { readonly row: Row; readonly now: number; readonly harness: string; readonly current: boolean; readonly disabled: boolean; readonly onOpen: () => void; readonly unread: boolean }) {
   const { session, items, state } = row;
   const urgent = mostUrgent(items), left = urgent === null ? null : remaining(urgent, now);
   const id = useId(), metaId = id + "-meta", lineId = id + "-line", title = session.title || "新对话";
-  const indicator = state === "wait" ? <StatusDot tone="wait"/> : state === "run" ? <StatusDot tone="run"/> : state === "fail" ? <StatusDot tone="fail"/>
-    : state === "unknown" ? <CircleHelp size={14} className="text-fg-3" aria-hidden="true"/> : null;
+  // Amber waits for you, grey that blinks is at work, red failed, and blue is what you have not looked at since it moved on.
+  const indicator = state === "wait" ? <StatusDot tone="wait"/> : state === "run" ? <StatusDot tone="work"/> : state === "fail" ? <StatusDot tone="fail"/>
+    : state === "unknown" ? <CircleHelp size={14} className="text-fg-3" aria-hidden="true"/> : unread ? <StatusDot tone="run" live={false}/> : row.delegating ? <StatusDot tone="work"/> : null;
+  // The second line: whose it is, then how it stands in a sentence (the step in progress, or what the last Turn came to), else the state's word.
+  const standing = row.delegating ? row.delegating + " 个委派进行中" : session.line ?? STATE_WORDS[state], meta = harness + (standing ? " · " + standing : "") + (unread ? " · 未读" : "");
   // The app's row: a 6 px state dot in the leading slot, the title, and a second line that says whose conversation it is and how it stands
   // (what it waits for, while it waits for you).
   return <button type="button" disabled={disabled} onClick={onOpen} aria-current={current ? "page" : undefined} aria-label={title} aria-describedby={left ? metaId + " " + lineId : metaId}
@@ -275,11 +292,11 @@ function SessionRow({ row, now, harness, current, disabled, onOpen }: { readonly
     {row.child ? <span className="pointer-events-none absolute top-0 left-[15px] h-[15px] w-2 rounded-bl-[5px] border-b border-l border-line-strong" aria-hidden="true"/> : null}
     <span className="flex h-5 w-4 flex-none items-center justify-center">{indicator}</span>
     <span className="flex min-w-0 flex-1 flex-col">
-      <span className={cn("session-title trunc", state === "closed" && "text-fg-2")}>{title}</span>
+      <span className={cn("session-title trunc", state === "closed" && "text-fg-2", unread && "font-medium")}>{title}</span>
       {urgent && left ? <span id={lineId} className="attention-line line-clamp-2 text-caption font-normal text-amber-on-tint" title={left.hint}>{attentionKind(urgent)}{items.length > 1 ? `（${items.length} 项）` : ""}{urgent.expiresAt === undefined ? null : <>{left.source ? " · " + left.source : ""} <span className="whitespace-nowrap">{left.text}</span></>}</span>
-        : <span className="session-meta trunc text-caption font-normal text-fg-3" aria-hidden="true">{harness}{STATE_WORDS[state] ? " · " + STATE_WORDS[state] : ""}</span>}
+        : <span className="session-meta trunc text-caption font-normal text-fg-3" aria-hidden="true" title={session.line}>{harness}{standing ? " · " + standing : ""}</span>}
     </span>
-    <span id={metaId} className="sr-only">{harness}{STATE_WORDS[state] ? " · " + STATE_WORDS[state] : ""}</span>
+    <span id={metaId} className="sr-only">{meta}</span>
   </button>;
 }
 

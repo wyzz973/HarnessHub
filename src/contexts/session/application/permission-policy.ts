@@ -65,6 +65,11 @@ export function policyDecision(flavor: HarnessFlavor | undefined, level: Permiss
  * of its own): its changes and commands are refused, and this says why before it tries. A command typed as such (a slash word) goes as it is.
  */
 export const PLAN_NOTE = "（HarnessHub：当前是“只规划”，只读。不要修改文件，也不要运行命令；只阅读并给出方案。）";
+/** The Turn's text with a note of the Hub's put before the user's words; a command typed as such (a slash word) goes as it is. */
+export function withHubNote(text: TurnText, note: string): TurnText {
+  if (typeof text === "string") return text.trimStart().startsWith("/") ? text : note + "\n\n" + text;
+  return text.user.trimStart().startsWith("/") ? text : { ...text, user: note + "\n\n" + text.user };
+}
 export function withPlanNote(text: TurnText): TurnText {
   if (typeof text === "string") return text.trimStart().startsWith("/") ? text : PLAN_NOTE + "\n\n" + text;
   return text.user.trimStart().startsWith("/") ? text : { ...text, user: PLAN_NOTE + "\n\n" + text.user };

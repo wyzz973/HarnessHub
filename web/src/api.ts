@@ -356,8 +356,8 @@ function decodeLogPage(value: unknown): InstallationLogPage {
 function decodeSummary(value: unknown): SessionSummary {
   const row = record(value);
   return { id: text(row.id), title: text(row.title), status: choice(row.status, SESSION_STATES), workspace: text(row.workspace),
-    selection: selection(row.selection), updatedSeq: number(row.updatedSeq), activeRunId: nullableText(row.activeRunId),
-    ...(row.parent === undefined ? {} : { parent: (parent => ({ sessionId: text(parent.sessionId), afterRunId: nullableText(parent.afterRunId) }))(record(row.parent)) }) };
+    selection: selection(row.selection), updatedSeq: number(row.updatedSeq), activeRunId: nullableText(row.activeRunId), ...(typeof row.line === "string" && row.line !== "" ? { line: row.line } : {}),
+    ...(row.parent === undefined ? {} : { parent: (parent => ({ sessionId: text(parent.sessionId), afterRunId: nullableText(parent.afterRunId), ...(parent.by === "harness" ? { by: "harness" as const } : {}) }))(record(row.parent)) }) };
 }
 function contentRef(value: unknown): ContentRef { try { return parseContentRef(value); } catch { return invalid(); } }
 function nativeInputs(value: unknown): NativeInputs { const row = record(value); return { image: bool(row.image), audio: bool(row.audio), file: bool(row.file) }; }

@@ -33,7 +33,8 @@ const REQUEST_MS = 30_000, MAX_REPLY_BYTES = 8 * 1024 * 1024;
  */
 const INSTRUCTIONS = "HarnessHub keeps the whole history of this conversation. A handoff note you were given is a summary: when it says something was left out, "
   + "or when you need what the user or an earlier Harness said or did, read it back with hub_turns, hub_read_turn and hub_search. "
-  + "hub_update_plan and hub_wrap_up show the user your task list and a short wrap-up above the message box; they do not replace your reply.";
+  + "hub_update_plan and hub_wrap_up show the user your task list and a short wrap-up above the message box; they do not replace your reply. "
+  + "hub_delegate hands a self-contained part of the work to another Harness on this computer, which does it in a conversation of its own; hub_delegations says how what you handed over stands.";
 /** The server's instructions: what its tools are for, and the session instructions this session's process was given for it. */
 export function serverInstructions(env: Readonly<Record<string, string | undefined>>): string {
   const session = env[TABLE_INSTRUCTIONS_ENV]?.trim();
@@ -47,7 +48,7 @@ export function serverInstructions(env: Readonly<Record<string, string | undefin
 interface ToolDefinition {
   readonly name: TableTool; readonly title: string; readonly description: string;
   readonly inputSchema: { readonly type: "object"; readonly properties: Readonly<Record<string, unknown>>; readonly required?: readonly string[]; readonly additionalProperties: false };
-  readonly annotations: { readonly title: string; readonly readOnlyHint: boolean; readonly destructiveHint: false; readonly idempotentHint: true; readonly openWorldHint: false };
+  readonly annotations: { readonly title: string; readonly readOnlyHint: boolean; readonly destructiveHint: false; readonly idempotentHint: boolean; readonly openWorldHint: false };
 }
 /** The two tools that tell the Hub how the turn goes: they change only what the user is shown, and calling one again with the same input changes nothing. */
 const PROGRESS = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
@@ -106,6 +107,21 @@ const TOOLS: readonly ToolDefinition[] = [
       actions: { type: "array", minItems: 1, maxItems: 2, description: "Optional, with ask: one or two answers, recommendation first.", items: { type: "object", properties: {
         label: { type: "string", minLength: 1, description: "The answer as the user would say it, one to four words." } }, required: ["label"], additionalProperties: false } } }, required: ["recap"], additionalProperties: false },
     annotations: { title: "Wrap up this turn", ...PROGRESS } },
+  { name: "hub_delegate", title: "Delegate a part of the work",
+    description: "Hand a part of this task to another Harness on this computer (another coding agent the user has installed). It works in a conversation of its own, in the same folder, "
+      + "starting from this conversation's history up to the previous turn, at the same permission level, while you go on. Use it when the user asks for another Harness, or when a part is "
+      + "independent enough to run beside your own work (a second opinion, a review, a search, a separate file). Do not delegate what you can do in a few steps yourself. "
+      + "`task` must stand on its own: say what to do, where, and what to give back, with everything it needs from this turn (it has not seen this turn). "
+      + "The call returns at once. The outcome reaches you with the user's next message; when you need it in this turn, call hub_delegations with `wait`. The user sees the delegated work as a card in this conversation.",
+    inputSchema: { type: "object", properties: {
+      harness: { type: "string", minLength: 1, description: "Which Harness: its id or name, for example codex, claude-code, opencode. An unknown one is answered with the ids available here." },
+      task: { type: "string", minLength: 1, description: "The work to do, self-contained: what, where, and what to report back." } }, required: ["harness", "task"], additionalProperties: false },
+    annotations: { title: "Delegate a part of the work", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
+  { name: "hub_delegations", title: "How delegated work stands",
+    description: "The work this conversation delegated to other Harnesses, oldest first: who has it, the task, whether it still runs, and what it replied when it ended. "
+      + "`wait`: seconds to wait for what still runs (at most 25 in one call; call again while something still runs and you need it).",
+    inputSchema: { type: "object", properties: { wait: whole("Seconds to wait for work that still runs before answering.", 0, 25) }, additionalProperties: false },
+    annotations: { title: "How delegated work stands", ...READ_ONLY } },
 ];
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -315,6 +331,28 @@ export async function callTool(name: string, args: Readonly<Record<string, unkno
         if (typeof args.recap !== "string" || args.recap.trim() === "") throw new ToolError("recap is required: two or three short sentences of what is done and what is not.");
         await tell(connection, "/api/table/wrap-up", { recap: args.recap, ...(typeof args.ask === "string" ? { ask: args.ask } : {}), ...(Array.isArray(args.actions) ? { actions: args.actions } : {}) });
         return { text: "Wrap-up shown to the user.", isError: false };
+      }
+      case "hub_delegate": {
+        if (typeof args.harness !== "string" || args.harness.trim() === "") throw new ToolError("harness is required: the id or name of the Harness to hand the work to.");
+        if (typeof args.task !== "string" || args.task.trim() === "") throw new ToolError("task is required: the work to do, self-contained.");
+        let reply: Awaited<ReturnType<typeof post>>;
+        try { reply = await post(connection, "/api/table/delegate", { harness: args.harness, task: args.task }); } catch (error) { throw unreachable(connection.origin, error); }
+        const body = record(reply.body);
+        if (reply.status === 401) throw new ToolError("HarnessHub does not accept this conversation's token (the Hub may have been restarted since this program started, or the turn has ended).");
+        if (reply.status !== 200 || body === null) throw new ToolError(typeof body?.message === "string" ? body.message : "HarnessHub answered with status " + reply.status + ".");
+        return { text: "Delegated to " + String(body.harness) + ". It works in a conversation of its own while you go on; the user sees it as a card here. "
+          + "Its outcome reaches you with the user's next message. If you need it in this turn, call hub_delegations with wait.", isError: false };
+      }
+      case "hub_delegations": {
+        const view = await ask(connection, "/api/table/delegations", { wait: wholeArgument(args, "wait", 0, 25) });
+        const rows = Array.isArray(view.delegations) ? view.delegations as readonly Record<string, unknown>[] : [];
+        if (rows.length === 0) return { text: "This conversation has delegated no work.", isError: false };
+        const said = (row: Readonly<Record<string, unknown>>): string => {
+          const status = String(row.status), state = status === "running" ? "still running" : status === "completed" ? "done" : status === "failed" ? "failed" : status === "cancelled" ? "stopped" : "outcome unknown";
+          const reply = typeof row.reply === "string" && row.reply !== "" ? "\nReply:\n" + row.reply : status === "running" ? "" : "\n(no text reply)";
+          return "[" + String(row.harness) + " · " + state + "]\nTask: " + String(row.task) + reply;
+        };
+        return { text: rows.map(said).join("\n\n"), isError: false };
       }
       default: return { text: "Unknown tool: " + name + ".", isError: true };
     }

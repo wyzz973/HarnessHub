@@ -18,7 +18,7 @@ export const TABLE_INSTRUCTIONS_ENV = "HARNESSHUB_INSTRUCTIONS";
 export const TABLE_MCP_NAME = "harnesshub";
 
 /** The read tools of the first slice. */
-export const TABLE_TOOLS = ["hub_turns", "hub_read_turn", "hub_search", "hub_update_plan", "hub_wrap_up"] as const;
+export const TABLE_TOOLS = ["hub_turns", "hub_read_turn", "hub_search", "hub_update_plan", "hub_wrap_up", "hub_delegate", "hub_delegations"] as const;
 /** The Hub's tools that write: they tell the Hub how the Turn in progress goes (its task list, its wrap-up); the page shows these, and not the calls. */
 export const TABLE_PROGRESS_TOOLS = ["hub_update_plan", "hub_wrap_up"] as const;
 export type TableTool = typeof TABLE_TOOLS[number];

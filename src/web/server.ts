@@ -49,6 +49,7 @@ import { TableMount } from "../infrastructure/table/mount.js";
 import type { HubToolsOptions } from "../infrastructure/capabilities/hub-tools.js";
 import type { ClaudeRunner } from "../infrastructure/capabilities/claude-mcp.js";
 import { flavorOf } from "../adapters/flavors/index.js";
+import { PERMISSION_KEY } from "../contracts/flavor.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 /**
@@ -440,7 +441,21 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     secrets: (configuration, harnessIds) => { const factory: SessionBindingFactory = app.factory; return factory.relaySecrets === undefined ? Promise.resolve([]) : factory.relaySecrets(configuration, harnessIds); },
     http: { json, queries, body: request => body(request) },
     // `hub_update_plan` and `hub_wrap_up`: the Turn in progress of the token's conversation takes them, from the Harness the token was minted for.
-    progress: (grant, made) => { app.runtime.hubProgress(grant.sessionId, { harnessId: grant.harnessId, controlId: grant.controlId }, made); } });
+    progress: (grant, made) => { app.runtime.hubProgress(grant.sessionId, { harnessId: grant.harnessId, controlId: grant.controlId }, made); },
+    // `hub_delegate`, `hub_delegations` (2026-11-13): the Turn's Harness hands a part of its work to another Harness of this computer, at the conversation's own permission level.
+    delegation: {
+      start: async (grant, wanted, task) => {
+        const usable = harnesses.filter(item => item.controls.some(control => control.available)), key = wanted.toLowerCase();
+        const found = usable.find(item => item.id === key) ?? usable.find(item => item.name.toLowerCase() === key) ?? usable.find(item => item.name.toLowerCase().replace(/[^a-z0-9]/gu, "") === key.replace(/[^a-z0-9]/gu, ""));
+        if (found === undefined) throw new HttpError(400, "DELEGATE_HARNESS_UNKNOWN", "No such Harness on this computer. Give one of: " + usable.map(item => item.id).join(", ") + ".");
+        const control = found.controls.find(item => item.id === found.defaultControlId && item.available) ?? found.controls.find(item => item.available)!;
+        const level = app.store.get(grant.sessionId).selection.nativeOptions?.[PERMISSION_KEY] ?? "auto", id = randomBytes(12).toString("hex");
+        const child = await app.runtime.delegate(grant.sessionId, { harnessId: found.id, controlId: control.id, nativeOptions: { [PERMISSION_KEY]: level } }, "hub-delegate-" + id, { harnessId: grant.harnessId, controlId: grant.controlId });
+        if (child.runs.length === 0) app.runtime.send(child.id, task, "hub-delegate-" + id + "-task");
+        return { sessionId: child.id, harness: found.name };
+      },
+      states: grant => app.runtime.delegationsFor(grant.sessionId, { harnessId: grant.harnessId, controlId: grant.controlId }),
+    } });
   // This build: every compiled Gateway file by name and content (ADR-033), also named in a Turn's diagnostics (ADR-037).
   const revision = buildRevision(fileURLToPath(new URL("..", import.meta.url)));
   // Derived observations only; a file this version cannot adopt is reported and left as it is. Catalogs are reused only by

@@ -235,7 +235,17 @@ export type SessionOrigin = BranchOrigin | ImportOrigin;
  * A conversation started as a delegation (2026-11-13): another conversation handed it a part of its work, for a Harness of its own to do.
  * `parentId` is that conversation; `afterRunId` the finished Turn it was handed after (null: before any finished Turn).
  */
-export interface DelegationOrigin { readonly parentId: SessionId; readonly afterRunId: RunId | null }
+export interface DelegationOrigin { readonly parentId: SessionId; readonly afterRunId: RunId | null;
+  /** The Harness of the delegating conversation asked for it with the Hub's tool, in the Turn `afterRunId`; absent: the user did. */
+  readonly by?: "harness" }
+/** How one piece of delegated work stands: who has it, what was asked, its latest Turn's state (`running` while it goes on) and what it said. */
+export interface DelegationState { readonly sessionId: SessionId; readonly harnessId: string; readonly harness: string; readonly task: string; readonly runId: RunId | null;
+  readonly status: "running" | "completed" | "failed" | "cancelled" | "unknown"; readonly reply: string }
+/**
+ * What a conversation's own Harness was told of the work it delegated: for each conversation it delegated to, the Turn of that one whose
+ * outcome was told (`runId`) and the Turn of this one it went with (`by`). An outcome counts as told while `by` went through or still runs.
+ */
+export type DelegationsTold = Readonly<Record<string, { readonly runId: RunId; readonly by: RunId }>>;
 export interface BranchOrigin {
   readonly kind: "fork";
   readonly sessionId: SessionId;
@@ -317,6 +327,8 @@ export interface SessionSnapshot {
   readonly origin?: SessionOrigin;
   /** Present on a conversation another one delegated work to. */
   readonly delegation?: DelegationOrigin;
+  /** What this conversation's Harness was told of the work it delegated (see DelegationsTold). */
+  readonly delegationsTold?: DelegationsTold;
   /** v11: the user chose to keep this conversation's native process between Turns for background work (ADR-030). */
   readonly retainNative?: true;
   /** v11: the native process this conversation holds now; cleared when it is closed. */

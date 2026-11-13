@@ -289,6 +289,7 @@ export interface HeadJson {
   readonly relayRecoveryFailed?: number;
   readonly origin?: StoredOrigin;
   readonly delegation?: import("./session.js").DelegationOrigin;
+  readonly delegationsTold?: import("./session.js").DelegationsTold;
 }
 /** One row of `sessions` of a converted conversation. */
 export interface HeadRow {
@@ -499,6 +500,8 @@ export interface ConversationStore extends ConversationReader {
    * so that a notice a restarted Harness repeats is not shown again, without the Turns that are not held in memory. Optional so that a store without it still fits.
    */
   noticeShown?(id: SessionId, print: string): boolean;
+  /** The conversations `id` delegated work to (2026-11-13), oldest first. Optional: a store without it has none. */
+  delegatedBy?(id: SessionId): readonly SessionId[];
   nativeOwners(harnessId: string, controlId: string): ReadonlyMap<string, SessionId>;
   /** Every content id any conversation references (`content_refs`, and the references of the conversations not yet converted), for the collector. */
   contentReferences(): ReadonlySet<string>;

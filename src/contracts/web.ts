@@ -121,8 +121,21 @@ export interface SessionSummary {
   readonly activeRunId: string | null;
   /** The conversation that delegated this one its work (2026-11-13), and the Turn of it the work was handed after (null: before any finished Turn). */
   readonly parent?: DelegationParent;
+  /**
+   * One sentence of how it stands, for the list's second line: while a Turn goes on, the step in progress of that Turn's task list; once it has ended, the first
+   * sentence of its wrap-up. Absent when the Turn gave neither.
+   */
+  readonly line?: string;
 }
-export interface DelegationParent { readonly sessionId: string; readonly afterRunId: string | null }
+/** The first sentence of a wrap-up, or the step in progress of a task list, cut to what one line of a list holds. */
+export function summaryLine(text: string): string {
+  const flat = text.replace(/\s+/gu, " ").trim(), end = /[。！？!?]|\.(?=\s|$)/u.exec(flat);
+  const first = end === null || end.index === 0 ? flat : flat.slice(0, end.index), units = [...first];
+  return units.length > 80 ? units.slice(0, 80).join("") + "…" : first;
+}
+export interface DelegationParent { readonly sessionId: string; readonly afterRunId: string | null;
+  /** The delegating conversation's Harness asked for it (with the Hub's tool); absent: the user did. */
+  readonly by?: "harness" }
 /** Public history excludes admission fingerprints and private configuration references. */
 /** The installed Harness's own sessions of a workspace; `conversationId` names the conversation already continuing one. */
 export interface NativeSessionListView {
@@ -207,6 +220,8 @@ export interface SessionView {
   readonly origin?: import("./session.js").SessionOrigin;
   /** The conversation that delegated this one its work. */
   readonly parent?: DelegationParent;
+  /** What this conversation's Harness was told of the work it delegated: by conversation, the Turn of it whose outcome was told and the Turn of this one it went with. */
+  readonly delegationsTold?: import("./session.js").DelegationsTold;
   /**
    * Whether the conversation keeps its native process between Turns (ADR-030), and the process it keeps now: when it was
    * first kept, its last Turn, when it ends unless used, and how many updates it sent outside Turns (counted, not shown).

@@ -431,7 +431,10 @@ export function ChatPage(props: ChatProps) {
    */
   const delegated = props.delegations ?? [], loadDelegation = props.onLoadDelegation;
   const delegationCards = (items: readonly SessionSummary[], key: string): ReactNode => items.length === 0 || loadDelegation === undefined || session === null ? null
-    : <DelegationCards key={key} items={items} harness={harnessName} load={loadDelegation} onOpen={id => props.onOpenSession?.(id)} onReport={answer} reportTo={harnessName(session.selection.harnessId)} busy={answerBlocked !== null}/>;
+    : <DelegationCards key={key} items={items} harness={harnessName} load={loadDelegation} onOpen={id => props.onOpenSession?.(id)} onReport={answer} reportTo={harnessName(session.selection.harnessId)} busy={answerBlocked !== null}
+      told={(id, runId) => { const entry = session.delegationsTold?.[id]; if (entry === undefined || entry.runId !== runId) return false;
+        // Told with a Turn that did not go through is told again with the next one.
+        const by = session.runs.find(run => run.id === entry.by); return by === undefined || by.status === "completed" || !finished(by.status); }}/>;
   const transcriptItems = (current: ConversationView): ReactNode[] => current.runs.flatMap(run => {
     const open = (current.permissions ?? []).filter(request => request.runId === run.id && !request.decided);
     return [<ProtocolTurn key={"turn:" + run.id} run={run} message={messageOf} arrived={arrived} detailed={detailed} onEdit={fillDraft}

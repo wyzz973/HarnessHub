@@ -44,6 +44,8 @@ import { endedAt, over, userStopped } from "./lib/protocol/runs.js";
 import { finished } from "./lib/turn.js";
 import { cn } from "./lib/cn.js";
 import { inScratch } from "./lib/format.js";
+import { markSeen } from "./lib/seen.js";
+import { summaryLine } from "../../src/contracts/web.js";
 import { backgroundOutcome, enableNotifications, markNotificationAsked, notificationsOfferable, notifyTurnEnded } from "./lib/notify.js";
 import { useToast } from "./ui/overlay.js";
 import { LogoMark, Notice, Spinner, TipProvider } from "./ui/primitives.js";
@@ -377,6 +379,8 @@ export function App() {
     try {
       const page = await api.sessions(cursor);
       listed.current = { extra: [...listed.current.extra, ...page.sessions], next: page.next };
+      // Older conversations read in later are not news.
+      markSeen(page.sessions, true);
       setState(current => current ? { ...current, sessions: [...current.sessions, ...page.sessions.filter(row => !current.sessions.some(known => known.id === row.id))], sessionsNext: page.next } : current);
     } catch (failure: unknown) { if (mounted.current) setError(errorMessage(failure)); }
     finally { loadingSessions.current = false; }
@@ -454,7 +458,9 @@ export function App() {
       if (!current) return current;
       // Titled as the Gateway titles it: nothing reads the state again to correct it (ADR-050).
       const summary = { id: value.id, title: value.title,
-        status: value.status, workspace: value.workspace, selection: value.selection, updatedSeq: value.lastSeq, activeRunId: value.activeRunId, ...(value.parent === undefined ? {} : { parent: value.parent }) };
+        status: value.status, workspace: value.workspace, selection: value.selection, updatedSeq: value.lastSeq, activeRunId: value.activeRunId, ...(value.parent === undefined ? {} : { parent: value.parent }),
+        // The list's second line, as the Gateway makes it for the others: the step in progress while a Turn goes on, the wrap-up's first sentence after.
+        ...(line => line ? { line: summaryLine(line) } : {})(value.activeRunId !== null ? (value.plan?.runId === value.activeRunId ? value.plan.steps.find(step => step.status === "in_progress")?.text : undefined) : value.recap?.summary) };
       return { ...current, sessions: current.sessions.some(item => item.id === value.id)
         ? current.sessions.map(item => item.id === value.id ? summary : item) : [summary, ...current.sessions] };
     });
@@ -1152,7 +1158,7 @@ export function App() {
   const loadDelegation = useCallback(async (id: string, signal: AbortSignal): Promise<DelegationResult> => {
     const view = conversationOf(replaceWithSnapshot(null, await api.session(id, signal)));
     const last = view.runs.at(-1), reply = last === undefined ? "" : view.messages.find(message => message.id === last.assistantMessageId)?.text ?? "";
-    return { status: last?.status ?? null, summary: view.recap !== undefined && view.recap.runId === last?.id ? view.recap.summary : null, reply: reply.length > 12_000 ? reply.slice(0, 12_000) + "…" : reply };
+    return { runId: last?.id ?? null, status: last?.status ?? null, summary: view.recap !== undefined && view.recap.runId === last?.id ? view.recap.summary : null, reply: reply.length > 12_000 ? reply.slice(0, 12_000) + "…" : reply };
   }, [api]);
   const permissionLevel = draft.nativeOptions[PERMISSION_KEY];
   const delegate = useCallback(async (harness: HarnessView, text: string): Promise<void> => {
@@ -1166,10 +1172,12 @@ export function App() {
     await api.delegate(from, selection, text, requestKey(), requestKey());
     await refreshState().catch(() => {});
   }, [api, refreshState, permissionLevel]);
-  // Conversations at work that are not the open one are followed by reading the list: their rows, and the work this one delegated, say how they stand.
-  const othersWorking = state?.sessions.some(item => item.activeRunId !== null && item.id !== sessionId) ?? false;
+  // While any conversation works, the list is read again and again: the rows of those that are not open, and the work this one delegated (a Harness may hand some
+  // over in the middle of its Turn), say how they stand. Once nothing works it is read one last time, for what ended since the reading before.
+  const working = state?.sessions.some(item => item.activeRunId !== null) ?? false, wasWorking = useRef(false);
   useEffect(() => {
-    if (!othersWorking) return;
+    if (!working && !wasWorking.current) return;
+    wasWorking.current = working;
     let stopped = false, timer: ReturnType<typeof setTimeout> | null = null;
     const controller = new AbortController();
     const read = async () => {
@@ -1185,11 +1193,11 @@ export function App() {
           return changed || added.length ? { ...current, sessions: [...added, ...sessions] } : current;
         });
       } catch { /* the next read tries again */ }
-      if (!stopped) timer = setTimeout(() => void read(), document.visibilityState === "hidden" ? 10_000 : 2_500);
+      if (!stopped && working) timer = setTimeout(() => void read(), document.visibilityState === "hidden" ? 10_000 : 2_500);
     };
-    timer = setTimeout(() => void read(), 2_500);
+    if (working) timer = setTimeout(() => void read(), 2_500); else void read();
     return () => { stopped = true; if (timer !== null) clearTimeout(timer); controller.abort(); };
-  }, [othersWorking, api]);
+  }, [working, api]);
   // The folders of earlier conversations, newest first, then the Gateway's own; those the Gateway made for a 临时对话 are not projects.
   const recentFolders = useMemo(() => [...new Set([...(state?.sessions ?? []).map(item => item.workspace), state?.workspace ?? ""].filter(path => path !== "" && !inScratch(path, state?.scratchRoot)))].slice(0, 8), [state?.sessions, state?.workspace, state?.scratchRoot]);
   const failed = useMemo(() => new Set((state?.sessions ?? []).flatMap(item => {

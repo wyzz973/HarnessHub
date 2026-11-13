@@ -1,4 +1,4 @@
-import { ArrowUpRight, CornerUpLeft } from "lucide-react";
+import { ArrowUpRight, Check, CornerUpLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { HarnessView, SessionSummary } from "../../../src/contracts/web.js";
 import { errorMessage } from "../api.js";
@@ -55,29 +55,32 @@ export function DelegateDialog({ open, onClose, harnesses, current, onDelegate }
 }
 
 /** What a delegated conversation came to: its latest Turn's state, the wrap-up its Harness gave (when it gave one) and its reply. */
-export interface DelegationResult { readonly status: string | null; readonly summary: string | null; readonly reply: string }
+export interface DelegationResult { readonly runId: string | null; readonly status: string | null; readonly summary: string | null; readonly reply: string }
 
 /**
  * The work this conversation handed to other Harnesses at one place of it: each as a card that says who has it, what was asked and how it
- * stands, opens the conversation it runs in, and, once it is done, sends its result to this conversation's Harness as your next message.
+ * stands, and opens the conversation it runs in. What it came to goes to this conversation's Harness with your next message (the Gateway
+ * puts it before your words); the card says once it has, and until then offers to have that Harness carry on right away.
  */
-export function DelegationCards({ items, harness, load, onOpen, onReport, reportTo, busy }: {
+export function DelegationCards({ items, harness, load, onOpen, onReport, reportTo, busy, told }: {
   readonly items: readonly SessionSummary[]; readonly harness: (id: string) => string;
   readonly load: (id: string, signal: AbortSignal) => Promise<DelegationResult>;
   readonly onOpen: (id: string) => void;
-  /** Sends a result into this conversation; absent when it cannot take a message now. */
+  /** Sends a message into this conversation; absent when it cannot take one now. */
   readonly onReport?: ((text: string) => void) | undefined;
-  /** The Harness of this conversation, which a result is sent to. */
+  /** The Harness of this conversation, which the outcome goes to. */
   readonly reportTo: string; readonly busy: boolean;
+  /** Whether the outcome of that Turn of that conversation has gone to this conversation's Harness. */
+  readonly told: (id: string, runId: string) => boolean;
 }) {
   if (items.length === 0) return null;
   return <div className="delegations flex flex-col gap-2">{items.map(item => <DelegationCard key={item.id} item={item} name={harness(item.selection.harnessId)} load={load} onOpen={() => onOpen(item.id)}
-    onReport={onReport} reportTo={reportTo} busy={busy}/>)}</div>;
+    onReport={onReport} reportTo={reportTo} busy={busy} told={runId => told(item.id, runId)}/>)}</div>;
 }
 
-function DelegationCard({ item, name, load, onOpen, onReport, reportTo, busy }: {
+function DelegationCard({ item, name, load, onOpen, onReport, reportTo, busy, told }: {
   readonly item: SessionSummary; readonly name: string; readonly load: (id: string, signal: AbortSignal) => Promise<DelegationResult>; readonly onOpen: () => void;
-  readonly onReport?: ((text: string) => void) | undefined; readonly reportTo: string; readonly busy: boolean;
+  readonly onReport?: ((text: string) => void) | undefined; readonly reportTo: string; readonly busy: boolean; readonly told: (runId: string) => boolean;
 }) {
   const running = item.activeRunId !== null;
   const [result, setResult] = useState<DelegationResult | null>(null), [sent, setSent] = useState(false);
@@ -91,22 +94,21 @@ function DelegationCard({ item, name, load, onOpen, onReport, reportTo, busy }: 
   const failed = !running && (result?.status === "failed" || result?.status === "unknown"), stopped = !running && result?.status === "cancelled";
   const state = running ? "进行中" : failed ? "失败" : stopped ? "已停止" : result === null ? "" : "已完成";
   const said = running ? null : result?.summary || result?.reply || null;
-  const report = () => {
-    if (onReport === undefined || result === null) return;
-    onReport(`${name} 做完了我委派的任务。\n\n任务：${item.title}\n\n结果：\n${result.reply || result.summary || "（没有文字回复）"}`);
-    setSent(true);
-  };
+  const known = !running && result !== null && result.runId !== null && told(result.runId);
+  // The outcome goes with the message (the Gateway puts it before these words): the message only asks to carry on.
+  const report = () => { if (onReport === undefined || result === null) return; onReport(`看一下 ${name} 的委派结果，然后接着做。`); setSent(true); };
   return <section className="delegation card motion-enter flex min-w-0 flex-col gap-1.5 px-3.5 py-3 text-ui-sm" aria-label={"委派给 " + name}>
     <div className="flex min-w-0 items-center gap-2">
       <BrandIcon brand={item.selection.harnessId} name={name} size={18}/>
-      <span className="min-w-0 flex-1 trunc"><span className="text-fg-3">委派给 </span><span className="font-medium">{name}</span></span>
+      <span className="min-w-0 flex-1 trunc"><span className="text-fg-3">{item.parent?.by === "harness" ? reportTo + " 委派给 " : "委派给 "}</span><span className="font-medium">{name}</span></span>
       {state ? <span className={cn("flex flex-none items-center gap-1.5 text-caption", failed ? "text-red" : "text-fg-3")}>{running ? <StatusDot tone="run"/> : null}<SwapText text={state} shimmer={running}/></span> : null}
     </div>
     <p className="m-0 line-clamp-2 break-words text-fg-2" title={item.title}>{item.title}</p>
     {said ? <p className="delegation-result m-0 line-clamp-4 border-t border-line pt-2 break-words whitespace-pre-wrap text-fg">{said}</p> : null}
     <div className="-mb-0.5 -ml-1.5 flex flex-wrap items-center gap-1">
       <button type="button" className="btn btn-ghost btn-sm" onClick={onOpen}><ArrowUpRight size={13}/>打开</button>
-      {!running && result !== null && onReport !== undefined ? <button type="button" className="btn btn-ghost btn-sm" disabled={busy || sent} onClick={report}><CornerUpLeft size={13}/>{sent ? "已发给 " + reportTo : "发给 " + reportTo}</button> : null}
+      {known ? <span className="ml-1 flex items-center gap-1 text-caption text-fg-3"><Check size={12} aria-hidden="true"/>已告知 {reportTo}</span>
+        : !running && result !== null && onReport !== undefined && !sent ? <button type="button" className="btn btn-ghost btn-sm" disabled={busy} title={"下一条消息会带上这个结果；点这里让 " + reportTo + " 现在就接着做"} onClick={report}><CornerUpLeft size={13}/>让 {reportTo} 接着做</button> : null}
     </div>
   </section>;
 }

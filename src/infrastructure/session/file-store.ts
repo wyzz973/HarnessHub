@@ -1026,6 +1026,10 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     const last = page[page.length - 1];
     return { rows: page, next: rows.length > limit && last !== undefined ? encodeListCursor(last.updatedAt, last.id) : null };
   }
+  delegatedBy(id: SessionId): readonly SessionId[] {
+    this.assertOwner();
+    return [...this.index.rows.values()].filter(row => row.parent?.parentId === id).sort((left, right) => left.updatedAt - right.updatedAt).map(row => row.id);
+  }
   listKept(): readonly SessionId[] { this.assertOwner(); return [...this.index.rows.values()].filter(row => row.kept).map(row => row.id); }
   unfinished(): readonly SessionId[] { this.assertOwner(); return [...this.index.rows.values()].filter(row => row.unfinished).map(row => row.id).sort(); }
   nativeOwners(harnessId: string, controlId: string): ReadonlyMap<string, SessionId> {

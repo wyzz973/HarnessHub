@@ -61,8 +61,9 @@ export function StatusPill({ tone = "neutral", live = false, size = "md", childr
  * `live` is false), amber for waiting for you, red for failed, grey for idle. Hidden from assistive technology unless
  * given a `label`; the row it marks should say its state in words as well.
  */
-export function StatusDot({ tone, live = tone === "run", size = 7, label, className }: {
-  readonly tone: "run" | "wait" | "fail" | "idle"; readonly live?: boolean; readonly size?: number; readonly label?: string; readonly className?: string;
+export function StatusDot({ tone, live = tone === "run" || tone === "work", size = 7, label, className }: {
+  /** `work`: something goes on, said in grey (the sidebar keeps blue for what is unread); `run`: the same in the accent. */
+  readonly tone: "run" | "work" | "wait" | "fail" | "idle"; readonly live?: boolean; readonly size?: number; readonly label?: string; readonly className?: string;
 }) {
   return <span className={cn("status-dot", className)} data-tone={tone} {...(live ? { "data-live": "" } : {})} style={size === 7 ? undefined : { width: size, height: size }}
     {...(label ? { role: "img", "aria-label": label } : { "aria-hidden": true })}/>;

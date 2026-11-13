@@ -42,6 +42,14 @@ export interface TableApiOptions {
   readonly now?: () => number;
   /** What the Harness of the conversation's Turn in progress says of it (`hub_update_plan`, `hub_wrap_up`): the Runtime places it in the Turn; absent, the two routes refuse. */
   readonly progress?: (grant: TableGrant, made: TableProgress) => void;
+  /**
+   * `hub_delegate` and `hub_delegations` (2026-11-13): the Harness of the conversation's Turn in progress hands a part of its work to another Harness, which does it in a
+   * conversation of its own, and asks how what it handed over stands. Absent, the two routes refuse.
+   */
+  readonly delegation?: {
+    readonly start: (grant: TableGrant, harness: string, task: string) => Promise<{ readonly sessionId: string; readonly harness: string }>;
+    readonly states: (grant: TableGrant) => readonly import("../contracts/session.js").DelegationState[];
+  };
 }
 /** What the two writing tools bring: the whole task list, or the Turn's wrap-up. */
 export type TableProgress =
@@ -103,7 +111,8 @@ export class TableApi {
     const { http } = this.options, path = url.pathname;
     const turn = /^\/api\/table\/turns\/([0-9]{1,6})$/u.exec(path), turns = path === "/api/table/turns", search = path === "/api/table/search";
     const writes = path === "/api/table/plan" || path === "/api/table/wrap-up";
-    if (!turn && !turns && !search && !writes) return false;
+    const delegate = path === "/api/table/delegate", delegations = path === "/api/table/delegations";
+    if (!turn && !turns && !search && !writes && !delegate && !delegations) return false;
     // In this order: only this computer; then the token (whatever else is wrong with a request, a token that is not valid is a 401); then what may be asked.
     if (!loopback(request.socket.remoteAddress)) { http.json(response, 403, { code: "TABLE_LOCAL_ONLY", message: "The table is for programs on this computer" }); return true; }
     const grant = this.authenticate(request);
@@ -118,6 +127,27 @@ export class TableApi {
       if (this.options.progress === undefined || http.body === undefined) { http.json(response, 501, { code: "PROGRESS_UNAVAILABLE", message: "This HarnessHub does not take a Turn's progress" }); return true; }
       this.options.progress(grant, progressOf(path, await http.body(request)));
       http.json(response, 200, { ok: true }); return true;
+    }
+    if (delegate || delegations) {
+      const hooks = this.options.delegation;
+      if (hooks === undefined || http.body === undefined) { http.json(response, 501, { code: "DELEGATION_UNAVAILABLE", message: "This HarnessHub does not delegate" }); return true; }
+      if (delegate) {
+        if (method !== "POST") { response.setHeader("Allow", "POST"); http.json(response, 405, { code: "METHOD_NOT_ALLOWED", message: "Work is delegated with POST" }); return true; }
+        http.queries(url, []);
+        const value = await http.body(request), body = value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : invalid("the body must be a JSON object");
+        const text = (field: unknown, name: string): string => typeof field === "string" && field.trim() !== "" ? field.trim() : invalid(name + " must be a text");
+        http.json(response, 200, await hooks.start(grant, text(body.harness, "harness"), text(body.task, "task"))); return true;
+      }
+      if (method !== "GET") { response.setHeader("Allow", "GET"); http.json(response, 405, { code: "METHOD_NOT_ALLOWED", message: "Delegated work is read with GET" }); return true; }
+      http.queries(url, ["wait"]);
+      // `wait`: seconds to wait for what still runs to end, at most what one tool call may take; the reading is given whichever comes first.
+      const wait = whole(url, "wait", 0, 25) ?? 0, until = (this.options.now ?? Date.now)() + wait * 1000;
+      let states = hooks.states(grant);
+      while (states.some(entry => entry.status === "running") && (this.options.now ?? Date.now)() < until && !response.destroyed) {
+        await new Promise(done => setTimeout(done, 1000));
+        states = hooks.states(grant);
+      }
+      http.json(response, 200, { delegations: states }); return true;
     }
     if (method !== "GET") { response.setHeader("Allow", "GET"); http.json(response, 405, { code: "METHOD_NOT_ALLOWED", message: "The table is read with GET" }); return true; }
     const state = this.conversation(grant.sessionId), hiding = await this.redaction(state, grant);

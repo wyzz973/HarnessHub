@@ -376,6 +376,7 @@
   /* #35 Status dot, 6 px: running blinks every 1.2 s; waiting is amber; failed is red */
   .status-dot { --dot-color: var(--text-3); display: inline-block; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--dot-color); }
   .status-dot[data-tone="run"] { --dot-color: var(--run); }
+  .status-dot[data-tone="work"] { --dot-color: var(--text-3); }
   .status-dot[data-tone="wait"] { --dot-color: var(--amber-dot); }
   .status-dot[data-tone="fail"] { --dot-color: var(--red-dot); }
   .status-dot[data-tone="idle"] { --dot-color: var(--border-strong); }
