@@ -703,7 +703,8 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
       {/* The narrow category row scrolls sideways when the kinds do not fit (on a 390 px phone the last one comes in by
           scrolling); its padding scrolls with it, so the last tab keeps its 16 px from the edge, 16 px from the one before. */}
       {!wide && ready ? <div className="flex-none overflow-x-auto hairline-b"><Tabs items={tabItems} value={kind} onChange={choose} label="能力类别" idPrefix="capability-tab" panelId="capability-tabpanel" className="h-11 w-max px-4 [&>.tab]:h-11 [&>.tab+.tab]:ml-4"/></div> : null}
-      <div className="scroll-area min-h-0 flex-1">
+      {/* Not a positioned box here: the floating bar inside is placed against the page (the section), so it stays put while this scrolls. */}
+      <div className="scroll-area !static min-h-0 flex-1">
         <div className={cn("flex w-full max-w-[1040px] flex-col gap-5", wide ? "px-9 pt-10 pb-[120px]" : "px-4 pt-5 pb-[120px]")}>
           {view === null ? <>
             {problem ? <Notice tone="red" action={<button type="button" className="btn btn-sm" onClick={() => load()}>重试</button>}>{problem}</Notice> : null}

@@ -421,7 +421,7 @@ export function Composer(props: ComposerProps) {
         ...(way?.impossible === undefined ? {} : { disabled: true, reason: way.impossible }) }; }),
     ...(level.permission === "custom" ? [{ value: "custom", label: "自定义", short: "自定义", description: "改过这一家的原生选项，不对应任何一档", disabled: true }] : [])];
   const effortChoices = (option: NativeOption): PickerOption[] => [{ value: "", label: valueName(option, option.currentValue) + " · 本机默认", short: valueName(option, option.currentValue) },
-    ...EFFORT_LEVELS.map(id => { const way = level.levels.effort.find(entry => entry.level === id), native = way?.options[option.id], used = native === undefined ? undefined : lastUsed(native, recalled?.nativeOptions?.[option.id]);
+    ...EFFORT_LEVELS.map(id => { const way = level.levels.effort.find(entry => entry.level === id), native = way?.options[option.id], used = recalled?.nativeOptions?.[EFFORT_KEY] === id ? lastUsed(id, id) : native === undefined ? undefined : lastUsed(native, recalled?.nativeOptions?.[option.id]);
       const description = [used, way?.note].filter(Boolean).join("；");
       return { value: id, label: EFFORT_WORDS[id], short: EFFORT_WORDS[id], ...(description ? { description } : {}), ...(way === undefined ? { disabled: true, reason: level.levels.effortMissing } : {}) }; }),
     ...(level.effort === "custom" ? [{ value: "custom", label: "自定义", short: "自定义", description: "改过这一家的原生选项，不对应任何一档", disabled: true }] : [])];
