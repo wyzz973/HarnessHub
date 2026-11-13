@@ -21,6 +21,7 @@ import { officialInstallMethod } from "../adapters/catalog-channels.js";
 import { harnessTier } from "../adapters/catalog.js";
 import type { InstallationJobView } from "../contracts/management.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
+import { chooseFolder, FolderDialogUnavailable, scratchFolder } from "../infrastructure/workspace/choose-folder.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
@@ -102,6 +103,8 @@ export interface WebServerOptions {
   readonly loginShell?: { readonly shell: string | null; readonly shells: string } | false;
   /** The workspace lock namespace (`resolveWorkspaceLockRoot`) when this server composes its own application; the default otherwise. */
   readonly workspaceLockRoot?: string;
+  /** Where conversations started without a folder get one of their own (2026-11-13); `chats` in the data directory by default. */
+  readonly scratchRoot?: string;
   /** What counts as an installation (ADR-044) when this server composes its own application; the composition's default otherwise. */
   readonly installations?: InstallationPolicy;
   /** Fetches from GitHub without following redirects, for adding and updating skills (ADR-045 §4); the platform's `fetch` by default. */
@@ -468,6 +471,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const searchDirs = (): readonly string[] => [...options.configuration.searchDirs, ...(loginDirs?.dirs ?? []).filter(dir => !options.configuration.searchDirs.includes(dir))];
   const loginShellView = () => ({ available: options.loginShell !== undefined && options.loginShell !== false && options.loginShell.shell !== null,
     ...(options.loginShell && options.loginShell.shell !== null ? { shell: basename(options.loginShell.shell) } : {}), dirs: loginDirs?.dirs ?? [], readAt: loginDirs?.readAt ?? null });
+  // Where conversations started without a folder get theirs, as the canonical path their workspaces will carry (it need not exist yet).
+  const scratchRoot = await (async (path: string) => {
+    const rest: string[] = [];
+    for (let at = path; ;) { try { return join(await realpath(at), ...rest); } catch { const up = dirname(at); if (up === at) return path; rest.unshift(basename(at)); at = up; } }
+  })(resolve(options.scratchRoot ?? join(options.root, "chats")));
   /** A request's workspace with this Gateway's catalog, configuration home and search settings. */
   const workspaceConfiguration = (workspace: string) => prepareConfiguration({ workspace,
     ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
@@ -631,7 +639,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     // not waited for. The startup scan ends before the listener opens, so there always is one.
     if (path === "/api/v1/state" && method === "GET") {
       queries(url, []); const listed = conversations!.sessions({});
-      const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses, harnessesScannedAt: scannedAt,
+      const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, scratchRoot, providers: app.providers.list(), harnesses, harnessesScannedAt: scannedAt,
         sessions: listed.sessions, sessionsNext: listed.next, jobs: app.management.listJobs(50), readiness: readinessViews(nativeModels.readiness(), app.store.startupSamples(STARTUP_SAMPLES)), installationPolicy: app.factory.installations,
         // This Gateway has the relay API (ADR-055 §12.4): the page asks for the relay of a Gateway that says so and of none else.
         relay: true };
@@ -1042,6 +1050,15 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       }
       if (method === "POST" && providerRoute[2] === "/probe") { record(await body(request), []); json(response, 200, await app.providers.probe(id)); return; }
     }
+    if (path === "/api/v1/workspaces/choose" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["start"]);
+      const closed = new AbortController(), gone = () => { if (!response.writableEnded) closed.abort(); };
+      response.once("close", gone);
+      try { json(response, 200, { path: await chooseFolder({ prompt: "选择项目文件夹", start: input.start === undefined ? undefined : text(input.start, "start"), signal: closed.signal }) }); }
+      catch (error) { if (error instanceof FolderDialogUnavailable) throw new HttpError(501, "FOLDER_DIALOG_UNAVAILABLE", "这台电脑上打不开系统的文件夹选择框"); throw error; }
+      finally { response.off("close", gone); }
+      return;
+    }
     if (path === "/api/v1/sessions/import" && method === "POST") {
       queries(url, []); const input = record(await body(request), ["workspace", "selection", "nativeId", "commandId"], ["selection", "nativeId", "commandId"]);
       const configuration = input.workspace === undefined ? options.configuration : await workspaceConfiguration(text(input.workspace, "workspace"));
@@ -1052,11 +1069,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (path === "/api/v1/sessions") {
       if (method === "GET") { queries(url, ["after", "limit"]); json(response, 200, conversations!.sessions({ after: url.searchParams.get("after") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
       if (method === "POST") {
-        queries(url, []); const input = record(await body(request), ["workspace", "selection", "commandId"], ["selection", "commandId"]);
-        const configuration = input.workspace === undefined ? options.configuration : await prepareConfiguration({ workspace: text(input.workspace, "workspace"),
-          ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
-          ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
-          packageRoots: options.configuration.packageRoots, searchDirs: searchDirs(), pathOnly: options.configuration.pathOnly });
+        queries(url, []); const input = record(await body(request), ["workspace", "scratch", "selection", "commandId"], ["selection", "commandId"]);
+        if (input.scratch !== undefined && (input.scratch !== true || input.workspace !== undefined)) throw new HttpError(400, "INVALID_INPUT", "Invalid scratch");
+        // Started without a folder (2026-11-13): the conversation gets one of its own, named by this request so a repeat names the same one.
+        const configuration = input.scratch === true ? await workspaceConfiguration(await scratchFolder(scratchRoot, command(input.commandId)))
+          : input.workspace === undefined ? options.configuration : await workspaceConfiguration(text(input.workspace, "workspace"));
         json(response, 201, conversations!.session((await app.runtime.create(configuration, select(input.selection), command(input.commandId))).id)); return;
       }
     }

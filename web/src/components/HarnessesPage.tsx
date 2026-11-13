@@ -2,7 +2,7 @@ import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { ArrowRight, Check, ChevronRight, CircleAlert, CircleArrowUp, CircleCheck, CircleDashed, Clock3, Copy, Info, Package, RefreshCw, ScanSearch, Search, Square, Terminal, X } from "lucide-react";
 import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent, ReactNode } from "react";
-import type { HarnessEntrySource, HarnessReadinessView, HarnessView, InstallationView, NativeResumeView, SessionSummary } from "../../../src/contracts/web.js";
+import type { HarnessEntrySource, HarnessReadinessView, HarnessView, InstallationView, SessionSummary } from "../../../src/contracts/web.js";
 import type { InstallationJobView, InstallationLog } from "../../../src/contracts/management.js";
 import { errorMessage, failureMessage, GatewayApi, protocolLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
@@ -399,7 +399,7 @@ export function HarnessesPage(props: HarnessProps) {
   const facts: StateFacts = { jobs, unconfirmed: props.unconfirmed, submitting: props.submitting, readiness: props.readiness };
   const active = jobs.filter(installationActive);
   // The page leaves out the hidden Harnesses; details, tasks and names still find every one.
-  const listed = harnesses.filter(harness => !props.hidden.has(harness.id)), hiddenCount = harnesses.length - listed.length;
+  const listed = harnesses.filter(harness => !props.hidden.has(harness.id));
   const mine = listed.filter(onMachine).sort(byTierAndName);
   const catalog = listed.flatMap(harness => { if (onMachine(harness) || harness.tier !== "focus") return []; const way = installWay(harness); return way ? [{ harness, way }] : []; })
     .sort((a, b) => byTierAndName(a.harness, b.harness));
@@ -453,7 +453,6 @@ export function HarnessesPage(props: HarnessProps) {
       </div> : null}
       {jobs.length ? <Collapsible open={showTasks} id="installation-tasks">
         <section aria-label="安装任务" className="card mt-5 p-1.5">
-          <p className="m-0 px-2.5 pt-1.5 pb-1 text-caption text-fg-3">任务在本机服务里独立运行，关闭详情后仍可在这里查看。</p>
           <ul className="m-0 flex list-none flex-col p-0">{jobs.map(job => <li key={job.id}>
             <button type="button" onClick={() => setSelectedId(job.harnessId)} className="row flex w-full items-center gap-2.5 border-none bg-transparent px-2.5 py-2 text-left hover:bg-subtle">
               <BrandIcon brand={job.harnessId} name={harnesses.find(h => h.id === job.harnessId)?.name ?? job.harnessId} size={24}/>
@@ -480,10 +479,6 @@ export function HarnessesPage(props: HarnessProps) {
         {catalog.length > CATALOG_ROWS ? <Collapsible open={allCatalog} id="agents-catalog-more">{catalog.slice(CATALOG_ROWS).map((item, index) => shownRow(item, index + CATALOG_ROWS))}</Collapsible> : null}
       </div>
     </section> : null}
-    <div className="-mt-2 flex flex-col gap-1.5 text-ui-sm text-fg-3">
-      {hiddenCount > 0 ? <p className="hidden-frozen m-0">已隐藏 {hiddenCount} 个冻结的 Harness，<button type="button" className="link-btn" onClick={props.onSettings}>可在设置里显示</button></p> : null}
-      <p className="m-0">没找到装在别处的 Harness？在<button type="button" className="link-btn" onClick={props.onSettings}>设置</button>的“发现”里添加它所在的目录，再重新检测。</p>
-    </div>
     </PageShell>
     {beside
       // Beside the cards (Agent board): a sheet that leaves the page usable, without a scrim, under every floating layer;
@@ -533,7 +528,7 @@ const TONE_INK: Readonly<Record<Tone, string>> = { accent: "text-accent-text", a
 function AgentCard({ harness, state, action, selected, onOpen }: {
   readonly harness: HarnessView; readonly state: AgentState; readonly action: { readonly label: string; readonly run: () => void } | null; readonly selected: boolean; readonly onOpen: () => void;
 }) {
-  const nameId = useId(), version = versionOf(harness), products = harness.installations.filter(item => item.role === "product").length;
+  const nameId = useId(), version = versionOf(harness);
   // A pointer anywhere on the card opens the details, except on its buttons or while text is being selected.
   const open = (event: MouseEvent<HTMLElement>) => { if ((event.target as Element).closest("button, a, input, select, textarea") || window.getSelection()?.toString()) return; onOpen(); };
   // When the details make the cards reflow beside them, the chosen card stays in view (at once, not scrolled smoothly).
@@ -548,7 +543,7 @@ function AgentCard({ harness, state, action, selected, onOpen }: {
         <div className="flex min-w-0 items-center gap-1.5">
           <h3 id={nameId} className="trunc m-0 text-[15px] leading-[22px] font-semibold">{harness.name}</h3>
           {harness.tier === "frozen" ? <Badge tone="neutral" className="harness-frozen flex-none" title="冻结：保留适配与历史对话，不再打磨">冻结</Badge> : null}
-          <StatusPill tone={state.tone} live={state.live} className="-my-px ml-auto flex-none" {...(state.hint ? { title: state.hint } : {})}><SwapText text={state.pill}/></StatusPill>
+          {state.kind === "ready" ? null : <StatusPill tone={state.tone} live={state.live} className="-my-px ml-auto flex-none" {...(state.hint ? { title: state.hint } : {})}><SwapText text={state.pill}/></StatusPill>}
         </div>
         <span className="agent-meta trunc text-caption leading-4 text-fg-3" title={`${version ?? "版本未知"} · ${placeOf(harness, true)}`}>{version ?? "版本未知"} · {placeOf(harness, false)}</span>
       </div>
@@ -647,21 +642,9 @@ function AgentDetail(props: HarnessProps & { harness: HarnessView; state: AgentS
       {!here ? <InstallSection {...props} busy={busy} titleId={ids + "install"}/> : null}
       {job ? <JobSection {...props} job={job} related={related} titleId={ids + "job"} onSelectJob={setSelectedJobId} said={state.jobId === job.id ? state.detail ?? null : null}
         stated={health && state.jobId === job.id} running={state.kind === "busy" ? state.summary : null}/> : null}
-      {here ? <section aria-labelledby={ids + "models"} className="flex flex-col gap-2.5">
-        <SectionTitle id={ids + "models"}>模型与登录</SectionTitle>
-        <p className="m-0 text-ui-sm text-fg-2">{props.readiness === undefined ? "" : seen?.checkedAt != null ? seen.state === "ready" ? `${ago(seen.checkedAt)}读取过它的模型列表${seen.signedIn === true ? "，已登录" : ""}。`
-          : seen.state === "signed_out" ? `${ago(seen.checkedAt)}读取时，它需要先登录或完成设置。`
-          : seen.state === "failed" ? `${ago(seen.checkedAt)}读取它的模型列表失败。` : "" : "还没有读取过它的模型列表；在对话里选它时会读取。"}模型和登录沿用 {name} 自己的配置，HarnessHub 不复制也不修改。</p>
-      </section> : null}
-      {here && props.sessions !== undefined ? <ContinueSection api={props.api} name={name} titleId={ids + "continue"}
-        session={props.sessions.reduce<SessionSummary | null>((latest, item) => item.selection.harnessId === harness.id && (latest === null || item.updatedSeq > latest.updatedSeq) ? item : latest, null)}
-        onOpen={id => { props.onClose(); props.onOpenSession(id); }}/> : null}
       {here ? <MaintenanceSection {...props} busy={busy} titleId={ids + "maintenance"}/> : null}
-      {harness.installations.some(item => item.role === "product") ? <section aria-labelledby={ids + "capabilities"} className="flex flex-col gap-2.5">
-        <SectionTitle id={ids + "capabilities"}>能力</SectionTitle>
-        <p className="m-0 text-ui-sm text-fg-2">{name} 读取的技能、MCP、指令、子 Agent、命令、Hooks 和插件，以及各自是否生效。</p>
-        <button type="button" className="btn btn-sm self-start" onClick={() => props.onCapabilities(harness.id)}>查看 {name} 的能力</button>
-      </section> : null}
+      {harness.installations.some(item => item.role === "product") ? <button type="button" className="row -mx-2 flex h-9 items-center gap-2 border-none bg-transparent px-2 text-left text-ui-sm font-semibold text-fg-2 hover:bg-subtle hover:text-fg" onClick={() => props.onCapabilities(harness.id)}>
+        <span className="flex-1">能力</span><ChevronRight size={14} className="text-fg-3" aria-hidden="true"/></button> : null}
       <section className="flex flex-col gap-2">
         <button type="button" className="-mx-1.5 flex items-center gap-1.5 self-start rounded-row border-none bg-transparent px-1.5 py-1 text-ui-sm font-semibold text-fg-2 hover:text-fg" aria-expanded={technical} aria-controls={ids + "technical"} onClick={() => setTechnical(value => !value)}>
           <ChevronRight size={14} className={cn("motion-rotate", technical && "rotate-90")} aria-hidden="true"/>技术细节</button>
@@ -671,48 +654,18 @@ function AgentDetail(props: HarnessProps & { harness: HarnessView; state: AgentS
   </>;
 }
 
-/**
- * How to continue the Agent's latest conversation in its own program (ADR-039), read once when shown: the command the
- * program's help gives, or its one-question command with what that depends on. HarnessHub only offers it for copying.
- */
-function ContinueSection({ api, name, session, titleId, onOpen }: { readonly api: GatewayApi; readonly name: string; readonly session: SessionSummary | null; readonly titleId: string; readonly onOpen: (id: string) => void }) {
-  const [view, setView] = useState<NativeResumeView | null | "failed" | undefined>(undefined);
-  const id = session?.id ?? null;
-  useEffect(() => {
-    if (id === null) return;
-    const controller = new AbortController(); setView(undefined);
-    api.nativeResume(id, AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]))
-      .then(value => { if (!controller.signal.aborted) setView(value); }, () => { if (!controller.signal.aborted) setView("failed"); });
-    return () => controller.abort();
-  }, [api, id]);
-  const read = view === undefined || view === "failed" ? null : view, command = read?.interactive ?? read?.once ?? null;
-  return <section aria-labelledby={titleId} className="flex flex-col gap-2.5">
-    <SectionTitle id={titleId}>在原程序里继续对话</SectionTitle>
-    {session === null ? <p className="m-0 text-ui-sm text-fg-2">还没有用 {name} 的对话。</p> : <>
-      <p className="m-0 text-ui-sm text-fg-2">最近的对话<button type="button" className="link-btn font-normal" onClick={() => onOpen(session.id)}>「{session.title}」</button>
-        {view === "failed" ? "：暂时读不到续接命令，可以在这个对话的详情栏里再看。" : view === null ? "还没有可以在原程序里继续的原生会话。"
-          : read?.interactive ? "，在它的工作区目录中运行：" : read?.once ? "，在它的工作区目录中只问一次：" : read?.list ? "：" + read.list : read?.note === "no-command" ? "：这个程序没有可给出的续接命令。" : ""}</p>
-      {command ? <CommandBox command={command} label="复制恢复命令"/> : null}
-      {read && !read.interactive && read.once && read.onceNote ? <p className="m-0 text-caption text-fg-3">{read.onceNote}</p> : null}
-    </>}
-  </section>;
-}
-
 /** How a product that is not here is installed: by HarnessHub the official way, or by the user in a terminal (ADR-044). */
 function InstallSection(props: HarnessProps & { harness: HarnessView; busy: boolean; titleId: string; onRequest: (harness: HarnessView) => void; onInstallRequest: (harness: HarnessView) => void }) {
   const { harness, busy } = props, install = harness.install, recipe = harness.management.recipe, name = harness.name;
   const official = officialInstallable(harness), managed = !official && canManage(harness) && actionFor(harness) === "install";
-  const explanation = install ? official ? "HarnessHub 可以按官网方式代为安装：点“安装”后先显示会运行什么、写到哪里，确认后才运行。"
-      : managed ? `HarnessHub 可以代为安装：按 ${name} 目录里的方式装入，完成后就能对话。`
-      : install.method === "terminal" ? `按 ${name} 官方说明在终端安装，完成后重新检测即可使用。HarnessHub 不代为运行这条命令。` : `按 ${name} 官方说明安装，完成后重新检测即可使用。`
-    : managed ? `HarnessHub 可以代为安装${recipe?.packageName ? (recipe.kind === "python" ? " Python 包 " : recipe.kind === "binary" ? "官方发布包 " : " npm 包 ") + recipe.packageName : ""}，完成后就能对话。`
-    : "这个目录项还没有当前环境可用的安装方式。";
+  const explanation = install ? official || managed ? "" : install.method === "terminal" ? "在终端运行这条命令，装好后重新检测。" : `按 ${name} 官方说明安装，装好后重新检测。`
+    : managed ? recipe?.packageName ? (recipe.kind === "python" ? "Python 包 " : recipe.kind === "binary" ? "官方发布包 " : "npm 包 ") + recipe.packageName : "" : "还没有可用的安装方式。";
   return <section aria-labelledby={props.titleId} className="flex flex-col gap-2.5">
-    <SectionTitle id={props.titleId}>安装 · 按官网的方式</SectionTitle>
-    <p className="m-0 text-ui-sm text-fg-2">{explanation}{install ? `命令于 ${install.checkedAt} 对照官方说明核对。` : ""}</p>
+    <SectionTitle id={props.titleId}>安装</SectionTitle>
+    {explanation ? <p className="m-0 text-ui-sm text-fg-2">{explanation}</p> : null}
     {install ? <CommandBox command={install.command} label="复制安装命令"/> : null}
     {install || official || managed ? <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      {official ? <button type="button" className="btn btn-primary" disabled={busy} onClick={() => props.onInstallRequest(harness)}>{busy ? <Spinner size={14} label=""/> : null}{busy ? "任务运行中" : "按官网方式安装"}</button>
+      {official ? <button type="button" className="btn btn-primary" disabled={busy} onClick={() => props.onInstallRequest(harness)}>{busy ? <Spinner size={14} label=""/> : null}{busy ? "任务运行中" : "安装"}</button>
         : managed ? <button type="button" className="btn btn-primary" disabled={busy} onClick={() => props.onRequest(harness)}>{busy ? <Spinner size={14} label=""/> : null}{busy ? props.submitting.includes(harness.id) ? "提交中" : "任务运行中" : "安装"}</button> : null}
       {install ? <a className="text-ui-sm" href={install.docs} target="_blank" rel="noreferrer">查看官方说明</a> : null}
     </div> : null}
@@ -794,7 +747,6 @@ function Fact({ label, children }: { readonly label: string; readonly children: 
 function MaintenanceSection(props: HarnessProps & { harness: HarnessView; busy: boolean; titleId: string; onRequest: (harness: HarnessView) => void;
   onUninstallRequest: (harness: HarnessView, installation: InstallationView) => void; onUpgradeRequest: (harness: HarnessView, installation: InstallationView) => void }) {
   const { harness, busy } = props, management = harness.management, version = versionOf(harness), adapter = adapterVersion(harness);
-  const products = harness.installations.filter(item => item.role === "product").length;
   const manage = canManage(harness), action = actionFor(harness);
   const managedCurrent = management.source === "managed" && management.updateStatus === "current";
   const label = busy ? props.submitting.includes(harness.id) ? "提交中" : "任务运行中"
@@ -802,7 +754,7 @@ function MaintenanceSection(props: HarnessProps & { harness: HarnessView; busy: 
     : managedCurrent ? "已是最新" : management.updateStatus === "available" && management.latestVersion ? "升级到 " + management.latestVersion : "升级";
   const row = "flex items-center gap-3 px-3 py-[11px]";
   return <section aria-labelledby={props.titleId} className="flex flex-col gap-2.5">
-    <SectionTitle id={props.titleId} action={<Tip label="检查更新"><button type="button" className="icon-btn icon-btn-sm" aria-label={`检查 ${harness.name} 更新`} disabled={props.checking} onClick={() => props.onCheckUpdates([harness.id])}>{props.checking ? <Spinner size={13} label=""/> : <RefreshCw size={14}/>}</button></Tip>}>维护 · 按官网的安装方式</SectionTitle>
+    <SectionTitle id={props.titleId} action={<Tip label="检查更新"><button type="button" className="icon-btn icon-btn-sm" aria-label={`检查 ${harness.name} 更新`} disabled={props.checking} onClick={() => props.onCheckUpdates([harness.id])}>{props.checking ? <Spinner size={13} label=""/> : <RefreshCw size={14}/>}</button></Tip>}>维护</SectionTitle>
     <div className="hairline overflow-hidden rounded-block">
       <dl className="m-0 grid grid-cols-2 gap-3 px-3 py-2.5">
         <div className="min-w-0"><dt className="text-caption text-fg-3">当前版本</dt><dd className="m-0 truncate text-ui font-semibold">{version ?? (harness.installed ? "版本未知" : "未安装")}</dd>{adapter ? <dd className="m-0 text-caption text-fg-3">接入口 {adapter}</dd> : null}</div>
@@ -831,9 +783,6 @@ function MaintenanceSection(props: HarnessProps & { harness: HarnessView; busy: 
         <button type="button" className={cn("btn btn-sm flex-none", !busy && (action === "install" || management.updateStatus === "available") && "btn-primary")} disabled={busy || managedCurrent} onClick={() => props.onRequest(harness)}>{busy ? <Spinner size={13} label=""/> : null}{label}</button>
       </div> : management.native?.reason ? <div className={cn(row, "hairline-t")}><Info size={16} className="flex-none text-fg-3" aria-hidden="true"/><span className="min-w-0 flex-1 text-caption text-fg-2">{management.native.reason}</span></div> : null}
     </div>
-    {products > 1 ? <p className="m-0 text-caption text-fg-2">“当前使用”按 HarnessHub 服务进程的 PATH 顺序确定；终端常被 nvm 等改动 PATH，用的可能是另一份。</p> : null}
-    {harness.installations.some(item => item.canUninstall) ? <p className="m-0 text-caption text-fg-3">卸载只删除程序，保留你的数据和配置；确认前会列出要停止的服务和要删的文件。</p> : null}
-    {harness.management.source === "system" && !harness.installations.length ? <p className="m-0 text-caption text-fg-3">这里管理终端使用的本机原安装，升级沿用它的原渠道。</p> : null}
   </section>;
 }
 

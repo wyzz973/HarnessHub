@@ -336,7 +336,7 @@ export function WriteDialog({ api, open, items, onCheck, onClose }: {
           </div>
         </section>;
       })}
-      <p className="m-0 text-caption text-fg-3">只改列出的这些行与链接，文件的其他内容不变；写入前先备份原文件。确认 15 分钟内有效。</p>
+      <p className="m-0 text-caption text-fg-3">只改列出的这些行与链接，文件的其他内容不变；写入前先备份原文件。</p>
     </div>
     <div className={DIALOG_FOOT}>
       <button type="button" className="btn" disabled={busy} onClick={() => onClose(written(progress), false)}>{wroteAny ? "关闭" : "取消"}</button>

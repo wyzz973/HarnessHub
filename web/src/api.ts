@@ -382,7 +382,7 @@ function decodeReadiness(value: unknown): HarnessReadinessView {
 }
 function decodeState(value: unknown): WebState {
   const row = record(value);
-  return { ...(row.providerManagement === undefined ? {} : { providerManagement: bool(row.providerManagement) }), workspace: text(row.workspace), providers: list(row.providers, decodeProvider), harnesses: list(row.harnesses, decodeHarness),
+  return { ...(row.providerManagement === undefined ? {} : { providerManagement: bool(row.providerManagement) }), workspace: text(row.workspace), ...(row.scratchRoot === undefined ? {} : { scratchRoot: text(row.scratchRoot) }), providers: list(row.providers, decodeProvider), harnesses: list(row.harnesses, decodeHarness),
     harnessesScannedAt: isoTime(row.harnessesScannedAt), sessions: list(row.sessions, decodeSummary), ...(row.sessionsNext === undefined ? {} : { sessionsNext: nullableText(row.sessionsNext) }), jobs: list(row.jobs, decodeInstallationJob),
     readiness: list(row.readiness, decodeReadiness), installationPolicy: choice(row.installationPolicy, ["official", "any"]) };
 }
@@ -703,8 +703,13 @@ export class GatewayApi {
       });
     } finally { clearTimeout(timeout); }
   }
-  createSession(workspace: string, selection: SelectionRequest, key: string): Promise<ClientSessionView> {
-    return this.request("/sessions", "POST", { workspace, selection, commandId: key }, decodeSessionViewV14);
+  /** Starts a conversation in `workspace`, or without a folder (null): the Gateway then gives it one of its own. */
+  createSession(workspace: string | null, selection: SelectionRequest, key: string): Promise<ClientSessionView> {
+    return this.request("/sessions", "POST", workspace === null ? { scratch: true, selection, commandId: key } : { workspace, selection, commandId: key }, decodeSessionViewV14);
+  }
+  /** Shows the system's folder dialog on this Mac and gives the folder chosen, or null when it was cancelled. It waits as long as the dialog is open. */
+  chooseFolder(start: string | undefined, signal?: AbortSignal): Promise<string | null> {
+    return this.request("/workspaces/choose", "POST", start ? { start } : {}, value => nullableText(record(value).path), signal, null);
   }
   /**
    * Sends one message. `relay` is what the user chose about the history for this message (stage3 §3); a message that
@@ -783,9 +788,10 @@ export class GatewayApi {
   cancelInstallation(id: string, key: string): Promise<InstallationJobView> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key }, decodeInstallationJob); }
   inspectInstallation(id: string): Promise<InstallationJobView> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/inspect`, "POST", {}, decodeInstallationJob); }
   installationLogs(id: string, afterSeq: number, signal?: AbortSignal): Promise<InstallationLogPage> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/logs?afterSeq=${afterSeq}&limit=50`, "GET", undefined, decodeLogPage, signal); }
-  private async request<T>(path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body: unknown, decode: (value: unknown) => T, signal?: AbortSignal): Promise<T> {
+  private async request<T>(path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body: unknown, decode: (value: unknown) => T, signal?: AbortSignal, deadlineMs: number | null = 15_000): Promise<T> {
     const deadline = new AbortController();
-    const timeout = setTimeout(() => deadline.abort(new DOMException("Request deadline exceeded", "TimeoutError")), 15_000);
+    // A request that waits for the user (the folder dialog) has no deadline of its own.
+    const timeout = deadlineMs === null ? undefined : setTimeout(() => deadline.abort(new DOMException("Request deadline exceeded", "TimeoutError")), deadlineMs);
     const attempt = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
     try {
       const raw = body instanceof RawBody ? body.blob : null;

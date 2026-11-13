@@ -24,6 +24,10 @@ export function shortTitle(title: string | null | undefined): string {
 }
 /** The last path segment of a workspace, for compact display; the full path stays in the title attribute. */
 export function folderName(path: string): string { return path.split(/[\\/]/u).filter(Boolean).at(-1) ?? path; }
+/** Whether a conversation's workspace is one the Gateway made for it (it was started without a folder). */
+export function inScratch(workspace: string, scratchRoot: string | undefined): boolean {
+  return scratchRoot !== undefined && scratchRoot !== "" && workspace.startsWith(scratchRoot.replace(/\/+$/u, "") + "/");
+}
 /** The path with the home directory shortened when it is recognizably a user's home. */
 export function homePath(path: string): string { return path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/u, "~"); }
 /**

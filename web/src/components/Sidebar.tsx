@@ -1,4 +1,4 @@
-import { Bell, BellOff, Blocks, Bot, CircleHelp, Folder, FolderOpen, Inbox as InboxIcon, PanelLeft, Search, Settings, SlidersHorizontal, SquarePen, X } from "lucide-react";
+import { Bell, BellOff, Blocks, Bot, CircleHelp, Folder, FolderOpen, Inbox as InboxIcon, MessageCircle, PanelLeft, Search, Settings, SlidersHorizontal, SquarePen, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
@@ -9,7 +9,7 @@ import type { ClientSessionView } from "../lib/protocol/wire.js";
 import { errorMessage } from "../api.js";
 import { attentionKind, liveItems, mostUrgent, remaining } from "../attention.js";
 import { cn } from "../lib/cn.js";
-import { ago, folderName, homePath } from "../lib/format.js";
+import { ago, folderName, homePath, inScratch } from "../lib/format.js";
 import { useNotificationChoice } from "../lib/notify.js";
 import { useNow } from "../lib/prefs.js";
 import { Collapsible } from "../ui/motion.js";
@@ -53,6 +53,8 @@ interface SidebarProps {
   readonly activeJobs: number; readonly updates: number;
   /** Conversations whose latest Turn this page saw fail; the summaries carry no outcome of their own. */
   readonly failed: ReadonlySet<string>;
+  /** Where the Gateway keeps the folders of conversations started without one; those are listed together as 临时对话. */
+  readonly scratchRoot?: string | undefined;
   /** Whether the page's connections to the local service are up; false while one of them is down. */
   readonly connected: boolean;
   readonly inbox: InboxSource;
@@ -65,7 +67,9 @@ interface SidebarProps {
 }
 type RowState = "wait" | "run" | "unknown" | "closed" | "fail" | "idle";
 interface Row { readonly session: SessionSummary; readonly items: readonly AttentionItem[]; readonly state: RowState }
-interface Project { readonly key: string; readonly name: string; readonly detail: string | null; readonly rows: readonly Row[] }
+interface Project { readonly key: string; readonly name: string; readonly detail: string | null; readonly rows: readonly Row[]; readonly scratch: boolean }
+/** The group of the conversations started without a folder: each has a folder of its own, and they are listed together. */
+const SCRATCH_KEY = "\u0000scratch";
 /** What a row says about its conversation to assistive technology, after the Agent's name (the Interaction board's words). */
 const STATE_WORDS: Readonly<Record<RowState, string>> = { wait: TURN_STATUS_WORDS.waiting, run: TURN_STATUS_WORDS.running, unknown: TURN_STATUS_WORDS.unknown, closed: "已结束", fail: "上一轮" + TURN_STATUS_WORDS.failed, idle: "" };
 const RANK: Readonly<Record<RowState, number>> = { wait: 0, run: 1, unknown: 2, closed: 2, fail: 2, idle: 2 };
@@ -75,19 +79,20 @@ const RANK: Readonly<Record<RowState, number>> = { wait: 0, run: 1, unknown: 2, 
  * first; inside one, those waiting for the user come first, then running ones, then the rest by recency. Projects whose
  * folder names collide carry their parent folder so they can be told apart.
  */
-function groupProjects(sessions: readonly SessionSummary[], waiting: ReadonlyMap<string, readonly AttentionItem[]>, failed: ReadonlySet<string>): readonly Project[] {
+function groupProjects(sessions: readonly SessionSummary[], waiting: ReadonlyMap<string, readonly AttentionItem[]>, failed: ReadonlySet<string>, scratchRoot: string | undefined): readonly Project[] {
+  const keyOf = (workspace: string) => inScratch(workspace, scratchRoot) ? SCRATCH_KEY : workspace;
   const byWorkspace = new Map<string, Row[]>();
   for (const session of sessions) {
     const items = waiting.get(session.id) ?? [];
     const state: RowState = items.length ? "wait" : session.activeRunId !== null ? "run" : session.status === "blocked" ? "unknown" : session.status === "closed" ? "closed" : failed.has(session.id) ? "fail" : "idle";
-    const rows = byWorkspace.get(session.workspace);
-    if (rows) rows.push({ session, items, state }); else byWorkspace.set(session.workspace, [{ session, items, state }]);
+    const key = keyOf(session.workspace), rows = byWorkspace.get(key);
+    if (rows) rows.push({ session, items, state }); else byWorkspace.set(key, [{ session, items, state }]);
   }
   const names = new Map<string, number>();
-  for (const key of byWorkspace.keys()) { const name = folderName(key); names.set(name, (names.get(name) ?? 0) + 1); }
+  for (const key of byWorkspace.keys()) { if (key === SCRATCH_KEY) continue; const name = folderName(key); names.set(name, (names.get(name) ?? 0) + 1); }
   return [...byWorkspace.entries()].map(([key, rows]) => {
-    const name = key.trim() ? folderName(key) : "未归入项目", parent = key.replace(/[\\/][^\\/]*[\\/]*$/u, "");
-    return { key, name, detail: key.trim() && (names.get(name) ?? 0) > 1 && parent ? homePath(parent) : null,
+    const scratch = key === SCRATCH_KEY, name = scratch ? "临时对话" : key.trim() ? folderName(key) : "未归入项目", parent = key.replace(/[\\/][^\\/]*[\\/]*$/u, "");
+    return { key, name, scratch, detail: !scratch && key.trim() && (names.get(name) ?? 0) > 1 && parent ? homePath(parent) : null,
       rows: rows.map((row, index) => ({ row, index })).sort((a, b) => RANK[a.row.state] - RANK[b.row.state] || a.index - b.index).map(item => item.row) };
   });
 }
@@ -122,14 +127,15 @@ export function Sidebar(props: SidebarProps) {
   const now = useNow(attention.some(item => item.expiresAt !== undefined));
   const waiting = useMemo(() => liveItems(attention, now), [attention, now]);
   const bySession = useMemo(() => { const map = new Map<string, AttentionItem[]>(); for (const item of waiting) map.set(item.sessionId, [...(map.get(item.sessionId) ?? []), item]); return map; }, [waiting]);
-  const groups = useMemo(() => groupProjects(sessions, bySession, props.failed), [sessions, bySession, props.failed]);
+  const groups = useMemo(() => groupProjects(sessions, bySession, props.failed, props.scratchRoot), [sessions, bySession, props.failed, props.scratchRoot]);
   const name = (id: string) => props.harnesses.find(harness => harness.id === id)?.name ?? id;
   // Opened and closed projects, remembered per workspace; without a choice a project is open when it holds the open
   // conversation, one waiting for you, or the newest conversation, and once shown open it stays open until closed, so a
   // conversation starting elsewhere never folds a project away by itself.
   const [choices, setChoices] = useState(readProjectChoices);
   const choose = (key: string, open: boolean) => setChoices(current => { const next = { ...current }; delete next[key]; next[key] = open; writeProjectChoices(next); return next; });
-  const currentProject = sessions.find(session => session.id === currentId)?.workspace;
+  const currentWorkspace = sessions.find(session => session.id === currentId)?.workspace;
+  const currentProject = currentWorkspace === undefined ? undefined : inScratch(currentWorkspace, props.scratchRoot) ? SCRATCH_KEY : currentWorkspace;
   // Opening a conversation opens its project, so the selected row is always in view.
   useEffect(() => { if (currentProject !== undefined && choices[currentProject] === false) choose(currentProject, true); }, [currentId, currentProject]);
   const isOpen = (project: Project, index: number) => {
@@ -182,9 +188,9 @@ export function Sidebar(props: SidebarProps) {
     {nav("capabilities", "能力", <Blocks size={16}/>)}
     {props.providerManagement ? nav("providers", "模型连接", <SlidersHorizontal size={16}/>) : null}
     <div className="session-section mt-3.5 flex min-h-0 flex-1 flex-col gap-0.5">
-      <h2 className="m-0 flex h-[30px] flex-none items-center pr-1 pl-2.5 text-ui-sm font-normal text-fg-3">项目</h2>
+      <h2 className="m-0 flex h-[30px] flex-none items-center pr-1 pl-2.5 text-ui-sm font-normal text-fg-3">对话</h2>
       <nav className="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-2" aria-label="对话列表">
-        {sessions.length === 0 ? <p className="m-0 px-2.5 py-2 text-ui-sm text-fg-3">对话会按项目（工作区）归在这里。</p>
+        {sessions.length === 0 ? null
           : groups.map((project, index) => <ProjectGroup key={project.key} project={project} open={isOpen(project, index)} onToggle={open => choose(project.key, open)}
             now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} arrivals={arriving} harness={name} onSession={props.onSession}/>)}
         {props.more ? <MoreSessions onMore={props.onMore}/> : null}
@@ -220,9 +226,9 @@ function ProjectGroup({ project, open, onToggle, now, currentId, disabled, arriv
   // A closed project still shows the most pressing state inside it, so nothing waiting for you hides in it.
   const strongest = project.rows.find(row => row.state === "wait") ?? project.rows.find(row => row.state === "run") ?? project.rows.find(row => row.state === "fail");
   return <div className="session-group flex flex-col gap-0.5">
-    <Tip label={project.key || "没有工作区的对话"} side="right"><button type="button" className="nav-row w-full gap-2 pr-2.5 pl-2" aria-expanded={open} aria-controls={listId}
+    <Tip label={project.scratch ? "不用文件夹的对话" : project.key || "没有工作区的对话"} side="right"><button type="button" className="nav-row w-full gap-2 pr-2.5 pl-2" aria-expanded={open} aria-controls={listId}
       aria-label={project.name + (project.detail ? " · " + project.detail : "")} aria-describedby={summaryId} onClick={() => onToggle(!open)}>
-      {open ? <FolderOpen size={16} className="text-accent-text" aria-hidden="true"/> : <Folder size={16} className="text-fg-2" aria-hidden="true"/>}
+      {project.scratch ? <MessageCircle size={16} className="text-fg-2" aria-hidden="true"/> : open ? <FolderOpen size={16} className="text-fg-2" aria-hidden="true"/> : <Folder size={16} className="text-fg-2" aria-hidden="true"/>}
       <span className="min-w-0 flex-1 trunc">{project.name}{project.detail ? <span className="text-fg-3"> · {project.detail}</span> : null}</span>
       {!open && strongest ? <StatusDot tone={strongest.state === "wait" ? "wait" : strongest.state === "run" ? "run" : "fail"} live={false}/> : null}
       {!open ? <span className="text-caption text-fg-3" aria-hidden="true">{project.rows.length}</span> : null}
@@ -351,7 +357,6 @@ export function InboxList({ items, sessions, harnesses, current, onLoad, onDecid
           : option ? <button type="button" className="btn btn-sm btn-primary flex-none" aria-describedby={lineId} disabled={state === "sending"} onClick={() => decide(item, option)}>
             {state === "sending" ? <Spinner size={12} label="" className="text-on-accent"/> : null}{option.name}</button> : null}
       </li>;
-    })}</ul> : <p className="m-0 px-3.5 py-6 text-center text-ui-sm text-fg-3">没有等你处理的审批或提问。</p>}
-    <p className="m-0 flex-none hairline-t px-3.5 py-2 text-caption text-fg-3">只有一次性的选项能在这里直接点；持续生效的选项和提问要进对话里看清楚再选。</p>
+    })}</ul> : <p className="m-0 px-3.5 py-6 text-center text-ui-sm text-fg-3">没有等你处理的事</p>}
   </>;
 }

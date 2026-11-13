@@ -6,11 +6,11 @@ import type { NativeExtensions, NativeModelCatalog } from "../../../src/contract
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import type { AttentionItem, HarnessSelection, PublicRun, SelectionRequest } from "../../../src/contracts/session.js";
-import type { HarnessReadinessView, HarnessView, NativeResumeView, NativeSessionListView } from "../../../src/contracts/web.js";
+import type { HarnessReadinessView, HarnessView, NativeSessionListView } from "../../../src/contracts/web.js";
 import type { ConversationView } from "../lib/conversation.js";
 import { failureMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
-import { clock, folderName, shortTitle } from "../lib/format.js";
+import { clock, folderName, inScratch, shortTitle } from "../lib/format.js";
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
 import { bannerOf, installationNotices, relayHasStory, relayLine } from "../lib/relay-state.js";
 import { useClosedNotices } from "../lib/use-relay.js";
@@ -30,7 +30,7 @@ import { DetailsPanel, type ChangesLoader, type PanelTab } from "./DetailsPanel.
 import { RelayPacketDialog, type PacketTarget } from "./RelayDetails.js";
 import { RelayCard, RelayInstallation, SEND_ALONE, type RelayNext } from "./RelayCard.js";
 import { ProtocolTurn, type TurnReads } from "./ProtocolTurn.js";
-import { Welcome } from "./Welcome.js";
+import { Welcome, type Place } from "./Welcome.js";
 import { PERMISSION_WORDS, selectionLevels } from "../../../src/contracts/levels.js";
 
 export interface SelectionDraft { harnessId: string; controlId: string; providerId: string; providerRevision: number | null; model: string; nativeOptions: Readonly<Record<string, string>> }
@@ -100,7 +100,11 @@ export interface ChatProps {
   rememberedChoice?: (harnessId: string) => { readonly controlId: string; readonly nativeModel?: string; readonly nativeOptions?: Readonly<Record<string, string>> } | null;
   workspace: string; mutation: string | null; error: string | null; connectionError: string | null;
   messageDraft: string; onMessageDraft: Dispatch<SetStateAction<string>>;
-  onDraft: (draft: SelectionDraft) => void; onWorkspace: (workspace: string) => void;
+  onDraft: (draft: SelectionDraft) => void;
+  /** Where a new conversation works, the folders of earlier ones, and the system's folder dialog. */
+  place: Place; onPlace: (place: Place) => void; recentFolders: readonly string[]; onChooseFolder: (start: string | undefined) => Promise<string | null>;
+  /** Where the Gateway keeps the folders of conversations started without one. */
+  scratchRoot?: string | undefined;
   /** Sends the message; `relay` is what the user chose about the history for this one message (a way forward from a refusal). */
   onSend: (text: string, retryAttachments?: readonly ContentRef[], relay?: RelayRequest) => Promise<void>;
   onApply: () => void; onCancel: () => void; onClose: () => void; onDismissError: () => void; onProviders: () => void; onNew: () => void; onMenu: () => void;
@@ -137,7 +141,6 @@ export interface ChatProps {
   /** Cancels a Turn still waiting for its workspace; resolves once the cancellation is recorded or refused. */
   onCancelQueued?: (runId: string) => Promise<void>;
   /** How to continue the conversation's native session in its own program (ADR-039), read when shown. */
-  onLoadNativeResume?: ((signal: AbortSignal) => Promise<NativeResumeView | null>) | undefined;
   /** Reads the selected Harness's native skills, MCP servers and plugins on demand. */
   onLoadExtensions?: (signal: AbortSignal) => Promise<NativeExtensions | null>;
   /** `probes` includes the sessions that catalog reads opened, which are left out otherwise. */
@@ -448,7 +451,7 @@ export function ChatPage(props: ChatProps) {
 
   // The wrap-up the latest Turn gave (`hub_wrap_up`), while nothing came after it: once you send a message, or press one of its answers, it goes. A Turn that gave none shows none.
   const latest = session?.runs.at(-1), nextStep = session?.recap !== undefined && latest !== undefined && latest.id === session.recap.runId && active === null && session.status === "open"
-    && latest.protocol !== undefined && over(latest.protocol) ? session.recap : null;
+    && latest.protocol !== undefined && over(latest.protocol) && (session.recap.ask || session.recap.actions?.length) ? session.recap : null;
   // Why its answers cannot be sent now (they are a message like any other): the Harness's own problem first, then what the conversation is in the middle of.
   const answerBlocked = canRetry ? null : problem ?? (pending ? "Harness 正在切换，切换完成后再选。" : dirty ? "Harness 的选择改了还没应用：先应用，或直接在输入框里回复。"
     : mutation !== null ? "正在处理上一个操作，完成后再选。" : "现在不能发送消息。");
@@ -511,7 +514,7 @@ export function ChatPage(props: ChatProps) {
   const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史"
     : currentState ?? (pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话");
   const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} loadChanges={props.onLoadChanges} tab={panelTab} onTab={setTab} runId={panelRun} onRun={setPanelRun}
-    loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} loadNativeResume={props.onLoadNativeResume} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)}
+    loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)}
     relay={relay?.view && relayHasStory(relay.view) ? { view: relay.view, onViewPacket: viewPacket } : undefined}/> : null;
   // #23: the panel opens by widening (300 ms) and pushes the conversation aside; its content follows 60 ms later from 24 px to
   // the right; it closes in 200 ms. From the keyboard (⌘\) it opens and closes at once.
@@ -527,7 +530,7 @@ export function ChatPage(props: ChatProps) {
         : props.sidebarHidden ? <Tip label="展开侧栏 ⌘B"><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts="Meta+B" onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
       <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
         <h1 ref={heading} id="chat-title" tabIndex={-1} className={cn("m-0 min-w-0 truncate text-ui font-semibold outline-none", !session && "sr-only")} title={title}>{title}{session && session.status !== "open" ? <span className="ml-2 text-caption font-medium text-fg-3">{session.status === "closed" ? "已结束" : "需要核实"}</span> : null}</h1>
-        {session ? <span className="hidden min-w-0 flex-none truncate text-caption text-fg-3 sm:inline sm:max-w-[40%]" title={session.workspace}>{folderName(session.workspace)}</span> : null}
+        {session ? <span className="hidden min-w-0 flex-none truncate text-caption text-fg-3 sm:inline sm:max-w-[40%]" title={session.workspace}>{inScratch(session.workspace, props.scratchRoot) ? "临时对话" : folderName(session.workspace)}</span> : null}
       </div>
       {session ? <>
         <HeaderState session={session} active={active} harnessName={harnessName}/>
@@ -579,15 +582,8 @@ export function ChatPage(props: ChatProps) {
         }}>
           {props.sessionError ? <EmptyState title="无法打开这个对话" action={<button className="btn" onClick={props.onNew}>新建对话</button>}>{props.sessionError}</EmptyState>
             : props.loading ? <div className="flex items-center justify-center gap-2 py-24 text-ui-sm text-fg-2"><Spinner/><span>正在读取对话</span></div>
-            : session === null ? <Welcome harnesses={harnesses.filter(harness => !props.hiddenHarnesses.has(harness.id))} readiness={props.readiness ?? []} firstUse={props.conversations === 0} selected={draft.harnessId} workspace={props.workspace} onWorkspace={props.onWorkspace}
-              onSuggest={fillDraft} onHarnesses={props.onHarnesses} onSettings={props.onSettings} onRescan={props.onRescan} scanning={props.scanning} composer={composer}
-              onChoose={harness => {
-                // Another Harness's model and options never carry over; this Harness's last choice from this browser does.
-                const remembered = props.rememberedChoice?.(harness.id), entry = remembered && harness.controls.some(control => control.id === remembered.controlId && control.available) ? remembered : null;
-                props.onDraft({ ...draft, harnessId: harness.id, controlId: entry?.controlId ?? harness.controls.find(control => control.id === harness.defaultControlId && control.available)?.id ?? harness.controls.find(control => control.available)?.id ?? "",
-                  model: draft.providerId ? draft.model : entry?.nativeModel ?? "", nativeOptions: draft.providerId ? {} : entry?.nativeOptions ?? {} });
-                textarea.current?.focus();
-              }}/>
+            : session === null ? <Welcome harnesses={harnesses.filter(harness => !props.hiddenHarnesses.has(harness.id))} readiness={props.readiness ?? []} place={props.place} onPlace={props.onPlace}
+              recents={props.recentFolders} chooseFolder={props.onChooseFolder} onHarnesses={props.onHarnesses} composer={composer}/>
             : <div className="transcript mx-auto flex max-w-reading flex-col gap-7 pb-4" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
               {olderCursor !== null ? <div ref={topMark} className="older-turns flex justify-center"><button type="button" className="btn btn-ghost btn-sm" onClick={() => void loadOlder()}>加载更早的对话</button></div> : null}
               {session.origin && olderCursor === null ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession}/> : null}
@@ -646,13 +642,9 @@ function HeaderState({ session, active, harnessName }: { readonly session: Conve
   const state: { readonly text: string; readonly tone: "neutral" | "accent" | "amber" | "red"; readonly live?: boolean } = (() => {
     if (active) {
       const open = session.permissions?.filter(request => request.runId === active.id && !request.decided) ?? [];
+      // Work going on is said where it happens (the Turn's own line, the sidebar's dot); an approval where it is answered.
       if (active.cancelRequested) return { text: "正在停止", tone: "neutral" };
-      if (open.length) return { text: open.some(dockedRequest) ? "等你批准" : "等你回答", tone: "amber" };
-      switch (stateOf(active)) {
-        case "queued": return { text: TURN_STATUS_WORDS.queued, tone: "neutral" };
-        case "preparing": return { text: TURN_STATUS_WORDS.preparing, tone: "accent", live: true };
-        default: return { text: TURN_STATUS_WORDS.running, tone: "accent", live: true };
-      }
+      return { text: open.length === 0 && stateOf(active) === "queued" ? TURN_STATUS_WORDS.queued : "", tone: "neutral" };
     }
     if (!latest) return { text: "", tone: "neutral" };
     const status = stateOf(latest);
@@ -675,14 +667,18 @@ function HeaderState({ session, active, harnessName }: { readonly session: Conve
  * the head tells it (the Turns the page holds may not reach it). One line, "3/7 · 正在：…", that opens every step, the arrow turning 180°; the step in progress stands out and
  * the finished ones are struck through. Not shown when every step is done, or when no Turn has a list.
  */
-function PlanBar({ session, harness }: { readonly session: ConversationView; readonly active: PublicRun | null; readonly harness: (id: string) => string }) {
+function PlanBar({ session, active, harness }: { readonly session: ConversationView; readonly active: PublicRun | null; readonly harness: (id: string) => string }) {
   const [open, setOpen] = useState(false), [unfolded, setUnfolded] = useState(false);
   const id = useId();
   const found = shownPlan(session.runs, session.plan);
   if (found === undefined || found.steps.length === 0 || found.steps.every(step => step.status === "completed")) return null;
+  // A list is the latest Turn's or it is history: one a later Turn left behind is not what is being done now.
+  if (found.runId !== (active ?? session.runs.at(-1))?.id) return null;
+  // Nothing is in progress once the Turn has ended: the step it stopped at is the next one.
+  const working = active !== null;
   const steps = found.steps, done = steps.filter(step => step.status === "completed").length, total = steps.length;
   const current = steps.find(step => step.status === "in_progress") ?? steps.find(step => step.status === "pending");
-  const where = current ? `${current.status === "in_progress" ? "正在" : "下一步"}：${current.text}` : "已完成";
+  const where = current ? `${working && current.status === "in_progress" ? "正在" : "下一步"}：${current.text}` : "已完成";
   // The 8 px between the bar and its steps belongs to the steps, so a closed plan leaves no gap above the composer.
   return <div className="plan-bar flex flex-col">
     <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}
@@ -700,7 +696,7 @@ function PlanBar({ session, harness }: { readonly session: ConversationView; rea
           ? <li key={"fold-" + position} className="flex min-w-0"><button type="button" className="plan-fold btn btn-ghost btn-sm -ml-1.5 text-fg-3" onClick={() => setUnfolded(true)}>还有 {row.count} 步，展开</button></li>
           : (step => <li key={row.index} className="flex min-w-0 items-start gap-2">
           {step.status === "completed" ? <Check size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="已完成" role="img"/>
-            : step.status === "in_progress" ? <Spinner size={15} tone="run" label="进行中"/>
+            : step.status === "in_progress" && working ? <Spinner size={15} tone="run" label="进行中"/>
             : <Circle size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="待办" role="img"/>}
           <span className={cn("min-w-0 break-words", step.status === "completed" ? "text-fg-3 line-through decoration-line-strong" : step.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{step.text}</span>
         </li>)(steps[row.index]!))}
@@ -715,8 +711,8 @@ function PlanBar({ session, harness }: { readonly session: ConversationView; rea
  */
 function NextStep({ recap, harness, blocked, onAnswer }: { readonly recap: NonNullable<ConversationView["recap"]>; readonly harness: string; readonly blocked: string | null; readonly onAnswer: (text: string) => void }) {
   const why = useId();
-  return <section className="next-step card motion-fade-in flex flex-col gap-2 p-4 text-ui-sm" data-turn-next="" aria-label={harness + " 的小结"}>
-    <p className="m-0 whitespace-pre-wrap break-words text-fg-2">{recap.summary}</p>
+  // The box is the question and its answers: the Turn's reply above it already says what was done.
+  return <section className="next-step card motion-enter flex flex-col gap-2.5 px-4 py-3.5 text-ui-sm" data-turn-next="" aria-label={harness + " 的提问"} title={recap.summary}>
     {recap.ask ? <p className="m-0 break-words font-medium text-fg">{recap.ask}</p> : null}
     {recap.actions?.length ? <div className="flex flex-wrap items-center gap-2" role="group" aria-label="回答">
       {recap.actions.map((label, index) => <button key={index} type="button" className={cn("btn btn-sm next-step-answer", index === 0 ? "btn-primary" : "btn-ghost")} disabled={blocked !== null}

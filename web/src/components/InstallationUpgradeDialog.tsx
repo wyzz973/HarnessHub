@@ -56,7 +56,7 @@ export function InstallationUpgradeDialog({ api, harness, installation, onClose,
     description={`${shownInstallation?.label ?? ""}${shownInstallation?.version ? ` · ${shownInstallation.version}` : ""}`} className="upgrade-installation-dialog w-[min(560px,calc(100vw-32px))]">
     <ConfirmBody>
       {failure ? <CheckFailed message={failure} onRetry={() => setAttempt(value => value + 1)}/>
-        : check === null ? <Checking>正在准备：读取最新版本、运行 Homebrew 预演或下载官方脚本…</Checking>
+        : check === null ? <Checking>正在准备…</Checking>
         : check.terminal ? <>
           <p className="m-0 text-ui-sm text-fg-2">{check.terminal.explains}</p>
           <TerminalCommand command={check.terminal.command}/>
@@ -83,7 +83,7 @@ export function InstallationUpgradeDialog({ api, harness, installation, onClose,
           {idle.length ? <p className="upgrade-idle m-0 text-ui-sm text-fg-2">{idle.length} 个对话保留的 {name} 进程会先关闭，下次发消息时重新连接。</p> : null}
           {check.processes.length ? <Notice tone="amber">这些程序正在运行这份安装，不会被关闭，重开后才用新版本：{check.processes.map(item => `${item.name}（进程 ${item.pid}）`).join("、")}。</Notice> : null}
           {check.notes.map(note => <p key={note} className="upgrade-note m-0 text-ui-sm text-fg-2">{note}</p>)}
-          <p className="m-0 text-caption text-fg-3">升级沿用这份安装自己的渠道，不改模型配置、登录和对话。确认 15 分钟内有效。</p>
+          <p className="m-0 text-caption text-fg-3">不改模型配置、登录和对话。</p>
         </>}
     </ConfirmBody>
     <ConfirmFooter>

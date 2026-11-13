@@ -1,154 +1,90 @@
-import { Popover as BasePopover } from "@base-ui/react/popover";
-import { ArrowRight, Check, ChevronDown, Folder, RefreshCw } from "lucide-react";
-import { useId, useRef, useState } from "react";
-import type { ReactElement, ReactNode } from "react";
+import { ChevronDown, Folder, FolderOpen, MessageCircle } from "lucide-react";
+import { useRef, useState } from "react";
+import type { ReactNode } from "react";
 import type { HarnessReadinessView, HarnessView } from "../../../src/contracts/web.js";
 import { cn } from "../lib/cn.js";
 import { folderName, homePath } from "../lib/format.js";
-import { Popover, PopHead } from "../ui/overlay.js";
+import { Menu, Popover } from "../ui/overlay.js";
 import { motionStyle } from "../ui/motion.js";
-import { Badge } from "../ui/primitives.js";
-import { BrandIcon } from "./BrandIcon.js";
+import { Segmented, Spinner } from "../ui/primitives.js";
 import { readinessStatus } from "./Composer.js";
 
-const SOURCE: Readonly<Record<string, string>> = { managed: "HarnessHub 管理", system: "本机安装", missing: "未安装" };
-const TONE = { success: "accent", warning: "amber", danger: "red" } as const;
+/** Where a new conversation works: in a folder of the user's (a project), or in none (the Gateway gives it one of its own). */
+export interface Place { readonly scratch: boolean; readonly workspace: string }
 
 interface WelcomeProps {
-  readonly harnesses: readonly HarnessView[]; readonly readiness: readonly HarnessReadinessView[]; readonly firstUse: boolean; readonly selected: string;
-  readonly workspace: string; readonly onWorkspace: (value: string) => void; readonly onChoose: (harness: HarnessView) => void; readonly onSuggest: (text: string) => void;
-  readonly onHarnesses: () => void; readonly onSettings: () => void; readonly onRescan: () => void; readonly scanning: boolean; readonly composer: ReactNode;
+  readonly harnesses: readonly HarnessView[]; readonly readiness: readonly HarnessReadinessView[];
+  readonly place: Place; readonly onPlace: (place: Place) => void;
+  /** Folders of earlier conversations, newest first. */
+  readonly recents: readonly string[];
+  /** Shows the system's folder dialog; null when it was cancelled, a rejection when this computer cannot show one. */
+  readonly chooseFolder: (start: string | undefined) => Promise<string | null>;
+  readonly onHarnesses: () => void; readonly composer: ReactNode;
 }
 /**
- * The start of a new conversation (Main board): a greeting, who is ready from the latest readiness facts (and who needs the
- * user), the workspace, then the composer. Opening the summary lists every available Agent with its version and state and
- * chooses one. The first time, the summary and the workspace become three steps — what was found, where it works, a first
- * question — with nothing to fill in. Only facts the Gateway gave are shown: no Git branch, nothing estimated.
+ * The start of a new conversation: a greeting, the composer, and under it where the conversation works — a quick chat
+ * without a folder, or a project folder picked from the recent ones or with the system's own dialog. A Harness that needs
+ * the user is said in one line; when all are ready nothing is.
  */
-export function Welcome({ harnesses, readiness, firstUse, selected, workspace, onWorkspace, onChoose, onSuggest, onHarnesses, onSettings, onRescan, scanning, composer }: WelcomeProps) {
+export function Welcome({ harnesses, readiness, place, onPlace, recents, chooseFolder, onHarnesses, composer }: WelcomeProps) {
   const available = harnesses.filter(harness => harness.controls.some(control => control.available));
-  const status = (harness: HarnessView) => {
+  const tone = (harness: HarnessView) => {
     const control = harness.controls.find(item => item.id === harness.defaultControlId && item.available) ?? harness.controls.find(item => item.available);
-    return readinessStatus(harness, readiness.find(item => item.harnessId === harness.id && item.controlId === control?.id));
+    return readinessStatus(harness, readiness.find(item => item.harnessId === harness.id && item.controlId === control?.id))?.tone;
   };
   // Needing the user: found but its control entry is not ready, or its latest read said to sign in or failed.
-  const attention = harnesses.filter(harness => !available.includes(harness) ? harness.installed : status(harness)?.tone === "warning" || status(harness)?.tone === "danger");
-  const ready = available.filter(harness => !attention.includes(harness));
-  const found = [...ready, ...attention];
-  const missing = harnesses.filter(harness => !harness.installed && !available.includes(harness)).length;
-  const [listOpen, setListOpen] = useState(false);
+  const attention = harnesses.filter(harness => !available.includes(harness) ? harness.installed : tone(harness) === "warning" || tone(harness) === "danger");
   // Opened from the keyboard (⇧⌘O), the page is simply there (Motion board #37); decided once, so a later pointer event
   // does not start the entrance over.
   const [enter] = useState(() => document.documentElement.dataset.input === "keyboard" ? undefined : "motion-enter");
-  const list = (trigger: ReactElement) => <AgentList trigger={trigger} open={listOpen} onOpenChange={setListOpen} harnesses={available} status={status} selected={selected} firstUse={firstUse}
-    missing={missing} onChoose={onChoose} onHarnesses={onHarnesses} onSettings={onSettings} onRescan={onRescan} scanning={scanning}/>;
-  const attentionText = attention.length === 1 ? `${attention[0]!.name} 需要处理` : attention.length === 2 ? `${attention[0]!.name}、${attention[1]!.name} 需要处理` : `${attention.length} 个 Harness 需要处理`;
+  const note = available.length === 0 ? "这台 Mac 上还没有可用的 Harness" : attention.length === 1 ? `${attention[0]!.name} 需要处理` : attention.length > 1 ? `${attention.length} 个 Harness 需要处理` : null;
   return <div className="welcome mx-auto flex min-h-full w-full max-w-[760px] flex-col justify-center pt-8 pb-[min(150px,16vh)]">
-    <h2 className={cn(enter, "m-0 text-center text-[24px] leading-8 font-medium tracking-[-0.02em] text-balance sm:text-greeting sm:leading-[42px]")}>今天想让哪个 Harness 做什么？</h2>
-    {firstUse ? <ol className="m-0 mt-6 mb-6 grid list-none grid-cols-1 gap-3 p-0 sm:grid-cols-3" aria-label="开始使用">
-      <Step index={1} enter={enter} title={found.length ? `找到了 ${found.length} 个 Harness` : "还没有找到 Harness"} text={found.length ? "用你已经装好的，登录和模型都沿用原来的。" : "装好之后点“重新检测”，或从登录 shell 补充目录。"}>
-        {found.length ? list(<button type="button" className="agent-summary row -mx-1 flex min-h-[30px] flex-wrap items-center gap-1.5 self-start border-none bg-transparent px-1 py-1 hover:bg-hover" aria-label={`查看找到的 ${found.length} 个 Harness`}>
-          {found.slice(0, 8).map(harness => <BrandIcon key={harness.id} brand={harness.id} name={harness.name} size={22} className={cn(!ready.includes(harness) && "opacity-45")}/>)}
-          {found.length > 8 ? <span className="text-caption text-fg-3">+{found.length - 8}</span> : null}</button>)
-          : <button type="button" className="btn btn-sm self-start" onClick={onRescan} disabled={scanning}><RefreshCw size={12} className={cn(scanning && "spin")} aria-hidden="true"/>重新检测</button>}
-      </Step>
-      <Step index={2} enter={enter} title="选一个项目文件夹" text="Harness 在这里读写文件。以后每个对话都可以换。">
-        <WorkspaceEditor workspace={workspace} onWorkspace={onWorkspace} trigger={<button type="button" className="h-[30px] w-full min-w-0 truncate rounded-row border-none bg-surface px-2.5 text-left text-caption text-fg-2 shadow-hairline transition-[color,background-color] duration-120 ease-standard hover:text-fg" title={workspace}>{homePath(workspace) || "填写工作目录"}</button>}/>
-      </Step>
-      <Step index={3} enter={enter} title="开始第一段对话" text="给一个现成的问题，回车就能看到效果。">
-        <button type="button" className="press h-[30px] self-start rounded-full border-none bg-transparent px-3 text-caption text-fg-2 shadow-[inset_0_0_0_1px_var(--border-strong)] transition-[color,background-color,transform] duration-120 ease-standard hover:bg-subtle hover:text-fg" onClick={() => onSuggest("讲讲这个项目的结构")}>讲讲这个项目的结构</button>
-      </Step>
-    </ol> : <>
-      <div className={cn(enter, "mt-3 mb-7 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 text-ui-sm text-fg-3")} style={enter ? motionStyle({ delay: 40 }) : undefined}>
-        {/* The summary's own padding is taken back from the row's gaps, so the dot sits 10 px from the words on both sides. */}
-        {available.length ? list(<button type="button" className="agent-summary row -mx-1.5 flex h-7 items-center gap-2.5 border-none bg-transparent px-1.5 text-ui-sm text-fg-3 hover:bg-subtle hover:text-fg-2" title="查看本机的 Harness">
-          <span className="flex items-center" aria-hidden="true">{found.slice(0, 6).map((harness, index) => <BrandIcon key={harness.id} brand={harness.id} name={harness.name} size={22} className={cn("outline-2 outline-app", index > 0 && "-ml-1.5")}/>)}</span>
-          <span>{ready.length} 个 Harness 就绪</span></button>)
-          : <span>这台电脑上还没有找到可用的 Harness</span>}
-        {attention.length ? <><span aria-hidden="true" className="max-sm:hidden">·</span><button type="button" className="link-btn font-normal text-amber hover:text-amber" onClick={onHarnesses}>{attentionText}</button></>
-          : available.length ? null : <><span aria-hidden="true" className="max-sm:hidden">·</span><button type="button" className="link-btn font-normal" onClick={onHarnesses}>查看安装方式</button></>}
-      </div>
-      <div className="flex items-center gap-0.5 px-2 pb-2">
-        <WorkspaceEditor workspace={workspace} onWorkspace={onWorkspace} trigger={<button type="button" className="flex h-[30px] max-w-full min-w-0 items-center gap-1.5 rounded-row border-none bg-transparent px-2 text-ui-sm font-medium text-fg transition-[color,background-color] duration-120 ease-standard hover:bg-subtle data-[popup-open]:bg-subtle" title={workspace}>
-          <Folder size={15} className="flex-none text-fg-2" aria-hidden="true"/><span className="min-w-0 truncate">{folderName(workspace) || "选择工作区"}</span><ChevronDown size={12} strokeWidth={2} className="flex-none text-fg-3" aria-hidden="true"/></button>}/>
-      </div>
-    </>}
+    <h2 className={cn(enter, "m-0 mb-7 text-center text-[24px] leading-8 font-medium tracking-[-0.02em] text-balance sm:text-greeting sm:leading-[42px]")}>今天想让哪个 Harness 做什么？</h2>
+    {note ? <p className={cn(enter, "-mt-4 mb-6 text-center text-ui-sm")} style={enter ? motionStyle({ delay: 40 }) : undefined}>
+      <button type="button" className={cn("link-btn font-normal", available.length ? "text-amber hover:text-amber" : "")} onClick={onHarnesses}>{note}</button></p> : null}
     {composer}
+    <PlacePicker place={place} onPlace={onPlace} recents={recents} chooseFolder={chooseFolder}/>
   </div>;
 }
 
-/** One of the three first steps (Interaction board): its number, what it does, and the one thing to press. */
-function Step({ index, enter, title, text, children }: { readonly index: number; readonly enter: string | undefined; readonly title: string; readonly text: string; readonly children: ReactNode }) {
-  return <li className={cn(enter, "flex min-w-0 flex-col gap-2.5 rounded-card bg-subtle p-4")} style={enter ? motionStyle({ delay: index * 40 }) : undefined}>
-    <span className="text-[11px] leading-4 font-semibold text-accent-text">{index} / 3</span>
-    <span className="text-[15px] leading-[22px] font-semibold">{title}</span>
-    <span className="text-caption text-fg-2">{text}</span>
-    {children}
-  </li>;
-}
-
-/** The new conversation's workspace: the folder by name, its full path to change in place. */
-function WorkspaceEditor({ workspace, onWorkspace, trigger }: { readonly workspace: string; readonly onWorkspace: (value: string) => void; readonly trigger: ReactElement }) {
-  const field = useRef<HTMLInputElement>(null), hint = useId();
-  const relative = workspace.trim() !== "" && !workspace.startsWith("/") && !/^[A-Za-z]:[\\/]/u.test(workspace);
-  return <Popover label="新对话的工作区" side="bottom" align="start" className="w-[420px] max-w-[calc(100vw-24px)]" initialFocus={field} trigger={trigger}>
-    <PopHead title="新对话的工作区" closeLabel="完成"/>
-    <div className="flex flex-col gap-2 p-3.5">
-      <input ref={field} aria-label="新对话工作目录" aria-describedby={hint} value={workspace} onChange={event => onWorkspace(event.target.value)} placeholder="工作目录的绝对路径" className="field mono text-code"
-        onKeyDown={event => { if (event.key === "Enter" && !event.nativeEvent.isComposing) event.currentTarget.blur(); }}/>
-      <p id={hint} className={cn("m-0 text-caption", relative ? "text-amber" : "text-fg-3")}>{relative ? "需要绝对路径，例如 /Users/you/project。" : "Harness 在这里读写文件。以后每个对话都可以换。"}</p>
-    </div>
-  </Popover>;
-}
-
 /**
- * The Agents found on this computer, listed from the summary: each with its version as a fact (ADR-053), where it came
- * from and its latest readiness; choosing one starts the new conversation with it and returns to the message.
+ * Where the new conversation works, in the row under the composer: 临时对话 needs no folder; 项目 names the folder, opens the
+ * recent ones, and asks the system's dialog for another. A computer that cannot show the dialog gets a field for the path.
  */
-function AgentList({ trigger, open, onOpenChange, harnesses, status, selected, firstUse, missing, onChoose, onHarnesses, onSettings, onRescan, scanning }: {
-  readonly trigger: ReactElement; readonly open: boolean; readonly onOpenChange: (open: boolean) => void; readonly harnesses: readonly HarnessView[];
-  readonly status: (harness: HarnessView) => ReturnType<typeof readinessStatus>; readonly selected: string; readonly firstUse: boolean; readonly missing: number;
-  readonly onChoose: (harness: HarnessView) => void; readonly onHarnesses: () => void; readonly onSettings: () => void; readonly onRescan: () => void; readonly scanning: boolean;
-}) {
-  const chose = useRef(false), popup = useRef<HTMLDivElement>(null);
-  return <BasePopover.Root open={open} onOpenChange={next => { if (next) chose.current = false; onOpenChange(next); }}>
-    <BasePopover.Trigger render={trigger}/>
-    <BasePopover.Portal>
-      <BasePopover.Positioner side="bottom" align="center" sideOffset={8} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-50">
-        <BasePopover.Popup aria-labelledby="welcome-harness-list-title" ref={popup} finalFocus={() => {
-          const focused = document.activeElement;
-          if (focused !== null && focused !== document.body && !popup.current?.contains(focused)) return false;
-          return chose.current ? document.getElementById("message-input") : true;
-        }}
-          className="surface-pop flex max-h-[min(520px,var(--available-height))] w-[380px] max-w-[calc(100vw-24px)] flex-col overflow-hidden">
-          {/* One name for the list: the popup and its region take the heading's words. */}
-          <section aria-labelledby="welcome-harness-list-title" className="flex min-h-0 flex-col">
-            <div className="flex items-baseline justify-between gap-3 px-3.5 pt-3 pb-1.5">
-              <h3 id="welcome-harness-list-title" className="m-0 text-ui-sm font-semibold">本机可用的 Harness</h3>
-              <button type="button" className="link-btn flex items-center gap-1 text-caption" onClick={() => { onOpenChange(false); onHarnesses(); }}>查看全部<ArrowRight size={12} aria-hidden="true"/></button>
-            </div>
-            {firstUse ? <p className="m-0 px-3.5 pb-2 text-caption text-fg-2">HarnessHub 直接使用它们本机的安装、模型配置和登录状态，不复制、不修改。登录是否有效、额度是否够用，会在第一次使用时由各自核实。</p> : null}
-            <div className="scroll-area flex min-h-0 flex-col gap-0.5 p-[5px] pt-0">{harnesses.map(harness => {
-              const state = status(harness), version = harness.management.programVersion ?? harness.management.installedVersion;
-              return <button key={harness.id} type="button" aria-label={`选择 ${harness.name}`} aria-pressed={selected === harness.id}
-                onClick={() => { chose.current = true; onChoose(harness); onOpenChange(false); }}
-                className="row flex w-full items-center gap-3 rounded-row border-none bg-transparent px-2.5 py-2 text-left hover:bg-subtle">
-                <BrandIcon brand={harness.id} name={harness.name} size={28}/>
-                <span className="flex min-w-0 flex-1 flex-col"><strong className="trunc text-ui font-medium">{harness.name}</strong>
-                  <span className="trunc text-caption text-fg-3">{[version ?? null, SOURCE[harness.management.source] ?? null].filter(Boolean).join(" · ")}</span></span>
-                {state ? <Badge tone={TONE[state.tone]} dot {...(state.title ? { title: state.title } : {})}>{state.label}</Badge> : null}
-                <Check size={15} strokeWidth={2.2} className={cn("flex-none text-accent-text", selected !== harness.id && "invisible")} aria-hidden="true"/>
-              </button>;
-            })}</div>
-            {firstUse ? <div className="flex flex-wrap items-center gap-2 px-3.5 py-2.5 text-caption text-fg-2 hairline-t">
-              <span className="w-full">没找到你装的某个 Harness？可能它在登录 shell 的 PATH 里，或者是自定义安装。</span>
-              <button type="button" className="btn btn-sm" onClick={() => { onOpenChange(false); onSettings(); }}>从登录 shell 补充目录</button>
-              <button type="button" className="btn btn-sm" onClick={onRescan} disabled={scanning}><RefreshCw size={12} className={cn(scanning && "spin")} aria-hidden="true"/>重新检测</button>
-            </div> : null}
-            {missing > 0 ? <p className="m-0 px-3.5 py-2.5 text-caption text-fg-3 hairline-t">另有 {missing} 个在目录中但未安装，可以在 Harness 页查看官方安装方式。HarnessHub 不会替你运行安装命令。</p> : null}
-          </section>
-        </BasePopover.Popup>
-      </BasePopover.Positioner>
-    </BasePopover.Portal>
-  </BasePopover.Root>;
+function PlacePicker({ place, onPlace, recents, chooseFolder }: Pick<WelcomeProps, "place" | "onPlace" | "recents" | "chooseFolder">) {
+  const [choosing, setChoosing] = useState(false), [typing, setTyping] = useState(false);
+  const chip = useRef<HTMLButtonElement>(null), field = useRef<HTMLInputElement>(null);
+  const pick = () => {
+    if (choosing) return;
+    setChoosing(true);
+    chooseFolder(place.workspace || undefined).then(path => { if (path !== null) onPlace({ scratch: false, workspace: path }); }, () => setTyping(true)).finally(() => setChoosing(false));
+  };
+  const folders = [...new Set([place.workspace, ...recents].filter(path => path.trim() !== ""))].slice(0, 8);
+  const label = (text: string, icon: ReactNode) => <span className="flex items-center gap-1.5">{icon}{text}</span>;
+  return <div className="place-picker mt-2.5 flex min-h-7 flex-wrap items-center gap-x-1.5 gap-y-1 px-1">
+    <Segmented label="对话在哪里进行" value={place.scratch ? "scratch" : "project"} onChange={value => onPlace({ ...place, scratch: value === "scratch" })}
+      options={[{ value: "scratch", label: label("临时对话", <MessageCircle size={13} aria-hidden="true"/>) }, { value: "project", label: label("项目", <Folder size={13} aria-hidden="true"/>) }]}/>
+    {place.scratch ? null : <Menu align="start" className="max-w-[min(420px,calc(100vw-24px))]"
+      trigger={<button ref={chip} type="button" aria-label={"项目文件夹：" + (folderName(place.workspace) || "未选择")} title={place.workspace}
+        className="motion-fade-in flex h-7 max-w-full min-w-0 items-center gap-1 rounded-row border-none bg-transparent px-2 text-ui-sm text-fg transition-[color,background-color] duration-120 ease-standard hover:bg-subtle data-[popup-open]:bg-subtle">
+        <span className="min-w-0 truncate">{folderName(place.workspace) || "选择文件夹"}</span>
+        {choosing ? <Spinner size={12} label="正在等你选择文件夹"/> : <ChevronDown size={12} strokeWidth={2} className="flex-none text-fg-3" aria-hidden="true"/>}</button>}
+      items={[
+        ...folders.map(path => ({ icon: <Folder size={14}/>, label: <span className="block max-w-[200px] truncate">{folderName(path)}</span>,
+          hint: <span className="block max-w-[180px] truncate" title={path}>{homePath(path.replace(/\/[^/]*\/*$/u, "")) || "/"}</span>,
+          checked: path === place.workspace, onSelect: () => onPlace({ scratch: false, workspace: path }) })),
+        ...(folders.length ? [{ separator: true as const }] : []),
+        { icon: <FolderOpen size={14}/>, label: "选择文件夹…", onSelect: pick },
+      ]}/>}
+    <Popover label="项目文件夹的路径" open={typing} onOpenChange={setTyping} anchor={chip} side="bottom" align="start" className="w-[420px] max-w-[calc(100vw-24px)]" initialFocus={field}>
+      <form className="flex items-center gap-2 p-2.5" onSubmit={event => {
+        event.preventDefault();
+        const value = field.current?.value.trim() ?? "";
+        if (value.startsWith("/")) { onPlace({ scratch: false, workspace: value }); setTyping(false); }
+      }}>
+        <input ref={field} aria-label="项目文件夹的路径" defaultValue={place.workspace} placeholder="/Users/you/project" className="field mono min-w-0 flex-1 text-code"/>
+        <button type="submit" className="btn btn-primary flex-none">好</button>
+      </form>
+    </Popover>
+  </div>;
 }

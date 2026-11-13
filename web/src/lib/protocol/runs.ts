@@ -34,12 +34,12 @@ export function latestPlan(runs: readonly PublicRun[]): { readonly run: TurnRun;
  * (Claude Code's TodoWrite, Codex's update_plan) or the Hub's hub_update_plan. A tie, the same Turn, is the loaded one's.
  */
 export function shownPlan(runs: readonly PublicRun[], head: { readonly runId: string; readonly harnessId: string; readonly steps: readonly PlanStep[] } | undefined):
-  { readonly harnessId: string; readonly steps: readonly PlanStep[] } | undefined {
-  const held = latestPlan(runs), loaded = held === undefined ? undefined : { harnessId: held.run.protocol.executor.harnessId, steps: held.plan.steps };
-  if (head === undefined || held === undefined) return loaded ?? (head === undefined ? undefined : { harnessId: head.harnessId, steps: head.steps });
+  { readonly harnessId: string; readonly runId: string; readonly steps: readonly PlanStep[] } | undefined {
+  const held = latestPlan(runs), loaded = held === undefined ? undefined : { harnessId: held.run.protocol.executor.harnessId, runId: held.run.id, steps: held.plan.steps };
+  if (head === undefined || held === undefined) return loaded ?? (head === undefined ? undefined : { harnessId: head.harnessId, runId: head.runId, steps: head.steps });
   // A head Turn outside the loaded ones is older than all of them.
   const index = (id: string) => runs.findIndex(run => run.id === id);
-  return index(held.run.id) >= index(head.runId) ? loaded : { harnessId: head.harnessId, steps: head.steps };
+  return index(held.run.id) >= index(head.runId) ? loaded : { harnessId: head.harnessId, runId: head.runId, steps: head.steps };
 }
 /** One row of a long task list as the bar shows it: a step (with its place in the list), or the steps folded away between two shown ones. */
 export type PlanRow = { readonly kind: "step"; readonly index: number } | { readonly kind: "fold"; readonly count: number };
@@ -71,7 +71,8 @@ function tasksOf(turn: ReadTurn): ReadonlySet<string> { return new Set(turn.item
 /** The actions the Turn itself took: the ones it listed, not what its delegated tasks did inside. */
 export function ownWork(turn: ReadTurn): readonly WorkItem[] {
   const tasks = tasksOf(turn);
-  return turn.items.filter((item): item is WorkItem => isWork(item) && !inside(item, tasks));
+  // The Hub's record of what the workspace changed is not an action of the Turn's.
+  return turn.items.filter((item): item is WorkItem => isWork(item) && !inside(item, tasks) && !(item.type === "file_change" && item.by === "hub"));
 }
 /** How many actions the Turn itself took. */
 export function stepCount(turn: ReadTurn): number { return ownWork(turn).length; }
@@ -80,11 +81,13 @@ export function endedAt(turn: Pick<ReadTurn, "startedAt" | "durationMs">): numbe
 /** The edits of a Turn that carry a stored detail, which is where their diff is: the places the conversation's changes are counted by. */
 /** The Hub's own record of what a Turn changed in its workspace (the `workspace` item), when it made one. */
 export function hubRecordOf(turn: Pick<ReadTurn, "items">): FileChangeItem | undefined { return turn.items.find((item): item is FileChangeItem => item.type === "file_change" && item.by === "hub"); }
-/** A Turn's changes with a stored detail: the Hub's record when there is one (what the workspace really changed), else the Harness's own edits. */
+/**
+ * A Turn's changes: the Hub's record when there is one (what the workspace really changed), else the Harness's own edits with a stored detail.
+ * A record without a diff (the workspace is not a repository) only names the files: the Harness's own edits are the changes when they carry the diffs.
+ */
 export function editsOf(turn: ReadTurn): readonly FileChangeItem[] {
-  const record = hubRecordOf(turn);
-  if (record !== undefined) return [record];
-  return turn.items.filter((item): item is FileChangeItem => item.type === "file_change" && item.detail !== undefined);
+  const record = hubRecordOf(turn), own = turn.items.filter((item): item is FileChangeItem => item.type === "file_change" && item.by !== "hub" && item.detail !== undefined);
+  return record !== undefined && !(record.detail === undefined && own.length > 0) ? [record] : own;
 }
 /** How many changes some Turns made, counted as places, known without reading any detail. */
 export function changeCount(runs: readonly PublicRun[]): number { return runs.reduce((count, run) => count + (run.protocol === undefined ? 0 : editsOf(run.protocol).length), 0); }

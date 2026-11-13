@@ -80,7 +80,7 @@ export function StoredDetail({ content, fallback, load, native }: { readonly con
 export function PlanView({ steps, explanation, owner, compact: small = false }: { readonly steps: readonly PlanStep[]; readonly explanation?: string | undefined; readonly owner?: string; readonly compact?: boolean }) {
   const done = steps.filter(step => step.status === "completed").length;
   return <section className={cn("native-plan flex flex-col", small ? "gap-2" : "gap-2.5")} aria-label="计划">
-    <p className="m-0 text-caption text-fg-3">{owner ? owner + " 维护的计划" : "计划"} · {done} / {steps.length} 完成</p>
+    <p className="m-0 text-caption text-fg-3">{owner ? owner + " · " : ""}{done} / {steps.length}</p>
     {explanation ? <p className="m-0 text-ui-sm text-fg-2">{explanation}</p> : null}
     <ol className={cn("m-0 flex list-none flex-col p-0", small ? "gap-2" : "gap-2.5")}>{steps.map((step, index) => <li key={index} className="flex items-start gap-2 text-ui-sm">
       <span role="img" aria-label={step.status === "completed" ? "已完成" : step.status === "in_progress" ? "进行中" : "待办"} className={cn("mt-[2.5px] flex flex-none", step.status === "completed" ? "text-fg-3" : step.status === "in_progress" ? "text-run" : "text-placeholder")}>
@@ -95,11 +95,16 @@ export function PlanView({ steps, explanation, owner, compact: small = false }: 
  */
 export interface Announcement { readonly severity: "info" | "warning" | "error"; readonly title: string; readonly detail?: string }
 export function NoticeList({ notices }: { notices: readonly Announcement[] }) {
-  return <div className="flex flex-col gap-1.5">{notices.map((notice, index) => <div key={index} role={notice.severity === "error" ? "alert" : "status"}
-    className={cn("native-notice flex items-start gap-2.5 rounded-block px-3 py-2.5 text-ui-sm", notice.severity === "error" ? "bg-red-soft" : "bg-surface shadow-hairline")}>
-    {notice.severity === "info" ? <Info size={16} className="mt-0.5 flex-none text-fg-3" aria-hidden="true"/> : <TriangleAlert size={16} className={cn("mt-0.5 flex-none", notice.severity === "error" ? "text-red" : "text-fg-2")} aria-hidden="true"/>}
-    <div className="min-w-0"><strong className={cn("font-semibold", notice.severity === "error" && "text-red-on-tint")}>{notice.title}</strong>{notice.detail ? <p className="m-0 mt-0.5 break-words text-fg-2">{notice.detail}</p> : null}</div>
-  </div>)}</div>;
+  // What the program said beside its work is a quiet line; only an error takes a fill.
+  return <div className="flex flex-col gap-1">{notices.map((notice, index) => notice.severity === "error"
+    ? <div key={index} role="alert" className="native-notice flex items-start gap-2 rounded-block bg-red-soft px-3 py-2 text-ui-sm">
+      <TriangleAlert size={14} className="mt-[3px] flex-none text-red" aria-hidden="true"/>
+      <div className="min-w-0 text-red-on-tint"><span className="font-medium">{notice.title}</span>{notice.detail ? <p className="m-0 mt-0.5 break-words">{notice.detail}</p> : null}</div>
+    </div>
+    : <div key={index} role="status" title={notice.detail ? notice.title + "\n" + notice.detail : notice.title} className="native-notice flex items-start gap-2 px-1.5 text-caption text-fg-3">
+      {notice.severity === "info" ? <Info size={13} className="mt-[1.5px] flex-none" aria-hidden="true"/> : <TriangleAlert size={13} className="mt-[1.5px] flex-none" aria-hidden="true"/>}
+      <span className="line-clamp-2 min-w-0 break-words">{notice.title}{notice.detail ? " " + notice.detail : ""}</span>
+    </div>)}</div>;
 }
 /** Files, images and links the program produced; an image is shown, files are downloaded, links open elsewhere. */
 export function OutputList({ outputs }: { outputs: readonly PublicOutput[] }) {

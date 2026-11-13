@@ -235,6 +235,8 @@ export interface KeptProcessView {
 export interface WebState {
   readonly providerManagement?: boolean;
   readonly workspace: string;
+  /** Where conversations started without a folder get theirs: a conversation whose workspace is inside it was started that way. */
+  readonly scratchRoot?: string;
   readonly providers: readonly ProviderView[];
   /** The last completed scan of this computer's Harnesses (ADR-050); reading the state never starts one. */
   readonly harnesses: readonly HarnessView[];
@@ -273,6 +275,8 @@ export interface InstallationLogPage {
 }
 export interface CreateWebSession {
   readonly workspace?: string;
+  /** Start without a folder: the Gateway gives the conversation one of its own. Not together with `workspace`. */
+  readonly scratch?: true;
   readonly selection: SelectionRequest;
   readonly commandId: string;
 }

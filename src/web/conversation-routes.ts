@@ -209,12 +209,19 @@ export class ConversationRoutes {
   private hubEdits(id: SessionId, version: number): { readonly places: readonly EditPlace[]; readonly files: number } {
     const kept = this.hubEditLists.get(id);
     if (kept !== undefined && kept.version === version) return kept.value;
-    const raw = this.rawEditsOf(id, version), records = new Map<RunId, { place: EditPlace; files: number }>();
+    const raw = this.rawEditsOf(id, version), records = new Map<RunId, { place: EditPlace; files: number; bare: boolean }>();
     for (const place of raw) {
       const row = this.options.facts.item(place.runId, place.seq);
-      if (row?.itemId === "workspace") records.set(place.runId, { place, files: (row.fields as { readonly changes?: readonly unknown[] }).changes?.length ?? 1 });
+      if (row?.itemId === "workspace") records.set(place.runId, { place, files: (row.fields as { readonly changes?: readonly unknown[] }).changes?.length ?? 1, bare: (row.fields as { readonly detail?: unknown }).detail === undefined });
     }
-    const places = raw.filter(place => { const record = records.get(place.runId); return record === undefined || record.place === place; });
+    // A record without a diff (the workspace is not a repository, as a conversation started without a folder) only names the files: where the
+    // Harness's own edits of that Turn carry the diffs, they are what is listed, and the record is not (2026-11-13).
+    const own = new Set<RunId>(raw.filter(place => records.get(place.runId)?.place !== place).map(place => place.runId));
+    const places = raw.filter(place => {
+      const record = records.get(place.runId);
+      if (record === undefined) return true;
+      return record.bare && own.has(place.runId) ? record.place !== place : record.place === place;
+    });
     const value = { places, files: places.reduce((sum, place) => sum + (records.get(place.runId)?.place === place ? records.get(place.runId)!.files : 1), 0) };
     remember(this.hubEditLists, id, { version, value });
     return value;

@@ -17,6 +17,7 @@ import type { ClientSessionView } from "./lib/protocol/wire.js";
 import type { TurnReads } from "./components/ProtocolTurn.js";
 import { liveItems, notifyWaiting } from "./attention.js";
 import { ApiError, errorMessage, GatewayApi, requestKey } from "./api.js";
+import type { Place } from "./components/Welcome.js";
 import { ChatPage, effectiveProviderProblem, EMPTY_SELECTION, selectionDraft, selectionProblem, selectionRequest } from "./components/ChatPage.js";
 import type { QueuedMessage, SelectionDraft } from "./components/ChatPage.js";
 import { HarnessesPage, installationActive } from "./components/HarnessesPage.js";
@@ -40,6 +41,7 @@ import { hiddenHarnesses, useMedia, useNow, usePreferences } from "./lib/prefs.j
 import { endedAt, over, userStopped } from "./lib/protocol/runs.js";
 import { finished } from "./lib/turn.js";
 import { cn } from "./lib/cn.js";
+import { inScratch } from "./lib/format.js";
 import { backgroundOutcome, enableNotifications, markNotificationAsked, notificationsOfferable, notifyTurnEnded } from "./lib/notify.js";
 import { useToast } from "./ui/overlay.js";
 import { LogoMark, Notice, Spinner, TipProvider } from "./ui/primitives.js";
@@ -73,6 +75,16 @@ function rememberedChoice(harnessId: string): { readonly controlId: string; read
     return { controlId: row.controlId, ...(typeof row.model === "string" ? { nativeModel: row.model } : {}), ...(row.nativeOptions === undefined ? {} : { nativeOptions: parseNativeOptions(row.nativeOptions) }) };
   } catch { return null; }
 }
+const PLACE_KEY = "harnesshub:new-chat-place";
+/** Where this browser last started a conversation: a project folder, or none. A convenience; without storage it starts from the Gateway's folder. */
+function readPlace(): Place {
+  try {
+    const raw = localStorage.getItem(PLACE_KEY), value: unknown = raw === null || raw.length > 8192 ? null : JSON.parse(raw);
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) { const row = value as Record<string, unknown>; return { scratch: row.scratch === true, workspace: typeof row.workspace === "string" && row.workspace.startsWith("/") ? row.workspace : "" }; }
+  } catch { /* starts from the default */ }
+  return { scratch: false, workspace: "" };
+}
+function writePlace(place: Place): void { try { localStorage.setItem(PLACE_KEY, JSON.stringify(place)); } catch { /* lasts for this page only */ } }
 function rememberChoice(draft: SelectionDraft, catalog: NativeModelCatalog | null): void {
   if (draft.providerId || !draft.harnessId || !draft.controlId) return;
   // Only thinking levels: the Hub's level, or a native one as the catalog names it; any other option the catalog does not describe is left out.
@@ -273,6 +285,9 @@ export function App() {
   const [messageDraft, setMessageDraft] = useState("");
   const [attachments, setAttachments] = useState<readonly AttachmentDraft[]>([]);
   const [workspace, setWorkspace] = useState("");
+  // A new conversation works in a project folder or, as a 临时对话, in none; this browser remembers the last choice.
+  const [scratch, setScratch] = useState(() => readPlace().scratch);
+  const choosePlace = useCallback((place: Place) => { setScratch(place.scratch); setWorkspace(place.workspace); writePlace(place); }, []);
   const [mutation, setMutation] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -377,7 +392,7 @@ export function App() {
         const snapshot = await api.state(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]));
         await openDraftStore();
         if (!ignored) {
-          setState(snapshot); setWorkspace(snapshot.workspace);
+          setState(snapshot); setWorkspace(readPlace().workspace || snapshot.workspace);
           const key = sessionIdRef.current ?? "new", saved = savedChatDraft(snapshot.workspace, key);
           if (saved && !chatDrafts.current.has(key)) { chatDrafts.current.set(key, saved); setMessageDraft(saved.message); setAttachments(draftAttachments(saved.attachments)); setDraft(saved.selection); pendingMessage.current = saved.messageIntent; pendingSwitchWrite.current = null; switchArmed.current = null; }
           void scanIfStale(snapshot, controller.signal).catch((failure: unknown) => { if (!ignored) setManagementConnectionError(errorMessage(failure)); });
@@ -784,7 +799,7 @@ export function App() {
       saveChatDraft();
       let id = request.sessionId;
       if (id === null) {
-        const created = await api.createSession(workspace, selectionRequest(draft), request.createKey);
+        const created = await api.createSession(scratch ? null : workspace, selectionRequest(draft), request.createKey);
         id = created.head.id; request.sessionId = id; chatDrafts.current.delete("new");
         draftStore?.write(draftStorageKey(state.workspace, "new"), null);
         sessionIdRef.current = id; writeSessionRoute(id); setSessionId(id); acceptSession(created);
@@ -1116,6 +1131,8 @@ export function App() {
     const id = session.id;
     setOutcomes(current => { const known = current.get(id); return known?.status === lastStatus && known.seq === lastSeq ? current : new Map(current).set(id, { status: lastStatus, seq: lastSeq }); });
   }, [session?.id, lastStatus, lastSeq]);
+  // The folders of earlier conversations, newest first, then the Gateway's own; those the Gateway made for a 临时对话 are not projects.
+  const recentFolders = useMemo(() => [...new Set([...(state?.sessions ?? []).map(item => item.workspace), state?.workspace ?? ""].filter(path => path !== "" && !inScratch(path, state?.scratchRoot)))].slice(0, 8), [state?.sessions, state?.workspace, state?.scratchRoot]);
   const failed = useMemo(() => new Set((state?.sessions ?? []).flatMap(item => {
     const known = outcomes.get(item.id);
     return known?.status === "failed" && known.seq === item.updatedSeq ? [item.id] : [];
@@ -1169,7 +1186,7 @@ export function App() {
   const shown: Page = page === "providers" && state.providerManagement === false ? "chat" : page;
   const inbox: InboxSource = { items: attentionItems, sessions: state.sessions, harnesses: state.harnesses, current: session, onLoad: (id, signal) => api.session(id, signal), onDecide: decideWaiting,
     onOpen: id => { setInboxOpen(false); setSidebarOpen(false); selectSession(id); } };
-  const sidebar = <Sidebar providerManagement={state.providerManagement !== false} page={shown} sessions={state.sessions} harnesses={state.harnesses} currentId={sessionId}
+  const sidebar = <Sidebar providerManagement={state.providerManagement !== false} page={shown} sessions={state.sessions} harnesses={state.harnesses} currentId={sessionId} scratchRoot={state.scratchRoot}
     interactionBusy={mutation !== null} activeJobs={state.jobs.filter(installationActive).length} updates={state.harnesses.filter(harness => !hidden.has(harness.id) && hasUpdate(harness)).length}
     failed={failed} connected={connectionError === null && managementConnectionError === null && !attentionDown} inbox={inbox} inboxOpen={inboxOpen && !narrow} onInboxOpenChange={setInboxOpen}
     more={state.sessionsNext != null} onMore={() => void loadMoreSessions()} onCollapse={() => showSidebar(false)} {...(narrow ? { onClose: () => setSidebarOpen(false), onInbox: openInbox } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => openLayer(() => setPalette(true))}/>;
@@ -1190,8 +1207,8 @@ export function App() {
           catch(failure){ setError(errorMessage(failure)); } }} onPermission={(permission,option,input)=>{ if(!sessionId||!startOperation("permission"))return; void api.decidePermission(sessionId,permission,option,requestKey(),input).then(()=>api.session(sessionId)).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={refreshNativeModels} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft}
         messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} hiddenHarnesses={hidden} readiness={state.readiness} rememberedChoice={rememberedChoice} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError}
-        onRetryConnection={() => setStreamAttempt(value => value + 1)} onLoadOlder={readOlder} reads={turnReads} {...(sessionId === null ? {} : { onLoadChanges: (before: string | undefined, signal: AbortSignal) => api.changes(sessionId, before, undefined, signal) })} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
-        sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued} onLoadNativeResume={session ? signal => api.nativeResume(session.id, signal) : undefined}
+        onRetryConnection={() => setStreamAttempt(value => value + 1)} onLoadOlder={readOlder} reads={turnReads} {...(sessionId === null ? {} : { onLoadChanges: (before: string | undefined, signal: AbortSignal) => api.changes(sessionId, before, undefined, signal) })} onDraft={changeSelection} place={{ scratch, workspace }} onPlace={choosePlace} recentFolders={recentFolders} onChooseFolder={start => api.chooseFolder(start)} scratchRoot={state.scratchRoot} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
+        sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued}
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
         onImportNative={importNative} focusOnOpen={sessionId !== null && openedFromPage === sessionId} onOpenFocused={() => setOpenedFromPage(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}
         onProviders={() => navigate("providers")} onNew={newChat} onMenu={shell.onMenu}

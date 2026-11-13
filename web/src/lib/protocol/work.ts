@@ -125,7 +125,8 @@ const glue = (object: string): string => object.startsWith("“") ? "" : " ";
  */
 export function workLabel(item: WorkItem): WorkLabel {
   const spec = specOf(item), voice = VOICE[item.status], verb = (spec.object === null ? spec.alone : spec.verbs)[voice];
-  const status = SAID_BY_VERB.has(item.status) ? null : ITEM_STATUS_WORDS[item.status];
+  // An action that has not started says so with its mark alone.
+  const status = SAID_BY_VERB.has(item.status) || item.status === "pending" ? null : ITEM_STATUS_WORDS[item.status];
   const facts = [spec.added > 0 ? "+" + spec.added : "", spec.removed > 0 ? "−" + spec.removed : "", spec.exit !== undefined && spec.exit !== 0 ? "退出码 " + spec.exit : ""].filter(Boolean);
   const lead = spec.object === null ? verb : verb + glue(spec.object) + spec.object;
   return { text: [lead, ...facts].join(" ") + (status === null ? "" : " · " + status), verb, object: spec.object, mono: spec.mono && spec.object !== null, status, title: spec.title,

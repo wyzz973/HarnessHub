@@ -37,7 +37,7 @@ export function InstallDialog({ api, harness, onClose, onConfirm }: {
     className="install-dialog w-[min(560px,calc(100vw-32px))]">
     <ConfirmBody>
       {failure ? <CheckFailed message={failure} onRetry={() => setAttempt(value => value + 1)}/>
-        : check === null ? <Checking>正在准备：下载官方安装脚本或读取 npm 上的版本…</Checking>
+        : check === null ? <Checking>正在准备…</Checking>
         : <>
           {check.blocked ? <Notice tone="red" title="现在不能安装" className="install-blocked">{check.blocked}</Notice> : null}
           <Facts className="install-facts">
@@ -52,7 +52,7 @@ export function InstallDialog({ api, harness, onClose, onConfirm }: {
           {check.configFiles.length ? <p className="install-config m-0 text-ui-sm text-fg-2">官方安装会写 {check.configFiles.join("、")}；完成后只列出改动了哪些设置，不显示其他内容。</p> : null}
           <p className="install-terminal m-0 text-ui-sm text-fg-2">{terminalLine(check)}</p>
           {check.notes.map(note => <p key={note} className="install-note m-0 text-ui-sm text-fg-2">{note}</p>)}
-          <p className="m-0 text-caption text-fg-3">安装程序在沙箱里只能写上面列出的位置，但它仍能读取你的家目录并联网，这与在终端运行官网命令相同。确认 15 分钟内有效。</p>
+          <p className="m-0 text-caption text-fg-3">安装程序在沙箱里只能写上面列出的位置，但它仍能读取你的家目录并联网，这与在终端运行官网命令相同。</p>
         </>}
     </ConfirmBody>
     <ConfirmFooter>

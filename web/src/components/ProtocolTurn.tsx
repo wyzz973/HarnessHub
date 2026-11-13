@@ -301,12 +301,12 @@ function EndView({ turn }: { readonly turn: ReadTurn }) {
 function LiveLine({ queue, startupHint, waiting, replying }: { readonly queue: QueueNotice | undefined; readonly startupHint: { readonly seconds: number; readonly usual: boolean } | undefined; readonly waiting: "approval" | "question" | undefined; readonly replying: boolean }) {
   const { run, turn } = useTurn(), now = useNow(true);
   const state = liveStatus({ turn, run, now, startupHint, queue, waiting, replying });
-  const since = turn.startedAt === undefined ? null : elapsed(now - turn.startedAt);
+  const since = turn.startedAt === undefined || now - turn.startedAt < 3000 ? null : elapsed(now - turn.startedAt);
   if (state.quiet) return null;
   return <div className="live-line motion-fade-in flex min-w-0 items-start gap-[7px] px-1.5 text-ui-sm text-fg-3" data-state={state.tone}>
     <LiveIcon tone={state.tone} className="mt-[2.5px]"/>
     <span className={cn("response-status min-w-0", state.thinking && "motion-breathe")} role="status">{state.wrap ? state.text : <SwapText text={state.text} shimmer={state.tone === "run"} className="max-w-full"/>}</span>
-    {state.timer && since !== null ? <span className="flex-none whitespace-nowrap">· 已用 {since}</span> : null}
+    {state.timer && since !== null ? <span className="motion-fade-in flex-none whitespace-nowrap tabular-nums">· {since}</span> : null}
   </div>;
 }
 
@@ -419,6 +419,8 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
   const arrangement = useMemo(() => arrange(turn, { asking: waiting === "approval" }), [turn, waiting]), over = arrangement.over, cancelling = run.cancelRequested;
   // A hand-over line comes in only when the Turn that carries it was accepted moments ago; one drawn with the page's history stays still.
   const [recent] = useState(() => run.timing !== undefined && Date.now() - run.timing.acceptedAt < 5000 && !turnIsOver(run));
+  // A Turn watched to its end brings its footer in; one found ended has it from the start.
+  const [watched] = useState(() => !turnIsOver(run));
   // The items the reader has seen: a Turn found as it is has none that come in; one watched running has each as it arrives.
   const [seen] = useState<Set<string>>(() => shownSteps(run.id) ?? new Set(turn.items.map(item => item.id)));
   useLayoutEffect(() => { rememberShown(run.id, seen); }, [run.id, seen]);
@@ -453,7 +455,7 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
         {children}
         {over ? <WorkspaceLine turn={turn}/> : null}
         {over ? <EndView turn={turn}/> : null}
-        <div className="turn-meta -mt-1 flex min-h-7 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-caption text-fg-3">
+        {over ? <div className={cn("turn-meta -mt-1 flex min-h-7 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-caption text-fg-3", watched && "motion-fade-in")}>
           <span className="turn-footer flex min-w-0 items-center gap-1.5"><BrandIcon brand={turn.executor.harnessId} name={harness} size={16}/><span className="min-w-0 break-words" title={turnFooter(turn)}>{turnByline(turn)}</span></span>
           <div className={cn("message-actions flex items-center gap-0.5 transition-opacity duration-150", quiet && "[@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100")}>
             {reply ? <ActionButton label={copy.state === "copied" ? "已复制回复" : "复制回复"} onClick={copy.write}>{copy.state === "copied" ? <Check size={14}/> : <Copy size={14}/>}</ActionButton> : null}
@@ -463,7 +465,7 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
             {retry ? <button type="button" className="btn btn-ghost btn-sm retry-response ml-1 min-w-24" onClick={() => onRetry(run.input, run.attachments)}><RotateCcw size={13}/>重试回复</button> : null}
           </div>
           {copy.state === "failed" ? <span className="text-red" role="status">无法使用剪贴板，可选中文本后复制。</span> : copy.state === "copied" ? <span className="sr-only" role="status">已复制</span> : null}
-        </div>
+        </div> : null}
       </> : null}
     </article>;
   })}</Context.Provider>;

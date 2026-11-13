@@ -1,11 +1,11 @@
 import { ChevronRight, Clock, File, FileText, ListChecks, X } from "lucide-react";
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { ITEM_STATUS_WORDS, TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import type { CommandItem, SubagentItem } from "../../../src/contracts/protocol.js";
 import type { FileChangeItem, PlanItem } from "../../../src/contracts/protocol.js";
 import type { PublicRun } from "../../../src/contracts/session.js";
-import type { HarnessView, NativeResumeView, SessionHeadView } from "../../../src/contracts/web.js";
+import type { HarnessView, SessionHeadView } from "../../../src/contracts/web.js";
 import type { ConversationView } from "../lib/conversation.js";
 import type { ClientConversationChanges, ClientConversationEdit } from "../lib/protocol/wire.js";
 import type { ProviderView } from "../../../src/contracts/provider.js";
@@ -21,7 +21,6 @@ import { EmptyState, Fact, Segmented, Spinner, StatusDot, Tabs } from "../ui/pri
 import { DiffLines, PlanView, type ToolDetailLoader } from "./Activity.js";
 import { dockedRequest } from "./Approval.js";
 import { BrandIcon } from "./BrandIcon.js";
-import { NativeResume } from "./NativeResume.js";
 import { TurnSteps } from "./ProtocolTurn.js";
 import { RelayDetails } from "./RelayDetails.js";
 import type { RelayView } from "../relay.js";
@@ -175,10 +174,9 @@ function RunDiagnostics({ runId, load }: { readonly runId: string; readonly load
     } catch { void text.catch(() => {}); setState("failed"); }
   };
   return <section className="run-diagnostics flex flex-col gap-2 hairline-t pt-3.5" aria-label="诊断信息">
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2"><button type="button" className="btn btn-sm diagnostics-copy" disabled={state === "busy"} onClick={() => void copy()}>{state === "busy" ? <><Spinner size={12} label=""/>正在准备诊断信息…</> : "复制诊断信息"}</button>
-      <label className="flex items-center gap-1.5 text-caption text-fg-2"><input type="checkbox" className="accent-accent" checked={content} onChange={event => { setContent(event.target.checked); setState("idle"); }}/>包含这一轮的提示词与回复</label></div>
-    <p className={cn("m-0 text-caption", state === "failed" ? "text-red" : "text-fg-3")} role="status">{state === "copied" ? `已复制诊断信息（${content ? "含" : "不含"}对话内容）。` : state === "failed" ? "无法复制诊断信息，请稍后再试。"
-      : "包含版本、各阶段耗时、结束原因、清理状态与本回合 stderr 的最后 4 KiB；已隐去路径、环境变量值和密钥样式的字符串。默认不含对话内容。"}</p>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2"><button type="button" className="btn btn-sm diagnostics-copy" disabled={state === "busy"} title="版本、各阶段耗时、结束原因、清理状态与本回合 stderr 的最后 4 KiB；路径、环境变量值和密钥样式的字符串已隐去" onClick={() => void copy()}>{state === "busy" ? <><Spinner size={12} label=""/>正在准备…</> : state === "copied" ? "已复制" : "复制诊断信息"}</button>
+      <label className="flex items-center gap-1.5 text-caption text-fg-2"><input type="checkbox" className="accent-accent" checked={content} onChange={event => { setContent(event.target.checked); setState("idle"); }}/>含对话内容</label></div>
+    <p className={cn("m-0 text-caption text-red", state !== "failed" && "sr-only")} role="status">{state === "copied" ? `已复制诊断信息（${content ? "含" : "不含"}对话内容）。` : state === "failed" ? "无法复制诊断信息，请稍后再试。" : ""}</p>
   </section>;
 }
 
@@ -189,7 +187,6 @@ interface PanelProps {
   readonly tab: PanelTab; readonly onTab: (tab: PanelTab) => void; readonly runId: string | null; readonly onRun: (id: string) => void;
   readonly loadToolDetail?: ToolDetailLoader | undefined;
   readonly loadDiagnostics?: ((runId: string, includeContent: boolean) => Promise<string>) | undefined;
-  readonly loadNativeResume?: ((signal: AbortSignal) => Promise<NativeResumeView | null>) | undefined;
   readonly onEndProcess?: (() => void) | undefined; readonly busy: boolean; readonly onClose?: (() => void) | undefined;
   /** The conversation's relay state, when the Gateway gives one: it adds the "接续" tab (relay-architecture §12.1). */
   readonly relay?: { readonly view: RelayView; readonly onViewPacket: (packetId: string) => void } | undefined;
@@ -227,11 +224,11 @@ export function DetailsPanel(props: PanelProps) {
     </div>
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${tab}`}>
       {tab === "changes" ? <Changes changes={changes} counts={{ turn: selected ? changeCount([selected]) : 0, all: total }} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}/>
-        : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <Empty>这个对话还没有执行记录。</Empty>
-        : tab === "plan" ? planned ? <div className="px-4 pt-3 pb-4"><PlanView steps={planned.steps} explanation={planned.explanation} owner={planned.owner}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划">Harness 报告计划后会显示在这里。</EmptyState>
+        : tab === "process" ? selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <Empty>还没有执行记录</Empty>
+        : tab === "plan" ? planned ? <div className="px-4 pt-3 pb-4"><PlanView steps={planned.steps} explanation={planned.explanation} owner={planned.owner}/></div> : <EmptyState icon={<ListChecks size={22}/>} title="还没有计划"/>
         : tab === "background" ? <Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/>
         : tab === "relay" && props.relay ? <RelayDetails view={props.relay.view} name={id => name(id)} onViewPacket={props.relay.onViewPacket}/>
-        : selected ? <RunFacts {...props} run={selected} runs={runs}/> : <Empty>发出第一条消息后，这里会显示执行者、阶段耗时与用量。</Empty>}
+        : selected ? <RunFacts {...props} run={selected} runs={runs}/> : <Empty>还没有执行记录</Empty>}
     </div>
   </div>;
 }
@@ -267,7 +264,7 @@ function Changes({ changes, counts, selected, workspace, name, sessionId }: { re
   const [scope, setScope] = useState<"turn" | "all">("all");
   const [chosen, setChosen] = useState<string | null>(null);
   useEffect(() => { setChosen(null); setScope("all"); }, [sessionId]);
-  if (!changes.edits) return <EmptyState icon={<FileText size={22}/>} title="还没有改动">Harness 在这个对话里编辑文件后，改动会按文件列在这里，只读，不提供撤销。</EmptyState>;
+  if (!changes.edits) return <EmptyState icon={<FileText size={22}/>} title="还没有改动"/>;
   const turn = selected ? changes.files.filter(file => file.runIds.has(selected.id)) : [];
   const files = scope === "turn" ? turn : changes.files;
   const current = files.find(file => file.path === chosen) ?? files[0];
@@ -285,17 +282,17 @@ function Changes({ changes, counts, selected, workspace, name, sessionId }: { re
         {file.add ? <span className="flex-none text-[11px] text-add-on-tint">+{file.add}</span> : null}{file.del ? <span className="flex-none text-[11px] text-del-on-tint">−{file.del}</span> : null}
       </button></li>;
     })}</ul> : null}
-    {changes.unread > 0 ? <p className="m-0 flex items-center gap-2 px-4 pb-3 text-caption text-fg-3">更早还有 {changes.unread} 处编辑没有读取。<button type="button" className="link-btn text-caption" onClick={changes.more}>再读取 {Math.min(40, changes.unread)} 处</button></p> : null}
+    {changes.unread > 0 ? <p className="m-0 flex items-center gap-2 px-4 pb-3 text-caption text-fg-3"><button type="button" className="link-btn text-caption" onClick={changes.more}>更早的 {changes.unread} 处编辑</button></p> : null}
     {changes.loading ? <p className="m-0 flex items-center gap-1.5 px-4 pb-3 text-caption text-fg-3"><Spinner size={12} label=""/>正在读取改动…</p> : null}
     {changes.failures.length ? <p className="m-0 px-4 pb-3 text-caption text-red">{changes.failures.length} 处改动读取失败：{changes.failures[0]}</p> : null}
     {current ? <section className="mx-3 mt-1 mb-3 min-w-0 overflow-hidden rounded-block bg-surface shadow-hairline" aria-label={"差异：" + workspacePath(current.path, workspace)}>
       <div className="flex h-9 items-center gap-2 px-3 text-caption text-fg-3 hairline-b">
         <span className="min-w-0 flex-1 trunc font-mono text-fg-2" title={current.path}>{workspacePath(current.path, workspace)}</span>
-        <span className="flex-none">只读 · 来自 {current.harnessIds.map(name).join("、")}</span>
+        <span className="flex-none">{current.harnessIds.map(name).join("、")}</span>
       </div>
       <div className="native-diff diff py-1.5" role="group" aria-label="差异">{current.diffs.map((diff, index) => <div key={index} className={cn(index > 0 && "hairline-t")}><DiffLines file={diff} headers={false}/></div>)}</div>
     </section>
-      : !changes.loading && !changes.failures.length ? <p className="m-0 px-4 pb-4 text-caption text-fg-3">{scope === "turn" && changes.files.length ? "这一轮没有改动文件。" : "Harness 改了文件，但没有返回差异文本。"}</p> : null}
+      : !changes.loading && !changes.failures.length ? <p className="m-0 px-4 pb-4 text-caption text-fg-3">{scope === "turn" && changes.files.length ? "这一轮没有改动文件" : "没有差异文本"}</p> : null}
   </div>;
 }
 
@@ -304,115 +301,92 @@ function Phases({ run }: { readonly run: PublicRun }) {
   if (!timing) return null;
   const end = timing.endedAt ?? now, total = Math.max(1, end - timing.acceptedAt);
   const rows: [string, number | undefined, number | undefined][] = [
-    [run.reused ? "启动原程序（复用保留的进程）" : "启动原程序", timing.preparingAt, timing.readyAt],
-    ["发送到首个输出", timing.dispatchedAt, timing.firstOutputAt],
+    ["启动", timing.preparingAt, timing.readyAt],
+    ["等首个输出", timing.dispatchedAt, timing.firstOutputAt],
     ["回复与工具", timing.firstOutputAt, timing.endedAt ?? (finished(run.status) ? undefined : now)],
   ];
   const visible = rows.filter(([, from, to]) => from !== undefined && to !== undefined);
   if (!visible.length) return null;
-  return <section className="flex flex-col gap-2" aria-label="本轮阶段"><span className="text-caption text-fg-3">本轮阶段</span>
+  return <section className="flex flex-col gap-2 hairline-t pt-3.5" aria-label="本轮阶段">
     {visible.map(([label, from, to]) => { const span = to! - from!; return <div key={label} className="grid grid-cols-[minmax(0,1fr)_76px] items-center gap-2.5">
       <span className="flex flex-col gap-1"><span className="text-ui-sm">{label}</span><span className="h-[5px] overflow-hidden rounded-full bg-subtle"><span className={cn("block h-full rounded-full", label === "回复与工具" ? "bg-accent" : "bg-fg-3")} style={{ width: Math.max(2, Math.round(span / total * 100)) + "%" }}/></span></span>
       <span className="mono text-right text-caption text-fg-2">{duration(span)}</span></div>; })}
   </section>;
 }
 /**
- * One Turn in the list of every Turn's steps: who ran it and what it did, opened to its timeline and steps. A Turn in progress carries
- * the blue dot of work going on; while it waits for the user (`waiting`) nothing of it runs, and its dot is the amber one of waiting, named
- * as the header names it. A Turn waiting in the queue has not started: a still grey dot, 排队中 (ruling N).
+ * One Turn in the list of every Turn's steps: what was asked, who ran it and what it did, opened to its steps. A Turn in progress
+ * carries the blue dot of work going on; while it waits for the user (`waiting`) its dot is the amber one of waiting, named as the
+ * header names it. A Turn waiting in the queue has not started: a still grey dot (ruling N).
  */
 function RunProcess({ run, open, onToggle, loadToolDetail, name, now, waiting }: { readonly run: PublicRun; readonly open: boolean; readonly onToggle: () => void; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly now: number; readonly waiting: string | null }) {
-  const turn = run.protocol, active = !finished(run.status), panel = useId(), at = (time: number | undefined) => time === undefined ? null : new Date(time).toLocaleTimeString("zh-CN", { hour12: false });
+  const turn = run.protocol, active = !finished(run.status), panel = useId();
   const harness = turn?.executor.harness ?? name(run.selection.harnessId), summary = turn === undefined ? "" : summarizeGroup(ownWork(turn)).text;
-  const time = turn === undefined ? "" : turn.durationMs !== undefined ? spentText(turn.durationMs) : active && turn.startedAt !== undefined ? "已用 " + elapsed(now - turn.startedAt) : "";
-  const status = TURN_STATUS_WORDS[stateOf(run)];
-  const steps: [string, number | undefined][] = [["收到消息", run.timing?.acceptedAt], ["开始启动原程序", run.timing?.preparingAt], ["原生会话就绪", run.timing?.readyAt], ["发给原程序", run.timing?.dispatchedAt], ["首个输出", run.timing?.firstOutputAt], [status, run.timing?.endedAt]];
-  const model = turn?.executor.model?.label;
+  const time = turn === undefined ? "" : turn.durationMs !== undefined ? spentText(turn.durationMs) : active && turn.startedAt !== undefined ? elapsed(now - turn.startedAt) : "";
+  const started = run.timing?.acceptedAt === undefined ? undefined : new Date(run.timing.acceptedAt).toLocaleString("zh-CN", { hour12: false });
   return <li className="flex min-w-0 flex-col">
-    <button type="button" className="row flex min-h-9 w-full min-w-0 items-center gap-2 border-none bg-transparent px-1.5 py-1.5 text-left text-ui-sm text-fg-2 hover:bg-subtle" aria-expanded={open} aria-controls={panel} onClick={onToggle}>
-      <BrandIcon brand={turn?.executor.harnessId ?? run.selection.harnessId} name={harness} size={18}/>
-      {/* What the Turn did and its time stay whole: in the narrow panel the line wraps between its parts, never in a number */}
-      <span className="min-w-0 flex-1 break-words"><span className="text-fg">{harness}</span>{[...(summary ? [summary] : []), ...(time ? [time] : [])].map((part, index) => <Fragment key={index}> · <span className="whitespace-nowrap">{part}</span></Fragment>)}</span>
-      {active ? waiting ? <StatusDot tone="wait" label={waiting}/> : stateOf(run) === "queued" ? <StatusDot tone="idle" label={TURN_STATUS_WORDS.queued}/> : <StatusDot tone="run" label={TURN_STATUS_WORDS.running}/> : null}
-      <span className="flex-none text-caption text-fg-3">第 {turn?.n ?? "?"} 轮</span>
-      <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
+    <button type="button" className="row flex w-full min-w-0 items-start gap-2.5 border-none bg-transparent px-2 py-1.5 text-left hover:bg-subtle" aria-expanded={open} aria-controls={panel} onClick={onToggle} {...(started ? { title: started } : {})}>
+      <BrandIcon brand={turn?.executor.harnessId ?? run.selection.harnessId} name={harness} size={18} className="mt-px"/>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="trunc text-ui-sm text-fg">{oneLine(run.input) || harness}</span>
+        <span className="trunc text-caption text-fg-3">{[harness, summary, time].filter(Boolean).join(" · ")}</span>
+      </span>
+      {active ? <span className="mt-[7px] flex flex-none">{waiting ? <StatusDot tone="wait" label={waiting}/> : stateOf(run) === "queued" ? <StatusDot tone="idle" label={TURN_STATUS_WORDS.queued}/> : <StatusDot tone="run" label={TURN_STATUS_WORDS.running}/>}</span> : null}
+      <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("mt-1 flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
     </button>
     <Collapsible open={open} id={panel}>
-      <div className="mb-2 ml-[15px] flex min-w-0 flex-col gap-3 border-l border-line-strong py-1 pl-3.5">
-        {model ? <p className="m-0 text-caption text-fg-3">{model}</p> : null}
-        <ol className="m-0 flex list-none flex-col gap-1.5 p-0" aria-label="时间线">{steps.filter(([, time]) => time !== undefined).map(([label, time]) => <li key={label} className="grid grid-cols-[64px_minmax(0,1fr)] items-baseline gap-2.5 text-ui-sm"><span className="mono text-[11.5px] text-fg-3">{at(time)}</span><span>{label}</span></li>)}</ol>
-        {turn === undefined ? <p className="m-0 text-caption text-red">这一轮无法显示：{run.protocolProblem ?? "服务没有给出这一轮的协议数据"}</p>
-          : ownWork(turn).length || turn.items.some(item => item.type === "reasoning" || item.type === "context_event") ? <div className="-ml-1.5 flex min-w-0 flex-col"><TurnSteps run={run} turn={turn} loadDetail={loadToolDetail} asking={waiting === "等你批准"}/></div>
-          : <p className="m-0 text-caption text-fg-3">这一轮没有调用工具。</p>}
+      <div className="mt-0.5 mb-2 ml-[17px] flex min-w-0 flex-col border-l border-line pl-2">
+        {turn === undefined ? <p className="m-0 px-1.5 py-1 text-caption text-red">这一轮无法显示：{run.protocolProblem ?? "服务没有给出这一轮的协议数据"}</p>
+          : ownWork(turn).length || turn.items.some(item => item.type === "reasoning" || item.type === "context_event") ? <TurnSteps run={run} turn={turn} loadDetail={loadToolDetail} asking={waiting === "等你批准"}/>
+          : <p className="m-0 px-1.5 py-1 text-caption text-fg-3">没有调用工具</p>}
       </div>
     </Collapsible>
   </li>;
 }
-/** Every Turn's steps, oldest first, the chosen one open (Conversation board: "两个 Harness 的全部步骤，按时间排列"). */
+/** Every Turn's steps, oldest first, the chosen one open. */
 function Process({ run, runs, onRun, loadToolDetail, name, waiting }: { readonly run: PublicRun; readonly runs: readonly PublicRun[]; readonly onRun: (id: string) => void; readonly loadToolDetail: ToolDetailLoader | undefined; readonly name: (id: string) => string; readonly waiting: (run: PublicRun) => string | null }) {
   const [closed, setClosed] = useState<string | null>(null);
   const now = useNow(runs.some(item => !finished(item.status)));
-  const harnesses = new Set(runs.map(item => item.protocol?.executor.harnessId ?? item.selection.harnessId)).size;
-  return <div className="flex flex-col gap-1 px-2.5 pt-3 pb-4">
-    <p className="m-0 px-1.5 pb-1 text-caption text-fg-3">{harnesses > 1 ? (harnesses === 2 ? "两个" : harnesses + " 个") + " Harness 的全部步骤，按时间排列" : "这个对话的全部步骤，按时间排列"}</p>
-    <ol className="m-0 flex list-none flex-col gap-px p-0">{runs.map(item => <RunProcess key={item.id} run={item} open={item.id === run.id && closed !== item.id} now={now} name={name} loadToolDetail={loadToolDetail} waiting={waiting(item)}
-      onToggle={() => { if (item.id === run.id) setClosed(closed === item.id ? null : item.id); else { setClosed(null); onRun(item.id); } }}/>)}</ol>
-  </div>;
+  return <ol className="m-0 flex list-none flex-col gap-px px-2 pt-2 pb-4">{runs.map(item => <RunProcess key={item.id} run={item} open={item.id === run.id && closed !== item.id} now={now} name={name} loadToolDetail={loadToolDetail} waiting={waiting(item)}
+    onToggle={() => { if (item.id === run.id) setClosed(closed === item.id ? null : item.id); else { setClosed(null); onRun(item.id); } }}/>)}</ol>;
 }
 function Background({ session, kept, items, busy, onEndProcess, name }: { readonly session: ConversationView; readonly kept: NonNullable<SessionHeadView["retention"]>["process"] | null; readonly items: readonly { readonly run: PublicRun; readonly item: SubagentItem | CommandItem }[]; readonly busy: boolean; readonly onEndProcess?: (() => void) | undefined; readonly name: (id: string | undefined) => string }) {
   const now = useNow(kept !== null), keeper = kept ? name(kept.harnessId) : "原程序";
-  const hint = session.retention?.enabled ? "已开启保持原生进程：下一轮结束后原程序会留在后台。" : "回合结束时原程序随之关闭。需要它在后台继续运行任务时，在 Harness 选择器（⌘J）底部打开“高级配置…”，开启“保持原生进程”。";
   return <div className="flex flex-col gap-3 px-4 pt-3 pb-4">
     {kept ? <div className="kept-panel flex flex-col gap-2 rounded-block bg-surface p-3 shadow-hairline">
-      <div className="flex items-center gap-2"><StatusDot tone="run"/><strong className="text-ui-sm font-semibold">原生进程保留中</strong></div>
-      <p className="m-0 text-ui-sm text-fg-2">回合之间不关闭 {keeper}，它在后台运行的任务可以继续，下一条消息也不必重新启动。空闲 30 分钟后结束。</p>
+      <div className="flex items-center gap-2"><StatusDot tone="run"/><strong className="text-ui-sm font-medium">{keeper} 保留在后台</strong></div>
       <div className="flex flex-wrap items-center gap-3 text-caption text-fg-3"><span>后台活动 {kept.backgroundUpdates} 条</span><span>{Math.max(1, Math.round((kept.idleEndsAt - now) / 60000))} 分钟后结束</span></div>
       {onEndProcess ? <button type="button" className="btn btn-sm self-start" disabled={busy} onClick={onEndProcess}>结束后台进程</button> : null}
     </div> : null}
     {session.retention?.upgraded ? <p className="kept-upgraded m-0 rounded-block bg-subtle px-3 py-2.5 text-ui-sm text-fg-2">升级 {name(session.retention.upgraded.harnessId)} 前，HarnessHub 关闭了这个对话保留的后台进程。下一条消息会用新版本重新启动原程序。</p> : null}
     {session.retention?.outside ? <p className="m-0 rounded-block bg-subtle px-3 py-2.5 text-ui-sm text-fg-2">原程序的后台任务可能仍在运行（{session.retention.outside.count} 个进程）：它们已离开原程序的进程组，HarnessHub 没有结束它们。</p> : null}
     {items.length ? <>
-      <span className="text-caption text-fg-3">后台任务与子任务</span>
       <ul className="m-0 flex list-none flex-col gap-px p-0">{items.map(({ item }) => <li key={item.id} className="flex min-h-[30px] items-center gap-2.5 px-1 text-ui-sm">
         <StatusDot tone={item.status === "running" ? "run" : item.status === "failed" ? "fail" : "idle"}/>
         <span className="min-w-0 flex-1"><span className="text-fg-3">{item.type === "subagent" ? "子任务" : "后台命令"} · </span>{item.type === "subagent" ? item.title : oneLine(item.command)}</span>
         <span className={cn("flex-none text-caption", item.status === "failed" ? "text-red" : "text-fg-3")}>{ITEM_STATUS_WORDS[item.status]}</span></li>)}</ul>
-    </> : kept ? null : <EmptyState icon={<Clock size={22}/>} title="没有后台任务">Harness 在后台运行的命令和子任务会出现在这里。</EmptyState>}
-    {kept ? null : <p className="m-0 text-center text-caption text-fg-3">{hint}</p>}
+    </> : kept ? null : <EmptyState icon={<Clock size={22}/>} title="没有后台任务"/>}
   </div>;
 }
 function RunFacts(props: PanelProps & { readonly run: PublicRun; readonly runs: readonly PublicRun[] }) {
   const { run, session } = props, turn = run.protocol, terminal = finished(run.status);
   const harnessId = turn?.executor.harnessId ?? run.selection.harnessId;
   const harness = props.harnesses.find(row => row.id === harnessId), provider = props.providers.find(row => row.id === run.selection.provider?.providerId);
-  const version = harness?.management.programVersion ?? harness?.management.installedVersion, adapter = harness && harness.management.programVersion && harness.management.installedVersion && harness.management.programVersion !== harness.management.installedVersion ? harness.management.installedVersion : null;
-  const nativeState = session.nativeStates?.find(state => state.harnessId === session.selection.harnessId && state.controlId === session.selection.controlId);
-  const options = Object.entries(run.selection.nativeOptions ?? {});
+  const version = harness?.management.programVersion ?? harness?.management.installedVersion;
   const model = turn?.executor.model;
   return <div className="execution-details flex flex-col gap-4 px-4 pt-3.5 pb-4 text-ui-sm">
     <RunPicker runs={props.runs} run={run} onRun={props.onRun}/>
-    <dl className="m-0 grid grid-cols-[96px_minmax(0,1fr)] gap-x-3 gap-y-2">
-      <Fact label="执行者"><span className="inline-flex items-center gap-1.5"><BrandIcon brand={harnessId} name={turn?.executor.harness ?? harness?.name ?? harnessId} size={16}/>{turn?.executor.harness ?? harness?.name ?? harnessId}{version ? ` ${version}` : ""}{adapter ? ` · 接入口 ${adapter}` : ""}</span></Fact>
-      <Fact label="模型连接">{provider?.name ?? (run.selection.provider ? "Provider" : "Harness 原生连接")}</Fact>
-      <Fact label="模型">{model === undefined ? "本机默认" : <>{model.label}{model.id !== model.label ? <> · <code className="text-code">{model.id}</code></> : null}</>}</Fact>
-      {run.selection.provider ? <Fact label="配置版本">{run.selection.provider.revision}</Fact> : null}
-      {options.length ? <Fact label="原生选项">{options.map(([id, value]) => `${id} ${value}`).join("、")}</Fact> : null}
-      <Fact label="控制入口"><code className="text-code">{run.selection.controlId}</code></Fact>
+    <dl className="m-0 grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-2">
+      <Fact label="执行者"><span className="inline-flex items-center gap-1.5"><BrandIcon brand={harnessId} name={turn?.executor.harness ?? harness?.name ?? harnessId} size={16}/>{turn?.executor.harness ?? harness?.name ?? harnessId}{version ? ` ${version}` : ""}</span></Fact>
+      {model ? <Fact label="模型"><span title={model.id}>{model.label}</span></Fact> : null}
+      {provider ? <Fact label="模型连接">{provider.name}</Fact> : null}
       <Fact label="工作区"><span className="mono text-code" title={session.workspace}>{homePath(session.workspace) || folderName(session.workspace)}</span></Fact>
-      <Fact label="执行状态">{waitingWords(session, run) ?? (turn === undefined ? TURN_STATUS_WORDS[stateOf(run)] : statusText(turn))}</Fact>
-      <Fact label="执行标识"><code className="text-code break-all">{run.id}</code></Fact>
+      <Fact label="状态">{waitingWords(session, run) ?? (turn === undefined ? TURN_STATUS_WORDS[stateOf(run)] : statusText(turn))}</Fact>
       {turn?.durationMs !== undefined ? <Fact label="用时">{spentText(turn.durationMs)}</Fact> : null}
-      {run.timing?.readyAt !== undefined && run.timing.preparingAt !== undefined ? <Fact label="启动原程序">{duration(run.timing.readyAt - run.timing.preparingAt)}{run.reused ? "（复用保留的进程）" : ""}</Fact> : null}
-      {run.timing?.firstOutputAt !== undefined && run.timing.dispatchedAt !== undefined ? <Fact label="发送后首个输出">{duration(run.timing.firstOutputAt - run.timing.dispatchedAt)}</Fact> : null}
       {turn === undefined ? <Fact label="协议数据">这一轮无法显示：{run.protocolProblem ?? "服务没有给出这一轮的协议数据"}</Fact> : usageFacts(turn).map(([label, value]) => <Fact key={label} label={label}>{value}</Fact>)}
       {run.error ? <Fact label="错误代码"><code className="text-code">{run.error.code}</code></Fact> : null}
     </dl>
     <Phases run={run}/>
-    {turn?.status === "unknown" ? <p className="m-0 rounded-block bg-amber-soft px-3 py-2.5 text-ui-sm text-amber-on-tint">请先核实执行结果。这个请求不会自动重新执行。</p> : turn?.status === "completed" ? <p className="m-0 text-caption text-fg-3">本轮执行已结束，结果仍需由你确认。</p> : null}
+    {turn?.status === "unknown" ? <p className="m-0 rounded-block bg-amber-soft px-3 py-2.5 text-ui-sm text-amber-on-tint">结果未知，不会自动重新执行。</p> : null}
     {props.loadDiagnostics && terminal ? <RunDiagnostics key={run.id} runId={run.id} load={props.loadDiagnostics}/> : null}
-    {nativeState && run.id === props.runs.at(-1)?.id ? <section className="flex flex-col gap-2.5 hairline-t pt-3.5" aria-label="原生会话">
-      <span className="text-caption font-medium text-fg-2">原生会话 · {nativeState.status === "ready" ? "继续已有会话" : nativeState.status === "forking" ? "正在建立分支副本" : "状态待确认"}</span>
-      {nativeState.status === "ready" && props.loadNativeResume ? <NativeResume key={session.id + ":" + nativeState.harnessId + ":" + nativeState.controlId} load={props.loadNativeResume}/> : null}
-    </section> : null}
   </div>;
 }
