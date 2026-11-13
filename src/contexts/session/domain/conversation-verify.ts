@@ -395,6 +395,7 @@ export const verifyTransition: VerifyTransition = (before: Conversation, after: 
   if (newBindings.length < oldBindings.length) say("transition-bindings-kept", here, "a native binding was erased");
   const added = after.commands.slice(before.commands.length), writer = after.runs.find(run => run.id === (before.activeRunId ?? after.activeRunId));
   const cleared = writer !== undefined && events.some(event => event.type === "run.ended" && event.data.runId === writer.id && clearedNative(event.data.native));
+  const reseated = writer !== undefined && events.some(event => event.type === "native.binding_reseated" && event.data.runId === writer.id);
   for (let index = 0; index < newBindings.length; index++) {
     const old = oldBindings[index], next = newBindings[index]!, where = "binding " + index + " (" + next.harnessId + "/" + next.controlId + ")";
     if (old !== undefined && same(old, next)) continue;
@@ -405,7 +406,7 @@ export const verifyTransition: VerifyTransition = (before: Conversation, after: 
       || old.status === "forking" && next.status === "ready" || (old.status === "fork-pending" || old.status === "forking") && next.status === "archived" && next.checkpoint === old.checkpoint);
     if (!reset && !forked && (!writer || writer.selection.provider !== undefined || writer.selection.harnessId !== next.harnessId || writer.selection.controlId !== next.controlId || next.throughRunId !== null && next.throughRunId !== old?.throughRunId && next.throughRunId !== writer.id))
       say("transition-binding-owner", where, "native state changed without its original Run owner");
-    if (!reset && !forked && old !== undefined && next.status === "archived" && (!cleared || !frozen)) say("transition-binding-archive", where, "a native binding is archived only by a native reset, a failed branch or a confirmed native clear");
+    if (!reset && !forked && old !== undefined && next.status === "archived" && (!(cleared || reseated) || !frozen)) say("transition-binding-archive", where, "a native binding is archived only by a native reset, a failed branch, a confirmed native clear or the Hub's own successor to a full one");
     const behind = relayForward(old?.relay, next.relay);
     if (behind !== null) say("transition-relay-forward", where, behind);
   }

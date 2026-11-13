@@ -558,6 +558,11 @@ export interface SessionRuntimeOptions {
    * conversation's (`place`, which reads nothing and writes nothing), and what brings it up to the record before a Harness is told to read it (`ensure`).
    * Absent: no Harness is told of a directory.
    */
+  /**
+   * How full the window of a native session may be at the end of a Turn before the Hub opens a new native session for the next one (2026-11-13), as a share of the
+   * window the Harness reported (0–1). Absent: the Runtime's own (RESEAT_AT). Null: the Hub never does it.
+   */
+  readonly reseatAt?: number | null;
   readonly context?: { place(id: SessionId): { readonly dir: string; readonly self: string }; ensure(id: SessionId): Promise<void>;
     /**
      * The state of the task as the conversation stands in it (src/web/task-state.ts), as its Harness reads it before the Turn `upTo`; null when there is nothing to say.

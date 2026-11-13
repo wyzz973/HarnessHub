@@ -23,7 +23,7 @@ import { outlineOf, rowsHistory, type RelayHistory } from "../domain/relay/histo
 import { turnSource } from "../domain/turn-source.js";
 import { toolFamily } from "../domain/protocol/index.js";
 import { commandEffect, commandOutcome, dispatched, type InputOutcome } from "../domain/relay/advance.js";
-import { initialBindingRelay, owed, plan, type RelayFact } from "../domain/relay/delivery.js";
+import { initialBindingRelay, owed, plan, step, type RelayFact } from "../domain/relay/delivery.js";
 import { BLOCKED_CODES, RelayError, type BindingRelayState, type DeliveryRecord, type RelayAttention, type RelayCapabilities, type RelayDeliveryWrite, type RelayIndexRow, type RelayInstallationNotice, type RelayKeyPort, type RelayLogPort, type RelayPacket, type RelayPrefKey, type RelayStorePort } from "../../../contracts/relay.js";
 import { relayRedactor, restoreLabels } from "../domain/relay/redaction.js";
 import { hardCap, packetBudget, resolveWindow, type ResolvedWindow } from "../domain/relay/windows.js";
@@ -111,7 +111,23 @@ interface KeptProcess {
   readonly identity?: KeptProcessIdentity;
 }
 /** Why a kept process was closed; each close is recorded for its conversation. */
-type KeptRelease = "idle" | "disabled" | "ended_by_user" | "selection_changed" | "conversation_closed" | "native_reset" | "branched" | "exited" | "gateway_shutdown" | "harness_upgrade";
+type KeptRelease = "idle" | "disabled" | "ended_by_user" | "selection_changed" | "conversation_closed" | "native_reset" | "native_reseated" | "branched" | "exited" | "gateway_shutdown" | "harness_upgrade";
+/**
+ * How full a native session's window is, at the end of a Turn, when the Hub opens a new native session for the next one (2026-11-13). Why this one: a Harness compacts
+ * its own session somewhere above it, and what it keeps after that the Hub cannot see — where exactly is not published and the accounts differ (Claude Code between
+ * about 64% and 84% of the window, Codex between 80% and 95%, OpenCode at the window less some 20,000 tokens), so this stands a Turn's growth below the most usual of
+ * them. An operator's HARNESSHUB_RESEAT_AT replaces it, or turns it off.
+ *
+ * What the new session is handed is a packet of at most half of that level (not half of the window, as a handoff's is): the session then has to grow by as much again
+ * before the next time, so what the Hub makes a Harness read again never exceeds what was newly done. Measured before this rule (2026-11-13, S12): a conversation made
+ * of the user's own long messages was carried whole, the new session was as full as the old one (77% and 77%), and the next Turn opened another. And a session that
+ * was opened with the conversation and was this full after its first Turn is left to its Harness: another one would be no emptier.
+ */
+export const RESEAT_AT = 0.75;
+/** What the Harness is told when its Turn runs in a native session the Hub opened in the place of a nearly full one; the packet before it and the state after it say the rest. */
+const RESEATED_NOTE = "（HarnessHub：你原来的原生会话上下文快满了，这是 HarnessHub 给你换的新会话。上面是这段对话到现在的内容，里面多数是你自己做的；接着做，不要从头再来。）";
+/** The same where the Turn could carry no packet (it could not be prepared, or does not fit): the new session is told so, and the state after it says where things stand. */
+const RESEATED_BARE_NOTE = "（HarnessHub：你原来的原生会话上下文快满了，这是 HarnessHub 给你换的新会话。之前的对话这一轮没能带过来；接着做之前先弄清现在做到哪了，不要从头再来。）";
 /** A kept process without a Turn for this long is closed (ADR-030). */
 export const KEPT_IDLE_MS = 30 * 60 * 1000;
 function sameSelection(left: HarnessSelection, right: HarnessSelection): boolean {
@@ -736,9 +752,33 @@ export class SessionRuntime {
     if ((prev as { readonly commandEffect?: unknown }).commandEffect === "compact") return true;
     try { if (turnSource(this.store, state.id).turn(at - 1)?.run.activities?.some(activity => activity.kind === "compaction") === true) return true; } catch { /* told by the usage below, if at all */ }
     const earlier = at > 1 ? state.runs[at - 2] : undefined, used = (row: ConversationRun) => row.usage?.context?.used;
-    if (!same(earlier)) return false;
+    // Two Turns of one native session only: a new one (after a clear, or one the Hub opened in the place of a full one) starts small without having compacted anything.
+    if (!same(earlier) || prev.relay?.executedOn?.nativeEpoch !== earlier.relay?.executedOn?.nativeEpoch) return false;
     const now = used(prev), before = used(earlier);
     return typeof now === "number" && typeof before === "number" && before > 0 && now < 0.5 * before;
+  }
+  /**
+   * Whether the native session of `binding` is nearly full, so that the Hub opens a new one for the Turn `run` (2026-11-13): the last Turn dispatched into it told how
+   * much of its window was used and how large the window is, and the share is at or above the threshold (RESEAT_AT, or the operator's). Never for an input that may be a
+   * command (it is meant for the session as it is: `/compact`, `/clear`), nor where the new session would be handed nothing (the user sends this input alone, the
+   * installation hands nothing over by itself, the relay's record could not be recovered), nor for a session that told of no window, nor for one a new session would
+   * not be emptier than.
+   */
+  private nearlyFull(state: Conversation, run: ConversationRun, binding: NativeSessionBinding, typed: string): { readonly used: number; readonly size: number } | null {
+    const at = this.reseatAt(), relay = binding.relay;
+    if (at === null || relay === undefined || binding.opensNew === true || binding.throughRunId === null || binding.status !== "ready") return null;
+    if (typed.trimStart().startsWith("/") || state.relayRecoveryFailed !== undefined || this.settings().attach === "off" || this.choicesOf(state, run).attach === "none") return null;
+    const full = (row: ConversationRun | undefined): { readonly used: number; readonly size: number } | null => {
+      const context = row?.usage?.context;
+      return context === undefined || typeof context.size !== "number" || context.size <= 0 || context.used < at * context.size ? null : { used: context.used, size: context.size };
+    };
+    const now = full(state.runs.find(row => row.id === binding.throughRunId));
+    if (now === null) return null;
+    // A session that was opened with the conversation (a packet of the whole of it) and was this full after its first Turn: another one would be handed the same and be no
+    // emptier. It is left to its Harness.
+    const first = state.runs.find(row => row.relay?.executedOn?.harnessId === binding.harnessId && row.relay.executedOn.controlId === binding.controlId && row.relay.executedOn.nativeEpoch === relay.epoch);
+    if (first?.relay?.continuity.kind === "rehydrate" && full(first) !== null) return null;
+    return now;
   }
   /** Where the Harness of a binding reads the record as files: when it does (recordFiles) and the Hub keeps the directory; null otherwise. */
   private recordPlace(id: SessionId, binding: PreparedSessionBinding | null | undefined): { readonly dir: string; readonly self: string } | null {
@@ -1347,6 +1387,11 @@ export class SessionRuntime {
   private readonly windows = new Map<string, number>();
   /** The writes of the record's directory that a Turn's end began and did not wait for: the close waits for them. */
   private readonly recordWork = new Set<Promise<void>>();
+  /** How full a native session may be before the Hub opens a new one (RESEAT_AT, or the operator's); null: never. */
+  private reseatShare: number | null | undefined = undefined;
+  /** Sets how full a native session may be before the Hub opens a new one for the next Turn: a share of its window, null for never, undefined for the Runtime's own. */
+  setReseatAt(share: number | null | undefined): void { this.reseatShare = share === undefined || share === null || Number.isFinite(share) && share > 0 && share <= 1 ? share : undefined; }
+  private reseatAt(): number | null { const set = this.reseatShare === undefined ? this.options.reseatAt : this.reseatShare; return set === undefined ? RESEAT_AT : set; }
   close(): Promise<void> {
     if (this.shutdown) return this.shutdown;
     this.accepting = false;
@@ -2137,6 +2182,8 @@ export class SessionRuntime {
     // was never prompted, so a Turn that ends before dispatching into it keeps the binding opening a new one (G068 fix batch 2,
     // I-1a). C5 (I-1b): the checkpoint the Driver refused as a session it does not have, and how its connection was closed.
     let openedNew = false, replacedEmpty: string | null = null, refusedCleanup: CleanupEvidence | null = null;
+    // Whether the Hub opened this Turn's native session in the place of one that was nearly full.
+    let reseated = false;
     try {
       // Conversations that came to this workspace before this one and still work in it: this Turn does not wait for them, it says they are there.
       const company = this.coworkers(id, state.configuration.workspace);
@@ -2144,9 +2191,25 @@ export class SessionRuntime {
       this.placed(execution, company.length === 0 ? null : hubNotice(sharedNotice(company.length), this.options.now().getTime()),
         [event("run.preparing", { runId: target, selection: state.selection, epoch: state.epoch }), ...(company.length === 0 ? [] : [event("run.workspace_shared", { runId: target, otherSessionIds: company })])],
         { always: true, patch: current => ({ ...updatedRun(current, target, { status: "preparing", selection: pinned, epoch: waitedSwitch ? current.epoch : queued.epoch, ...phase(current, target, "preparingAt", this.options.now().getTime()) }), activeRunId: target }) });
-      const current = this.owned(execution), run = this.continue(execution), typed = inputOf(run);
+      let current = this.owned(execution);
+      const run = this.continue(execution), typed = inputOf(run);
       previousNative = run.selection.provider === undefined ? current.nativeBindings?.find(binding => binding.harnessId === run.selection.harnessId && binding.controlId === run.selection.controlId && binding.status !== "archived") : undefined;
       if (previousNative !== undefined && previousNative.status !== "ready") throw new SessionError("NATIVE_STATE_UNCONFIRMED", "原生会话状态尚未确认；可以切换其他 Harness，或明确建立新的原生分支。公共历史会保留。");
+      // A native session that is nearly full gets a successor (2026-11-13): the Hub archives its binding as it is — nothing of the conversation is given up, so the clear
+      // floor stays — and the binding that takes its place opens a new native session, which holds nothing: the Turn then carries the conversation to it as to any
+      // Harness that was not in it, with the task's state, and the rest is in the record. A process the conversation kept holds the old session and is closed first.
+      const full = previousNative === undefined ? null : this.nearlyFull(current, run, previousNative, typed);
+      if (full !== null && previousNative !== undefined) {
+        if (this.kept.has(id)) { await this.release(id, "native_reseated"); this.continue(execution); }
+        const old = previousNative, h = old.harnessId, c = old.controlId, relay = step(old.relay!, { kind: "reseated" });
+        const successor: NativeSessionBinding = { harnessId: h, controlId: c, checkpoint: old.checkpoint, throughRunId: null, status: "ready", ...(old.observed === undefined ? {} : { observed: old.observed }), relay, opensNew: true };
+        this.placed(execution, { kind: "notice", severity: "info", title: "上下文用到 " + Math.min(100, Math.round(100 * full.used / full.size)) + "%，换到新的原生会话接着做", code: "NATIVE_RESEATED", at: this.options.now().getTime() },
+          [event("native.binding_reseated", { runId: target, harnessId: h, controlId: c, used: full.used, size: full.size, nativeEpoch: relay.epoch, floor: relay.floor })],
+          { always: true, patch: latest => ({ ...latest, nativeBindings: [...(latest.nativeBindings ?? []).map(binding => binding.harnessId === h && binding.controlId === c && binding.status !== "archived" ? { ...binding, status: "archived" as const } : binding), successor] }) });
+        current = this.owned(execution);
+        previousNative = current.nativeBindings?.find(binding => binding.harnessId === h && binding.controlId === c && binding.status !== "archived");
+        reseated = true;
+      }
       // A process the conversation kept takes the Turn when it still runs this selection; any other kept process is closed first
       // and the Turn starts the program as usual (ADR-030).
       reusing = run.selection.provider === undefined ? await this.takeKept(id, run.selection) : null;
@@ -2293,7 +2356,9 @@ export class SessionRuntime {
             // The window the packet is budgeted against, and what the channel leaves it. The history is left out whole to fit; the renderer
             // never fails, and when even its least packet is over the cap (below) the input goes as typed.
             const resolved = resolveWindow(history, asked, this.windows.get(windowKey(run.selection)) ?? null), limit = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(typed, kinds) ?? [...typed].length;
-            const cap = hardCap(resolved, estimateTokens(typed), limit, size);
+            // A session the Hub opened in the place of a nearly full one is handed half of the level it was replaced at (RESEAT_AT's account), not half of the window.
+            const level = reseated ? this.reseatAt() : null;
+            const cap = Math.min(hardCap(resolved, estimateTokens(typed), limit, size), level === null ? Number.POSITIVE_INFINITY : Math.floor(level * resolved.size / 2));
             // Delegated work is handed the history as any handoff is (2026-11-13: a tighter budget for it was taken out the day it was put in; what it saved was little,
             // and a Harness that has to fetch what it was not given is slower and less sure than one that was given it).
             const budget: RelayBudget = packetBudget(resolved, cap), standard = packetBudget(resolved, Number.POSITIVE_INFINITY);
@@ -2424,13 +2489,16 @@ export class SessionRuntime {
       const delegated = command === null && this.load(id).delegation !== undefined && this.load(id).runs[0]?.id === target && toolsUsable() ? DELEGATED_NOTE : null;
       // The task's state, said whole where this Harness may not hold it any more (2026-11-13): it takes the conversation over or comes back to it (the Turn carries a
       // packet), or its own session was compacted in the Turn before. It holds the board, which is then not said a second time.
-      const cause = command !== null ? null : packet !== null ? "handoff" : this.compactedBefore(this.load(id), target) ? "compaction" : null;
-      // A handoff that carries the whole conversation says the conversation's own part of the state already: only the task's part is added to it.
+      const cause = command !== null ? null : reseated ? "reseat" : packet !== null ? "handoff" : this.compactedBefore(this.load(id), target) ? "compaction" : null;
+      // A handoff that carries the whole conversation says the conversation's own part of the state already: only the task's part is added to it. A native session the
+      // Hub opened in the place of a full one is told the whole state: it is the same Harness in the middle of its own work, and where it stands comes first.
       const standing = cause === null ? null : this.options.context?.state?.(id, target, recordAt() !== null, cause === "handoff" && packet?.record.complete === true ? "task" : "whole") ?? null;
       if (standing !== null) {
-        const version = this.taskBoard(id).version;
-        this.placed(execution, { kind: "notice", severity: "info", title: cause === "compaction" ? "它压缩过上下文，重新带上了任务现在的状态" : "带上了任务现在的状态", code: "TASK_STATE_TOLD", at: this.options.now().getTime() },
-          [event("run.task_state_told", { runId: target, cause })], { always: true, patch: current => ({ ...current, taskBoardTold: Math.max(current.taskBoardTold ?? 0, version) }) });
+        const version = this.taskBoard(id).version, patch = (current: Conversation): Conversation => ({ ...current, taskBoardTold: Math.max(current.taskBoardTold ?? 0, version) });
+        // The Turn said already that it runs in a new native session; that it carries the state is part of that, and is not said in a line of its own.
+        if (cause === "reseat") this.commit(id, current => ({ next: patch(current), events: [event("run.task_state_told", { runId: target, cause })] }));
+        else this.placed(execution, { kind: "notice", severity: "info", title: cause === "compaction" ? "它压缩过上下文，重新带上了任务现在的状态" : "带上了任务现在的状态", code: "TASK_STATE_TOLD", at: this.options.now().getTime() },
+          [event("run.task_state_told", { runId: target, cause })], { always: true, patch });
       }
       // The task's board, when it changed since this Harness was last told: what everyone on the task goes by, before anything else of the Hub's.
       const board = command === null ? this.boardNews(this.load(id)) : null;
@@ -2446,7 +2514,7 @@ export class SessionRuntime {
       if (words !== null && words.line !== null) this.placed(execution, { kind: "notice", severity: "info", title: words.line, code: "PARENT_WORDS_TOLD", at: this.options.now().getTime() },
         [event("run.parent_words_told", { runId: target, through: words.through })], { always: true, patch: current => ({ ...current, parentWordsTold: words.through }) });
       else if (words !== null) this.commit(id, current => ({ next: { ...current, parentWordsTold: words.through }, events: [event("run.parent_words_marked", { runId: target, through: words.through })] }));
-      const notes = [standing, board?.text ?? null, delegated, words?.text ?? null, edits?.text ?? null, told?.text ?? null].filter((note): note is string => note !== null).map(note => asCommand(asFiles(note, recordAt()), execution.binding?.hubCommand));
+      const notes = [command === null && reseated ? packet !== null ? RESEATED_NOTE : RESEATED_BARE_NOTE : null, standing, board?.text ?? null, delegated, words?.text ?? null, edits?.text ?? null, told?.text ?? null].filter((note): note is string => note !== null).map(note => asCommand(asFiles(note, recordAt()), execution.binding?.hubCommand));
       // The directory is brought up to the record before a Harness that reads it starts: what it is told is there is there.
       if (recordAt() !== null) { await this.options.context!.ensure(id).catch(() => undefined); this.continue(execution); }
       execution.run = await control.startText(native, notes.length === 0 ? planned : withHubNote(planned, notes.join("\n\n")), value => this.output(execution, value), ...(files.length ? [files] : []));

@@ -71,6 +71,16 @@ export function selection(value: string, explicitControl?: string): SelectionReq
   return { harnessId, ...(controlId === undefined ? {} : { controlId }) };
 }
 export function hash(value: string): string { return createHash("sha256").update(value).digest("hex"); }
+/**
+ * The operator's word on when the Hub opens a new native session in the place of a nearly full one (HARNESSHUB_RESEAT_AT in the Gateway's own environment): a share of
+ * the window between 0 and 1, or `off` for never. Unset, or anything else: the Runtime's own.
+ */
+export function reseatSetting(value: string | undefined): { readonly reseatAt?: number | null } {
+  if (value === undefined || value.trim() === "") return {};
+  if (value.trim().toLowerCase() === "off") return { reseatAt: null };
+  const share = Number(value);
+  return Number.isFinite(share) && share > 0 && share <= 1 ? { reseatAt: share } : {};
+}
 export function newCommand(prefix = "command"): string { return prefix + "-" + randomUUID(); }
 export function errorRecord(error: unknown): { readonly code: string; readonly message: string } {
   // A failure of the storage is told with what it was made of (a table, a column, a rule: startup-failure.ts), not with its code alone.
@@ -172,6 +182,7 @@ export function application(root: string, publish: (commit: ConversationCommit) 
       secrets: (configuration, harnessIds) => factory.relaySecrets === undefined ? Promise.resolve([]) : factory.relaySecrets(configuration, harnessIds) });
     const runtime: SessionRuntime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, workspace: new WorkspaceRecorder(), flavor: flavorOf, ...(options.budgets ?? {}),
       context: { place: id => context.place(id), ensure: id => context.ensure(id), state: (id, upTo, record, scope) => context.state(id, upTo, record, scope) },
+      ...reseatSetting(process.env.HARNESSHUB_RESEAT_AT),
       ...(relayKeys === null ? {} : { relayKeys }),
       ...(process.platform === "win32" ? {} : { processes: new PosixProcessGroups() }) });
     // Upgrades see and close this runtime's conversations' processes (ADR-043).

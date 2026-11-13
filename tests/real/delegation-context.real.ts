@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { parse as parseToml } from "smol-toml";
 import { application as composeApplication } from "../../src/cli/session-application.js";
+import { RESEAT_AT } from "../../src/contexts/session/application/runtime.js";
 import { PERMISSION_KEY } from "../../src/contracts/flavor.js";
 import { WORK_TYPES, type ProtocolItem } from "../../src/contracts/protocol.js";
 import type { SessionId } from "../../src/contracts/session.js";
@@ -73,6 +74,10 @@ class Voided extends Error {}
 /** The scenario could not run: a Turn that failed or did not settle, an answer of the API that was not expected. */
 class Broken extends Error {}
 
+/** Plain words for material that has no regularity to work an answer out from (S12): drawn at random, a line is no function of the lines before it. */
+const WORDS = ("river stone window paper garden silver morning travel coffee bridge letter winter market circle yellow anchor candle forest harbor island jacket kitchen ladder mirror needle orange pencil "
+  + "quiet rabbit saddle ticket umbrella valley wagon zipper basket copper dinner engine feather guitar hammer insect jungle kettle lantern magnet napkin ocean pepper quilt ribbon shadow thunder velvet whistle "
+  + "apple border cabin desert eagle fabric glove honey iron jewel knife lemon marble north olive piano queen radio salt table uncle violin water xenon yard zebra").split(" ");
 const pass = (reason: string, note?: string, checks?: Record<string, unknown>): Judged => ({ verdict: "过", reason, ...(note === undefined ? {} : { note }), ...(checks === undefined ? {} : { checks }) });
 const fail = (reason: string, note?: string, checks?: Record<string, unknown>): Judged => ({ verdict: "不过", reason, ...(note === undefined ? {} : { note }), ...(checks === undefined ? {} : { checks }) });
 const mark = (prefix: string): string => prefix + "-" + randomBytes(4).toString("hex").toUpperCase();
@@ -260,6 +265,13 @@ class Ruler {
     const before = await this.send(id, text);
     await this.settle([id], new Map([[id, before + 1]]));
     return this.turnOf(id, role, before);
+  }
+  /** Sets, for the Gateway of this run, how full a native session may be before the Hub opens a new one (undefined: as the Gateway was started). */
+  reseatAt(share: number | undefined): void { this.app.runtime.setReseatAt(share); }
+  /** How full the Harness said its window was at the end of a Turn; null when it told of no window. */
+  async window(id: string, ordinal: number): Promise<{ readonly used: number; readonly size: number } | null> {
+    const context = (await this.api.get("/sessions/" + id) as SessionViewV14).window.turns.find(turn => turn.run.ordinal === ordinal)?.run.turn.usage.context;
+    return context === undefined || typeof context.size !== "number" || context.size <= 0 ? null : { used: context.used, size: context.size };
   }
   /** Writes a constraint on the task's board as the user does from the page. */
   async note(id: string, text: string): Promise<void> { await this.api.post("/sessions/" + id + "/task", { kind: "constraint", text }); }
@@ -531,6 +543,54 @@ const SCENARIOS: readonly Scenario[] = [
       const checks = { made, told };
       if (!told) return fail("中途加的约束没有在这一轮里送到（新建的是 " + made.join("、") + "）", note, checks);
       return off.length === 0 ? pass("中途加的约束送到了，新建的 " + made.join("、") + " 以 mm_ 开头", note, checks) : fail("约束送到了，但新建的 " + made.join("、") + " 没有以 mm_ 开头", note, checks);
+    } },
+  { id: "S12", name: "窗口快满", roles: ["A"], measures: "一家 Harness 的窗口快满时，Hub 有没有给它换一个新的原生会话；换完有没有腾出地方，早先的约束它还照不照做，没带过去的内容它还找不找得到",
+    async run(r) {
+      const ws = await r.workspace("s12"), a = await r.open("A", ws), key = mark("KEY"), percent = (value: number) => (Math.round(1000 * value) / 10) + "%";
+      need(await r.say(a, "A", "这个任务里有一条约定：所有新建的文件，文件名都必须以 rr_ 开头。把这条约定记到任务板上，然后只回答“记住了”。"));
+      let at = await r.window(a, 0), ordinal = 0;
+      if (at === null) throw new Voided("这家 Harness 没有报窗口大小");
+      // The mark the Hub waits for is set for this scenario so that some 90,000 tokens of material reach it, whatever the window (at the Runtime's own mark a window of a
+      // million tokens would take three quarters of a million); what is measured is what happens at the mark, not where it stands.
+      const share = Math.min(RESEAT_AT, (at.used + 90_000) / at.size);
+      // Material without any regularity (a model works a regular one out from its beginning): plain words in a random order, with one line in its middle that is asked for at the end.
+      const material = (chars: number, marked: boolean): string => {
+        const rows: string[] = [];
+        for (let length = 0; length < chars;) { const row = Array.from({ length: 14 }, () => WORDS[randomBytes(1)[0]! % WORDS.length]!).join(" "); rows.push(row); length += row.length + 1; }
+        if (marked) rows.splice(Math.floor(rows.length / 2), 0, "编号 7 的校验码是 " + key + "。");
+        return rows.join("\n");
+      };
+      r.reseatAt(share);
+      try {
+        // The window is filled a message at a time until the Harness says it is as full as the Hub waits for: the first by a fixed length, the rest by what the first cost.
+        let rate = 0, chars = 200_000;
+        for (let round = 0; at.used < share * at.size; round++) {
+          if (round >= 8) throw new Voided("八段材料之后窗口只到 " + percent(at.used / at.size));
+          const filled = need(await r.say(a, "A", "下面是一段参考材料，先不用处理，也不要用任何工具，只回答“收到”。\n\n" + material(chars, round === 0)));
+          if (filled.notices.includes("NATIVE_RESEATED")) throw new Voided("材料还没填够，Hub 就换了会话");
+          const next = await r.window(a, filled.ordinal);
+          if (next === null) throw new Voided("这家 Harness 没有报窗口大小");
+          if (next.used < at.used) throw new Voided("填到 " + percent(at.used / at.size) + " 之后它自己先压缩了（剩 " + percent(next.used / next.size) + "）");
+          rate = Math.max(rate, (next.used - at.used) / chars); at = next; ordinal = filled.ordinal;
+          // A little past the mark, so that the next message is the one that crosses it and not the one after.
+          chars = Math.max(4_000, Math.ceil((share * at.size + 5_000 - at.used) / (rate || 0.25)));
+        }
+        const full = at, before = await files(ws);
+        const after = need(await r.say(a, "A", "在当前工作目录里新建一个文件，写一行 hello，文件名你自己起。做完回复一句话。"));
+        const made = added(before, await files(ws)), reseated = after.notices.includes("NATIVE_RESEATED"), then = await r.window(a, after.ordinal);
+        const asked = need(await r.say(a, "A", "很早以前我发过的一段参考材料里，有一行写着“编号 7 的校验码”。它是什么？只回答校验码。"));
+        const knew = asked.reply.includes(key), read = informing(asked), again = asked.notices.includes("NATIVE_RESEATED");
+        const note = "换的位置设在 " + percent(share) + "（窗口 " + full.size + "）；换之前用到 " + percent(full.used / full.size) + "（" + full.used + "）" + (then === null ? "" : "，换之后这一轮结束时 " + percent(then.used / then.size) + "（" + then.used + "）")
+          + "，填了 " + ordinal + " 段材料" + (read.length ? "；答校验码时用了：" + listed(read) : "；答校验码时没有用工具") + (again ? "；下一轮又换了一次" : "");
+        const checks = { share, full, then, made, reseated, knew, again, read: read.length };
+        if (!reseated) return fail("窗口用到 " + percent(full.used / full.size) + "，Hub 没有换新的原生会话", note, checks);
+        if (made.length === 0) throw new Voided("换了新会话的这一轮没有新建文件");
+        const off = made.filter(path => !basename(path).startsWith("rr_"));
+        if (off.length > 0) return fail("换了新会话之后新建了 " + made.join("、") + "，没有以 rr_ 开头", note, checks);
+        if (then !== null && then.used >= full.used) return fail("换了新会话，但没有腾出地方", note, checks);
+        if (again) return fail("换了新会话之后，下一轮又换了一次", note, checks);
+        return knew ? pass("换了新会话、腾出了地方，新建的 " + made.join("、") + " 以 rr_ 开头，很早以前的校验码也答对了", note, checks) : fail("换了新会话、约束照做，但很早以前的校验码没答出来", note, checks);
+      } finally { r.reseatAt(undefined); }
     } },
 ];
 

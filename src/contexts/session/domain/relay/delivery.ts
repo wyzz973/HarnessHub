@@ -22,6 +22,8 @@ import type { CommandOutcome } from "./advance.js";
  *   rewound     a command that may have changed the native    → resendAll
  *               history ran, or an unknown Turn was continued
  *   cleared     the native session was given up                → the next epoch: nothing known, the clear is the floor
+ *   reseated    the Hub gave the native session a successor    → the next epoch: nothing known, the floor as it was (everything
+ *               because its window was nearly full               above it is owed again, to the new native session)
  *   ran         the native session ran an input of its own     → a binding that held nothing now holds the conversation as it
  *               while nothing was owed to it                     stood before that input, so a later packet is an update
  * A packet known not to have been sent (never dispatched, refused before it was inserted) is no event: the binding stays as it was.
@@ -36,6 +38,8 @@ export type RelayEvent =
   | { readonly kind: "unconfirmed"; readonly packet: PacketRef; readonly autoResend: boolean }
   | { readonly kind: "rewound" }
   | { readonly kind: "cleared"; readonly seq: number }
+  /** The Hub opens a new native session in the place of one whose window is nearly full (2026-11-13): nothing of the conversation is given up. */
+  | { readonly kind: "reseated" }
   /** A Turn the native session ran itself while nothing was owed and that it evidently received; `throughSeq` is the last seq of the conversation before it. */
   | { readonly kind: "ran"; readonly throughSeq: number };
 /** The binding's relay state moved by one event. Total: every state × event has a result. */
@@ -48,6 +52,7 @@ export function step(relay: BindingRelayState, event: RelayEvent): BindingRelayS
     }
     case "rewound": return check({ ...relay, resendAll: true });
     case "cleared": return check({ epoch: relay.epoch + 1, mark: -1, floor: Math.max(relay.floor, event.seq), pending: null, resendAll: false });
+    case "reseated": return check({ epoch: relay.epoch + 1, mark: -1, floor: relay.floor, pending: null, resendAll: false });
     // Only a binding that held nothing and waits for nothing: one that holds a part has its mark from a packet, which its own Turns do not move.
     case "ran": return relay.mark >= 0 || relay.pending !== null ? relay : check({ ...relay, mark: Math.max(event.throughSeq, relay.floor, 0) });
   }

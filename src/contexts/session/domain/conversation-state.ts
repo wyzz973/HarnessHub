@@ -142,7 +142,7 @@ function relayStep(old: BindingRelayState | undefined, next: BindingRelayState |
  *
  *   - the configuration and the origin never change, and a selection changes only with one epoch;
  *   - a binding is changed only by the Run that owns it (the writer), by a native reset, or by the branch's own native fork; it is archived only by a native
- *     reset, a failed fork, or the end of a Run whose Driver gave the native session up; its relay state only goes forward; none is taken away;
+ *     reset, a failed fork, the end of a Run whose Driver gave the native session up, or a Run the Hub opens a new native session for because the old one is nearly full; its relay state only goes forward; none is taken away;
  *   - the relay recovery failure is recorded by recovery (or by a Run's end committed without its relay part) and cleared by a new native session;
  *   - a closed conversation stays closed and a blocked one reopens only with the effective switch that was pending and no unknown Run left with open resources;
  *   - the sources of a Run's context and of a switch are earlier Runs that finished, and unknown Runs are acknowledged only by a recovery switch of a blocked conversation.
@@ -160,6 +160,8 @@ export function assertConversationTransition(before: Conversation, after: Conver
   const added = after.commands.slice(before.commands.length);
   const writer = runIn(after, before.activeRunId ?? after.activeRunId ?? "");
   const nativeCleared = writer !== undefined && events.some(event => event.type === "run.ended" && event.data.runId === writer.id && clearedNative(event.data.native));
+  // The Hub gave the writer's native session a successor before the Turn ran, because its window was nearly full (2026-11-13).
+  const reseated = writer !== undefined && events.some(event => event.type === "native.binding_reseated" && event.data.runId === writer.id);
   // A branch inside the conversation (a message sent again from an earlier place, another branch chosen) gives up every native session: they hold Turns the path no longer has.
   const branched = events.some(event => event.type === "conversation.branched");
   if (before.nativeBindings !== after.nativeBindings) {
@@ -178,7 +180,7 @@ export function assertConversationTransition(before: Conversation, after: Conver
         throw transition("native state changed without its original Run owner");
       // A Run archives its own binding only when its end reports the Driver replaced the cleared native session; it may then add
       // the new binding of the same Harness control (the Hub's clear, F04).
-      if (!reset && !forked && old !== undefined && next.status === "archived" && (!nativeCleared || !frozen)) throw transition("a native binding is archived only by a native reset, a failed branch or a confirmed native clear");
+      if (!reset && !forked && old !== undefined && next.status === "archived" && (!(nativeCleared || reseated) || !frozen)) throw transition("a native binding is archived only by a native reset, a failed branch, a confirmed native clear or the Hub's own successor to a full one");
       relayStep(old?.relay, next.relay);
     }
   }
