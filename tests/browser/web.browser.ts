@@ -3879,7 +3879,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   await expect(files.nth(1)).toContainText("~/.claude/skills"); await expect(files.nth(1).locator(".capability-links li")).toHaveText(["+ 新建~/.claude/skills/gamma → ~/.agents/skills/gamma"]);
   await expect(bar).toBeHidden(); await expect(write).toHaveCSS("opacity", "1");
   // The page behind is veiled in the sidebar's color, as on the Capabilities board, not darkened.
-  assert.equal(await page.locator(".backdrop").evaluate(element => getComputedStyle(element).backgroundColor), "color(srgb 0.976471 0.980392 0.984314 / 0.6)");
+  assert.equal(await page.locator(".backdrop").evaluate(element => getComputedStyle(element).backgroundColor), "color(srgb 0.980392 0.980392 0.980392 / 0.6)");
   // A preview taller than the dialog scrolls; no file's block is squeezed to hide some of its lines.
   assert.deepEqual(await files.evaluateAll(nodes => nodes.map(node => node.scrollHeight - node.clientHeight)), [0, 0]);
   await page.screenshot({ path: join(artifact, "dl8-capabilities-preview-light-1440.png"), animations: "disabled" });

@@ -34,7 +34,8 @@ const REQUEST_MS = 30_000, MAX_REPLY_BYTES = 8 * 1024 * 1024;
 const INSTRUCTIONS = "HarnessHub keeps the whole history of this conversation. A handoff note you were given is a summary: when it says something was left out, "
   + "or when you need what the user or an earlier Harness said or did, read it back with hub_turns, hub_read_turn and hub_search. "
   + "hub_update_plan and hub_wrap_up show the user your task list and a short wrap-up above the message box; they do not replace your reply. "
-  + "hub_delegate hands a self-contained part of the work to another Harness on this computer, which does it in a conversation of its own; hub_delegations says how what you handed over stands.";
+  + "hub_delegate hands a self-contained part of the work to another Harness on this computer, which does it in a conversation of its own; hub_delegations says how what you handed over stands. "
+  + "hub_task shows the whole task when several conversations work on it (who has what, what each changed); the three read tools take another conversation of the task as `conversation`.";
 /** The server's instructions: what its tools are for, and the session instructions this session's process was given for it. */
 export function serverInstructions(env: Readonly<Record<string, string | undefined>>): string {
   const session = env[TABLE_INSTRUCTIONS_ENV]?.trim();
@@ -61,7 +62,8 @@ const TOOLS: readonly ToolDefinition[] = [
       + "Turn numbers are the same as in handoff notes; the last turn may be the one you are running now. Shows the latest " + TABLE_LIMITS.turnsDefault + " turns; page with `from` and `limit`.",
     inputSchema: { type: "object", properties: {
       from: whole("The number of the first turn to list. Default: the window ends at the latest turn.", 1),
-      limit: whole("How many turns to list (default " + TABLE_LIMITS.turnsDefault + ").", 1, TABLE_LIMITS.turnsMax) }, additionalProperties: false },
+      limit: whole("How many turns to list (default " + TABLE_LIMITS.turnsDefault + ").", 1, TABLE_LIMITS.turnsMax),
+      conversation: { type: "string", pattern: "^c-[0-9a-f]{6}$", description: "Another conversation of the same task to read instead of this one: its label from hub_task (the conversation that delegated this work to you, or one working beside you). Default: this conversation." } }, additionalProperties: false },
     annotations: { title: "List the turns of this conversation", ...READ_ONLY } },
   { name: "hub_read_turn", title: "Read one turn of this conversation",
     description: "Read one turn of this HarnessHub conversation. By default you get an overview: the user's words, the reply, the numbered tool calls, the files changed and the plan, each cut at a sensible "
@@ -73,7 +75,8 @@ const TOOLS: readonly ToolDefinition[] = [
       part: { type: "string", enum: [...TABLE_PARTS], description: "What to read: overview (the default), user, reply, tools, files, plan; or input, output, diff of one tool call, which need `tool`." },
       tool: whole("The tool call's number in the turn's tool list (part tools, or the overview). Needed for input, output and diff.", 1),
       offset: whole("Where the page starts, in characters of that part; the previous page's result says where the next one starts.", 0),
-      limit: whole("How many characters one page holds (default " + TABLE_LIMITS.pageDefault + ").", 1, TABLE_LIMITS.pageMax) }, required: ["n"], additionalProperties: false },
+      limit: whole("How many characters one page holds (default " + TABLE_LIMITS.pageDefault + ").", 1, TABLE_LIMITS.pageMax) ,
+      conversation: { type: "string", pattern: "^c-[0-9a-f]{6}$", description: "Another conversation of the same task to read instead of this one: its label from hub_task (the conversation that delegated this work to you, or one working beside you). Default: this conversation." } }, required: ["n"], additionalProperties: false },
     annotations: { title: "Read one turn of this conversation", ...READ_ONLY } },
   { name: "hub_search", title: "Search this conversation",
     description: "Search this whole HarnessHub conversation (the user's words, replies, tool calls and their inputs, outputs and diffs) for a word or phrase, ignoring case. "
@@ -83,7 +86,8 @@ const TOOLS: readonly ToolDefinition[] = [
       query: { type: "string", minLength: 1, maxLength: TABLE_LIMITS.queryMax, description: "The word or phrase to look for." },
       limit: whole("How many places to return (default " + TABLE_LIMITS.searchDefault + ").", 1, TABLE_LIMITS.searchMax),
       after: { type: "string", pattern: "^(w[0-9]{1,15}\\.[0-9]{1,9}(user|reply)|[0-9]{1,9}\\.[0-9]{1,9})$", description: "Where to go on from: the `after` value the previous result gave for its next page." },
-      in: { type: "string", enum: [...TABLE_SEARCH_SCOPES], description: "What to search: all (the default) is everything, read turn by turn; words is only the user's words and the replies, which is quick however long the conversation is." } }, required: ["query"], additionalProperties: false },
+      in: { type: "string", enum: [...TABLE_SEARCH_SCOPES], description: "What to search: all (the default) is everything, read turn by turn; words is only the user's words and the replies, which is quick however long the conversation is." } ,
+      conversation: { type: "string", pattern: "^c-[0-9a-f]{6}$", description: "Another conversation of the same task to read instead of this one: its label from hub_task (the conversation that delegated this work to you, or one working beside you). Default: this conversation." } }, required: ["query"], additionalProperties: false },
     annotations: { title: "Search this conversation", ...READ_ONLY } },
   { name: "hub_update_plan", title: "Update the task list",
     description: "Show the user your task list for this task, pinned above their message box in HarnessHub. Give the whole list every time; it replaces the one shown before. "
@@ -122,6 +126,12 @@ const TOOLS: readonly ToolDefinition[] = [
       + "`wait`: seconds to wait for what still runs (at most 25 in one call; call again while something still runs and you need it).",
     inputSchema: { type: "object", properties: { wait: whole("Seconds to wait for work that still runs before answering.", 0, 25) }, additionalProperties: false },
     annotations: { title: "How delegated work stands", ...READ_ONLY } },
+  { name: "hub_task", title: "The whole task: every conversation working on it",
+    description: "The task this conversation belongs to, as HarnessHub keeps it: the conversation it began in and every conversation work was delegated to, each with its label, its Harness, "
+      + "what it was asked, whether it still runs, what it last replied and the files it changed. Use it when you were handed a part of a larger task, when you need to know what another Harness "
+      + "did or changed (before touching a file someone else may be editing), or before reading another conversation: give its label as `conversation` to hub_turns, hub_read_turn or hub_search.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { title: "The whole task", ...READ_ONLY } },
 ];
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -290,6 +300,13 @@ function wholeArgument(args: Readonly<Record<string, unknown>>, name: string, mi
   if (typeof number !== "number" || !Number.isSafeInteger(number) || number < minimum || number > maximum) throw new ToolError(name + " must be a whole number from " + minimum + " to " + maximum + ".");
   return number;
 }
+/** The label of another conversation of the task, as the reads take it; undefined for this conversation. */
+function conversationArgument(args: Readonly<Record<string, unknown>>): string | undefined {
+  const value = args.conversation;
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !/^c-[0-9a-f]{6}$/u.test(value)) throw new ToolError("conversation must be a label from hub_task, like c-1a2b3c.");
+  return value;
+}
 /** Runs one tool. Never throws: what goes wrong is a result with isError. */
 export async function callTool(name: string, args: Readonly<Record<string, unknown>>, surface: Surface, env: Readonly<Record<string, string | undefined>>): Promise<ToolResult> {
   const connection = connect(env);
@@ -299,7 +316,7 @@ export async function callTool(name: string, args: Readonly<Record<string, unkno
     switch (name) {
       case "hub_turns": {
         const from = wholeArgument(args, "from", 1), limit = wholeArgument(args, "limit", 1, TABLE_LIMITS.turnsMax);
-        const view = await ask(connection, "/api/table/turns", { from, limit });
+        const view = await ask(connection, "/api/table/turns", { from, limit, c: conversationArgument(args) });
         return { text: renderTurns(view as unknown as TableTurnsView, surface), isError: false };
       }
       case "hub_read_turn": {
@@ -307,7 +324,7 @@ export async function callTool(name: string, args: Readonly<Record<string, unkno
         if (n === undefined) throw new ToolError("n is required: the number of the turn to read (see hub_turns).");
         const part = args.part === undefined || args.part === null ? undefined : args.part;
         if (part !== undefined && (typeof part !== "string" || !(TABLE_PARTS as readonly string[]).includes(part))) throw new ToolError("part must be one of " + TABLE_PARTS.join(", ") + ".");
-        const view = await ask(connection, "/api/table/turns/" + n, { part, tool: wholeArgument(args, "tool", 1), offset: wholeArgument(args, "offset", 0), limit: wholeArgument(args, "limit", 1, TABLE_LIMITS.pageMax) });
+        const view = await ask(connection, "/api/table/turns/" + n, { part, tool: wholeArgument(args, "tool", 1), offset: wholeArgument(args, "offset", 0), limit: wholeArgument(args, "limit", 1, TABLE_LIMITS.pageMax), c: conversationArgument(args) });
         return { text: renderTurn(view as unknown as TableTurnRead, surface), isError: false };
       }
       case "hub_search": {
@@ -317,7 +334,7 @@ export async function callTool(name: string, args: Readonly<Record<string, unkno
         if (after !== undefined && (typeof after !== "string" || !/^(w[0-9]{1,15}\.[0-9]{1,9}(user|reply)|[0-9]{1,9}\.[0-9]{1,9})$/u.test(after))) throw new ToolError("after must be the value a previous search gave for its next page.");
         const scope = args.in === undefined || args.in === null ? undefined : args.in;
         if (scope !== undefined && (typeof scope !== "string" || !(TABLE_SEARCH_SCOPES as readonly string[]).includes(scope))) throw new ToolError("in must be one of " + TABLE_SEARCH_SCOPES.join(", ") + ".");
-        const view = await ask(connection, "/api/table/search", { q: query, limit: wholeArgument(args, "limit", 1, TABLE_LIMITS.searchMax), after, in: scope });
+        const view = await ask(connection, "/api/table/search", { q: query, limit: wholeArgument(args, "limit", 1, TABLE_LIMITS.searchMax), after, in: scope, c: conversationArgument(args) });
         return { text: renderSearch(view as unknown as TableSearchView, surface, { after: after !== undefined }), isError: false };
       }
       case "hub_update_plan": {
@@ -331,6 +348,21 @@ export async function callTool(name: string, args: Readonly<Record<string, unkno
         if (typeof args.recap !== "string" || args.recap.trim() === "") throw new ToolError("recap is required: two or three short sentences of what is done and what is not.");
         await tell(connection, "/api/table/wrap-up", { recap: args.recap, ...(typeof args.ask === "string" ? { ask: args.ask } : {}), ...(Array.isArray(args.actions) ? { actions: args.actions } : {}) });
         return { text: "Wrap-up shown to the user.", isError: false };
+      }
+      case "hub_task": {
+        const view = await ask(connection, "/api/table/task", {});
+        const members = Array.isArray(view.members) ? view.members as readonly Record<string, unknown>[] : [], self = typeof view.self === "string" ? view.self : null;
+        if (members.length === 0) return { text: "This conversation is the whole task: nothing was delegated from it, and nothing delegated it.", isError: false };
+        const line = (row: Readonly<Record<string, unknown>>): string => {
+          const status = String(row.status), state = status === "running" ? "running" : status === "completed" ? "done" : status === "empty" ? "not started" : status === "failed" ? "failed" : status === "cancelled" ? "stopped" : "outcome unknown";
+          const files = Array.isArray(row.files) && row.files.length ? "\n" + "  ".repeat(Number(row.depth) + 1) + "files changed: " + (row.files as unknown[]).map(String).join(", ") : "";
+          const reply = typeof row.reply === "string" && row.reply !== "" ? "\n" + "  ".repeat(Number(row.depth) + 1) + "last reply: " + row.reply : "";
+          return "  ".repeat(Number(row.depth)) + "[" + String(row.label) + "]" + (row.label === self ? " (this conversation)" : "") + " " + String(row.harness) + " · " + state + " · " + String(row.turns) + " turn(s)"
+            + (row.parent === null ? " · where the task began" : " · delegated by " + String(row.parent) + (row.by === "harness" ? " (its Harness)" : " (the user)"))
+            + "\n" + "  ".repeat(Number(row.depth) + 1) + "asked: " + String(row.task) + reply + files;
+        };
+        const how = surface === "mcp" ? "Read any of them with hub_turns, hub_read_turn or hub_search and conversation: \"<label>\"." : "Read any of them with turns, turn or search and --conversation <label>.";
+        return { text: "This task spans " + members.length + " conversation(s):\n" + members.map(line).join("\n") + "\n" + how, isError: false };
       }
       case "hub_delegate": {
         if (typeof args.harness !== "string" || args.harness.trim() === "") throw new ToolError("harness is required: the id or name of the Harness to hand the work to.");
@@ -446,6 +478,8 @@ const USAGE = [
   "                                                   show the user a short wrap-up of this turn, with one question and one or two answers when the next move is theirs",
   "  hub-tools delegate <harness> <task>              hand a self-contained part of the work to another Harness, which does it in a conversation of its own",
   "  hub-tools delegations [--wait N]                 how the work handed over stands; --wait N waits up to N seconds (25 at most) for what still runs",
+  "  hub-tools task                                   the whole task: every conversation working on it, what each was asked, replied and changed",
+  "                                                   (turns, turn and search take --conversation <label> to read another conversation of the task)",
   "  hub-tools mcp                                    serve these tools as an MCP server on stdio",
   "",
   "It reads " + TABLE_ENV.url + " and " + TABLE_ENV.session + " from the environment; HarnessHub sets them for the programs it starts.",
@@ -458,11 +492,11 @@ export async function main(args: readonly string[], io: ToolIo = { env: process.
   const [command, ...rest] = args;
   if (command === "--help" || command === "-h" || command === "help") { io.stdout.write(USAGE + "\n"); return 0; }
   if (command === "mcp") return serve(io);
-  if (!["turns", "turn", "search", "plan", "wrap-up", "delegate", "delegations"].includes(command ?? "")) return misuse(io, command === undefined ? "" : "Unknown command: " + command);
+  if (!["turns", "turn", "search", "plan", "wrap-up", "delegate", "delegations", "task"].includes(command ?? "")) return misuse(io, command === undefined ? "" : "Unknown command: " + command);
   let values: Record<string, string | undefined>, positionals: string[], actions: readonly string[] = [];
   try {
     const parsed = parseArgs({ args: rest, allowPositionals: true, strict: true, options: { from: { type: "string" }, limit: { type: "string" }, part: { type: "string" }, tool: { type: "string" }, offset: { type: "string" }, after: { type: "string" }, in: { type: "string" },
-      wait: { type: "string" }, ask: { type: "string" }, explanation: { type: "string" }, action: { type: "string", multiple: true } } });
+      wait: { type: "string" }, ask: { type: "string" }, explanation: { type: "string" }, conversation: { type: "string" }, action: { type: "string", multiple: true } } });
     const { action, ...single } = parsed.values;
     values = single; positionals = parsed.positionals; actions = action ?? [];
   } catch (error) { return misuse(io, error instanceof Error ? error.message : "bad arguments"); }
@@ -470,13 +504,13 @@ export async function main(args: readonly string[], io: ToolIo = { env: process.
   let tool: TableTool, input: Record<string, unknown>;
   if (command === "turns") {
     if (positionals.length) return misuse(io, "turns takes no arguments but --from and --limit.");
-    tool = "hub_turns"; input = only(["from", "limit"]);
+    tool = "hub_turns"; input = only(["from", "limit", "conversation"]);
   } else if (command === "turn") {
     if (positionals.length !== 1) return misuse(io, "turn takes the turn's number: hub-tools turn <n>.");
-    tool = "hub_read_turn"; input = { n: positionals[0], ...only(["part", "tool", "offset", "limit"]) };
+    tool = "hub_read_turn"; input = { n: positionals[0], ...only(["part", "tool", "offset", "limit", "conversation"]) };
   } else if (command === "search") {
     if (!positionals.length) return misuse(io, "search takes the words to look for: hub-tools search <words>.");
-    tool = "hub_search"; input = { query: positionals.join(" "), ...only(["limit", "after", "in"]) };
+    tool = "hub_search"; input = { query: positionals.join(" "), ...only(["limit", "after", "in", "conversation"]) };
   } else if (command === "plan") {
     if (!positionals.length) return misuse(io, "plan takes the whole task list, a step each: \"[x] done\" \"[~] in progress\" \"[ ] to do\".");
     // A step's mark says its state; a step without one is still to do.
@@ -490,6 +524,9 @@ export async function main(args: readonly string[], io: ToolIo = { env: process.
   } else if (command === "delegate") {
     if (positionals.length < 2) return misuse(io, "delegate takes the Harness and the task: hub-tools delegate <harness> \"<task>\".");
     tool = "hub_delegate"; input = { harness: positionals[0], task: positionals.slice(1).join(" ") };
+  } else if (command === "task") {
+    if (positionals.length) return misuse(io, "task takes no arguments.");
+    tool = "hub_task"; input = {};
   } else {
     if (positionals.length) return misuse(io, "delegations takes no arguments but --wait.");
     tool = "hub_delegations"; input = only(["wait"]);

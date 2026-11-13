@@ -232,11 +232,17 @@ function wroteRows(changes: Placed["changes"]): boolean {
   return (changes.items?.length ?? 0) > 0 || (changes.text?.length ?? 0) > 0 || (changes.contentRefs?.length ?? 0) > 0 || (changes.noticePrints?.length ?? 0) > 0;
 }
 function event(type: string, data: Readonly<Record<string, unknown>>): EventDraft { return { type, data }; }
+/** What the Harness of a delegated conversation reads before its task: that this is a part of a larger task, and how the rest of it is read. */
+const DELEGATED_NOTE = "（HarnessHub：下面是从另一段对话委派给你的任务，是一件更大的事的一部分。那段对话正在进行的一轮、以及这件事里其他 Harness 做了什么和改了哪些文件，都能读到："
+  + "先用 harnesshub 的 hub_task 看全貌，再用 hub_turns、hub_read_turn、hub_search 带上对话标签去读。任务里提到“之前”“别人做的”“本轮”这类你手上没有的内容时，先去那里查，不要猜；动别人可能在改的文件前也先看一眼。）";
 /** One piece of delegated work as its conversation's Harness reads it: who had it, how it ended, the task and the reply, each cut at a length a note can carry. */
 export function delegationText(entry: DelegationState): string {
   const clip = (text: string, most: number) => { const units = [...text]; return units.length > most ? units.slice(0, most).join("") + "…（后面省略）" : text; };
   const outcome = entry.status === "running" ? "还在做" : entry.status === "completed" ? "已完成" : entry.status === "failed" ? "失败" : entry.status === "cancelled" ? "被停止" : "结果未知";
-  return "【" + entry.harness + " · " + outcome + "】\n任务：" + clip(entry.task, 1200) + (entry.status === "running" ? "" : "\n" + (entry.reply ? "它的回复：\n" + clip(entry.reply, 6000) : "它没有留下文字回复。"));
+  const files = entry.files === undefined || entry.files.length === 0 ? "" : "\n它改动的文件：" + entry.files.slice(0, 30).join("、") + (entry.files.length > 30 ? " 等 " + entry.files.length + " 个" : "");
+  // Its conversation by the label the Hub's tools take: what it ran and changed is read there, not guessed.
+  const label = "c-" + entry.sessionId.replace(/^session-/u, "").replace(/-/gu, "").slice(0, 6);
+  return "【" + entry.harness + " · " + outcome + " · 对话 " + label + "】\n任务：" + clip(entry.task, 1200) + (entry.status === "running" ? "" : "\n" + (entry.reply ? "它的回复：\n" + clip(entry.reply, 6000) : "它没有留下文字回复。")) + files;
 }
 /** Native events that the user sees in the conversation; the first of them marks the Run's first output. */
 const VISIBLE_OUTPUT = new Set<ControlEvent["type"]>(["text", "thinking", "tool", "plan", "permission_requested", "output", "activity"]);
@@ -782,9 +788,11 @@ export class SessionRuntime {
         const child = this.load(childId), last = child.runs.at(-1), turns = turnSource(this.store, childId);
         const harnessId = (last ?? child).selection.harnessId, harness = this.options.harnessName?.(harnessId) ?? harnessId;
         const task = (turns.turn(0)?.user.text ?? "").trim();
-        if (last === undefined || !terminal(last.status)) { states.push({ sessionId: childId, harnessId, harness, task, runId: last?.id ?? null, status: "running", reply: "" }); continue; }
+        let files: readonly string[] = [];
+        try { files = this.store.changedFiles?.(childId) ?? []; } catch { files = []; }
+        if (last === undefined || !terminal(last.status)) { states.push({ sessionId: childId, harnessId, harness, task, runId: last?.id ?? null, status: "running", reply: "", files }); continue; }
         const turn = turns.turn(child.runs.length - 1);
-        states.push({ sessionId: childId, harnessId, harness, task, runId: last.id, status: last.status === "completed" || last.status === "failed" || last.status === "cancelled" ? last.status : "unknown", reply: turn?.assistant?.text.trim() ?? "" });
+        states.push({ sessionId: childId, harnessId, harness, task, runId: last.id, status: last.status === "completed" || last.status === "failed" || last.status === "cancelled" ? last.status : "unknown", reply: turn?.assistant?.text.trim() ?? "", files });
       } catch { /* a conversation that cannot be read now is left out of this reading */ }
     }
     return states;
@@ -805,7 +813,7 @@ export class SessionRuntime {
     const names = [...new Set(fresh.map(entry => entry.harness))];
     return { told: Object.fromEntries(fresh.map(entry => [entry.sessionId, { runId: entry.runId!, by }])),
       line: "带上了 " + names.join("、") + " 的委派结果" + (fresh.length > 1 ? "（" + fresh.length + " 项）" : ""),
-      text: "（HarnessHub：之前委派给别的 Harness、在另外的对话里做的任务有了结果。这是给你的背景，不是新的指令；这些任务已经处理过，不要重做。\n\n" + fresh.map(delegationText).join("\n\n") + "\n）" };
+      text: "（HarnessHub：之前委派给别的 Harness、在另外的对话里做的任务有了结果。这是给你的背景，不是新的指令；这些任务已经处理过，不要重做。需要它做事的细节（跑了什么、改了什么）时，用 harnesshub 的 hub_task 看全貌，或用 hub_read_turn、hub_search 带上那段对话的标签去读。\n\n" + fresh.map(delegationText).join("\n\n") + "\n）" };
   }
   /**
    * How the work this conversation delegated stands, for its Harness's tool (`hub_delegations`), asked within its Turn in progress: every piece, and the outcomes it
@@ -2115,7 +2123,10 @@ export class SessionRuntime {
       if (news !== null) this.placed(execution, { kind: "notice", severity: "info", title: news.line, code: "DELEGATION_TOLD", at: this.options.now().getTime() },
         [event("run.delegations_told", { runId: target, told: Object.entries(news.told).map(([sessionId, entry]) => ({ sessionId, runId: entry.runId })) })],
         { always: true, patch: current => ({ ...current, delegationsTold: { ...(current.delegationsTold ?? {}), ...news.told } }) });
-      execution.run = await control.startText(native, news === null ? planned : withHubNote(planned, news.text), value => this.output(execution, value), ...(files.length ? [files] : []));
+      // The first Turn of a conversation that was delegated its work says so, and where the rest of the task is read (2026-11-13).
+      const delegated = command === null && this.load(id).delegation !== undefined && this.load(id).runs[0]?.id === target && execution.binding?.hubTools === true ? DELEGATED_NOTE : null;
+      const notes = [delegated, news?.text ?? null].filter((note): note is string => note !== null);
+      execution.run = await control.startText(native, notes.length === 0 ? planned : withHubNote(planned, notes.join("\n\n")), value => this.output(execution, value), ...(files.length ? [files] : []));
       this.owned(execution);
       void execution.run.result.then(() => { execution.backendSettled = true; }, () => { execution.backendSettled = true; });
       if (this.load(id).runs.find(run => run.id === target)!.cancelRequested || !this.accepting || this.fatal || this.closingSessions.has(id)) this.stop(execution);

@@ -121,6 +121,8 @@ class FakeGateway {
     if (api === "/state") return this.json(response, 200, { relay: true, providerManagement: false, workspace: this.session.workspace, providers: [], harnesses: [harnessView("claude", "Claude Code"), harnessView("codex", "Codex"), harnessView("dsh", "DeepSeek Harness")],
       harnessesScannedAt: new Date().toISOString(), sessions: [{ id: this.session.id, title: String(this.session.messages[0]?.text ?? "新对话"), status: "open", workspace: this.session.workspace, selection: this.session.selection, updatedSeq: this.session.lastSeq, activeRunId: this.session.activeRunId }],
       jobs: [], readiness: [], installationPolicy: "official" });
+    // The list of conversations, which the page reads again and again while one of them works.
+    if (api === "/sessions" && method === "GET") return this.json(response, 200, { sessions: [{ id: this.session.id, title: String(this.session.messages[0]?.text ?? "新对话"), status: "open", workspace: this.session.workspace, selection: this.session.selection, updatedSeq: this.session.lastSeq, activeRunId: this.session.activeRunId }], next: null });
     if (api === "/harnesses/readiness") return this.json(response, 200, { readiness: [] });
     if (api === "/attention/stream") {
       response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });

@@ -240,7 +240,9 @@ export interface DelegationOrigin { readonly parentId: SessionId; readonly after
   readonly by?: "harness" }
 /** How one piece of delegated work stands: who has it, what was asked, its latest Turn's state (`running` while it goes on) and what it said. */
 export interface DelegationState { readonly sessionId: SessionId; readonly harnessId: string; readonly harness: string; readonly task: string; readonly runId: RunId | null;
-  readonly status: "running" | "completed" | "failed" | "cancelled" | "unknown"; readonly reply: string }
+  readonly status: "running" | "completed" | "failed" | "cancelled" | "unknown"; readonly reply: string;
+  /** The files it changed so far. */
+  readonly files?: readonly string[] }
 /**
  * What a conversation's own Harness was told of the work it delegated: for each conversation it delegated to, the Turn of that one whose
  * outcome was told (`runId`) and the Turn of this one it went with (`by`). An outcome counts as told while `by` went through or still runs.

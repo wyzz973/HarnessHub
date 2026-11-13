@@ -46,6 +46,11 @@ export interface TableApiOptions {
    * `hub_delegate` and `hub_delegations` (2026-11-13): the Harness of the conversation's Turn in progress hands a part of its work to another Harness, which does it in a
    * conversation of its own, and asks how what it handed over stands. Absent, the two routes refuse.
    */
+  /**
+   * The task the token's conversation belongs to (task-family.ts): that conversation, the one that delegated it and everything delegated under either, each by its label. With it the
+   * three reads take `c=<label>` for another conversation of the task, and `/api/table/task` gives the overview; absent, a token reads its own conversation only.
+   */
+  readonly family?: (grant: TableGrant) => readonly import("./task-family.js").TaskMember[];
   readonly delegation?: {
     readonly start: (grant: TableGrant, harness: string, task: string) => Promise<{ readonly sessionId: string; readonly harness: string }>;
     readonly states: (grant: TableGrant) => readonly import("../contracts/session.js").DelegationState[];
@@ -111,8 +116,8 @@ export class TableApi {
     const { http } = this.options, path = url.pathname;
     const turn = /^\/api\/table\/turns\/([0-9]{1,6})$/u.exec(path), turns = path === "/api/table/turns", search = path === "/api/table/search";
     const writes = path === "/api/table/plan" || path === "/api/table/wrap-up";
-    const delegate = path === "/api/table/delegate", delegations = path === "/api/table/delegations";
-    if (!turn && !turns && !search && !writes && !delegate && !delegations) return false;
+    const delegate = path === "/api/table/delegate", delegations = path === "/api/table/delegations", task = path === "/api/table/task";
+    if (!turn && !turns && !search && !writes && !delegate && !delegations && !task) return false;
     // In this order: only this computer; then the token (whatever else is wrong with a request, a token that is not valid is a 401); then what may be asked.
     if (!loopback(request.socket.remoteAddress)) { http.json(response, 403, { code: "TABLE_LOCAL_ONLY", message: "The table is for programs on this computer" }); return true; }
     const grant = this.authenticate(request);
@@ -150,17 +155,26 @@ export class TableApi {
       http.json(response, 200, { delegations: states }); return true;
     }
     if (method !== "GET") { response.setHeader("Allow", "GET"); http.json(response, 405, { code: "METHOD_NOT_ALLOWED", message: "The table is read with GET" }); return true; }
-    const state = this.conversation(grant.sessionId), hiding = await this.redaction(state, grant);
+    if (task) {
+      http.queries(url, []);
+      const members = this.options.family?.(grant) ?? [];
+      // Never an identity: the labels are what the tools take.
+      http.json(response, 200, { self: members.find(member => member.sessionId === grant.sessionId)?.label ?? null, members: members.map(({ sessionId: _hidden, ...member }) => member) }); return true;
+    }
+    // `c`: another conversation of the same task, by its label; none but those can be named.
+    const named = url.searchParams.get("c");
+    const target = named === null ? grant.sessionId : (this.options.family?.(grant) ?? []).find(member => member.label === named)?.sessionId ?? invalid("c must be the label of a conversation of this task (the task overview lists them)");
+    const state = this.conversation(target), hiding = await this.redaction(state, grant);
     const notes = hiding.known ? [] : [UNHIDDEN];
     if (turns) {
-      http.queries(url, ["from", "limit"]);
+      http.queries(url, ["from", "limit", "c"]);
       const from = whole(url, "from", 1, 1_000_000), limit = whole(url, "limit", 1, TABLE_LIMITS.turnsMax), range = directoryRange(state, from, limit);
       const loaded = await this.load(directoryNeeds(state, range.from, range.to), TABLE_LIMITS.directoryDetails, "files");
       const view = turnsView(state, from, limit, loaded.details, hiding.redaction);
       http.json(response, 200, { ...view, ...(notes.length ? { notes } : {}) }); return true;
     }
     if (turn) {
-      http.queries(url, ["part", "tool", "offset", "limit"]);
+      http.queries(url, ["part", "tool", "offset", "limit", "c"]);
       const n = Number(turn[1]), part = url.searchParams.get("part");
       if (part !== null && !(TABLE_PARTS as readonly string[]).includes(part)) invalid("part must be one of " + TABLE_PARTS.join(", "));
       const tool = whole(url, "tool", 1, 100_000), offset = whole(url, "offset", 0, 1_000_000_000), limit = whole(url, "limit", 1, TABLE_LIMITS.pageMax);
@@ -169,14 +183,14 @@ export class TableApi {
       const view = readTurn(state, n, query, loaded.details, hiding.redaction);
       http.json(response, 200, { ...view, ...(notes.length ? { notes: [...(view.notes ?? []), ...notes] } : {}) }); return true;
     }
-    http.queries(url, ["q", "limit", "after", "in"]);
+    http.queries(url, ["q", "limit", "after", "in", "c"]);
     const words = url.searchParams.get("q"), after = url.searchParams.get("after") ?? undefined, scope = (url.searchParams.get("in") ?? "all") as TableSearchScope;
     if (!(TABLE_SEARCH_SCOPES as readonly string[]).includes(scope)) invalid("in must be one of " + TABLE_SEARCH_SCOPES.join(", "));
     if (words === null || words.trim() === "" || words.length > TABLE_LIMITS.queryMax) invalid("q must be the words to search for, 1 to " + TABLE_LIMITS.queryMax + " characters");
     const limit = whole(url, "limit", 1, TABLE_LIMITS.searchMax), reader = this.options.reader;
     // The words alone are found by the conversation's full-text indexes; everything is read Turn by Turn.
     const view = scope === "words"
-      ? searchWordsPage(state, words, { limit, ...(after === undefined ? {} : { after }) }, (query, range) => reader.search(query, { sessionId: grant.sessionId, limit: range.limit, ...(range.after === undefined ? {} : { after: range.after }) }), hiding.redaction)
+      ? searchWordsPage(state, words, { limit, ...(after === undefined ? {} : { after }) }, (query, range) => reader.search(query, { sessionId: target, limit: range.limit, ...(range.after === undefined ? {} : { after: range.after }) }), hiding.redaction)
       : await searchPage(state, words, { limit, ...(after === undefined ? {} : { after }) }, this.searchLoad(), hiding.redaction);
     http.json(response, 200, { ...view, ...(notes.length ? { notes } : {}) }); return true;
   }

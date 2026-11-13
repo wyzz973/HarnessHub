@@ -51,6 +51,7 @@ import type { ClaudeRunner } from "../infrastructure/capabilities/claude-mcp.js"
 import { flavorOf } from "../adapters/flavors/index.js";
 import { PERMISSION_KEY } from "../contracts/flavor.js";
 import { TABLE_COMMAND_DIR } from "../contracts/table.js";
+import { taskFamily } from "./task-family.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 /**
@@ -443,6 +444,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     http: { json, queries, body: request => body(request) },
     // `hub_update_plan` and `hub_wrap_up`: the Turn in progress of the token's conversation takes them, from the Harness the token was minted for.
     progress: (grant, made) => { app.runtime.hubProgress(grant.sessionId, { harnessId: grant.harnessId, controlId: grant.controlId }, made); },
+    // The task a conversation belongs to: what its Harness may read beside its own conversation (`hub_task`, and `conversation` on the reads).
+    family: grant => taskFamily(app.store, grant.sessionId, harnessId => harnesses.find(item => item.id === harnessId)?.name ?? null),
     // `hub_delegate`, `hub_delegations` (2026-11-13): the Turn's Harness hands a part of its work to another Harness of this computer, at the conversation's own permission level.
     delegation: {
       start: async (grant, wanted, task) => {
