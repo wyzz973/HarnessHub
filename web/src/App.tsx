@@ -75,6 +75,17 @@ function rememberedChoice(harnessId: string): { readonly controlId: string; read
     return { controlId: row.controlId, ...(typeof row.model === "string" ? { nativeModel: row.model } : {}), ...(row.nativeOptions === undefined ? {} : { nativeOptions: parseNativeOptions(row.nativeOptions) }) };
   } catch { return null; }
 }
+/**
+ * What a new conversation starts with when nothing was drafted for it: the Harness last used (the open conversation's, else the newest one's),
+ * with this browser's last choice for it. Only a starting point: it is shown in the composer and changed there before anything is sent.
+ */
+function startingSelection(sessions: readonly SessionSummary[], harnesses: readonly HarnessView[], currentId: string | null): SelectionDraft {
+  const last = (sessions.find(item => item.id === currentId) ?? sessions[0])?.selection.harnessId, harness = harnesses.find(row => row.id === last);
+  const control = harness?.controls.find(row => row.id === harness.defaultControlId && row.available) ?? harness?.controls.find(row => row.available);
+  if (harness === undefined || control === undefined) return { ...EMPTY_SELECTION };
+  const remembered = rememberedChoice(harness.id), entry = remembered && harness.controls.some(row => row.id === remembered.controlId && row.available) ? remembered : null;
+  return { ...EMPTY_SELECTION, harnessId: harness.id, controlId: entry?.controlId ?? control.id, model: entry?.nativeModel ?? "", nativeOptions: entry?.nativeOptions ?? {} };
+}
 const PLACE_KEY = "harnesshub:new-chat-place";
 /** Where this browser last started a conversation: a project folder, or none. A convenience; without storage it starts from the Gateway's folder. */
 function readPlace(): Place {
@@ -394,7 +405,9 @@ export function App() {
         if (!ignored) {
           setState(snapshot); setWorkspace(readPlace().workspace || snapshot.workspace);
           const key = sessionIdRef.current ?? "new", saved = savedChatDraft(snapshot.workspace, key);
-          if (saved && !chatDrafts.current.has(key)) { chatDrafts.current.set(key, saved); setMessageDraft(saved.message); setAttachments(draftAttachments(saved.attachments)); setDraft(saved.selection); pendingMessage.current = saved.messageIntent; pendingSwitchWrite.current = null; switchArmed.current = null; }
+          if (saved && !chatDrafts.current.has(key)) { chatDrafts.current.set(key, saved); setMessageDraft(saved.message); setAttachments(draftAttachments(saved.attachments)); setDraft(key === "new" && saved.selection.harnessId === "" ? startingSelection(snapshot.sessions, snapshot.harnesses, null) : saved.selection); pendingMessage.current = saved.messageIntent; pendingSwitchWrite.current = null; switchArmed.current = null; }
+          // A new conversation with nothing drafted starts with the Harness last used.
+          else if (key === "new" && !chatDrafts.current.has("new")) setDraft(current => current.harnessId === "" ? startingSelection(snapshot.sessions, snapshot.harnesses, null) : current);
           void scanIfStale(snapshot, controller.signal).catch((failure: unknown) => { if (!ignored) setManagementConnectionError(errorMessage(failure)); });
         }
       } catch (failure: unknown) {
@@ -671,11 +684,12 @@ export function App() {
   };
   useEffect(() => { if (state && !sessionLoading && !sessionError) saveChatDraft(); }, [messageDraft, attachments, draft, session?.epoch, mutation, state !== null, sessionLoading, sessionError, queued]);
   const newChat = () => leave(() => {
+    const from = sessionIdRef.current;
     selectionWish.current = null; lastAutoSelection.current = null; switchArmed.current = null;
     saveChatDraft(); const saved = chatDrafts.current.get("new"); pendingSwitchWrite.current = saved?.selectionIntent ?? null;
     sessionIdRef.current = null; liveWindow.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(false);
     pendingMessage.current = saved?.messageIntent ?? null; setQueued(null); setQueueNotice(null);
-    writeSessionRoute(null); setSessionId(null); setHeld(null); setSessionLoading(false); setSessionError(null); setDraft(saved?.selection ?? { ...EMPTY_SELECTION }); setMessageDraft(saved?.message ?? ""); setAttachments(draftAttachments(saved?.attachments)); setChatKey(value => value + 1);
+    writeSessionRoute(null); setSessionId(null); setHeld(null); setSessionLoading(false); setSessionError(null); setDraft(saved !== undefined && saved.selection.harnessId !== "" ? saved.selection : startingSelection(state?.sessions ?? [], state?.harnesses ?? [], from)); setMessageDraft(saved?.message ?? ""); setAttachments(draftAttachments(saved?.attachments)); setChatKey(value => value + 1);
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
   /**
