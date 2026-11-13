@@ -52,19 +52,18 @@ test("changes are counted as places, from the edits that carry a stored detail, 
   assert.equal(changeCount([run(turn([withDetail, edit("c.ts", "completed", { detail: ref("content-c") })])), run(turn([without])), run(undefined)]), 2);
 });
 
-test("the line under the message box says the Turn's place, steps, time and the numbers it reported, in the words of its footer", () => {
+test("the line under the message box says only how full the context is, and the footer is written from the Turn's numbers", () => {
   const usage: TurnUsage = { completeness: "complete", input: 41_000, cachedInput: 40_000, output: 1_100, context: { used: 90, size: 1000 }, cost: { amount: 0.8727869, currency: "USD", scope: "conversation" } };
   const done = turn([command("a"), command("b")], { usage, startedAt: 1000, durationMs: 31_000 });
-  assert.deepEqual(statusParts(done).map(part => part.text), ["第 3 轮", "2 步", "用时 31 秒", "输入 41.0k", "上下文 9%", "对话累计 US$0.87"]);
-  assert.equal(statusParts(done)[4]?.share, 9, "the share is there for the ring");
+  // Only how full the context is stands under the message box; the time, tokens and cost are in the footer and the details.
+  assert.deepEqual(statusParts(done).map(part => part.text), ["上下文 9%"]);
+  assert.equal(statusParts(done)[0]?.share, 9, "the share is there for the ring");
   assert.equal(turnFooter(done), "Codex · 用时 31 秒 · 输入 41.0k · 输出 1.1k · 对话累计 US$0.87", "the footer under the Turn is written from the same numbers");
-  // A Turn that goes on counts whole seconds from when it began, if it is given the time to count; without it no time is written.
   const going = turn([command("a", "running")], { status: "running", startedAt: 1000 });
-  assert.deepEqual(statusParts(going, 43_900).map(part => part.text), ["第 3 轮", "1 步", "已用 42 秒"]);
-  assert.deepEqual(statusParts(going).map(part => part.text), ["第 3 轮", "1 步"]);
-  // Only what the Turn reported: input only when the Hub counted the whole Turn, no size no share, and no cost when nothing was spent.
+  assert.deepEqual(statusParts(going, 43_900).map(part => part.text), [], "a Turn without a context reported says nothing there");
+  // Without a size there is no share.
   const partial = turn([], { usage: { completeness: "partial", input: 7, context: { used: 2048 }, cost: { amount: 0, currency: "USD", scope: "session" } }, durationMs: 4_000 });
-  assert.deepEqual(statusParts(partial).map(part => part.text), ["第 3 轮", "用时 4.0 秒", "上下文 2.0k"]);
+  assert.deepEqual(statusParts(partial).map(part => part.text), ["上下文 2.0k"]);
 });
 
 test("a cost of nothing is not written, and a cost is written under its scope", () => {
@@ -149,7 +148,7 @@ test("what a Turn says while it goes on and shows nothing else: why it waits, wh
   const live = (more: Partial<Parameters<typeof liveStatus>[0]> & { items?: readonly ReadItem[]; status?: ReadTurn["status"] } = {}) =>
     liveStatus({ turn: { status: more.status ?? "running", items: more.items ?? [], executor: { harnessId: "codex", harness: "Codex" } }, run: { status: "running", cancelRequested: false, awaitingSwitchId: null, timing: time } as PublicRun, now: 5_000, replying: false, ...more });
   // An approval: the action it asks for in the 想… form, grey and still; without one, 等你批准. A question keeps naming the action in progress.
-  assert.deepEqual(live({ waiting: "approval", items: [command("ls"), command("rm -rf build", "pending")] }), { text: "想运行 rm -rf build", tone: "wait", timer: true, wrap: false, thinking: false });
+  assert.deepEqual(live({ waiting: "approval", items: [command("ls"), command("rm -rf build", "pending")] }), { text: "想运行 rm -rf build", tone: "wait", timer: true, wrap: false, thinking: false, quiet: true });
   assert.equal(live({ waiting: "approval", items: [command("ls")] }).text, "等你批准");
   assert.equal(live({ waiting: "question", items: [command("npm test", "running")] }).text, "正在运行 npm test");
   assert.deepEqual(live({ waiting: "question" }), { text: "等你回答", tone: "wait", timer: true, wrap: false, thinking: false });
@@ -163,7 +162,10 @@ test("what a Turn says while it goes on and shows nothing else: why it waits, wh
   assert.equal(live({ status: "preparing", startupHint: { seconds: 1, usual: false } }).text, "正在启动 Codex");
   // Running: the action in progress, the reply, or, with nothing shown yet, that it thinks, in words that change as the silence goes on.
   assert.equal(live({ items: [command("git diff --stat", "running")] }).text, "正在运行 git diff --stat");
-  assert.equal(live({ replying: true }).text, "正在回复");
+  // A reply being written says so itself, and the line is not drawn; a reply already written with nothing after it is thought again.
+  const writing = { ...at("running"), type: "assistant_message", messageId: "message-w" as never, phase: "final" } as ReadItem;
+  assert.deepEqual(live({ items: [writing], replying: true }), { text: "正在回复", tone: "run", timer: true, wrap: false, thinking: false, quiet: true });
+  assert.equal(live({ items: [{ ...writing, status: "completed" } as ReadItem], replying: true }).text, "正在思考");
   assert.deepEqual(live({}), { text: "正在思考", tone: "run", timer: true, wrap: false, thinking: true });
   assert.equal(live({ now: 10 + 31_000 }).text, "再想想");
   assert.equal(live({ now: 10 + 61_000 }).text, "快想好了");

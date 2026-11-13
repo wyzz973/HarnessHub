@@ -7,8 +7,11 @@ let native = "browser-native-" + process.pid;
 const send = value => process.stdout.write(JSON.stringify(value) + "\n");
 const reply = (id, result) => send({ id, result });
 const notify = (method, params) => send({ method, params });
+// The requests this fixture answers; any other request is refused as a real app-server refuses a method it does not have.
+const ANSWERED = new Set(["initialize", "config/read", "account/read", "model/list", "skills/list", "mcpServerStatus/list", "plugin/installed", "thread/start", "thread/fork", "thread/resume", "turn/start", "turn/interrupt"]);
 createInterface({ input: process.stdin }).on("line", line => {
   const value = JSON.parse(line);
+  if (value.id !== undefined && typeof value.method === "string" && !ANSWERED.has(value.method)) { send({ id: value.id, error: { code: -32601, message: "Method not found: " + value.method } }); return; }
   if (value.id === "browser-approval" && value.result !== undefined && active?.approval) {
     notify("item/agentMessage/delta", { threadId: native, turnId: active.id, itemId: "browser-message", delta: "原生审批已收到：" + value.result.decision });
     notify("turn/completed", { threadId: native, turn: { id: active.id, status: "completed" } }); active = null; return;

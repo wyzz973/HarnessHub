@@ -30,7 +30,7 @@ const harness = (harnessId: string, name: string, model?: string): Executor => (
 test("an action reads in the voice of its state: in progress, done, failed, and a neutral one with the state's own word for the rest", () => {
   const cases: readonly (readonly [ItemStatus, string])[] = [
     ["running", "正在运行 npm test"], ["completed", "运行了 npm test"], ["failed", "运行失败 npm test"],
-    ["pending", "运行 npm test · 等待开始"], ["waiting", "运行 npm test · 等你处理"], ["declined", "运行 npm test · 已拒绝"], ["cancelled", "运行 npm test · 已停止"], ["unknown", "运行 npm test · 结果未知"],
+    ["pending", "运行 npm test"], ["waiting", "运行 npm test · 等你处理"], ["declined", "运行 npm test · 已拒绝"], ["cancelled", "运行 npm test · 已停止"], ["unknown", "运行 npm test · 结果未知"],
   ];
   for (const [status, text] of cases) assert.equal(workLabel(command("npm test", status)).text, text, status);
   // A state the verb says is not said twice; one it does not say is said in the table's word.
@@ -289,7 +289,7 @@ test("an event is one quiet line of its own facts, and a state that is not done 
   assert.equal(line({ type: "delegation", to: harness("codex", "Codex"), task: "补测试", status: "running" }), "交给 Codex：补测试 · 进行中");
   const options = [{ id: "a", role: "allow_once", label: "Allow" }];
   assert.equal(line({ type: "approval", subject: "command", title: "运行 npm test", options }), null, "an approval still waiting is above the message box, not here");
-  assert.equal(line({ type: "approval", subject: "command", title: "运行 npm test", options, decision: { role: "allow_once", by: "user", at: 1 } }), "已允许：运行 npm test");
+  assert.equal(line({ type: "approval", subject: "command", title: "运行 npm test", options, decision: { role: "allow_once", by: "user", at: 1 } }), null, "allowing once is not written in the timeline");
   assert.equal(line({ type: "approval", subject: "command", title: "运行 npm test", options, decision: { role: "allow_always", by: "user", at: 1 } }), "已允许（以后都允许）：运行 npm test");
   assert.equal(line({ type: "approval", subject: "file_change", title: "修改 a.js", options, decision: { role: "deny", by: "timeout", at: 1 } }), "已拒绝（等待超时）：修改 a.js");
   assert.equal(line({ type: "approval", subject: "tool", title: "x", options, decision: { role: "allow_session", by: "policy", at: 1 } }), "已允许（这个对话里都允许）（按规则）：x");

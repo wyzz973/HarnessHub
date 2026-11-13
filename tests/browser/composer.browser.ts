@@ -268,7 +268,7 @@ test("the next message typed while a reply streams stays as typed through the st
   // A Turn that is under way for a while: the box is for the next message.
   const second = "第四条：先把这条发出去";
   await composer.fill(second); await composer.press("Enter");
-  await expect(composer).toHaveAttribute("placeholder", "回复进行中，可以先写下一条…", { timeout: 20_000 });
+  await expect(composer).toHaveAttribute("placeholder", "先写下一条", { timeout: 20_000 });
   await expect(composer).toHaveValue("");
   await watch(page);
   // Typed over the 2.5 s it is held back and the seconds in which its frames arrive and it ends.
@@ -296,7 +296,7 @@ test("a message sent with Enter while a reply runs is held, shown once in the he
   await fixture.mode({ echoDelayMs: 3000 });
   const second = "第四条：先把这条发出去";
   await composer.fill(second); await composer.press("Enter");
-  await expect(composer).toHaveAttribute("placeholder", "回复进行中，可以先写下一条…", { timeout: 20_000 });
+  await expect(composer).toHaveAttribute("placeholder", "先写下一条", { timeout: 20_000 });
   await watch(page);
   await composer.pressSequentially(TEXT, { delay: 20 });
   await expect(composer).toHaveValue(TEXT);
@@ -328,7 +328,7 @@ async function running(started: Started) {
   await expect(model).not.toContainText("读取模型…", { timeout: 20_000 });
   await fixture.mode({ RELAY_HOLD: "1" });
   await composer.fill("跑一个要很久的命令"); await composer.press("Enter");
-  await expect(composer).toHaveAttribute("placeholder", "回复进行中，可以先写下一条…", { timeout: 20_000 });
+  await expect(composer).toHaveAttribute("placeholder", "先写下一条", { timeout: 20_000 });
   const status = async (): Promise<string | undefined> => (await started.current()).runs.at(-1)?.status;
   const stops = async (): Promise<number> => (await sent(root, "codex")).filter(line => line.method === "turn/interrupt").length;
   await expect.poll(status, { timeout: 20_000 }).toBe("running");

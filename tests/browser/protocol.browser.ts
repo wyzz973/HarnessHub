@@ -292,10 +292,12 @@ test("every Turn ends with the same footer, and says why it ended when that was 
   const { page, log, errors } = await open(t, mixed());
   const footers = log.locator(".turn-footer");
   await expect(footers).toHaveText([
-    "Claude Code · 用时 1 分 05 秒 · 输入 4 · 输出 1.2k · 对话累计 US$0.87",
-    "Codex · GPT-6.1 · 用时 31 秒 · 输入 41.0k · 输出 1.1k",
-    "DeepSeek Harness · 用时 4.0 秒",
+    "Claude Code · 1 分 05 秒",
+    "Codex · GPT-6.1 · 31 秒",
+    "DeepSeek Harness · 4.0 秒",
   ]);
+  // Who, with which model and how long is the footer; the usage is its hint.
+  await expect(footers.first().locator("[title]")).toHaveAttribute("title", "Claude Code · 用时 1 分 05 秒 · 输入 4 · 输出 1.2k · 对话累计 US$0.87");
   // Not the ordinary end: the state's word, then the table's sentence, on the failed Turn only.
   const third = log.locator("article.assistant-message").nth(2);
   await expect(third.locator(".quiet-line[data-item=end]")).toHaveText("失败 · 模型拒绝了这个请求");
@@ -323,7 +325,8 @@ test("a Turn that goes on shows its open run and the action in progress, folds t
   await expect(group.locator(".action-row")).toHaveText(["运行了 git status --short", "正在运行 npm test"]);
   await expect(turn.locator(".live-line .response-status")).toHaveText("正在运行 npm test");
   await expect(turn).toHaveAttribute("aria-busy", "true");
-  await expect(turn.locator(".turn-footer")).toHaveText("Codex · GPT-6.1");
+  // The footer comes once the Turn is over.
+  await expect(turn.locator(".turn-footer")).toHaveCount(0);
   await shoot(page, "going-on");
   // The action ends and the Harness starts to answer: nothing can join the run any more, so it folds.
   const runs = gateway.session.runs as Json[], messages = gateway.session.messages;
@@ -333,14 +336,15 @@ test("a Turn that goes on shows its open run and the action in progress, folds t
   gateway.session.lastSeq = 99; gateway.session.version = 98; gateway.publish();
   await expect(group.getByRole("button", { name: "运行了 2 条命令", exact: true })).toHaveAttribute("aria-expanded", "false");
   await expect(turn.locator(".markdown")).toContainText("测试跑完了");
-  await expect(turn.locator(".live-line .response-status")).toHaveText("正在回复");
+  // The reply being written says so itself: the live line is not drawn.
+  await expect(turn.locator(".live-line")).toHaveCount(0);
   // Over: the footer carries its time and the Turn is no longer busy.
   change("done", "completed");
   (runs[0]!.protocol as Json).durationMs = 12_000; (runs[0]!.protocol as Json).stopReason = "end_turn"; (runs[0]!.timing as Json).endedAt = NOW; gateway.session.activeRunId = null;
   gateway.publish();
   await expect(turn).toHaveAttribute("aria-busy", "false");
   await expect(turn.locator(".live-line")).toHaveCount(0);
-  await expect(turn.locator(".turn-footer")).toHaveText("Codex · GPT-6.1 · 用时 12 秒");
+  await expect(turn.locator(".turn-footer")).toHaveText("Codex · GPT-6.1 · 12 秒");
   assert.deepEqual(errors, []);
 });
 
@@ -358,7 +362,7 @@ test("a Turn that has shown nothing yet says what it waits for, and an action ne
   // Nothing in the other Turn shows work yet: a line says it is being started.
   const waiting = log.locator("article.assistant-message").nth(1);
   await expect(waiting.locator(".live-line")).toContainText("正在启动 Claude Code");
-  await expect(waiting.locator(".turn-footer")).toHaveText("Claude Code");
+  await expect(waiting.locator(".turn-footer")).toHaveCount(0);
   await shoot(page, "waiting-and-unknown");
   assert.deepEqual(errors, []);
 });
@@ -383,9 +387,8 @@ test("a Run whose protocol Turn the page cannot read says so with the reason bes
   await expect(log).toContainText("第一轮的话"); await expect(log).toContainText("第三轮的话");
   await expect(log.locator(".unreadable-turn .turn-footer, .unreadable-turn .process-summary, .unreadable-turn .action-row")).toHaveCount(0);
   await expect(log.locator(".turn-footer")).toHaveCount(1);
-  // The Turn that can be read next to them is drawn as ever, and the line under the box belongs to it.
-  await expect(log.locator("article.assistant-message").last().locator(".turn-footer")).toHaveText("Codex · 用时 2.0 秒");
-  await expect(page.locator(".composer-status")).toContainText("第 4 轮");
+  // The Turn that can be read next to them is drawn as ever.
+  await expect(log.locator("article.assistant-message").last().locator(".turn-footer")).toHaveText("Codex · 2.0 秒");
   await shoot(page, "unreadable");
   assert.deepEqual(errors, []);
 });
@@ -400,7 +403,7 @@ test("on a phone the lines wrap inside the column and nothing makes the page wid
   assert.deepEqual(errors, []);
 });
 
-test("the other items each have a line of their own: a clear, a decision, an answer, a proposal, a recap, work handed over, an artifact, a stop", async t => {
+test("the other items each have a line of their own: a clear, an answer, a proposal, work handed over, an artifact, a stop; allowing once and the wrap-up have none", async t => {
   sequence = 0;
   const options = [{ id: "allow", role: "allow_once", label: "Allow" }];
   const stopped = run({ n: 1, harness: "claude", input: "做点事", status: "cancelled", stopReason: "user_stopped", durationMs: 9_000, usage: { completeness: "unavailable" }, items: [
@@ -413,17 +416,18 @@ test("the other items each have a line of their own: a clear, a decision, an ans
   const { page, log, errors } = await open(t, conversation([stopped], { 1: "停在这里了。" }));
   const turn = log.locator("article.assistant-message").nth(0);
   await expect(turn.locator(".quiet-line[data-item=context_event]")).toHaveText("上下文已压缩");
-  await expect(turn.locator(".quiet-line[data-item=approval]")).toHaveText("已允许：运行 npm test");
+  // Allowing once is not written in the timeline.
+  await expect(turn.locator(".quiet-line[data-item=approval]")).toHaveCount(0);
   await expect(turn.locator(".quiet-line[data-item=question]")).toHaveText("已回答：用哪个库？（dayjs）");
   await expect(turn.locator(".plan-proposal")).toContainText("先改 total，再补测试。");
-  // The wrap-up is one line of its Turn (the question and the answers are the next-step box's, above the message box).
-  await expect(turn.locator(".recap-line")).toHaveText("小结：改了 total，还没有提交。");
+  // The wrap-up is not written in the timeline (its question and answers are the next-step box's, above the message box).
+  await expect(turn.locator(".recap-line")).toHaveCount(0);
   await expect(turn.locator(".quiet-line[data-item=delegation]")).toHaveText("已交给 Codex：补测试");
   await expect(turn.getByRole("link", { name: "测试报告" })).toHaveAttribute("href", "https://example.com/report");
   // The stop is said once, by its own item; the line that ends a Turn does not say it again.
   await expect(turn.locator(".quiet-line[data-item=interrupt]")).toHaveText("你停止了这一轮");
   await expect(turn.locator(".quiet-line[data-item=end]")).toHaveCount(0);
-  await expect(turn.locator(".turn-footer")).toHaveText("Claude Code · 用时 9.0 秒");
+  await expect(turn.locator(".turn-footer")).toHaveText("Claude Code · 9.0 秒");
   await shoot(page, "other-items");
   assert.deepEqual(errors, []);
 });

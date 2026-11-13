@@ -562,7 +562,7 @@ test("the settings page offers the one relay setting when the Gateway has it, sa
   await expect(group.getByRole("radio")).toHaveText(["开（默认）", "关"]);
   await expect(group.getByRole("radio", { name: "开（默认）" })).toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("radiogroup", { name: "跨厂商交接" })).toHaveCount(0); await expect(page.getByRole("radiogroup", { name: "送达拿不准时" })).toHaveCount(0);
-  await expect(page.getByText("对话换到另一个 Harness 后的第一条消息，自动附上它没看过的部分")).toBeVisible();
+  await expect(page.getByText("换过去的第一条消息，自动带上它没看过的部分")).toBeVisible();
   await shoot(page, "settings-relay");
   await group.getByRole("radio", { name: "关" }).click();
   await expect(group.getByRole("radio", { name: "关" })).toHaveAttribute("aria-checked", "true");
@@ -584,7 +584,7 @@ test("a Gateway without the relay setting shows none, and a value the page canno
   const none = await open(t, conversation("completed", packetRelay(CODEX)), { prefs: null }, [/404/u]);
   await none.page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true }).click();
   await expect(none.page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
-  await expect(none.page.getByRole("heading", { name: "对话", exact: true, level: 2 })).toBeVisible();
+  await expect(none.page.locator("#main-content").getByRole("heading", { name: "对话", exact: true, level: 2 })).toBeVisible();
   await expect(none.page.getByRole("radiogroup", { name: "换 Harness 时附上之前的对话" })).toHaveCount(0);
   assert.ok(none.gateway.reads.prefs >= 1, "the page asked, and was told there is no such setting");
   assert.deepEqual(none.errors, []);
@@ -632,7 +632,7 @@ test("a Gateway that does not say it has the relay API sees no relay request, no
   await expect(page.getByRole("tab", { name: /^执行/u })).toBeVisible(); await expect(page.getByRole("tab", { name: /接续/u })).toHaveCount(0);
   await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "对话", exact: true, level: 2 })).toBeVisible();
+  await expect(page.locator("#main-content").getByRole("heading", { name: "对话", exact: true, level: 2 })).toBeVisible();
   await expect(page.getByRole("radiogroup", { name: "换 Harness 时附上之前的对话" })).toHaveCount(0);
   await page.waitForTimeout(300);
   assert.deepEqual(gateway.reads, { view: 0, text: 0, prefs: 0 }, "nothing of the relay was asked");

@@ -145,7 +145,9 @@ function codex(message) {
   if (message.method === "thread/start" || message.method === "thread/resume") {
     state = load(); thread(); save(state);
     notify("thread/started", { thread: { id: threadId } });
-    send({ id: message.id, result: { thread: { id: threadId, path: null, modelProvider: env.RELAY_PROVIDER ?? "openai" }, model: env.RELAY_MODEL ?? "gpt-5.5", modelProvider: env.RELAY_PROVIDER ?? "openai" } });
+    // As a real app-server does, the thread reports the approval policy and sandbox it runs with (the ones asked for, else Codex's own).
+    const sandbox = { "read-only": "readOnly", "workspace-write": "workspaceWrite", "danger-full-access": "dangerFullAccess" }[params.sandbox ?? "workspace-write"];
+    send({ id: message.id, result: { thread: { id: threadId, path: null, modelProvider: env.RELAY_PROVIDER ?? "openai" }, model: env.RELAY_MODEL ?? "gpt-5.5", modelProvider: env.RELAY_PROVIDER ?? "openai", approvalPolicy: params.approvalPolicy ?? "on-request", sandbox: { type: sandbox } } });
     return;
   }
   if (message.method === "turn/start") {
