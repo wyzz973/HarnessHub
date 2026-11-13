@@ -27,7 +27,9 @@ function nativeNote(session: ConversationView, origin: SessionOrigin): string {
  * The quoted history a branch started from, shown before its own messages and never sent again as new input: a quiet card
  * that says where the conversation came from and how it continues natively, with the history behind one disclosure.
  */
-export function BranchOrigin({ origin, session, harnesses, onOpenSource }: { origin: SessionOrigin; session: ConversationView; harnesses: readonly HarnessView[]; onOpenSource: ((id: string) => void) | undefined }) {
+export function BranchOrigin({ origin, session, harnesses, onOpenSource, delegated = false }: { origin: SessionOrigin; session: ConversationView; harnesses: readonly HarnessView[]; onOpenSource: ((id: string) => void) | undefined;
+  /** The conversation was handed this work by the one it quotes: it says so, and nothing about branches. */
+  delegated?: boolean }) {
   const [open, setOpen] = useState(false);
   const history = useId();
   const name = (id: string | undefined) => harnesses.find(row => row.id === id)?.name ?? id ?? "Harness";
@@ -36,15 +38,15 @@ export function BranchOrigin({ origin, session, harnesses, onOpenSource }: { ori
   return <section className="branch-origin flex flex-col gap-2 rounded-card bg-surface px-4 py-3 shadow-hairline" aria-label={imported ? "接续来源" : "分支来源"}>
     <header className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-ui-sm">
       <span className="flex text-fg-3">{imported ? <BrandIcon brand={imported.harnessId} name={name(imported.harnessId)} size={18}/> : <GitBranch size={16} aria-hidden="true"/>}</span>
-      <strong className="min-w-0 font-semibold text-fg">{imported ? "接续本机 " + name(imported.harnessId) + " 会话" + (imported.title ? "「" + imported.title + "」" : "") : "分支自之前的对话"}</strong>
-      <small className="text-caption text-fg-3">{origin.kind === "fork" && origin.history.length === 0 ? "分支前的对话在原对话里" : origin.history.length + " 条消息"}{earlier ? " · " + earlier : ""}</small>
+      <strong className="min-w-0 font-semibold text-fg">{imported ? "接续本机 " + name(imported.harnessId) + " 会话" + (imported.title ? "「" + imported.title + "」" : "") : delegated ? "委派来的任务" : "分支自之前的对话"}</strong>
+      <small className="text-caption text-fg-3">{delegated ? "带着原对话的 " + origin.history.length + " 条消息" : origin.kind === "fork" && origin.history.length === 0 ? "分支前的对话在原对话里" : origin.history.length + " 条消息"}{earlier ? " · " + earlier : ""}</small>
       <span className="flex-1"/>
       {origin.kind === "fork" && onOpenSource ? <button type="button" className="link-btn inline-flex items-center gap-1 text-caption" onClick={() => onOpenSource(origin.sessionId)}>打开原对话 <ArrowUpRight size={12} aria-hidden="true"/></button> : null}
     </header>
-    <p className="m-0 text-ui-sm text-fg-2" role="status">{nativeNote(session, origin)}</p>
+    {delegated ? null : <p className="m-0 text-ui-sm text-fg-2" role="status">{nativeNote(session, origin)}</p>}
     {origin.history.length ? <div className="flex flex-col">
       <button type="button" aria-expanded={open} aria-controls={history} onClick={() => setOpen(value => !value)} className="row -ml-1.5 flex h-7 items-center gap-1.5 self-start border-none bg-transparent px-1.5 text-ui-sm text-fg-2 hover:bg-subtle">
-        {imported ? <History size={14} className="text-fg-3" aria-hidden="true"/> : null}{imported ? "查看本机会话的历史" : "查看分支前的对话"}
+        {imported ? <History size={14} className="text-fg-3" aria-hidden="true"/> : null}{imported ? "查看本机会话的历史" : delegated ? "查看原对话" : "查看分支前的对话"}
         <ChevronRight size={12} strokeWidth={2.2} className={cn("text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
       </button>
       <Collapsible open={open} id={history}><ol className="m-0 mt-2 ml-1 flex list-none flex-col gap-3 border-l border-line-strong p-0 pl-3.5">{origin.history.map((message, index) => <li key={index} className="flex min-w-0 flex-col gap-1">

@@ -356,7 +356,8 @@ function decodeLogPage(value: unknown): InstallationLogPage {
 function decodeSummary(value: unknown): SessionSummary {
   const row = record(value);
   return { id: text(row.id), title: text(row.title), status: choice(row.status, SESSION_STATES), workspace: text(row.workspace),
-    selection: selection(row.selection), updatedSeq: number(row.updatedSeq), activeRunId: nullableText(row.activeRunId) };
+    selection: selection(row.selection), updatedSeq: number(row.updatedSeq), activeRunId: nullableText(row.activeRunId),
+    ...(row.parent === undefined ? {} : { parent: (parent => ({ sessionId: text(parent.sessionId), afterRunId: nullableText(parent.afterRunId) }))(record(row.parent)) }) };
 }
 function contentRef(value: unknown): ContentRef { try { return parseContentRef(value); } catch { return invalid(); } }
 function nativeInputs(value: unknown): NativeInputs { const row = record(value); return { image: bool(row.image), audio: bool(row.audio), file: bool(row.file) }; }
@@ -723,6 +724,10 @@ export class GatewayApi {
   /** Makes the branch through the Turn `runId` (an alternative of a Turn: its message sent again, its reply tried again) the conversation's path; nothing runs. */
   selectBranch(id: string, runId: string, key: string): Promise<ClientSessionView> {
     return this.request(`/sessions/${encodeURIComponent(id)}/branch`, "POST", { runId, commandId: key }, decodeSessionViewV14);
+  }
+  /** Hands `text` to `selection` in a conversation of its own that starts from this one's history; the server answers with that conversation. */
+  delegate(id: string, selection: SelectionRequest, text: string, key: string, messageKey: string): Promise<ClientSessionView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/delegate`, "POST", { selection, text, commandId: key, messageCommandId: messageKey }, decodeSessionViewV14);
   }
   /** Branches a conversation after a finished reply; the server answers with the new conversation. */
   forkSession(id: string, key: string, throughRunId?: string): Promise<ClientSessionView> {

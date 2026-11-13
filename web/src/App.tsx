@@ -18,6 +18,8 @@ import type { TurnReads } from "./components/ProtocolTurn.js";
 import { liveItems, notifyWaiting } from "./attention.js";
 import { ApiError, errorMessage, GatewayApi, requestKey } from "./api.js";
 import type { Place } from "./components/Welcome.js";
+import type { DelegationResult } from "./components/Delegation.js";
+import { PERMISSION_KEY } from "../../src/contracts/flavor.js";
 import { ChatPage, effectiveProviderProblem, EMPTY_SELECTION, selectionDraft, selectionProblem, selectionRequest } from "./components/ChatPage.js";
 import type { QueuedMessage, SelectionDraft } from "./components/ChatPage.js";
 import { HarnessesPage, installationActive } from "./components/HarnessesPage.js";
@@ -452,7 +454,7 @@ export function App() {
       if (!current) return current;
       // Titled as the Gateway titles it: nothing reads the state again to correct it (ADR-050).
       const summary = { id: value.id, title: value.title,
-        status: value.status, workspace: value.workspace, selection: value.selection, updatedSeq: value.lastSeq, activeRunId: value.activeRunId };
+        status: value.status, workspace: value.workspace, selection: value.selection, updatedSeq: value.lastSeq, activeRunId: value.activeRunId, ...(value.parent === undefined ? {} : { parent: value.parent }) };
       return { ...current, sessions: current.sessions.some(item => item.id === value.id)
         ? current.sessions.map(item => item.id === value.id ? summary : item) : [summary, ...current.sessions] };
     });
@@ -1145,6 +1147,49 @@ export function App() {
     const id = session.id;
     setOutcomes(current => { const known = current.get(id); return known?.status === lastStatus && known.seq === lastSeq ? current : new Map(current).set(id, { status: lastStatus, seq: lastSeq }); });
   }, [session?.id, lastStatus, lastSeq]);
+  // What this conversation handed to other Harnesses: the conversations that say it delegated them their work.
+  const delegations = useMemo(() => sessionId === null ? [] : (state?.sessions ?? []).filter(item => item.parent?.sessionId === sessionId), [state?.sessions, sessionId]);
+  const loadDelegation = useCallback(async (id: string, signal: AbortSignal): Promise<DelegationResult> => {
+    const view = conversationOf(replaceWithSnapshot(null, await api.session(id, signal)));
+    const last = view.runs.at(-1), reply = last === undefined ? "" : view.messages.find(message => message.id === last.assistantMessageId)?.text ?? "";
+    return { status: last?.status ?? null, summary: view.recap !== undefined && view.recap.runId === last?.id ? view.recap.summary : null, reply: reply.length > 12_000 ? reply.slice(0, 12_000) + "…" : reply };
+  }, [api]);
+  const permissionLevel = draft.nativeOptions[PERMISSION_KEY];
+  const delegate = useCallback(async (harness: HarnessView, text: string): Promise<void> => {
+    const from = sessionIdRef.current;
+    if (from === null) return;
+    const control = harness.controls.find(row => row.id === harness.defaultControlId && row.available) ?? harness.controls.find(row => row.available);
+    if (control === undefined) throw new ApiError("INVALID_SELECTION", harness.name + " 现在不可用。");
+    const remembered = rememberedChoice(harness.id), entry = remembered && harness.controls.some(row => row.id === remembered.controlId && row.available) ? remembered : null;
+    // It works at this conversation's permission level, with its own last model and thinking level from this browser.
+    const selection = selectionRequest({ ...EMPTY_SELECTION, harnessId: harness.id, controlId: entry?.controlId ?? control.id, model: entry?.nativeModel ?? "", nativeOptions: { ...(entry?.nativeOptions ?? {}), [PERMISSION_KEY]: permissionLevel ?? "auto" } });
+    await api.delegate(from, selection, text, requestKey(), requestKey());
+    await refreshState().catch(() => {});
+  }, [api, refreshState, permissionLevel]);
+  // Conversations at work that are not the open one are followed by reading the list: their rows, and the work this one delegated, say how they stand.
+  const othersWorking = state?.sessions.some(item => item.activeRunId !== null && item.id !== sessionId) ?? false;
+  useEffect(() => {
+    if (!othersWorking) return;
+    let stopped = false, timer: ReturnType<typeof setTimeout> | null = null;
+    const controller = new AbortController();
+    const read = async () => {
+      try {
+        const page = await api.sessions(undefined, undefined, controller.signal);
+        if (stopped) return;
+        setState(current => {
+          if (current === null) return current;
+          const fresh = new Map(page.sessions.map(row => [row.id, row]));
+          let changed = false;
+          const sessions = current.sessions.map(row => { const now = fresh.get(row.id); if (now === undefined || now.updatedSeq < row.updatedSeq || (now.updatedSeq === row.updatedSeq && now.activeRunId === row.activeRunId && now.title === row.title)) return row; changed = true; return now; });
+          const added = page.sessions.filter(row => !current.sessions.some(known => known.id === row.id));
+          return changed || added.length ? { ...current, sessions: [...added, ...sessions] } : current;
+        });
+      } catch { /* the next read tries again */ }
+      if (!stopped) timer = setTimeout(() => void read(), document.visibilityState === "hidden" ? 10_000 : 2_500);
+    };
+    timer = setTimeout(() => void read(), 2_500);
+    return () => { stopped = true; if (timer !== null) clearTimeout(timer); controller.abort(); };
+  }, [othersWorking, api]);
   // The folders of earlier conversations, newest first, then the Gateway's own; those the Gateway made for a 临时对话 are not projects.
   const recentFolders = useMemo(() => [...new Set([...(state?.sessions ?? []).map(item => item.workspace), state?.workspace ?? ""].filter(path => path !== "" && !inScratch(path, state?.scratchRoot)))].slice(0, 8), [state?.sessions, state?.workspace, state?.scratchRoot]);
   const failed = useMemo(() => new Set((state?.sessions ?? []).flatMap(item => {
@@ -1221,7 +1266,7 @@ export function App() {
           catch(failure){ setError(errorMessage(failure)); } }} onPermission={(permission,option,input)=>{ if(!sessionId||!startOperation("permission"))return; void api.decidePermission(sessionId,permission,option,requestKey(),input).then(()=>api.session(sessionId)).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={refreshNativeModels} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft}
         messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} hiddenHarnesses={hidden} readiness={state.readiness} rememberedChoice={rememberedChoice} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError}
-        onRetryConnection={() => setStreamAttempt(value => value + 1)} onLoadOlder={readOlder} reads={turnReads} {...(sessionId === null ? {} : { onLoadChanges: (before: string | undefined, signal: AbortSignal) => api.changes(sessionId, before, undefined, signal) })} onDraft={changeSelection} place={{ scratch, workspace }} onPlace={choosePlace} recentFolders={recentFolders} onChooseFolder={start => api.chooseFolder(start)} scratchRoot={state.scratchRoot} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
+        onRetryConnection={() => setStreamAttempt(value => value + 1)} onLoadOlder={readOlder} reads={turnReads} {...(sessionId === null ? {} : { onLoadChanges: (before: string | undefined, signal: AbortSignal) => api.changes(sessionId, before, undefined, signal) })} onDraft={changeSelection} place={{ scratch, workspace }} onPlace={choosePlace} recentFolders={recentFolders} onChooseFolder={start => api.chooseFolder(start)} scratchRoot={state.scratchRoot} delegations={delegations} onLoadDelegation={loadDelegation} onDelegate={delegate} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
         sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued}
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
         onImportNative={importNative} focusOnOpen={sessionId !== null && openedFromPage === sessionId} onOpenFocused={() => setOpenedFromPage(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}

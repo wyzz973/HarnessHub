@@ -1,4 +1,4 @@
-import { ArrowLeftRight, History, ListPlus, Paperclip, Plus, RefreshCw, ShieldCheck, SquareSlash, TriangleAlert } from "lucide-react";
+import { ArrowLeftRight, History, ListPlus, Paperclip, Plus, RefreshCw, ShieldCheck, Split, SquareSlash, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { PublicRun } from "../../../src/contracts/session.js";
@@ -57,6 +57,8 @@ interface ComposerProps extends ChatProps {
    * conversation is on: the "+" menu holds it, as a choice that is made and undone from there.
    */
   readonly sendAlone?: { readonly checked: boolean; readonly onToggle: () => void } | undefined;
+  /** Opens the way to hand a part of the work to another Harness; absent where there is no conversation to hand it from. */
+  readonly onOpenDelegate?: (() => void) | undefined;
 }
 
 /** The Gateway's guard on one message (src/contexts/session/domain/state.ts MAX_INPUT_BYTES): only against a mistaken paste of a whole dump. */
@@ -574,6 +576,7 @@ export function Composer(props: ComposerProps) {
                 aria-label="添加文件或上下文" disabled={readonly}><Plus size={16} strokeWidth={1.9}/></button>} items={[
                 { label: "添加文件或图片…", icon: <Paperclip size={15}/>, hint: "@", disabled: !canAttach, onSelect: () => picker.current?.click() },
                 ...(commands.length ? [{ label: "原生命令", icon: <SquareSlash size={15}/>, hint: "/", disabled: disabled, onSelect: () => { setSlashClosedAt(null); (props.onReplaceDraft ?? props.onMessageDraft)("/"); setTimeout(() => inputRef.current?.focus(), 0); } }] : []),
+                ...(props.onOpenDelegate ? [{ label: "委派给另一个 Harness…", icon: <Split size={15}/>, onSelect: props.onOpenDelegate }] : []),
                 ...(sessionsOffered ? [{ label: "继续原程序的会话…", icon: <History size={15}/>, disabled: disabled || props.mutation !== null, onSelect: () => openPanel("sessions") }] : []),
                 ...(props.sendAlone ? [{ separator: true as const }, { label: "只发这条消息", icon: <ArrowLeftRight size={15}/>, description: "不附之前的对话，只发你写的这一条", checked: props.sendAlone.checked, disabled: disabled, onSelect: props.sendAlone.onToggle }] : []),
               ]}/>
@@ -698,8 +701,7 @@ function AdvancedSettings(props: ComposerProps & {
     {nativeState ? <div className={row}><span className={heading}>原生会话</span><strong className="text-ui-sm font-medium">{nativeState.status === "ready" ? "继续已有会话" : "状态待确认"}</strong>
       {nativeState.observed ? <small className="native-observed text-caption text-fg-2">原生当前：{props.describeNative(nativeState.observed.model ?? undefined, nativeState.observed.options) || "未报告"}</small> : null}
       <small className="text-caption text-fg-3">公共历史与旧原生记录保留；原生内部状态重新建立。</small>
-      <button type="button" className="btn btn-sm self-start" disabled={disabled || props.dirty || props.pending || props.active !== null} onClick={props.onNativeBranch}>重新建立原生会话</button>
-      {nativeState.status === "ready" && session && props.onShowResume ? <button type="button" className="link-btn self-start text-ui-sm" onClick={props.onShowResume}>在原程序中继续的方式…</button> : null}</div> : null}
+      <button type="button" className="btn btn-sm self-start" disabled={disabled || props.dirty || props.pending || props.active !== null} onClick={props.onNativeBranch}>重新建立原生会话</button></div> : null}
     <p className="m-0 bg-subtle px-3.5 py-2.5 text-caption text-fg-3">选择后直接切换；当前回复继续使用原配置，下一次发送使用新选择。</p>
   </Popover>;
 }

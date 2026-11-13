@@ -23,6 +23,8 @@ export interface IndexRow {
   readonly lastSeq: number;
   readonly runCount: number;
   readonly activeRunId: RunId | null;
+  /** The conversation that delegated this one its work, when one did. */
+  readonly parent?: Conversation["delegation"];
   readonly kept: boolean;
   /** A Turn not finished or a switch pending: what recovery visits. */
   readonly unfinished: boolean;
@@ -49,7 +51,7 @@ export function indexRowOf(conversation: Conversation, file: string, facts: { re
     list.push({ harnessId: run.selection.harnessId, controlId: run.selection.controlId, preparingAt: timing.preparingAt, readyAt: timing.readyAt }); samples.set(key, list);
   }
   return { id: conversation.id, file, title: facts.title, status: conversation.status, workspace: conversation.configuration.workspace, selection: conversation.selection, updatedAt: facts.updatedAt,
-    lastSeq: conversation.lastSeq, runCount: conversation.runs.length, activeRunId: conversation.activeRunId, kept: conversation.retained !== undefined,
+    lastSeq: conversation.lastSeq, runCount: conversation.runs.length, activeRunId: conversation.activeRunId, ...(conversation.delegation === undefined ? {} : { parent: conversation.delegation }), kept: conversation.retained !== undefined,
     unfinished: conversation.pendingSwitchId !== null || conversation.runs.some(run => !runFinished(run.status)),
     bindings: (conversation.nativeBindings ?? []).map(binding => ({ harnessId: binding.harnessId, controlId: binding.controlId, checkpoint: binding.checkpoint, status: binding.status, ...(binding.opensNew === true ? { opensNew: true as const } : {}) })),
     createKey: facts.createKey, handoffs: facts.handoffs, samples: [...samples.values()].flat(), size: facts.size, mtimeMs: facts.mtimeMs };

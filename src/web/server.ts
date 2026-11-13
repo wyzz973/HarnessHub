@@ -1147,7 +1147,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (textRoute && method === "GET") { queries(url, ["from", "to"]); json(response, 200, conversations!.itemText(textRoute[1]!, textRoute[2]!, textRoute[3]!, { from: url.searchParams.get("from") ?? undefined, to: url.searchParams.get("to") ?? undefined })); return; }
     const changesRoute = /^\/api\/v1\/sessions\/([^/]+)\/changes$/u.exec(path);
     if (changesRoute && method === "GET") { queries(url, ["before", "limit"]); json(response, 200, conversations!.changes(changesRoute[1]!, { before: url.searchParams.get("before") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
-    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|branch|retention|end-process|native-resume))?$/u.exec(path);
+    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|branch|delegate|retention|end-process|native-resume))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
       if (action === undefined && method === "GET") { queries(url, []); json(response, 200, conversations!.session(id)); return; }
@@ -1195,6 +1195,15 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
           // `branchFrom`: the message goes from the place of that Turn (its message edited and sent again, or its reply tried again), on a branch of its own.
           json(response, 202, app.runtime.send(id, input.text, command(input.commandId), (input.attachments ?? []) as string[], relay.choices, input.branchFrom as string | undefined));
           return;
+        }
+        // A part of the work goes to a Harness of its own (2026-11-13): a conversation that starts from this one's history, with the task as its first message.
+        if (action === "delegate") {
+          const input = record(await body(request, MAX_MESSAGE_BODY_BYTES), ["selection", "text", "commandId", "messageCommandId"], ["selection", "text", "commandId", "messageCommandId"]);
+          if (typeof input.text !== "string" || !input.text.trim()) throw new HttpError(400, "INVALID_INPUT", "Message text required");
+          const child = await app.runtime.delegate(id, select(input.selection), command(input.commandId));
+          // A repeat of the request finds the conversation it made, and the task already in it.
+          if (child.runs.length === 0) app.runtime.send(child.id, input.text, command(input.messageCommandId), [], undefined, undefined);
+          json(response, 201, conversations!.session(child.id)); return;
         }
         // Another branch of the conversation becomes its path (the alternative of a Turn: `runId`); nothing runs.
         if (action === "branch") { const input = record(await body(request), ["runId", "commandId"], ["runId", "commandId"]); json(response, 200, conversations!.session(app.runtime.selectBranch(id, text(input.runId, "Run identity", 160), command(input.commandId)).id)); return; }

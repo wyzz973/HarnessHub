@@ -288,6 +288,7 @@ export interface HeadJson {
   readonly retained?: RetainedProcess;
   readonly relayRecoveryFailed?: number;
   readonly origin?: StoredOrigin;
+  readonly delegation?: import("./session.js").DelegationOrigin;
 }
 /** One row of `sessions` of a converted conversation. */
 export interface HeadRow {
@@ -441,6 +442,8 @@ export interface SessionListRow {
   readonly updatedAt: number;
   readonly activeRunId: RunId | null;
   readonly runCount: number;
+  /** The conversation that delegated this one its work, when one did. */
+  readonly parent?: import("./session.js").DelegationOrigin;
 }
 /** Opaque. A list reads on from it; there is no ceiling on how many conversations a list reaches. */
 export type SessionListCursor = string & { readonly __sessionListCursor: true };

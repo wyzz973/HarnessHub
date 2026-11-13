@@ -429,7 +429,7 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
     [turn, run, reads, over, cancelling, detailed, arrangement.children, message, loadToolDetail, seen, onViewPacket]);
   const pieces = useMemo(() => segments(arrangement.blocks), [arrangement.blocks]);
   // What the Harness said in this Turn, for copying and for the line that says the Turn is replying: its segments, which stand between its actions, one after another.
-  const replies = turn.items.flatMap(item => item.type === "assistant_message" ? [message(item.messageId)?.text ?? ""] : []);
+  const replies = [...new Set(turn.items.flatMap(item => item.type === "assistant_message" ? [item.messageId] : []))].map(id => message(id)?.text ?? "");
   const reply = replies.filter(Boolean).join("\n\n");
   const copy = useCopy(reply);
   const retry = onRetry !== undefined && (turn.status === "failed" || turn.status === "cancelled");

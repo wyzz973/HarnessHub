@@ -231,6 +231,11 @@ export interface ForkedMessage {
  * Harness continued in the Hub (v9). The quoted history is immutable and never re-executed.
  */
 export type SessionOrigin = BranchOrigin | ImportOrigin;
+/**
+ * A conversation started as a delegation (2026-11-13): another conversation handed it a part of its work, for a Harness of its own to do.
+ * `parentId` is that conversation; `afterRunId` the finished Turn it was handed after (null: before any finished Turn).
+ */
+export interface DelegationOrigin { readonly parentId: SessionId; readonly afterRunId: RunId | null }
 export interface BranchOrigin {
   readonly kind: "fork";
   readonly sessionId: SessionId;
@@ -310,6 +315,8 @@ export interface SessionSnapshot {
   readonly nativeBindings?: readonly NativeSessionBinding[];
   /** Present on a branched Session (v8): the public history it was branched from. */
   readonly origin?: SessionOrigin;
+  /** Present on a conversation another one delegated work to. */
+  readonly delegation?: DelegationOrigin;
   /** v11: the user chose to keep this conversation's native process between Turns for background work (ADR-030). */
   readonly retainNative?: true;
   /** v11: the native process this conversation holds now; cleared when it is closed. */

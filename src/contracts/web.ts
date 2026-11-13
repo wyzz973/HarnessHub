@@ -119,7 +119,10 @@ export interface SessionSummary {
   readonly selection: HarnessSelection;
   readonly updatedSeq: number;
   readonly activeRunId: string | null;
+  /** The conversation that delegated this one its work (2026-11-13), and the Turn of it the work was handed after (null: before any finished Turn). */
+  readonly parent?: DelegationParent;
 }
+export interface DelegationParent { readonly sessionId: string; readonly afterRunId: string | null }
 /** Public history excludes admission fingerprints and private configuration references. */
 /** The installed Harness's own sessions of a workspace; `conversationId` names the conversation already continuing one. */
 export interface NativeSessionListView {
@@ -202,6 +205,8 @@ export interface SessionView {
   readonly nativeStates?: readonly NativeStateView[];
   /** The public history a branched conversation started from. */
   readonly origin?: import("./session.js").SessionOrigin;
+  /** The conversation that delegated this one its work. */
+  readonly parent?: DelegationParent;
   /**
    * Whether the conversation keeps its native process between Turns (ADR-030), and the process it keeps now: when it was
    * first kept, its last Turn, when it ends unless used, and how many updates it sent outside Turns (counted, not shown).
@@ -281,6 +286,8 @@ export interface CreateWebSession {
   readonly commandId: string;
 }
 export interface SwitchWebSession { readonly selection: SelectionRequest; readonly commandId: string }
+/** `POST /api/v1/sessions/:id/delegate`: a conversation of its own for `selection` to do `text`, starting from this one's history. `messageCommandId` is the task message's own identity. */
+export interface DelegateWebSession { readonly selection: SelectionRequest; readonly text: string; readonly commandId: string; readonly messageCommandId: string }
 export interface WebError {
   readonly code: string;
   readonly message: string;

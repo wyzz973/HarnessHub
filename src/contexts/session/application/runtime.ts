@@ -720,6 +720,37 @@ export class SessionRuntime {
     } catch (error) { if (storeUntrusted(error)) this.fail(error, id); throw error; }
   }
   /**
+   * Hands a part of a conversation's work to a Harness of its own (2026-11-13): a new conversation in the same workspace with that Harness, marked as delegated by
+   * the source, which quotes the source's public history through its latest finished Turn (nothing when it has none). Nothing is sent to a model here: the task is the
+   * new conversation's first message. The source may be in the middle of a Turn; it is only read.
+   */
+  async delegate(sourceId: SessionId, selection: SelectionRequest, key: string): Promise<Conversation> {
+    this.admit();
+    const loaded = this.load(sourceId), request = requested(selection), command = commandId(key);
+    const through = [...loaded.runs].reverse().find(run => terminal(run.status));
+    const fingerprint = this.fingerprint({ kind: "delegate", source: sourceId, through: through?.id ?? null, selection: request });
+    const prior = this.store.findByCreateKey(command);
+    if (prior) { replayCommand(prior, command, "create", fingerprint); return this.load(prior.id); }
+    const validated = await this.factory.validate(request, loaded.configuration);
+    this.admit();
+    // Validation has an await boundary; the same command may have been committed in the meantime.
+    const concurrent = this.store.findByCreateKey(command);
+    if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return this.load(concurrent.id); }
+    const id = sessionId("session-" + this.options.id());
+    const last = through === undefined ? -1 : loaded.runs.findIndex(run => run.id === through.id);
+    const history = through === undefined ? [] : this.quotedThrough(sourceId, loaded, last);
+    const parts = through === undefined ? null : originToRows(id, { kind: "fork", sessionId: sourceId, throughRunId: through.id, history }, last);
+    const state: Conversation = { id, version: 0, lastSeq: 0, format: CONVERSATION_FORMAT, epoch: 1, status: "open", configuration: loaded.configuration, selection: validated,
+      activeRunId: null, pendingSwitchId: null, runs: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
+      ...(parts === null ? {} : { origin: parts.stored }), delegation: { parentId: sourceId, afterRunId: through?.id ?? null } };
+    try {
+      const committed = this.store.create(state, [event("session.created", { selection: validated, continuity: "public_context_rehydrate",
+        ...(through === undefined ? {} : { origin: { sessionId: sourceId, throughRunId: through.id, messages: history.length, nativeFork: false } }) })], parts?.rows);
+      this.managedSessions.add(id); this.publish(committed);
+      return this.load(id);
+    } catch (error) { if (storeUntrusted(error)) this.fail(error, id); throw error; }
+  }
+  /**
    * The history a branch after the Run at `last` quotes: what the source itself quoted, then the words of its finished Turns through that Run in the order they were said (the seq of each message
    * places it: a queued input is accepted before the reply of the Turn in front of it is made).
    */

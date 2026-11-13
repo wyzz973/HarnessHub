@@ -1,4 +1,4 @@
-import { ArrowDown, Check, ChevronUp, Circle, CircleDashed, FileDown, GitBranch, ListChecks, ListTree, Menu as MenuIcon, MoreHorizontal, PanelLeft, PanelRight, TerminalSquare, X } from "lucide-react";
+import { ArrowDown, Check, ChevronUp, Circle, CircleDashed, FileDown, GitBranch, ListChecks, ListTree, Menu as MenuIcon, MoreHorizontal, PanelLeft, PanelRight, Split, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import type { ContentRef } from "../../../src/contracts/content.js";
@@ -6,7 +6,7 @@ import type { NativeExtensions, NativeModelCatalog } from "../../../src/contract
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import type { AttentionItem, HarnessSelection, PublicRun, SelectionRequest } from "../../../src/contracts/session.js";
-import type { HarnessReadinessView, HarnessView, NativeSessionListView } from "../../../src/contracts/web.js";
+import type { HarnessReadinessView, HarnessView, NativeSessionListView, SessionSummary } from "../../../src/contracts/web.js";
 import type { ConversationView } from "../lib/conversation.js";
 import { failureMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
@@ -31,6 +31,7 @@ import { RelayPacketDialog, type PacketTarget } from "./RelayDetails.js";
 import { RelayCard, RelayInstallation, SEND_ALONE, type RelayNext } from "./RelayCard.js";
 import { ProtocolTurn, type TurnReads } from "./ProtocolTurn.js";
 import { Welcome, type Place } from "./Welcome.js";
+import { DelegateDialog, DelegationCards, type DelegationResult } from "./Delegation.js";
 import { PERMISSION_WORDS, selectionLevels } from "../../../src/contracts/levels.js";
 
 export interface SelectionDraft { harnessId: string; controlId: string; providerId: string; providerRevision: number | null; model: string; nativeOptions: Readonly<Record<string, string>> }
@@ -105,6 +106,9 @@ export interface ChatProps {
   place: Place; onPlace: (place: Place) => void; recentFolders: readonly string[]; onChooseFolder: (start: string | undefined) => Promise<string | null>;
   /** Where the Gateway keeps the folders of conversations started without one. */
   scratchRoot?: string | undefined;
+  /** The conversations this one delegated work to, newest first; how one of them stands; and the way to delegate (the conversation goes on meanwhile). */
+  delegations?: readonly SessionSummary[]; onLoadDelegation?: (id: string, signal: AbortSignal) => Promise<DelegationResult>;
+  onDelegate?: (harness: HarnessView, text: string) => Promise<void>;
   /** Sends the message; `relay` is what the user chose about the history for this one message (a way forward from a refusal). */
   onSend: (text: string, retryAttachments?: readonly ContentRef[], relay?: RelayRequest) => Promise<void>;
   onApply: () => void; onCancel: () => void; onClose: () => void; onDismissError: () => void; onProviders: () => void; onNew: () => void; onMenu: () => void;
@@ -186,7 +190,7 @@ export function ChatPage(props: ChatProps) {
   const { session, draft, harnesses, providers, mutation, error, preferences } = props;
   const [followBottom, setFollowBottom] = useState(true);
   const [dismissedSwitch, setDismissedSwitch] = useState<string | null>(null);
-  const [confirmClose, setConfirmClose] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false), [delegating, setDelegating] = useState(false);
   const [tab, setTab] = useState<PanelTab | null>(null);
   const [panelRun, setPanelRun] = useState<string | null>(null);
   const [overlay, setOverlay] = useState(false);
@@ -378,7 +382,6 @@ export function ChatPage(props: ChatProps) {
     if (panelOpen && panelTab === "run" && (panelRun ?? session?.runs.at(-1)?.id) === runId) { setPanel(false); return; }
     setPanelRun(runId); setTab("run"); setPanel(true);
   };
-  const showResume = () => { setPanelRun(session?.runs.at(-1)?.id ?? null); setTab("run"); setPanel(true); };
   const detailed = preferences.density === "detailed";
   // Approvals wait in the composer's place, oldest first (ADR-054 §5); questions and forms stay in their Turn.
   const requestHarness = (request: PermissionRequestView) => harnessName(runs.get(request.runId as never)?.selection.harnessId ?? session?.selection.harnessId ?? "");
@@ -426,15 +429,20 @@ export function ChatPage(props: ChatProps) {
    * its reply starts: its status, timer and arc carry on. The Runtime creates the reply's message when its first text is committed;
    * the Turn finds it by the Run's `assistantMessageId`.
    */
-  const transcriptItems = (current: ConversationView): ReactNode[] => current.runs.map(run => {
+  const delegated = props.delegations ?? [], loadDelegation = props.onLoadDelegation;
+  const delegationCards = (items: readonly SessionSummary[], key: string): ReactNode => items.length === 0 || loadDelegation === undefined || session === null ? null
+    : <DelegationCards key={key} items={items} harness={harnessName} load={loadDelegation} onOpen={id => props.onOpenSession?.(id)} onReport={answer} reportTo={harnessName(session.selection.harnessId)} busy={answerBlocked !== null}/>;
+  const transcriptItems = (current: ConversationView): ReactNode[] => current.runs.flatMap(run => {
     const open = (current.permissions ?? []).filter(request => request.runId === run.id && !request.decided);
-    return <ProtocolTurn key={"turn:" + run.id} run={run} message={messageOf} arrived={arrived} detailed={detailed} onEdit={fillDraft}
+    return [<ProtocolTurn key={"turn:" + run.id} run={run} message={messageOf} arrived={arrived} detailed={detailed} onEdit={fillDraft}
       onRetry={canRetry ? (text, sent) => { void (props.onBranchSend ? props.onBranchSend(run.id, text, sent ?? []) : send(text, sent ?? [])).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
       onResend={props.onBranchSend && session?.status === "open" ? (runId, text, sent) => { void props.onBranchSend!(runId, text, sent ?? []).catch(() => {}); } : undefined}
       onSelectBranch={props.onSelectBranch ? runId => { void props.onSelectBranch!(runId).catch(() => {}); } : undefined} branchBusy={!canRetry}
       onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? current.runs.at(-1)?.id) === run.id} onViewPacket={relay ? viewPacket : undefined} reads={props.reads}
       startupHint={startupHints.get(run.id)} queue={queue?.runId === run.id ? queueNotice : undefined}
-      waiting={open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{turnRequests(run.id)}</ProtocolTurn>;
+      waiting={open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{turnRequests(run.id)}</ProtocolTurn>,
+      // What was handed to another Harness after this Turn stands right after it.
+      delegationCards(delegated.filter(item => item.parent?.afterRunId === run.id).reverse(), "delegated:" + run.id)];
   });
 
   // ↑ in an empty composer: the held message comes back first, otherwise the last message sent becomes the draft.
@@ -492,7 +500,7 @@ export function ChatPage(props: ChatProps) {
     return { checked, onToggle: () => relay.onNext(checked ? null : SEND_ALONE) };
   })() : undefined;
   const composer = <Composer {...props} sendAlone={sendAlone} onSendDraft={text => send(text)} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}
-    onShowResume={session ? showResume : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} onEditLast={editLast} onReplaceDraft={fillDraft}
+    onOpenDelegate={props.onDelegate && session?.status === "open" ? () => setDelegating(true) : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} onEditLast={editLast} onReplaceDraft={fillDraft}
     above={session ? <>
       {relay ? <RelayCard line={relayNow} banner={banner} target={harnessName(session.selection.harnessId)} next={relay.next} onNext={relay.onNext}
         onDismissBanner={() => { if (banner !== null) closed.add(closedKey(banner.key)); }}/> : null}
@@ -542,8 +550,8 @@ export function ChatPage(props: ChatProps) {
           </button></Tip>
           {changes ? <span id="details-changes" className="sr-only">本对话改动 {changes} 处</span> : null}
           <Menu align="end" trigger={<button type="button" className="icon-btn" aria-label="更多操作" title="更多操作"><MoreHorizontal size={16}/></button>} items={[
+            ...(props.onDelegate ? [{ label: "委派给另一个 Harness…", icon: <Split size={14}/>, disabled: session.status !== "open", onSelect: () => setDelegating(true) }] : []),
             { label: "从最新回复分支", icon: <GitBranch size={14}/>, disabled: !canBranch || !props.onBranch || session.facts.branchable === null, onSelect: () => { const last = session.facts.branchable; if (last !== null) props.onBranch?.(last.runId); } },
-            { label: "在原程序中继续的方式", icon: <TerminalSquare size={14}/>, onSelect: showResume },
             { separator: true },
             { label: panelOpen ? "收起详情" : "打开详情", icon: <PanelRight size={14}/>, hint: "⌘\\", onSelect: () => setPanel(!panelOpen) },
             // Checked is the detailed density: every Turn's steps open. This browser keeps it, as the setting does (ruling R1).
@@ -554,7 +562,7 @@ export function ChatPage(props: ChatProps) {
             { separator: true },
             // The one way to end the conversation (ruling R3); the confirmation below is unchanged.
             { label: "结束对话…", icon: <X size={14}/>, description: "结束会话，保留历史", danger: true, disabled: session.status === "closed" || mutation !== null, onSelect: () => setConfirmClose(true) },
-          ]} footer="导出公开对话与执行摘要；原生内部状态不包含在内。"/>
+          ]}/>
         </div>
       </> : null}
     </header>
@@ -586,10 +594,12 @@ export function ChatPage(props: ChatProps) {
               recents={props.recentFolders} chooseFolder={props.onChooseFolder} onHarnesses={props.onHarnesses} composer={composer}/>
             : <div className="transcript mx-auto flex max-w-reading flex-col gap-7 pb-4" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
               {olderCursor !== null ? <div ref={topMark} className="older-turns flex justify-center"><button type="button" className="btn btn-ghost btn-sm" onClick={() => void loadOlder()}>加载更早的对话</button></div> : null}
-              {session.origin && olderCursor === null ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession}/> : null}
+              {session.origin && olderCursor === null ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession} delegated={session.parent !== undefined}/> : null}
               {/* A first message sent from the home opens its conversation empty for a moment: it is not shown as ready meanwhile. */}
               {session.runCount === 0 && !session.origin && mutation !== "sending" && !(firstSend !== null && (firstSend.id === null || firstSend.id === session.id))
                 ? <EmptyState title="对话准备好了">发出第一条消息，开始这次协作。</EmptyState> : null}
+              {/* Handed over before any Turn had finished, or after a Turn the page does not hold (every Turn is held: it was one of another branch). */}
+              {olderCursor === null ? delegationCards(delegated.filter(item => item.parent?.afterRunId == null || !session.runs.some(run => run.id === item.parent?.afterRunId)).reverse(), "delegated:first") : null}
               {transcriptItems(session)}
               {orphanCards.length ? orphanCards : null}
             </div>}
@@ -610,6 +620,8 @@ export function ChatPage(props: ChatProps) {
     {!inline && session ? <Dialog open={overlay} onOpenChange={setOverlay} title="详情栏" kind={narrow ? "sheet" : "drawer"} className={narrow ? "h-[80dvh]" : ""}><aside className="flex min-h-0 flex-1 flex-col" aria-label="详情栏">{panel}</aside></Dialog> : null}
     <div className="sr-only" role="status" aria-live="polite">{status}</div>
     {session && relay ? <RelayPacketDialog api={relay.api} sessionId={session.id} packet={viewedPacket} onClose={() => setViewing(null)} name={harnessName}/> : null}
+    {props.onDelegate && session ? <DelegateDialog open={delegating} onClose={() => setDelegating(false)} current={session.selection.harnessId} onDelegate={props.onDelegate}
+      harnesses={harnesses.filter(harness => !props.hiddenHarnesses.has(harness.id) && harness.controls.some(control => control.available))}/> : null}
     <Dialog open={confirmClose} onOpenChange={setConfirmClose} title="结束这次会话？" description="历史会保留。这次会话将不再接收新消息；之后可以新建对话。">
       <div className="flex flex-col gap-4 px-5 pt-2 pb-5">
         {active || pending ? <p className="m-0 text-ui-sm text-fg-2">当前执行或待生效的选择会停止，已经产生的内容与文件会保留。</p> : null}

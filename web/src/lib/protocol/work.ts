@@ -311,7 +311,13 @@ export function lay(items: readonly ReadItem[]): readonly Block[] {
  */
 export function arrange(turn: Pick<ReadTurn, "status" | "items">, options: { readonly asking?: boolean } = {}): Arrangement {
   // The Hub's record of the workspace is said once at the Turn's end (ProtocolTurn's WorkspaceLine), not among the Harness's own actions.
-  const over = turnOver(turn), items = turn.items.filter(item => !(item.type === "file_change" && item.by === "hub")).map(item => settled(item, over));
+  // An answer said twice in one Turn (a Harness that says it, calls a tool such as the Hub's wrap-up, and says it again to end) is drawn once, where it ends:
+  // the same message named by two segments, or two segments with the same words.
+  const lastOf = new Map<string, string>();
+  const words = (item: ReadItem): string | null => { const text = item.type === "assistant_message" ? item.text?.trim() : undefined; return text ? "text:" + text : null; };
+  for (const item of turn.items) if (item.type === "assistant_message") { lastOf.set("id:" + item.messageId, item.id); const said = words(item); if (said !== null) lastOf.set(said, item.id); }
+  const repeated = (item: ReadItem): boolean => { if (item.type !== "assistant_message") return false; const said = words(item); return lastOf.get("id:" + item.messageId) !== item.id || (said !== null && lastOf.get(said) !== item.id); };
+  const over = turnOver(turn), items = turn.items.filter(item => !(item.type === "file_change" && item.by === "hub") && !repeated(item)).map(item => settled(item, over));
   const tasks = new Set(items.filter(item => item.type === "subagent").map(item => item.id));
   // The task an item happened inside, when that task is one of the Turn's own. A chain of tasks that leads back to itself is shown flat, so that every item is shown once.
   const parents = new Map(items.map(item => [item.id, item.parentId !== undefined && tasks.has(item.parentId) && item.parentId !== item.id ? item.parentId : undefined]));

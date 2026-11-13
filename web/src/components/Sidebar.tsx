@@ -66,7 +66,9 @@ interface SidebarProps {
   readonly more?: boolean; readonly onMore?: () => void;
 }
 type RowState = "wait" | "run" | "unknown" | "closed" | "fail" | "idle";
-interface Row { readonly session: SessionSummary; readonly items: readonly AttentionItem[]; readonly state: RowState }
+interface Row { readonly session: SessionSummary; readonly items: readonly AttentionItem[]; readonly state: RowState;
+  /** A conversation another one in the list delegated work to: it stands right under that one, set in. */
+  readonly child?: true }
 interface Project { readonly key: string; readonly name: string; readonly detail: string | null; readonly rows: readonly Row[]; readonly scratch: boolean }
 /** The group of the conversations started without a folder: each has a folder of its own, and they are listed together. */
 const SCRATCH_KEY = "\u0000scratch";
@@ -93,10 +95,22 @@ function groupProjects(sessions: readonly SessionSummary[], waiting: ReadonlyMap
   return [...byWorkspace.entries()].map(([key, rows]) => {
     const scratch = key === SCRATCH_KEY, name = scratch ? "临时对话" : key.trim() ? folderName(key) : "未归入项目", parent = key.replace(/[\\/][^\\/]*[\\/]*$/u, "");
     return { key, name, scratch, detail: !scratch && key.trim() && (names.get(name) ?? 0) > 1 && parent ? homePath(parent) : null,
-      rows: rows.map((row, index) => ({ row, index })).sort((a, b) => RANK[a.row.state] - RANK[b.row.state] || a.index - b.index).map(item => item.row) };
+      rows: nested(rows.map((row, index) => ({ row, index })).sort((a, b) => RANK[a.row.state] - RANK[b.row.state] || a.index - b.index).map(item => item.row)) };
   });
 }
 
+/** The rows with each delegated conversation moved under the one that delegated it (when that one is listed in the same group), in the order they had. */
+function nested(rows: readonly Row[]): readonly Row[] {
+  const listed = new Set(rows.map(row => row.session.id)), under = new Map<string, Row[]>();
+  for (const row of rows) { const parent = row.session.parent?.sessionId; if (parent !== undefined && parent !== row.session.id && listed.has(parent)) under.set(parent, [...(under.get(parent) ?? []), { ...row, child: true }]); }
+  if (under.size === 0) return rows;
+  const placed = new Set<string>(), out: Row[] = [];
+  const put = (row: Row): void => { if (placed.has(row.session.id)) return; placed.add(row.session.id); out.push(row); for (const child of under.get(row.session.id) ?? []) put(child); };
+  for (const row of rows) { const parent = row.session.parent?.sessionId; if (parent === undefined || parent === row.session.id || !listed.has(parent)) put(row); }
+  // A ring of parents would leave rows out: whatever is left is listed as it was.
+  for (const row of rows) put(row);
+  return out;
+}
 const PROJECTS_KEY = "harnesshub:sidebar-projects";
 /** Projects shown open by default during this page's life: they stay open in every sidebar (the drawer too) until closed. */
 const SHOWN_OPEN = new Set<string>();
@@ -256,7 +270,9 @@ function SessionRow({ row, now, harness, current, disabled, onOpen }: { readonly
   // The app's row: a 6 px state dot in the leading slot, the title, and a second line that says whose conversation it is and how it stands
   // (what it waits for, while it waits for you).
   return <button type="button" disabled={disabled} onClick={onOpen} aria-current={current ? "page" : undefined} aria-label={title} aria-describedby={left ? metaId + " " + lineId : metaId}
-    className={cn("session-item nav-row h-auto w-full items-start gap-2 py-[5px] pr-2.5 pl-2 disabled:opacity-60", left && "has-attention")}>
+    className={cn("session-item nav-row relative h-auto w-full items-start gap-2 py-[5px] pr-2.5 disabled:opacity-60", row.child ? "pl-[26px]" : "pl-2", left && "has-attention")}>
+    {/* A delegated conversation hangs from the one above it. */}
+    {row.child ? <span className="pointer-events-none absolute top-0 left-[15px] h-[15px] w-2 rounded-bl-[5px] border-b border-l border-line-strong" aria-hidden="true"/> : null}
     <span className="flex h-5 w-4 flex-none items-center justify-center">{indicator}</span>
     <span className="flex min-w-0 flex-1 flex-col">
       <span className={cn("session-title trunc", state === "closed" && "text-fg-2")}>{title}</span>

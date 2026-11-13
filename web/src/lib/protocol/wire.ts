@@ -292,6 +292,7 @@ export function decodeHead(value: unknown): SessionHeadView {
     return { enabled: bool(kept.enabled, "enabled"), process, ...(lost === undefined ? {} : { lost }), ...(outside === undefined ? {} : { outside }), ...(upgraded === undefined ? {} : { upgraded }) };
   });
   const last = maybe(row.lastSwitch, lastSwitch);
+  const parent = maybe(row.parent, item => { const made = rec(item, "a delegating conversation"); return { sessionId: str(made.sessionId, "a conversation id"), afterRunId: nullable(made.afterRunId, value => str(value, "a Run")) }; });
   // The latest task list and the latest Turn's wrap-up: a reading that is not one is left out (the head stays).
   let plan: SessionHeadView["plan"], recap: SessionHeadView["recap"];
   try {
@@ -307,7 +308,7 @@ export function decodeHead(value: unknown): SessionHeadView {
   } catch { recap = undefined; }
   return { id: str(row.id, "a conversation id"), version: nat(row.version, "version"), lastSeq: nat(row.lastSeq, "lastSeq"), epoch: nat(row.epoch, "epoch"), status: pick(row.status, ["open", "closed", "blocked"] as const, "a conversation's state"),
     workspace: str(row.workspace, "a workspace"), selection: selection(row.selection), activeRunId: nullable(row.activeRunId, item => str(item, "a Run")), pendingSwitchId: nullable(row.pendingSwitchId, item => str(item, "a switch")),
-    ...(permissions === undefined ? {} : { permissions }), ...(states === undefined ? {} : { nativeStates: states }), ...(quoted === undefined ? {} : { origin: quoted }), ...(queue === undefined ? {} : { queue }), ...(retention === undefined ? {} : { retention }),
+    ...(permissions === undefined ? {} : { permissions }), ...(states === undefined ? {} : { nativeStates: states }), ...(quoted === undefined ? {} : { origin: quoted }), ...(parent === undefined ? {} : { parent }), ...(queue === undefined ? {} : { queue }), ...(retention === undefined ? {} : { retention }),
     title: str(row.title, "a title"), runCount: nat(row.runCount, "runCount"), ...(last === undefined ? {} : { lastSwitch: last }), facts: sessionFacts(row.facts),
     ...(plan === undefined ? {} : { plan }), ...(recap === undefined ? {} : { recap }) };
 }
@@ -337,7 +338,8 @@ export interface ClientSessionList { readonly sessions: readonly SessionSummary[
 export function decodeSessionListView(value: unknown): ClientSessionList {
   const row = rec(value, "a list of conversations");
   return { sessions: many(row.sessions, item => { const made = rec(item, "a conversation"); return { id: str(made.id, "an id"), title: str(made.title, "a title"), status: pick(made.status, ["open", "closed", "blocked"] as const, "a state"), workspace: str(made.workspace, "a workspace"),
-    selection: selection(made.selection), updatedSeq: nat(made.updatedSeq, "updatedSeq"), activeRunId: nullable(made.activeRunId, entry => str(entry, "a Run")) }; }, "conversations"), next: nullable(row.next, item => str(item, "a cursor")) };
+    selection: selection(made.selection), updatedSeq: nat(made.updatedSeq, "updatedSeq"), activeRunId: nullable(made.activeRunId, entry => str(entry, "a Run")),
+    ...(made.parent === undefined ? {} : { parent: (parent => ({ sessionId: str(parent.sessionId, "a conversation id"), afterRunId: nullable(parent.afterRunId, entry => str(entry, "a Run")) }))(rec(made.parent, "a delegating conversation")) }) }; }, "conversations"), next: nullable(row.next, item => str(item, "a cursor")) };
 }
 
 /** `GET …/changes?before=&limit=`: the changes of the whole conversation that have a stored detail, newest first; the first page also names the newest plan. */
