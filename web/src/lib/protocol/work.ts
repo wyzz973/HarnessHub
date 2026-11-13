@@ -2,7 +2,7 @@ import { ITEM_STATUS_WORDS } from "../../../../src/contracts/protocol-words.js";
 import { WORK_TYPES, type FileOp, type ItemStatus, type ReasoningItem, type WorkItem } from "../../../../src/contracts/protocol.js";
 import type { ReadItem, ReadTurn } from "../../../../src/contracts/protocol-read.js";
 import type { PublicMessage } from "../../../../src/contracts/session.js";
-import { TABLE_MCP_NAME, TABLE_PROGRESS_TOOLS } from "../../../../src/contracts/table.js";
+import { TABLE_MCP_NAME, TABLE_PROGRESS_TOOLS, hubCommandOnly } from "../../../../src/contracts/table.js";
 
 /*
  * What the page says of the actions of a Turn, from the protocol's items alone (docs/proposals/protocol/hub-protocol.html §13): one
@@ -68,6 +68,8 @@ function specOf(item: WorkItem): Spec {
   switch (item.type) {
     case "command": {
       const text = item.command.trim();
+      // The Hub's tools as a command of the conversation (a Harness that takes no tool entry runs it): said as the tools are.
+      if (hubCommandOnly(text) !== null) return plain(HUB, HUB, null, item.command);
       return { ...plain(RUN, RUN_ONE, text ? oneLine(text) : null, item.command, true), ...(item.exitCode === undefined ? {} : { exit: item.exitCode }) };
     }
     case "file_read": return plain(READ, READ_ONE, item.path ? baseName(item.path) : null, item.path ?? "", true);
@@ -209,7 +211,7 @@ export function summarizeGroup(items: readonly WorkItem[]): GroupSummary {
     targets.keys.set(key, statuses.add(status));
   };
   for (const item of items) switch (item.type) {
-    case "command": add("command", "id:" + item.id, item.status); break;
+    case "command": add(hubCommandOnly(item.command) !== null ? "hub" : "command", "id:" + item.id, item.status); break;
     case "file_change":
       if (item.changes.length === 0) { add("change", "id:" + item.id, item.status); ops.add("modify"); }
       else for (const change of item.changes) { add("change", "path:" + change.path, item.status); ops.add(change.op); }
@@ -277,7 +279,9 @@ export interface Arrangement {
  */
 // The same goes for the Hub's delegation tools: the work handed over stands as a card after the Turn, and asking how it stands is not an action of the task.
 const PROGRESS: ReadonlySet<string> = new Set<string>([...TABLE_PROGRESS_TOOLS, "hub_delegate", "hub_delegations"]);
-const elsewhere = (item: ReadItem): boolean => item.type === "mcp_tool" && item.server === TABLE_MCP_NAME && PROGRESS.has(item.tool);
+const COMMAND_ELSEWHERE: ReadonlySet<string> = new Set(["plan", "wrap-up", "delegate", "delegations"]);
+const elsewhere = (item: ReadItem): boolean => item.type === "mcp_tool" ? item.server === TABLE_MCP_NAME && PROGRESS.has(item.tool)
+  : item.type === "command" && COMMAND_ELSEWHERE.has(hubCommandOnly(item.command)?.verb ?? "");
 
 /**
  * Lays items out in the order they come in: an action that comes after another with nothing but thoughts between them joins its

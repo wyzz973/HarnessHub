@@ -28,5 +28,9 @@ export const openclawFlavor: HarnessFlavor = {
   nativePlan: false,
   // docs/cli/acp.md: the bridge rejects per-session `mcpServers` (dist/server-*.mjs assertSupportedSessionSetup); sessions.patch has no
   // tool or prompt field (SessionsPatchMutationProperties), and a prompt's `_meta` takes only prefixCwd, thinking, deliver and timeoutMs.
-  capabilities: { sessionMcp: "none", systemPrompt: "none", planTool: "none", resume: "native", fork: "none", attachments: "native", usage: "turn" },
+  // Its own MCP registry (`mcp.servers`) is the Gateway's, for every session, and hands a server nothing that tells one session from another
+  // (dist/mcp-transport-*.mjs: the configured env only). So the Hub's tools are a command of the conversation the agent runs with its exec
+  // tool (`cli`; 2026-11-13: run without asking in the workspace mode), and the instructions that name it go after the first prompt of a new
+  // session. Not in read-only ("plan"), where OpenClaw refuses every command.
+  capabilities: { sessionMcp: "cli", systemPrompt: "first-prompt", planTool: "hub", resume: "native", fork: "none", attachments: "native", usage: "turn" },
 };

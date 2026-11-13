@@ -3,6 +3,7 @@ import type { TurnText } from "../../../contracts/control.js";
 import type { PermissionLevel } from "../../../contracts/protocol.js";
 import { approvalRole, subjectOf } from "../domain/items-place.js";
 import { isHubToolCall } from "../domain/protocol/tools.js";
+import { hubCommandOnly } from "../../../contracts/table.js";
 
 /**
  * The Hub's answer to a permission request under the conversation's permission level (T3 Code's client policy): by the adapter's declaration
@@ -16,7 +17,9 @@ const KIND_OF_FAMILY: Readonly<Record<string, RequestKind>> = { read: "read", se
  * The call a request is about, as the Hub placed it (its item): what tells the request when it says nothing of its own (DeepSeek Harness's
  * has no title and no kind). `hub`: the call is one of the Hub's own tools (the item says so).
  */
-export interface RequestCall { readonly type: string; readonly title?: string; readonly name?: string; readonly hub?: boolean }
+export interface RequestCall { readonly type: string; readonly title?: string; readonly name?: string; readonly hub?: boolean;
+  /** The command line of a call that runs one. */
+  readonly command?: string }
 /**
  * Whether a request is about one of the Hub's own tools (they read this conversation back or tell the Hub how the Turn goes, and touch
  * nothing of the user's): the Hub allows those itself at every level ("plan" included), so that a Harness that asks about MCP tools does
@@ -24,7 +27,8 @@ export interface RequestCall { readonly type: string; readonly title?: string; r
  */
 function aboutHubTool(title: string, call: RequestCall | undefined): boolean {
   if (call?.hub === true) return true;
-  return [title, call?.name, call?.title].some(text => text !== undefined && text.trim() !== "" && isHubToolCall({ title: text }));
+  // The same tools as a command of the conversation (HubToolsEntry `cli`): a line that is that command's call and nothing else.
+  return [title, call?.name, call?.title, call?.command].some(text => text !== undefined && text.trim() !== "" && (isHubToolCall({ title: text }) || hubCommandOnly(text) !== null));
 }
 function kindOfTitle(title: string): RequestKind {
   switch (subjectOf(title)) {

@@ -32,7 +32,8 @@ const NATIVE_IMPORT_MS = 10 * 60_000;
  */
 const NATIVE_STARTUP_MS = 5 * 60_000;
 import type { NativeInstallationLocks, NativeUsageLease } from "../management/native-lock.js";
-import { nativeOnly, selectedLevels } from "../../contracts/flavor.js";
+import { nativeOnly, selectedLevels, sessionEntryOf } from "../../contracts/flavor.js";
+import { flavorOf } from "../../adapters/flavors/index.js";
 
 export interface ConfigurationInput {
   readonly workspace: string;
@@ -282,7 +283,8 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       environment.TMPDIR = temporary.path;
       // The context table (docs/decisions/LOG.md, 2026-11-11): the Hub's address and a token of this process alone, for the tool
       // process the Harness starts inside it. Added after the class identity above: a token per process must not make a class per Turn.
-      attached = this.table?.attach({ sessionId: session, harnessId: selection.harnessId, controlId: selection.controlId }) ?? null;
+      // A Harness whose declaration gives the tools as a command (`cli`) has the conversation's command written with the token.
+      attached = this.table?.attach({ sessionId: session, harnessId: selection.harnessId, controlId: selection.controlId }, { command: selection.provider === undefined && sessionEntryOf(flavorOf(selection.harnessId)).tools === "cli" }) ?? null;
       if (attached !== null) Object.assign(environment, attached.env);
       // Whether this process has the Hub's tools, as a fact of how it is started (the packet may repeat it to the model): it carries the table's
       // environment, it reads the configuration the Hub's tool entry is written in (the user's own, not a generated or an isolated home), and
@@ -300,12 +302,12 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       control = await createNativeControl(selection.harnessId, launch, options);
       if (selection.provider !== undefined && this.providers) control = new RedactedHarnessControl(control, text => this.providers!.redact(text), () => this.providers!.createTextRedactor());
       // A Driver that hands the tools to its session itself has them whatever the user's configuration holds (docs/decisions/LOG.md, 2026-11-12).
-      const hubTools = configured || attached !== null && control.sessionTools === true;
+      const hubTools = configured || attached !== null && (control.sessionTools === true || attached.command !== undefined);
       // What the relay must never send on (ADR-055 §10.2 (a)–(c)): credential-named values this program was given or this
       // Gateway's environment holds, and whatever its configuration references by name.
       const base = nativeBaseValues(this.nativeEnvironment, home, selection.harnessId);
       const secrets = credentialValues({ environments: [environment, this.nativeEnvironment.values], referenced: Object.entries(referenced).filter(([name]) => !(name in base)) }, existsSync);
-      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, temporary, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage, secrets, attached, hubTools);
+      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, temporary, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage, secrets, attached, hubTools, attached?.command);
     } catch (error) {
       attached?.detach();
       let cleanupError: unknown;
@@ -454,7 +456,8 @@ class DirectoryPreparedBinding implements PreparedSessionBinding {
   private closed = false;
   constructor(readonly control: HarnessControl, readonly workspace: string, private readonly lease: WorkspaceLease,
     private readonly root: string, private readonly temporary: HostTmpdir, private readonly owner: () => void, readonly installation: NonNullable<PreparedSessionBinding["installation"]>, private readonly usage?: NativeUsageLease,
-    readonly secrets: readonly string[] = [], private readonly table: TableAttachment | null = null, readonly hubTools = false) {}
+    readonly secrets: readonly string[] = [], private readonly table: TableAttachment | null = null, readonly hubTools = false, command?: string) { if (command !== undefined) this.hubCommand = command; }
+  readonly hubCommand?: string;
   assertOwned(): void {
     if (this.closed || this.closing !== null) throw new SessionError("BINDING_CLOSED", "binding is closing or closed");
     this.owner(); this.lease.assertOwned(); this.usage?.assertOwned();

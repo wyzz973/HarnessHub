@@ -50,6 +50,7 @@ import type { HubToolsOptions } from "../infrastructure/capabilities/hub-tools.j
 import type { ClaudeRunner } from "../infrastructure/capabilities/claude-mcp.js";
 import { flavorOf } from "../adapters/flavors/index.js";
 import { PERMISSION_KEY } from "../contracts/flavor.js";
+import { TABLE_COMMAND_DIR } from "../contracts/table.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 /**
@@ -404,7 +405,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   });
   let app: ReturnType<typeof composeApplication>;
   // The context table's mount (docs/decisions/LOG.md, 2026-11-11): the native processes the application starts carry this server's address and a token each.
-  const table = options.table ?? new TableMount(options.tableGrants);
+  const table = options.table ?? new TableMount(options.tableGrants, join(options.root, TABLE_COMMAND_DIR));
   // The relay's API (ADR-055 §12.4): its routes, the delivery state of the Runs it shows and the bodies of the errors it explains.
   let relayApi: RelayApi;
   // A Turn waits for a slot only when an operator limited the conversations running at once; conversations sharing a workspace do not wait.

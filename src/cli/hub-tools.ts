@@ -114,7 +114,7 @@ const TOOLS: readonly ToolDefinition[] = [
       + "`task` must stand on its own: say what to do, where, and what to give back, with everything it needs from this turn (it has not seen this turn). "
       + "The call returns at once. The outcome reaches you with the user's next message; when you need it in this turn, call hub_delegations with `wait`. The user sees the delegated work as a card in this conversation.",
     inputSchema: { type: "object", properties: {
-      harness: { type: "string", minLength: 1, description: "Which Harness: its id or name, for example codex, claude-code, opencode. An unknown one is answered with the ids available here." },
+      harness: { type: "string", minLength: 1, description: "Which Harness: its id or name, for example codex, claude, opencode, hermes. An unknown one is answered with the ids available here." },
       task: { type: "string", minLength: 1, description: "The work to do, self-contained: what, where, and what to report back." } }, required: ["harness", "task"], additionalProperties: false },
     annotations: { title: "Delegate a part of the work", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
   { name: "hub_delegations", title: "How delegated work stands",
@@ -441,7 +441,12 @@ const USAGE = [
   "                                                   (input, output and diff need --tool K, a tool call's number in the turn)",
   "  hub-tools search <words> [--limit N] [--after C] [--in all|words]",
   "                                                   find words in the whole conversation, a page at a time (C: the cursor the page before gave); --in words searches only the user's words and the replies, quickly",
-  "  hub-tools mcp                                    serve these tools as an MCP server on stdio (with hub_update_plan and hub_wrap_up, which only the server has)",
+  "  hub-tools plan <step>...                         show the user your task list: each step is \"[x] done\", \"[~] in progress\" or \"[ ] to do\"; give the whole list every time",
+  "  hub-tools wrap-up <recap> [--ask Q] [--action A]...",
+  "                                                   show the user a short wrap-up of this turn, with one question and one or two answers when the next move is theirs",
+  "  hub-tools delegate <harness> <task>              hand a self-contained part of the work to another Harness, which does it in a conversation of its own",
+  "  hub-tools delegations [--wait N]                 how the work handed over stands; --wait N waits up to N seconds (25 at most) for what still runs",
+  "  hub-tools mcp                                    serve these tools as an MCP server on stdio",
   "",
   "It reads " + TABLE_ENV.url + " and " + TABLE_ENV.session + " from the environment; HarnessHub sets them for the programs it starts.",
 ].join("\n");
@@ -453,11 +458,13 @@ export async function main(args: readonly string[], io: ToolIo = { env: process.
   const [command, ...rest] = args;
   if (command === "--help" || command === "-h" || command === "help") { io.stdout.write(USAGE + "\n"); return 0; }
   if (command === "mcp") return serve(io);
-  if (command !== "turns" && command !== "turn" && command !== "search") return misuse(io, command === undefined ? "" : "Unknown command: " + command);
-  let values: Record<string, string | undefined>, positionals: string[];
+  if (!["turns", "turn", "search", "plan", "wrap-up", "delegate", "delegations"].includes(command ?? "")) return misuse(io, command === undefined ? "" : "Unknown command: " + command);
+  let values: Record<string, string | undefined>, positionals: string[], actions: readonly string[] = [];
   try {
-    const parsed = parseArgs({ args: rest, allowPositionals: true, strict: true, options: { from: { type: "string" }, limit: { type: "string" }, part: { type: "string" }, tool: { type: "string" }, offset: { type: "string" }, after: { type: "string" }, in: { type: "string" } } });
-    values = parsed.values; positionals = parsed.positionals;
+    const parsed = parseArgs({ args: rest, allowPositionals: true, strict: true, options: { from: { type: "string" }, limit: { type: "string" }, part: { type: "string" }, tool: { type: "string" }, offset: { type: "string" }, after: { type: "string" }, in: { type: "string" },
+      wait: { type: "string" }, ask: { type: "string" }, explanation: { type: "string" }, action: { type: "string", multiple: true } } });
+    const { action, ...single } = parsed.values;
+    values = single; positionals = parsed.positionals; actions = action ?? [];
   } catch (error) { return misuse(io, error instanceof Error ? error.message : "bad arguments"); }
   const only = (names: readonly string[]) => Object.fromEntries(names.flatMap(name => values[name] === undefined ? [] : [[name, values[name]]]));
   let tool: TableTool, input: Record<string, unknown>;
@@ -467,9 +474,25 @@ export async function main(args: readonly string[], io: ToolIo = { env: process.
   } else if (command === "turn") {
     if (positionals.length !== 1) return misuse(io, "turn takes the turn's number: hub-tools turn <n>.");
     tool = "hub_read_turn"; input = { n: positionals[0], ...only(["part", "tool", "offset", "limit"]) };
-  } else {
+  } else if (command === "search") {
     if (!positionals.length) return misuse(io, "search takes the words to look for: hub-tools search <words>.");
     tool = "hub_search"; input = { query: positionals.join(" "), ...only(["limit", "after", "in"]) };
+  } else if (command === "plan") {
+    if (!positionals.length) return misuse(io, "plan takes the whole task list, a step each: \"[x] done\" \"[~] in progress\" \"[ ] to do\".");
+    // A step's mark says its state; a step without one is still to do.
+    const items = positionals.map(step => { const marked = /^\s*\[( |x|X|~|>|-)\]\s*(.*)$/su.exec(step), mark = marked?.[1] ?? " ";
+      return { content: (marked?.[2] ?? step).trim(), status: mark === "x" || mark === "X" ? "completed" : mark === "~" || mark === ">" ? "in_progress" : "pending" }; });
+    if (items.some(item => item.content === "")) return misuse(io, "every step of the plan needs its words.");
+    tool = "hub_update_plan"; input = { items, ...only(["explanation"]) };
+  } else if (command === "wrap-up") {
+    if (!positionals.length) return misuse(io, "wrap-up takes the recap: two or three short sentences of what is done and what is not.");
+    tool = "hub_wrap_up"; input = { recap: positionals.join(" "), ...only(["ask"]), ...(actions.length ? { actions: actions.map(label => ({ label })) } : {}) };
+  } else if (command === "delegate") {
+    if (positionals.length < 2) return misuse(io, "delegate takes the Harness and the task: hub-tools delegate <harness> \"<task>\".");
+    tool = "hub_delegate"; input = { harness: positionals[0], task: positionals.slice(1).join(" ") };
+  } else {
+    if (positionals.length) return misuse(io, "delegations takes no arguments but --wait.");
+    tool = "hub_delegations"; input = only(["wait"]);
   }
   const result = await callTool(tool, input, "cli", io.env);
   (result.isError ? io.stderr : io.stdout).write(result.text + "\n");

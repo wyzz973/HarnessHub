@@ -45,9 +45,12 @@ export interface AsksFor { readonly read: boolean; readonly edit: boolean; reado
  * through an entry of that one session or process, never the Harness's configuration:
  * - `acp`: ACP `mcpServers` on session/new, session/load and session/resume, with the process's table address and token;
  * - `thread-config`: Codex's `config` on thread/start and thread/resume (`mcp_servers.<name>`), the user's own entry of that name kept;
+ * - `cli`: the Harness takes no tool entry for one session, but its agent runs commands: the Hub writes a command of this conversation
+ *   (TableMount, a file that carries the table's address and this process's token) and the session's instructions say how to run it. The
+ *   same tools, called as `<command> turns`, `<command> delegate …` (hub-tools.ts); they are there only where the Harness may run a command;
  * - `none`: the Harness has no such entry (its declaration says why), so the tools are not there.
  */
-export type HubToolsEntry = "acp" | "thread-config" | "none";
+export type HubToolsEntry = "acp" | "thread-config" | "cli" | "none";
 /**
  * Where the Hub's session instructions (how to use the task list and the wrap-up) go, after anything of the user's own:
  * - `acp-meta`: the session request's `_meta.systemPrompt.append` (claude-agent-acp keeps its own preset and adds this);

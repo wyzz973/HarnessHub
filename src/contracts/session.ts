@@ -405,6 +405,8 @@ export interface PreparedSessionBinding {
    * what it was started with. Absent is no: nothing is promised the packet could repeat.
    */
   readonly hubTools?: boolean;
+  /** The conversation's Hub command, when this process's Harness has the Hub's tools as a command it runs (HubToolsEntry `cli`); absent otherwise. */
+  readonly hubCommand?: string;
   assertOwned(): void;
   close(): Promise<CleanupEvidence>;
 }

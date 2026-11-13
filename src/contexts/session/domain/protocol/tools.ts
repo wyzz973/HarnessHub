@@ -179,12 +179,20 @@ const CHANGE_VERB = /^(?:multi[_ ]?edit|notebook[_ ]?edit|edit(?:[_ ]?file)?|wri
 const SEARCH_VERB = /^(?:search(?:[_ ]?files)?|grep|glob|find|ls|搜索|查找)\s*[:：]?\s+/iu;
 const QUOTED = /"([^"]+)"|`([^`]+)`|“([^”]+)”|'([^']+)'/gu;
 
+/** The tools a script calls as `tools.<server>.<tool>(` or `tools["<server>"].<tool>(` (OpenCode's Code Mode), in the order they are written. */
+function scriptCalls(code: string | undefined): readonly { readonly server: string; readonly tool: string }[] {
+  if (code === undefined) return [];
+  const found: { server: string; tool: string }[] = [];
+  for (const match of code.matchAll(/\btools\s*(?:\.\s*([A-Za-z0-9_-]+)|\[\s*["']([A-Za-z0-9_-]+)["']\s*\])\s*(?:\?\.|\.)\s*([A-Za-z0-9_]+)\s*\(/gu)) found.push({ server: match[1] ?? match[2]!, tool: match[3]! });
+  return found;
+}
 /** The command a call ran: its stored input when that is the command, else its title when the Harness writes the command as its title. Empty: not told. */
 function commandText(tool: PublicTool, detail: ToolDetailInput | null, named: Named | null): string {
   const input = detail?.input?.trim() ?? "";
   if (input !== "") {
     if (!input.startsWith("{")) return input;
-    const field = inputField(input, ["command", "cmd", "script", "shell_command"]);
+    // `code`: the script of a tool that runs one (OpenCode's Code Mode), shown as the command it is.
+    const field = inputField(input, ["command", "cmd", "script", "shell_command", "code"]);
     if (field !== undefined) return field;
   }
   // The title is the command only where the Harness says it ran one, never where it is just the tool's name.
@@ -309,6 +317,14 @@ export function normalizeTool(tool: PublicTool, ctx: ToolContext): Normalized {
   }
   switch (family) {
     case "execute": {
+      // OpenCode's Code Mode runs tools from a script (`execute` with `code`: `await tools.<server>.<tool>(…)`). A script that calls only the
+      // Hub's own tools is a use of those tools, told as one: a read of the conversation when it makes one, else the first tool it calls.
+      const called = scriptCalls(inputField(detail?.input, ["code"]));
+      if (called.length > 0 && called.every(call => call.server === TABLE_MCP_NAME && (TABLE_TOOLS as readonly string[]).includes(call.tool))) {
+        const shown = called.find(call => !(TABLE_PROGRESS_TOOLS as readonly string[]).includes(call.tool) && call.tool !== "hub_delegate" && call.tool !== "hub_delegations") ?? called[0]!;
+        const item: McpToolItem = { ...base(stateOf(tool, ctx, false)), type: "mcp_tool", server: TABLE_MCP_NAME, tool: shown.tool, hub: true as const };
+        return done(item);
+      }
       const text = commandText(tool, detail, named), { command, raw } = text === "" ? { command: "", raw: undefined } : unwrapShell(text), cwd = locationOf(detail ?? undefined);
       const item: CommandItem = { ...base(stateOf(tool, ctx, true)), type: "command", command: clip(command), ...(raw === undefined ? {} : { raw: clip(raw) }),
         ...(cwd !== null && cwd.startsWith("/") ? { cwd: clip(cwd) } : {}), ...(tool.exitCode === undefined ? {} : { exitCode: tool.exitCode }) };

@@ -176,7 +176,9 @@ export class Narrator {
    * `tools`: the Harness the packet goes to has the Hub's tools this Turn (hub_turns, hub_read_turn, hub_search), so that what the
    * packet leaves out can be read back: the packet then says how, and notes every command whose output it does not carry.
    */
-  constructor(readonly language: RelayLanguage, private readonly redactor: RelayRedactor, private readonly naming: (harnessId: string) => string | null, readonly tools = false) {}
+  constructor(readonly language: RelayLanguage, private readonly redactor: RelayRedactor, private readonly naming: (harnessId: string) => string | null, readonly tools = false,
+    /** The conversation's Hub command, when the target has the tools as a command it runs: what the packet names instead of the tools. */
+    readonly command?: string) {}
   get zh(): boolean { return this.language === "zh"; }
   /** A Harness's display name: its catalog name when known, else its id; an unknown one for none. Always a name, never "the other". */
   name(harnessId: string | null): string {

@@ -34,6 +34,54 @@ export const HUB_PROGRESS_INSTRUCTIONS = "你在 HarnessHub 里工作，这个�
   + "3. 需要用户拿主意时，把一个问题放进 hub_wrap_up 的 ask、一到两个回答放进 actions（推荐的放第一个），不要只在正文里问。\n"
   + "这是这个界面显示进度和下一步的唯一途径；它们不代替你的正文回复。";
 
+/** Where the commands of conversations live under the data directory, and the command's name: `<data>/harnesshub-cli/<16 hex>/hub`. */
+export const TABLE_COMMAND_DIR = "harnesshub-cli", TABLE_COMMAND_NAME = "hub";
+const COMMAND_RUN = new RegExp("(?:^|[\\s'\"=(;|&])((?:[^\\s'\"]*/)?" + TABLE_COMMAND_DIR + "/[0-9a-f]{8,64}/" + TABLE_COMMAND_NAME + ")(?:['\"])?(?:\\s+([a-z][a-z-]*))?", "u");
+/**
+ * Whether a command line runs a conversation's Hub command (HubToolsEntry `cli`), and which tool of it: the word after the command
+ * (`turns`, `turn`, `search`, `plan`, `wrap-up`, `delegate`, `delegations`), null when there is none. Told by the path's shape alone.
+ */
+export function hubCommandCall(line: string): { readonly command: string; readonly verb: string | null } | null {
+  const found = COMMAND_RUN.exec(line);
+  return found === null ? null : { command: found[1]!, verb: found[2] ?? null };
+}
+/**
+ * Whether a command line is one call of a conversation's Hub command and nothing else: it begins with the command and holds nothing a
+ * shell would run beside it (no `;`, `&`, `|`, backtick, `$(`, redirection or new line, quoted or not). What the Hub allows by itself and
+ * the page shows as a use of the Hub's tools must be only that; a line that does more is an ordinary command.
+ */
+export function hubCommandOnly(line: string): { readonly command: string; readonly verb: string | null } | null {
+  const text = line.trim();
+  if (/[;&|`<>\n\r]|\$\(/u.test(text)) return null;
+  const found = COMMAND_RUN.exec(text);
+  return found === null || found.index !== 0 ? null : { command: found[1]!, verb: found[2] ?? null };
+}
+/**
+ * The session instructions of a Harness whose Hub tools are a command (HubToolsEntry `cli`): what the command is and how each tool is
+ * called. `progress`: with the task list and the wrap-up (the preference `hub.progress`). Given as HUB_PROGRESS_INSTRUCTIONS is, through
+ * the entry the declaration names; never part of the user's words as the Hub keeps them.
+ */
+export function hubCommandInstructions(command: string, progress: boolean): string {
+  const run = (rest: string) => "  " + command + " " + rest;
+  return ["你在 HarnessHub 里工作。这段对话的完整记录由 HarnessHub 保存，下面这条命令是它给这段对话的工具，用你运行命令的工具来调用：",
+    run("turns") + "                  列出这段对话的每一轮",
+    run("turn <N>") + "               读第 N 轮的全部内容（工具调用、命令输出）",
+    run("search <词>") + "            在整段对话里搜索",
+    run("delegate <harness> \"<任务>\"") + "   把一段独立的活交给这台电脑上的另一个 Harness（例如 codex、claude、opencode），它在自己的对话里做，立刻返回；任务要写全，它看不到这一轮",
+    run("delegations --wait 25") + "  看交出去的活做得怎样，可以等它做完",
+    ...(progress ? [run("plan \"[x] 做完的一步\" \"[~] 正在做的一步\" \"[ ] 还没做的一步\"") + "   任务要做好几步时，把全部步骤列给用户看，每开始或做完一步再调用一次",
+      run("wrap-up \"<两三句小结>\" [--ask \"<一个问题>\" --action \"<回答>\"]") + "   每一轮结束前调用一次：做完了什么、还有什么没做或没验证；需要用户拿主意时带上问题和一到两个回答"] : []),
+    "别人交给你的记录是摘要：需要更早的细节时先用 turns、turn、search 查。" + (progress ? "plan 和 wrap-up 是这个界面显示进度和下一步的唯一途径，它们不代替你的正文回复。" : "")].join("\n");
+}
+
+/**
+ * What a session with the Hub's tools is told beside the progress instructions, whatever `hub.progress` says: work for another Harness goes
+ * through the Hub's tool, not through that Harness's own command line (some Harnesses carry skills that start one), so that it runs as a
+ * conversation the user sees and can take up.
+ */
+export const HUB_DELEGATION_INSTRUCTIONS = "要把一段活交给这台电脑上的另一个 Harness（Codex、Claude Code、OpenCode、Hermes 等）时，调用 harnesshub 的 hub_delegate，不要自己去启动它们的命令行："
+  + "这样它在自己的对话里做，用户在界面里看得到、接得上。需要它的结果时用 hub_delegations（可带 wait 等它做完）。";
+
 /** What the tool process answers when it was not started inside a Hub session. */
 export const TABLE_NOT_IN_SESSION = "Not inside a HarnessHub conversation: there is nothing to read here.";
 

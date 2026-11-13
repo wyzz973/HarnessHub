@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { parseProviderTarget } from "../../../contracts/provider.js";
-import { HUB_PROGRESS_INSTRUCTIONS } from "../../../contracts/table.js";
+import { HUB_DELEGATION_INSTRUCTIONS, HUB_PROGRESS_INSTRUCTIONS, hubCommandInstructions } from "../../../contracts/table.js";
 import { listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeUsage } from "../../../contracts/control.js";
 import { type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import { CONVERSATION_FORMAT, type Conversation, type ConversationCommit, type ConversationMutation, type ConversationRun, type ConversationStore, type HeldItem } from "../../../contracts/conversation.js";
@@ -351,9 +351,9 @@ export class SessionRuntime {
   /** The Hub's policy decision for a request under `level` (permission-policy.ts), by the request and the call it is about as this Turn placed it; undefined level: what it is about, the user deciding. */
   private policyFor(execution: ActiveExecution, run: ConversationRun, value: Extract<ControlEvent, { type: "permission_requested" }>, level: PermissionLevel | undefined): PolicyDecision {
     const call = value.forCall === undefined || execution.turn === null ? undefined : itemsOf(execution.turn).find(item => item.itemId === "tool:" + value.forCall)?.fields;
-    const named = call as { readonly title?: unknown; readonly name?: unknown; readonly hub?: unknown } | undefined;
+    const named = call as { readonly title?: unknown; readonly name?: unknown; readonly hub?: unknown; readonly command?: unknown } | undefined;
     return policyDecision(this.options.flavor?.(run.selection.harnessId), level, { title: value.title, options: value.options, question: value.kind === "question" || value.input !== undefined },
-      [value.toolKind, call?.native?.kind], call === undefined ? undefined : { type: call.type, ...(typeof named?.title === "string" ? { title: named.title } : {}), ...(typeof named?.name === "string" ? { name: named.name } : {}), ...(named?.hub === true ? { hub: true } : {}) });
+      [value.toolKind, call?.native?.kind], call === undefined ? undefined : { type: call.type, ...(typeof named?.title === "string" ? { title: named.title } : {}), ...(typeof named?.name === "string" ? { name: named.name } : {}), ...(named?.hub === true ? { hub: true } : {}), ...(typeof named?.command === "string" ? { command: named.command } : {}) });
   }
   /** The switch target each conversation is validating, at most one per conversation. */
   private readonly switchBindings = new Map<SessionId, { readonly binding: PreparedSessionBinding; close: Promise<CleanupEvidence> | null }>();
@@ -604,7 +604,10 @@ export class SessionRuntime {
    * use the task list and the wrap-up, when its process has the Hub's tools and the user leaves `hub.progress` on; nothing otherwise.
    */
   private sessionInstructions(binding: PreparedSessionBinding | null): string | null {
-    return binding?.hubTools === true && this.settings().progress === "on" ? HUB_PROGRESS_INSTRUCTIONS : null;
+    if (binding?.hubTools !== true) return null;
+    // A Harness whose tools are a command is told the command either way: nothing else would say it is there.
+    if (binding.hubCommand !== undefined) return hubCommandInstructions(binding.hubCommand, this.settings().progress === "on");
+    return this.settings().progress === "on" ? HUB_PROGRESS_INSTRUCTIONS + "\n" + HUB_DELEGATION_INSTRUCTIONS : HUB_DELEGATION_INSTRUCTIONS;
   }
 
   switch(id: SessionId, selection: SelectionRequest, key: string): SwitchReceipt {
@@ -1880,7 +1883,7 @@ export class SessionRuntime {
         const details = await this.relayDetails(history, sources), secrets = [...(execution.binding?.secrets ?? []), ...await this.relaySecretsOf(history, configuration, run, sources, origin)];
         this.continue(execution);
         // The binding says whether its process has the Hub's tools (it was started with the table's environment and its Harness holds the tool entry): a fact of this Turn's process, which the packet may then repeat.
-        return { origin, secrets, firstLine: reading.kind === "content", details, hubTools: execution.binding?.hubTools === true, ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
+        return { origin, secrets, firstLine: reading.kind === "content", details, hubTools: execution.binding?.hubTools === true, ...(execution.binding?.hubCommand === undefined ? {} : { hubCommand: execution.binding.hubCommand }), ...(this.options.harnessName === undefined ? {} : { names: this.options.harnessName }) };
       };
       if (native === null) {
         const observation = await control.initialize(); this.continue(execution);
