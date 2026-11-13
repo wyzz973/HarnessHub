@@ -293,6 +293,7 @@ export interface HeadJson {
   readonly taskBoard?: import("./session.js").TaskBoard;
   readonly taskBoardTold?: number;
   readonly taskEditsTold?: Readonly<Record<string, number>>;
+  readonly parentWordsTold?: number;
 }
 /** One row of `sessions` of a converted conversation. */
 export interface HeadRow {

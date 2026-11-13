@@ -880,6 +880,31 @@ export class SessionRuntime {
     return { told, line: "带上了其他对话的改动（" + count + " 个文件）",
       text: "（HarnessHub：这件任务里别的对话在你上一轮之后改了下面这些文件。你手上的内容可能已经过时：读或改它们之前先看磁盘上的最新内容，需要知道它们为什么改，用 harnesshub 的 hub_read_turn 带上对话标签去读。\n" + lines.join("\n") + "\n）" };
   }
+  /**
+   * What the user said in the conversation that delegated this one its work, since this one's Harness last had it (2026-11-13): the Hub carries it, so that a
+   * requirement the user adds there reaches work already handed over whether or not a Harness wrote it on the board. The first Turn's history covers the Turns through
+   * the one the delegation followed (a Turn still going on then is not in it: its words are told here). `through` is how many of those Turns are then told.
+   */
+  private parentWords(state: Conversation): { readonly through: number; readonly text: string | null; readonly line: string | null } | null {
+    const origin = state.delegation;
+    if (origin === undefined) return null;
+    try {
+      const parent = this.load(origin.parentId), at = parent.runs.findIndex(run => run.id === origin.afterRunId);
+      // A Harness delegates within its Turn in progress, which the history does not hold; the user's delegation follows a finished one.
+      const known = state.parentWordsTold ?? (at < 0 ? parent.runs.length : origin.by === "harness" ? at : at + 1);
+      if (parent.runs.length <= known) return null;
+      const turns = turnSource(this.store, origin.parentId), said: string[] = [];
+      for (let ordinal = known; ordinal < parent.runs.length; ordinal++) {
+        const words = (turns.turn(ordinal)?.user.text ?? "").trim(), units = [...words];
+        if (words !== "") said.push("- 第 " + (ordinal + 1) + " 轮：" + (units.length > 600 ? units.slice(0, 600).join("") + "…（后面省略）" : words).replace(/\n+/gu, "\n  "));
+      }
+      if (said.length === 0) return { through: parent.runs.length, text: null, line: null };
+      const shown = said.slice(-6), label = "c-" + origin.parentId.replace(/^session-/u, "").replace(/-/gu, "").slice(0, 6);
+      return { through: parent.runs.length, line: "带上了原对话里用户后来说的话（" + said.length + " 条）",
+        text: "（HarnessHub：把这件事交给你的那段对话（" + label + "）里，用户在你上次看到之后又说了下面的话。它们是对那段对话说的，不是给你的新任务；其中对整件任务都有效的要求（约定、限制、改了主意）你同样要照做。"
+          + (said.length > shown.length ? "更早的 " + (said.length - shown.length) + " 条用 harnesshub 的 hub_turns 带上这个对话标签去读。" : "") + "\n" + shown.join("\n") + "\n）" };
+    } catch { return null; }
+  }
   /** The Turn in progress of a conversation, when it is `from`'s: what the Hub's tools act within. */
   private runningFor(id: SessionId, from: { readonly harnessId: string; readonly controlId: string }): RunId {
     const execution = this.actives.get(id);
@@ -2283,7 +2308,12 @@ export class SessionRuntime {
       if (edits !== null && edits.line !== null) this.placed(execution, { kind: "notice", severity: "info", title: edits.line, code: "TASK_EDITS_TOLD", at: this.options.now().getTime() },
         [event("run.task_edits_told", { runId: target, told: edits.told })], { always: true, patch: current => ({ ...current, taskEditsTold: { ...(current.taskEditsTold ?? {}), ...edits.told } }) });
       else if (edits !== null) this.commit(id, current => ({ next: { ...current, taskEditsTold: { ...(current.taskEditsTold ?? {}), ...edits.told } }, events: [event("run.task_edits_marked", { runId: target, told: edits.told })] }));
-      const notes = [board?.text ?? null, delegated, edits?.text ?? null, told?.text ?? null].filter((note): note is string => note !== null).map(note => asCommand(note, execution.binding?.hubCommand));
+      // What the user said since in the conversation this one's work came from.
+      const words = command === null ? this.parentWords(this.load(id)) : null;
+      if (words !== null && words.line !== null) this.placed(execution, { kind: "notice", severity: "info", title: words.line, code: "PARENT_WORDS_TOLD", at: this.options.now().getTime() },
+        [event("run.parent_words_told", { runId: target, through: words.through })], { always: true, patch: current => ({ ...current, parentWordsTold: words.through }) });
+      else if (words !== null) this.commit(id, current => ({ next: { ...current, parentWordsTold: words.through }, events: [event("run.parent_words_marked", { runId: target, through: words.through })] }));
+      const notes = [board?.text ?? null, delegated, words?.text ?? null, edits?.text ?? null, told?.text ?? null].filter((note): note is string => note !== null).map(note => asCommand(note, execution.binding?.hubCommand));
       execution.run = await control.startText(native, notes.length === 0 ? planned : withHubNote(planned, notes.join("\n\n")), value => this.output(execution, value), ...(files.length ? [files] : []));
       this.owned(execution);
       void execution.run.result.then(() => { execution.backendSettled = true; }, () => { execution.backendSettled = true; });

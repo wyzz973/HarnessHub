@@ -411,17 +411,16 @@ export class CodexControl implements HarnessControl {
    * What a thread/start or thread/resume adds for the Hub, read with the effective configuration (config/read, nothing written):
    * `developerInstructions`, the user's own (`developer_instructions`, which the parameter would otherwise replace) and then ours, so
    * nothing the user wrote is dropped; and the Hub's tool server as the thread's `config` (`mcp_servers.<name>`, which leaves every other
-   * server of the user's as it is), unless the user's configuration already has an enabled server of that name, which is kept as it is.
+   * server of the user's as it is). A server of that name in the user's own configuration (one the Hub's capability page wrote there earlier) is
+   * replaced for this thread only, never in the file: it may run another build's tool program, whose tools this Gateway does not answer (2026-11-13).
    */
   private async threadEntry(cwd: string): Promise<{ readonly developerInstructions?: string; readonly config?: Readonly<Record<string, unknown>> }> {
     const server = this.hubToolServer();
     if (this.instructions === null && server === null) return {};
     const configured = object(object(await this.rpc.request("config/read", { includeLayers: false, cwd }), "native configuration").config, "effective native configuration");
     const own = typeof configured.developer_instructions === "string" ? configured.developer_instructions.trim() : "";
-    const servers = configured.mcp_servers !== null && typeof configured.mcp_servers === "object" ? configured.mcp_servers as Record<string, unknown> : {};
-    const mine = servers[TABLE_MCP_NAME], kept = mine !== null && typeof mine === "object" && (mine as { readonly enabled?: unknown }).enabled !== false;
     return { ...(this.instructions === null ? {} : { developerInstructions: own ? own + "\n\n" + this.instructions : this.instructions }),
-      ...(server === null || kept ? {} : { config: { ["mcp_servers." + TABLE_MCP_NAME]: server } }) };
+      ...(server === null ? {} : { config: { ["mcp_servers." + TABLE_MCP_NAME]: server } }) };
   }
   async nativeConfig(): Promise<{ readonly model: string | null; readonly options: NativeOptions } | null> {
     const mode = this.confirmedMode ?? (this.collaboration === null ? this.threadMode : null);

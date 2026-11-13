@@ -85,7 +85,7 @@ export function hubCommandInstructions(command: string, progress: boolean): stri
 export const HUB_DELEGATION_INSTRUCTIONS = "要把一段活交给这台电脑上的另一个 Harness（Codex、Claude Code、OpenCode、Hermes 等）时，调用 harnesshub 的 hub_delegate，不要自己去启动它们的命令行："
   + "这样它在自己的对话里做，用户在界面里看得到、接得上。需要它的结果时用 hub_delegations（可带 wait 等它做完）。\n"
   + "用户说了要一直遵守的要求（“以后都……”“记住……”）、定下了别人也得照办的决定，或者任务的目标定了、变了，就调用 hub_remember 记到任务板上（一条一句话）："
-  + "这件任务里别的 Harness 接手或被委派时会先看到它，不用用户再说一遍。不确定现在还算数的约束有哪些时，用 hub_board 看。";
+  + "这件任务里别的 Harness 接手或被委派时会先看到它，不用用户再说一遍。用户让你这一轮什么都别做、只回一句话时，记到任务板这一步也照做。不确定现在还算数的约束有哪些时，用 hub_board 看。";
 
 /** What the tool process answers when it was not started inside a Hub session. */
 export const TABLE_NOT_IN_SESSION = "Not inside a HarnessHub conversation: there is nothing to read here.";

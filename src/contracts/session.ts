@@ -351,6 +351,11 @@ export interface SessionSnapshot {
    * when this conversation began). What they change after that goes with this conversation's next Turn.
    */
   readonly taskEditsTold?: Readonly<Record<string, number>>;
+  /**
+   * On a conversation that was delegated its work: how many Turns of the conversation that delegated it this one's Harness has the user's words of (those its first
+   * Turn carried as history, and those told since). What the user says there after that goes with this conversation's next Turn.
+   */
+  readonly parentWordsTold?: number;
   /** v11: the user chose to keep this conversation's native process between Turns for background work (ADR-030). */
   readonly retainNative?: true;
   /** v11: the native process this conversation holds now; cleared when it is closed. */
