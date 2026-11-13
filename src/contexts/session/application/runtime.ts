@@ -248,6 +248,8 @@ function asCommand(note: string, command: string | undefined): string {
   const word = (tool: string) => tool === "read_turn" ? "turn" : tool === "update_plan" ? "plan" : tool === "wrap_up" ? "wrap-up" : tool;
   return note.replace(/harnesshub 的 hub_([a-z_]+)/gu, (_all, tool: string) => "命令 " + command + " " + word(tool)).replace(/hub_([a-z_]+)/gu, (_all, tool: string) => command + " " + word(tool));
 }
+/** What a remembered context window is kept by: the Harness, its control and the model chosen (none: its own default). */
+function windowKey(selection: { readonly harnessId: string; readonly controlId: string; readonly nativeModel?: string }): string { return selection.harnessId + "\n" + selection.controlId + "\n" + (selection.nativeModel ?? ""); }
 /** A note of the Hub's as a Harness that reads the record as files reads it (2026-11-13): where it named the reading tools, it names the directory. */
 function asFiles(note: string, place: { readonly dir: string; readonly self: string } | null): string {
   if (place === null) return note;
@@ -1265,6 +1267,8 @@ export class SessionRuntime {
    * Stops owned work and admission, then ends what the binding factory still does in the background (its own bound, ADR-056
    * §4.12). Public Sessions and Store remain available to the next owner.
    */
+  /** The context window each Harness last reported, by Harness, control and model: what a packet for it is sized by before it has run in a conversation. Kept while the Runtime lives. */
+  private readonly windows = new Map<string, number>();
   /** The writes of the record's directory that a Turn's end began and did not wait for: the close waits for them. */
   private readonly recordWork = new Set<Promise<void>>();
   close(): Promise<void> {
@@ -1842,6 +1846,9 @@ export class SessionRuntime {
     }
     const events = [event("run.output", { runId: run.id, event: logged(value) })];
     if (value.type === "usage") {
+      // The window a Harness reports is its own and its model's: remembered for the conversations in which it has not run yet (windows.ts resolveWindow).
+      const size = value.usage.context?.size;
+      if (typeof size === "number" && Number.isSafeInteger(size) && size > 0) this.windows.set(windowKey(run.selection), size);
       this.placed(execution, null, events, { always: true, patch: current => {
         const held = runIn(current, run.id)!;
         return updatedRun(current, run.id, { usage: { ...held.usage, ...(value.usage.turn === undefined ? {} : { turn: { ...held.usage?.turn, ...value.usage.turn } }), ...(value.usage.context === undefined ? {} : { context: value.usage.context }), ...(value.usage.cost === undefined ? {} : { cost: value.usage.cost }) } satisfies NativeUsage });
@@ -2209,7 +2216,7 @@ export class SessionRuntime {
             const runs = needRuns(history, asked, carrying.need);
             // The window the packet is budgeted against, and what the channel leaves it. The history is left out whole to fit; the renderer
             // never fails, and when even its least packet is over the cap (below) the input goes as typed.
-            const resolved = resolveWindow(history, asked), limit = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(typed, kinds) ?? [...typed].length;
+            const resolved = resolveWindow(history, asked, this.windows.get(windowKey(run.selection)) ?? null), limit = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(typed, kinds) ?? [...typed].length;
             const cap = hardCap(resolved, estimateTokens(typed), limit, size);
             // Delegated work is handed the history as any handoff is (2026-11-13: a tighter budget for it was taken out the day it was put in; what it saved was little,
             // and a Harness that has to fetch what it was not given is slower and less sure than one that was given it).

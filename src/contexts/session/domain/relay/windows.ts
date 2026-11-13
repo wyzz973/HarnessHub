@@ -35,8 +35,12 @@ export function reportedWindow(state: { readonly runs: readonly Pick<PublicRun, 
   }
   return null;
 }
-export function resolveWindow(state: { readonly runs: readonly Pick<PublicRun, "id" | "selection" | "usage">[] }, current: Pick<PublicRun, "id" | "selection">): ResolvedWindow {
-  const reported = reportedWindow(state, current);
+/**
+ * `elsewhere`: the window this Harness (with this model) last reported in any conversation, for a conversation in which it has not run yet (2026-11-13): a window is the
+ * Harness's and its model's, not the conversation's, so what it said of itself elsewhere holds here until it says otherwise.
+ */
+export function resolveWindow(state: { readonly runs: readonly Pick<PublicRun, "id" | "selection" | "usage">[] }, current: Pick<PublicRun, "id" | "selection">, elsewhere?: number | null): ResolvedWindow {
+  const here = reportedWindow(state, current), reported = here ?? (typeof elsewhere === "number" && Number.isSafeInteger(elsewhere) && elsewhere > 0 ? elsewhere : null);
   return { size: reported ?? ASSUMED_WINDOW, source: reported === null ? "assumed" : "observed", fixedPrefix: FIXED_PREFIX };
 }
 /**
