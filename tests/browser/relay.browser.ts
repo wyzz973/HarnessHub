@@ -266,6 +266,9 @@ class FakeGateway {
     if (match === null || match[1] !== this.session.id) return this.missing(response);
     const action = match[2] ?? "";
     if (action === "" && method === "GET") return this.json(response, 200, this.shown());
+    // What the details panel's overview reads of any conversation: the task it belongs to (an empty board, itself alone) and its changes (none here).
+    if (action === "task" && method === "GET") return this.json(response, 200, { board: { version: 0, entries: [] }, members: [] });
+    if (action === "changes" && method === "GET") return this.json(response, 200, { edits: [], next: null });
     const before = action === "turns" ? url.searchParams.get("before") : null;
     if (before !== null && method === "GET") return this.json(response, 200, turnsBefore(this.old(), before, Number(url.searchParams.get("limit") ?? 20)));
     const range = /^runs\/(\d+)\/items\/(\d+)\/text$/u.exec(action);
@@ -332,12 +335,12 @@ async function shoot(page: Page, name: string): Promise<void> {
 }
 /** The hand-over line of the conversation, by what it says. */
 const separator = (log: Locator, name: string | RegExp) => log.getByRole("separator", { name });
-/** Whether the page reads the relay: its details panel then has the 接续 tab, for a conversation the relay has something to tell of. */
+/** Whether the page reads the relay: its details panel then has the 上下文 tab, for a conversation the relay has something to tell of. */
 async function usesRelay(page: Page, wait = 1500): Promise<boolean> {
   const panel = page.getByRole("complementary", { name: "详情栏" });
   if (!await panel.isVisible()) await page.getByRole("button", { name: "详情栏", exact: true }).click();
-  await expect(panel.getByRole("tab", { name: /^执行/u })).toBeVisible();
-  return panel.getByRole("tab", { name: /接续/u }).waitFor({ timeout: wait }).then(() => true, () => false);
+  await expect(panel.getByRole("tab", { name: /^概览/u })).toBeVisible();
+  return panel.getByRole("tab", { name: /上下文/u }).waitFor({ timeout: wait }).then(() => true, () => false);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -480,17 +483,17 @@ test("after the context was cleared the banner says the next message carries no 
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The details panel's 接续 tab
+// The details panel's 上下文 page
 // ---------------------------------------------------------------------------------------------------------------------
 
-test("the details panel's 接续 tab lists where each Harness stands and the packets sent, and opens their text", async t => {
+test("the details panel's 上下文 page lists where each Harness stands and the packets sent, and opens their text", async t => {
   const { gateway, page, errors } = await open(t, conversation("completed", packetRelay(CODEX)));
   gateway.view = relayView({ packets: [packetRow("recorded", "E1"), { ...packetRow("unknown", null, { number: 2, packetId: SECOND_PACKET, runIndex: 2, kind: "delta", tier: "brief", estTokens: 400, omissions: 0, redactions: 0 }) }], bindings: [
     { harnessId: "claude", controlId: "claude-native", nativeEpoch: 1, sync: "synced", throughRun: 3, evidence: "E1", cleared: 1 },
     { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "pending", throughRun: null, evidence: null, cleared: 0 }] });
   gateway.announce();
   await page.getByRole("button", { name: "详情栏", exact: true }).click();
-  const tab = page.getByRole("tab", { name: /^接续/u });
+  const tab = page.getByRole("tab", { name: /^上下文/u });
   await expect(tab).toContainText("2");
   await tab.click();
   const panel = page.getByRole("tabpanel");
@@ -533,20 +536,20 @@ test("what is owed and asked is said from a view read for the state the conversa
   assert.deepEqual(errors, []);
 });
 
-test("the details panel has no 接续 tab for a conversation the relay has nothing to tell of, and gets it when there is something", async t => {
+test("the details panel has no 上下文 tab for a conversation the relay has nothing to tell of, and gets it when there is something", async t => {
   // One Harness holds a session of it, nothing was sent, nothing is owed or asked: nothing to tell.
   const { gateway, page, errors } = await open(t, conversation("completed", own(CODEX)), { view: relayView({ bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "synced", throughRun: 1, evidence: null, cleared: 0 }] }) });
   await page.getByRole("button", { name: "详情栏", exact: true }).click();
-  await expect(page.getByRole("tab", { name: /^执行/u })).toBeVisible();
-  await expect(page.getByRole("tab", { name: /接续/u })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: /^概览/u })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /上下文/u })).toHaveCount(0);
   // A second Harness holds a session of it: now there is a story.
   gateway.view = relayView({ bindings: [CLAUDE_BOUND, { harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "synced", throughRun: 1, evidence: null, cleared: 0 }] });
   gateway.announce();
-  await expect(page.getByRole("tab", { name: /^接续/u })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /^上下文/u })).toBeVisible();
   // Something owed (or asked) is a story too.
   gateway.view = relayView({ bindings: [{ harnessId: "codex", controlId: "codex-native", nativeEpoch: 1, sync: "fresh", throughRun: null, evidence: null, cleared: 0, owed: { runs: 1, estTokens: 300 } }] });
   gateway.announce();
-  await expect(page.getByRole("tab", { name: /^接续/u })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /^上下文/u })).toBeVisible();
   assert.deepEqual(errors, []);
 });
 
@@ -607,8 +610,8 @@ test("a Gateway without the relay API leaves the page as it was, and a message s
   await expect(separator(log, /^Claude Code → Codex/u)).toBeVisible();
   await expect(page.locator(".relay-card")).toHaveCount(0);
   await page.getByRole("button", { name: "详情栏", exact: true }).click();
-  await expect(page.getByRole("tab", { name: /^执行/u })).toBeVisible();
-  await expect(page.getByRole("tab", { name: /接续/u })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: /^概览/u })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /上下文/u })).toHaveCount(0);
   // It asked, was told there is no such endpoint, forgot what it had taken for a sign, and did not go on asking.
   await expect.poll(() => gateway.reads.view).toBeGreaterThan(0);
   await expect.poll(() => page.evaluate(() => localStorage.getItem("harnesshub:relay-api"))).toBeNull();
@@ -631,7 +634,7 @@ test("a Gateway that does not say it has the relay API sees no relay request, no
   await expect(page.locator(".relay-card")).toHaveCount(0);
   await page.waitForTimeout(500);
   await page.getByRole("button", { name: "详情栏", exact: true }).click();
-  await expect(page.getByRole("tab", { name: /^执行/u })).toBeVisible(); await expect(page.getByRole("tab", { name: /接续/u })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: /^概览/u })).toBeVisible(); await expect(page.getByRole("tab", { name: /上下文/u })).toHaveCount(0);
   await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
   await expect(page.locator("#main-content").getByRole("heading", { name: "对话", exact: true, level: 2 })).toBeVisible();
@@ -664,7 +667,7 @@ test("each sign that the Gateway has the relay API makes the page use it, and th
   assert.equal(pushed.gateway.reads.view, 0);
   assert.equal(await usesRelay(pushed.page), false);
   pushed.gateway.announce("relay.input_recorded", { runId: "run-2", packetId: PACKET });
-  await expect(pushed.page.getByRole("complementary", { name: "详情栏" }).getByRole("tab", { name: /接续/u })).toBeVisible();
+  await expect(pushed.page.getByRole("complementary", { name: "详情栏" }).getByRole("tab", { name: /上下文/u })).toBeVisible();
   assert.equal(await remembered(pushed.page), "1");
 
   // This browser remembered it from an earlier visit: no other sign is needed.

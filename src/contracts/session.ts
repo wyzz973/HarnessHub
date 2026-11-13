@@ -247,7 +247,12 @@ export const BOARD_KINDS = ["goal", "constraint", "decision", "note"] as const;
 export type BoardKind = typeof BOARD_KINDS[number];
 export interface BoardEntry { readonly id: string; readonly kind: BoardKind; readonly text: string;
   /** Who wrote it: a Harness's id, or `user`. */
-  readonly by: string; readonly at: number }
+  readonly by: string; readonly at: number;
+  /**
+   * Where an entry a Harness wrote came from (2026-11-14): the Turn in progress of the conversation it was written in (`ordinal` counts from 0), whose user's words it is
+   * that Harness's reading of. Absent for the user's own entries, and for those written before it was kept.
+   */
+  readonly from?: { readonly sessionId: SessionId; readonly runId: RunId; readonly ordinal: number } }
 export interface TaskBoard { readonly version: number; readonly entries: readonly BoardEntry[] }
 /** How one piece of delegated work stands: who has it, what was asked, its latest Turn's state (`running` while it goes on) and what it said. */
 export interface DelegationState { readonly sessionId: SessionId; readonly harnessId: string; readonly harness: string; readonly task: string; readonly runId: RunId | null;
@@ -568,8 +573,15 @@ export interface SessionRuntimeOptions {
      * The state of the task as the conversation stands in it (src/web/task-state.ts), as its Harness reads it before the Turn `upTo` (null: as it stands now, with the Turn in progress); null when there is nothing to say.
      * `record`: its Harness reads the record as files, so the state names the directory. `scope`: `task` when the Turn's handoff carries the whole conversation — then
      * only what that handoff does not say (the board, the chain the work came down through, the other conversations of the task); `whole` otherwise.
+     * `words`: what the user's words of the conversation may take, in estimated tokens, where no packet goes with the state (the share a handoff to this Harness would
+     * give them: the user's messages, newest first, as many as fit, and the latest whatever it takes); null where a packet goes with it, which carries them.
      */
-    state?(id: SessionId, upTo: RunId | null, record: boolean, scope: "whole" | "task"): string | null };
+    state?(id: SessionId, upTo: RunId | null, record: boolean, scope: "whole" | "task", words: number | null): string | null;
+    /**
+     * Writes again what changes in the middle of a Turn (2026-11-14): the task's `task.md`, `board.md` and the `STATE.md` of each of its conversations, so that a Harness
+     * that reads them after it compacted reads them as they are now. Light, one writer a task at a time; a failure leaves what was there.
+     */
+    refresh?(id: SessionId): Promise<void> };
   /**
    * The installation's relay key (ADR-055 §10.2, D5; relay-keys.ts): the HMACs of delivery rows and of a request's relay
    * choice. Without it the Runtime keys them under a key it keeps only in memory and names EPHEMERAL_KEY_ID (A17), which no

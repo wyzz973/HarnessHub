@@ -1202,7 +1202,19 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         json(response, 200, { resume: binding === undefined ? null : nativeResume(selection.harnessId, binding.checkpoint, { git }) }); return;
       }
       // The board of the task this conversation belongs to (2026-11-13): what every Harness on the task goes by, as the page shows it.
-      if (action === "task" && method === "GET") { queries(url, []); json(response, 200, { board: app.runtime.taskBoard(id) } satisfies TaskView); return; }
+      if (action === "task" && method === "GET") {
+        queries(url, []);
+        // With the conversations working on the task, as the Hub's tools tell them to a Harness: the page shows who has what.
+        // A file is listed once, by its place in the conversation's workspace: a Harness names it whole, the Hub's own record of the workspace from the workspace on.
+        const once = (member: SessionId, files: readonly string[]): string[] => {
+          let workspace = ""; try { workspace = app.store.get(member).configuration.workspace; } catch { /* named as they were reported */ }
+          const prefix = workspace === "" ? null : workspace.endsWith("/") ? workspace : workspace + "/";
+          return [...new Set(files.map(path => prefix !== null && path.startsWith(prefix) && path.length > prefix.length ? path.slice(prefix.length) : path))];
+        };
+        const members = taskFamily(app.store, id as SessionId, harnessId => harnesses.find(item => item.id === harnessId)?.name ?? null)
+          .map(({ sessionId, label, parent, depth, harnessId, harness, task, status, turns, files }) => ({ sessionId, label, parent, depth, harnessId, harness, task, status, turns, files: once(sessionId, files) }));
+        json(response, 200, { board: app.runtime.taskBoard(id), members } satisfies TaskView); return;
+      }
       if (action === "events" && method === "GET") {
         queries(url, ["afterSeq", "limit"]); const after = cursor(url.searchParams.get("afterSeq"), 0, 0, Number.MAX_SAFE_INTEGER), limit = cursor(url.searchParams.get("limit"), 50, 1, 100);
         const events = app.store.events(id, after, limit).map(item => relayApi.publicEvent(item)), nextSeq = events.at(-1)?.seq ?? after;

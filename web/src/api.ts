@@ -20,6 +20,9 @@ import { CAPABILITY_CHANGE_KINDS, CAPABILITY_DRIFT_STATES, CAPABILITY_KINDS, CAP
   type SkillSourceListing, type SkillUpdateView, INSTRUCTION_CHECK_OPTIONS, INSTRUCTION_TARGET_STATES, type InstructionCheckOption, type InstructionsView, type SubagentDefinitionView,
   type SubagentInventoryView, type SkillTextView } from "../../src/contracts/capabilities.js";
 
+/** The task a conversation belongs to as the page holds it: its board, and the conversations working on it (the one it began in first). */
+export interface TaskSnapshot { readonly board: TaskBoard; readonly members: readonly import("../../src/contracts/web.js").TaskMemberView[] }
+
 export interface ToolDetailView { readonly kind?: string; readonly name?: string; readonly input?: string; readonly output?: string; readonly diff?: string; readonly parentId?: string; readonly locations?: readonly string[]; readonly exitCode?: number; readonly truncated?: boolean }
 /** Same-origin URL of stored native content for img/download use; the page cookie authorizes it. */
 export function contentUrl(content: ContentRef, download = false): string { return "/api/v1/content/" + encodeURIComponent(content.id) + (download ? "?download=1" : ""); }
@@ -40,7 +43,20 @@ function decodeTaskBoard(value: unknown): TaskBoard {
   const board = record(record(value).board);
   return { version: number(board.version), entries: list(board.entries, row => {
     const item = record(row), kind = text(item.kind);
-    return (BOARD_KINDS as readonly string[]).includes(kind) ? { id: text(item.id), kind: kind as BoardKind, text: text(item.text), by: text(item.by), at: number(item.at) } : invalid();
+    // Where a Harness wrote it from, when the Gateway says: the Turn of the conversation it was in (counted from 0).
+    const from = item.from === undefined || item.from === null ? null : record(item.from);
+    return (BOARD_KINDS as readonly string[]).includes(kind) ? { id: text(item.id), kind: kind as BoardKind, text: text(item.text), by: text(item.by), at: number(item.at),
+      ...(from === null ? {} : { from: { sessionId: text(from.sessionId) as never, runId: text(from.runId) as never, ordinal: number(from.ordinal) } }) } : invalid();
+  }) };
+}
+const MEMBER_STATES = ["running", "completed", "failed", "cancelled", "unknown", "empty"] as const;
+/** The task a conversation belongs to: its board and the conversations working on it (none from a Gateway that does not list them). */
+function decodeTask(value: unknown): TaskSnapshot {
+  const item = record(value);
+  return { board: decodeTaskBoard(value), members: item.members === undefined ? [] : list(item.members, row => {
+    const member = record(row), status = text(member.status);
+    return { sessionId: text(member.sessionId), label: text(member.label), parent: nullableText(member.parent), depth: number(member.depth), harnessId: text(member.harnessId), harness: text(member.harness),
+      task: text(member.task), status: (MEMBER_STATES as readonly string[]).includes(status) ? status as TaskSnapshot["members"][number]["status"] : "unknown", turns: number(member.turns), files: list(member.files, text) };
   }) };
 }
 function nullableNumber(value: unknown): number | null { return value === null ? null : number(value); }
@@ -734,6 +750,8 @@ export class GatewayApi {
   }
   /** The board of the task a conversation belongs to: what every Harness working on it goes by. */
   taskBoard(id: string, signal?: AbortSignal): Promise<TaskBoard> { return this.request(`/sessions/${encodeURIComponent(id)}/task`, "GET", undefined, decodeTaskBoard, signal); }
+  /** The task of a conversation: its board, and the conversations working on it. */
+  task(id: string, signal?: AbortSignal): Promise<TaskSnapshot> { return this.request(`/sessions/${encodeURIComponent(id)}/task`, "GET", undefined, decodeTask, signal); }
   /** Writes on that board as the user, or takes an entry off it; the server answers with the board as it is then. */
   writeTaskBoard(id: string, change: { readonly kind: BoardKind; readonly text: string } | { readonly forget: string }): Promise<TaskBoard> {
     return this.request(`/sessions/${encodeURIComponent(id)}/task`, "POST", change, decodeTaskBoard);

@@ -51,6 +51,8 @@ export const COMMANDS: readonly NativeCommand[] = [{ name: "compact", descriptio
 /** How one prompt ends. `result`: the Driver knows it recorded, knows nothing, knows it refused it, loses its connection, or holds until released. */
 export interface Script {
   readonly result?: "recorded" | "unrecorded" | "not_recorded" | "lost" | "hold" | "overflow";
+  /** What the Turn reports of its context window before it ends (`usage.context`), in place of what `usage` says of its Harness. */
+  readonly context?: { readonly used: number; readonly size: number };
   /** true: the Harness compacts its own session in this Turn, and says so before it answers. */
   readonly compacts?: boolean;
   /** true: the Driver reports the input as an event (E1) before it answers. */
@@ -82,6 +84,10 @@ export class Fakes implements SessionBindingFactory {
   secretsFail = false;
   /** The Harnesses whose processes have the Hub's tools, as a binding says it (PreparedSessionBinding.hubTools): none unless added. */
   readonly hubTools = new Set<string>();
+  /** The Harnesses that read the record as files (PreparedSessionBinding.recordFiles): none unless added. */
+  readonly recordFiles = new Set<string>();
+  /** What a Harness's Turn in progress reports next: its latest prompt's output, to say more while it is held. */
+  readonly emit = new Map<string, (event: Parameters<Parameters<HarnessControl["startText"]>[2]>[0]) => void>();
   /** Runs when the Runtime enables permissions: after the Turn's authorization, right before its dispatch. */
   onAuthorized: ((harnessId: string) => void) | null = null;
   relayCapabilities(selection: HarnessSelection): RelayCapabilities | null { return this.declarations[selection.harnessId] ?? null; }
@@ -113,12 +119,14 @@ export class Fakes implements SessionBindingFactory {
       startText: async (_id, turn, output) => {
         const input = typeof turn === "string" ? turn : turn.user, plan = this.script(harnessId, input);
         this.prompts.push({ harnessId, text: singleText(turn), turn, session: session! });
+        this.emit.set(harnessId, output);
         const rows = entries(), name = /^\/(\S+)/u.exec(input)?.[1];
         if (name === "undo") rows.pop(); else if (name === "clear") rows.length = 0; else if (plan.insert !== false) rows.push(singleText(turn));
         if (plan.live === true) output({ type: "input_recorded", ...(typeof turn === "object" ? { packetId: turn.relay.packetId } : {}) });
         if (plan.compacts === true) output({ type: "activity", id: "compaction-" + this.prompts.length, kind: "compaction", title: "上下文压缩", status: "completed" });
         output({ type: "text", text: "reply from " + harnessId });
-        if (this.usage[harnessId] !== undefined) output({ type: "usage", usage: this.usage[harnessId]! });
+        if (plan.context !== undefined) output({ type: "usage", usage: { context: plan.context } });
+        else if (this.usage[harnessId] !== undefined) output({ type: "usage", usage: this.usage[harnessId]! });
         const extra: Partial<BackendResult> = plan.cleared === true ? { native: { cleared: true } } : {};
         let result: Promise<BackendResult>;
         switch (plan.result ?? "recorded") {
@@ -133,7 +141,8 @@ export class Fakes implements SessionBindingFactory {
       },
       close: async () => { const closed = this.closing[harnessId] ?? CLEAN; if (closed instanceof Error) throw closed; return closed; },
     };
-    return { control, workspace: configuration.workspace, assertOwned: () => {}, close: () => control.close(), ...(this.hubTools.has(harnessId) ? { hubTools: true } : {}) };
+    return { control, workspace: configuration.workspace, assertOwned: () => {}, close: () => control.close(), ...(this.hubTools.has(harnessId) ? { hubTools: true } : {}),
+      ...(this.recordFiles.has(harnessId) ? { recordFiles: true } : {}) };
   }
   /** What reached `harnessId`, in order. */
   to(harnessId: string): readonly { readonly text: string; readonly turn: TurnText; readonly session: string }[] { return this.prompts.filter(row => row.harnessId === harnessId); }

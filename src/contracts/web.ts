@@ -302,7 +302,17 @@ export interface CreateWebSession {
 }
 export interface SwitchWebSession { readonly selection: SelectionRequest; readonly commandId: string }
 /** The task a conversation belongs to as the page shows it (2026-11-13): its board, what every Harness working on it goes by. */
-export interface TaskView { readonly board: import("./session.js").TaskBoard }
+/** One conversation of a task as the page lists it (src/web/task-family.ts): who has it, what it was asked, how its latest Turn stands, the files it changed. */
+export interface TaskMemberView {
+  readonly sessionId: string; readonly label: string;
+  /** The label of the conversation that delegated this one its work; null for the one the task began in. */
+  readonly parent: string | null; readonly depth: number;
+  readonly harnessId: string; readonly harness: string; readonly task: string;
+  readonly status: "running" | "completed" | "failed" | "cancelled" | "unknown" | "empty";
+  readonly turns: number; readonly files: readonly string[];
+}
+/** The task a conversation belongs to: its board, and — when it is read — the conversations working on it, the one it began in first. */
+export interface TaskView { readonly board: import("./session.js").TaskBoard; readonly members?: readonly TaskMemberView[] }
 /** `POST /api/v1/sessions/:id/delegate`: a conversation of its own for `selection` to do `text`, starting from this one's history. `messageCommandId` is the task message's own identity. */
 export interface DelegateWebSession { readonly selection: SelectionRequest; readonly text: string; readonly commandId: string; readonly messageCommandId: string }
 export interface WebError {

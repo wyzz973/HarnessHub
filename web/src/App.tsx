@@ -1158,7 +1158,7 @@ export function App() {
   }, [session?.id, lastStatus, lastSeq]);
   // What this conversation handed to other Harnesses: the conversations that say it delegated them their work.
   // The board of the task the open conversation belongs to: one access per conversation, so the panel reads it again only when the conversation moves on.
-  const taskBoard = useMemo<TaskBoardAccess | undefined>(() => sessionId === null ? undefined : { load: signal => api.taskBoard(sessionId, signal), write: change => api.writeTaskBoard(sessionId, change) }, [api, sessionId]);
+  const taskBoard = useMemo<TaskBoardAccess | undefined>(() => sessionId === null ? undefined : { load: signal => api.task(sessionId, signal), write: change => api.writeTaskBoard(sessionId, change) }, [api, sessionId]);
   const delegations = useMemo(() => sessionId === null ? [] : (state?.sessions ?? []).filter(item => item.parent?.sessionId === sessionId), [state?.sessions, sessionId]);
   const loadDelegation = useCallback(async (id: string, signal: AbortSignal): Promise<DelegationResult> => {
     const view = conversationOf(replaceWithSnapshot(null, await api.session(id, signal)));

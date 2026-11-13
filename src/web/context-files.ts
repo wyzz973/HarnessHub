@@ -9,8 +9,9 @@ import {
   CONTEXT_DETAIL_POLICY, contextIndex, contextNeeds, contextTurn, contextTurnPath, detailKey, rowsTable, tableDetailOf, tableRedaction,
   type ContextFile, type TableRedaction, type TableToolDetail,
 } from "../contexts/session/domain/table.js";
+import { conversationLabel } from "../contexts/session/domain/board-words.js";
 import { taskFamily, taskLabel, type TaskMember } from "./task-family.js";
-import { hasState, stateText, taskState, type StateScope, type StateStore } from "./task-state.js";
+import { hasState, stateText, taskState, type StateScope, type StateStore, type StateWords } from "./task-state.js";
 
 /**
  * The record as a directory (docs/decisions/LOG.md, 2026-11-13): what the Hub knows of a task, laid out as read-only files a Harness reads with its own file tools —
@@ -24,7 +25,8 @@ import { hasState, stateText, taskState, type StateScope, type StateStore } from
  *   <root>/<task>/<conversation>/turns/007.md    the whole of Turn 7; a text too long for it is whole in turns/007/tool-02.output.txt
  *
  * `ensure` brings the directory of a conversation's task up to the record: only what changed is written (a finished Turn's files are written once), and what a
- * conversation no longer holds (Turns after a place it went back to) is removed. Files are written beside and moved into place, so one being read is never half written.
+ * conversation no longer holds (Turns after a place it went back to) is removed. `refresh` writes again only what changes in the middle of a Turn (task.md, board.md,
+ * each STATE.md). Files are written beside and moved into place, so one being read is never half written.
  * What the table hides of a Harness's secrets is hidden here the same way.
  */
 /** The directory under the data root the record's directories are kept in. */
@@ -45,6 +47,11 @@ export interface ContextFilesOptions {
   readonly name: (harnessId: string) => string | null;
   /** The board of the task a conversation belongs to. */
   readonly board: (id: SessionId) => TaskBoard;
+  /**
+   * What changed in the task for the Turn in progress of a conversation that its Harness has not been told (2026-11-14): its STATE.md then begins with it, for a Harness
+   * that reads the record as files and may call no tool of the Hub's. `written` is called once the file that says it is in place. Null: nothing is pending.
+   */
+  readonly changes?: (id: SessionId) => { readonly text: string; written(): void } | null;
 }
 /** What a conversation's directory was written from: its version then, and each Turn's Run and state in order. */
 interface Written { readonly version: number; readonly runs: readonly string[] }
@@ -57,8 +64,9 @@ export const CONTEXT_README = [
   "Read-only. Everything the user and every Harness said and did on this task is here; read it with your own file tools and search it with grep.",
   "",
   "- task.md: the conversations working on the task, how each stands, the files each changed",
-  "- board.md: what everyone on the task goes by (the goal, the user's constraints, decisions)",
-  "- <conversation>/STATE.md: where that conversation stands in the task, as HarnessHub puts it together (goal, what must hold, the task list, the files in play)",
+  "- board.md: what everyone on the task goes by (the goal, the user's constraints, decisions), each entry with its id and who wrote it",
+  "- <conversation>/STATE.md: where that conversation stands in the task, as HarnessHub puts it together (goal, what must hold, the task list, the files in play, the user's latest message); "
+    + "what changed for its turn in progress that its Harness was not told yet comes first. It is kept current while a turn runs",
   "- <conversation>/index.md: one entry a turn of that conversation (who ran it, how it ended, what was asked and answered in short)",
   "- <conversation>/turns/NNN.md: the whole of turn NNN: the user's words, the reply, every tool call with its input and output, the files changed",
   "- <conversation>/turns/NNN/tool-KK.output.txt: a text too long to stand in the turn's file, whole",
@@ -83,17 +91,34 @@ export class ContextFiles {
   /** Where the directory of a conversation's task is, whether or not it is written yet. */
   place(id: SessionId): ContextPlace { return { dir: join(this.options.root, taskLabel(this.rootOf(id))), self: taskLabel(id) }; }
 
-  /** The state of the task as the conversation `id` stands in it, as its Harness reads it before the Turn `upTo` (task-state.ts); null when there is nothing to say yet. */
-  state(id: SessionId, upTo?: RunId, record = false, scope: StateScope = "whole"): string | null {
+  /**
+   * The state of the task as the conversation `id` stands in it, as its Harness reads it before the Turn `upTo` (task-state.ts); null when there is nothing to say yet.
+   * `words`: how much of the user's words it carries (StateWords).
+   */
+  state(id: SessionId, upTo?: RunId, record = false, scope: StateScope = "whole", words: StateWords = "latest"): string | null {
     try {
-      const state = taskState(this.options.reader, id, this.options.name, this.options.board(id), upTo);
+      const state = taskState(this.options.reader, id, this.options.name, this.options.board(id), upTo, words);
       return hasState(state, scope) ? stateText(state, this.options.name, record ? this.place(id) : undefined, scope) : null;
     } catch { return null; }
   }
   /** Brings the directory of the task `id` belongs to up to the record. One writer a task at a time; a failure leaves what was there and is the caller's to ignore. */
-  ensure(id: SessionId): Promise<void> {
+  ensure(id: SessionId): Promise<void> { return this.serialized(id, dir => this.write(id, dir)); }
+  /**
+   * Writes again only what changes in the middle of a Turn (2026-11-14): the task's `task.md`, `board.md` and each conversation's `STATE.md`, so that a Harness that
+   * reads them after it compacted reads where the task stands now and not where it stood when the Turn began. Serialized with `ensure`; a failure leaves what was there.
+   */
+  refresh(id: SessionId): Promise<void> {
+    return this.serialized(id, async dir => {
+      const members = taskFamily(this.options.reader, id, this.options.name);
+      await mkdir(dir, { recursive: true, mode: 0o700 });
+      await this.common(id, dir, members);
+      for (const member of members) await this.stateFile(member, dir);
+    }).catch(() => undefined);
+  }
+  /** One writer a task at a time: `work` runs after what was asked of the task's directory before it. */
+  private serialized(id: SessionId, work: (dir: string) => Promise<void>): Promise<void> {
     const place = this.place(id), before = this.working.get(place.dir) ?? Promise.resolve();
-    const next = before.catch(() => undefined).then(() => this.write(id, place.dir));
+    const next = before.catch(() => undefined).then(() => work(place.dir));
     this.working.set(place.dir, next);
     void next.catch(() => undefined).finally(() => { if (this.working.get(place.dir) === next) this.working.delete(place.dir); });
     return next;
@@ -103,13 +128,31 @@ export class ContextFiles {
     const members = taskFamily(this.options.reader, id, this.options.name);
     await mkdir(dir, { recursive: true, mode: 0o700 });
     await this.put(join(dir, "README.md"), CONTEXT_README);
-    await this.put(join(dir, "task.md"), taskText(members));
-    await this.put(join(dir, "board.md"), boardText(this.options.board(id), this.options.name));
+    await this.common(id, dir, members);
     for (const member of members) {
       try { await this.conversation(member.sessionId, join(dir, member.label), member.label); } catch { /* a conversation that cannot be read now keeps what it had */ }
-      // Where each conversation stands in the task, as the Hub puts it together: the same state it says to a Harness, always as it is now.
-      await this.put(join(dir, member.label, "STATE.md"), (this.state(member.sessionId, undefined, false) ?? "（还没有可说的状态）") + "\n").catch(() => undefined);
+      await this.stateFile(member, dir);
     }
+  }
+  /** The task's own files: its conversations and its board. */
+  private async common(id: SessionId, dir: string, members: readonly TaskMember[]): Promise<void> {
+    await this.put(join(dir, "task.md"), taskText(members));
+    await this.put(join(dir, "board.md"), boardText(this.options.board(id), this.options.name));
+  }
+  /**
+   * Where a conversation stands in the task, as the Hub puts it together: the same state it says to a Harness, always as it is now, with the user's latest message
+   * whole (the earlier ones are in index.md). When something changed for its Turn in progress that its Harness was not told, that comes first.
+   */
+  private async stateFile(member: TaskMember, dir: string): Promise<void> {
+    let changes: { readonly text: string; written(): void } | null = null;
+    try { changes = this.options.changes?.(member.sessionId) ?? null; } catch { changes = null; }
+    let state: string | null = null;
+    try {
+      const gathered = taskState(this.options.reader, member.sessionId, this.options.name, this.options.board(member.sessionId), undefined, "latest");
+      state = hasState(gathered, "whole") || gathered.words.said.length > 0 ? stateText(gathered, this.options.name, "inside", "whole") : null;
+    } catch { state = null; }
+    const text = (changes === null ? "" : "# 这一轮开始以来的变化\n\n" + changes.text + "\n\n# 这件任务现在的状态\n\n") + (state ?? "（还没有可说的状态）") + "\n";
+    try { await this.put(join(dir, member.label, "STATE.md"), text); changes?.written(); } catch { /* the file keeps what it had */ }
   }
 
   /** One conversation's directory: the Turns that changed since it was last written, then its index. */
@@ -182,15 +225,28 @@ export function taskText(members: readonly TaskMember[]): string {
   }
   return lines.join("\n");
 }
-/** The task's board as a file. */
+/**
+ * The task's board as a file: each entry with its id (what `hub_remember` takes as `forget`) and who wrote it. An entry a Harness wrote is that Harness's reading of
+ * what the user said, and names the turn it was written in by its path, relative to this directory.
+ */
 export function boardText(board: TaskBoard, name: (harnessId: string) => string | null): string {
   if (board.entries.length === 0) return "# The task's board\n\n(empty)\n";
-  const lines = ["# The task's board", "", "What everyone working on this task goes by. Written by the user and by the Harnesses.", ""];
+  const lines = ["# The task's board", "", "What everyone working on this task goes by. Written by the user and by the Harnesses.",
+    "An entry the user wrote is the user's own. An entry a Harness wrote is that Harness's reading of what the user said: it names the turn it came from (a path relative to this directory); "
+      + "when you are unsure it is what the user meant, or it does not agree with what the user says now, read the user's words there and go by them.",
+    "Each entry begins with its id in brackets: to take an entry off when the user withdrew it, give that id to hub_remember as `forget`.", ""];
+  const source = (entry: TaskBoard["entries"][number]): string => {
+    if (entry.by === "user") return "the user";
+    const who = name(entry.by) ?? entry.by;
+    if (entry.from === undefined) return who;
+    const label = conversationLabel(entry.from.sessionId), turn = entry.from.ordinal + 1;
+    return who + "'s reading of the user's words in turn " + turn + " of " + label + ": " + label + "/" + contextTurnPath(turn);
+  };
   for (const kind of ["goal", "constraint", "decision", "note"] as const) {
     const entries = board.entries.filter(entry => entry.kind === kind);
     if (entries.length === 0) continue;
     lines.push("## " + BOARD_WORDS[kind]);
-    for (const entry of entries) lines.push("- " + entry.text + " (" + (entry.by === "user" ? "the user" : name(entry.by) ?? entry.by) + ")");
+    for (const entry of entries) lines.push("- [" + entry.id + "] " + entry.text + " (" + source(entry) + ")");
     lines.push("");
   }
   return lines.join("\n");

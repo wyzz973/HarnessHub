@@ -58,7 +58,7 @@ export function RelayPacketDialog({ api, sessionId, packet, onClose, name }: {
  * sentence each, and the packets that were sent, with how each fared and a way to read it.
  */
 export function RelayDetails({ view, name, onViewPacket }: { readonly view: RelayView; readonly name: (id: string) => string; readonly onViewPacket: (packetId: string) => void }) {
-  return <div className="relay-details flex flex-col gap-5 px-4 pt-3.5 pb-4 text-ui-sm">
+  return <div className="relay-details flex flex-col gap-5 px-[18px] pt-3.5 pb-4 text-ui-sm">
     <section className="flex flex-col gap-1" aria-label="各 Harness 的同步状态">
       <span className="text-caption text-fg-3">各 Harness 的同步状态</span>
       {view.bindings.length ? <ul className="m-0 flex list-none flex-col p-0">{view.bindings.map(binding => <li key={binding.harnessId + ":" + binding.controlId} className="relay-binding flex min-w-0 flex-col gap-0.5 py-2 hairline-b last:border-b-0" data-sync={binding.sync}>

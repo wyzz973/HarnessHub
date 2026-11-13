@@ -109,6 +109,16 @@ RUN HH_REAL_MODEL_CLAUDE=haiku node --test dist/tests/real/delegation-context.re
 
 S13 的“不过”是规则判的，不是上下文没送到：Claude Code 自己压的那一边除了读记录目录，还到自己的 `~/.claude/projects` 里搜；Codex 在 Hub 换的那一边到 `~/.codex` 里找旧会话；OpenCode 列了 Gateway 数据目录的上一层。对话都很小（窗口只用了 4%–11%），所以这组对照说明的是“这个规模上分不出高下，起作用的是记录目录”，不说明大窗口上谁更好。S14 不设那个开关时，这一轮里它不会压缩，场景记为作废。
 
+### 六处修复之后（2026-11-14）
+
+整轮按默认设置跑了一次：S1 到 S13 全过，证据 `delegation-ruler-2026-11-13T17-01-44-226Z.json`。新加一项：
+
+| 场景 | 量什么 | 结果 |
+|---|---|---|
+| S15 撤掉一条约定 | 用户在任务板上写了一条约束，再让 A 把它撤掉：它找不找得到条目的编号（读记录目录的 Harness 没有读任务板的工具，编号在 `board.md` 里），撤不撤得掉 | Claude Code：撤掉了，但被“越出工作区”判不过（列了数据目录的上一层）。Codex：过，`cat board.md` 后用 `forget` 撤掉 |
+
+S13 顺带量了任务板被写脏的情况：修复前 Codex 六轮里六轮调了 `hub_remember`，修复后零轮。S14 带着 Claude Code 的提早压缩开关单独跑了一次，过。
+
 S4 用 C = OpenCode 补量了一次。OpenCode 没有用户级的 harnesshub 一项，用的是这次构建的工具。结果是不过：它的 `hub_turns`、`hub_search`、`hub_read_turn` 只看得到自己的对话，于是去翻了 Gateway 的数据目录（`ls`、`find`，再 `cat` 对话文件），从里面找到 B 的文件名，加上了 two。尺子按“越出工作区”判它不过。证据见 `delegation-ruler-2026-11-13T04-20-30-711Z.json`。
 
 ## 量的时候发现的

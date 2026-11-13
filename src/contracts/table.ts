@@ -69,8 +69,9 @@ export function hubCommandInstructions(command: string, progress: boolean): stri
     run("search <词>") + "            在整段对话里搜索",
     run("delegate <harness> \"<任务>\"") + "   把一段独立的活交给这台电脑上的另一个 Harness（例如 codex、claude、opencode），它在自己的对话里做，立刻返回；任务要写全，它看不到这一轮",
     run("delegations --wait 25") + "  看交出去的活做得怎样，可以等它做完",
-    run("remember constraint \"<一句话>\"") + "   用户说了要一直遵守的要求、定了决定（decision）或目标（goal）时记到任务板，别的 Harness 接手或被委派时会先看到",
-    run("board") + "                  看任务板：目标、约束、决定",
+    run("remember constraint \"<一句话>\"") + "   用户说了在这条消息之外也要算数的要求（整个任务里、以后都……）、定了别人也得照办的决定（decision）或任务的目标（goal）时记到任务板，别的 Harness 接手或被委派时会先看到；"
+      + "只管这一条消息、这一轮的话（怎么回答、“只回答……”“回复里不要……”）不记，拿不准就不记；用户撤回一条时用 remember --forget <编号>（编号在 board 里）",
+    run("board") + "                  看任务板：目标、约束、决定，每条带编号",
     run("task") + "                   这件任务的全貌：有哪些对话在做、各自被交代了什么、回复了什么、改了哪些文件；turns、turn、search 加 --conversation <标签> 可读其中另一段对话",
     ...(progress ? [run("plan \"[x] 做完的一步\" \"[~] 正在做的一步\" \"[ ] 还没做的一步\"") + "   任务要做好几步时，把全部步骤列给用户看，每开始或做完一步再调用一次",
       run("wrap-up \"<两三句小结>\" [--ask \"<一个问题>\" --action \"<回答>\"]") + "   每一轮结束前调用一次：做完了什么、还有什么没做或没验证；需要用户拿主意时带上问题和一到两个回答"] : []),
@@ -84,9 +85,11 @@ export function hubCommandInstructions(command: string, progress: boolean): stri
  */
 const DELEGATE_WORDS = "要把一段活交给这台电脑上的另一个 Harness（Codex、Claude Code、OpenCode、Hermes 等）时，调用 harnesshub 的 hub_delegate，不要自己去启动它们的命令行："
   + "这样它在自己的对话里做，用户在界面里看得到、接得上。需要它的结果时用 hub_delegations（可带 wait 等它做完）。\n"
-  + "用户说了要一直遵守的要求（“以后都……”“记住……”）、定下了别人也得照办的决定，或者任务的目标定了、变了，就调用 hub_remember 记到任务板上（一条一句话）："
-  + "这件任务里别的 Harness 接手或被委派时会先看到它，不用用户再说一遍。用户让你这一轮什么都别做、只回一句话时，记到任务板这一步也照做。";
-export const HUB_DELEGATION_INSTRUCTIONS = DELEGATE_WORDS + "不确定现在还算数的约束有哪些时，用 hub_board 看。你的上下文被压缩过、或者记不清这件任务的目标和要遵守的约束时，先用 hub_task 和 hub_board 看一遍，再接着做。";
+  + "任务板只记用户说了在这条消息之外也要算数的东西：对整件任务或从今以后都有效的要求（“以后都……”“整个任务里……”“记住……”）、别的 Harness 也得照办的决定、任务的目标（定了或变了）。"
+  + "这时调用 hub_remember 记上去（一条一句话），这件任务里别的 Harness 接手或被委派时会先看到它，不用用户再说一遍。"
+  + "只管这一条消息、这一轮的话不记：怎么回答、这一步怎么做、“只回答……”“回复里不要……”这类。拿不准就不记。"
+  + "一条消息里既定了长期要守的规矩、又让你只回一句话时，规矩照样记上，再照它说的回话。";
+export const HUB_DELEGATION_INSTRUCTIONS = DELEGATE_WORDS + "不确定现在还算数的约束有哪些时，用 hub_board 看；用户撤回一条时，把它的编号（hub_board 里每条前面的）交给 hub_remember 的 forget。你的上下文被压缩过、或者记不清这件任务的目标和要遵守的约束时，先用 hub_task 和 hub_board 看一遍，再接着做。";
 /**
  * Whether a path (or a command line that names one) is inside the record's directory as the Hub lays it out (`context/<task>/…`, 2026-11-13): what a Harness
  * reads there is the conversation's own record, and the page says so in place of a file's name.
@@ -99,8 +102,8 @@ export const TABLE_RECORD_ENV = "HARNESSHUB_RECORD";
  * task's directory, `self` the name of the conversation's own directory inside it.
  */
 export function hubRecordInstructions(dir: string, self: string): string {
-  return DELEGATE_WORDS + "不确定现在还算数的约束有哪些时，看记录目录里的 board.md。\n"
-    + "这件任务的完整记录在一个只读目录里：" + dir + " 。你这段对话是其中的 " + self + "/ ：" + self + "/STATE.md 是 HarnessHub 整理的现状（目标、要遵守的、做到哪、改过的文件），" + self + "/index.md 每一轮一条，" + self + "/turns/NNN.md 是第 N 轮的全文（用户原话、回复、每次工具调用的输入和完整输出、改动的文件）。"
+  return DELEGATE_WORDS + "不确定现在还算数的约束有哪些时，看记录目录里的 board.md；用户撤回一条时，把它的编号（board.md 里每条前面的）交给 hub_remember 的 forget。\n"
+    + "这件任务的完整记录在一个只读目录里：" + dir + " 。你这段对话是其中的 " + self + "/ ：" + self + "/STATE.md 是 HarnessHub 整理的现状（目标、要遵守的、做到哪、改过的文件、用户最新的话），一轮进行中也随时更新，开头有“这一轮开始以来的变化”时，那是你这一轮开始后这件任务里变了、还没告诉过你的东西；" + self + "/index.md 每一轮一条，" + self + "/turns/NNN.md 是第 N 轮的全文（用户原话、回复、每次工具调用的输入和完整输出、改动的文件）。"
     + "task.md 列着这件任务里的每段对话（各自在做什么、改了哪些文件），每段对话一个目录；board.md 是任务板。"
     + "需要更早的细节、别的 Harness 做过什么时，用你自己读文件、搜文件的工具到那里查（比如先 grep），不要猜，也不要改那个目录。"
     + "只在这个目录里面找：它的上级目录里是别的任务的记录，和这件事无关，不要去翻。"

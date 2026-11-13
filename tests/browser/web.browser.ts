@@ -749,7 +749,7 @@ test("unified chat shows native plan, notices, tool details with diffs and turn 
   // (decision E); at this width the header's button opens it beside the conversation.
   const panel = page.getByRole("complementary", { name: "详情栏" });
   await page.getByRole("button", { name: "详情栏", exact: true }).click();
-  await panel.getByRole("tab", { name: /计划/u }).click();
+  await expect(panel.getByRole("tab", { name: "概览", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(panel.getByText("Codex · 1 / 2", { exact: true })).toBeVisible(); await expect(panel.getByText("修改文件")).toBeVisible();
   await expect(log.getByText("计划 · 1/2 完成")).toHaveCount(0);
   await expect(log.getByText("浏览器验收提示")).toBeVisible();
@@ -767,7 +767,7 @@ test("unified chat shows native plan, notices, tool details with diffs and turn 
   await group.locator(".action-row[data-type=file_change]").getByRole("button").click();
   await expect(log.locator(".native-diff .is-add")).toContainText("+新内容"); await expect(log.locator(".native-diff .is-remove")).toContainText("-旧内容");
   await page.locator(".assistant-message").last().hover(); await page.getByRole("button", { name: "执行详情", exact: true }).last().click();
-  await expect(page.getByText("本轮用量")).toBeVisible(); await expect(panel).toContainText("1,500 / 10,000 tokens（15%）");
+  await expect(panel.locator(".execution-details")).toContainText("输入"); await expect(panel).toContainText("1,500 / 10k tokens"); await expect(panel).toContainText("15%");
   await page.screenshot({ path: join(artifact, "native-activity.png"), fullPage: true, animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "native activity must not overflow a narrow screen");
@@ -1348,7 +1348,7 @@ test("a Turn the Runtime cancelled when its wait budget ran out says 已停止 w
   await expect(page.locator(".chat-page > header .status-pill")).toHaveCount(0);
   await turn.hover(); await turn.getByRole("button", { name: "执行详情", exact: true }).click();
   const facts = page.getByRole("complementary", { name: "详情栏" }).locator(".execution-details");
-  await expect(facts.locator("dt", { hasText: /^状态$/u }).locator("xpath=following-sibling::dd[1]")).toHaveText("已停止 · 超过了这一轮的时间上限");
+  await expect(facts.locator(".run-state")).toHaveText("已停止 · 超过了这一轮的时间上限");
   await page.screenshot({ path: join(artifact, "runtime-cancelled.png"), animations: "disabled" });
   await page.keyboard.press("Escape"); await expect(page.getByRole("complementary", { name: "详情栏" })).toHaveCount(0);
   // Notifications on: a Turn the Runtime cancels out of sight is announced as a failure is, silently, titled with the Agent
@@ -1401,8 +1401,7 @@ test("a Turn waiting for a slot, when an operator limited the conversations runn
   // So do the details: its facts say 排队中.
   await page.keyboard.press("ControlOrMeta+Backslash");
   const details = page.getByRole("complementary", { name: "详情栏" });
-  await details.getByRole("tab", { name: "执行", exact: true }).click();
-  await expect(details.locator(".execution-details dt", { hasText: /^状态$/u }).locator("xpath=following-sibling::dd[1]")).toHaveText("排队中");
+  await expect(details.locator(".execution-details .run-state")).toHaveText("排队中");
   await page.keyboard.press("ControlOrMeta+Backslash"); await expect(details).toHaveCount(0);
   await expect(log.locator(".queued-turn small")).toHaveText("没有单独的等待期限，按发送先后轮到。");
   await expect(log.getByRole("button", { name: "打开那个对话", exact: true })).toHaveCount(0);
@@ -1579,24 +1578,28 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   let release!: () => void; const held = new Promise<void>(done => { release = done; });
   await page.route("**/api/v1/content/**", async route => { await held; await route.continue(); });
   await button.click();
-  await expect(panel.getByRole("tab", { name: /改动/u })).toHaveText("改动1"); await expect(panel.getByRole("tab", { name: /改动/u })).toHaveAttribute("aria-selected", "true");
-  await expect(panel.getByRole("radio", { name: "整个对话 1", exact: true })).toHaveAttribute("aria-checked", "true"); await expect(panel).not.toContainText("README.md");
+  await expect(panel.getByRole("tab", { name: /改动/u })).toHaveText("改动1"); await expect(panel.getByRole("tab", { name: "概览", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(panel).not.toContainText("README.md");
   release();
   await expect(panel).toContainText("README.md"); assert.ok(reads.length > 0, "opened, the panel reads the diffs");
+  // The overview names the file; the page of the changes holds its diff.
+  await panel.getByRole("tab", { name: /改动/u }).click();
+  await expect(panel.getByRole("radio", { name: "这段对话 1", exact: true })).toHaveAttribute("aria-checked", "true");
   // Opening it was the user's choice, which this browser keeps.
   await page.reload(); await expect(panel).toBeVisible(); await expect(button).toHaveAttribute("aria-pressed", "true");
+  await panel.getByRole("tab", { name: /改动/u }).click();
   await expect(panel.locator(".native-diff .is-add")).toContainText("新内容"); await expect(panel.locator(".native-diff .is-remove")).toContainText("旧内容");
   await expect(panel.getByRole("button", { name: /撤销|还原|revert/iu })).toHaveCount(0);
   await panel.getByRole("tab", { name: /过程/u }).click();
   await expect(panel.locator(".action-row").first()).toContainText("ls -la");
-  await panel.getByRole("tab", { name: /计划/u }).click(); await expect(panel).toContainText("Codex · 1 / 2");
-  await panel.getByRole("tab", { name: /执行/u }).click(); await expect(panel).toContainText("本轮用量"); await expect(panel.getByRole("button", { name: "复制诊断信息", exact: true })).toBeVisible();
+  await panel.getByRole("tab", { name: "概览", exact: true }).click(); await expect(panel).toContainText("Codex · 1 / 2");
+  await expect(panel.locator(".execution-details")).toContainText("输入"); await expect(panel.getByRole("button", { name: "复制诊断信息", exact: true })).toBeVisible();
   await page.screenshot({ path: join(artifact, "details-panel.png"), animations: "disabled" });
   await page.getByRole("button", { name: "详情栏", exact: true }).click(); await expect(panel).toHaveCount(0);
   // Narrower, the panel opens over the conversation and closes back to it.
   await page.setViewportSize({ width: 943, height: 900 });
   await page.getByRole("button", { name: "详情栏", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("本轮用量");
+  await expect(page.getByRole("dialog").locator(".execution-details")).toContainText("输入");
   await page.getByRole("button", { name: "关闭详情栏", exact: true }).click(); await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   // On a phone the menu offers 显示每一步 as well (ruling R1: at every width).
@@ -1666,12 +1669,12 @@ test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is 
   assert.deepEqual(await editRow.evaluate(element => { const style = getComputedStyle(element); return [element.matches(":focus-visible"), style.outlineStyle, style.outlineWidth, style.outlineOffset]; }), [true, "solid", "2px", "-2px"]);
   await editRow.blur();
   await page.screenshot({ path: join(artifact, "dl4-turn-light-1440.png"), animations: "disabled" });
-  // D02: the details tabs are 改动 (with the number of changes, the button's), 计划, 过程, 后台 and 执行; the underline sits under
+  // D02: the details tabs begin 概览, 改动 (with the number of changes, the button's) and 过程; the underline sits under
   // the chosen tab. The panel is closed until opened (decision E).
   const panel = page.getByRole("complementary", { name: "详情栏" });
   await page.getByRole("button", { name: "详情栏", exact: true }).click();
-  await expect(panel.getByRole("tab")).toHaveText(["改动1", "计划", "过程", "后台", "执行"]);
-  for (const [name, file] of [["计划", "plan"], ["过程", "process"], ["后台", "background"], ["改动", "changes"]] as const) {
+  await expect(panel.getByRole("tab").nth(0)).toHaveText("概览"); await expect(panel.getByRole("tab").nth(1)).toHaveText("改动1"); await expect(panel.getByRole("tab").nth(2)).toHaveText("过程");
+  for (const [name, file] of [["概览", "overview"], ["过程", "process"], ["改动", "changes"]] as const) {
     const tab = panel.getByRole("tab", { name: new RegExp("^" + name, "u") });
     await tab.click(); await expect(tab).toHaveAttribute("aria-selected", "true");
     await expect.poll(() => panel.locator(".tabs-indicator").evaluate(indicator => { const chosen = indicator.parentElement!.querySelector<HTMLElement>("[aria-selected=true]")!;
@@ -1679,9 +1682,9 @@ test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is 
     await page.screenshot({ path: join(artifact, `dl4-panel-${file}-light-1440.png`), animations: "disabled" });
   }
   // D03: the changes of this Turn or of the whole conversation, each file with its lines, the diff from its Harness.
-  await expect(panel.getByRole("radio", { name: "整个对话 1", exact: true })).toHaveAttribute("aria-checked", "true");
-  await expect(panel.getByRole("button", { name: /README\.md/u })).toHaveAttribute("aria-pressed", "true");
-  await expect(panel.getByRole("region", { name: /^差异：/u })).toContainText(/^README\.mdCodex/u);
+  await expect(panel.getByRole("radio", { name: "这段对话 1", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(panel.getByRole("button", { name: /README\.md/u })).toHaveAttribute("aria-expanded", "true");
+  await expect(panel.getByRole("region", { name: /^差异：README\.md/u })).toBeVisible();
   // C08: switching the model takes effect between Turns; the place is marked by the Turn that carries it, with a hairline and the pill in the middle.
   await pick("选择模型", "Native A");
   await expect.poll(async () => { const value = await current(); return value.pendingSwitchId === null && value.selection.nativeModel === "native-a"; }).toBe(true);
@@ -1701,9 +1704,9 @@ test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is 
   const after = await current(); assert.equal(after.runs.length, 2); assert.equal(after.runs[0].selection.nativeModel, "native-b"); assert.equal(after.runs[1].selection.nativeModel, "native-a");
   assert.equal((await (await context.request.get(origin + "/api/v1/sessions")).json()).sessions.length, 1);
   await expect(log.locator(".assistant-message").last()).toHaveAttribute("data-run-status", "completed");
-  // The latest Turn changed nothing: "本轮" says so, "整个对话" still lists the file; 过程 lists both Turns, oldest first.
+  // The latest Turn changed nothing: "本轮" says so, "这段对话" still lists the file; 过程 lists both Turns, oldest first.
   await panel.getByRole("radio", { name: "本轮 0", exact: true }).click(); await expect(panel).toContainText("这一轮没有改动文件");
-  await panel.getByRole("radio", { name: "整个对话 1", exact: true }).click(); await expect(panel.getByRole("button", { name: /README\.md/u })).toBeVisible();
+  await panel.getByRole("radio", { name: "这段对话 1", exact: true }).click(); await expect(panel.getByRole("button", { name: /README\.md/u })).toBeVisible();
   await panel.getByRole("tab", { name: /^过程/u }).click();
   // Each Turn is listed by what was asked, with who ran it and what it did.
   await expect(panel.getByRole("tabpanel")).toContainText("NATIVE_ACTIVITYCodex · 运行了 1 条命令，修改了 README.md");
@@ -2590,7 +2593,7 @@ test("G054-UP2 a conversation whose kept process an upgrade closed says so until
   assert.deepEqual(events.events.filter((event: { type: string }) => event.type === "native.process_closed").map((event: { data: { reason: string; cleanup: { closed: boolean } } }) => [event.data.reason, event.data.cleanup.closed]), [["harness_upgrade", true]]);
   // The details panel is closed until opened (ADR-054 decision E); at this width its button opens it beside the conversation.
   await page.getByRole("button", { name: "详情栏", exact: true }).click();
-  await page.getByRole("complementary", { name: "详情栏" }).getByRole("tab", { name: /后台/u }).click();
+  await page.getByRole("complementary", { name: "详情栏" }).getByRole("tab", { name: /过程/u }).click();
   await expect(page.locator(".kept-upgraded")).toHaveText("升级 Kept Agent 前，HarnessHub 关闭了这个对话保留的后台进程。下一条消息会用新版本重新启动原程序。");
   await page.screenshot({ path: join(artifact, "upgrade-kept-closed.png"), animations: "disabled" });
   await reply("second", 2);

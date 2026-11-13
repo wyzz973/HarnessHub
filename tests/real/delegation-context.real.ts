@@ -276,6 +276,10 @@ class Ruler {
   }
   /** Writes a constraint on the task's board as the user does from the page. */
   async note(id: string, text: string): Promise<void> { await this.api.post("/sessions/" + id + "/task", { kind: "constraint", text }); }
+  /** The entries on the board of the conversation's task, as the page reads them. */
+  async board(id: string): Promise<readonly { readonly id: string; readonly kind: string; readonly text: string; readonly by: string }[]> {
+    return ((await this.api.get("/sessions/" + id + "/task")) as { readonly board: { readonly entries: readonly { readonly id: string; readonly kind: string; readonly text: string; readonly by: string }[] } }).board.entries;
+  }
   /** Switches the conversation to the role's Harness as the page does (the user's switch): its next message goes to that Harness. */
   async switchTo(id: string, role: Role): Promise<void> {
     await this.api.post("/sessions/" + id + "/switches", { selection: this.selection(role), commandId: "switch-" + randomUUID() });
@@ -643,6 +647,17 @@ const SCENARIOS: readonly Scenario[] = [
       const checks = { made, told, window };
       if (!told) return fail("它压缩之后，这一轮里状态没有送回去（新建的是 " + made.join("、") + "）", note, checks);
       return off.length === 0 ? pass("压缩之后状态送回去了，新建的 " + made.join("、") + " 以 pp_ 开头", note, checks) : fail("状态送回去了，但新建的 " + made.join("、") + " 没有以 pp_ 开头", note, checks);
+    } },
+  { id: "S15", name: "撤掉一条约定", roles: ["A"], measures: "任务板上有一条约束，用户让这家 Harness 把它撤掉：它找不找得到条目的编号、撤不撤得掉（读记录目录的 Harness 没有读任务板的工具，编号在 board.md 里）",
+    async run(r) {
+      const ws = await r.workspace("s15"), a = await r.open("A", ws);
+      await r.note(a, "这件任务里所有新建的文件，文件名都必须以 qq_ 开头。");
+      const before = await r.board(a);
+      if (before.length !== 1) throw new Voided("任务板上不是正好一条（" + before.length + " 条）");
+      const turn = need(await r.say(a, "A", "任务板上那条“文件名以 qq_ 开头”的约束不要了，把它从任务板上撤掉。撤完只回答“撤了”。"));
+      const after = await r.board(a), tools = informing(turn), note = tools.length ? "用了：" + listed(tools) : "没有用工具";
+      const checks = { before: before.length, after: after.length };
+      return after.length === 0 ? pass("撤掉了，任务板空了", note, checks) : fail("没撤掉，任务板上还有 " + after.length + " 条：" + after.map(entry => entry.text).join("；"), note, checks);
     } },
 ];
 

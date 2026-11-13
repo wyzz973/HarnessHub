@@ -28,6 +28,7 @@ import { BLOCKED_CODES, RelayError, type BindingRelayState, type DeliveryRecord,
 import { relayRedactor, restoreLabels } from "../domain/relay/redaction.js";
 import { hardCap, packetBudget, resolveWindow, type ResolvedWindow } from "../domain/relay/windows.js";
 import { estimateTokens, type RelayBudget } from "../domain/relay/budget.js";
+import { boardAuthor, boardAuthority, conversationLabel } from "../domain/board-words.js";
 /**
  * How long a relay read on a Turn's connection (setting the native title) may take before it counts as unavailable (ADR-055 §6.1,
  * C6: ≤2 s).
@@ -50,6 +51,13 @@ interface ActiveExecution {
   signaled?: Map<string, number>;
   /** The Harness compacted its own session while this Turn works, and the state has not been said to it since (output, signalsFor). */
   compacted?: boolean;
+  /**
+   * What the conversation's STATE.md says changed for this Turn, once the file that says it is in place (recordSignals): a Harness that reads the record as files and is
+   * seen reading that file (or board.md, for the board) is then told it, as a tool's answer would have told it. Null once told, or when the file says nothing.
+   */
+  filed?: PendingSignals | null;
+  /** The tool calls of this Turn seen naming the conversation's STATE.md or the task's board.md, by their identity, until each completes (recordRead). */
+  reads?: Map<string, "state" | "board">;
   binding: PreparedSessionBinding | null;
   run: ControlRun | null;
   dispatched: boolean;
@@ -88,6 +96,17 @@ interface ActiveExecution {
   /** The Turn's relay (ADR-055 §6.1, §7; G068 phase two): what it checked, sent and saw recorded, until its end commits it. */
   readonly relay: TurnRelay;
 }
+/**
+ * What changed in the task for the Turn in progress that its Harness has not been told (signalsFor): the board when it changed, what the user said since in the
+ * conversation the work came from, and what the other conversations changed among the files this one has to do with. Each part with what it says, the line the Turn
+ * shows of it and what the conversation remembers once it is told; `seen`: how far each other conversation is then told of within the Turn.
+ */
+interface PendingSignals {
+  readonly runId: RunId;
+  readonly board: { readonly text: string; readonly line: string; readonly version: number } | null;
+  readonly words: { readonly text: string; readonly line: string; readonly through: number } | null;
+  readonly edits: { readonly text: string; readonly line: string; readonly told: Readonly<Record<string, number>>; readonly seen: Readonly<Record<string, number>> } | null;
+}
 /** What a Turn holds of the relay between its preparation and its end (relay-coordinator.ts does the deciding). */
 interface TurnRelay {
   declaration: RelayDeclaration;
@@ -121,9 +140,10 @@ type KeptRelease = "idle" | "disabled" | "ended_by_user" | "selection_changed" |
  * that the old one cannot go on: `lost`, the Harness has no session with that identity any more; `overflow`, the last Turn in it failed because the conversation is
  * over the model's window. `full` is an operator's own choice (HARNESSHUB_RESEAT_AT, a share of the window at the end of a Turn): off unless set, kept to measure the
  * one way against the other. A session opened for it is handed at most half of that level, so that it has to grow by as much again before the next time; the other
- * two are handed the conversation as any handoff is.
+ * two are handed the conversation as any handoff is — save that a session opened with the conversation that overflowed in its first Turn is followed by one handed less
+ * (`shrink`, 2026-11-14: the packet's cap times that factor; the estimate a packet is sized by may be off by half again), until one that went alone overflows too.
  */
-type Reseat = { readonly reason: "full"; readonly used: number; readonly size: number } | { readonly reason: "overflow" } | { readonly reason: "lost" };
+type Reseat = { readonly reason: "full"; readonly used: number; readonly size: number } | { readonly reason: "overflow"; readonly shrink: number } | { readonly reason: "lost" };
 /** The codes a Turn fails with when the conversation is over the model's window (Codex's own report of it; the ACP Harnesses' as json-rpc-process.ts reads it). */
 const OVERFLOW_CODES: ReadonlySet<string> = new Set(["CONTEXT_WINDOW_EXCEEDED", "NATIVE_CONTEXT_EXCEEDED"]);
 /** What the Harness is told when its Turn runs in a native session the Hub opened in the place of another; the packet before it and the state after it say the rest. */
@@ -256,14 +276,18 @@ function wroteRows(changes: Placed["changes"]): boolean {
 }
 function event(type: string, data: Readonly<Record<string, unknown>>): EventDraft { return { type, data }; }
 const BOARD_WORDS: Readonly<Record<BoardKind, string>> = { goal: "目标", constraint: "约束", decision: "决定", note: "备注" };
-/** The task's board as a Harness reads it: its goal, then the constraints, the decisions and the notes, each with who wrote it. */
-export function boardText(board: TaskBoard, name: (harnessId: string) => string): string {
+/**
+ * The task's board as a Harness reads it: its goal, then the constraints, the decisions and the notes, each with who wrote it — the user's own, or a Harness's reading
+ * of the user's words in the Turn it names (board-words.ts). `files`: the Harness reads the record as files, so a Turn is named by its path.
+ */
+export function boardText(board: TaskBoard, name: (harnessId: string) => string, files = false): string {
   const of = (kind: BoardKind) => board.entries.filter(entry => entry.kind === kind);
-  const line = (entry: BoardEntry) => "- " + entry.text + "（" + (entry.by === "user" ? "用户" : name(entry.by)) + " 记）";
-  const parts = [...of("goal").map(entry => "目标：" + entry.text),
+  const line = (entry: BoardEntry) => "- " + entry.text + "（" + boardAuthor(entry, name, files) + "）";
+  const parts = [...of("goal").map(entry => "目标：" + entry.text + "（" + boardAuthor(entry, name, files) + "）"),
     ...(["constraint", "decision", "note"] as const).flatMap(kind => of(kind).length === 0 ? [] : [BOARD_WORDS[kind] + "：\n" + of(kind).map(line).join("\n")])];
   if (board.entries.length === 0) return "（HarnessHub 任务板：现在是空的，之前给过你的条目都已撤下，不必再照它们做。）";
-  return "（HarnessHub 任务板：这件任务里所有 Harness 共同遵守的内容，由用户和各个 Harness 记下，对你同样有效，先照它做。这是最新的一份：之前给过你、这里没有的条目已撤下。用户又提了要一直遵守的要求、定了新的决定或目标变了，就用 harnesshub 的 hub_remember 记上去。\n" + parts.join("\n") + "\n）";
+  return "（HarnessHub 任务板：这件任务里所有 Harness 共同遵守的内容，由用户和各个 Harness 记下，对你同样有效，先照它做。这是最新的一份：之前给过你、这里没有的条目已撤下。" + boardAuthority(files)
+    + "用户又说了在这条消息之外也要算数的要求、定了新的决定或目标变了，就用 harnesshub 的 hub_remember 记上去；只管这一条消息的话不记。\n" + parts.join("\n") + "\n）";
 }
 /** A note of the Hub's as a Harness that has the Hub's tools as a command of the conversation reads it: each tool by its word of that command. */
 function asCommand(note: string, command: string | undefined): string {
@@ -634,10 +658,10 @@ export class SessionRuntime {
       const value: ControlEvent = { type: "plan", entries: made.items.map(item => ({ content: item.content, status: item.status })), ...(made.explanation === undefined ? {} : { explanation: made.explanation }) };
       this.firstOutput(state, run);
       this.placed(execution, { kind: "event", event: value, at }, [event("run.output", { runId: run.id, event: logged(value), by: "hub_tool" })], { always: true });
-      return;
-    }
-    this.placed(execution, { kind: "recap", summary: made.summary, ...(made.ask === undefined ? {} : { ask: made.ask }), ...(made.actions === undefined ? {} : { actions: made.actions }), at },
+    } else this.placed(execution, { kind: "recap", summary: made.summary, ...(made.ask === undefined ? {} : { ask: made.ask }), ...(made.actions === undefined ? {} : { actions: made.actions }), at },
       [event("run.recap", { runId: run.id, summary: made.summary, ...(made.ask === undefined ? {} : { ask: made.ask }), ...(made.actions === undefined ? {} : { actions: made.actions }) })], { always: true });
+    // Where the conversation stands changed: its STATE.md says so now, not at the Turn's end.
+    this.refreshRecord(id);
   }
   /**
    * What changed in the task while the Turn in progress of `id` works (2026-11-13), for its Harness: said with the answer of a tool of the Hub's it calls, as a signal
@@ -651,13 +675,14 @@ export class SessionRuntime {
     if (execution === undefined) return null;
     const state = this.owned(execution), run = runIn(state, execution.runId);
     if (run === undefined || run.status !== "running" || run.selection.harnessId !== from.harnessId || run.selection.controlId !== from.controlId) return null;
-    const notes: string[] = [], at = this.options.now().getTime();
+    const notes: string[] = [], at = this.options.now().getTime(), place = this.recordPlace(id, execution.binding);
     this.flushStream(execution);
     // The Harness compacted its own session in this Turn: what it holds of the task after that the Hub cannot see, so the state is said to it whole, now, and not
-    // with its next Turn (2026-11-13). It holds the board, which is then not said a second time below.
+    // with its next Turn (2026-11-13). It holds the board, which is then not said a second time below. No packet goes with it: it carries the user's words by the
+    // rule a handoff to this Harness would carry them.
     if (execution.compacted === true) {
       execution.compacted = false;
-      const standing = this.options.context?.state?.(id, null, this.recordPlace(id, execution.binding) !== null, "whole") ?? null;
+      const standing = this.options.context?.state?.(id, null, place !== null, "whole", this.wordsBudget(state, run, null)) ?? null;
       if (standing !== null) {
         const version = this.taskBoard(id).version;
         this.placed(execution, { kind: "notice", severity: "info", title: "它压缩了上下文，带上了任务现在的状态", code: "TASK_STATE_TOLD", at },
@@ -666,34 +691,103 @@ export class SessionRuntime {
         this.pinned.set(id, run.id);
       }
     }
-    const board = this.boardNews(this.load(id));
+    const pending = this.pendingSignals(execution, run.id, this.load(id), place !== null);
+    if (pending !== null) notes.push(...this.markSignals(execution, pending, "tool"));
+    if (notes.length === 0) return null;
+    // What was told is pending no more: the conversation's STATE.md stops saying it.
+    this.refreshRecord(id);
+    return notes.map(note => asCommand(asFiles(note, place), execution.binding?.hubCommand)).join("\n\n");
+  }
+  /** What changed in the task for the Turn `runId` that its Harness has not been told (PendingSignals); null when nothing. Reads only. */
+  private pendingSignals(execution: ActiveExecution, runId: RunId, state: Conversation, files: boolean): PendingSignals | null {
+    const board = this.boardNews(state, files), parent = this.parentWords(state), edits = this.editSignals(execution, state);
+    const words = parent !== null && parent.line !== null && parent.text !== null ? { text: parent.text, line: parent.line, through: parent.through } : null;
+    return board === null && words === null && edits === null ? null : { runId, board, words, edits };
+  }
+  /**
+   * Tells the Harness of the Turn in progress what was pending: each part the Turn shows as its notice, and the conversation remembers as told (never back: a part
+   * told already the other way stays told). `via`: with a tool's answer, or through the record's files (the Harness was seen reading them). Returns what each says.
+   */
+  private markSignals(execution: ActiveExecution, pending: PendingSignals, via: "tool" | "file"): string[] {
+    const at = this.options.now().getTime(), during = via === "file" ? { during: true, via } : { during: true }, notes: string[] = [];
+    // Whatever the file says of the Turn is told by now, or will be said again with it.
+    if (via === "tool") execution.filed = null;
+    const { board, words, edits } = pending;
     if (board !== null) {
       this.placed(execution, { kind: "notice", severity: "info", title: board.line, code: "TASK_BOARD_TOLD", at },
-        [event("run.task_board_told", { runId: run.id, version: board.version, during: true })], { always: true, patch: current => ({ ...current, taskBoardTold: board.version }) });
+        [event("run.task_board_told", { runId: pending.runId, version: board.version, ...during })], { always: true, patch: current => ({ ...current, taskBoardTold: Math.max(current.taskBoardTold ?? 0, board.version) }) });
       notes.push(board.text);
     }
-    const words = this.parentWords(this.load(id));
-    if (words !== null && words.line !== null && words.text !== null) {
+    if (words !== null) {
       this.placed(execution, { kind: "notice", severity: "info", title: words.line, code: "PARENT_WORDS_TOLD", at },
-        [event("run.parent_words_told", { runId: run.id, through: words.through, during: true })], { always: true, patch: current => ({ ...current, parentWordsTold: words.through }) });
+        [event("run.parent_words_told", { runId: pending.runId, through: words.through, ...during })], { always: true, patch: current => ({ ...current, parentWordsTold: Math.max(current.parentWordsTold ?? 0, words.through) }) });
       notes.push(words.text);
     }
-    const edits = this.editSignals(execution, this.load(id));
     if (edits !== null) {
+      const signaled = execution.signaled ??= new Map<string, number>();
+      for (const [other, through] of Object.entries(edits.seen)) signaled.set(other, Math.max(signaled.get(other) ?? 0, through));
       this.placed(execution, { kind: "notice", severity: "info", title: edits.line, code: "TASK_EDITS_TOLD", at },
-        [event("run.task_edits_told", { runId: run.id, told: edits.told, during: true })], { always: true, patch: current => ({ ...current, taskEditsTold: { ...(current.taskEditsTold ?? {}), ...edits.told } }) });
+        [event("run.task_edits_told", { runId: pending.runId, told: edits.told, ...during })], { always: true, patch: current => {
+          const told: Record<string, number> = { ...(current.taskEditsTold ?? {}) };
+          for (const [other, through] of Object.entries(edits.told)) told[other] = Math.max(told[other] ?? 0, through);
+          return { ...current, taskEditsTold: told };
+        } });
       notes.push(edits.text);
     }
-    if (notes.length === 0) return null;
-    const place = this.recordPlace(id, execution.binding);
-    return notes.map(note => asCommand(asFiles(note, place), execution.binding?.hubCommand)).join("\n\n");
+    return notes;
+  }
+  /**
+   * What the STATE.md of `id` begins with (2026-11-14): what changed for its Turn in progress that its Harness, which reads the record as files, has not been told. For
+   * a Harness that calls no tool of the Hub's the file is the channel: once the file that says it is in place (`written`) and the Harness is seen reading it, it is told
+   * (recordRead). Null when nothing is pending, no Turn is in progress, or its Harness does not read the record as files. Reads only; never throws.
+   */
+  recordSignals(id: SessionId): { readonly text: string; written(): void } | null {
+    try {
+      const execution = this.actives.get(id);
+      if (execution === undefined) return null;
+      const place = this.recordPlace(id, execution.binding), state = this.load(id), run = runIn(state, execution.runId);
+      if (place === null || run === undefined || run.status !== "running") return null;
+      const pending = this.pendingSignals(execution, run.id, state, true);
+      // A file that says nothing of the Turn tells nothing when it is read.
+      if (pending === null) { execution.filed = null; return null; }
+      const text = [pending.board?.text, pending.words?.text, pending.edits?.text].filter((note): note is string => note !== undefined)
+        .map(note => asCommand(asFiles(note, place), execution.binding?.hubCommand)).join("\n\n");
+      return { text, written: () => { if (this.actives.get(id) === execution) execution.filed = pending; } };
+    } catch { return null; }
+  }
+  /**
+   * A tool call of the Turn that reads the conversation's STATE.md or the task's board.md inside the record's directory (it names the file by its path or in its
+   * command), once it completed, after the file said what changed for the Turn (recordSignals): what the file said is told now, as a tool's answer would have told it,
+   * and is not said again. board.md holds the board alone, so reading it tells the board alone.
+   */
+  private recordRead(execution: ActiveExecution, value: Extract<ControlEvent, { type: "tool" }>): void {
+    const place = this.recordPlace(execution.sessionId, execution.binding);
+    if (place === null) return;
+    // A call's later reports may not repeat what it reads: what its first one named is kept by its identity until it completes.
+    const reads = execution.reads ??= new Map<string, "state" | "board">();
+    const named = [value.title, value.detail?.input ?? "", ...(value.detail?.locations ?? [])].join("\n");
+    if (named.includes(place.dir)) {
+      // Its own STATE.md: named under its own directory, or by itself in a command run there (the task's directory is named by a label too, the first conversation's).
+      const own = [...named.matchAll(/(?:(c-[0-9a-f]{6})\/)?STATE\.md/gu)].some(found => found[1] === place.self || (found[1] === undefined && named.includes(place.dir + "/" + place.self)));
+      const read = own ? "state" : /board\.md/u.test(named) ? "board" : null;
+      if (read !== null && reads.get(value.id) !== "state") reads.set(value.id, read);
+    }
+    const read = reads.get(value.id), filed = execution.filed;
+    if (read === undefined || (value.status !== "completed" && value.status !== "failed")) return;
+    reads.delete(value.id);
+    if (value.status !== "completed" || filed === null || filed === undefined) return;
+    const told: PendingSignals = read === "state" ? filed : { ...filed, words: null, edits: null };
+    if (told.board === null && told.words === null && told.edits === null) return;
+    execution.filed = read === "state" || (filed.words === null && filed.edits === null) ? null : { ...filed, board: null };
+    this.markSignals(execution, told, "file");
+    this.refreshRecord(execution.sessionId);
   }
   /**
    * What the other conversations of the task changed, since this Turn's Harness was last told, among the files this conversation has read or changed (its interest):
-   * a file it never touched is not worth a word in the middle of its work, and is told with its next Turn. `told`: the conversations all of whose changes were said
-   * here, which the next Turn then does not say again.
+   * a file it never touched is not worth a word in the middle of its work, and is told with its next Turn. `told`: the conversations all of whose changes are said
+   * here, which the next Turn then does not say again; `seen`: how far each one said is then told of within the Turn. Reads only.
    */
-  private editSignals(execution: ActiveExecution, state: Conversation): { readonly text: string; readonly line: string; readonly told: Readonly<Record<string, number>> } | null {
+  private editSignals(execution: ActiveExecution, state: Conversation): PendingSignals["edits"] {
     const since = this.store.changedSince?.bind(this.store);
     if (since === undefined) return null;
     const prefix = state.configuration.workspace.endsWith("/") ? state.configuration.workspace : state.configuration.workspace + "/";
@@ -707,7 +801,7 @@ export class SessionRuntime {
       if (fields.type === "file_change") for (const change of fields.changes ?? []) if (typeof change.path === "string") interest.add(short(change.path));
     }
     if (interest.size === 0) return null;
-    const signaled = execution.signaled ??= new Map<string, number>(), told: Record<string, number> = {}, lines: string[] = [];
+    const signaled = execution.signaled ?? new Map<string, number>(), told: Record<string, number> = {}, seen: Record<string, number> = {}, lines: string[] = [];
     let count = 0;
     for (const other of this.taskOthers(state.id)) {
       try {
@@ -715,15 +809,15 @@ export class SessionRuntime {
         if (found.through <= known || found.files.length === 0) continue;
         const files = [...new Set(found.files.map(short))], mine = files.filter(path => interest.has(path));
         if (mine.length === 0) continue;
-        signaled.set(other, found.through);
+        seen[other] = found.through;
         if (mine.length === files.length) told[other] = found.through;
         const harnessId = (this.load(other).runs.at(-1) ?? this.load(other)).selection.harnessId;
-        lines.push("- " + (this.options.harnessName?.(harnessId) ?? harnessId) + "（对话 c-" + other.replace(/^session-/u, "").replace(/-/gu, "").slice(0, 6) + "）：" + mine.slice(0, 20).join("、") + (mine.length > 20 ? " 等 " + mine.length + " 个" : ""));
+        lines.push("- " + (this.options.harnessName?.(harnessId) ?? harnessId) + "（对话 " + conversationLabel(other) + "）：" + mine.slice(0, 20).join("、") + (mine.length > 20 ? " 等 " + mine.length + " 个" : ""));
         count += mine.length;
       } catch { /* told with the next Turn */ }
     }
     if (lines.length === 0) return null;
-    return { told, line: "进行中带上了其他对话的改动（" + count + " 个文件）",
+    return { told, seen, line: "进行中带上了其他对话的改动（" + count + " 个文件）",
       text: "（HarnessHub：你这一轮进行中，这件任务里别的对话改了你读过或改过的文件。你手上的内容可能已经过时：再读或再改它们之前先看磁盘上的最新内容，需要知道它们为什么改，用 harnesshub 的 hub_read_turn 带上对话标签去读。\n" + lines.join("\n") + "\n）" };
   }
   /** A branch is taken only while nothing goes on: no Turn open or queued, no switch waiting. */
@@ -786,15 +880,17 @@ export class SessionRuntime {
   }
   /**
    * Why the Hub opens a new native session for the Turn `run` before it resumes `binding`'s (Reseat), if it does: the last Turn dispatched into it failed because the
-   * conversation is over the model's window, or — where an operator set a level — it ended with that share of its window used. Not for a session that was opened with
-   * the conversation and was in that state after its first Turn: another one would be handed the same and be no better off. It is left to its Harness, and to the user.
+   * conversation is over the model's window, or — where an operator set a level — it ended with that share of its window used. A session that was opened with the
+   * conversation and overflowed in its first Turn is followed by one handed less (overflowShrink, 2026-11-14); one whose first Turn carried nothing and still
+   * overflowed has nothing a new one could be handed less of, and is left to its Harness and to the user, so that it cannot loop. Nor for a session opened with the
+   * conversation that was as full as the level after its first Turn: another one would be handed the same and be no better off.
    */
   private reseatCause(state: Conversation, run: ConversationRun, binding: NativeSessionBinding, typed: string): Reseat | null {
     if (!this.mayReseat(state, run, binding, typed)) return null;
     const relay = binding.relay!, last = state.runs.find(row => row.id === binding.throughRunId);
     const first = state.runs.find(row => row.relay?.executedOn?.harnessId === binding.harnessId && row.relay.executedOn.controlId === binding.controlId && row.relay.executedOn.nativeEpoch === relay.epoch);
     const carried = first?.relay?.continuity.kind === "rehydrate";
-    if (last?.status === "failed" && OVERFLOW_CODES.has(last.error?.code ?? "")) return carried && first === last ? null : { reason: "overflow" };
+    if (last?.status === "failed" && OVERFLOW_CODES.has(last.error?.code ?? "")) return first === last && !carried ? null : { reason: "overflow", shrink: this.overflowShrink(state, binding) };
     const at = this.reseatAt();
     if (at === null) return null;
     const full = (row: ConversationRun | undefined): { readonly used: number; readonly size: number } | null => {
@@ -803,6 +899,23 @@ export class SessionRuntime {
     };
     const now = full(last);
     return now === null || carried && full(first) !== null ? null : { reason: "full", ...now };
+  }
+  /**
+   * How much less than a handoff's cap the session that follows an overflow is handed (2026-11-14): for each of the latest Turns on this Harness control, one after the
+   * other, that were handed the conversation and failed over the model's window, the cap is scaled by `size / used` where that Turn reported more used than the window
+   * holds, and halved where it reported nothing to go by. 1 when the Turn that overflowed was not handed the conversation (it overflowed in a session that grew).
+   * Read from the record alone: nothing new is kept for it.
+   */
+  private overflowShrink(state: Conversation, binding: NativeSessionBinding): number {
+    let shrink = 1;
+    for (let at = state.runs.length - 1; at >= 0; at--) {
+      const row = state.runs[at]!;
+      if (row.selection.harnessId !== binding.harnessId || row.selection.controlId !== binding.controlId || !terminal(row.status)) continue;
+      if (row.status !== "failed" || !OVERFLOW_CODES.has(row.error?.code ?? "") || row.relay?.continuity.kind !== "rehydrate") break;
+      const context = row.usage?.context;
+      shrink *= context !== undefined && typeof context.size === "number" && context.size > 0 && context.used > context.size ? context.size / context.used : 0.5;
+    }
+    return shrink;
   }
   /** Where the Harness of a binding reads the record as files: when it does (recordFiles) and the Hub keeps the directory; null otherwise. */
   private recordPlace(id: SessionId, binding: PreparedSessionBinding | null | undefined): { readonly dir: string; readonly self: string } | null {
@@ -982,7 +1095,9 @@ export class SessionRuntime {
    */
   writeBoard(id: SessionId, by: { readonly harnessId: string; readonly controlId: string } | "user", change: { readonly kind: BoardKind; readonly text: string } | { readonly forget: string }): TaskBoard {
     this.admit();
-    if (by !== "user") this.runningFor(id, by);
+    // A Harness writes in its Turn in progress: the entry names that Turn, whose user's words it is the Harness's reading of (2026-11-14).
+    const running = by === "user" ? null : this.runningFor(id, by);
+    const from: BoardEntry["from"] = running === null ? undefined : { sessionId: id, runId: running, ordinal: this.load(id).runs.findIndex(run => run.id === running) };
     const root = this.taskRoot(id), author = by === "user" ? "user" : by.harnessId, at = this.options.now().getTime();
     let made: TaskBoard = { version: 0, entries: [] };
     this.commit(root, current => {
@@ -992,7 +1107,7 @@ export class SessionRuntime {
       else {
         const text = change.text.replace(/\s+/gu, " ").trim();
         if (text === "") throw new SessionError("INVALID_INPUT", "要记下的内容不能为空");
-        const entry: BoardEntry = { id: "b" + (board.version + 1), kind: change.kind, text, by: author, at };
+        const entry: BoardEntry = { id: "b" + (board.version + 1), kind: change.kind, text, by: author, at, ...(from === undefined ? {} : { from }) };
         // Said again in the same words, it stays one entry; a new goal takes the old one's place.
         entries = [...board.entries.filter(item => !(item.kind === entry.kind && (item.text === entry.text || entry.kind === "goal"))), entry];
       }
@@ -1003,19 +1118,46 @@ export class SessionRuntime {
     });
     if (by !== "user" && root !== id && (this.load(id).taskBoardTold ?? 0) >= made.version - 1)
       this.commit(id, current => ({ next: { ...current, taskBoardTold: made.version }, events: [event("run.task_board_told", { version: made.version, wrote: true })] }));
+    // The task's board.md and every STATE.md say the board as it is now; the Turns in progress whose Harness reads them are told the change there.
+    this.refreshRecord(id);
     return made;
   }
   /**
    * The task's board as the Harness of `state` reads it before the user's words, when it has changed since that Harness was last told (2026-11-13); null when there is
-   * nothing new. `version` is what the conversation then remembers as told.
+   * nothing new. `version` is what the conversation then remembers as told. `files`: its Harness reads the record as files (an entry's source is named by its path).
    */
-  private boardNews(state: Conversation): { readonly text: string; readonly line: string; readonly version: number } | null {
+  private boardNews(state: Conversation, files: boolean): { readonly text: string; readonly line: string; readonly version: number } | null {
     let board: TaskBoard | undefined;
     try { board = this.load(this.taskRoot(state.id)).taskBoard; } catch { board = undefined; }
     const told = state.taskBoardTold ?? 0;
     // An empty board is told only to a Harness that was given entries before: that they are withdrawn.
     if (board === undefined || board.version <= told || (board.entries.length === 0 && told === 0)) return null;
-    return { version: board.version, line: board.entries.length === 0 ? "任务板已清空，告知了这一点" : "带上了任务板（" + board.entries.length + " 条）", text: boardText(board, harnessId => this.options.harnessName?.(harnessId) ?? harnessId) };
+    return { version: board.version, line: board.entries.length === 0 ? "任务板已清空，告知了这一点" : "带上了任务板（" + board.entries.length + " 条）", text: boardText(board, harnessId => this.options.harnessName?.(harnessId) ?? harnessId, files) };
+  }
+  /**
+   * What a handoff to the Harness of `run` would give the user's earlier words (the `user` share of packetBudget, in estimated tokens): the state said where no packet
+   * goes carries the user's words of the conversation by the same rule (2026-11-14). `channel`: the bound of the channel the state goes in, with the Turn's input
+   * (null: with a tool's answer, which the input's channel does not bound).
+   */
+  private wordsBudget(state: Conversation, run: ConversationRun, channel: { readonly limit: number; readonly size: number } | null): number {
+    try {
+      const resolved = resolveWindow(state, run, this.windows.get(windowKey(run.selection)) ?? null);
+      let typed = "";
+      try { typed = turnSource(this.store, state.id).turn(state.runs.findIndex(row => row.id === run.id))?.user.text ?? ""; } catch { typed = ""; }
+      return packetBudget(resolved, hardCap(resolved, estimateTokens(typed), channel === null ? null : { limit: channel.limit }, channel?.size ?? [...typed].length)).user;
+    } catch { return 0; }
+  }
+  /**
+   * Writes again what changes of the record's directory in the middle of a Turn (ContextFiles.refresh): fire and forget, and the Runtime's close waits for it
+   * (recordWork); once it closes nothing more is written.
+   */
+  private refreshRecord(id: SessionId): void {
+    const context = this.options.context;
+    if (context?.refresh === undefined || !this.accepting) return;
+    let work: Promise<void>;
+    try { work = context.refresh(id).catch(() => undefined); } catch { return; }
+    this.recordWork.add(work);
+    void work.finally(() => this.recordWork.delete(work));
   }
   /** The conversations of the task `id` belongs to, other than itself and those it delegated work to itself (what those come to reaches it with their outcome). */
   private taskOthers(id: SessionId): readonly SessionId[] {
@@ -1989,6 +2131,8 @@ export class SessionRuntime {
       // Every call is written, whatever their number; a report that only refines the private detail changes no row, so nothing is committed for it until the detail is stored.
       const placed = this.placed(execution, { kind: "event", event: value, at }, [event("run.output", { runId: run.id, event: logged(value) })]);
       for (const request of placed.store) this.storeDetail(execution, request);
+      // A Harness that reads the record as files may read there what changed for its Turn (recordRead).
+      this.recordRead(execution, value);
       return;
     }
     const events = [event("run.output", { runId: run.id, event: logged(value) })];
@@ -2003,10 +2147,12 @@ export class SessionRuntime {
       return;
     }
     // The Harness compacted its own session while the Turn works: the state is owed to it again, with the answer of the next tool of the Hub's it calls (signalsFor),
-    // or with its next Turn when it calls none.
-    if (value.type === "activity" && value.kind === "compaction" && value.status !== "failed") { execution.compacted = true; this.pinned.delete(execution.sessionId); }
+    // or with its next Turn when it calls none. Its STATE.md is written again, for a Harness told to read it after it compacted.
+    const compacted = value.type === "activity" && value.kind === "compaction" && value.status !== "failed";
+    if (compacted) { execution.compacted = true; this.pinned.delete(execution.sessionId); }
     // A plan, a notice (one this conversation already showed is not shown again), an activity, a diagnostic: written as reported and logged.
     this.placed(execution, { kind: "event", event: value, at }, events, { always: true });
+    if (compacted || value.type === "plan") this.refreshRecord(execution.sessionId);
   }
   /**
    * E1 (ADR-055 §7.1, §14.2): the native side recorded this Turn's input. For a Turn carrying a packet the text window open
@@ -2213,6 +2359,8 @@ export class SessionRuntime {
     let openedNew = false, replacedEmpty: string | null = null, refusedCleanup: CleanupEvidence | null = null;
     // Why the Hub opened this Turn's native session in the place of the one it would have resumed (Reseat), when it did.
     let reseated: Reseat["reason"] | null = null;
+    // What the packet's cap is scaled by in a session opened after a handed conversation overflowed (Reseat `overflow`); 1 otherwise.
+    let shrink = 1;
     try {
       // Conversations that came to this workspace before this one and still work in it: this Turn does not wait for them, it says they are there.
       const company = this.coworkers(id, state.configuration.workspace);
@@ -2231,13 +2379,16 @@ export class SessionRuntime {
         const h = old.harnessId, c = old.controlId, relay = step(old.relay!, { kind: "reseated" });
         const successor: NativeSessionBinding = { harnessId: h, controlId: c, checkpoint: old.checkpoint, throughRunId: null, status: "ready", ...(old.observed === undefined ? {} : { observed: old.observed }), relay, opensNew: true };
         const title = why.reason === "full" ? "上下文用到 " + Math.min(100, Math.round(100 * why.used / why.size)) + "%，换到新的原生会话接着做"
-          : why.reason === "overflow" ? "上一轮超出了上下文窗口，换到新的原生会话接着做" : "原来的原生会话找不回来了，换到新的原生会话接着做";
+          : why.reason === "overflow" ? (why.shrink < 1 ? "上一轮带着之前的对话还是超出了上下文窗口，换到新的原生会话、少带一些接着做" : "上一轮超出了上下文窗口，换到新的原生会话接着做")
+          : "原来的原生会话找不回来了，换到新的原生会话接着做";
         this.placed(execution, { kind: "notice", severity: "info", title, code: "NATIVE_RESEATED", at: this.options.now().getTime() },
-          [event("native.binding_reseated", { runId: target, harnessId: h, controlId: c, reason: why.reason, ...(why.reason === "full" ? { used: why.used, size: why.size } : {}), nativeEpoch: relay.epoch, floor: relay.floor })],
+          [event("native.binding_reseated", { runId: target, harnessId: h, controlId: c, reason: why.reason, ...(why.reason === "full" ? { used: why.used, size: why.size } : {}),
+            ...(why.reason === "overflow" ? { shrink: why.shrink } : {}), nativeEpoch: relay.epoch, floor: relay.floor })],
           { always: true, patch: latest => ({ ...latest, nativeBindings: [...(latest.nativeBindings ?? []).map(binding => binding.harnessId === h && binding.controlId === c && binding.status !== "archived" ? { ...binding, status: "archived" as const } : binding), successor] }) });
         current = this.owned(execution);
         previousNative = current.nativeBindings?.find(binding => binding.harnessId === h && binding.controlId === c && binding.status !== "archived");
         reseated = why.reason;
+        shrink = why.reason === "overflow" ? why.shrink : 1;
       };
       // Known before the program starts: the last Turn in it failed over the model's window, or it is as full as an operator's level. A process the conversation kept
       // holds the old session and is closed first.
@@ -2403,7 +2554,8 @@ export class SessionRuntime {
             const resolved = resolveWindow(history, asked, this.windows.get(windowKey(run.selection)) ?? null), limit = declaration.capabilities?.placement.maxInput ?? null, size = declaration.capabilities?.placement.measure(typed, kinds) ?? [...typed].length;
             // A session opened at an operator's level is handed half of that level (Reseat's account), not half of the window.
             const level = reseated === "full" ? this.reseatAt() : null;
-            const cap = Math.min(hardCap(resolved, estimateTokens(typed), limit, size), level === null ? Number.POSITIVE_INFINITY : Math.floor(level * resolved.size / 2));
+            // One opened after a handed conversation overflowed is handed less again (Reseat `overflow`): the estimate a packet is sized by may be off by half again.
+            const cap = Math.floor(shrink * Math.min(hardCap(resolved, estimateTokens(typed), limit, size), level === null ? Number.POSITIVE_INFINITY : Math.floor(level * resolved.size / 2)));
             // Delegated work is handed the history as any handoff is (2026-11-13: a tighter budget for it was taken out the day it was put in; what it saved was little,
             // and a Harness that has to fetch what it was not given is slower and less sure than one that was given it).
             const budget: RelayBudget = packetBudget(resolved, cap), standard = packetBudget(resolved, Number.POSITIVE_INFINITY);
@@ -2539,7 +2691,13 @@ export class SessionRuntime {
       const cause = command !== null ? null : reseated !== null ? "reseat" : packet !== null ? "handoff" : !toldBefore && this.compactedBefore(this.load(id), target) ? "compaction" : null;
       // A handoff that carries the whole conversation says the conversation's own part of the state already: only the task's part is added to it. A native session the
       // Hub opened in the place of a full one is told the whole state: it is the same Harness in the middle of its own work, and where it stands comes first.
-      const standing = cause === null ? null : this.options.context?.state?.(id, target, recordAt() !== null, cause === "handoff" && packet?.record.complete === true ? "task" : "whole") ?? null;
+      // A packet that goes with the Turn carries the user's words; where none goes, the state carries them by the rule a handoff to this Harness would (2026-11-14).
+      const wordsShare = (): number | null => {
+        if (packet !== null) return null;
+        const limit = declaration.capabilities?.placement.maxInput ?? null, latest = this.load(id), asked = latest.runs.find(row => row.id === target)!;
+        return this.wordsBudget(latest, asked, limit === null ? null : { limit: limit.limit, size: declaration.capabilities!.placement.measure(typed, kinds) });
+      };
+      const standing = cause === null ? null : this.options.context?.state?.(id, target, recordAt() !== null, cause === "handoff" && packet?.record.complete === true ? "task" : "whole", wordsShare()) ?? null;
       if (standing !== null) {
         const version = this.taskBoard(id).version, patch = (current: Conversation): Conversation => ({ ...current, taskBoardTold: Math.max(current.taskBoardTold ?? 0, version) });
         // The Turn said already that it runs in a new native session; that it carries the state is part of that, and is not said in a line of its own.
@@ -2548,7 +2706,7 @@ export class SessionRuntime {
           [event("run.task_state_told", { runId: target, cause })], { always: true, patch });
       }
       // The task's board, when it changed since this Harness was last told: what everyone on the task goes by, before anything else of the Hub's.
-      const board = command === null ? this.boardNews(this.load(id)) : null;
+      const board = command === null ? this.boardNews(this.load(id), recordAt() !== null) : null;
       if (board !== null) this.placed(execution, { kind: "notice", severity: "info", title: board.line, code: "TASK_BOARD_TOLD", at: this.options.now().getTime() },
         [event("run.task_board_told", { runId: target, version: board.version })], { always: true, patch: current => ({ ...current, taskBoardTold: board.version }) });
       // What the other conversations of the task changed since this Harness was last told; where there is only how far they stand to remember, it is remembered without a word.
@@ -2564,6 +2722,8 @@ export class SessionRuntime {
       const notes = [command === null && reseated !== null ? reseatedNote(reseated, packet !== null) : null, standing, board?.text ?? null, delegated, words?.text ?? null, edits?.text ?? null, told?.text ?? null].filter((note): note is string => note !== null).map(note => asCommand(asFiles(note, recordAt()), execution.binding?.hubCommand));
       // The directory is brought up to the record before a Harness that reads it starts: what it is told is there is there.
       if (recordAt() !== null) { await this.options.context!.ensure(id).catch(() => undefined); this.continue(execution); }
+      // Otherwise the task's STATE.md files are written again without waiting: what the user says here is news to work this conversation handed over (parentWords).
+      else this.refreshRecord(id);
       execution.run = await control.startText(native, notes.length === 0 ? planned : withHubNote(planned, notes.join("\n\n")), value => this.output(execution, value), ...(files.length ? [files] : []));
       this.owned(execution);
       void execution.run.result.then(() => { execution.backendSettled = true; }, () => { execution.backendSettled = true; });

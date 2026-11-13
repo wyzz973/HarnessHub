@@ -35,13 +35,13 @@ const INSTRUCTIONS = "HarnessHub keeps the whole history of this conversation. A
   + "or when you need what the user or an earlier Harness said or did, read it back with hub_turns, hub_read_turn and hub_search. "
   + "hub_update_plan and hub_wrap_up show the user your task list and a short wrap-up above the message box; they do not replace your reply. "
   + "hub_delegate hands a self-contained part of the work to another Harness on this computer, which does it in a conversation of its own; hub_delegations says how what you handed over stands. "
-  + "hub_board is what everyone on the task goes by (its goal, the user's constraints, decisions); write on it with hub_remember when the user states something that must keep holding. "
+  + "hub_board is what everyone on the task goes by (its goal, the user's constraints, decisions); write on it with hub_remember when the user states something that must keep holding beyond this message. "
   + "hub_task shows the whole task when several conversations work on it (who has what, what each changed); the three read tools take another conversation of the task as `conversation`.";
 /** The same for a session whose Harness reads the record as files (TABLE_RECORD_ENV): the reading tools are not offered, and the session instructions name the directory. */
 const INSTRUCTIONS_FILES = "HarnessHub keeps the whole record of this task as read-only files; the session instructions name the directory. Read it with your own file tools. "
   + "hub_update_plan and hub_wrap_up show the user your task list and a short wrap-up above the message box; they do not replace your reply. "
   + "hub_delegate hands a self-contained part of the work to another Harness on this computer, which does it in a conversation of its own; hub_delegations says how what you handed over stands. "
-  + "hub_remember writes on the task's board (its goal, the user's constraints, decisions) when the user states something that must keep holding.";
+  + "hub_remember writes on the task's board (its goal, the user's constraints, decisions) when the user states something that must keep holding beyond this message.";
 /** The tools that only read the record: a session that reads it as files is not offered them. */
 const READING_TOOLS: readonly string[] = ["hub_turns", "hub_read_turn", "hub_search", "hub_task", "hub_board"];
 const recordFiles = (env: Readonly<Record<string, string | undefined>>): boolean => env[TABLE_RECORD_ENV] === "files";
@@ -151,10 +151,12 @@ const TOOLS: readonly ToolDefinition[] = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { title: "Read the task board", ...READ_ONLY } },
   { name: "hub_remember", title: "Write on the task board",
-    description: "Write on the task board, which every Harness working on this task (now, or handed a part of it later) is given before it starts. Call it when the user states something that must keep holding "
-      + "(kind constraint: \"all new files start with zz_\", \"use pnpm, never npm\"), when a choice is made that others must follow (kind decision), when the goal of the task is set or changes (kind goal, "
-      + "which replaces the old one), or for a fact others will need (kind note). One short sentence per entry, in the user's language, standing on its own. Not for progress (that is the task list) and not for what only this turn needs. "
-      + "`forget` takes an entry off by its id (from hub_board) when the user withdrew it.",
+    description: "Write on the task board, which every Harness working on this task (now, or handed a part of it later) is given before it starts. Record only what the user says holds beyond this message: "
+      + "for the whole task or from now on (\"from now on…\", \"throughout this task…\", \"remember…\"; kind constraint: \"all new files start with zz_\", \"use pnpm, never npm\"), a choice others must also follow "
+      + "(kind decision), the task's goal when it is set or changes (kind goal, which replaces the old one), or a lasting fact about the task the user gave that others will need (kind note). "
+      + "Do not record what concerns only this message or this turn: how to answer, how to do this one step, \"only answer …\", \"don't put … in your reply\". When unsure, do not record. "
+      + "When one message both states a lasting rule and asks for a one-line reply, the rule is still recorded. One short sentence per entry, in the user's language, standing on its own. Not for progress (that is the task list). "
+      + "`forget` takes an entry off by its id when the user withdrew it: the id stands before each entry in board.md of the task's record directory, or in hub_board.",
     inputSchema: { type: "object", properties: {
       kind: { type: "string", enum: ["goal", "constraint", "decision", "note"], description: "goal (the task's goal; replaces the old one), constraint (what must keep holding), decision (a choice made), note (a fact others need)." },
       text: { type: "string", minLength: 1, description: "One short sentence that stands on its own." },
@@ -328,11 +330,20 @@ function wholeArgument(args: Readonly<Record<string, unknown>>, name: string, mi
   if (typeof number !== "number" || !Number.isSafeInteger(number) || number < minimum || number > maximum) throw new ToolError(name + " must be a whole number from " + minimum + " to " + maximum + ".");
   return number;
 }
-/** The task board as words: each entry with its id, its kind and who wrote it. */
+/**
+ * The task board as words: each entry with its id, its kind and who wrote it. An entry the user wrote is the user's own; one a Harness wrote is that Harness's reading
+ * of the user's words in the turn it names, which hub_read_turn reads (with `conversation` for another conversation of the task).
+ */
 function renderBoard(view: Readonly<Record<string, unknown>>): string {
   const entries = Array.isArray(view.entries) ? view.entries as readonly Record<string, unknown>[] : [];
   if (entries.length === 0) return "The task board is empty.";
-  return entries.map(entry => "[" + String(entry.id) + "] " + String(entry.kind) + ": " + String(entry.text) + " (by " + String(entry.by) + ")").join("\n");
+  const source = (entry: Readonly<Record<string, unknown>>): string => {
+    if (entry.by === "user") return "by the user";
+    const from = record(entry.from), label = typeof from?.sessionId === "string" ? "c-" + from.sessionId.replace(/^session-/u, "").replace(/-/gu, "").slice(0, 6) : null;
+    return "by " + String(entry.by) + (label !== null && typeof from?.ordinal === "number" ? ", its reading of the user's words in turn " + (from.ordinal + 1) + " of " + label : "");
+  };
+  return "Entries by the user are the user's own; an entry by a Harness is that Harness's reading of the user's words in the turn it names: read them there when unsure.\n"
+    + entries.map(entry => "[" + String(entry.id) + "] " + String(entry.kind) + ": " + String(entry.text) + " (" + source(entry) + ")").join("\n");
 }
 /** The label of another conversation of the task, as the reads take it; undefined for this conversation. */
 function conversationArgument(args: Readonly<Record<string, unknown>>): string | undefined {
@@ -341,14 +352,14 @@ function conversationArgument(args: Readonly<Record<string, unknown>>): string |
   if (typeof value !== "string" || !/^c-[0-9a-f]{6}$/u.test(value)) throw new ToolError("conversation must be a label from hub_task, like c-1a2b3c.");
   return value;
 }
-/** Runs one tool. Never throws: what goes wrong is a result with isError. */
 /**
- * Calls a tool, and says with its answer what changed in the task meanwhile (2026-11-13): the Hub is asked after every call but the wrap-up (the Turn's last, where
- * nothing more is to be done with it). A Hub that has no such answer, or does not answer, leaves the tool's own answer as it is.
+ * Calls a tool, and says with its answer what changed in the task meanwhile (2026-11-13): the Hub is asked after every call, the wrap-up's too (2026-11-14: a change
+ * heard at the end of a Turn is better than one heard after it). A Hub that has no such answer, or does not answer, leaves the tool's own answer as it is. Never
+ * throws: what goes wrong is a result with isError.
  */
 export async function callTool(name: string, args: Readonly<Record<string, unknown>>, surface: Surface, env: Readonly<Record<string, string | undefined>>): Promise<ToolResult> {
   const result = await runTool(name, args, surface, env);
-  if (result.isError || name === "hub_wrap_up") return result;
+  if (result.isError) return result;
   const connection = connect(env);
   if (connection.kind !== "ready") return result;
   try {

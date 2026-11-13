@@ -196,6 +196,8 @@ export function ChatPage(props: ChatProps) {
   const [confirmClose, setConfirmClose] = useState(false), [delegating, setDelegating] = useState(false);
   const [tab, setTab] = useState<PanelTab | null>(null);
   const [panelRun, setPanelRun] = useState<string | null>(null);
+  // What the panel's overview brings into view: a Turn's facts, asked for from that Turn's own button; any other way into the panel asks for nothing.
+  const [panelFocus, setPanelFocus] = useState<"run" | null>(null);
   const [overlay, setOverlay] = useState(false);
   const [agentPicker, setAgentPicker] = useState(false);
   const [decisions, setDecisions] = useState<ReadonlyMap<string, DecisionRecord>>(() => new Map());
@@ -277,7 +279,7 @@ export function ChatPage(props: ChatProps) {
     return () => watch.disconnect();
   }, [olderCursor, loadOlder, firstOrdinal, session?.id]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useLayoutEffect(() => { following.current = true; setFollowBottom(true); if (session) scrollToLatest(); else scroll.current?.scrollTo({ top: 0 }); setTab(null); setPanelRun(null); setOverlay(false); setDecisions(new Map()); setViewing(null); }, [session?.id, scrollToLatest]);
+  useLayoutEffect(() => { following.current = true; setFollowBottom(true); if (session) scrollToLatest(); else scroll.current?.scrollTo({ top: 0 }); setTab(null); setPanelRun(null); setPanelFocus(null); setOverlay(false); setDecisions(new Map()); setViewing(null); }, [session?.id, scrollToLatest]);
   useLayoutEffect(() => { if (following.current && session) scrollToLatest(); }, [session?.version, followBottom, scrollToLatest, props.queued]);
   useEffect(() => {
     const element = scroll.current, content = transcript.current;
@@ -376,14 +378,14 @@ export function ChatPage(props: ChatProps) {
   const shownChanges = useRef<{ id: string | null; count: number }>({ id: null, count: 0 });
   const changesArrived = session !== null && shownChanges.current.id === session.id && changes > shownChanges.current.count;
   useLayoutEffect(() => { shownChanges.current = { id: session?.id ?? null, count: changes }; });
-  const panelTab: PanelTab = tab ?? (changes ? "changes" : latestPlan(session?.runs ?? []) !== undefined ? "plan" : "run");
+  const panelTab: PanelTab = tab ?? "overview";
   // Opened from the keyboard (⌘\), the panel's content does not slide in (#37). Decided once per opening: an animation
   // that followed the live input mode would start over whenever the next input came from the pointer.
   const [panelFromKeyboard, setPanelFromKeyboard] = useState(false);
   const setPanel = (open: boolean) => { if (open && !panelOpen) setPanelFromKeyboard(document.documentElement.dataset.input === "keyboard"); if (inline) props.onPreference("panel", open); else setOverlay(open); };
   const openDetails = (runId: string) => {
-    if (panelOpen && panelTab === "run" && (panelRun ?? session?.runs.at(-1)?.id) === runId) { setPanel(false); return; }
-    setPanelRun(runId); setTab("run"); setPanel(true);
+    if (panelOpen && panelTab === "overview" && panelFocus === "run" && (panelRun ?? session?.runs.at(-1)?.id) === runId) { setPanel(false); return; }
+    setPanelRun(runId); setTab("overview"); setPanelFocus("run"); setPanel(true);
   };
   const detailed = preferences.density === "detailed";
   // Approvals wait in the composer's place, oldest first (ADR-054 §5); questions and forms stay in their Turn.
@@ -444,7 +446,7 @@ export function ChatPage(props: ChatProps) {
       onRetry={canRetry ? (text, sent) => { void (props.onBranchSend ? props.onBranchSend(run.id, text, sent ?? []) : send(text, sent ?? [])).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
       onResend={props.onBranchSend && session?.status === "open" ? (runId, text, sent) => { void props.onBranchSend!(runId, text, sent ?? []).catch(() => {}); } : undefined}
       onSelectBranch={props.onSelectBranch ? runId => { void props.onSelectBranch!(runId).catch(() => {}); } : undefined} branchBusy={!canRetry}
-      onDetails={openDetails} detailsOpen={panelOpen && panelTab === "run" && (panelRun ?? current.runs.at(-1)?.id) === run.id} onViewPacket={relay ? viewPacket : undefined} reads={props.reads}
+      onDetails={openDetails} detailsOpen={panelOpen && panelTab === "overview" && panelFocus === "run" && (panelRun ?? current.runs.at(-1)?.id) === run.id} onViewPacket={relay ? viewPacket : undefined} reads={props.reads}
       startupHint={startupHints.get(run.id)} queue={queue?.runId === run.id ? queueNotice : undefined}
       waiting={open.length ? open.some(request => dockedRequest(request)) ? "approval" : "question" : undefined}>{turnRequests(run.id)}</ProtocolTurn>,
       // What was handed to another Harness after this Turn stands right after it.
@@ -527,7 +529,7 @@ export function ChatPage(props: ChatProps) {
     : TURN_STATUS_WORDS[stateOf(current)];
   const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史"
     : currentState ?? (pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话");
-  const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} loadChanges={props.onLoadChanges} tab={panelTab} onTab={setTab} runId={panelRun} onRun={setPanelRun}
+  const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} loadChanges={props.onLoadChanges} tab={panelTab} onTab={value => { setTab(value); setPanelFocus(null); }} runId={panelRun} onRun={setPanelRun} onOpenSession={props.onOpenSession} focus={panelFocus}
     loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)} board={props.taskBoard}
     relay={relay?.view && relayHasStory(relay.view) ? { view: relay.view, onViewPacket: viewPacket } : undefined}/> : null;
   // #23: the panel opens by widening (300 ms) and pushes the conversation aside; its content follows 60 ms later from 24 px to

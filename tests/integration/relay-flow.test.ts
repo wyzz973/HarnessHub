@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 import { SessionError, type SessionSnapshot } from "../../src/contracts/session.js";
-import { BLIND, Fakes, LIVE, declared, decisionOf, eventOf, events, fromAlpha, relayOf, turn, to, world } from "../fixtures/relay-fakes.js";
+import { conversationLabel } from "../../src/contexts/session/domain/board-words.js";
+import { ContextFiles } from "../../src/web/context-files.js";
+import { BLIND, Fakes, LIVE, declared, decisionOf, eventOf, events, fromAlpha, relayOf, turn, to, world, type Script } from "../fixtures/relay-fakes.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { appStore } from "../fixtures/runtime-store.js";
@@ -413,4 +417,85 @@ test("a Harness that compacts its session in the middle of a Turn is told the st
   // A Turn that compacted and called no tool of the Hub's: the state goes with the next Turn.
   await turn(app, id, "work again", "k3"); await turn(app, id, "after", "k4");
   assert.match(fakes.to("alpha").at(-1)!.text, /STATE AS IT STANDS[\s\S]*after$/u);
+});
+
+test("a session handed the conversation that overflows in its first Turn is followed by one handed less, and less again; one that went alone and overflowed is left to the user", async t => {
+  const w = world(t), fakes = new Fakes({ alpha: declared() }), app = w.runtime(fakes), id = (await app.create(w.configuration, { harnessId: "alpha" }, "create")).id;
+  const scripts = new Map<string, Script>();
+  // A Turn in a session the Hub opened has the Hub's note before the user's words.
+  fakes.script = (_harnessId, input) => [...scripts].find(([words]) => input === words || input.endsWith("\n" + words))?.[1] ?? {};
+  const reseated = (runId: string) => eventOf(w.store, id, "native.binding_reseated", runId)?.data;
+  const cap = (runId: string) => ((eventOf(w.store, id, "run.context_prepared", runId)?.data.relay as { readonly budget?: { readonly cap: number } } | undefined)?.budget?.cap);
+  await turn(app, id, "one fact", "k1");
+  scripts.set("too much", { result: "overflow" });
+  assert.equal((await turn(app, id, "too much", "k2")).status, "failed");
+  // The session that grew overflowed: the next one is handed the conversation as any handoff is. It overflows too, and says by how much.
+  scripts.set("go on", { result: "overflow", context: { used: 150_000, size: 100_000 } });
+  const third = await turn(app, id, "go on", "k3");
+  assert.deepEqual([third.status, reseated(third.id)?.reason, reseated(third.id)?.shrink, cap(third.id)], ["failed", "overflow", 1, 64_000]);
+  // It was handed the conversation and overflowed in its first Turn: the next one is handed less, by what that Turn reported (100k of 150k).
+  scripts.set("still", { result: "overflow" });
+  const fourth = await turn(app, id, "still", "k4");
+  assert.equal(reseated(fourth.id)?.reason, "overflow"); assert.ok(Math.abs(Number(reseated(fourth.id)?.shrink) - 2 / 3) < 1e-9, String(reseated(fourth.id)?.shrink));
+  assert.equal(cap(fourth.id), 33_333, "the window it reported (100k) halved, times 2/3");
+  assert.notEqual(fakes.to("alpha").at(-1)!.session, fakes.to("alpha").at(-2)!.session);
+  assert.equal(readRelayPrompt(fakes.to("alpha").at(-1)!.text).packet, true);
+  // It reported nothing to go by: half again.
+  const fifth = await turn(app, id, "and again", "k5");
+  assert.equal(fifth.status, "completed"); assert.ok(Math.abs(Number(reseated(fifth.id)?.shrink) - 1 / 3) < 1e-9); assert.equal(cap(fifth.id), 16_666);
+  // A session that grew overflows on a window that holds no packet: the session after it goes alone, and overflows too. Nothing could be handed less: it is left to the user.
+  scripts.set("huge", { result: "overflow", context: { used: 5000, size: 3000 } });
+  await turn(app, id, "huge", "k6");
+  scripts.set("alone", { result: "overflow" });
+  const seventh = await turn(app, id, "alone", "k7");
+  assert.deepEqual([reseated(seventh.id)?.reason, reseated(seventh.id)?.shrink, decisionOf(w.store, id, seventh.id)?.kind], ["overflow", 1, "alone"]);
+  const eighth = await turn(app, id, "after it", "k8");
+  assert.equal(reseated(eighth.id), undefined, "no new session in its place");
+  assert.deepEqual([fakes.to("alpha").at(-1)!.text, fakes.to("alpha").at(-1)!.session], ["after it", fakes.to("alpha").at(-2)!.session]);
+});
+
+test("an entry a Harness writes names the Turn it came from; a Harness that reads the record as files is told a change once it reads its STATE.md", async t => {
+  const w = world(t), fakes = new Fakes({ alpha: declared() }), dir = "/nowhere/context/c-000000", filed: string[] = [];
+  const app: SessionRuntime = w.runtime(fakes, { context: { place: () => ({ dir, self: "c-000000" }), ensure: async () => {}, state: () => null,
+    refresh: async other => { const changes = app.recordSignals(other); if (changes !== null) { filed.push(changes.text); changes.written(); } } } });
+  fakes.recordFiles.add("alpha");
+  const id = (await app.create(w.configuration, { harnessId: "alpha" }, "create")).id, from = { harnessId: "alpha", controlId: "alpha-acp" };
+  fakes.script = (_harnessId, input) => input === "work" ? { result: "hold" } : {};
+  const run = app.send(id, "work", "k1").runId; await fakes.reached("alpha", 1);
+  const mine = app.writeBoard(id, from, { kind: "constraint", text: "新文件以 kk_ 开头" });
+  assert.deepEqual(mine.entries[0]!.from, { sessionId: id, runId: run, ordinal: 0 });
+  // Written by its own Harness, it is not news to it; one the user writes is, and the conversation's STATE.md says so, each entry by who wrote it.
+  assert.equal(filed.length, 0);
+  app.writeBoard(id, "user", { kind: "decision", text: "用 pnpm" });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(filed.at(-1) ?? "", new RegExp("kk_ 开头（alpha 记的，依据第 1 轮用户的话：" + conversationLabel(id) + "/turns/001\\.md）[\\s\\S]*用 pnpm（用户写的）", "u"));
+  // Read before it completes, nothing is told; once its read of STATE.md completes, the change is told, through the file, and not again with a tool's answer.
+  fakes.emit.get("alpha")!({ type: "tool", id: "read-1", title: "Read", status: "in_progress", detail: { input: JSON.stringify({ file_path: dir + "/c-000000/STATE.md" }) } });
+  assert.equal(events(w.store, id).filter(row => row.type === "run.task_board_told" && row.data.via === "file").length, 0);
+  fakes.emit.get("alpha")!({ type: "tool", id: "read-1", title: "Read", status: "completed" });
+  const told = events(w.store, id).filter(row => row.type === "run.task_board_told" && row.data.via === "file");
+  assert.deepEqual(told.map(row => [row.data.runId, row.data.version, row.data.during]), [[run, 2, true]]);
+  assert.equal(app.signalsFor(id, from), null);
+  fakes.release(); await app.wait(id);
+});
+
+test("the state carries the user's words whole and newest first, as many as a handoff's share for them; STATE.md the latest whole and where the rest are; board.md each entry's id", async t => {
+  const w = world(t), fakes = new Fakes({ alpha: declared() }), app = w.runtime(fakes), id = (await app.create(w.configuration, { harnessId: "alpha" }, "create")).id;
+  const long = "第一行\n" + "长".repeat(1000);
+  await turn(app, id, "起头的话", "k1"); await turn(app, id, "中间的话", "k2"); await turn(app, id, long, "k3");
+  app.writeBoard(id, "user", { kind: "constraint", text: "用 pnpm" });
+  const context = new ContextFiles({ root: join(w.data, "context"), reader: w.store, name: () => null, board: other => app.taskBoard(other) });
+  const all = context.state(id, undefined, false, "whole", 1_000_000)!;
+  assert.ok(all.includes("- 第 3 轮：第一行\n  " + "长".repeat(1000)), "whole, its lines kept");
+  assert.ok(all.indexOf("第 3 轮") < all.indexOf("第 2 轮") && all.indexOf("第 2 轮") < all.indexOf("第 1 轮"), "newest first");
+  assert.doesNotMatch(all, /目标（/u, "the first words are among them: the goal is not said a second time");
+  assert.match(all, /- 约束：用 pnpm（用户写的）/u);
+  const least = context.state(id, undefined, false, "whole", 0)!;
+  assert.match(least, /第 3 轮：第一行/u); assert.doesNotMatch(least, /中间的话/u); assert.match(least, /目标（这件事起头时用户的原话）：起头的话/u);
+  assert.match(least, /更早的 2 轮里用户说的话没有放在这里，用 harnesshub 的 hub_turns/u);
+  assert.doesNotMatch(context.state(id, undefined, false, "whole", "none")!, /用户在这段对话里说的话/u, "a packet carries them");
+  await context.ensure(id);
+  const place = context.place(id), state = readFileSync(join(place.dir, place.self, "STATE.md"), "utf8"), board = readFileSync(join(place.dir, "board.md"), "utf8");
+  assert.ok(state.includes("第一行\n  " + "长".repeat(1000))); assert.match(state, /更早的 2 轮[^\n]*同一目录的 index\.md/u);
+  assert.match(board, /- \[b1\] 用 pnpm \(the user\)/u);
 });
