@@ -1,5 +1,18 @@
 # 工程文档与阅读顺序
 
+## 现在先读（2026-11-14）
+
+1. [AGENTS.md](../AGENTS.md)：这里怎么干活。
+2. [功能清单](product/features.md)：现在能做什么、每一条的证据、还没做的。
+3. [决定记录](decisions/LOG.md)：每个决定和每次真机运行，新的在上。
+4. [适配矩阵](contracts/harness-adapters.md)：六家 Harness 每一项怎么适配、真机核对到哪。
+5. [对话文件](contracts/session-files.md)：2026-11-12 起对话的存法。
+6. 证据：[委派上下文尺子](verification/delegation-ruler.md)、[接力尺子](verification/relay-ruler.md)、[验证记录](verification/)。
+
+## 历史（2026-11-11 及以前）
+
+下面是当时逐条追加的说明，只作参考；其中的存储版本、预算和“最新”，都停在写下的那一天。
+
 最新（2026-11-11）：项目改为快速迭代——先读仓库根的 [AGENTS.md](../AGENTS.md) 与[决定记录](decisions/LOG.md)。`plan/`、`TASKS.md`、测试矩阵、不变量表与就绪门禁停在当天的样子，只作历史参考。接力的现状见[阶段三验证记录](verification/relay-stage3-2026-11-11.md)，同类产品的对比见[调研](research/similar-products-2026-11-11.md)。
 
 最新（2026-11-09）：[最小可用版本功能清单](product/mvp-2026-11-09.md)，写明每一条的证据等级，以及对外可以说和不要说的。接力的交接单取代了 JSON 信封（[验证记录](verification/relay-mvp-2026-11-09.md)：独立审查三轮，真机两对冒烟，OpenCode → DeepSeek Harness → OpenCode 全程通过）。存储优化见 [G075](verification/relay-g075-2026-11-09.md)：8 MiB 时从受理到派发 p95 281.7 ms。

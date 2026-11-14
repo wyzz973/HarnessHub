@@ -1,5 +1,7 @@
 # HarnessHub / HarnessGateway：交给 Claude Code 的 handoff
 
+> 2026-10-11 的交接，只作历史参考：仓库位置、存储版本和各家进度都已变了。现在的情况见[功能清单](product/features.md)和[决定记录](decisions/LOG.md)。
+
 日期：2026-10-11（Asia/Singapore）。接班目标：继续补齐**所有接入 Harness 的完整原生能力**，采用统一聊天界面。本文基于现有代码、Git、运行进程、数据库统计和既有验收日志，只读复核；本次交接没有重跑模型或测试，也没有重启服务。
 
 ## 1. 接手位置与当前状态
