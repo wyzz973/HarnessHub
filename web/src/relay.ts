@@ -41,7 +41,7 @@ export const RELAY_ATTACH = ["auto", "off"] as const;
 export type RelayAttach = typeof RELAY_ATTACH[number];
 export const RELAY_PREF_ATTACH = "relay.attach";
 /** Whether a session with the Hub's tools is told, in its system prompt, to show its task list and wrap-up (`on`, the default) or not (`off`). */
-export const HUB_PROGRESS = ["on", "off"] as const;
+export const HUB_PROGRESS = ["auto", "on", "off"] as const;
 export type HubProgress = typeof HUB_PROGRESS[number];
 export const RELAY_PREF_PROGRESS = "hub.progress";
 /** Why a binding asks the user to look at it (`attention.cause`), and what the relay decided for a Turn (`decision`): the words of the wire. */
@@ -270,7 +270,7 @@ export function decodeRelayPrefs(value: unknown): RelayPrefs | null {
   if (rows === null) return null;
   // A value this page cannot read is not shown as another: the whole answer is then no answer.
   const attach = rows[RELAY_PREF_ATTACH] ?? rows.attach, chosen = attach === undefined ? "auto" : oneOf(attach, RELAY_ATTACH);
-  const shown = rows[RELAY_PREF_PROGRESS] ?? rows.progress, progress = shown === undefined ? "on" : oneOf(shown, HUB_PROGRESS);
+  const shown = rows[RELAY_PREF_PROGRESS] ?? rows.progress, progress = shown === undefined ? "auto" : oneOf(shown, HUB_PROGRESS);
   return chosen === null || progress === null ? null : { attach: chosen, progress };
 }
 /** One event the Gateway pushes about the relay. The page needs to know only that the relay state changed, and of what. */

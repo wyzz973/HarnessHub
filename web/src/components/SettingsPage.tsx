@@ -105,7 +105,9 @@ export function SettingsDialog({ open, onOpenChange, api, relay, preferences, on
         {relay.prefs === null ? null : <Row title="换 Harness 时附上之前的对话" control={<Segmented label="换 Harness 时附上之前的对话" value={relay.prefs.attach} onChange={value => relay.change("attach", value)}
           options={[{ value: "auto", label: "开（默认）", disabled: relay.saving }, { value: "off", label: "关", disabled: relay.saving }]}/>}>
           {relay.problem ? <span className="mt-1 block text-red" role="status">{relay.problem}</span> : null}</Row>}
-        {relay.prefs === null ? null : <Row title={PROGRESS_LABEL} control={<Switch checked={relay.prefs.progress === "on"} onChange={value => relay.change("progress", value ? "on" : "off")} disabled={relay.saving} label={PROGRESS_LABEL}/>}>
+        {relay.prefs === null ? null : <Row title={PROGRESS_LABEL} control={<Segmented label={PROGRESS_LABEL} value={relay.prefs.progress} onChange={value => relay.change("progress", value)}
+          options={[{ value: "auto", label: "自动（默认）", disabled: relay.saving }, { value: "on", label: "开", disabled: relay.saving }, { value: "off", label: "关", disabled: relay.saving }]}/>}>
+          自动：自己有任务清单的 Harness 不另外要求。
           <details className="progress-instructions mt-1.5"><summary className="cursor-pointer text-fg-3">给 Harness 的说明</summary>
             <pre className="m-0 mt-1 rounded-row bg-inset px-3 py-2 text-code whitespace-pre-wrap">{HUB_PROGRESS_INSTRUCTIONS}</pre></details></Row>}
       </Card>

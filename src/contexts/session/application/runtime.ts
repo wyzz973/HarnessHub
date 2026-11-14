@@ -937,11 +937,12 @@ export class SessionRuntime {
    */
   private sessionInstructions(binding: PreparedSessionBinding | null, id: SessionId): string | null {
     if (binding?.hubTools !== true) return null;
+    const setting = this.settings().progress, progress = setting === "on" || setting === "auto" && binding.nativePlan !== true;
     // A Harness whose tools are a command is told the command either way: nothing else would say it is there.
-    if (binding.hubCommand !== undefined) return hubCommandInstructions(binding.hubCommand, this.settings().progress === "on");
+    if (binding.hubCommand !== undefined) return hubCommandInstructions(binding.hubCommand, progress);
     // A Harness that reads the record as files is told where the directory is in place of the reading tools.
     const place = this.recordPlace(id, binding), rest = place === null ? HUB_DELEGATION_INSTRUCTIONS : hubRecordInstructions(place.dir, place.self);
-    return this.settings().progress === "on" ? HUB_PROGRESS_INSTRUCTIONS + "\n" + rest : rest;
+    return progress ? HUB_PROGRESS_INSTRUCTIONS + "\n" + rest : rest;
   }
   /**
    * Whether the Harness of the Turn `target` compacted its own session in the Turn before (2026-11-13): that Turn was its own too, and it told of a compaction (a

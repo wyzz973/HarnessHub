@@ -883,10 +883,10 @@ test("the reading of the relay never takes an unknown word for a good one, and d
   assert.deepEqual(relayBody({ attach: "full", resend: true, native: "new", tier: "brief", note: "x" } as never), { attach: "full" });
 
   // The setting, from any of the shapes a Gateway may answer with; a value that cannot be read is not shown as another.
-  assert.deepEqual(decodeRelayPrefs({ "relay.attach": "off" }), { attach: "off", progress: "on" });
+  assert.deepEqual(decodeRelayPrefs({ "relay.attach": "off" }), { attach: "off", progress: "auto" });
   assert.deepEqual(decodeRelayPrefs({ prefs: { "relay.attach": "auto", "relay.crossVendor": "ask", "hub.progress": "off" } }), { attach: "auto", progress: "off" });
-  assert.deepEqual(decodeRelayPrefs([{ key: "relay.attach", value: "off" }, { key: "relay.allowUnprobed", value: "true" }]), { attach: "off", progress: "on" });
-  assert.deepEqual(decodeRelayPrefs({}), { attach: "auto", progress: "on" }, "what the Gateway does not name is at its default: on");
+  assert.deepEqual(decodeRelayPrefs([{ key: "relay.attach", value: "off" }, { key: "relay.allowUnprobed", value: "true" }]), { attach: "off", progress: "auto" });
+  assert.deepEqual(decodeRelayPrefs({}), { attach: "auto", progress: "auto" }, "what the Gateway does not name is at its default: auto");
   assert.equal(decodeRelayPrefs({ "hub.progress": "maybe" }), null, "a progress value the page cannot read is no answer");
   assert.equal(decodeRelayPrefs({ "relay.attach": "sometimes" }), null); assert.equal(decodeRelayPrefs("x"), null); assert.equal(decodeRelayPrefs(null), null);
   assert.deepEqual(decodeRelayFrame({ type: "relay", event: { type: "relay.input_recorded", sessionId: SESSION, runId: "run-2", at: 5 } }), { type: "relay.input_recorded", sessionId: SESSION, runId: "run-2", packetId: null });
@@ -914,7 +914,7 @@ test("the relay's data layer answers 'no relay information' for a Gateway withou
   assert.deepEqual((await read(reply(200, relayView({ packets: [packetRow("recorded", "E1")] })))).view?.packets.map(item => item.packetId), [PACKET]);
   assert.equal(seen[0]?.path, "/sessions/session-a%20b/relay"); assert.equal(seen[0]?.as, "json");
   assert.equal(await createRelayApi(make(() => reply(404))).prefs(), null); assert.equal(await createRelayApi(make(() => new Error("network"))).prefs(), null);
-  assert.deepEqual(await createRelayApi(make(() => reply(200, { prefs: { "relay.attach": "off" } }))).prefs(), { attach: "off", progress: "on" });
+  assert.deepEqual(await createRelayApi(make(() => reply(200, { prefs: { "relay.attach": "off" } }))).prefs(), { attach: "off", progress: "auto" });
   // A packet that is not there is not a relay that is not there: its own code (and a conversation's) leave the Gateway known to have the relay.
   assert.deepEqual(await read(reply(404, { code: "RELAY_PACKET_NOT_FOUND", message: "this conversation has no such handoff packet" })), { view: null, absent: false });
   // A packet's text: the text and its ETag, or a reason in the page's words.

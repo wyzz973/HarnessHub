@@ -313,7 +313,8 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       // Gateway's environment holds, and whatever its configuration references by name.
       const base = nativeBaseValues(this.nativeEnvironment, home, selection.harnessId);
       const secrets = credentialValues({ environments: [environment, this.nativeEnvironment.values], referenced: Object.entries(referenced).filter(([name]) => !(name in base)) }, existsSync);
-      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, temporary, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage, secrets, attached, hubTools, attached?.command, recordFiles && hubTools);
+      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, temporary, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage, secrets, attached, hubTools, attached?.command, recordFiles && hubTools,
+        flavorOf(selection.harnessId)?.capabilities?.planTool === "native");
     } catch (error) {
       attached?.detach();
       let cleanupError: unknown;
@@ -462,7 +463,8 @@ class DirectoryPreparedBinding implements PreparedSessionBinding {
   private closed = false;
   constructor(readonly control: HarnessControl, readonly workspace: string, private readonly lease: WorkspaceLease,
     private readonly root: string, private readonly temporary: HostTmpdir, private readonly owner: () => void, readonly installation: NonNullable<PreparedSessionBinding["installation"]>, private readonly usage?: NativeUsageLease,
-    readonly secrets: readonly string[] = [], private readonly table: TableAttachment | null = null, readonly hubTools = false, command?: string, readonly recordFiles = false) { if (command !== undefined) this.hubCommand = command; }
+    readonly secrets: readonly string[] = [], private readonly table: TableAttachment | null = null, readonly hubTools = false, command?: string, readonly recordFiles = false,
+    readonly nativePlan = false) { if (command !== undefined) this.hubCommand = command; }
   readonly hubCommand?: string;
   assertOwned(): void {
     if (this.closed || this.closing !== null) throw new SessionError("BINDING_CLOSED", "binding is closing or closed");

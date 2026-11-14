@@ -30,5 +30,5 @@ export const codexFlavor: HarnessFlavor = {
   // The record is read as files with its own file tools (2026-11-13; verified on the installed program: it read the directory and answered from it).
   // Words in the middle of a turn: app-server's `turn/steer {threadId, expectedTurnId, input, clientUserMessageId}` (0.166.0), which Codex
   // refuses when the turn named is not the active one, so words that find no turn are never a turn of their own.
-  capabilities: { sessionMcp: "thread-config", systemPrompt: "developer-instructions", planTool: "hub", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native", record: "files", steer: "native" },
+  capabilities: { sessionMcp: "thread-config", systemPrompt: "developer-instructions", planTool: "native", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native", record: "files", steer: "native" },
 };

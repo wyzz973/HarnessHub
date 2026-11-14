@@ -27,7 +27,7 @@ test("the request's choice and the installation's setting are read as a whole", 
   assert.equal(parseRelayChoices(undefined), undefined); assert.equal(parseRelayChoices({}), undefined); assert.equal(parseRelayChoices({ attach: "auto" }), undefined);
   assert.deepEqual(parseRelayChoices({ attach: "full" }), { attach: "full" }); assert.deepEqual(parseRelayChoices({ attach: "none" }), { attach: "none" });
   for (const value of [null, "full", ["full"], { attach: "everything" }, { attach: 1 }, { resend: true }, { native: "new" }, { attach: "full", tier: "goal" }]) assert.throws(() => parseRelayChoices(value), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT", JSON.stringify(value));
-  assert.deepEqual(relaySettings({}), { attach: "auto", progress: "on" }); assert.deepEqual(relaySettings({ "relay.attach": "off" }), { attach: "off", progress: "on" }); assert.deepEqual(relaySettings({ "relay.attach": "auto", "hub.progress": "off" }), { attach: "auto", progress: "off" });
+  assert.deepEqual(relaySettings({}), { attach: "auto", progress: "auto" }); assert.deepEqual(relaySettings({ "relay.attach": "off" }), { attach: "off", progress: "auto" }); assert.deepEqual(relaySettings({ "relay.attach": "auto", "hub.progress": "off" }), { attach: "auto", progress: "off" }); assert.deepEqual(relaySettings({ "hub.progress": "on" }), { attach: "auto", progress: "on" });
 });
 
 test("what a Turn records of its decision, and which failures only send the words alone", () => {

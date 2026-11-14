@@ -488,6 +488,8 @@ export interface PreparedSessionBinding {
    * not the Hub's reading tools, which its tool server leaves out. Absent is no.
    */
   readonly recordFiles?: boolean;
+  /** Whether this Harness keeps its own task list and asks its own questions (FlavorCapabilities.planTool `native`): `hub.progress` `auto` then adds nothing. */
+  readonly nativePlan?: boolean;
   assertOwned(): void;
   close(): Promise<CleanupEvidence>;
 }

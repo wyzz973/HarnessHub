@@ -382,7 +382,7 @@ test("a hostile relay member or preference is refused whole, and nothing of it i
   assert.equal((await get(f, "/api/v1/relay/prefs")).text, prefs, "no refused write changed a preference");
   // The table the preferences live in is still there, with its constraint: a legal write still works afterwards.
   assert.equal((await write(f, "PUT", "/api/v1/relay/prefs", { key: "relay.attach", value: "off" })).status, 200);
-  assert.deepEqual(row(row((await get(f, "/api/v1/relay/prefs")).data).prefs), { "relay.attach": "off", "hub.progress": "on" });
+  assert.deepEqual(row(row((await get(f, "/api/v1/relay/prefs")).data).prefs), { "relay.attach": "off", "hub.progress": "auto" });
   // A body past the Gateway's limit, and one that is not UTF-8 JSON, are refused before they are read as a request.
   assert.equal((await send(f, { method: "PUT", path: "/api/v1/relay/prefs", write: true, body: JSON.stringify({ key: "relay.attach", value: "x".repeat(200_000) }) })).status, 413);
   assert.equal((await send(f, { method: "PUT", path: "/api/v1/relay/prefs", write: true, body: Buffer.from([0x7b, 0x22, 0xff, 0xfe, 0x22, 0x7d]) })).status, 400);
