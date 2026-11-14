@@ -119,14 +119,14 @@ export class LocalContentStore implements ContentPort {
       return this.publish(written, { name, type, kind, origin: "upload", workspace: input.workspace, command: key, fingerprint });
     } finally { this.removePartial(written.path); }
   }
-  /** Admission: each identity must be a staged, not withdrawn upload of this workspace whose bytes are still present. */
-  resolve(ids: readonly string[], workspace: string): readonly ContentRef[] {
+  /** Admission: each identity must be a staged, not withdrawn upload whose bytes are still present (the page uploads before it knows the conversation's folder). */
+  resolve(ids: readonly string[]): readonly ContentRef[] {
     if (!Array.isArray(ids) || new Set(ids).size !== ids.length) throw new SessionError("INVALID_INPUT", "attachments must be unique content identities");
     const refs = this.use(db => ids.map(value => {
       const stored = db.prepare("SELECT * FROM content WHERE id=?").get(contentId(value));
       if (stored === undefined) throw new SessionError("ATTACHMENT_UNAVAILABLE", "an attachment is no longer available; remove it and attach the file again");
       const item = parseRow(stored);
-      if (item.workspace !== workspace || item.origin !== "upload" || item.discarded === 1) throw new SessionError("ATTACHMENT_UNAVAILABLE", "an attachment does not belong to this workspace or was removed");
+      if (item.origin !== "upload" || item.discarded === 1) throw new SessionError("ATTACHMENT_UNAVAILABLE", "an attachment was removed");
       this.blob(item.sha256, item.bytes);
       return reference(item);
     }));
@@ -134,14 +134,14 @@ export class LocalContentStore implements ContentPort {
     return refs;
   }
   /** Withdraws a staged upload from future admission. Content already admitted by a Run stays referenced and kept. */
-  discard(value: string, workspace: string): void {
+  discard(value: string): void {
     this.owner();
     const id = contentId(value);
     this.use(db => {
       const stored = db.prepare("SELECT * FROM content WHERE id=?").get(id);
       if (stored === undefined) return;
       const item = parseRow(stored);
-      if (item.workspace !== workspace || item.origin !== "upload") throw new SessionError("ATTACHMENT_UNAVAILABLE", "attachment does not belong to this workspace");
+      if (item.origin !== "upload") throw new SessionError("ATTACHMENT_UNAVAILABLE", "only an upload can be removed");
       db.prepare("UPDATE content SET discarded=1 WHERE id=?").run(item.id);
     });
   }

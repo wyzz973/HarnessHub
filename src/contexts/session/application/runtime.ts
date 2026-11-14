@@ -603,7 +603,7 @@ export class SessionRuntime {
     let attachments: readonly ContentRef[] = [];
     if (attachmentIds.length) {
       if (this.options.content === undefined) throw new SessionError("ATTACHMENT_UNAVAILABLE", "this Gateway has no content storage for attachments");
-      attachments = this.options.content.resolve(attachmentIds, state.configuration.workspace);
+      attachments = this.options.content.resolve(attachmentIds);
     }
     // A key that cannot be used never stops an input (one sent alone included): its choice is then fingerprinted under a key
     // kept in memory only (EPHEMERAL_KEY_ID, not checkable), and any packet it would carry fails at its own preparation.

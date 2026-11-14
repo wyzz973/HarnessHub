@@ -73,11 +73,11 @@ test("uploads are staged once per command, typed by their bytes, admitted per wo
   await assert.rejects(stage("up-4", "long.txt", "text/plain", Buffer.from("abcd"), 3), code("CONTENT_LIMIT"));
   assert.equal((await readdir(join(data, "content", "partial"))).length, 0, "rejected uploads leave no partial files");
   const notes = await stage("up-5", "notes.txt", "text/plain", Buffer.from("hello"));
-  assert.deepEqual(store.resolve([image.id, notes.id], "/w"), [image, notes]);
-  assert.throws(() => store.resolve([image.id], "/other"), code("ATTACHMENT_UNAVAILABLE"));
-  assert.throws(() => store.resolve([image.id, image.id], "/w"), code("INVALID_INPUT"));
+  assert.deepEqual(store.resolve([image.id, notes.id]), [image, notes]);
+  assert.throws(() => store.resolve(["content-unknown"]), code("ATTACHMENT_UNAVAILABLE"));
+  assert.throws(() => store.resolve([image.id, image.id]), code("INVALID_INPUT"));
   const output = await store.storeOutput({ workspace: "/w", name: "out.txt", mediaType: "text/plain", data: Buffer.from("x") });
-  assert.throws(() => store.resolve([output.id], "/w"), code("ATTACHMENT_UNAVAILABLE"), "native outputs are not user attachments");
+  assert.throws(() => store.resolve([output.id]), code("ATTACHMENT_UNAVAILABLE"), "native outputs are not user attachments");
   // A stable private copy: the same path every Turn, read-only, and repaired if something changed it.
   const [copy] = await store.materialize([image]);
   assert.equal(copy!.path, join(realpathSync(data), "content", "files", image.id, "shot.png"));
@@ -85,9 +85,9 @@ test("uploads are staged once per command, typed by their bytes, admitted per wo
   await chmod(copy!.path, 0o600); await writeFile(copy!.path, "tampered");
   const [again] = await store.materialize([image]);
   assert.equal(again!.path, copy!.path); assert.deepEqual(await readFile(again!.path), PNG);
-  store.discard(notes.id, "/w");
-  assert.throws(() => store.resolve([notes.id], "/w"), code("ATTACHMENT_UNAVAILABLE"));
-  assert.throws(() => store.discard(image.id, "/other"), code("ATTACHMENT_UNAVAILABLE"));
+  store.discard(notes.id);
+  assert.throws(() => store.resolve([notes.id]), code("ATTACHMENT_UNAVAILABLE"));
+  assert.throws(() => store.discard(output.id), code("ATTACHMENT_UNAVAILABLE"), "a native output is not removed as an upload");
   // Withdrawn and unreferenced uploads go at the next owner start; a referenced upload and its copy stay.
   now += CONTENT_RETENTION_MS + 1;
   const later = new LocalContentStore(data, () => {}, () => now);

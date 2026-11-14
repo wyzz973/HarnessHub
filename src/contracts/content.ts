@@ -94,14 +94,14 @@ export interface ControlAttachment extends ContentRef {
 }
 /**
  * Owner of stored bytes for user attachments, native outputs and tool details; Session snapshots keep only references.
- * `resolve` is synchronous admission: it confirms the owner still holds each staged upload for the workspace.
+ * `resolve` is synchronous admission: it confirms the owner still holds each staged upload. Any conversation may take an upload, whatever folder it works in.
  */
 /** The bytes of a stored output: all at once, or in pieces as they are made (a tool call's detail of tens of MiB is never held twice). */
 export type ContentBytes = Uint8Array | Iterable<Uint8Array> | AsyncIterable<Uint8Array>;
 export interface ContentPort {
   /** Keeps what a Harness made, whole and of any size (at least one byte); a failure to keep it throws, and the caller says on the item that it was not kept. */
   storeOutput(input: { readonly workspace: string; readonly name: string; readonly mediaType: string; readonly data: ContentBytes }): Promise<ContentRef>;
-  resolve(ids: readonly string[], workspace: string): readonly ContentRef[];
+  resolve(ids: readonly string[]): readonly ContentRef[];
   materialize(refs: readonly ContentRef[]): Promise<readonly ControlAttachment[]>;
   /**
    * A stored item's bytes as UTF-8 text when it holds at most `maxBytes` and still is exactly `ref` (size and digest);

@@ -936,7 +936,7 @@ test("a detail the content store cannot keep is said on the call's item, the Tur
 
 test("attachments are admitted with the input, checked and copied before dispatch, and a refusal fails only that input", { timeout: 10000 }, async t => {
   const f = await fixture(t), content = new LocalContentStore(join(f.root, "data"), () => f.store.assertOwner());
-  const factory = new ControlledFactory([controlled(), controlled()]), prepare = factory.prepare.bind(factory);
+  const factory = new ControlledFactory([controlled(), controlled(), controlled()]), prepare = factory.prepare.bind(factory);
   const received: { checked: string[]; files: { name: string; path: string }[] }[] = [];
   let refuse = false;
   factory.prepare = async (...args) => {
@@ -953,8 +953,8 @@ test("attachments are admitted with the input, checked and copied before dispatc
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7]);
   const image = await content.stage({ workspace: f.configuration.workspace, name: "shot.png", mediaType: "image/png", commandId: "upload-1", declaredBytes: png.length, source: body(png) });
   const elsewhere = await content.stage({ workspace: "/elsewhere", name: "x.txt", mediaType: "text/plain", commandId: "upload-2", declaredBytes: 1, source: body(Buffer.from("x")) });
-  // Admission is synchronous: an unknown or foreign upload creates no Run.
-  assert.throws(() => app.send(session.id, "look", "send-foreign", [elsewhere.id]), (error: unknown) => error instanceof SessionError && error.code === "ATTACHMENT_UNAVAILABLE");
+  // Admission is synchronous: an unknown upload creates no Run.
+  assert.throws(() => app.send(session.id, "look", "send-unknown", ["content-unknown"]), (error: unknown) => error instanceof SessionError && error.code === "ATTACHMENT_UNAVAILABLE");
   assert.equal(oldShape(app, session.id).runs.length, 0);
   const receipt = app.send(session.id, "look", "send-1", [image.id]);
   assert.deepEqual(app.send(session.id, "look", "send-1", [image.id]), { ...receipt, replayed: true });
@@ -971,6 +971,11 @@ test("attachments are admitted with the input, checked and copied before dispatc
   state = oldShape(app, session.id);
   assert.equal(state.runs[1]?.status, "failed"); assert.deepEqual(state.runs[1]?.error, { code: "ATTACHMENT_UNSUPPORTED", message: "当前 Harness 或模型不接受图片附件：shot.png" });
   assert.equal(state.status, "open"); assert.equal(received[1]?.files.length, 0, "a refused input never reaches the Harness");
+  // An upload staged under another folder is taken too: the page uploads before it knows the conversation's folder.
+  refuse = false;
+  app.send(session.id, "from elsewhere", "send-3", [elsewhere.id]); await app.wait(session.id);
+  state = oldShape(app, session.id);
+  assert.equal(state.runs[2]?.status, "completed"); assert.deepEqual(state.runs[2]?.attachments, [elsewhere]);
 });
 
 test("a branch quotes public history, forks the native session at its latest Turn, and falls back to public context otherwise", { timeout: 10000 }, async t => {

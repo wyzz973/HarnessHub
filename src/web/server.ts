@@ -978,7 +978,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     }
     const attachmentRoute = /^\/api\/v1\/attachments\/(content-[a-zA-Z0-9-]{1,96})$/u.exec(path);
     if (attachmentRoute && method === "DELETE") {
-      queries(url, []); app.content.discard(attachmentRoute[1]!, options.configuration.workspace);
+      queries(url, []); app.content.discard(attachmentRoute[1]!);
       if (!response.destroyed && !response.writableEnded) { headers(response); response.statusCode = 204; response.end(); }
       return;
     }
