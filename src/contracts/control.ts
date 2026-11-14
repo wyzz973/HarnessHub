@@ -129,8 +129,9 @@ export type NativeOutput =
   | { readonly kind: "content"; readonly name: string; readonly mediaType: string; readonly data: Uint8Array }
   | { readonly kind: "link"; readonly uri: string; readonly name: string; readonly title?: string; readonly mediaType?: string };
 export type ControlEvent =
-  | { readonly type: "text"; readonly text: string }
-  | { readonly type: "thinking"; readonly text: string }
+  /** `item`: the Harness's own id of the message or reasoning the text belongs to; a new id starts a new segment (Codex's commentary before its answer). */
+  | { readonly type: "text"; readonly text: string; readonly item?: string }
+  | { readonly type: "thinking"; readonly text: string; readonly item?: string }
   | { readonly type: "tool"; readonly id: string; readonly title: string; readonly status: string; readonly detail?: NativeToolDetail }
   | { readonly type: "plan"; readonly entries: readonly NativePlanEntry[]; readonly explanation?: string }
   | { readonly type: "usage"; readonly usage: NativeUsage }

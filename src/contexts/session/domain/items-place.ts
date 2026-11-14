@@ -118,11 +118,11 @@ interface Request { readonly kind: "approval" | "question"; readonly options: re
 interface Entry { readonly item: HeldItem; readonly detail?: NativeToolDetail; readonly dirty?: true; readonly request?: Request }
 type Kind = "text" | "thinking";
 /** Text that arrived and is not committed yet. */
-interface Window { readonly kind: Kind; readonly text: string; readonly bytes: number; readonly at: number; readonly nul: boolean }
+interface Window { readonly kind: Kind; readonly text: string; readonly bytes: number; readonly at: number; readonly nul: boolean; readonly native?: string }
 /** Whitespace written by no segment yet: it begins the next segment of its kind, or is written as it is. */
-interface Hold { readonly kind: Kind; readonly text: string; readonly at: number; readonly nul: boolean }
+interface Hold { readonly kind: Kind; readonly text: string; readonly at: number; readonly nul: boolean; readonly native?: string }
 /** The open segment: its item, how many chunks it has, how many UTF-16 units, and the high surrogate at the end of its last window (waiting for its other half). */
-interface Segment { readonly kind: Kind; readonly itemId: string; readonly units: number; readonly carry: string }
+interface Segment { readonly kind: Kind; readonly itemId: string; readonly units: number; readonly carry: string; readonly native?: string }
 
 /**
  * A Turn in progress: the Run's row, the next `seq`, every item so far with what is kept beside it, the counts that name the segments, the
@@ -324,14 +324,14 @@ function takePlace(s: Draft, w: Writes, at: number): void { closeSegment(s, w, a
 // Text: windows, held whitespace, segments
 // ---------------------------------------------------------------------------------------------------------------------------------
 
-function takeText(s: Draft, w: Writes, kind: Kind, raw: string, at: number): void {
+function takeText(s: Draft, w: Writes, kind: Kind, raw: string, at: number, native?: string): void {
   const nul = raw.includes("\0"), text = nul ? raw.replace(/\0/gu, "") : raw;
   if (text === "") return;
-  if (s.window !== null && s.window.kind !== kind) flushWindow(s, w, false);
-  if (s.segment !== null && s.segment.kind !== kind) closeSegment(s, w, at, "completed");
-  if (s.hold !== null && s.hold.kind !== kind) writeHold(s, w, at, "completed");
+  if (s.window !== null && (s.window.kind !== kind || s.window.native !== native)) flushWindow(s, w, false);
+  if (s.segment !== null && (s.segment.kind !== kind || s.segment.native !== native)) closeSegment(s, w, at, "completed");
+  if (s.hold !== null && (s.hold.kind !== kind || s.hold.native !== native)) writeHold(s, w, at, "completed");
   const open = s.window;
-  s.window = open === null ? { kind, text, bytes: utf8Length(text), at, nul } : { ...open, text: open.text + text, bytes: open.bytes + utf8Length(text), nul: open.nul || nul };
+  s.window = open === null ? { kind, text, bytes: utf8Length(text), at, nul, ...(native === undefined ? {} : { native }) } : { ...open, text: open.text + text, bytes: open.bytes + utf8Length(text), nul: open.nul || nul };
   if (s.window.bytes >= STREAM_WINDOW_BYTES) flushWindow(s, w, false);
 }
 /** The window is committed: a chunk of the open segment, the first of a segment it opens, or whitespace that waits. `final`: the Turn ends, so nothing is carried to a next window. */
@@ -339,7 +339,8 @@ function flushWindow(s: Draft, w: Writes, final: boolean): void {
   const window = s.window;
   if (window === null) return;
   s.window = null;
-  const segment = s.segment !== null && s.segment.kind === window.kind ? s.segment : null, hold = s.hold !== null && s.hold.kind === window.kind ? s.hold : null;
+  const segment = s.segment !== null && s.segment.kind === window.kind && s.segment.native === window.native ? s.segment : null;
+  const hold = s.hold !== null && s.hold.kind === window.kind && s.hold.native === window.native ? s.hold : null;
   let joined = (segment !== null ? segment.carry : hold !== null ? hold.text : "") + window.text, carry = "";
   if (!final && joined !== "" && isHigh(joined.charCodeAt(joined.length - 1))) { carry = joined.slice(-1); joined = joined.slice(0, -1); }
   if (segment !== null) {
@@ -347,20 +348,20 @@ function flushWindow(s: Draft, w: Writes, final: boolean): void {
     if (joined !== "") appendChunk(s, w, joined, window.nul);
   } else if (/\S/u.test(joined)) {
     s.hold = null;
-    s.segment = openSegment(s, w, window.kind, joined, carry, hold?.at ?? window.at, window.nul || hold?.nul === true, "running", null);
+    s.segment = openSegment(s, w, window.kind, joined, carry, hold?.at ?? window.at, window.nul || hold?.nul === true, "running", null, window.native);
   } else {
-    s.hold = { kind: window.kind, text: joined + carry, at: hold?.at ?? window.at, nul: window.nul || hold?.nul === true };
+    s.hold = { kind: window.kind, text: joined + carry, at: hold?.at ?? window.at, nul: window.nul || hold?.nul === true, ...(window.native === undefined ? {} : { native: window.native }) };
   }
 }
 /** Opens the item of a segment with its first chunk. `endedAt`: when it is written closed (whitespace that was held, written because the kind changed or the Turn ended). */
-function openSegment(s: Draft, w: Writes, kind: Kind, body: string, carry: string, at: number, nul: boolean, status: ItemStatus, endedAt: number | null): Segment {
+function openSegment(s: Draft, w: Writes, kind: Kind, body: string, carry: string, at: number, nul: boolean, status: ItemStatus, endedAt: number | null, nativeItem?: string): Segment {
   const count = kind === "text" ? s.counts.text + 1 : s.counts.think + 1, itemId = (kind === "text" ? "text:" : "think:") + count;
   s.counts = kind === "text" ? { ...s.counts, text: count } : { ...s.counts, think: count };
   const { text, marks } = sound(body), clipped: string[] = nul ? ["text:nul"] : [];
   const fields: ItemFields = kind === "text" ? { type: "assistant_message", messageId: s.run.facts.assistantMessageId } : { type: "reasoning" };
   const native: NativeFacts = nativeOf(marks.length === 0 ? {} : { surrogates: marks }, clipped);
   insert(s, w, { itemId, fields: Object.keys(native).length === 0 ? fields : withNative(fields, native), status, at, endedAt, text: [text] });
-  return { kind, itemId, units: body.length, carry };
+  return { kind, itemId, units: body.length, carry, ...(nativeItem === undefined ? {} : { native: nativeItem }) };
 }
 /** A chunk after the first, in the open segment: the lone surrogates it holds are told by their place in the whole text. */
 function appendChunk(s: Draft, w: Writes, body: string, nul: boolean): void {
@@ -387,7 +388,7 @@ function writeHold(s: Draft, w: Writes, at: number, status: ItemStatus): void {
   const hold = s.hold;
   if (hold === null) return;
   s.hold = null;
-  openSegment(s, w, hold.kind, hold.text, "", hold.at, hold.nul, status, at);
+  openSegment(s, w, hold.kind, hold.text, "", hold.at, hold.nul, status, at, hold.native);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -766,7 +767,7 @@ export function place(turn: ActiveTurn, input: PlaceInput, env: PlaceEnv = {}): 
       case "event": {
         const event = record(input.event) as ControlEvent | undefined, at = input.at;
         if (event === undefined) break;
-        if (event.type === "text" || event.type === "thinking") { takeText(s, w, event.type, str(event.text), at); break; }
+        if (event.type === "text" || event.type === "thinking") { takeText(s, w, event.type, str(event.text), at, typeof event.item === "string" && event.item !== "" ? event.item : undefined); break; }
         flushWindow(s, w, false);
         switch (event.type) {
           case "tool": placeTool(s, w, event, at); break;
