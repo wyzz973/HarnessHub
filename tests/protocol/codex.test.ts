@@ -26,10 +26,14 @@ test("Codex initialization acknowledgement, original thread policies, streaming 
     for (let i = 0; i < 2; i++) assert.deepEqual(await (await driver.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "completed" });
     assert.equal(events.filter(event => event.type === "text").length, 2);
     const messages = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
-    assert.deepEqual(messages[0].params.capabilities, { experimentalApi: false, requestAttestation: false });
+    // The experimental API is declared on every connection, and the turn diff (the Hub keeps its own checkpoints) is opted out of.
+    assert.deepEqual(messages[0].params.capabilities, { experimentalApi: true, optOutNotificationMethods: ["turn/diff/updated"], requestAttestation: false });
     assert.equal(messages[1].method, "initialized");
-    assert.deepEqual(messages[2].params, { cwd: process.cwd(), ephemeral: false });
-    assert.deepEqual(messages[3].params.input, [{ type: "text", text: "hello", text_elements: [] }]);
+    assert.deepEqual(messages.find(message => message.method === "thread/start").params, { cwd: process.cwd(), ephemeral: false });
+    const turns = messages.filter(message => message.method === "turn/start");
+    assert.deepEqual(turns[0].params.input, [{ type: "text", text: "hello", text_elements: [] }]);
+    // Every turn carries the thread's settings as the thread reported them, and the reasoning summary (`auto` when the user set none).
+    for (const turn of turns) { assert.equal(turn.params.approvalPolicy, "never"); assert.equal(turn.params.summary, "auto"); }
   } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
 });
 test("Codex completion notification may precede the turn/start response", async () => {
@@ -139,8 +143,7 @@ test("Codex never attributes output of a thread it does not own", async () => {
   try { const id = await ready(driver), run = await driver.startText(id, "hello", event => events.push(event)); await assert.rejects(run.result, /deadline/); assert.equal(events.some(event => event.type === "text"), false); }
   finally { assert.equal((await driver.close()).closed, true); }
 });
-for (const [scenario, expected] of [["wrong-turn", /identity changed/],
-  ["duplicate-permission", /repeated an RPC request/], ["exit-zero", /exited/], ["no-settlement", /deadline/]])
+for (const [scenario, expected] of [["duplicate-permission", /repeated an RPC request/], ["exit-zero", /exited/], ["no-settlement", /deadline/]])
   test(`Codex rejects ${scenario} and awaits cleanup`, async () => {
     const driver = control(scenario as string, {}, { runTimeoutMs: 100 });
     try { const id = await ready(driver), run = await driver.startText(id, "hello", () => {}); await assert.rejects(run.result, expected as RegExp); }
@@ -182,14 +185,23 @@ test("Codex passive unknown notifications expose only method diagnostics", async
     assert.ok(!JSON.stringify(events).includes("must-not-leak"));
   } finally { await driver.close(); }
 });
-test("Codex duplicate completion retains first backend fact but exposes connection failure at close", async () => {
+// Nothing Codex sends ends the connection (research of 2026-11-14 §6.2): a second completion of a finished turn is late, and counted.
+test("Codex duplicate completion retains the first backend fact and counts the second as late", async () => {
   const driver = control("duplicate-complete");
   try {
     const id = await ready(driver), run = await driver.startText(id, "hello", () => {});
     assert.deepEqual(await run.result, { status: "completed", reason: "completed" });
+    assert.ok(driver.unattributedUpdates >= 1);
+    assert.equal(driver.healthy(), true);
     const cleanup = await driver.close(); assert.equal(cleanup.closed, true);
-    assert.equal(cleanup.protocolFailure?.code, "INVALID_STATE");
+    assert.equal(cleanup.protocolFailure, null);
   } finally { await driver.close(); }
+});
+// A turn Codex begins by itself on the thread while a Run is active (a goal's continuation) is the Run's: its output is shown, and the Run waits for it.
+test("Codex attaches a turn it began by itself to the Run that is active", async () => {
+  const driver = control("wrong-turn", {}, { runTimeoutMs: 300 }), events: ControlEvent[] = [];
+  try { const id = await ready(driver), run = await driver.startText(id, "hello", event => events.push(event)); await assert.rejects(run.result, /deadline/); assert.ok(events.some(event => event.type === "text" && event.item === "message-1")); }
+  finally { assert.equal((await driver.close()).closed, true); }
 });
 
 test("an explicit Codex rejection before a turn exists fails the request without manufacturing an unknown execution", async () => {
@@ -451,7 +463,8 @@ test("Codex lists this workspace's threads and reads one for continuing it, newe
     assert.deepEqual(first, { sessions: [{ id: "thread-recent", title: "Recent work", updatedAt: 1700000300000, source: "cli" }], nextCursor: "page-2" }, "other workspaces and ephemeral threads are left out");
     assert.deepEqual(await driver.nativeSessions(process.cwd(), "page-2"), { sessions: [{ id: "thread-older", title: "older question", updatedAt: 1700000100000, source: "subAgent" }], nextCursor: null });
     assert.deepEqual(await driver.importSession("thread-recent", process.cwd()), { checkpoint: "thread-recent", title: "Recent work", omitted: 0, complete: true, historyRead: true,
-      history: [{ role: "user", text: "question 1" }, { role: "assistant", text: "answer 1" }, { role: "user", text: "question 2\n[图片]" }, { role: "assistant", text: "answer 2" }, { role: "user", text: "question 3" }, { role: "assistant", text: "answer 3" }] });
+      history: [{ role: "user", text: "question 1" }, { role: "assistant", text: "（这一轮里做了：运行 `ls`）\n\nanswer 1" }, { role: "user", text: "question 2\n[图片]" }, { role: "assistant", text: "（这一轮里做了：运行 `ls`）\n\nanswer 2" },
+        { role: "user", text: "question 3" }, { role: "assistant", text: "（这一轮里做了：运行 `ls`）\n\nanswer 3" }] });
     await assert.rejects(driver.importSession("thread-elsewhere", process.cwd()), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_WORKSPACE_MISMATCH");
     await assert.rejects(driver.importSession("thread-ephemeral", process.cwd()), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_UNAVAILABLE");
     const sent = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
@@ -478,20 +491,20 @@ test("Codex shows a sub-agent thread of the turn as an entry with its own tools 
     assert.equal(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : "").join(""), "你好 fixture", "the sub-agent's report is not the reply");
   } finally { await driver.close(); }
 });
-test("Codex plan mode is declared only by a connection opened with a chosen mode, and its proposed plan is the reply", async () => {
+test("Codex plan mode works on every connection (the experimental API is always declared), and its proposed plan is the reply", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-codex-plan-"));
   const sent = async (name: string) => (await readFile(join(directory, name), "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
   const experimental = async (name: string) => ((await sent(name)).find(row => row.method === "initialize")!.params!.capabilities as Record<string, unknown>).experimentalApi;
   // The settings the fixture's threads say they run with.
   const runs = { approval_policy: "never", sandbox: "danger-full-access" };
   try {
-    // The app-server's version is kept as evidence; a catalog read never declares the experimental API.
+    // The app-server's version is kept as evidence; every connection declares the experimental API.
     const reader = control("plan-mode", { FIXTURE_TRACE: join(directory, "reader") });
     try {
       assert.equal((await reader.initialize()).agentVersion, "0.162.1");
       assert.deepEqual((await reader.models()).options?.find(option => option.id === "collaboration_mode")?.values.map(value => value.value), ["default", "plan"]);
     } finally { await reader.close(); }
-    assert.equal(await experimental("reader"), false);
+    assert.equal(await experimental("reader"), true);
     // An app-server that states an older version, or none, is offered the mode too, and plan mode works on it when it lists
     // the modes: what it answers decides, not the version it states (ADR-053).
     for (const scenario of ["plan-old", "basic"]) {
@@ -538,12 +551,11 @@ test("Codex plan mode is declared only by a connection opened with a chosen mode
       assert.deepEqual(await back.nativeConfig(), { model: null, options: { collaboration_mode: "default", ...runs } });
     } finally { await back.close(); }
     assert.deepEqual((await sent("back")).find(row => row.method === "turn/start")!.params!.collaborationMode, { mode: "default", settings: { model: "native-model-a", reasoning_effort: null, developer_instructions: null } });
-    // A connection that was not prepared for the mode refuses it before a thread is opened.
+    // A connection that was not prepared for the mode takes it all the same.
     const unprepared = control("plan-mode", { FIXTURE_TRACE: join(directory, "unprepared") });
     try {
-      await unprepared.initialize();
-      await assert.rejects(unprepared.open(process.cwd(), undefined, { collaboration_mode: "plan" }), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_OPTION_UNAVAILABLE");
-      assert.equal((await sent("unprepared")).some(row => row.method === "thread/start" || row.method === "collaborationMode/list"), false);
+      await unprepared.initialize(); await unprepared.open(process.cwd(), undefined, { collaboration_mode: "plan" });
+      assert.equal((await sent("unprepared")).some(row => row.method === "collaborationMode/list"), true);
     } finally { await unprepared.close(); }
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

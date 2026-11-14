@@ -174,7 +174,8 @@ test("a Codex thread keeps the collaboration mode it last confirmed while the co
   runtime.send(session.id, "do it", "third"); await runtime.wait(session.id);
   assert.equal(oldShape(runtime, session.id).runs[2]!.status, "completed"); assert.equal(observed(session.id), "default");
   const sent = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
-  assert.deepEqual(sent.filter(row => row.method === "initialize").map(row => (row.params!.capabilities as Record<string, unknown>).experimentalApi), [true, false, true]);
+  // Every connection declares the experimental API (the driver uses it whenever this Codex has what it needs).
+  assert.deepEqual(sent.filter(row => row.method === "initialize").map(row => (row.params!.capabilities as Record<string, unknown>).experimentalApi), [true, true, true]);
   assert.deepEqual(sent.filter(row => row.method === "turn/start").map(row => (row.params!.collaborationMode as { mode?: string } | undefined)?.mode ?? null), ["plan", null, "default"]);
 });
 

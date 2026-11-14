@@ -69,7 +69,7 @@ test("Codex names the thread before its first turn (thread/name/set), one line; 
   await control.setTitle!(id, "修好\n测试  ");
   await control.setTitle!(id, " \n ");
   await run(control, id, "开始");
-  const methods = (await peer.sent()).map(line => line.method).filter(method => method !== undefined && !["initialize", "initialized"].includes(method));
+  const methods = (await peer.sent()).map(line => line.method).filter(method => method !== undefined && !["initialize", "initialized", "config/read"].includes(method));
   assert.deepEqual(methods, ["thread/start", "thread/name/set", "turn/start"], "named before the first turn, the empty title not sent");
   assert.equal((await peer.native()).threads["thread-relay"]!.name, "修好 测试");
   const refusing = await peerRoot(t, { RELAY_NAME_FAULT: "refuse" }), refused = await opened(t, "codex", refusing);

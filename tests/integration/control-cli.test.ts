@@ -89,7 +89,9 @@ for (const protocol of ["acp-v1", "codex-app-server"] as const) {
     assert.equal(result.status, 0, result.stderr);
     const output = records(result.stdout);
     assert.deepEqual(output.map((entry) => entry.type), ["protocol", "event", "event", "result", "cleanup"]);
-    assert.deepEqual(output.filter((entry) => entry.type === "event").map((entry) => entry.event), [{ type: "text", text: "first " }, { type: "text", text: "second" }]);
+    // Codex names the message item the text belongs to.
+    const item = protocol === "codex-app-server" ? { item: "message-1" } : {};
+    assert.deepEqual(output.filter((entry) => entry.type === "event").map((entry) => entry.event), [{ type: "text", text: "first ", ...item }, { type: "text", text: "second", ...item }]);
     assert.deepEqual(output.find((entry) => entry.type === "result")?.result, { status: "completed", reason: protocol === "acp-v1" ? "end_turn" : "completed", ...(protocol === "acp-v1" ? { input: "recorded" } : {}) });
     const trace = await traces(f);
     const prompt = trace.find((entry) => entry.method === (protocol === "acp-v1" ? "session/prompt" : "turn/start"));
@@ -125,15 +127,16 @@ for (const protocol of ["acp-v1", "codex-app-server"] as const) {
     await assertClosed(f);
   });
 
-  test("formal CLI " + protocol + " preserves completion but fails the invocation on duplicate terminal messages", async (t) => {
+  // ACP fails the connection on a second answer to one prompt; Codex counts a second completion of a finished turn as late and goes on.
+  test("formal CLI " + protocol + " preserves completion on duplicate terminal messages", async (t) => {
     const f = await fixture(t); await manifest(f, protocol, "duplicate-complete");
     const result = invoke(f, ["run", "--harness", "cli-fixture", "--prompt", "duplicate terminal fixture", "--json"]);
-    assert.notEqual(result.status, 0, result.stderr);
+    if (protocol === "acp-v1") assert.notEqual(result.status, 0, result.stderr); else assert.equal(result.status, 0, result.stderr);
     const output = records(result.stdout);
     assert.deepEqual(output.find((entry) => entry.type === "result")?.result, { status: "completed", reason: protocol === "acp-v1" ? "end_turn" : "completed", ...(protocol === "acp-v1" ? { input: "recorded" } : {}) });
     const cleanup = output.find((entry) => entry.type === "cleanup")?.cleanup;
-    assert.ok(cleanup && typeof cleanup === "object" && "closed" in cleanup && cleanup.closed === true && "protocolFailure" in cleanup && cleanup.protocolFailure !== null);
-    assert.match(result.stderr, /connection failed/);
+    assert.ok(cleanup && typeof cleanup === "object" && "closed" in cleanup && cleanup.closed === true && "protocolFailure" in cleanup && (protocol === "acp-v1" ? cleanup.protocolFailure !== null : cleanup.protocolFailure === null));
+    if (protocol === "acp-v1") assert.match(result.stderr, /connection failed/);
     await assertClosed(f);
   });
 }

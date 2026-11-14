@@ -98,6 +98,15 @@ export function classifyRemoteFailure(message: string, acpCode?: number): { read
 }
 export type RpcId = string | number;
 export interface RpcRequest { readonly id: RpcId; readonly method: string; readonly params: unknown }
+/** What a request handler resolves with when the peer withdrew its request (it was resolved elsewhere): nothing is written back. */
+export const SKIP_REPLY: unique symbol = Symbol("skip reply");
+/**
+ * A request handler's refusal of a request the peer defines but this client does not serve (it holds no such credential, it gives no
+ * such proof): answered with this JSON-RPC error code and the message, never -32601, which says the method does not exist.
+ */
+export class RequestRefused extends Error {
+  constructor(message: string, readonly rpcCode = -32000) { super(message); this.name = "RequestRefused"; }
+}
 export interface RpcHandlers {
   readonly notification: (method: string, params: unknown) => void;
   readonly request: (request: RpcRequest) => Promise<unknown> | unknown;
@@ -394,10 +403,11 @@ export class JsonRpcProcess {
       this.incomingIds.add(requestKey);
       const request: RpcRequest = { id: requestId, method, params: message.params };
       void Promise.resolve().then(() => this.handlers.request(request)).then(
-        result => this.write({ id: requestId, result }),
+        result => result === SKIP_REPLY ? undefined : this.write({ id: requestId, result }),
         error => {
           if (error instanceof ControlError && error.code === "METHOD_NOT_FOUND")
             return this.write({ id: requestId, error: { code: -32601, message: "Method not supported by this client" } });
+          if (error instanceof RequestRefused) return this.write({ id: requestId, error: { code: error.rpcCode, message: error.message } });
           this.abort(errorFrom(error));
         },
       ).catch(error => this.abort(errorFrom(error)));

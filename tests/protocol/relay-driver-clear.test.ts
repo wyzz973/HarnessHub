@@ -80,7 +80,10 @@ test("Codex: /clear, /new and /reset alone are not sent; the thread is given up 
   const sent = await peer.sent(), starts = sent.filter(line => line.method === "turn/start");
   assert.deepEqual(starts.map(line => ((line.params as { input: { text: string }[] }).input[0]!.text)), ["先说一句", "继续", "继续", "继续"], "no turn was started for a clear");
   assert.deepEqual(starts.map(line => (line.params as { threadId: string }).threadId), threads, "each turn on its own thread");
-  assert.deepEqual([...new Set(sent.flatMap(line => typeof line.method === "string" ? [line.method] : []))].sort(), ["initialize", "initialized", "thread/start", "turn/start"], "nothing else reached Codex: no archive, no delete, no clear");
+  // The configuration is read (never written) for each thread; a given-up thread is unsubscribed once its successor is open.
+  assert.deepEqual([...new Set(sent.flatMap(line => typeof line.method === "string" ? [line.method] : []))].sort(), ["config/read", "initialize", "initialized", "thread/start", "thread/unsubscribe", "turn/start"], "nothing else reached Codex: no archive, no delete, no clear");
+  assert.deepEqual(sent.filter(line => line.method === "thread/start").map(line => (line.params as { sessionStartSource?: string }).sessionStartSource), [undefined, "clear", "clear", "clear"], "a thread after a clear says so to the user's hooks");
+  assert.deepEqual(sent.filter(line => line.method === "thread/unsubscribe").map(line => (line.params as { threadId: string }).threadId), threads.slice(0, 3), "each given-up thread is unloaded");
   assert.equal((await peer.native()).threads["thread-relay"]!.turns.length, 1, "the given-up thread stays as it was in the user's Codex");
   assert.equal(control.healthy!(), true);
   assert.equal((await run(control, current, "再继续")).result.status, "completed", "and the current thread goes on");
