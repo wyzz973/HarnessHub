@@ -45,7 +45,7 @@ function commandChoice(decision: unknown, index: number, host: string | undefine
   if (decision === "accept") return { id: "accept", name: "允许一次", value: decision, order: 0 };
   if (decision === "acceptForSession") return { id: "acceptForSession", name: host ? "本次会话都允许访问 " + host : "本次会话允许", value: decision, order: 1 };
   if (decision === "decline") return { id: "decline", name: "拒绝", value: decision, order: 3 };
-  if (decision === "cancel") return { id: "cancel", name: "取消并停止这一轮", value: decision, order: 4 };
+  if (decision === "cancel") return { id: "cancel", name: "拒绝并停止", value: decision, order: 4 };
   const row = record(decision);
   const exec = record(row?.acceptWithExecpolicyAmendment), prefix = strings(exec?.execpolicy_amendment);
   if (exec !== null && prefix.length) return { id: "acceptWithExecpolicyAmendment", name: "以后都允许以“" + line(prefix.join(" "), 200) + "”开头的命令", value: decision, order: 2 };
@@ -86,7 +86,7 @@ export function fileChangeApproval(params: Row, owned: boolean, changes: readonl
   const files = changes.flatMap(value => { const row = record(value); return typeof row?.path === "string" ? [basename(row.path)] : []; }).slice(0, 3).join(", ");
   const detail = [typeof params.reason === "string" ? line(params.reason) : "", typeof params.grantRoot === "string" && params.grantRoot ? "请求本次会话可写：" + params.grantRoot : "", ...changeLines(changes), diff ?? ""].filter(Boolean).join("\n");
   return { title: child(owned) + "Codex 请求修改文件" + (files ? "：" + files : ""), ...(detail ? { detail } : {}),
-    choices: [{ id: "accept", name: "允许一次" }, { id: "acceptForSession", name: "本次会话允许" }, { id: "decline", name: "拒绝" }, { id: "cancel", name: "取消并停止这一轮" }], toolKind: "edit",
+    choices: [{ id: "accept", name: "允许一次" }, { id: "acceptForSession", name: "本次会话允许" }, { id: "decline", name: "拒绝" }, { id: "cancel", name: "拒绝并停止" }], toolKind: "edit",
     ...(typeof params.itemId === "string" ? { forCall: params.itemId } : {}),
     answer: choice => ({ decision: ["accept", "acceptForSession", "decline", "cancel"].includes(choice) ? choice : "decline" }), refusal: { decision: "decline" }, cancel: { decision: "cancel" } };
 }
@@ -114,7 +114,7 @@ export function legacyApproval(method: string, params: Row, owned: boolean): Pro
   const decisions: Readonly<Record<string, string>> = { accept: "approved", acceptForSession: "approved_for_session", decline: "denied", cancel: "abort" };
   const detail = [typeof params.reason === "string" ? line(params.reason) : "", typeof params.cwd === "string" ? "目录：" + params.cwd : "", ...files.map(path => "修改 " + path)].filter(Boolean).join("\n");
   return { title: child(owned) + (patch ? "Codex 请求修改文件" + (files.length ? "：" + files.slice(0, 3).map(path => basename(path)).join(", ") : "") : line(command) || "Codex 请求执行命令"), ...(detail ? { detail } : {}),
-    choices: [{ id: "accept", name: "允许一次" }, { id: "acceptForSession", name: "本次会话允许" }, { id: "decline", name: "拒绝" }, { id: "cancel", name: "取消并停止这一轮" }], toolKind: patch ? "edit" : "execute",
+    choices: [{ id: "accept", name: "允许一次" }, { id: "acceptForSession", name: "本次会话允许" }, { id: "decline", name: "拒绝" }, { id: "cancel", name: "拒绝并停止" }], toolKind: patch ? "edit" : "execute",
     ...(typeof params.callId === "string" ? { forCall: params.callId } : {}),
     answer: choice => ({ decision: decisions[choice] ?? "denied" }), refusal: { decision: "denied" }, cancel: { decision: "abort" } };
 }

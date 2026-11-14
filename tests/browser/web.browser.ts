@@ -2010,7 +2010,7 @@ test("G054-FR8 G054-DL5 a decision of the docked approval pressed with the point
   const layout = () => dock.getByRole("button").evaluateAll(buttons => buttons.map(button => {
     const element = button as HTMLElement; return `${element.getAttribute("aria-label")} ${element.offsetLeft},${element.offsetTop} ${element.offsetWidth}×${element.offsetHeight}`; }));
   // Codex asks with three one-time options, each with its number for the keyboard: 允许一次 (⏎), 拒绝 (esc) and 取消.
-  const decisions = [["允许一次", "accept"], ["拒绝", "decline"], ["取消", "cancel"]] as const;
+  const decisions = [["允许一次", "accept"], ["拒绝", "decline"], ["拒绝并停止", "cancel"]] as const;
   let round = 0;
   for (const [shade, scheme] of (["light", "dark"] as const).entries()) for (const [step, width] of [390, 320, 1440].entries()) {
     await page.emulateMedia({ colorScheme: scheme }); await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
@@ -2064,7 +2064,7 @@ test("G054-DL5 a decision of the docked approval pressed at its very edge is sen
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click(); await askEachStep(page);
   // Codex asks with 允许一次 (⏎), 拒绝 (esc) and 取消. On a phone 允许一次 fills a line of its own, and .97 draws each of its
   // ends in by some 5 px.
-  const rounds = [[390, "light", "允许一次", "left"], [390, "dark", "拒绝", "right"], [320, "light", "允许一次", "right"], [320, "dark", "取消", "left"], [1440, "light", "允许一次", "right"], [1440, "dark", "拒绝", "left"]] as const;
+  const rounds = [[390, "light", "允许一次", "left"], [390, "dark", "拒绝", "right"], [320, "light", "允许一次", "right"], [320, "dark", "拒绝并停止", "left"], [1440, "light", "允许一次", "right"], [1440, "dark", "拒绝", "left"]] as const;
   for (const [index, [width, scheme, name, edge]] of rounds.entries()) {
     await page.emulateMedia({ colorScheme: scheme }); await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
     // Asked after keyboard use and after pointer use in turn.
