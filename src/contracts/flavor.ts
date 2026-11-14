@@ -92,6 +92,12 @@ export interface FlavorCapabilities {
    */
   readonly record?: "files" | "tools";
   /**
+   * How the model gets the Hub's tools (2026-11-15, T3 Code's way): `native`, the Harness loads MCP tools on demand itself (Codex's tool_search,
+   * Claude Code's ToolSearch, OpenCode's `execute`), so each costs a name until it is used; `search`, the Hub's server lists only the core tools and
+   * hub_tool_search, which adds the others when asked (notifications/tools/list_changed); `all` (the default), every definition on every request.
+   */
+  readonly toolLoad?: "native" | "search" | "all";
+  /**
    * Words the user sends while a Turn runs (2026-11-14): `native`, the Harness takes them into the turn in progress (`POST /sessions/:id/steer`,
    * HarnessControl.steer), so the page may offer to send them now; `none` (the default), it cannot, and the page keeps them until the Turn
    * ends (its queue). Never done by stopping the turn and sending again. The page reads this from the catalog's `flavor` and still falls back

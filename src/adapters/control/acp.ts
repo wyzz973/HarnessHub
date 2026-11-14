@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { TABLE_ENV, TABLE_INSTRUCTIONS_ENV, TABLE_MCP_NAME, TABLE_RECORD_ENV } from "../../contracts/table.js";
+import { TABLE_ENV, TABLE_INSTRUCTIONS_ENV, TABLE_LOAD_ENV, TABLE_MCP_NAME, TABLE_PROGRESS_ENV, TABLE_RECORD_ENV } from "../../contracts/table.js";
 import { listedCommand, nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type SteerOutcome, type StopRequestReceipt } from "../../contracts/control.js";
@@ -470,7 +470,10 @@ export class AcpControl implements HarnessControl {
     const url = this.options.env[TABLE_ENV.url], token = this.options.env[TABLE_ENV.session], tool = fileURLToPath(new URL("../../cli/hub-tools.js", import.meta.url));
     if (!url || !token || !existsSync(tool)) return [];
     const said = this.instructions !== null && this.options.entry.instructions === "mcp-instructions" ? [{ name: TABLE_INSTRUCTIONS_ENV, value: this.instructions }] : [];
-    return [{ name: TABLE_MCP_NAME, command: process.execPath, args: [tool, "mcp"], env: [{ name: TABLE_ENV.url, value: url }, { name: TABLE_ENV.session, value: token }, ...(this.options.env[TABLE_RECORD_ENV] ? [{ name: TABLE_RECORD_ENV, value: this.options.env[TABLE_RECORD_ENV]! }] : []), ...said] }];
+    // How the record is read and how the tools are loaded come with the process (the binding); whether the task list and the wrap-up are asked for, with the session.
+    const carried = [TABLE_RECORD_ENV, TABLE_LOAD_ENV].flatMap(name => this.options.env[name] ? [{ name, value: this.options.env[name]! }] : []);
+    const progress = this.progress === false ? [{ name: TABLE_PROGRESS_ENV, value: "off" }] : [];
+    return [{ name: TABLE_MCP_NAME, command: process.execPath, args: [tool, "mcp"], env: [{ name: TABLE_ENV.url, value: url }, { name: TABLE_ENV.session, value: token }, ...carried, ...progress, ...said] }];
   }
   /** What setSessionInstructions gave for the sessions this connection opens from now on; null gives nothing. */
   private instructions: string | null = null;
@@ -479,8 +482,10 @@ export class AcpControl implements HarnessControl {
    * opens a session new, cleared once a prompt carried them to the native side.
    */
   private instructionsDue = false;
+  /** Whether the sessions opened from now on are asked for the task list and the wrap-up; undefined: not said, the server keeps those two tools. */
+  private progress: boolean | undefined;
   /** HarnessControl.setSessionInstructions, through the entry the declaration names (ControlOptions.entry.instructions). */
-  setSessionInstructions(text: string | null): void { this.instructions = text; }
+  setSessionInstructions(text: string | null, tools?: { readonly progress: boolean }): void { this.instructions = text; this.progress = tools?.progress; }
   /**
    * Runs once, before the agent's program is started (initialize is the first request, and the process is spawned for it).
    * A driver whose program would act on the user's machine merely by starting (Hermes's `hermes acp` starts, stops or

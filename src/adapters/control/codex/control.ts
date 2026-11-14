@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { TABLE_ENV, TABLE_MCP_NAME, TABLE_RECORD_ENV } from "../../../contracts/table.js";
+import { TABLE_ENV, TABLE_LOAD_ENV, TABLE_MCP_NAME, TABLE_PROGRESS_ENV, TABLE_RECORD_ENV } from "../../../contracts/table.js";
 import { nativeConversationId, requestExpiry, singleText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlLaunch, type ControlOptions, type ControlRun,
   type HarnessControl, type NativeConversationId, type NativeExtensions, type NativeModelCatalog, type NativeOption, type NativeOptions, type NativeSessionImport, type NativeSessionPage,
   type NativeToolDetail, type NativeUsage, type ProtocolObservation, type SteerOutcome, type StopRequestReceipt, type TurnText } from "../../../contracts/control.js";
@@ -247,13 +247,19 @@ export class CodexControl implements HarnessControl {
     catch (error) { if (error instanceof ControlError && (error.code === "REMOTE_ERROR" || error.code === "REQUEST_TIMEOUT") && this.rpc.failure === null) throw new ControlError("NATIVE_TITLE_UNAVAILABLE", "Codex did not name the thread"); throw error; }
   }
   /** HarnessControl.setSessionInstructions: Codex's `developerInstructions` on thread/start and thread/resume, after the user's own. */
-  setSessionInstructions(text: string | null): void { this.instructions = text; }
-  /** The Hub's tool server as a thread's own MCP server (`mcp_servers.<name>` in the thread's `config`), the table's variables forwarded by name. */
+  setSessionInstructions(text: string | null, tools?: { readonly progress: boolean }): void { this.instructions = text; this.progress = tools?.progress; }
+  /** Whether the threads opened from now on are asked for the task list and the wrap-up; undefined: not said, the server keeps those two tools. */
+  private progress: boolean | undefined;
+  /**
+   * The Hub's tool server as a thread's own MCP server (`mcp_servers.<name>` in the thread's `config`): the table's variables forwarded by name, the token among
+   * them, so that the thread's recorded configuration never holds it; whether the task list and the wrap-up are asked for, a value of this thread, given as one.
+   */
   private hubToolServer(): Readonly<Record<string, unknown>> | null {
     if (this.options.entry?.tools !== "thread-config") return null;
     const tool = fileURLToPath(new URL("../../../cli/hub-tools.js", import.meta.url));
     if (!this.options.env[TABLE_ENV.url] || !this.options.env[TABLE_ENV.session] || !existsSync(tool)) return null;
-    return { command: process.execPath, args: [tool, "mcp"], env_vars: [TABLE_ENV.url, TABLE_ENV.session, ...(this.options.env[TABLE_RECORD_ENV] ? [TABLE_RECORD_ENV] : [])], default_tools_approval_mode: "approve" };
+    return { command: process.execPath, args: [tool, "mcp"], env_vars: [TABLE_ENV.url, TABLE_ENV.session, ...[TABLE_RECORD_ENV, TABLE_LOAD_ENV].filter(name => this.options.env[name])],
+      ...(this.progress === false ? { env: { [TABLE_PROGRESS_ENV]: "off" } } : {}), default_tools_approval_mode: "approve" };
   }
   get sessionTools(): boolean { return this.hubToolServer() !== null; }
   async nativeConfig(): Promise<{ readonly model: string | null; readonly options: NativeOptions } | null> {

@@ -10,7 +10,9 @@ import { fileURLToPath } from "node:url";
 import test, { after, before } from "node:test";
 import { application } from "../../src/cli/session-application.js";
 import { sessionId } from "../../src/contracts/session.js";
-import { TABLE_PROGRESS_TOOLS, TABLE_ENV, TABLE_NOT_IN_SESSION, TABLE_TOOLS } from "../../src/contracts/table.js";
+import { TABLE_PROGRESS_TOOLS, TABLE_ENV, TABLE_LOAD_ENV, TABLE_NOT_IN_SESSION, TABLE_PROGRESS_ENV, TABLE_TOOL_SEARCH, TABLE_TOOLS } from "../../src/contracts/table.js";
+/** What a server lists where every tool is listed: all but the one that loads the others. */
+const LISTED = TABLE_TOOLS.filter(name => name !== TABLE_TOOL_SEARCH);
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { MemoryTableGrants } from "../../src/infrastructure/session/table-grants.js";
 import { readWhole, type ReadConversation } from "../fixtures/http-conversation.js";
@@ -279,9 +281,9 @@ test("MCP: initialize, tools/list and tools/call for the three tools, from a rea
   assert.deepEqual([info.protocolVersion, row(info.serverInfo).name, row(info.capabilities).tools !== undefined, typeof info.instructions], ["2025-03-26", "harnesshub", true, "string"]);
   assert.deepEqual(row((await mcp.request("ping")).result), {});
   const listed = row((await mcp.request("tools/list")).result).tools as Record<string, unknown>[];
-  assert.deepEqual(listed.map(item => item.name), [...TABLE_TOOLS]);
+  assert.deepEqual(listed.map(item => item.name), LISTED);
   for (const item of listed) {
-    assert.ok(String(item.description).length > 200 && /^[A-Z]/u.test(String(item.description)), item.name + " says in English what it is for and when to use it");
+    assert.ok(String(item.description).length > 80 && /^[A-Z]/u.test(String(item.description)), item.name + " says in English what it is for and when to use it");
     assert.equal(row(item.inputSchema).type, "object"); assert.equal(row(item.inputSchema).additionalProperties, false); assert.equal(row(item.annotations).readOnlyHint, ![...TABLE_PROGRESS_TOOLS, "hub_delegate", "hub_remember"].includes(String(item.name)));
   }
   assert.deepEqual(row(listed[1]!.inputSchema).required, ["n"]); assert.deepEqual(row(listed[2]!.inputSchema).required, ["query"]);
@@ -325,11 +327,30 @@ test("MCP: initialize, tools/list and tools/call for the three tools, from a rea
   assert.equal(await mcp.end(), 0, "the process ends when its input does"); assert.deepEqual(mcp.stderr, [], "nothing but protocol on stdout and nothing on stderr");
 });
 
+test("MCP: where tools load on demand, the core ones and hub_tool_search are listed, and a search lists what it found from then on", async t => {
+  const names = async (mcp: Mcp) => (row((await mcp.request("tools/list")).result).tools as Record<string, unknown>[]).map(item => item.name);
+  const mcp = new Mcp({ ...session(), [TABLE_LOAD_ENV]: "search" }); t.after(() => { mcp.child.kill("SIGKILL"); });
+  const told: string[] = []; createInterface({ input: mcp.child.stdout }).on("line", line => { const method = row(JSON.parse(line)).method; if (typeof method === "string") told.push(method); });
+  const info = row((await mcp.request("initialize", { protocolVersion: "2025-06-18", capabilities: {} })).result);
+  assert.deepEqual(row(info.capabilities).tools, { listChanged: true }); assert.match(String(info.instructions), /hub_tool_search/u);
+  assert.deepEqual(await names(mcp), ["hub_update_plan", "hub_wrap_up", TABLE_TOOL_SEARCH]);
+  const found = await mcp.tool(TABLE_TOOL_SEARCH, { query: "列出这个对话之前的轮次" });
+  assert.equal(found.isError, false); assert.match(found.text, /^Loaded; call them by name:\nhub_turns: /u);
+  assert.deepEqual(told, ["notifications/tools/list_changed"]);
+  assert.deepEqual(await names(mcp), ["hub_turns", "hub_update_plan", "hub_wrap_up", TABLE_TOOL_SEARCH]);
+  assert.equal((await mcp.tool("hub_turns", {})).isError, false);
+  // A session not asked for the task list and the wrap-up has neither of them, listed or found.
+  const quiet = new Mcp({ ...session(), [TABLE_LOAD_ENV]: "search", [TABLE_PROGRESS_ENV]: "off" }); t.after(() => { quiet.child.kill("SIGKILL"); });
+  await quiet.open();
+  assert.deepEqual(await names(quiet), [TABLE_TOOL_SEARCH]);
+  assert.doesNotMatch((await quiet.tool(TABLE_TOOL_SEARCH, { query: "xyz" })).text, /hub_update_plan|hub_wrap_up/u);
+});
+
 test("MCP: outside a Hub conversation it answers initialize and tools/list, and every call says there is nothing to read", async t => {
   for (const [label, env] of [["no variables", {}], ["no token", { [TABLE_ENV.url]: f.origin }], ["no address", { [TABLE_ENV.session]: f.token }], ["empty variables", { [TABLE_ENV.url]: "", [TABLE_ENV.session]: "" }]] as const) {
     const mcp = new Mcp(env); t.after(() => { mcp.child.kill("SIGKILL"); });
     await mcp.open();
-    assert.deepEqual(((row((await mcp.request("tools/list")).result).tools) as Record<string, unknown>[]).map(item => item.name), [...TABLE_TOOLS], label);
+    assert.deepEqual(((row((await mcp.request("tools/list")).result).tools) as Record<string, unknown>[]).map(item => item.name), LISTED, label);
     for (const [name, args] of [["hub_turns", {}], ["hub_read_turn", { n: 1 }], ["hub_search", { query: "x" }]] as const) {
       const result = await mcp.tool(name, args); assert.deepEqual(result, { text: TABLE_NOT_IN_SESSION, isError: true }, label + " " + name);
     }

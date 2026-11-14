@@ -32,7 +32,7 @@ const NATIVE_IMPORT_MS = 10 * 60_000;
  */
 const NATIVE_STARTUP_MS = 5 * 60_000;
 import type { NativeInstallationLocks, NativeUsageLease } from "../management/native-lock.js";
-import { TABLE_RECORD_ENV } from "../../contracts/table.js";
+import { TABLE_LOAD_ENV, TABLE_RECORD_ENV } from "../../contracts/table.js";
 import { nativeOnly, selectedLevels, sessionEntryOf } from "../../contracts/flavor.js";
 import { flavorOf } from "../../adapters/flavors/index.js";
 
@@ -292,6 +292,11 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       const declared = flavorOf(selection.harnessId)?.capabilities?.record ?? "tools", forced = process.env.HARNESSHUB_RECORD_READ;
       const recordFiles = attached !== null && attached.command === undefined && selection.provider === undefined && (forced === "files" || forced === "tools" ? forced : declared) === "files";
       if (recordFiles) environment[TABLE_RECORD_ENV] = "files";
+      // How the model gets the tools (FlavorCapabilities.toolLoad): a Harness that cannot load MCP tools on demand itself has the server list the core ones and
+      // hub_tool_search. HARNESSHUB_TOOL_LOAD (native | search | all) in the Gateway's own environment overrides the declarations, for measuring.
+      const load = process.env.HARNESSHUB_TOOL_LOAD, loading = load === "native" || load === "search" || load === "all" ? load : flavorOf(selection.harnessId)?.capabilities?.toolLoad ?? "all";
+      const toolSearch = attached !== null && attached.command === undefined && selection.provider === undefined && loading === "search";
+      if (toolSearch) environment[TABLE_LOAD_ENV] = "search";
       // Whether this process has the Hub's tools, as a fact of how it is started (the packet may repeat it to the model): it carries the table's
       // environment, it reads the configuration the Hub's tool entry is written in (the user's own, not a generated or an isolated home), and
       // that Harness's configuration holds the entry. A kept process keeps this answer; a probe that cannot tell says no.
@@ -314,7 +319,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       const base = nativeBaseValues(this.nativeEnvironment, home, selection.harnessId);
       const secrets = credentialValues({ environments: [environment, this.nativeEnvironment.values], referenced: Object.entries(referenced).filter(([name]) => !(name in base)) }, existsSync);
       return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, temporary, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage, secrets, attached, hubTools, attached?.command, recordFiles && hubTools,
-        flavorOf(selection.harnessId)?.capabilities?.planTool === "native");
+        flavorOf(selection.harnessId)?.capabilities?.planTool === "native", toolSearch && hubTools);
     } catch (error) {
       attached?.detach();
       let cleanupError: unknown;
@@ -464,7 +469,7 @@ class DirectoryPreparedBinding implements PreparedSessionBinding {
   constructor(readonly control: HarnessControl, readonly workspace: string, private readonly lease: WorkspaceLease,
     private readonly root: string, private readonly temporary: HostTmpdir, private readonly owner: () => void, readonly installation: NonNullable<PreparedSessionBinding["installation"]>, private readonly usage?: NativeUsageLease,
     readonly secrets: readonly string[] = [], private readonly table: TableAttachment | null = null, readonly hubTools = false, command?: string, readonly recordFiles = false,
-    readonly nativePlan = false) { if (command !== undefined) this.hubCommand = command; }
+    readonly nativePlan = false, readonly toolSearch = false) { if (command !== undefined) this.hubCommand = command; }
   readonly hubCommand?: string;
   assertOwned(): void {
     if (this.closed || this.closing !== null) throw new SessionError("BINDING_CLOSED", "binding is closing or closed");

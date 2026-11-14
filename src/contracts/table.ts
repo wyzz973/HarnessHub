@@ -17,11 +17,19 @@ export const TABLE_INSTRUCTIONS_ENV = "HARNESSHUB_INSTRUCTIONS";
 /** The name of the Hub's own MCP entry in a Harness's configuration. */
 export const TABLE_MCP_NAME = "harnesshub";
 
-/** The read tools of the first slice. */
-export const TABLE_TOOLS = ["hub_turns", "hub_read_turn", "hub_search", "hub_update_plan", "hub_wrap_up", "hub_delegate", "hub_delegations", "hub_task", "hub_board", "hub_remember"] as const;
+/** The Hub's tools. */
+export const TABLE_TOOLS = ["hub_turns", "hub_read_turn", "hub_search", "hub_update_plan", "hub_wrap_up", "hub_delegate", "hub_delegations", "hub_task", "hub_board", "hub_remember", "hub_tool_search"] as const;
 /** The Hub's tools that write: they tell the Hub how the Turn in progress goes (its task list, its wrap-up); the page shows these, and not the calls. */
 export const TABLE_PROGRESS_TOOLS = ["hub_update_plan", "hub_wrap_up"] as const;
 export type TableTool = typeof TABLE_TOOLS[number];
+/** The tool that loads the others where the server lists only the core ones (FlavorCapabilities.toolLoad `search`). */
+export const TABLE_TOOL_SEARCH = "hub_tool_search";
+/** `search`: the server lists the core tools and hub_tool_search, and adds the others on demand. Absent: every tool is listed. */
+export const TABLE_LOAD_ENV = "HARNESSHUB_LOAD";
+/** `off`: this session is not asked for the task list and the wrap-up, and the server leaves those two tools out. Absent: they are there. */
+export const TABLE_PROGRESS_ENV = "HARNESSHUB_PROGRESS";
+/** What a session whose server lists only the core tools is told beside the rest of its instructions. */
+export const HUB_TOOL_SEARCH_INSTRUCTIONS = "上面提到的 harnesshub 工具没列出来时，先用 hub_tool_search 按名字或用途加载再调用。";
 /**
  * What a Driver gives the model of its session (HarnessControl.setSessionInstructions, through the entry its adapter declaration names:
  * the system prompt, the developer instructions, the Hub's MCP server's instructions, or a block after a new session's first prompt) when

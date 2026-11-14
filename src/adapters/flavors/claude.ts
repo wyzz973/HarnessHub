@@ -16,5 +16,8 @@ export const claudeFlavor: HarnessFlavor = {
   // The record is read as files with its own file tools (2026-11-13; verified on the installed program: it read the directory and answered from it).
   // Words in the middle of a turn: claude-agent-acp's `_session/steering` (0.99.1 acp-agent.js `steer`, advertised by initialize's top-level
   // `_meta.steering.supported`), asked with `idleBehavior: "promptRequired"` so that words finding no turn are refused and never start one.
-  capabilities: { sessionMcp: "acp", systemPrompt: "acp-meta", planTool: "native", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native", record: "files", steer: "native" },
+  // Tools load on demand natively: Claude Code 2.1.316 defers MCP tools behind ToolSearch by default on the first-party API (Haiku 4.5 on 2026-11-15: the five
+  // tools cost 317 input tokens up front, 22k more with ENABLE_TOOL_SEARCH=false; a Turn that needed hub_turns called ToolSearch, then it). The Hub sets no
+  // ENABLE_TOOL_SEARCH: it is on already wherever Claude Code turns it on by itself, and Claude Code keeps it off for a custom base URL on purpose.
+  capabilities: { sessionMcp: "acp", systemPrompt: "acp-meta", planTool: "native", toolLoad: "native", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native", record: "files", steer: "native" },
 };

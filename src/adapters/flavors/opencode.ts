@@ -53,5 +53,7 @@ export const opencodeFlavor: HarnessFlavor = {
   // The record is read as files with its own file tools (2026-11-13; verified on the installed program: it read the directory and answered from it).
   // No words in the middle of a turn: OpenCode's ACP (2.2.5) refuses a second prompt while one runs ("Session already has an active ACP
   // prompt", opencode.ts BUSY) and its initialize advertises no steering method.
-  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", resume: "native", fork: "native", attachments: "native", usage: "turn", record: "files", steer: "none" },
+  // Tools load on demand natively: OpenCode 2.2.5 calls MCP tools from its `execute` script (Code Mode; ten tools cost 257 input tokens up front on 2026-11-15,
+  // and a Turn that needed hub_turns called it from there).
+  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", toolLoad: "native", resume: "native", fork: "native", attachments: "native", usage: "turn", record: "files", steer: "none" },
 };

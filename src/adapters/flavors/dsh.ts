@@ -45,5 +45,7 @@ export const dshFlavor: HarnessFlavor = {
   // The record is read as files with its own file tools (2026-11-13; verified on the installed program: it read the directory and answered from it).
   // No words in the middle of a turn: dsh-acp (installed 2026-11-14) refuses a second prompt while one runs ("a prompt is already in flight for
   // this session", lib/index.js prompt) and its initialize advertises no steering method.
-  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", resume: "native", fork: "none", attachments: "native", usage: "turn", record: "files", steer: "none" },
+  // Tools load through hub_tool_search: dsh-mcp-client sends every tool definition with every request (the five tools cost 2.2k input tokens on 2026-11-15),
+  // and it lists the server's tools again on notifications/tools/list_changed (a Turn that needed hub_turns searched, was listed it, and called it).
+  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", toolLoad: "search", resume: "native", fork: "none", attachments: "native", usage: "turn", record: "files", steer: "none" },
 };

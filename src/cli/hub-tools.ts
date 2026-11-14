@@ -3,8 +3,8 @@ import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { parseArgs } from "node:util";
 import {
-  TABLE_ENV, TABLE_INSTRUCTIONS_ENV, TABLE_LIMITS, TABLE_MCP_NAME, TABLE_NOT_IN_SESSION, TABLE_PARTS, TABLE_RECORD_ENV, TABLE_SEARCH_SCOPES, TABLE_TOOLS,
-  type TableSearchHit, type TableSearchView, type TableTool, type TableTurnRead, type TableTurnsView,
+  TABLE_ENV, TABLE_INSTRUCTIONS_ENV, TABLE_LIMITS, TABLE_LOAD_ENV, TABLE_MCP_NAME, TABLE_NOT_IN_SESSION, TABLE_PARTS, TABLE_PROGRESS_ENV, TABLE_PROGRESS_TOOLS, TABLE_RECORD_ENV,
+  TABLE_SEARCH_SCOPES, TABLE_TOOL_SEARCH, TABLE_TOOLS, type TableSearchHit, type TableSearchView, type TableTool, type TableTurnRead, type TableTurnsView,
 } from "../contracts/table.js";
 import { isMainModule } from "./main-module.js";
 
@@ -20,37 +20,91 @@ import { isMainModule } from "./main-module.js";
  * bearer token. Without them this is no Hub conversation and there is nothing to read: the MCP server still answers initialize and
  * tools/list, and every call, like every command, answers TABLE_NOT_IN_SESSION. When the Hub cannot be reached it says so in a
  * sentence. This file imports nothing of the Gateway but the contract and the main-module check, to start fast and to stay a program of its own.
+ * Where the session loads tools on demand (TABLE_LOAD_ENV), the server lists the core ones and hub_tool_search, and lists more as that finds them.
  */
 
 const SERVER_VERSION = "1";
 /** The protocol versions this server speaks, newest first; the tools it offers are the same in all of them. */
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 const REQUEST_MS = 30_000, MAX_REPLY_BYTES = 8 * 1024 * 1024;
-/**
- * What the server's `initialize` says of its tools, for every Harness that reads MCP instructions. How to use the task list and the
- * wrap-up is the Hub's session instructions, which reach the model through the Harness's own entry (its system prompt, its developer
- * instructions); only a session whose Harness has none is given them here (TABLE_INSTRUCTIONS_ENV), so that they are never said twice.
- */
-const INSTRUCTIONS = "HarnessHub keeps the whole history of this conversation. A handoff note you were given is a summary: when it says something was left out, "
-  + "or when you need what the user or an earlier Harness said or did, read it back with hub_turns, hub_read_turn and hub_search. "
-  + "hub_update_plan and hub_wrap_up show the user your task list and a short wrap-up above the message box; they do not replace your reply. "
-  + "hub_delegate hands a self-contained part of the work to another Harness on this computer, which does it in a conversation of its own; hub_delegations says how what you handed over stands. "
-  + "hub_board is what everyone on the task goes by (its goal, the user's constraints, decisions); write on it with hub_remember when the user states something that must keep holding beyond this message. "
-  + "hub_task shows the whole task when several conversations work on it (who has what, what each changed); the three read tools take another conversation of the task as `conversation`.";
-/** The same for a session whose Harness reads the record as files (TABLE_RECORD_ENV): the reading tools are not offered, and the session instructions name the directory. */
-const INSTRUCTIONS_FILES = "HarnessHub keeps the whole record of this task as read-only files; the session instructions name the directory. Read it with your own file tools. "
-  + "hub_update_plan and hub_wrap_up show the user your task list and a short wrap-up above the message box; they do not replace your reply. "
-  + "hub_delegate hands a self-contained part of the work to another Harness on this computer, which does it in a conversation of its own; hub_delegations says how what you handed over stands. "
-  + "hub_remember writes on the task's board (its goal, the user's constraints, decisions) when the user states something that must keep holding beyond this message.";
-/** The tools that only read the record: a session that reads it as files is not offered them. */
+
+// ---------------------------------------------------------------------------------------------------------------------
+// What this session is offered
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The tools that only read the record: a session that reads it as files (TABLE_RECORD_ENV) is not offered them. */
 const READING_TOOLS: readonly string[] = ["hub_turns", "hub_read_turn", "hub_search", "hub_task", "hub_board"];
-const recordFiles = (env: Readonly<Record<string, string | undefined>>): boolean => env[TABLE_RECORD_ENV] === "files";
-/** The tools this server offers its session. */
-export function offeredTools(env: Readonly<Record<string, string | undefined>>): readonly ToolDefinition[] { return recordFiles(env) ? TOOLS.filter(tool => !READING_TOOLS.includes(tool.name)) : TOOLS; }
-/** The server's instructions: what its tools are for, and the session instructions this session's process was given for it. */
-export function serverInstructions(env: Readonly<Record<string, string | undefined>>): string {
-  const session = env[TABLE_INSTRUCTIONS_ENV]?.trim(), own = recordFiles(env) ? INSTRUCTIONS_FILES : INSTRUCTIONS;
-  return session ? own + "\n\n" + session : own;
+const PROGRESS_TOOLS: readonly string[] = TABLE_PROGRESS_TOOLS;
+type Env = Readonly<Record<string, string | undefined>>;
+const recordFiles = (env: Env): boolean => env[TABLE_RECORD_ENV] === "files";
+const searching = (env: Env): boolean => env[TABLE_LOAD_ENV] === "search";
+const progressOn = (env: Env): boolean => env[TABLE_PROGRESS_ENV] !== "off";
+/** Every tool this session may use but hub_tool_search: the reading tools unless the record is files, the task list and the wrap-up unless they are off. */
+function usable(env: Env): readonly ToolDefinition[] {
+  return TOOLS.filter(tool => !(recordFiles(env) && READING_TOOLS.includes(tool.name)) && !(!progressOn(env) && PROGRESS_TOOLS.includes(tool.name)));
+}
+/**
+ * The tools this server lists to its session. Where the session loads them on demand (TABLE_LOAD_ENV `search`, T3 Code's McpToolExposure), only the core
+ * tools (the task list and the wrap-up, when this session is asked for them), what hub_tool_search loaded (`loaded`), and hub_tool_search itself.
+ */
+export function offeredTools(env: Env, loaded: ReadonlySet<string> = new Set()): readonly ToolDefinition[] {
+  const tools = usable(env);
+  if (!searching(env)) return tools;
+  return [...tools.filter(tool => PROGRESS_TOOLS.includes(tool.name) || loaded.has(tool.name)), searchTool(tools)];
+}
+/** What hub_tool_search can find, by purpose: said in its description, for the tools this session may load. */
+const PURPOSES: readonly (readonly [string, readonly string[]])[] = [
+  ["reading earlier turns", ["hub_turns", "hub_read_turn"]], ["searching this conversation", ["hub_search"]],
+  ["the task and its board", ["hub_task", "hub_board", "hub_remember"]], ["delegating to another Harness", ["hub_delegate", "hub_delegations"]],
+];
+function searchTool(tools: readonly ToolDefinition[]): ToolDefinition {
+  const names = new Set<string>(tools.map(tool => tool.name));
+  const found = PURPOSES.flatMap(([purpose, members]) => { const here = members.filter(name => names.has(name)); return here.length ? [purpose + " (" + here.join(", ") + ")"] : []; });
+  return { name: TABLE_TOOL_SEARCH, title: "Load HarnessHub tools",
+    description: "Load HarnessHub tools you do not have yet, then call them by name. Search by name or purpose: " + found.join(", ") + ".",
+    inputSchema: { type: "object", properties: { query: { type: "string", minLength: 1, maxLength: 500, description: "Tool names or what you need." } }, required: ["query"], additionalProperties: false },
+    annotations: { title: "Load HarnessHub tools", ...READ_ONLY } };
+}
+/** Words a tool is found by beyond its name and description, for a search in Chinese. */
+const FOUND_BY: Readonly<Partial<Record<TableTool, readonly string[]>>> = {
+  hub_turns: ["轮次", "之前", "历史", "列出"], hub_read_turn: ["某一轮", "全文", "输出", "读"], hub_search: ["搜索", "查找", "找"],
+  hub_task: ["任务", "全貌", "对话", "改了"], hub_board: ["任务板", "约束", "决定", "目标"], hub_remember: ["记住", "记下", "任务板", "约束"],
+  hub_delegate: ["委派", "交给", "另一个"], hub_delegations: ["委派", "交出去", "进展", "结果"],
+};
+/** Words that name no tool in particular. */
+const NOISE: ReadonlySet<string> = new Set(["hub", "harnesshub", "tool", "tools", "mcp", "the", "a", "of", "to", "and", "load"]);
+/**
+ * The tools a query finds among those this session may load (T3 Code's tool_search): scored by name and description, a Chinese word by the words above; the best and
+ * those at least half as good, at most ten. A query that finds none finds them all: there are few, and the model asked for one of them.
+ */
+export function searchTools(env: Env, query: string): readonly ToolDefinition[] {
+  const loadable = usable(env).filter(tool => !PROGRESS_TOOLS.includes(tool.name)), text = query.toLowerCase();
+  const terms = text.split(/[^a-z0-9_]+/u).filter(term => term !== "" && !NOISE.has(term)), runs = text.match(/[㐀-鿿]+/gu) ?? [];
+  const scored = loadable.map(tool => {
+    let score = 0;
+    for (const term of terms) score += term === tool.name ? 100 : tool.name.includes(term) ? 3 : tool.description.toLowerCase().includes(term) ? 1 : 0;
+    for (const run of runs) for (const word of FOUND_BY[tool.name] ?? []) if (run.includes(word)) score += 2;
+    return { tool, score };
+  }).filter(match => match.score > 0).sort((a, b) => b.score - a.score);
+  const best = scored[0]?.score ?? 0;
+  return best === 0 ? loadable : scored.filter(match => match.score * 2 >= best).slice(0, 10).map(match => match.tool);
+}
+/**
+ * What the server's `initialize` says of its tools, for every Harness that reads MCP instructions. How to use the task list and the wrap-up is the Hub's session
+ * instructions, which reach the model through the Harness's own entry (its system prompt, its developer instructions); only a session whose Harness has none is
+ * given them here (TABLE_INSTRUCTIONS_ENV), so that they are never said twice. Every request of the session pays for these words.
+ */
+export function serverInstructions(env: Env): string {
+  const progress = progressOn(env) ? "hub_update_plan and hub_wrap_up show the user your task list and a wrap-up; they do not replace your reply. " : "";
+  const own = recordFiles(env)
+    ? "HarnessHub keeps this task's whole record as read-only files (the session instructions name the directory); read them with your own file tools. " + progress
+      + "hub_delegate hands a self-contained part to another Harness; hub_delegations says how it stands. hub_remember puts on the task board what the user says must keep holding."
+    : "HarnessHub keeps this conversation's whole history; a handoff note is a summary. Read back what the user or an earlier Harness said or did with hub_turns, hub_read_turn and hub_search. " + progress
+      + "hub_delegate hands a self-contained part to another Harness; hub_delegations says how it stands. hub_board is what everyone on the task goes by; hub_remember puts on it what the user says must keep holding. "
+      + "hub_task shows every conversation of the task; the read tools take one as `conversation`.";
+  const loading = searching(env) ? " Load the tools not listed yet with " + TABLE_TOOL_SEARCH + "." : "";
+  const session = env[TABLE_INSTRUCTIONS_ENV]?.trim();
+  return own + loading + (session ? "\n\n" + session : "");
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -67,104 +121,94 @@ const PROGRESS = { readOnlyHint: false, destructiveHint: false, idempotentHint: 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const whole = (description: string, minimum: number, maximum?: number) => ({ type: "integer", minimum, ...(maximum === undefined ? {} : { maximum }), description });
 /** The argument the three read tools share: another conversation of the task, by its label. Said once and briefly: every session pays for these words. */
-const CONVERSATION = { type: "string", pattern: "^c-[0-9a-f]{6}$", description: "Read another conversation of this task instead: its label from hub_task." } as const;
+const CONVERSATION = { type: "string", pattern: "^c-[0-9a-f]{6}$", description: "Another conversation of this task, by its label from hub_task." } as const;
 const TOOLS: readonly ToolDefinition[] = [
   { name: "hub_turns", title: "List the turns of this conversation",
-    description: "List the turns of this HarnessHub conversation, oldest first, one entry each: its number, which Harness (and model) ran it, how it ended, the user's words and the reply shortened, "
-      + "and the counts of its tool calls and changed files. Use it to see what happened earlier: when a handoff note says something was left out, or the user refers to work you did not see. "
-      + "Turn numbers are the same as in handoff notes; the last turn may be the one you are running now. Shows the latest " + TABLE_LIMITS.turnsDefault + " turns; page with `from` and `limit`.",
+    description: "List this conversation's turns, oldest first: number, Harness (and model), how it ended, the user's words and the reply shortened, how many tool calls and changed files. "
+      + "Numbers match handoff notes; the last may be the turn running now. Shows the latest " + TABLE_LIMITS.turnsDefault + "; page with `from` and `limit`.",
     inputSchema: { type: "object", properties: {
-      from: whole("The number of the first turn to list. Default: the window ends at the latest turn.", 1),
-      limit: whole("How many turns to list (default " + TABLE_LIMITS.turnsDefault + ").", 1, TABLE_LIMITS.turnsMax),
+      from: whole("The first turn to list. Default: the window ends at the latest.", 1),
+      limit: whole("How many (default " + TABLE_LIMITS.turnsDefault + ").", 1, TABLE_LIMITS.turnsMax),
       conversation: CONVERSATION }, additionalProperties: false },
     annotations: { title: "List the turns of this conversation", ...READ_ONLY } },
   { name: "hub_read_turn", title: "Read one turn of this conversation",
-    description: "Read one turn of this HarnessHub conversation. By default you get an overview: the user's words, the reply, the numbered tool calls, the files changed and the plan, each cut at a sensible "
-      + "length with a pointer to the rest. `part` reads one piece in full: user, reply, tools, files or plan; or, for one tool call (its number from the tools list, as `tool`), its input, complete output or diff. "
-      + "Use it when a handoff note says content was left out (for example a command's full output from an earlier turn), or when you need exactly what was said or done before. "
-      + "Long content comes in pages: the result says how much is left and how to fetch the next page with `offset`. Secrets are hidden; the turn's reasoning is not kept.",
+    description: "Read one turn. Default: an overview (the user's words, the reply, numbered tool calls, files changed, plan), each cut with a pointer to the rest. "
+      + "`part` reads one piece in full: user, reply, tools, files, plan; or one tool call's input, output or diff (`tool`: its number). "
+      + "Long parts come in pages; the result gives the next `offset`. Secrets are hidden; reasoning is not kept.",
     inputSchema: { type: "object", properties: {
-      n: whole("The turn's number, as in hub_turns and in handoff notes.", 1),
-      part: { type: "string", enum: [...TABLE_PARTS], description: "What to read: overview (the default), user, reply, tools, files, plan; or input, output, diff of one tool call, which need `tool`." },
-      tool: whole("The tool call's number in the turn's tool list (part tools, or the overview). Needed for input, output and diff.", 1),
-      offset: whole("Where the page starts, in characters of that part; the previous page's result says where the next one starts.", 0),
-      limit: whole("How many characters one page holds (default " + TABLE_LIMITS.pageDefault + ").", 1, TABLE_LIMITS.pageMax) ,
+      n: whole("The turn's number, as in hub_turns and handoff notes.", 1),
+      part: { type: "string", enum: [...TABLE_PARTS], description: "overview (default), user, reply, tools, files, plan; input, output and diff need `tool`." },
+      tool: whole("A tool call's number in the turn's list, for input, output and diff.", 1),
+      offset: whole("Where the page starts, in characters; the page before says.", 0),
+      limit: whole("Characters per page (default " + TABLE_LIMITS.pageDefault + ").", 1, TABLE_LIMITS.pageMax),
       conversation: CONVERSATION }, required: ["n"], additionalProperties: false },
     annotations: { title: "Read one turn of this conversation", ...READ_ONLY } },
   { name: "hub_search", title: "Search this conversation",
-    description: "Search this whole HarnessHub conversation (the user's words, replies, tool calls and their inputs, outputs and diffs) for a word or phrase, ignoring case. "
-      + "Returns the places that match, newest turn first, each with its turn number, where it was found and an excerpt; read one in full with hub_read_turn. "
-      + "Use it to find where something was said, decided, run or changed. A long conversation is searched a page at a time: when there are more places, the result says how to go on with `after`.",
+    description: "Search the whole conversation (the user's words, replies, tool calls with their inputs, outputs and diffs) for a word or phrase, ignoring case. "
+      + "Returns the places, newest turn first, each with its turn, where and an excerpt; read one with hub_read_turn. More places: the result gives `after`.",
     inputSchema: { type: "object", properties: {
-      query: { type: "string", minLength: 1, maxLength: TABLE_LIMITS.queryMax, description: "The word or phrase to look for." },
-      limit: whole("How many places to return (default " + TABLE_LIMITS.searchDefault + ").", 1, TABLE_LIMITS.searchMax),
-      after: { type: "string", pattern: "^(w[0-9]{1,15}\\.[0-9]{1,9}(user|reply)|[0-9]{1,9}\\.[0-9]{1,9})$", description: "Where to go on from: the `after` value the previous result gave for its next page." },
-      in: { type: "string", enum: [...TABLE_SEARCH_SCOPES], description: "What to search: all (the default) is everything, read turn by turn; words is only the user's words and the replies, which is quick however long the conversation is." } ,
+      query: { type: "string", minLength: 1, maxLength: TABLE_LIMITS.queryMax, description: "The word or phrase." },
+      limit: whole("How many places (default " + TABLE_LIMITS.searchDefault + ").", 1, TABLE_LIMITS.searchMax),
+      after: { type: "string", pattern: "^(w[0-9]{1,15}\\.[0-9]{1,9}(user|reply)|[0-9]{1,9}\\.[0-9]{1,9})$", description: "The `after` the page before gave." },
+      in: { type: "string", enum: [...TABLE_SEARCH_SCOPES], description: "all (default): everything, turn by turn; words: only the user's words and the replies, quick." },
       conversation: CONVERSATION }, required: ["query"], additionalProperties: false },
     annotations: { title: "Search this conversation", ...READ_ONLY } },
   { name: "hub_update_plan", title: "Update the task list",
-    description: "Show the user your task list for this task, pinned above their message box in HarnessHub. Give the whole list every time; it replaces the one shown before. "
-      + "Use it when the work takes several steps (three or more, or the user gave you a list): call it once at the start with every step pending except the one you begin (in_progress), "
-      + "then again each time a step starts or finishes. Keep exactly one step in_progress while you work, mark finished steps completed, and add or reword steps when the plan changes. "
-      + "Steps are short imperative phrases (\"Read the config loader\", \"Add the retry\", \"Run the tests\"). Skip it for a quick question or a one-step change.",
+    description: "Show the user your task list, pinned above their message box; give the whole list each time, it replaces the last. "
+      + "For work of three or more steps (or a list the user gave): call it at the start, one step in_progress and the rest pending, then each time a step starts or finishes. "
+      + "Keep one step in_progress; add or reword steps as the plan changes. Steps are short imperative phrases. Skip it for a quick question or a one-step change.",
     inputSchema: { type: "object", properties: {
-      items: { type: "array", minItems: 1, description: "The whole task list, in order.", items: { type: "object", properties: {
-        content: { type: "string", minLength: 1, description: "The step, as a short imperative phrase." },
-        status: { type: "string", enum: ["pending", "in_progress", "completed"], description: "pending, in_progress (one step at a time) or completed." } }, required: ["content", "status"], additionalProperties: false } },
-      explanation: { type: "string", description: "Optional: one sentence on why the plan changed." } }, required: ["items"], additionalProperties: false },
+      items: { type: "array", minItems: 1, description: "The whole list, in order.", items: { type: "object", properties: {
+        content: { type: "string", minLength: 1, description: "A short imperative phrase." },
+        status: { type: "string", enum: ["pending", "in_progress", "completed"] } }, required: ["content", "status"], additionalProperties: false } },
+      explanation: { type: "string", description: "Optional: why the plan changed, in a sentence." } }, required: ["items"], additionalProperties: false },
     annotations: { title: "Update the task list", ...PROGRESS } },
   { name: "hub_wrap_up", title: "Wrap up this turn",
-    description: "Show the user a short wrap-up of this turn above their message box in HarnessHub: call it once, last, when your work for this message is done (not for every message of a chat). "
-      + "`recap`: two or three short sentences, addressed to the user, of what is now true or changed and what is not done or not verified. "
-      + "When the next move is the user's decision (a choice of approach, a go-ahead), add `ask`: one short question, and `actions`: one or two answers as buttons, your recommendation first, "
-      + "each label one to four words as the user would say it (\"Yes, go ahead\", \"Not now\"); a button sends its label as the user's next message. Leave both out when nothing waits on the user. "
-      + "In the first turn of a conversation only, add `title`: a name for the conversation, in the user's language, at most about ten characters (eight words in English), a name and not a sentence "
-      + "(\"Fix login timeout\", \"登录超时修复\"); leave it out in every later turn.",
+    description: "Show the user a short wrap-up above their message box: call it once, last, when your work for this message is done (not on every chat message). "
+      + "`recap`: two or three short sentences to the user: what is now true or changed, what is not done or not verified. "
+      + "When the next move is the user's decision, add `ask` (one short question) and `actions` (one or two answers as buttons, your recommendation first, one to four words each as the user "
+      + "would say them; a button sends its label). In the conversation's first turn only, add `title`: its name in the user's language, about ten characters (eight English words), a name, not a sentence.",
     inputSchema: { type: "object", properties: {
       recap: { type: "string", minLength: 1, description: "Two or three short sentences: what is done, what is not." },
-      ask: { type: "string", description: "Optional: the one question the user is to answer, in one short sentence." },
+      ask: { type: "string", description: "Optional: the one question for the user." },
       actions: { type: "array", minItems: 1, maxItems: 2, description: "Optional, with ask: one or two answers, recommendation first.", items: { type: "object", properties: {
-        label: { type: "string", minLength: 1, description: "The answer as the user would say it, one to four words." } }, required: ["label"], additionalProperties: false } },
-      title: { type: "string", minLength: 1, description: "Only in the conversation's first turn: its name, in the user's language, about ten characters at most (eight words in English); a name, not a sentence. Leave it out later." } },
+        label: { type: "string", minLength: 1, description: "As the user would say it, one to four words." } }, required: ["label"], additionalProperties: false } },
+      title: { type: "string", minLength: 1, description: "First turn only: the conversation's name." } },
       required: ["recap"], additionalProperties: false },
     annotations: { title: "Wrap up this turn", ...PROGRESS } },
   { name: "hub_delegate", title: "Delegate a part of the work",
-    description: "Hand a part of this task to another Harness on this computer (another coding agent the user has installed). It works in a conversation of its own, in the same folder, "
-      + "starting from this conversation's history up to the previous turn, at the same permission level, while you go on. Use it when the user asks for another Harness, or when a part is "
-      + "independent enough to run beside your own work (a second opinion, a review, a search, a separate file). Do not delegate what you can do in a few steps yourself. "
-      + "`task` must stand on its own: say what to do, where, and what to give back, with everything it needs from this turn (it has not seen this turn). "
-      + "The call returns at once. The outcome reaches you with the user's next message; when you need it in this turn, call hub_delegations with `wait`. The user sees the delegated work as a card in this conversation.",
+    description: "Hand part of this task to another Harness on this computer. It works in a conversation of its own, in the same folder, from this conversation's history up to the previous turn, "
+      + "at the same permission level, while you go on. Use it when the user asks for another Harness, or for an independent part (a second opinion, a review, a search, a separate file); "
+      + "not for what you can do in a few steps. `task` must stand alone: what to do, where, what to give back, and what it needs from this turn, which it has not seen. "
+      + "Returns at once; the outcome comes with the user's next message, or now with hub_delegations and `wait`. The user sees it as a card.",
     inputSchema: { type: "object", properties: {
-      harness: { type: "string", minLength: 1, description: "Which Harness: its id or name, for example codex, claude, opencode, hermes. An unknown one is answered with the ids available here." },
-      task: { type: "string", minLength: 1, description: "The work to do, self-contained: what, where, and what to report back." } }, required: ["harness", "task"], additionalProperties: false },
+      harness: { type: "string", minLength: 1, description: "Its id or name, e.g. codex, claude, opencode, hermes; an unknown one is answered with the ids here." },
+      task: { type: "string", minLength: 1, description: "Self-contained: what, where, what to report back." } }, required: ["harness", "task"], additionalProperties: false },
     annotations: { title: "Delegate a part of the work", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
   { name: "hub_delegations", title: "How delegated work stands",
-    description: "The work this conversation delegated to other Harnesses, oldest first: who has it, the task, whether it still runs, and what it replied when it ended. "
-      + "`wait`: seconds to wait for what still runs (at most 25 in one call; call again while something still runs and you need it).",
-    inputSchema: { type: "object", properties: { wait: whole("Seconds to wait for work that still runs before answering.", 0, 25) }, additionalProperties: false },
+    description: "The work this conversation delegated, oldest first: who has it, the task, whether it still runs, its reply when it ended.",
+    inputSchema: { type: "object", properties: { wait: whole("Seconds to wait for what still runs (at most 25; call again if needed).", 0, 25) }, additionalProperties: false },
     annotations: { title: "How delegated work stands", ...READ_ONLY } },
   { name: "hub_task", title: "The whole task: every conversation working on it",
-    description: "The task this conversation belongs to, as HarnessHub keeps it: the conversation it began in and every conversation work was delegated to, each with its label, its Harness, "
-      + "what it was asked, whether it still runs, what it last replied and the files it changed. Use it when you were handed a part of a larger task, when you need to know what another Harness "
-      + "did or changed (before touching a file someone else may be editing), or before reading another conversation: give its label as `conversation` to hub_turns, hub_read_turn or hub_search.",
+    description: "This conversation's task: where it began and every conversation work was delegated to, each with its label, Harness, what it was asked, whether it runs, its last reply "
+      + "and changed files. Use it when handed part of a larger task, before touching a file another Harness may be editing, or for a label to read with `conversation`.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { title: "The whole task", ...READ_ONLY } },
   { name: "hub_board", title: "Read the task board",
-    description: "The task board HarnessHub keeps for this task: its goal, the constraints the user set, the decisions made and notes, written by the user and by every Harness that worked on it. "
-      + "It is given to you when it changes; read it again when you are unsure what still holds, before a decision that others on the task must live with, or when you were handed a part of the task.",
+    description: "The task board: the goal, the user's constraints, decisions and notes, written by the user and every Harness on the task. "
+      + "You are given it when it changes; read it when unsure what still holds, before a decision others must live with, or when handed part of the task.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { title: "Read the task board", ...READ_ONLY } },
   { name: "hub_remember", title: "Write on the task board",
-    description: "Write on the task board, which every Harness working on this task (now, or handed a part of it later) is given before it starts. Record only what the user says holds beyond this message: "
-      + "for the whole task or from now on (\"from now on…\", \"throughout this task…\", \"remember…\"; kind constraint: \"all new files start with zz_\", \"use pnpm, never npm\"), a choice others must also follow "
-      + "(kind decision), the task's goal when it is set or changes (kind goal, which replaces the old one), or a lasting fact about the task the user gave that others will need (kind note). "
-      + "Do not record what concerns only this message or this turn: how to answer, how to do this one step, \"only answer …\", \"don't put … in your reply\". When unsure, do not record. "
-      + "When one message both states a lasting rule and asks for a one-line reply, the rule is still recorded. One short sentence per entry, in the user's language, standing on its own. Not for progress (that is the task list). "
-      + "`forget` takes an entry off by its id when the user withdrew it: the id stands before each entry in board.md of the task's record directory, or in hub_board.",
+    description: "Write on the task board, which every Harness on this task is given before it starts. Record only what the user says holds beyond this message: for the whole task or from now on "
+      + "(\"from now on…\", \"remember…\"; constraint: \"all new files start with zz_\", \"use pnpm, never npm\"), a choice others must follow (decision), the task's goal when set or changed (goal, "
+      + "replaces the old one), a lasting fact others need (note). Not what concerns only this message or turn (how to answer, \"only answer …\", \"don't put … in your reply\"); when unsure, don't. "
+      + "A lasting rule beside a one-line request is still recorded. One short sentence per entry, in the user's language. Not for progress. "
+      + "`forget` takes off an entry the user withdrew, by its id (in hub_board, or board.md of the record).",
     inputSchema: { type: "object", properties: {
-      kind: { type: "string", enum: ["goal", "constraint", "decision", "note"], description: "goal (the task's goal; replaces the old one), constraint (what must keep holding), decision (a choice made), note (a fact others need)." },
-      text: { type: "string", minLength: 1, description: "One short sentence that stands on its own." },
-      forget: { type: "string", description: "Instead of kind and text: the id of an entry to take off the board." } }, additionalProperties: false },
+      kind: { type: "string", enum: ["goal", "constraint", "decision", "note"] },
+      text: { type: "string", minLength: 1, description: "One short sentence that stands alone." },
+      forget: { type: "string", description: "Instead of kind and text: the id of an entry to take off." } }, additionalProperties: false },
     annotations: { title: "Write on the task board", ...PROGRESS } },
 ];
 
@@ -484,9 +528,19 @@ export interface ToolIo {
 }
 const ok = (id: unknown, result: unknown) => ({ jsonrpc: "2.0", id, result });
 const failure = (id: unknown, code: number, message: string) => ({ jsonrpc: "2.0", id, error: { code, message } });
+/** One server process's session: the tools hub_tool_search loaded, and how to tell the client its list changed. */
+interface Exposure { readonly loaded: Set<string>; readonly listChanged: () => void }
+/** hub_tool_search: what the query finds, listed to the session from now on (the client is told the list changed when it grew). Calls are never gated by it. */
+function loadTools(query: unknown, env: ToolIo["env"], exposure: Exposure): { readonly content: readonly object[]; readonly isError?: true } {
+  if (typeof query !== "string" || query.trim() === "") return { content: [{ type: "text", text: "query is required: tool names or what you need." }], isError: true };
+  const found = searchTools(env, query.slice(0, 500)), before = exposure.loaded.size;
+  for (const tool of found) exposure.loaded.add(tool.name);
+  if (exposure.loaded.size > before) exposure.listChanged();
+  return { content: [{ type: "text", text: (found.length ? "Loaded; call them by name:\n" + found.map(tool => tool.name + ": " + tool.description).join("\n") : "There is nothing more to load.") }] };
+}
 
 /** One JSON-RPC message: its response, or null when it needs none (a notification, or a response to us). */
-async function answer(message: unknown, env: ToolIo["env"]): Promise<object | null> {
+async function answer(message: unknown, env: ToolIo["env"], exposure: Exposure): Promise<object | null> {
   const body = record(message);
   if (body === null) return failure(null, -32600, "Invalid Request");
   const { id, method } = body;
@@ -498,15 +552,16 @@ async function answer(message: unknown, env: ToolIo["env"]): Promise<object | nu
     case "initialize": {
       const asked = params.protocolVersion;
       const version = typeof asked === "string" && (PROTOCOL_VERSIONS as readonly string[]).includes(asked) ? asked : PROTOCOL_VERSIONS[0];
-      return ok(id, { protocolVersion: version, capabilities: { tools: {} }, serverInfo: { name: TABLE_MCP_NAME, title: "HarnessHub", version: SERVER_VERSION }, instructions: serverInstructions(env) });
+      return ok(id, { protocolVersion: version, capabilities: { tools: env[TABLE_LOAD_ENV] === "search" ? { listChanged: true } : {} }, serverInfo: { name: TABLE_MCP_NAME, title: "HarnessHub", version: SERVER_VERSION }, instructions: serverInstructions(env) });
     }
     case "ping": return ok(id, {});
-    case "tools/list": return ok(id, { tools: offeredTools(env) });
+    case "tools/list": return ok(id, { tools: offeredTools(env, exposure.loaded) });
     case "tools/call": {
       const name = params.name;
       if (typeof name !== "string" || !(TABLE_TOOLS as readonly string[]).includes(name)) return failure(id, -32602, "Unknown tool: " + (typeof name === "string" ? name.slice(0, 64) : "(no name)"));
       const args = params.arguments === undefined ? {} : record(params.arguments);
       if (args === null) return failure(id, -32602, "arguments must be an object");
+      if (name === TABLE_TOOL_SEARCH) return ok(id, loadTools(args.query, env, exposure));
       const result = await callTool(name, args, "mcp", env);
       return ok(id, { content: [{ type: "text", text: result.text }], ...(result.isError ? { isError: true } : {}) });
     }
@@ -514,24 +569,26 @@ async function answer(message: unknown, env: ToolIo["env"]): Promise<object | nu
   }
 }
 /** A line of input: one message, or a batch of them; the text to write back, or null. */
-async function handleLine(line: string, env: ToolIo["env"]): Promise<string | null> {
+async function handleLine(line: string, env: ToolIo["env"], exposure: Exposure): Promise<string | null> {
   let message: unknown;
   try { message = JSON.parse(line); } catch { return JSON.stringify(failure(null, -32700, "Parse error")); }
   if (Array.isArray(message)) {
     if (message.length === 0) return JSON.stringify(failure(null, -32600, "Invalid Request"));
-    const replies = (await Promise.all(message.map(item => answer(item, env)))).filter((item): item is object => item !== null);
+    const replies = (await Promise.all(message.map(item => answer(item, env, exposure)))).filter((item): item is object => item !== null);
     return replies.length ? JSON.stringify(replies) : null;
   }
-  const reply = await answer(message, env);
+  const reply = await answer(message, env, exposure);
   return reply === null ? null : JSON.stringify(reply);
 }
 /** Serves MCP on stdin and stdout until stdin ends; the calls still running then are answered first. */
 async function serve(io: ToolIo): Promise<number> {
   const pending = new Set<Promise<void>>();
   const lines = createInterface({ input: io.stdin, crlfDelay: Infinity });
+  // Said before the answer of the call that grew the list, so that the client lists again before the model reads that answer.
+  const exposure: Exposure = { loaded: new Set(), listChanged: () => { io.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" }) + "\n"); } };
   lines.on("line", line => {
     if (line.trim() === "") return;
-    const task: Promise<void> = handleLine(line, io.env).then(text => { if (text !== null) io.stdout.write(text + "\n"); }, () => {}).then(() => { pending.delete(task); });
+    const task: Promise<void> = handleLine(line, io.env, exposure).then(text => { if (text !== null) io.stdout.write(text + "\n"); }, () => {}).then(() => { pending.delete(task); });
     pending.add(task);
   });
   await once(lines, "close");

@@ -337,9 +337,10 @@ export interface HarnessControl {
    * Text the Driver gives the model of the native sessions it opens or restores from now on (null: nothing), through the entry its
    * declaration names (ControlOptions.entry.instructions: Claude Code's `_meta.systemPrompt.append`, Codex's `developerInstructions`
    * after the user's own, the Hub's MCP server's instructions, or a block after the first prompt of a new session). Never part of the
-   * user's words as the Hub keeps them. Absent: this Driver has no such entry.
+   * user's words as the Hub keeps them. Absent: this Driver has no such entry. `tools.progress` false: the session is not asked for the
+   * task list and the wrap-up, and the Hub's tool server it is handed leaves those two tools out (TABLE_PROGRESS_ENV); absent: they are there.
    */
-  setSessionInstructions?(text: string | null): void;
+  setSessionInstructions?(text: string | null, tools?: { readonly progress: boolean }): void;
   /**
    * The Driver's static relay declaration (ADR-055 §3.2, §8.1): the same module-level object its factory returns for the
    * harness without an instance (relayCapabilities in adapters/control/factory.ts), never changed by the connection.

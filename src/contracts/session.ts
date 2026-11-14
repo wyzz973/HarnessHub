@@ -490,6 +490,8 @@ export interface PreparedSessionBinding {
   readonly recordFiles?: boolean;
   /** Whether this Harness keeps its own task list and asks its own questions (FlavorCapabilities.planTool `native`): `hub.progress` `auto` then adds nothing. */
   readonly nativePlan?: boolean;
+  /** Whether this process's tool server lists only the core tools and hub_tool_search (FlavorCapabilities.toolLoad `search`): its instructions then say how to load the rest. */
+  readonly toolSearch?: boolean;
   assertOwned(): void;
   close(): Promise<CleanupEvidence>;
 }

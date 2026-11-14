@@ -278,8 +278,9 @@ export interface Arrangement {
  * Calls the timeline does not draw: the Hub's two tools that tell how the Turn goes (`hub_update_plan`, `hub_wrap_up`). What they said is the Turn's task list and wrap-up,
  * each one line in the transcript and shown whole above the message box; the call itself would only say it again.
  */
-// The same goes for the Hub's delegation tools: the work handed over stands as a card after the Turn, and asking how it stands is not an action of the task.
-const PROGRESS: ReadonlySet<string> = new Set<string>([...TABLE_PROGRESS_TOOLS, "hub_delegate", "hub_delegations", "hub_remember"]);
+// The same goes for the Hub's delegation tools: the work handed over stands as a card after the Turn, and asking how it stands is not an action of the task;
+// nor is loading the Hub's other tools (hub_tool_search).
+const PROGRESS: ReadonlySet<string> = new Set<string>([...TABLE_PROGRESS_TOOLS, "hub_delegate", "hub_delegations", "hub_remember", "hub_tool_search"]);
 const COMMAND_ELSEWHERE: ReadonlySet<string> = new Set(["plan", "wrap-up", "delegate", "delegations", "remember"]);
 const elsewhere = (item: ReadItem): boolean => item.type === "mcp_tool" ? item.server === TABLE_MCP_NAME && PROGRESS.has(item.tool)
   : item.type === "command" && COMMAND_ELSEWHERE.has(hubCommandOnly(item.command)?.verb ?? "");

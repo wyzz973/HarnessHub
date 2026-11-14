@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { parseProviderTarget } from "../../../contracts/provider.js";
-import { HUB_DELEGATION_INSTRUCTIONS, HUB_PROGRESS_INSTRUCTIONS, hubCommandCall, hubCommandInstructions, hubRecordInstructions } from "../../../contracts/table.js";
+import { HUB_DELEGATION_INSTRUCTIONS, HUB_PROGRESS_INSTRUCTIONS, HUB_TOOL_SEARCH_INSTRUCTIONS, hubCommandCall, hubCommandInstructions, hubRecordInstructions } from "../../../contracts/table.js";
 import { cutTitle } from "../../../contracts/web.js";
 import { listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeUsage } from "../../../contracts/control.js";
 import { type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
@@ -937,12 +937,18 @@ export class SessionRuntime {
    */
   private sessionInstructions(binding: PreparedSessionBinding | null, id: SessionId): string | null {
     if (binding?.hubTools !== true) return null;
-    const setting = this.settings().progress, progress = setting === "on" || setting === "auto" && binding.nativePlan !== true;
+    const progress = this.progressAsked(binding);
     // A Harness whose tools are a command is told the command either way: nothing else would say it is there.
     if (binding.hubCommand !== undefined) return hubCommandInstructions(binding.hubCommand, progress);
     // A Harness that reads the record as files is told where the directory is in place of the reading tools.
-    const place = this.recordPlace(id, binding), rest = place === null ? HUB_DELEGATION_INSTRUCTIONS : hubRecordInstructions(place.dir, place.self);
+    const place = this.recordPlace(id, binding), rest = (place === null ? HUB_DELEGATION_INSTRUCTIONS : hubRecordInstructions(place.dir, place.self))
+      + (binding.toolSearch === true ? HUB_TOOL_SEARCH_INSTRUCTIONS : "");
     return progress ? HUB_PROGRESS_INSTRUCTIONS + "\n" + rest : rest;
+  }
+  /** Whether the session is asked for the task list and the wrap-up (`hub.progress`): `auto` asks a Harness without its own task list. Its tool server has those two tools only then. */
+  private progressAsked(binding: PreparedSessionBinding): boolean {
+    const setting = this.settings().progress;
+    return setting === "on" || setting === "auto" && binding.nativePlan !== true;
   }
   /**
    * Whether the Harness of the Turn `target` compacted its own session in the Turn before (2026-11-13): that Turn was its own too, and it told of a compaction (a
@@ -2730,7 +2736,7 @@ export class SessionRuntime {
         // abandoned session, never resumed.
         const resumeFrom = previousNative?.opensNew === true ? undefined : previousNative?.checkpoint;
         const open = (on: HarnessControl, from: string | undefined) => {
-          on.setSessionInstructions?.(this.sessionInstructions(execution.binding, id));
+          on.setSessionInstructions?.(this.sessionInstructions(execution.binding, id), { progress: execution.binding!.hubTools === true && this.progressAsked(execution.binding!) });
           return on.open(execution.binding!.workspace, carriedConfiguration?.model ?? run.selection.nativeModel, nativeOptions, from);
         };
         try { native = await open(control, resumeFrom); }
