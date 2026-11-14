@@ -34,6 +34,8 @@ async function start(t: test.TestContext) {
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  // These tests are about words kept for the Turn's end: since 2026-11-14 words written while a reply runs go into the Turn by default where the Harness can take them.
+  await context.addInitScript(() => { try { if (localStorage.getItem("harnesshub:preferences") === null) localStorage.setItem("harnesshub:preferences", JSON.stringify({ whileRunning: "queue", version: 3 })); } catch { /* none */ } });
   const page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });

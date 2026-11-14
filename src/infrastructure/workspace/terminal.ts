@@ -1,12 +1,17 @@
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
+import { constants as os } from "node:os";
 import { isAbsolute, normalize } from "node:path";
 import type { IPty } from "node-pty";
+import type { TerminalExitView } from "../../contracts/terminal.js";
 import { loginShellEnvironment } from "../discovery/login-shell.js";
 
-/** How long a shell has to end after it is hung up on (told again every 200 ms), and how long it is waited for after it is killed. */
-const HANGUP_GRACE_MS = 2000, HANGUP_REPEAT_MS = 200, KILL_WAIT_MS = 2000;
+/**
+ * How long a shell has to end after it is asked to (SIGTERM and a hang-up, told again every 200 ms) before it is killed, and how long it
+ * is waited for after it is killed.
+ */
+const END_GRACE_MS = 1000, END_REPEAT_MS = 200, KILL_WAIT_MS = 2000;
 /** The shell of a user whose `$SHELL` is unset or no program: the default of macOS. */
 const DEFAULT_SHELL = "/bin/zsh";
 /** What login(1) starts a login shell with; the shell's login configuration builds the user's PATH from it (path_helper and the profiles). */
@@ -50,8 +55,8 @@ export interface WorkspaceTerminalOptions {
   readonly size: TerminalSize;
   /** The shell's output, decoded as a stream: a character cut between two reads is told whole with the second. */
   readonly output: (text: string) => void;
-  /** Once, after the last output: the shell's exit status, null when a signal ended it. */
-  readonly exit: (code: number | null) => void;
+  /** Once, after the last output: the shell's exit status (null when a signal ended it) and the signal's name (null when it exited). */
+  readonly exit: (exit: TerminalExitView) => void;
 }
 
 /**
@@ -59,8 +64,8 @@ export interface WorkspaceTerminalOptions {
  * and a size that follows the page. It lives until it exits or `end()` hangs up on it.
  */
 export class WorkspaceTerminal {
-  /** Ends with the shell's exit status (null when a signal ended it), after the last output has been told. */
-  readonly exited: Promise<number | null>;
+  /** Ends with how the shell ended, after the last output has been told. */
+  readonly exited: Promise<TerminalExitView>;
   private done = false;
   private ending: Promise<void> | null = null;
   private constructor(private readonly pty: IPty, options: WorkspaceTerminalOptions) {
@@ -71,8 +76,9 @@ export class WorkspaceTerminal {
       this.done = true;
       const rest = decoder.decode();
       if (rest !== "") options.output(rest);
-      const code = signal !== undefined && signal !== 0 ? null : exitCode;
-      options.exit(code); done(code);
+      const signalled = signal !== undefined && signal !== 0;
+      const exit: TerminalExitView = { code: signalled ? null : exitCode, signal: signalled ? signalName(signal) : null };
+      options.exit(exit); done(exit);
     }));
   }
   /** Starts the shell; fails when node-pty cannot load here or the shell cannot be started. */
@@ -87,10 +93,11 @@ export class WorkspaceTerminal {
   pause(): void { if (!this.done) this.pty.pause(); }
   resume(): void { if (!this.done) this.pty.resume(); }
   /**
-   * Hangs up, as a line that is cut does: the shell and every other process on its terminal (its jobs, a full-screen program)
-   * get SIGHUP, which a program started with nohup ignores. The shell is told again until it exits (a shell can miss a hang-up
-   * that comes as it finishes a command line); still there after two seconds, it and its process group are killed. Ends once the
-   * shell has exited, or two seconds after the kill; `true` when it is known to have exited.
+   * Ends the shell: it gets SIGTERM and, since an interactive zsh or bash ignores SIGTERM, a hang-up as a terminal window that closes
+   * gives it, and every other process on its terminal (its jobs, a full-screen program) gets SIGHUP, which a program started with nohup
+   * ignores. The shell is told again every 200 ms (a shell can miss a hang-up that comes as it finishes a command line); still there
+   * after a second, it and its process group get SIGKILL. Ends once the shell has exited, or two seconds after the kill; `true` when it
+   * is known to have exited.
    */
   end(): Promise<boolean> {
     this.ending ??= (async () => {
@@ -98,10 +105,12 @@ export class WorkspaceTerminal {
       // Listed while the shell still holds its terminal: a terminal's name is given to another one once it is closed.
       const others = (await terminalProcesses(this.tty)).filter(pid => pid !== this.pty.pid);
       if (this.done) return;
-      signal(this.pty.pid, "SIGHUP");
+      const ask = (): void => { signal(this.pty.pid, "SIGTERM"); signal(this.pty.pid, "SIGHUP"); };
+      ask();
       for (const pid of others) signal(pid, "SIGHUP");
-      for (const deadline = Date.now() + HANGUP_GRACE_MS; Date.now() < deadline; signal(this.pty.pid, "SIGHUP"))
-        if (await within(this.exited, HANGUP_REPEAT_MS)) return;
+      for (const deadline = Date.now() + END_GRACE_MS; Date.now() < deadline; ask())
+        if (await within(this.exited, Math.max(1, Math.min(END_REPEAT_MS, deadline - Date.now())))) return;
+      if (this.done) return;
       signal(-this.pty.pid, "SIGKILL"); signal(this.pty.pid, "SIGKILL");
       await within(this.exited, KILL_WAIT_MS);
     })();
@@ -119,6 +128,10 @@ function terminalProcesses(tty: string | undefined): Promise<readonly number[]> 
   return new Promise(done => execFile("/bin/ps", ["-t", tty, "-o", "pid="], { timeout: 2000, env: { PATH: "/usr/bin:/bin" } }, (error, stdout) => {
     done(error ? [] : String(stdout).split(/\s+/u).filter(Boolean).map(Number).filter(pid => Number.isSafeInteger(pid) && pid > 1));
   }));
+}
+/** A signal's name (`SIGKILL`) by its number on this system; the number itself when it has none here. */
+function signalName(value: number): string {
+  return Object.entries(os.signals).find(([, number]) => number === value)?.[0] ?? String(value);
 }
 function signal(pid: number, name: NodeJS.Signals): void {
   try { process.kill(pid, name); } catch { /* already gone */ }

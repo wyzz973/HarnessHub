@@ -8,7 +8,7 @@ import type { NativeOptions } from "../contracts/control.js";
 import type { PlanStep } from "../contracts/protocol.js";
 import type {
   ConversationChangesView, ConversationEdit, DeletedSessionListView, ItemTextView, ItemView, KeptProcessView, NativeStateView, RunItemsPageView, SessionFacts, SessionHeadView, SessionListView, SessionSummary, SessionView,
-  SessionViewV14, TurnPageView, TurnWindowView,
+  SessionViewV14, TurnPageView, TurnWindowView, WorktreeMark,
 } from "../contracts/web.js";
 import { summaryLine } from "../contracts/web.js";
 import type { FrameViews } from "./commit-frame.js";
@@ -95,9 +95,12 @@ function asked<T>(read: () => T): T {
   }
 }
 const missing = (code: string, message: string): never => { throw new SessionError(code, message); };
-/** The marks of the list a head or a row carries (2026-11-14): archived, pinned, put aside until a moment; absent when it has none. */
-const listMarks = (from: { readonly archived?: true | undefined; readonly pinned?: true | undefined; readonly snoozedUntil?: number | undefined }): { readonly archived?: true; readonly pinned?: true; readonly snoozedUntil?: number } =>
-  ({ ...(from.archived === true ? { archived: true as const } : {}), ...(from.pinned === true ? { pinned: true as const } : {}), ...(typeof from.snoozedUntil === "number" ? { snoozedUntil: from.snoozedUntil } : {}) });
+/** The marks of the list a head or a row carries (2026-11-14): archived, pinned (with its place among the pinned), put aside until a moment, the Git worktree it works in; absent when it has none. */
+const listMarks = (from: { readonly archived?: true | undefined; readonly pinned?: true | undefined; readonly pinnedOrder?: number | undefined; readonly snoozedUntil?: number | undefined; readonly worktree?: WorktreeMark | undefined }):
+  { readonly archived?: true; readonly pinned?: true; readonly pinnedOrder?: number; readonly snoozedUntil?: number; readonly worktree?: WorktreeMark } =>
+  ({ ...(from.archived === true ? { archived: true as const } : {}), ...(from.pinned === true ? { pinned: true as const } : {}),
+    ...(from.pinned === true && typeof from.pinnedOrder === "number" && Number.isFinite(from.pinnedOrder) ? { pinnedOrder: from.pinnedOrder } : {}), ...(typeof from.snoozedUntil === "number" ? { snoozedUntil: from.snoozedUntil } : {}),
+    ...(from.worktree === undefined ? {} : { worktree: { root: from.worktree.root, path: from.worktree.path, branch: from.worktree.branch, baseSha: from.worktree.baseSha } }) });
 
 /** What the native session changed of its configuration by its own commands since its last Turn under the same epoch: the next Turn applies it (`carriedNativeConfiguration`, domain/state.ts, over the rows). */
 function carriedOf(selection: HarnessSelection, epoch: number, binding: NativeSessionBinding | undefined, last: RunRow | null): { readonly model?: string; readonly options?: NativeOptions } | null {

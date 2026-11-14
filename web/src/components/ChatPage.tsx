@@ -31,7 +31,7 @@ import { Composer, type DockedApproval } from "./Composer.js";
 import { DetailsPanel, type ChangesLoader, type ChangesWant, type PanelTab, type WorkspaceFacts } from "./DetailsPanel.js";
 import type { DiffRemark } from "./DiffBody.js";
 import type { WorkspaceAccess } from "./WorkspaceTools.js";
-import { TerminalDrawer, type ProjectScript } from "./TerminalDrawer.js";
+import { TerminalDrawer, type ProjectScript, type TerminalAccess } from "./TerminalDrawer.js";
 import { FindBar, type FindAccess, type FindHit, type FindTarget } from "./FindBar.js";
 import type { GitAccess } from "./GitChanges.js";
 import { RelayPacketDialog, type PacketTarget } from "./RelayDetails.js";
@@ -185,10 +185,12 @@ export interface ChatProps {
   git?: GitAccess | undefined;
   /** Finds words in the open conversation, all of it, and reads its Turns down to a place; absent where the Gateway cannot search. */
   find?: FindAccess | undefined;
+  /** Putting the files back as they were before a Turn (`ordinal`), offered with a resend where the conversation works in a worktree of its own. */
+  restore?: { readonly can: (ordinal: number, signal: AbortSignal) => Promise<boolean>; readonly run: (ordinal: number) => Promise<void> } | undefined;
   /** Find opened from elsewhere — a message the palette found: in this conversation, with these words, at this item. A new `stamp` opens it again. */
   findRequest?: (FindTarget & { readonly sessionId: string; readonly stamp: number }) | null | undefined;
   /** The address of the open conversation's terminal, for a size in columns and rows; absent where the Gateway has none. */
-  terminalUrl?: ((cols: number, rows: number) => string) | undefined;
+  terminals?: TerminalAccess | undefined;
   /** What is done with the open conversation's workspace: an editor, a commit and a push, a file shown. */
   workspaceTools?: WorkspaceAccess | undefined;
   /** Reads where the open conversation works: its folder and its repository's branch and uncommitted files. */
@@ -211,7 +213,7 @@ export interface ChatProps {
 }
 
 /** The latest values the page's shortcuts act on, read when a key is pressed rather than bound into the listener. */
-interface ShortcutState { readonly stop: (() => void) | null; readonly togglePanel: (() => void) | null; readonly openPicker: (() => void) | null; readonly answer: (() => void) | null; readonly toggleTerminal: (() => void) | null; readonly find: (() => void) | null }
+interface ShortcutState { readonly stop: (() => void) | null; readonly togglePanel: (() => void) | null; readonly openPicker: (() => void) | null; readonly openList: ((list: "model" | "thought" | "permission") => void) | null; readonly answer: (() => void) | null; readonly toggleTerminal: (() => void) | null; readonly find: (() => void) | null }
 /** A local decision on an approval, kept until the page leaves the conversation, to write its result back into the Turn. */
 type DecisionRecord = Decision & { readonly runId: string };
 
@@ -596,6 +598,7 @@ export function ChatPage(props: ChatProps) {
     return [<ProtocolTurn key={"turn:" + run.id} run={run} message={messageOf} arrived={arrived} detailed={detailed} onEdit={fillDraft}
       onRetry={canRetry ? (text, sent) => { void (props.onBranchSend ? props.onBranchSend(run.id, text, sent ?? []) : send(text, sent ?? [])).catch(() => {}); } : undefined} loadToolDetail={props.onToolDetail} onBranch={canBranch ? props.onBranch : undefined}
       onResend={props.onBranchSend && session?.status === "open" ? (runId, text, sent) => { void props.onBranchSend!(runId, text, sent ?? []).catch(() => {}); } : undefined}
+      restore={props.restore && session?.status === "open" ? turnRun => { const ordinal = runs.get(turnRun.id)?.ordinal; return ordinal === undefined ? undefined : { check: signal => props.restore!.can(ordinal, signal), run: () => props.restore!.run(ordinal) }; } : undefined}
       onSelectBranch={props.onSelectBranch ? runId => { void props.onSelectBranch!(runId).catch(() => {}); } : undefined} branchBusy={!canRetry}
       onDetails={openDetails} detailsOpen={panelOpen && panelTab === "overview" && panelFocus === "run" && (panelRun ?? current.runs.at(-1)?.id) === run.id} onViewPacket={relay ? viewPacket : undefined} reads={props.reads} workspace={current.workspace} onOpenChanges={openChanges} quiet={quiet}
       startupHint={startupHints.get(run.id)} queue={queue?.runId === run.id ? queueNotice : undefined}
@@ -626,21 +629,24 @@ export function ChatPage(props: ChatProps) {
 
   // ⌘J opens the Agent list, ⌘. stops the reply, ⌘\ opens or closes the details (ADR-054 §5); ⌘⏎ with an empty message box presses the
   // next-step box's first answer. The page's own listener runs first and keeps these keys, so none of them reaches another binding while the conversation is shown.
-  const shortcuts = useRef<ShortcutState>({ stop: null, togglePanel: null, openPicker: null, answer: null, toggleTerminal: null, find: null });
+  const shortcuts = useRef<ShortcutState>({ stop: null, togglePanel: null, openPicker: null, openList: null, answer: null, toggleTerminal: null, find: null });
+  // A list of the message box opened by its keys (the model, the thinking level, the permission): asked for by a new stamp.
+  const [openList, setOpenList] = useState<{ readonly list: "model" | "thought" | "permission"; readonly at: number } | null>(null);
   const firstAnswer = nextStep?.actions?.[0];
   shortcuts.current = {
     stop: active && !active.cancelRequested && mutation === null ? props.onCancel : null,
     togglePanel: session ? () => setPanel(!panelOpen) : null,
-    toggleTerminal: session && props.terminalUrl ? () => setTerminal(value => !value) : null,
+    toggleTerminal: session && props.terminals ? () => setTerminal(value => !value) : null,
     find: session && props.find ? () => setFinding(true) : null,
     openPicker: docked === null && !props.loading && props.sessionError === null && session?.status !== "closed" && (mutation === null || mutation === "switching") ? () => setAgentPicker(true) : null,
+    openList: docked === null && !props.loading && props.sessionError === null && session?.status !== "closed" && (mutation === null || mutation === "switching") ? list => setOpenList({ list, at: Date.now() }) : null,
     answer: firstAnswer !== undefined && answerBlocked === null && props.messageDraft.trim() === "" ? () => answer(firstAnswer) : null,
   };
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.isComposing || event.keyCode === 229 || !(event.metaKey || event.ctrlKey)) return;
       // The conversation's own shortcuts, by the keys chosen now (lib/keys.ts); ⌘⏎, the first answer of the next-step box, is not one that is given other keys.
-      const action = actionOf(event), key = action === "stop" || action === "panel" || action === "picker" || action === "terminal" || action === "find" ? action : !event.altKey && !event.shiftKey && event.key === "Enter" ? "answer" : null;
+      const action = actionOf(event), key = action === "stop" || action === "panel" || action === "picker" || action === "model" || action === "effort" || action === "permission" || action === "terminal" || action === "find" ? action : !event.altKey && !event.shiftKey && event.key === "Enter" ? "answer" : null;
       if (key === null) return;
       // A dialog (a confirmation, the palette) keeps its own keys; toasts are dialogs that never take them.
       if (event.target instanceof Element && event.target.closest("[role='dialog']:not(.toast)")) return;
@@ -650,7 +656,8 @@ export function ChatPage(props: ChatProps) {
       // Find where it is offered; elsewhere ⌘F stays the browser's own.
       if (key === "find" && current.find === null) return;
       event.preventDefault(); event.stopPropagation();
-      if (key === "stop") current.stop?.(); else if (key === "panel") current.togglePanel?.(); else if (key === "answer") current.answer?.(); else if (key === "terminal") current.toggleTerminal?.(); else if (key === "find") current.find?.(); else current.openPicker?.();
+      if (key === "stop") current.stop?.(); else if (key === "panel") current.togglePanel?.(); else if (key === "answer") current.answer?.(); else if (key === "terminal") current.toggleTerminal?.(); else if (key === "find") current.find?.();
+      else if (key === "model" || key === "effort" || key === "permission") current.openList?.(key === "effort" ? "thought" : key); else current.openPicker?.();
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
@@ -663,7 +670,7 @@ export function ChatPage(props: ChatProps) {
     return { checked, onToggle: () => relay.onNext(checked ? null : SEND_ALONE) };
   })() : undefined;
   const composer = <Composer {...props} sendAlone={sendAlone} onSendDraft={text => send(text)} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}
-    onOpenDelegate={props.onDelegate && session?.status === "open" ? () => setDelegating(true) : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} onEditLast={editLast} onReplaceDraft={fillDraft}
+    onOpenDelegate={props.onDelegate && session?.status === "open" ? () => setDelegating(true) : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} openList={openList} onEditLast={editLast} onReplaceDraft={fillDraft}
     above={session ? <>
       {relay ? <RelayCard line={relayNow} banner={banner} target={harnessName(session.selection.harnessId)} next={relay.next} onNext={relay.onNext}
         onDismissBanner={() => { if (banner !== null) closed.add(closedKey(banner.key)); }}/> : null}
@@ -685,7 +692,7 @@ export function ChatPage(props: ChatProps) {
     : TURN_STATUS_WORDS[stateOf(current)];
   const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史"
     : currentState ?? (pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话");
-  const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} loadChanges={props.onLoadChanges} tab={panelTab} onTab={chooseTab} runId={panelRun} onRun={setPanelRun} onOpenSession={props.onOpenSession} focus={panelFocus} want={changesWant} onReveal={props.onReveal} loadWorkspace={props.onLoadWorkspace} onRemark={session.status === "open" ? remark : undefined} tools={props.workspaceTools} git={props.git} onSaid={words => toast.show({ title: words })}
+  const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} loadChanges={props.onLoadChanges} tab={panelTab} onTab={chooseTab} runId={panelRun} onRun={setPanelRun} onOpenSession={props.onOpenSession} focus={panelFocus} want={changesWant} onReveal={props.onReveal} loadWorkspace={props.onLoadWorkspace} onRemark={session.status === "open" ? remark : undefined} tools={props.workspaceTools} git={props.git} onSaid={(words, link) => toast.show({ title: words, ...(link ? { action: { label: "打开", onClick: () => { window.open(link, "_blank", "noopener,noreferrer"); } } } : {}) })}
     loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)} board={props.taskBoard}
     relay={relay?.view && relayHasStory(relay.view) ? { view: relay.view, onViewPacket: viewPacket } : undefined}/> : null;
   // #23: the panel opens by widening (300 ms) and pushes the conversation aside; its content follows 60 ms later from 24 px to
@@ -714,7 +721,7 @@ export function ChatPage(props: ChatProps) {
         {/* The Conversation board's header ends with the details button and "…": showing every step and ending the conversation
             are items of that menu (rulings R1, R3), so they are there at every width. */}
         <div className="flex items-center gap-0.5 sm:gap-2.5">
-          {props.terminalUrl ? <Tip label={<>{terminal ? "收起终端" : "打开终端"}（{keyText("terminal")}）</>}><button type="button" className="icon-btn max-sm:hidden" aria-label="终端" aria-pressed={terminal} onClick={() => setTerminal(value => !value)}><SquareTerminal size={16}/></button></Tip> : null}
+          {props.terminals ? <Tip label={<>{terminal ? "收起终端" : "打开终端"}（{keyText("terminal")}）</>}><button type="button" className="icon-btn max-sm:hidden" aria-label="终端" aria-pressed={terminal} onClick={() => setTerminal(value => !value)}><SquareTerminal size={16}/></button></Tip> : null}
           <Tip label={<>{panelOpen ? "收起详情" : "打开详情"}（{keyText("panel")}）</>}><button type="button" className="icon-btn relative" aria-label="详情栏" aria-pressed={panelOpen} aria-describedby={changes ? "details-changes" : undefined} onClick={() => setPanel(!panelOpen)}>
             <PanelRight size={16}/>{!panelOpen && changes ? <ChangeBadge count={changes} news={changesArrived}/> : null}
           </button></Tip>
@@ -724,7 +731,7 @@ export function ChatPage(props: ChatProps) {
             { label: "从最新回复分支", icon: <GitBranch size={14}/>, disabled: !canBranch || !props.onBranch || session.facts.branchable === null, onSelect: () => { const last = session.facts.branchable; if (last !== null) props.onBranch?.(last.runId); } },
             { separator: true },
             { label: panelOpen ? "收起详情" : "打开详情", icon: <PanelRight size={14}/>, hint: keyText("panel"), onSelect: () => setPanel(!panelOpen) },
-            ...(props.terminalUrl ? [{ label: terminal ? "收起终端" : "打开终端", icon: <SquareTerminal size={14}/>, hint: keyText("terminal"), onSelect: () => setTerminal(value => !value) }] : []),
+            ...(props.terminals ? [{ label: terminal ? "收起终端" : "打开终端", icon: <SquareTerminal size={14}/>, hint: keyText("terminal"), onSelect: () => setTerminal(value => !value) }] : []),
             // Checked is the detailed density: every Turn's steps open. This browser keeps it, as the setting does (ruling R1).
             { label: "显示每一步", icon: <ListTree size={14}/>, checked: detailed, onSelect: () => props.onPreference("density", detailed ? "compact" : "detailed") },
             { separator: true },
@@ -789,7 +796,8 @@ export function ChatPage(props: ChatProps) {
           {refused && props.onFreeWorkspace ? <Notice tone="amber" className="kept-conflict" title="工作区正被另一个对话占用" action={<button type="button" className="btn btn-sm" disabled={freeing || mutation !== null} onClick={() => { setFreeing(true); void props.onFreeWorkspace!(refused).finally(() => setFreeing(false)); }}>{freeing ? "正在结束…" : "结束那个对话的后台进程并重试"}</button>}>那个对话保留着原生进程，它的后台任务可能还在运行。可以结束它的后台进程后重试这条消息，也可以稍后再试。</Notice> : null}
           {composer}
         </div></footer> : null}
-        {session && terminal && props.terminalUrl ? <TerminalDrawer key={session.id} place={inScratch(session.workspace, props.scratchRoot) ? "临时对话" : homePath(session.workspace)} url={props.terminalUrl} onClose={() => setTerminal(false)}
+        {session && terminal && props.terminals ? <TerminalDrawer key={session.id} session={session.id} place={inScratch(session.workspace, props.scratchRoot) ? "临时对话" : homePath(session.workspace)} access={props.terminals} onClose={() => setTerminal(false)}
+          onQuote={text => { props.onMessageDraft(value => (value.trim() ? value.replace(/\s+$/u, "") + "\n\n" : "") + "```\n" + text.replace(/\s+$/u, "") + "\n```\n"); textarea.current?.focus(); }}
           {...(props.workspaceTools?.file ? { scripts: projectScripts(props.workspaceTools.file) } : {})}/> : null}
       </div>
       {inline && asidePresence !== "closed" ? <aside className={cn("details-aside relative flex-none overflow-hidden bg-app hairline-l ease-panel keyboard:duration-0", dragging ? "transition-none" : "transition-[width]",

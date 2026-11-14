@@ -209,7 +209,7 @@ export const SHORTCUT_GROUPS: readonly { readonly title: string; readonly rows: 
   { title: "通用", rows: [chosen("new"), chosen("palette"), chosen("nextWaiting"), chosen("previous"), chosen("next"), { label: "跳到侧栏里的第 1–9 个对话", keys: ["⌥⌘1", "⌥⌘9"], range: true },
     chosen("sidebar"), { label: "撤销刚才的侧栏操作（5 秒内）", keys: ["⌘", "Z"] }, chosen("shortcuts"), { label: "关闭弹出层", keys: ["esc"] }] },
   { title: "对话", rows: [
-    { label: "发送；回复进行中时先暂存下一条", keys: ["⏎"] }, { label: "换行", keys: ["⇧", "⏎"] }, chosen("picker"), { ...chosen("stop"), or: ["esc"] }, chosen("panel"), chosen("terminal"), chosen("find"),
+    { label: "发送；回复进行中时先暂存下一条", keys: ["⏎"] }, { label: "换行", keys: ["⇧", "⏎"] }, chosen("picker"), chosen("model"), chosen("effort"), chosen("permission"), { ...chosen("stop"), or: ["esc"] }, chosen("panel"), chosen("terminal"), chosen("find"),
     { label: "选下一步框里的第一个回答（输入框为空时）", keys: ["⌘", "⏎"] }, { label: "编辑上一条（输入框为空时）", keys: ["↑"] }, { label: "原生命令 · 引用文件", keys: ["/", "@"] },
   ] },
   { title: "审批停在输入框时", rows: [

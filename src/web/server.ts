@@ -10,7 +10,7 @@ import { application as composeApplication, builtinHarnessName } from "../cli/se
 import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
 import type { ConversationCommit, StartupSample } from "../contracts/conversation.js";
-import { BOARD_KINDS, SessionError, parseNativeOptions, runId, sessionId, type BoardKind, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type TurnLimits } from "../contracts/session.js";
+import { BOARD_KINDS, SessionError, commandId, parseNativeOptions, runId, sessionId, type BoardKind, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type TurnLimits } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES } from "../contracts/content.js";
 import type { EditorsView, EventPage, GitBranchesView, GitChangesView, GitCommitView, GitLogView, GitPushView, GitScope, GitView, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, MaintenanceView, NativeSessionListView, SteerView, TaskView, UninstallCheckView, InstallCheckView, WebState, WorkspaceFileView, WorkspaceView } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
@@ -34,6 +34,9 @@ import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
 import { RelayApi, parseSendRelay } from "./relay-routes.js";
 import { ConversationRoutes, type HeadLive } from "./conversation-routes.js";
 import { RecallRoutes } from "./recall-routes.js";
+import { CheckpointRoutes, NO_OWN_WORKTREES } from "./checkpoint-routes.js";
+import type { WorkspaceOwnership } from "../contracts/workspace.js";
+import { WorktreeRoutes } from "./worktree-routes.js";
 import { commitFrame } from "./commit-frame.js";
 import { DetailHeads } from "./detail-heads.js";
 import { sendPieces, sendStream } from "./download.js";
@@ -49,7 +52,8 @@ import { messageStarts, turnSource } from "../contexts/session/domain/turn-sourc
 import { nativeResume } from "../infrastructure/management/verified-versions.js";
 import { LoginShellStore, loginShellEnvironment, readLoginShellPath, type LoginShellDirectories } from "../infrastructure/discovery/login-shell.js";
 import { terminalEnvironment, terminalShell } from "../infrastructure/workspace/terminal.js";
-import { TerminalSockets, terminalSize } from "../infrastructure/workspace/terminal-socket.js";
+import { Terminals } from "../infrastructure/workspace/terminals.js";
+import { TerminalRoutes } from "./terminal-routes.js";
 import { CapabilityService, type InstalledChannel, type InstalledHarness } from "../infrastructure/capabilities/service.js";
 import { CapabilityChanges, homeText } from "../infrastructure/capabilities/changes.js";
 import { CapabilityError, INSTRUCTION_CHECK_OPTIONS, type InstructionCheckOption, type McpDefinitionView } from "../contracts/capabilities.js";
@@ -117,12 +121,16 @@ export interface WebServerOptions {
   readonly workspaceLockRoot?: string;
   /** Where conversations started without a folder get one of their own (2026-11-13); `chats` in the data directory by default. */
   readonly scratchRoot?: string;
+  /** Where conversations that work in a Git worktree of their own get it (2026-11-14): `<this>/<repository folder>/hh-<8 hex>`; `worktrees` beside the scratch root by default. */
+  readonly worktreeRoot?: string;
   /** What counts as an installation (ADR-044) when this server composes its own application; the composition's default otherwise. */
   readonly installations?: InstallationPolicy;
   /** Fetches from GitHub without following redirects, for adding and updating skills (ADR-045 §4); the platform's `fetch` by default. */
   readonly github?: GithubFetch;
   /** The installation's relay key file (ADR-055 D5) when this server composes its own application; none otherwise (G072). */
   readonly relayKeyFile?: string;
+  /** Which conversations work in a worktree of their own, where files may be put back as they were before a Turn (2026-11-14); none by default (src/web/checkpoint-routes.ts). */
+  readonly workspaceOwnership?: WorkspaceOwnership;
   /** The context table's tokens (src/contracts/table.ts) when this server composes its own application; it makes its own otherwise. */
   readonly tableGrants?: TableGrants;
   /** The context table's mount, shared with whatever answers its tokens; this server makes its own when none is given, and sets its address once it listens. */
@@ -134,7 +142,7 @@ export interface WebServerOptions {
   /** Where the editors' application bundles are looked for (2026-11-14); /Applications and ~/Applications by default. For tests, which must never open an editor. */
   readonly applicationFolders?: readonly string[];
   /**
-   * A conversation's terminal (GET /api/v1/sessions/:id/terminal): the shell it runs, the user's `$SHELL` (else /bin/zsh) by
+   * A conversation's terminals (POST /api/v1/sessions/:id/terminals): the shell they run, the user's `$SHELL` (else /bin/zsh) by
    * default, and what is set in its environment over the login shell's (terminalEnvironment); for tests that keep the user's profile out.
    */
   readonly terminal?: { readonly shell?: string; readonly env?: Readonly<Record<string, string>> };
@@ -455,6 +463,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   };
   // The reads of a conversation kept as rows, as the API answers them (src/web/conversation-routes.ts); made once the Gateway's parts they read from exist, below.
   let conversations: ConversationRoutes | undefined;
+  // The conversations' own Git worktrees (2026-11-14, src/web/worktree-routes.ts): each published commit may give one's branch its name; made below.
+  let worktrees: WorktreeRoutes | undefined;
   const streams = new SessionStreamHub({ snapshot: id => conversations!.session(id),
     frame: commit => { const id = commit.changes.head!.row.id as SessionId; return commitFrame(commit.changes, conversations!.headView(commit.changes.head!.row), conversations!.frameViews(id)); },
     stale: commit => conversations!.needsSnapshot(commit) }, {}, failure => {
@@ -464,14 +474,20 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // Waiting approvals and questions of every conversation, refreshed after each published commit (ADR-035). A page with a
   // conversation open gets them on that conversation's stream; a page without one subscribes to them alone.
   const attention = new AttentionStreamHub(() => app.runtime.attention(), {}, frame => streams.attentionChanged(frame));
-  // The conversations' terminals, a shell per socket; the Gateway's close ends every one of them before the listener closes.
-  const terminals = new TerminalSockets({ maxPayload: MAX_MESSAGE_BODY_BYTES, report: problem => { process.stderr.write("HarnessGateway: " + problem + "\n"); } });
+  // The conversations' terminals, which outlive their sockets, each with its history in the data directory; the Gateway's close ends every one of them before the listener closes.
+  const terminals = new Terminals({ root: join(resolve(options.root), "terminals"), maxPayload: MAX_MESSAGE_BODY_BYTES, report: problem => { process.stderr.write("HarnessGateway: " + problem + "\n"); } });
   const made = (options.application ?? ((root, publish) => composeApplication(root, publish, { ...(options.budgets === undefined ? {} : { budgets: options.budgets }),
     ...(options.workspaceLockRoot === undefined ? {} : { workspaceLockRoot: options.workspaceLockRoot }),
     ...(options.installations === undefined ? {} : { installations: options.installations }), ...(options.relayKeyFile === undefined ? {} : { relayKeyFile: options.relayKeyFile }),
     table, tableGrants: table.grants })))(options.root, commit => {
+    // A conversation the user deleted keeps no terminal (an erased one was deleted first); one that is archived keeps its terminals.
+    if (commit.conversation.deletedAt !== undefined) void terminals.closeConversation(commit.conversation.id);
     // What the head tells besides the commit's rows (the totals of the Runs, the edits) moves along with it before the frame is made; the frame is one for the commit.
-    try { conversations?.observe(commit); streams.publish(commit); } finally { if (app !== undefined) attention.changed(); }
+    try { conversations?.observe(commit); streams.publish(commit); } finally {
+      if (app !== undefined) attention.changed();
+      // After the commit stood and was published: a branch is renamed (asynchronously) only for what was committed.
+      try { worktrees?.observe(commit); } catch (error) { process.stderr.write("HarnessGateway: a worktree's branch was not looked at (" + String(error instanceof Error ? error.message : error).slice(0, 200) + ")\n"); }
+    }
   });
   // An application put together by hand may bring no tokens for the context table: it then has a table nobody can enter.
   app = { ...made, grants: made.grants ?? table.grants };
@@ -526,7 +542,22 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         retention: { process: app.runtime.keptProcess(id), ...(lost === null ? {} : { lost }), ...(outside === null ? {} : { outside }), ...(upgraded === null ? {} : { upgraded }) } };
     } });
   // The recently deleted and their erasure, and the page's search (2026-11-14): src/web/recall-routes.ts.
-  const recall = new RecallRoutes({ conversations: () => conversations!, runtime: app.runtime, search: app.store, http: { json, headers, queries, body: request => body(request) } });
+  const recall = new RecallRoutes({ conversations: () => conversations!, runtime: app.runtime, search: app.store, http: { json, headers, queries, body: request => body(request) },
+    // An erasure that asks for it removes the worktrees of the conversations it erased (2026-11-14).
+    worktrees: { held: ids => worktrees!.held(ids), removeUnused: held => worktrees!.removeUnused(held) } });
+  // A conversation's terminals (2026-11-14): src/web/terminal-routes.ts.
+  const terminalRoutes = new TerminalRoutes({ terminals, workspace: id => conversations!.head(id).workspace,
+    launch: async () => { const shell = await terminalShell(options.terminal?.shell ?? app.factory.discoveryEnvironment.values.SHELL); return { shell, env: terminalEnvironment(app.factory.discoveryEnvironment.values, shell, options.terminal?.env) }; },
+    http: { json, headers, queries, body: request => body(request), error: (status, code, message) => new HttpError(status, code, message) } });
+  // A Turn's checkpoints, putting files back and a pull request (2026-11-14): src/web/checkpoint-routes.ts. gh is looked for in the folders discovery looks in, too.
+  // Files go back only in a worktree that is the conversation's own: one made for it (`worktree`) that no other conversation not erased works in.
+  const ownership: WorkspaceOwnership = options.workspaceOwnership ?? { ownWorktree: async id => {
+    let worktree: { readonly path: string } | undefined;
+    try { worktree = conversations!.head(id).worktree; } catch { return false; }
+    return worktree !== undefined && worktrees !== undefined && worktrees.usedBy(worktree.path, new Set([id])).length === 0;
+  } };
+  const checkpoints = new CheckpointRoutes({ store: app.store, ownership, ghDirs: () => searchDirs(), now: () => Date.now(),
+    http: { json, headers, queries, body: request => body(request), refuse: (status, code, message) => { throw new HttpError(status, code, message); } } });
   /** A conversation's title for the lists of conversations a maintenance step names; the generic name for one that is gone. */
   const titleOf = (id: string): string => { try { const row = app.store.head(sessionId(id)); return row.deletedAt === null ? row.title : "对话"; } catch { return "对话"; } };
   // Directories the user took from the login shell's PATH (G(ii)) extend discovery and new conversations until removed.
@@ -538,10 +569,15 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const loginShellView = () => ({ available: options.loginShell !== undefined && options.loginShell !== false && options.loginShell.shell !== null,
     ...(options.loginShell && options.loginShell.shell !== null ? { shell: basename(options.loginShell.shell) } : {}), dirs: loginDirs?.dirs ?? [], readAt: loginDirs?.readAt ?? null });
   // Where conversations started without a folder get theirs, as the canonical path their workspaces will carry (it need not exist yet).
-  const scratchRoot = await (async (path: string) => {
+  const canonical = async (path: string): Promise<string> => {
     const rest: string[] = [];
     for (let at = path; ;) { try { return join(await realpath(at), ...rest); } catch { const up = dirname(at); if (up === at) return path; rest.unshift(basename(at)); at = up; } }
-  })(resolve(options.scratchRoot ?? join(options.root, "chats")));
+  };
+  const scratchRoot = await canonical(resolve(options.scratchRoot ?? join(options.root, "chats")));
+  // Where the worktrees of conversations go (2026-11-14): beside the scratch root unless given (~/HarnessHub/worktrees beside ~/HarnessHub/chats).
+  const worktreeRoot = await canonical(resolve(options.worktreeRoot ?? join(dirname(scratchRoot), "worktrees")));
+  worktrees = new WorktreeRoutes({ root: worktreeRoot, store: app.store, record: (id, from, to) => app.runtime.recordWorktreeBranch(id, from, to), http: { json, queries },
+    report: line => { process.stderr.write("HarnessGateway: " + line.replace(/[\r\n]+/gu, " ").slice(0, 600) + "\n"); } });
   /** A request's workspace with this Gateway's catalog, configuration home and search settings. */
   const workspaceConfiguration = (workspace: string) => prepareConfiguration({ workspace,
     ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
@@ -676,9 +712,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     return login;
   };
   /**
-   * GET /api/v1/sessions/:id/terminal, upgraded to a WebSocket: the user's login shell in the conversation's workspace
-   * (docs/contracts/public-api.md, "对话的终端"). It is let in as any request of the page is (its Host, its login), and only from
-   * this Gateway's own page: a shell runs whatever it is sent, so a request without this Gateway's Origin is refused.
+   * GET /api/v1/sessions/:id/terminals/:tid/socket, upgraded to a WebSocket attached to a conversation's terminal (docs/contracts/public-api.md,
+   * "对话的终端"). It is let in as any request of the page is (its Host, its login), and only from this Gateway's own page: a shell runs
+   * whatever it is sent, so a request without this Gateway's Origin is refused.
    */
   const upgrade = async (request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> => {
     if (stopping) throw new HttpError(503, "GATEWAY_STOPPING", "Gateway is stopping");
@@ -686,23 +722,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (request.headers.origin !== origin) throw new HttpError(403, "ORIGIN_REJECTED", "A terminal opens only from this Gateway's page");
     if (request.headers["sec-fetch-site"] === "cross-site") throw new HttpError(403, "ORIGIN_REJECTED", "Cross-site request rejected");
     if (!request.url || !request.url.startsWith("/") || request.url.startsWith("//") || request.url.length > 4096 || /%(?:2f|5c|00)|\\/iu.test(request.url.split("?", 1)[0]!)) throw new HttpError(400, "INVALID_PATH", "Invalid request path");
-    const url = new URL(request.url, origin), route = /^\/api\/v1\/sessions\/([^/]+)\/terminal$/u.exec(url.pathname);
-    if (route === null || request.method !== "GET") throw new HttpError(404, "NOT_FOUND", "API route not found");
-    queries(url, ["cols", "rows"]);
-    const size = (name: "cols" | "rows", fallback: number): number => {
-      const value = url.searchParams.get(name);
-      if (value === null) return fallback;
-      if (!/^[1-9][0-9]{0,4}$/u.test(value) || !terminalSize(Number(value))) throw new HttpError(400, "INVALID_INPUT", "Invalid terminal " + name);
-      return Number(value);
-    };
-    const cols = size("cols", 80), rows = size("rows", 24), { setCookie } = loginOf(request);
-    // A conversation that is not there, or was deleted, is not found (404).
-    const workspace = conversations!.head(sessionId(route[1]!)).workspace;
-    if (!await stat(workspace).then(info => info.isDirectory(), () => false)) throw new HttpError(409, "WORKSPACE_UNAVAILABLE", "The conversation's folder is not there");
-    const shell = await terminalShell(options.terminal?.shell ?? app.factory.discoveryEnvironment.values.SHELL);
-    if (stopping) throw new HttpError(503, "GATEWAY_STOPPING", "Gateway is stopping");
-    if (socket.destroyed) return;
-    terminals.accept(request, socket, head, { shell, cwd: workspace, env: terminalEnvironment(app.factory.discoveryEnvironment.values, shell, options.terminal?.env), size: { cols, rows } }, setCookie);
+    if (!terminalRoutes.upgrade(request, socket, head, new URL(request.url, origin), () => loginOf(request).setCookie)) throw new HttpError(404, "NOT_FOUND", "API route not found");
   };
   async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (stopping) throw new HttpError(503, "GATEWAY_STOPPING", "Gateway is stopping");
@@ -1169,12 +1189,26 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       catch (error) { throw importFailure(error); }
       return;
     }
+    // A conversation's own worktree (2026-11-14): read for a deleted conversation too, so before the routes that do not find one.
+    if (await worktrees!.handle(request, response, url, method)) return;
     if (await recall.handle(request, response, url, method)) return;
+    if (await terminalRoutes.handle(request, response, url, method)) return;
     if (path === "/api/v1/sessions") {
       if (method === "GET") { queries(url, ["after", "limit"]); json(response, 200, conversations!.sessions({ after: url.searchParams.get("after") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
       if (method === "POST") {
-        queries(url, []); const input = record(await body(request), ["workspace", "scratch", "selection", "commandId"], ["selection", "commandId"]);
+        queries(url, []); const input = record(await body(request), ["workspace", "scratch", "worktree", "selection", "commandId"], ["selection", "commandId"]);
         if (input.scratch !== undefined && (input.scratch !== true || input.workspace !== undefined)) throw new HttpError(400, "INVALID_INPUT", "Invalid scratch");
+        if (input.worktree !== undefined && input.worktree !== true) throw new HttpError(400, "INVALID_INPUT", "Invalid worktree");
+        if (input.worktree === true && input.workspace === undefined) throw new HttpError(400, "INVALID_INPUT", "worktree 要和 workspace 一起给：从哪个仓库开工作树");
+        // In a Git worktree of its own (2026-11-14): the worktree is made from the repository the folder is in, then the conversation in it; a repeat of the request
+        // finds the conversation it made before any Git runs (src/web/worktree-routes.ts).
+        if (input.worktree === true) {
+          const key = command(input.commandId), selection = select(input.selection), from = text(input.workspace, "workspace");
+          const id = await worktrees!.start(from, key, {
+            prior: () => { const found = app.store.findByCreateKey(commandId(key)); return found === null ? null : { workspace: found.configuration.workspace, ...(found.worktree === undefined ? {} : { worktree: found.worktree }) }; },
+            create: async (workspace, worktree) => (await app.runtime.create(await workspaceConfiguration(workspace), selection, key, worktree === undefined ? {} : { worktree })).id });
+          json(response, 201, conversations!.session(id)); return;
+        }
         // Started without a folder (2026-11-13): the conversation gets one of its own, named by this request so a repeat names the same one.
         const configuration = input.scratch === true ? await workspaceConfiguration(await scratchFolder(scratchRoot, command(input.commandId)))
           : input.workspace === undefined ? options.configuration : await workspaceConfiguration(text(input.workspace, "workspace"));
@@ -1251,6 +1285,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (textRoute && method === "GET") { queries(url, ["from", "to"]); json(response, 200, conversations!.itemText(textRoute[1]!, textRoute[2]!, textRoute[3]!, { from: url.searchParams.get("from") ?? undefined, to: url.searchParams.get("to") ?? undefined })); return; }
     const changesRoute = /^\/api\/v1\/sessions\/([^/]+)\/changes$/u.exec(path);
     if (changesRoute && method === "GET") { queries(url, ["before", "limit"]); json(response, 200, conversations!.changes(changesRoute[1]!, { before: url.searchParams.get("before") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
+    if (await checkpoints.handle(request, response, url, method)) return;
     const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|steer|switches|resume|cancel|close|events|export|fork|branch|delegate|task|retention|end-process|native-resume|reveal|workspace|restore|open|file|git|git\/commit|git\/push|git\/changes|git\/diff|git\/log|git\/branches))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
@@ -1321,16 +1356,19 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       // The user renames the conversation, archives it, pins it or puts it aside until a moment (2026-11-14): one commit, which every page that has it open is told by its
       // head, and which does not move the conversation's time; the answer is its row of the list.
       if (action === undefined && method === "PATCH") {
-        queries(url, []); const input = record(await body(request), ["title", "archived", "pinned", "snoozedUntil"]);
-        if (input.title === undefined && input.archived === undefined && input.pinned === undefined && input.snoozedUntil === undefined)
+        queries(url, []); const input = record(await body(request), ["title", "archived", "pinned", "pinnedOrder", "snoozedUntil"]);
+        if (input.title === undefined && input.archived === undefined && input.pinned === undefined && input.pinnedOrder === undefined && input.snoozedUntil === undefined)
           throw new HttpError(400, "INVALID_INPUT", "Expected a title, whether the conversation is archived or pinned, or when it is put aside until");
         if (input.title !== undefined && typeof input.title !== "string") throw new HttpError(400, "INVALID_INPUT", "Invalid title");
         if (input.archived !== undefined && typeof input.archived !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Invalid archived");
         if (input.pinned !== undefined && typeof input.pinned !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Invalid pinned");
+        // A pinned conversation's place among the pinned (2026-11-14): any finite number; 409 PIN_REQUIRED for one not pinned (runtime.updateSession).
+        if (input.pinnedOrder !== undefined && (typeof input.pinnedOrder !== "number" || !Number.isFinite(input.pinnedOrder) || input.pinned === false)) throw new HttpError(400, "INVALID_INPUT", "Invalid pinnedOrder: a finite number, for a pinned conversation");
         if (input.snoozedUntil !== undefined && input.snoozedUntil !== null && (typeof input.snoozedUntil !== "number" || !Number.isSafeInteger(input.snoozedUntil) || input.snoozedUntil < 0))
           throw new HttpError(400, "INVALID_INPUT", "Invalid snoozedUntil: milliseconds since the epoch, or null");
         app.runtime.updateSession(id, { ...(input.title === undefined ? {} : { title: input.title as string }), ...(input.archived === undefined ? {} : { archived: input.archived as boolean }),
-          ...(input.pinned === undefined ? {} : { pinned: input.pinned as boolean }), ...(input.snoozedUntil === undefined ? {} : { snoozedUntil: input.snoozedUntil as number | null }) });
+          ...(input.pinned === undefined ? {} : { pinned: input.pinned as boolean }), ...(input.pinnedOrder === undefined ? {} : { pinnedOrder: input.pinnedOrder as number }),
+          ...(input.snoozedUntil === undefined ? {} : { snoozedUntil: input.snoozedUntil as number | null }) });
         json(response, 200, conversations!.summary(id)); return;
       }
       // The workspace and where it stands in Git, for the page's header: read-only, and a Git that does not answer leaves `git` out.
@@ -1468,7 +1506,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   });
   // The time a request takes to arrive is not limited (an upload takes as long as its bytes do, watchIdle ends one that falls silent); its headers must come within ten seconds.
   server.headersTimeout = 10000; server.requestTimeout = 0; server.keepAliveTimeout = 5000; server.maxConnections = MAX_CONNECTIONS;
-  // Only a conversation's terminal is upgraded (to a WebSocket); any other upgrade request is answered as a request of no route.
+  // Only a socket of a conversation's terminal is upgraded (to a WebSocket); any other upgrade request is answered as a request of no route.
   server.on("upgrade", (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     socket.on("error", () => { /* a client that went away has nothing to be told */ });
     void upgrade(request, socket, head).catch((error: unknown) => {
@@ -1485,9 +1523,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       // Bound even sockets that have not completed their headers; durable execution is closed separately.
       const deadline = setTimeout(() => server.closeAllConnections(), 12000); deadline.unref();
       server.closeIdleConnections();
-      // Every terminal's shell is ended (hung up on, then killed) and its socket closed: the listener waits for upgraded sockets too.
+      // Every terminal's shell is ended (SIGTERM and a hang-up, then killed), its sockets closed and its history deleted: the listener waits for upgraded sockets too.
       const shells = terminals.close();
       let failure: unknown = streams.readFailure?.error ?? streams.diagnosticFailure;
+      // A branch rename under way records its name before the runtime closes; none starts after.
+      try { await worktrees?.close(); } catch (error) { failure ??= error; }
       try { await app.runtime.close(); } catch (error) { failure = error; }
       try { await nativeModels.close(); } catch (error) { failure ??= error; }
       try { await shells; } catch (error) { failure ??= error; }
@@ -1502,6 +1542,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     return closing;
   };
   try {
+    // Shells never outlive the Gateway that started them: the histories a previous one left have nothing to attach to (the data directory is this one's now).
+    await terminals.prepare();
     // Processes conversations kept under a service that ended without closing them are ended (or left quarantined) first.
     const left = app.store.listKept().length;
     if (left > 0) process.stderr.write("HarnessGateway: ending " + left + " native process(es) kept by the previous service (up to about 6 s each)\n");
@@ -1525,6 +1567,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     streams.close(); attention.close();
     await terminals.close();
     await nativeModels.close();
+    await worktrees?.close();
     try { await app.runtime.close(); } finally { try { await app.management.shutdown(); } finally { try { await app.providers.shutdown(); } finally { try { await capabilityChanges.close(); } finally { app.store.close(); } } } }
     throw error;
   }

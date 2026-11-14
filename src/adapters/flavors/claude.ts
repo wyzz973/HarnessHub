@@ -6,6 +6,9 @@ export const claudeFlavor: HarnessFlavor = {
   harnessId: "claude",
   permission: policyLevels({ read: false, edit: true, execute: true }, { plan: [MODE("plan")], ask: [MODE("default")], auto_edit: [MODE("acceptEdits")], auto: [MODE("auto")], full: [MODE("bypassPermissions")] }),
   effort: { option: { category: "thought_level" }, values: {} },
+  // claude-agent-acp 0.99.1 acp-agent.js: the session config option `fast` ("on"/"off", category model_config) is there only while the session's model
+  // has `supportsFastMode`; session/set_config_option sends the SDK `applyFlagSettings({ fastMode })`, the session's flag layer, never a settings file.
+  speed: { option: { ids: ["fast"], category: "model_config" }, standard: "off", names: { on: "fast" } },
   asks: { read: false, edit: true, execute: true },
   nativePlan: true,
   // claude-agent-acp 0.99.1 acp-agent.js createSession: `mcpServers` go to the SDK as the session's own servers; `_meta.systemPrompt`

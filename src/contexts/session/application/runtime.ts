@@ -4,13 +4,13 @@ import { HUB_DELEGATION_INSTRUCTIONS, HUB_PROGRESS_INSTRUCTIONS, hubCommandCall,
 import { cutTitle } from "../../../contracts/web.js";
 import { listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeUsage } from "../../../contracts/control.js";
 import { type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
-import { CONVERSATION_FORMAT, type Conversation, type ConversationCommit, type ConversationMutation, type ConversationRun, type ConversationStore, type HeldItem } from "../../../contracts/conversation.js";
+import { CONVERSATION_FORMAT, type Conversation, type ConversationCommit, type ConversationMutation, type ConversationRun, type ConversationStore, type HeldItem, type SessionListCursor } from "../../../contracts/conversation.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId, STOP_GRACE_MS, STREAM_WINDOW_BYTES, STREAM_WINDOW_MS,
   type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type OutsideEvidence, type OutsideProcess, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionRuntimeOptions, type SwitchReceipt, type RunId, type DelegationsTold, type DelegationState, type BoardEntry, type BoardKind, type TaskBoard,
-  type MessageId, type SteerReceipt,
+  type MessageId, type SteerReceipt, type ConversationWorktree,
 } from "../../../contracts/session.js";
 import { buildPublicContext, type PublicContext, type PublicContextOptions } from "../domain/context.js";
 import { assertConversationTransition, inputOf, runIn, settledItems, updatedRun, userItemOf, withItems } from "../domain/conversation-state.js";
@@ -476,18 +476,24 @@ export class SessionRuntime {
     this.relayKeys = options.relayKeys ?? new UnkeptRelayKeys();
   }
 
-  create(configuration: SessionConfiguration, selection: SelectionRequest, key: string): Promise<Conversation> {
+  /**
+   * A new conversation, idempotently by key. `extra.worktree` (2026-11-14): the Git worktree it was started in, made by the caller before (its workspace is in it), kept
+   * with the conversation; a repeat of the key answers the conversation it made and keeps the worktree it was made with.
+   */
+  create(configuration: SessionConfiguration, selection: SelectionRequest, key: string, extra: { readonly worktree?: ConversationWorktree } = {}): Promise<Conversation> {
     try {
       this.admit();
     } catch (error) { return Promise.reject(error); }
-    const pending = this.createOwned(configuration, selection, key);
+    const pending = this.createOwned(configuration, selection, key, extra.worktree);
     this.creating.add(pending);
     void pending.then(() => { this.creating.delete(pending); }, () => { this.creating.delete(pending); });
     return pending;
   }
-  private async createOwned(configuration: SessionConfiguration, selection: SelectionRequest, key: string): Promise<Conversation> {
+  private async createOwned(configuration: SessionConfiguration, selection: SelectionRequest, key: string, worktree: ConversationWorktree | undefined): Promise<Conversation> {
     this.admit();
     const config = parseConfiguration(configuration), request = requested(selection), command = commandId(key);
+    if (worktree !== undefined && [worktree.root, worktree.path, worktree.branch, worktree.baseSha].some(part => typeof part !== "string" || part === "" || /[\0\r\n]/u.test(part)))
+      throw new SessionError("INVALID_INPUT", "a worktree is its repository, its folder, its branch and the commit it started from");
     const fingerprint = this.fingerprint({ kind: "create", configuration: config, selection: request });
     const prior = this.store.findByCreateKey(command);
     if (prior) { replayCommand(prior, command, "create", fingerprint); return this.load(prior.id); }
@@ -499,9 +505,10 @@ export class SessionRuntime {
     const id = sessionId("session-" + this.options.id());
     const state: Conversation = { id, version: 0, lastSeq: 0, format: CONVERSATION_FORMAT, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
-      runs: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
+      runs: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
+      ...(worktree === undefined ? {} : { worktree: { root: worktree.root, path: worktree.path, branch: worktree.branch, baseSha: worktree.baseSha } }) };
     try {
-      const committed = this.store.create(state, [event("session.created", { selection: validated, continuity: "public_context_rehydrate" })]);
+      const committed = this.store.create(state, [event("session.created", { selection: validated, continuity: "public_context_rehydrate", ...(worktree === undefined ? {} : { worktree: { path: worktree.path, branch: worktree.branch } }) })]);
       this.managedSessions.add(committed.conversation.id);
       this.publish(committed);
       return this.load(id);
@@ -1459,31 +1466,52 @@ export class SessionRuntime {
    * The same holds of the pin and the reminder (2026-11-14): `pinned` puts the conversation at the top of the list until taken off (a new Turn leaves it), `snoozedUntil`
    * puts it aside until that moment (null takes it off; a new Turn takes it off too). Whether the moment came is the page's to tell. None of these moves the
    * conversation's time (`marksOnly`): the list's order and its "how long ago" say how the conversation itself went on.
+   * A pinned conversation has its place among the pinned, `pinnedOrder` (lowest first; any finite number, which the user's drag sets): pinning without one puts it first,
+   * lower than every other pinned one, and one already pinned stays where it is; taking the pin off drops it. A place is a mark like the pin, and only a pinned conversation
+   * (or one this change pins) has one: PIN_REQUIRED otherwise.
    */
-  updateSession(id: SessionId, change: { readonly title?: string; readonly archived?: boolean; readonly pinned?: boolean; readonly snoozedUntil?: number | null }): Conversation {
+  updateSession(id: SessionId, change: { readonly title?: string; readonly archived?: boolean; readonly pinned?: boolean; readonly pinnedOrder?: number; readonly snoozedUntil?: number | null }): Conversation {
     this.admit();
-    if (change.title === undefined && change.archived === undefined && change.pinned === undefined && change.snoozedUntil === undefined)
+    if (change.title === undefined && change.archived === undefined && change.pinned === undefined && change.pinnedOrder === undefined && change.snoozedUntil === undefined)
       throw new SessionError("INVALID_INPUT", "a change names a title, whether the conversation is archived or pinned, or when it is put aside until");
     if (change.title !== undefined && typeof change.title !== "string") throw new SessionError("INVALID_INPUT", "a title is text");
     if (change.archived !== undefined && typeof change.archived !== "boolean") throw new SessionError("INVALID_INPUT", "archived is true or false");
     if (change.pinned !== undefined && typeof change.pinned !== "boolean") throw new SessionError("INVALID_INPUT", "pinned is true or false");
+    if (change.pinnedOrder !== undefined && (typeof change.pinnedOrder !== "number" || !Number.isFinite(change.pinnedOrder))) throw new SessionError("INVALID_INPUT", "pinnedOrder is a finite number");
+    if (change.pinnedOrder !== undefined && change.pinned === false) throw new SessionError("INVALID_INPUT", "a conversation taken off the pins has no place among them");
     if (change.snoozedUntil !== undefined && change.snoozedUntil !== null && (typeof change.snoozedUntil !== "number" || !Number.isSafeInteger(change.snoozedUntil) || change.snoozedUntil < 0))
       throw new SessionError("INVALID_INPUT", "snoozedUntil is a moment in milliseconds since the epoch, or null");
     const title = change.title === undefined ? undefined : change.title.replace(/\s*[\r\n\u2028\u2029]+\s*/gu, " ").trim();
     if (title === "") throw new SessionError("INVALID_INPUT", "a title cannot be empty");
     const state = this.load(id);
+    if (change.pinnedOrder !== undefined && change.pinned !== true && state.pinned !== true) throw new SessionError("PIN_REQUIRED", "only a pinned conversation has a place among the pinned");
     const renamed = title !== undefined && title !== state.userTitle, marked = change.archived !== undefined && change.archived !== (state.archived === true);
-    const pinned = change.pinned !== undefined && change.pinned !== (state.pinned === true), snoozed = change.snoozedUntil !== undefined && (change.snoozedUntil ?? undefined) !== state.snoozedUntil;
+    const pin = change.pinned ?? state.pinned === true;
+    // The place: the one given; for one pinned now without one, first among the pinned; one already pinned keeps its own (none, if it was pinned before places were kept).
+    const order = !pin ? undefined : change.pinnedOrder !== undefined ? (Object.is(change.pinnedOrder, -0) ? 0 : change.pinnedOrder)
+      : state.pinned === true ? state.pinnedOrder : (lowest => lowest === null ? 0 : lowest - 1)(this.lowestPinnedOrder(id));
+    const pinned = pin !== (state.pinned === true) || order !== state.pinnedOrder, snoozed = change.snoozedUntil !== undefined && (change.snoozedUntil ?? undefined) !== state.snoozedUntil;
     if (!renamed && !marked && !pinned && !snoozed) return state;
     this.commit(id, current => {
-      const { userTitle: _title, archived: _archived, pinned: _pinned, snoozedUntil: _snoozed, ...rest } = current;
-      const userTitle = title ?? current.userTitle, archived = change.archived ?? current.archived === true, pin = change.pinned ?? current.pinned === true;
+      const { userTitle: _title, archived: _archived, pinned: _pinned, pinnedOrder: _order, snoozedUntil: _snoozed, ...rest } = current;
+      const userTitle = title ?? current.userTitle, archived = change.archived ?? current.archived === true;
       const until = change.snoozedUntil === undefined ? current.snoozedUntil : change.snoozedUntil ?? undefined;
-      return { next: { ...rest, ...(userTitle === undefined ? {} : { userTitle }), ...(archived ? { archived: true as const } : {}), ...(pin ? { pinned: true as const } : {}), ...(until === undefined ? {} : { snoozedUntil: until }) },
-        events: [...(renamed ? [event("session.renamed", { title })] : []), ...(marked ? [event("session.archived", { archived })] : []), ...(pinned ? [event("session.pinned", { pinned: pin })] : []),
+      return { next: { ...rest, ...(userTitle === undefined ? {} : { userTitle }), ...(archived ? { archived: true as const } : {}), ...(pin ? { pinned: true as const } : {}), ...(pin && order !== undefined ? { pinnedOrder: order } : {}),
+          ...(until === undefined ? {} : { snoozedUntil: until }) },
+        events: [...(renamed ? [event("session.renamed", { title })] : []), ...(marked ? [event("session.archived", { archived })] : []), ...(pinned ? [event("session.pinned", { pinned: pin, ...(pin && order !== undefined ? { order } : {}) })] : []),
           ...(snoozed ? [event("session.snoozed", { until: until ?? null })] : [])], marksOnly: true };
     });
     return this.load(id);
+  }
+  /** The lowest place among the pinned conversations other than `except` (deleted ones are not in the list); null when none has one. */
+  private lowestPinnedOrder(except: SessionId): number | null {
+    let lowest: number | null = null, after: SessionListCursor | undefined;
+    do {
+      const page = this.store.list({ limit: 1000, ...(after === undefined ? {} : { after }) });
+      for (const row of page.rows) if (row.id !== except && row.pinned === true && typeof row.pinnedOrder === "number" && Number.isFinite(row.pinnedOrder)) lowest = lowest === null ? row.pinnedOrder : Math.min(lowest, row.pinnedOrder);
+      after = page.next ?? undefined;
+    } while (after !== undefined);
+    return lowest;
   }
   /**
    * The user deletes the conversation (2026-11-14): it leaves the list, and every read of it is not found, until the user restores it (`restoreSession`). Its file stays where
@@ -1555,6 +1583,8 @@ export class SessionRuntime {
       ready.push(id);
     }
     if (ready.length === 0) return [];
+    // Where each one worked, read while it is there: its checkpoints go with it (2026-11-14).
+    const workspaces = new Map(ready.map(id => [id, this.load(id).configuration.workspace] as const));
     // From here to the store's erasure nothing waits: the directories' work is queued behind their writers and runs once the rows are gone.
     const purging = new Set(ready), records: Promise<void>[] = [];
     for (const id of ready) { try { const work = this.options.context?.forget?.(id, purging); if (work !== undefined) records.push(work.catch(() => undefined)); } catch { /* the directory keeps what it had */ } }
@@ -1563,6 +1593,8 @@ export class SessionRuntime {
     for (const id of result.purged) this.forgetConversation(id);
     // Content is user data: it goes only when the store could say no other conversation mentions it.
     if (result.content !== null && result.content.size > 0) { try { this.options.content?.purge?.(result.content); } catch { /* what is left is kept, as unmentioned content always was */ } }
+    const checkpoints = this.options.checkpoints;
+    if (checkpoints !== undefined) for (const id of result.purged) { const workspace = workspaces.get(id); if (workspace !== undefined) { try { records.push(checkpoints.forget(workspace, id).catch(() => undefined)); } catch { /* its refs stay */ } } }
     await Promise.all(records);
     return result.purged;
   }
@@ -1583,6 +1615,17 @@ export class SessionRuntime {
     const state = this.load(id);
     if (state.userTitle !== undefined || state.harnessTitle !== undefined) return;
     this.commit(id, current => ({ next: { ...current, harnessTitle: name }, events: [event("session.titled", { title: name })], marksOnly: true }));
+  }
+  /**
+   * The branch of the conversation's worktree is now `to` (2026-11-14): the Gateway renamed it after the conversation's title (src/web/worktree-routes.ts), or found the
+   * worktree on another branch. Recorded only while the record still names `from`; one commit that does not move the conversation's time (`marksOnly`), in any state.
+   */
+  recordWorktreeBranch(id: SessionId, from: string, to: string): void {
+    this.admit();
+    if (typeof from !== "string" || typeof to !== "string" || to === "" || /[\0-\x1f\x7f]/u.test(to)) throw new SessionError("INVALID_INPUT", "a branch is a name");
+    const state = this.load(id), worktree = state.worktree;
+    if (worktree === undefined || worktree.branch !== from || from === to) return;
+    this.commit(id, current => ({ next: { ...current, worktree: { ...worktree, branch: to } }, events: [event("session.worktree_branch", { from, to })], marksOnly: true }));
   }
   /** Closes this conversation's kept process at the user's request, with the normal stop chain; resolves once it is recorded. */
   async endKept(id: SessionId, key: string): Promise<Conversation> {
@@ -2547,6 +2590,13 @@ export class SessionRuntime {
     if (execution.writeFailure !== null) throw execution.writeFailure;
   }
 
+  /** A checkpoint of a Turn's workspace (contracts/workspace.ts): it never fails the Turn, whatever the port does; nothing without the port. */
+  private checkpoint(workspace: string, id: SessionId, ordinal: number, side: "before" | "after"): Promise<void> {
+    const port = this.options.checkpoints;
+    if (port === undefined) return Promise.resolve();
+    try { return port.capture(workspace, id, ordinal, side).catch(() => undefined); } catch { return Promise.resolve(); }
+  }
+
   private async execute(id: SessionId, target: PublicRun["id"]): Promise<void> {
     const state = this.load(id), queued = state.runs.find(run => run.id === target);
     if (!queued || queued.status !== "queued") return;
@@ -2569,6 +2619,8 @@ export class SessionRuntime {
     this.actives.set(id, execution);
     // The Hub's own record of the workspace's changes, begun with the Turn and made at its end (workspace-record.ts).
     const watch = this.options.workspace?.begin(state.configuration.workspace) ?? null;
+    // The workspace as it is before the Turn (2026-11-14), taken while the Turn is prepared; its prompt waits for it, five seconds at most from here.
+    const before = this.checkpoint(state.configuration.workspace, id, queued.ordinal, "before");
     // The Turn's clock runs from here: starting the program, its model, tools and result. An operator's execution budget, when there is
     // one, and the hints that a Turn goes on are both counted from it (ADR-036, superseded 2026-11-12: no budget unless set).
     this.armBudget(execution); this.armHint(execution);
@@ -2899,6 +2951,8 @@ export class SessionRuntime {
         this.continue(execution);
         files = await content.materialize(run.attachments); this.continue(execution);
       }
+      // Nothing of the Turn reaches its Harness before the checkpoint of the workspace as it was is taken (or given up).
+      await before; this.continue(execution);
       this.commit(id, current => ({ next: updatedRun(current, target, phase(current, target, "dispatchedAt", this.options.now().getTime())), events: [event("run.dispatched", { runId: target })] }));
       execution.dispatched = true;
       // "Plan" as the Hub's policy (no plan mode of the Harness's own): the model is told it is read only before it tries.
@@ -3017,7 +3071,11 @@ export class SessionRuntime {
       // What the program logged during this Turn, kept privately in memory for the user's diagnostics (redacted on the way out).
       if (execution.binding && execution.diagnosticMark !== null) this.keepDiagnostics(id, target, execution.binding.control.diagnosticsSince?.(execution.diagnosticMark) ?? "");
       let handed = false;
+      // The workspace as the Turn left it (2026-11-14), whatever its end; after the one from before it, which it would otherwise race.
+      await before;
+      const after = this.checkpoint(state.configuration.workspace, id, queued.ordinal, "after");
       const recorded = watch === null ? null : await workspacePlacement(watch, execution.dispatched, this.options.content, state.configuration.workspace, () => this.options.now().getTime());
+      await after;
       const endedAt = this.options.now().getTime(), idleMs = this.options.keptIdleMs ?? KEPT_IDLE_MS;
       // The group's identity lets a later owner recognize and end it if this owner ends without closing it.
       let identity = reusing?.identity;

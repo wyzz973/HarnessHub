@@ -714,7 +714,8 @@ export class AcpControl implements HarnessControl {
       // The levels as this session's catalog makes them, for the model it now runs (contracts/flavor.ts levelOptions): the declaration's values
       // over the selection's own, so a selection that names only a level gets that level's native values, and a model's own thinking value.
       options = levelOptions(this.options.flavor, this.levelCatalog(this.catalog.options ?? []), options,
-        { ...(this.options.permission === undefined ? {} : { permission: this.options.permission }), ...(this.options.effort === undefined ? {} : { effort: this.options.effort }) }, checkpoint !== undefined);
+        { ...(this.options.permission === undefined ? {} : { permission: this.options.permission }), ...(this.options.effort === undefined ? {} : { effort: this.options.effort }),
+          ...(this.options.speed === undefined ? {} : { speed: this.options.speed }) }, checkpoint !== undefined);
       for (const [key, value] of Object.entries(options ?? {})) {
         const setting = this.catalog.options?.find(option => option.id === key);
         if (!setting || !setting.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "native option unavailable for selected Harness");

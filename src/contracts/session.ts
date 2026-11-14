@@ -4,7 +4,7 @@ import type { ContentPort, ContentRef } from "./content.js";
 import type { BindingRelayState, RelayRows, RunRelay, RunRelayRequest, SwitchMode, SwitchTiming } from "./relay.js";
 import type { ReadTurn } from "./protocol-read.js";
 import type { ConversationCommit } from "./conversation.js";
-import type { WorkspaceChanges } from "./workspace.js";
+import type { WorkspaceChanges, WorkspaceCheckpoints } from "./workspace.js";
 import type { FileChange } from "./protocol.js";
 import type { HarnessFlavor } from "./flavor.js";
 
@@ -384,6 +384,11 @@ export interface SessionSnapshot {
   /** The user pinned the conversation to the top of the list (2026-11-14): a mark of the list, kept until the user takes it off (a new Turn does not). */
   readonly pinned?: true;
   /**
+   * Where the pinned conversation stands among the pinned (2026-11-14): lower first, any finite number, set by the user's drag. Pinning without one puts it
+   * first (lower than every other pinned one); taking the pin off drops it. Only with `pinned`; one pinned before the order was kept has none.
+   */
+  readonly pinnedOrder?: number;
+  /**
    * The user asked to be reminded of the conversation later (2026-11-14): until this moment (milliseconds since the epoch) the list puts it aside. The page tells
    * whether the moment came; the Gateway only keeps it. A new Turn accepted in the conversation takes it off, as it does the archive mark.
    */
@@ -398,7 +403,18 @@ export interface SessionSnapshot {
    * (`userTitle`) still goes before it, whenever given.
    */
   readonly harnessTitle?: string;
+  /**
+   * The Git worktree the conversation was started in (2026-11-14, `POST /api/v1/sessions` with `worktree: true`): the conversation's workspace is in it. Kept with
+   * the conversation until it is erased; archiving and deleting it leave the worktree alone. Absent: the conversation works in its folder as it is.
+   */
+  readonly worktree?: ConversationWorktree;
 }
+/**
+ * A conversation's own Git worktree (2026-11-14), made from the repository its folder was in: `root` is that repository's main checkout (its top level; the page groups
+ * such conversations under it), `path` the worktree's top level, `branch` the branch checked out there (made as `hh/<8 hex>`, renamed once after the conversation's
+ * title), `baseSha` the commit it started from. All paths are real paths.
+ */
+export interface ConversationWorktree { readonly root: string; readonly path: string; readonly branch: string; readonly baseSha: string }
 export interface EventDraft { readonly type: string; readonly data: Readonly<Record<string, unknown>> }
 export interface SessionEvent extends EventDraft {
   readonly sessionId: SessionId;
@@ -552,6 +568,8 @@ export interface SessionRuntimeOptions {
   readonly flavor?: (harnessId: string) => HarnessFlavor;
   /** The Hub's own record of what each Turn changed in its workspace (contracts/workspace.ts); without it only what the Harness reported is kept. */
   readonly workspace?: WorkspaceChanges;
+  /** The checkpoints of a Turn's workspace before it starts and after it ends, and their erasure with the conversation (contracts/workspace.ts, 2026-11-14); none without it. */
+  readonly checkpoints?: WorkspaceCheckpoints;
   /** How long a kept native process may stay without a Turn before it is closed (ADR-030); 30 minutes unless shortened. */
   readonly keptIdleMs?: number;
   /**

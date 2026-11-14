@@ -1,5 +1,5 @@
 import type { BindingRow, CommandRow, HeldItem, ItemRow, RunRow, SwitchRow } from "../../contracts/conversation.js";
-import { SessionError, type CommandRecord, type NativeSessionBinding, type PublicSwitch, type SessionId } from "../../contracts/session.js";
+import { SessionError, type CommandRecord, type ConversationWorktree, type NativeSessionBinding, type PublicSwitch, type SessionId } from "../../contracts/session.js";
 
 /*
  * The objects a commit is made of (`RunRow`, `ItemRow`, `BindingRow`, …): the comparison of diff.ts builds them from the conversation, and the files of session-file.ts keep
@@ -18,12 +18,24 @@ export function canonicalJson(value: unknown): string {
 }
 export function utf8Length(text: string): number { return Buffer.byteLength(text, "utf8"); }
 /**
- * The marks of the list a conversation carries (2026-11-14: archived, pinned, put aside until a moment), as its head (`HeadJson`) and its head line keep them. A conversation
- * written before has none: it is neither archived nor pinned nor put aside.
+ * The marks of the list a conversation carries (2026-11-14: archived, pinned, put aside until a moment, and the Git worktree it works in), as its head (`HeadJson`) and
+ * its head line keep them. A conversation written before has none: it is neither archived nor pinned nor put aside, and works in its folder as it is. A pinned one has
+ * its place among the pinned (`pinnedOrder`, lowest first) once the user pinned or moved it after the order was kept; one pinned before has none. The order goes with
+ * the pin and never without it.
  */
-export function listMarksOf(from: { readonly archived?: true | undefined; readonly pinned?: true | undefined; readonly snoozedUntil?: number | undefined }): { readonly archived?: true; readonly pinned?: true; readonly snoozedUntil?: number } {
+export function listMarksOf(from: { readonly archived?: true | undefined; readonly pinned?: true | undefined; readonly pinnedOrder?: number | undefined; readonly snoozedUntil?: number | undefined; readonly worktree?: ConversationWorktree | undefined }):
+  { readonly archived?: true; readonly pinned?: true; readonly pinnedOrder?: number; readonly snoozedUntil?: number; readonly worktree?: ConversationWorktree } {
+  const worktree = worktreeOf(from.worktree);
   return { ...(from.archived === true ? { archived: true as const } : {}), ...(from.pinned === true ? { pinned: true as const } : {}),
-    ...(typeof from.snoozedUntil === "number" && Number.isSafeInteger(from.snoozedUntil) ? { snoozedUntil: from.snoozedUntil } : {}) };
+    ...(from.pinned === true && typeof from.pinnedOrder === "number" && Number.isFinite(from.pinnedOrder) ? { pinnedOrder: from.pinnedOrder } : {}),
+    ...(typeof from.snoozedUntil === "number" && Number.isSafeInteger(from.snoozedUntil) ? { snoozedUntil: from.snoozedUntil } : {}), ...(worktree === null ? {} : { worktree }) };
+}
+/** A worktree record as it was written: four texts, kept as they are (in this key order); anything else is no record. */
+export function worktreeOf(value: unknown): ConversationWorktree | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  return typeof item.root === "string" && typeof item.path === "string" && typeof item.branch === "string" && typeof item.baseSha === "string"
+    ? { root: item.root, path: item.path, branch: item.branch, baseSha: item.baseSha } : null;
 }
 const bit = (value: boolean): 0 | 1 => value ? 1 : 0;
 /** Whether a text holds no lone surrogate. */

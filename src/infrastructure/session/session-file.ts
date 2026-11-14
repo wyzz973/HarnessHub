@@ -9,7 +9,7 @@ import type { ItemStatus, ItemType } from "../../contracts/protocol.js";
 import type { DeliveryRecord, RelayPacket } from "../../contracts/relay.js";
 import {
   SessionError,
-  type CommandId, type CommandRecord, type ForkedMessage, type HarnessSelection, type NativeSessionBinding, type PublicSwitch, type RetainedProcess, type RunId, type SessionConfiguration, type SessionId,
+  type CommandId, type CommandRecord, type ConversationWorktree, type ForkedMessage, type HarnessSelection, type NativeSessionBinding, type PublicSwitch, type RetainedProcess, type RunId, type SessionConfiguration, type SessionId,
   type SessionSnapshot, type SwitchId,
 } from "../../contracts/session.js";
 import { conversationRunOf } from "../../contexts/session/domain/run-row.js";
@@ -51,9 +51,11 @@ export interface HeadState {
    * What the user named and marked (2026-11-14): the name, the archive mark, the pin, the moment a reminder puts it aside until, when it was deleted; and the name its
    * Harness gave it. A file written before has none of these, and its conversation is then neither named nor marked nor deleted.
    */
-  readonly userTitle?: string; readonly archived?: true; readonly pinned?: true; readonly snoozedUntil?: number; readonly deletedAt?: number; readonly harnessTitle?: string;
+  readonly userTitle?: string; readonly archived?: true; readonly pinned?: true; readonly pinnedOrder?: number; readonly snoozedUntil?: number; readonly deletedAt?: number; readonly harnessTitle?: string;
+  /** The Git worktree the conversation works in (2026-11-14, `SessionSnapshot.worktree`); a file written before has none. */
+  readonly worktree?: ConversationWorktree;
 }
-type UserMarks = Pick<HeadState, "userTitle" | "archived" | "pinned" | "snoozedUntil" | "deletedAt" | "harnessTitle">;
+type UserMarks = Pick<HeadState, "userTitle" | "archived" | "pinned" | "pinnedOrder" | "snoozedUntil" | "deletedAt" | "harnessTitle" | "worktree">;
 /** The user's names and marks of a conversation (and the name its Harness gave it), as the head line keeps them and the conversation carries them. */
 const userMarks = (from: { readonly [Key in keyof UserMarks]?: UserMarks[Key] | undefined }): UserMarks =>
   ({ ...(typeof from.userTitle === "string" ? { userTitle: from.userTitle } : {}), ...listMarksOf(from),

@@ -37,6 +37,7 @@ import { CapabilitiesPage } from "./components/CapabilitiesPage.js";
 import { CommandPalette, ShortcutsDialog, type PaletteCommand, type PaletteSearch } from "./components/CommandPalette.js";
 import type { FindAccess, FindTarget } from "./components/FindBar.js";
 import type { GitAccess } from "./components/GitChanges.js";
+import type { TerminalAccess } from "./components/TerminalDrawer.js";
 import { BrandIcon } from "./components/BrandIcon.js";
 import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
 import type { RelayNext } from "./components/RelayCard.js";
@@ -103,7 +104,7 @@ const PLACE_KEY = "harnesshub:new-chat-place";
 function readPlace(): Place {
   try {
     const raw = localStorage.getItem(PLACE_KEY), value: unknown = raw === null || raw.length > 8192 ? null : JSON.parse(raw);
-    if (value !== null && typeof value === "object" && !Array.isArray(value)) { const row = value as Record<string, unknown>; return { scratch: row.scratch === true, workspace: typeof row.workspace === "string" && row.workspace.startsWith("/") ? row.workspace : "" }; }
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) { const row = value as Record<string, unknown>; return { scratch: row.scratch === true, workspace: typeof row.workspace === "string" && row.workspace.startsWith("/") ? row.workspace : "", ...(row.worktree === true ? { worktree: true } : {}) }; }
   } catch { /* starts from the default */ }
   return { scratch: false, workspace: "" };
 }
@@ -311,7 +312,9 @@ export function App() {
   const [workspace, setWorkspace] = useState("");
   // A new conversation works in a project folder or, as a 临时对话, in none; this browser remembers the last choice.
   const [scratch, setScratch] = useState(() => readPlace().scratch);
-  const choosePlace = useCallback((place: Place) => { setScratch(place.scratch); setWorkspace(place.workspace); writePlace(place); }, []);
+  // Whether a new conversation in a project gets a git worktree of its own (remembered with the place, in this browser).
+  const [ownWorktree, setOwnWorktree] = useState(() => readPlace().worktree === true);
+  const choosePlace = useCallback((place: Place) => { setScratch(place.scratch); setWorkspace(place.workspace); setOwnWorktree(place.worktree === true); writePlace(place); }, []);
   const [mutation, setMutation] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -470,7 +473,9 @@ export function App() {
       const summary: SessionSummary = { id: value.id, title: value.title,
         status: value.status, workspace: value.workspace, selection: value.selection, updatedSeq: value.lastSeq, activeRunId: value.activeRunId, ...(value.parent === undefined ? {} : { parent: value.parent }),
         // When it last moved and since when its Turn runs, as its head says; a head that does not say keeps what the list knew.
-        updatedAt: value.updatedAt ?? known?.updatedAt ?? 0, ...(value.activeRunId === null ? {} : (since => since === undefined ? {} : { activeSince: since })(value.activeSince ?? known?.activeSince)), ...(value.archived === true ? { archived: true as const } : {}), ...(value.pinned === true ? { pinned: true as const } : {}), ...(value.snoozedUntil === undefined ? {} : { snoozedUntil: value.snoozedUntil }),
+        updatedAt: value.updatedAt ?? known?.updatedAt ?? 0, ...(value.activeRunId === null ? {} : (since => since === undefined ? {} : { activeSince: since })(value.activeSince ?? known?.activeSince)), ...(value.archived === true ? { archived: true as const } : {}), ...(value.pinned === true ? { pinned: true as const } : {}),
+        ...(value.pinned === true && value.pinnedOrder !== undefined ? { pinnedOrder: value.pinnedOrder } : {}), ...(value.snoozedUntil === undefined ? {} : { snoozedUntil: value.snoozedUntil }),
+        ...(value.worktree === undefined ? {} : { worktree: value.worktree }),
         // The list's second line, as the Gateway makes it for the others: the step in progress while a Turn goes on, the wrap-up's first sentence after.
         ...(line => line ? { line: summaryLine(line) } : {})(value.activeRunId !== null ? (value.plan?.runId === value.activeRunId ? value.plan.steps.find(step => step.status === "in_progress")?.text : undefined) : value.recap?.summary) };
       return { ...current, sessions: current.sessions.some(item => item.id === value.id)
@@ -772,7 +777,7 @@ export function App() {
    * What a conversation's row, and the open conversation's header, do to it: another title, put away or brought back. The list has the Gateway's answer at once;
    * putting one away says so with the way back for a few seconds, and asks nothing first (after T3 Code).
    */
-  const changeSession = useCallback((id: string, change: { readonly title?: string; readonly archived?: boolean; readonly pinned?: boolean; readonly snoozedUntil?: number | null }): Promise<void> => {
+  const changeSession = useCallback((id: string, change: { readonly title?: string; readonly archived?: boolean; readonly pinned?: boolean; readonly pinnedOrder?: number; readonly snoozedUntil?: number | null }): Promise<void> => {
     // A change this page makes itself is not news to it: a conversation that was read stays read, though the change moved it on.
     const before = state?.sessions.find(item => item.id === id), read = before !== undefined && !unseenNow(before);
     return api.updateSession(id, change).then(row => { if (read) markSeen([row]); setState(current => current ? { ...current, sessions: current.sessions.map(item => item.id === row.id ? row : item) } : current); });
@@ -786,6 +791,14 @@ export function App() {
     const stays = (item: SessionSummary): boolean => item.archived !== true && !(item.snoozedUntil !== undefined && item.snoozedUntil > Date.now());
     const rest = (state?.sessions ?? []).filter(item => item.id === id || stays(item)), at = rest.findIndex(item => item.id === id), next = rest[at + 1] ?? rest[at - 1];
     return { go: () => { if (next !== undefined) selectSession(next.id); else newChat(); }, back: () => selectSession(id) };
+  };
+  /** `leaving` for several at once: when the open conversation is among them, the page goes to the first conversation listed that is not, and comes back to it. */
+  const leavingMany = (ids: readonly string[]): { readonly go: () => void; readonly back: () => void } => {
+    const open = sessionIdRef.current;
+    if (!(page === "chat" && open !== null && ids.includes(open))) return { go: () => undefined, back: () => undefined };
+    const stays = (item: SessionSummary): boolean => !ids.includes(item.id) && item.archived !== true && !(item.snoozedUntil !== undefined && item.snoozedUntil > Date.now());
+    const next = (state?.sessions ?? []).find(stays);
+    return { go: () => { if (next !== undefined) selectSession(next.id); else newChat(); }, back: () => selectSession(open) };
   };
   /**
    * The way back from the sidebar's latest change (after T3 Code: every sidebar action can be taken back for five seconds, with ⌘Z or from its note, and none asks
@@ -845,13 +858,66 @@ export function App() {
       load: (before, signal) => api.deletedSessions(before, signal),
       restore: id => api.restoreSession(id).then(row => { putBack(row); bumpTrash(); toast.show({ title: "已恢复", description: shortTitle(row.title || "新对话"), action: { label: "打开", onClick: () => selectSession(row.id) }, timeout: 5000 }); },
         (failure: unknown) => { toast.show({ title: "没有恢复", description: errorMessage(failure) }); throw failure; }),
-      purge: id => api.purgeSession(id).then(() => { bumpTrash(); toast.show({ title: "已彻底删除" }); }, (failure: unknown) => { toast.show({ title: "没有彻底删除", description: errorMessage(failure) }); throw failure; }),
-      purgeAll: () => api.purgeDeleted().then(result => { bumpTrash(); toast.show({ title: "已彻底删除 " + result.purged + " 段对话" }); },
-        (failure: unknown) => { toast.show({ title: "没有清空", description: errorMessage(failure) }); throw failure; }),
+      purge: (id, removeWorktree) => (removeWorktree ? api.purgeSessionAndWorktree(id).then(result => result.worktreeRemoved ? "，工作树也删了" : result.worktreeKept === "shared" ? "，工作树还有别的对话在用，留下了" : result.worktreeKept === "failed" ? "，工作树没删掉：" + (result.worktreeError ?? "") : "")
+        : api.purgeSession(id).then(() => "")).then(said => { bumpTrash(); toast.show({ title: "已彻底删除" + said }); }, (failure: unknown) => { toast.show({ title: "没有彻底删除", description: errorMessage(failure) }); throw failure; }),
+      purgeAll: removeWorktrees => (removeWorktrees ? api.purgeDeletedAndWorktrees() : api.purgeDeleted()).then(result => {
+        bumpTrash();
+        toast.show({ title: "已彻底删除 " + result.purged + " 段对话" + (result.worktreesRemoved ? "，删了 " + result.worktreesRemoved + " 个工作树" : ""), ...(result.worktreeFailures?.length ? { description: result.worktreeFailures.length + " 个工作树没删掉：" + result.worktreeFailures[0]!.message } : {}) });
+      }, (failure: unknown) => { toast.show({ title: "没有清空", description: errorMessage(failure) }); throw failure; }),
+      worktree: (id, signal) => api.sessionWorktree(id, signal).then(view => view, (failure: unknown) => { if (failure instanceof ApiError && failure.status === 404) return null; throw failure; }),
       stamp: trashStamp,
+    },
+    // A pinned conversation dragged to another place among the pinned: shown there at once, then as the Gateway keeps it.
+    reorderPin: (id, order) => {
+      const before = state?.sessions.find(item => item.id === id)?.pinnedOrder;
+      setState(current => current ? { ...current, sessions: current.sessions.map(item => item.id === id ? { ...item, pinnedOrder: order } : item) } : current);
+      changeSession(id, { pinnedOrder: order }).then(() => offerUndo("已调整置顶顺序", () => { if (before !== undefined) changeSession(id, { pinnedOrder: before }).catch(() => undefined); }, false),
+        (failure: unknown) => { toast.show({ title: "没有调整成", description: errorMessage(failure) }); void refreshState().catch(() => undefined); });
     },
     markUnread: id => { const row = state?.sessions.find(item => item.id === id); if (row !== undefined) { markUnseen(row); offerUndo("已标为未读", () => markSeen([row]), false); } },
     reveal: id => { api.reveal(id).catch((failure: unknown) => toast.show({ title: "无法在访达中显示", description: errorMessage(failure) })); },
+    // Several at once (picked with ⌘ or ⇧): one note and one way back for all of them; the page leaves the open one if it is among them.
+    many: {
+      archive: ids => {
+        const gone = leavingMany(ids);
+        Promise.all(ids.map(id => changeSession(id, { archived: true }))).then(() => {
+          gone.go();
+          offerUndo("已归档 " + ids.length + " 段对话", () => { Promise.all(ids.map(id => changeSession(id, { archived: false }))).then(() => gone.back(), () => undefined); });
+        }, (failure: unknown) => toast.show({ title: "没有全部归档", description: errorMessage(failure) }));
+      },
+      pin: (ids, pinned) => {
+        const changed = ids.filter(id => (state?.sessions.find(item => item.id === id)?.pinned === true) !== pinned);
+        Promise.all(changed.map(id => changeSession(id, { pinned }))).then(() => offerUndo((pinned ? "已置顶 " : "已取消置顶 ") + changed.length + " 段对话", () => { void Promise.all(changed.map(id => changeSession(id, { pinned: !pinned }))).catch(() => undefined); }),
+          (failure: unknown) => toast.show({ title: pinned ? "没有全部置顶" : "没有全部取消置顶", description: errorMessage(failure) }));
+      },
+      snooze: (ids, until) => {
+        const gone = leavingMany(ids), before = new Map(ids.map(id => [id, state?.sessions.find(item => item.id === id)?.snoozedUntil ?? null] as const));
+        Promise.all(ids.map(id => changeSession(id, { snoozedUntil: until }))).then(() => {
+          gone.go();
+          offerUndo(ids.length + " 段对话稍后再提醒", () => { Promise.all(ids.map(id => changeSession(id, { snoozedUntil: before.get(id) ?? null }))).then(() => gone.back(), () => undefined); });
+        }, (failure: unknown) => toast.show({ title: "没有全部设成稍后提醒", description: errorMessage(failure) }));
+      },
+      markUnread: ids => {
+        const rows = (state?.sessions ?? []).filter(item => ids.includes(item.id) && item.id !== sessionIdRef.current);
+        for (const row of rows) markUnseen(row);
+        offerUndo("已标为未读", () => markSeen(rows), false);
+      },
+      remove: ids => {
+        const gone = leavingMany(ids);
+        Promise.allSettled(ids.map(id => api.deleteSession(id).then(() => id))).then(results => {
+          const deleted = results.flatMap(result => result.status === "fulfilled" ? [result.value] : []), failed = results.length - deleted.length;
+          setState(current => current ? { ...current, sessions: current.sessions.filter(item => !deleted.includes(item.id)) } : current);
+          bumpTrash();
+          if (deleted.length > 0) gone.go();
+          if (failed > 0) toast.show({ title: failed + " 段对话没有删除" });
+          if (deleted.length === 0) return;
+          offerUndo("已删除 " + deleted.length + " 段对话", () => { Promise.allSettled(deleted.map(id => api.restoreSession(id))).then(back => {
+            for (const result of back) if (result.status === "fulfilled") putBack(result.value);
+            bumpTrash(); gone.back();
+          }); });
+        });
+      },
+    },
     copy: (text, what) => { navigator.clipboard.writeText(text).then(() => toast.show({ title: "已复制" + what, timeout: 2500 }), () => toast.show({ title: "没有复制成", description: "浏览器没有让页面写剪贴板" })); },
     grouping: preferences.grouping, onGrouping: value => setPreference("grouping", value),
     onOrder: ids => { sidebarOrder.current = ids; },
@@ -892,6 +958,9 @@ export function App() {
     git: signal => api.git(sessionId, signal),
     commit: (message, paths) => api.commit(sessionId, message, paths),
     push: () => api.push(sessionId),
+    prStatus: signal => api.pullRequest(sessionId, signal),
+    createPr: input => api.createPullRequest(sessionId, input),
+    subjects: signal => api.gitLog(sessionId, undefined, signal).then(view => view.commits.map(commit => commit.subject)),
   }, [api, sessionId, editors, toast]);
   /** ⌘F: the Gateway finds the words in the whole conversation; going to a place reads the Turns down to it. */
   const find = useMemo<FindAccess | undefined>(() => sessionId === null ? undefined : {
@@ -905,6 +974,19 @@ export function App() {
     diff: (scope, path, whitespace, signal) => api.gitDiff(sessionId, scope, path, { ...(whitespace ? { whitespace: "ignore" as const } : {}), signal }),
     log: (before, signal) => api.gitLog(sessionId, before, signal).then(view => ({ commits: view.commits.map(commit => ({ sha: commit.sha, short: commit.shortSha, subject: commit.subject, author: commit.author, at: commit.committedAt })), next: view.next })),
     branches: signal => api.gitBranches(sessionId, signal),
+    checkpoints: (before, signal) => api.checkpoints(sessionId, before, signal),
+  }, [api, sessionId]);
+  /** Files put back as they were before a Turn, with its resend: where the conversation works in a worktree of its own and the Turn was captured before it. */
+  const restore = useMemo(() => sessionId === null ? undefined : {
+    can: (ordinal: number, signal: AbortSignal) => api.checkpoints(sessionId, ordinal + 1, signal).then(view => view.restorable && view.checkpoints.some(point => point.ordinal === ordinal && point.before !== undefined)),
+    run: (ordinal: number) => api.restoreCheckpoint(sessionId, ordinal).then(() => undefined),
+  }, [api, sessionId]);
+  /** The conversation's terminals, which the Gateway keeps running whatever the page attaches or lets go of. */
+  const terminals = useMemo<TerminalAccess | undefined>(() => sessionId === null ? undefined : {
+    list: signal => api.terminals(sessionId, signal),
+    open: (cols, rows, title) => api.openTerminal(sessionId, cols, rows, title),
+    close: id => api.closeTerminal(sessionId, id),
+    socketUrl: (id, cols, rows) => api.terminalSocketUrl(sessionId, id, cols, rows),
   }, [api, sessionId]);
   // A message the palette found: its conversation opens with find on the words, at that message.
   const [findRequest, setFindRequest] = useState<(FindTarget & { readonly sessionId: string; readonly stamp: number }) | null>(null);
@@ -1019,7 +1101,8 @@ export function App() {
       saveChatDraft();
       let id = request.sessionId;
       if (id === null) {
-        const created = await api.createSession(scratch ? null : workspace, selectionRequest(draft), request.createKey);
+        const created = !scratch && ownWorktree && workspace ? await api.createSessionInWorktree(workspace, selectionRequest(draft), request.createKey)
+          : await api.createSession(scratch ? null : workspace, selectionRequest(draft), request.createKey);
         id = created.head.id; request.sessionId = id; chatDrafts.current.delete("new");
         draftStore?.write(draftStorageKey(state.workspace, "new"), null);
         sessionIdRef.current = id; writeSessionRoute(id); setSessionId(id); acceptSession(created);
@@ -1535,7 +1618,7 @@ export function App() {
         onRetryConnection={() => setStreamAttempt(value => value + 1)} onLoadOlder={readOlder} reads={turnReads} {...(sessionId === null ? {} : { onLoadChanges: (before: string | undefined, signal: AbortSignal) => api.changes(sessionId, before, undefined, signal),
           onRename: (title: string) => changeSession(sessionId, { title }).catch((failure: unknown) => { toast.show({ title: "没有改成", description: errorMessage(failure) }); throw failure; }),
           onReveal: (path?: string) => { api.reveal(sessionId, path).catch((failure: unknown) => toast.show({ title: "无法在访达中显示", description: errorMessage(failure) })); },
-          onLoadWorkspace: (signal: AbortSignal) => api.workspace(sessionId, signal), workspaceTools, find, findRequest, git, terminalUrl: (cols: number, rows: number) => api.terminalUrl(sessionId, cols, rows) })} onDraft={changeSelection} place={{ scratch, workspace }} onPlace={choosePlace} recentFolders={recentFolders} onChooseFolder={start => api.chooseFolder(start)} scratchRoot={state.scratchRoot} delegations={delegations} onLoadDelegation={loadDelegation} onDelegate={delegate} taskBoard={taskBoard} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
+          onLoadWorkspace: (signal: AbortSignal) => api.workspace(sessionId, signal), workspaceTools, find, findRequest, git, terminals, restore })} onDraft={changeSelection} place={{ scratch, workspace, ...(ownWorktree ? { worktree: true } : {}) }} onPlace={choosePlace} recentFolders={recentFolders} onChooseFolder={start => api.chooseFolder(start)} scratchRoot={state.scratchRoot} delegations={delegations} onLoadDelegation={loadDelegation} onDelegate={delegate} taskBoard={taskBoard} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
         sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued}
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
         onImportNative={importNative} focusOnOpen={sessionId !== null && openedFromPage === sessionId} onOpenFocused={() => setOpenedFromPage(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}

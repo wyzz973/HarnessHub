@@ -46,6 +46,11 @@ export interface UserMessageBranching {
   readonly onResend?: ((text: string) => void) | undefined;
   readonly onSelectBranch?: ((runId: string) => void) | undefined;
   readonly busy?: boolean;
+  /**
+   * Putting the files back as they were before this Turn, with the resend (after T3 Code's "Edit from here … Revert files too"): offered where the conversation works in
+   * a worktree of its own and the Turn has a checkpoint from before it (`check`); `run` puts them back (what they are now is kept by the Gateway first).
+   */
+  readonly restore?: { readonly check: (signal: AbortSignal) => Promise<boolean>; readonly run: () => Promise<void> } | undefined;
 }
 const BUSY = "回合进行中：等这一轮结束或先停止它，再改发或切换分支";
 
@@ -63,6 +68,16 @@ export const UserMessage = memo(function UserMessage({ message, run, onEdit, bra
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const branch = branching?.branch, busy = branching?.busy === true;
+  // Whether the files can go back with the resend: asked when the editor opens; the choice is off until the user makes it.
+  const [restorable, setRestorable] = useState(false), [revert, setRevert] = useState(false), [restoring, setRestoring] = useState(false), [restoreProblem, setRestoreProblem] = useState<string | null>(null);
+  const restore = branching?.restore;
+  useEffect(() => {
+    setRestorable(false); setRevert(false); setRestoreProblem(null);
+    if (editing === null || restore === undefined) return;
+    const controller = new AbortController();
+    restore.check(controller.signal).then(can => { if (!controller.signal.aborted) setRestorable(can); }, () => undefined);
+    return () => controller.abort();
+  }, [editing === null]);
   const bubble = useRef<HTMLDivElement>(null), [long, setLong] = useState(false), [whole, setWhole] = useState(false);
   useLayoutEffect(() => { const element = bubble.current; if (element !== null) setLong(element.scrollHeight > 352); }, [message.text, editing === null]);
   const sent = steered !== undefined ? steered.at : run?.timing?.acceptedAt;
@@ -73,15 +88,26 @@ export const UserMessage = memo(function UserMessage({ message, run, onEdit, bra
   // Whether it rises into place (Motion board #15) is the conversation's call: ChatPage wraps a message that arrived after
   // the conversation opened, so a message never rises twice and history never moves.
   if (editing !== null && branching?.onResend) {
-    const send = () => { const text = editing.trim(); if (text === "" || busy) return; branching.onResend!(editing); setEditing(null); };
+    const send = async () => {
+      const text = editing.trim(); if (text === "" || busy || restoring) return;
+      if (revert && branching.restore) {
+        setRestoring(true); setRestoreProblem(null);
+        try { await branching.restore.run(); } catch (failure: unknown) { setRestoreProblem(failure instanceof Error ? failure.message : "没有还原成"); return; } finally { setRestoring(false); }
+      }
+      branching.onResend!(editing); setEditing(null);
+    };
     return <article className="message user-message flex flex-col items-end gap-1.5" aria-label="改发这条消息">
       <div className="flex w-full max-w-[85%] min-w-0 flex-col gap-2 rounded-card bg-subtle px-3 py-2">
         <textarea className="branch-edit min-h-20 w-full resize-y bg-transparent text-reading leading-6 text-fg outline-none" aria-label="改发的内容" autoFocus value={editing}
-          onChange={event => setEditing(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); send(); } else if (event.key === "Escape") setEditing(null); }}/>
+          onChange={event => setEditing(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void send(); } else if (event.key === "Escape") setEditing(null); }}/>
+        {restorable ? <label className="flex cursor-pointer items-center gap-2 text-caption text-fg-2">
+          <input type="checkbox" className="size-3.5 accent-[var(--accent)]" checked={revert} onChange={event => setRevert(event.target.checked)}/>
+          同时把文件还原到这一轮之前（现在的文件先存一份，可以找回）</label> : null}
+        {restoreProblem ? <p className="m-0 text-caption break-words text-red" role="alert">{restoreProblem}</p> : null}
         <div className="flex items-center justify-end gap-2">
           <small className="mr-auto text-caption text-fg-3">{busy ? BUSY : "从这里开一个分支重发，原来的回合留在另一个分支上"}</small>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(null)}>取消</button>
-          <button type="button" className="btn btn-primary btn-sm branch-send" disabled={busy || editing.trim() === ""} onClick={send}>发送</button>
+          <button type="button" className="btn btn-primary btn-sm branch-send" disabled={busy || restoring || editing.trim() === ""} onClick={() => void send()}>{restoring ? "正在还原…" : revert ? "还原并发送" : "发送"}</button>
         </div>
       </div>
     </article>;

@@ -1,4 +1,4 @@
-import { ChevronDown, Copy, FolderOpen, GitBranch, SquareArrowOutUpRight } from "lucide-react";
+import { ChevronDown, Copy, FolderOpen, GitBranch, GitPullRequest, SquareArrowOutUpRight } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { errorMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
@@ -16,6 +16,17 @@ export interface EditorChoice { readonly id: string; readonly name: string }
 export interface GitFile { readonly path: string; readonly index: string; readonly worktree: string; readonly added?: number | undefined; readonly removed?: number | undefined }
 export interface GitDetail { readonly branch: string | null; readonly upstream?: { readonly name: string; readonly ahead: number; readonly behind: number } | undefined; readonly remote: boolean; readonly files: readonly GitFile[] }
 export interface FilePage { readonly path: string; readonly size: number; readonly offset?: number | undefined; readonly text?: string | undefined; readonly next?: number | null | undefined; readonly binary?: true | undefined }
+/**
+ * Whether a pull request can be made from the conversation's branch with the user's own `gh` (after T3 Code's "Create PR"): gh installed and signed in, the branch and
+ * the default one, the remote, how many commits the branch has beyond the default one and how many are not pushed, and the request already open for the branch.
+ */
+export interface PrStatus {
+  readonly gh: "missing" | "signed-out" | "ready";
+  readonly branch: string | null; readonly defaultBranch: string | null;
+  readonly remote?: { readonly name: string; readonly url: string; readonly github: boolean } | undefined;
+  readonly ahead: number; readonly unpushed: number;
+  readonly existing?: { readonly url: string; readonly number: number; readonly title: string; readonly state: string } | undefined;
+}
 export interface WorkspaceAccess {
   /** The editors installed on this Mac; empty or absent when none was found. */
   readonly editors?: readonly EditorChoice[] | undefined;
@@ -24,6 +35,12 @@ export interface WorkspaceAccess {
   readonly commit?: ((message: string, paths?: readonly string[]) => Promise<{ readonly commit: string; readonly subject: string }>) | undefined;
   readonly push?: (() => Promise<{ readonly remote: string; readonly branch: string }>) | undefined;
   readonly file?: ((path: string, offset: number, signal: AbortSignal) => Promise<FilePage>) | undefined;
+  /** Whether a pull request can be made from the branch, and the one already made. */
+  readonly prStatus?: ((signal: AbortSignal) => Promise<PrStatus>) | undefined;
+  /** Pushes the branch when it needs it, then makes the pull request with `gh`; only when its button is pressed. */
+  readonly createPr?: ((input: { readonly title: string; readonly body: string }) => Promise<{ readonly url: string; readonly number: number }>) | undefined;
+  /** The subjects of the branch's newest commits, newest first: what a pull request's text starts from. */
+  readonly subjects?: ((signal: AbortSignal) => Promise<readonly string[]>) | undefined;
 }
 
 const EDITOR_KEY = "harnesshub:editor";
@@ -113,6 +130,76 @@ export function CommitDialog({ open, onClose, access, suggestion, onDone }: { re
           {canPush ? <button type="button" className="btn" disabled={busy !== null || message.trim() === "" || chosen.length === 0} onClick={() => void run(true)}>{busy === "push" ? <Spinner size={13} label=""/> : null}提交并推送</button> : null}
           <button type="button" className="btn btn-primary" disabled={busy !== null || message.trim() === "" || chosen.length === 0} onClick={() => void run(false)}>{busy === "commit" ? <Spinner size={13} label=""/> : null}提交</button>
         </>}
+      </div>
+    </div>
+  </Dialog>;
+}
+
+/**
+ * The pull request of the conversation's branch, as a row of the environment section: the one already made (with the way to it), or — where `gh` is signed in, the
+ * remote is GitHub and the branch has commits the default branch has not — "建 PR…", which asks for the title and the text before anything is pushed or made.
+ * Nothing is shown where none of that holds; a gh that is not signed in says how to sign in, once there is something to send.
+ */
+export function PullRequestRow({ access, stamp, suggestion, onSaid }: { readonly access: WorkspaceAccess; readonly stamp: string; readonly suggestion: string; readonly onSaid?: ((words: string, link?: string) => void) | undefined }) {
+  const [status, setStatus] = useState<PrStatus | null>(null), [making, setMaking] = useState(false), [again, setAgain] = useState(0);
+  useEffect(() => {
+    if (access.prStatus === undefined) return;
+    const controller = new AbortController();
+    access.prStatus(controller.signal).then(value => { if (!controller.signal.aborted) setStatus(value); }, () => { /* nothing is offered */ });
+    return () => controller.abort();
+  }, [stamp, again]);
+  if (status === null) return null;
+  const icon = <span className="flex size-4 flex-none items-center justify-center text-fg-3"><GitPullRequest size={14} aria-hidden="true"/></span>;
+  if (status.existing) return <a className="row -mx-2 flex min-h-7 min-w-0 items-center gap-2.5 px-2 text-left text-ui-sm text-fg-2 no-underline hover:bg-subtle" href={status.existing.url} target="_blank" rel="noopener noreferrer" title={status.existing.url}>
+    {icon}<span className="min-w-0 flex-1 trunc">PR #{status.existing.number} · {status.existing.title}</span><span className="flex-none text-caption text-fg-3">{status.existing.state === "OPEN" ? "进行中" : status.existing.state === "MERGED" ? "已合并" : status.existing.state === "CLOSED" ? "已关闭" : status.existing.state}</span></a>;
+  const onBranch = status.branch !== null && status.defaultBranch !== null && status.branch !== status.defaultBranch && status.ahead > 0;
+  if (!onBranch || status.remote?.github !== true) return null;
+  if (status.gh !== "ready") return <div className="flex min-h-7 min-w-0 items-center gap-2.5 text-caption text-fg-3">{icon}
+    <span className="min-w-0 flex-1">{status.gh === "missing" ? "装上 GitHub CLI（gh）后可以在这里建 PR" : "要建 PR，先在终端里运行 gh auth login"}</span></div>;
+  return <>
+    <button type="button" className="row -mx-2 flex min-h-7 min-w-0 items-center gap-2.5 border-none bg-transparent px-2 text-left text-ui-sm hover:bg-subtle" onClick={() => setMaking(true)}>
+      {icon}<span className="min-w-0 flex-1 trunc text-fg-2">建 PR…</span><span className="flex-none text-caption text-fg-3">{status.ahead} 个提交{status.unpushed > 0 ? " · " + status.unpushed + " 个没推送" : ""}</span></button>
+    {access.createPr ? <PullRequestDialog open={making} onClose={() => setMaking(false)} access={access} status={status} suggestion={suggestion}
+      onDone={(words, link) => { onSaid?.(words, link); setAgain(value => value + 1); }}/> : null}
+  </>;
+}
+
+/** The pull request's title and text, asked for before the branch is pushed (when it needs to be) and the request is made with `gh`; gh's or Git's own words when it refuses. */
+function PullRequestDialog({ open, onClose, access, status, suggestion, onDone }: { readonly open: boolean; readonly onClose: () => void; readonly access: WorkspaceAccess; readonly status: PrStatus; readonly suggestion: string;
+  readonly onDone: (words: string, link?: string) => void }) {
+  const [title, setTitle] = useState(""), [body, setBody] = useState(""), [busy, setBusy] = useState(false), [problem, setProblem] = useState<string | null>(null), field = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    setProblem(null); setBusy(false); setTitle(suggestion); setBody("");
+    if (access.subjects === undefined) return;
+    const controller = new AbortController();
+    // The newest commit names the request, the branch's commits make its text, as a list.
+    access.subjects(controller.signal).then(subjects => {
+      if (controller.signal.aborted) return;
+      const mine = subjects.slice(0, Math.max(1, status.ahead));
+      if (mine[0]) setTitle(current => current === suggestion || current === "" ? mine[0]! : current);
+      setBody(current => current === "" ? mine.map(subject => "- " + subject).join("\n") : current);
+    }, () => undefined);
+    return () => controller.abort();
+  }, [open]);
+  const make = async () => {
+    if (access.createPr === undefined || title.trim() === "" || busy) return;
+    setBusy(true); setProblem(null);
+    try { const made = await access.createPr({ title: title.trim(), body }); onDone("已建 PR #" + made.number, made.url); onClose(); }
+    catch (failure: unknown) { setProblem(errorMessage(failure)); }
+    finally { setBusy(false); }
+  };
+  return <Dialog open={open} onOpenChange={next => { if (!next && !busy) onClose(); }} title="建 PR" className="flex w-[min(560px,calc(100vw-32px))] flex-col" initialFocus={field}>
+    <div className="flex min-h-0 flex-col gap-3 px-5 pt-3 pb-5">
+      <p className="m-0 flex min-w-0 items-center gap-2 text-ui-sm text-fg-2"><GitBranch size={14} className="flex-none text-fg-3" aria-hidden="true"/>
+        <span className="mono min-w-0 trunc text-caption text-fg">{status.branch}</span><span className="flex-none text-caption text-fg-3">→ {status.defaultBranch}{status.unpushed > 0 ? " · 先推送 " + status.unpushed + " 个提交" : ""}</span></p>
+      <input ref={field} className="field h-9 w-full px-2.5 text-ui-sm" value={title} placeholder="标题" aria-label="PR 标题" onChange={event => setTitle(event.target.value)}/>
+      <textarea className="field min-h-[110px] w-full resize-y px-2.5 py-2 text-ui-sm leading-5" value={body} placeholder="说明（可以不写）" aria-label="PR 说明" onChange={event => setBody(event.target.value)}
+        onKeyDown={event => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void make(); } }}/>
+      {problem ? <p className="m-0 max-h-[120px] overflow-auto rounded-row bg-inset px-2.5 py-2 text-caption break-words whitespace-pre-wrap text-red" role="alert">{problem}</p> : null}
+      <div className="flex items-center justify-end gap-2 pt-1">
+        <button type="button" className="btn btn-ghost" disabled={busy} onClick={onClose}>取消</button>
+        <button type="button" className="btn btn-primary" disabled={busy || title.trim() === ""} onClick={() => void make()}>{busy ? <Spinner size={13} label=""/> : null}{status.unpushed > 0 ? "推送并建 PR" : "建 PR"}</button>
       </div>
     </div>
   </Dialog>;

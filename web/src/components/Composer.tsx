@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Check, CornerDownRight, History, ListPlus, Star, Paperclip, Plus, RefreshCw, ShieldCheck, Split, SquareSlash, TriangleAlert } from "lucide-react";
+import { ArrowLeftRight, Check, CornerDownRight, History, ListPlus, Star, Paperclip, Plus, RefreshCw, ShieldCheck, Split, SquareSlash, TriangleAlert, Zap } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { PublicRun } from "../../../src/contracts/session.js";
@@ -9,7 +9,7 @@ import { keyText } from "../lib/keys.js";
 import { ago } from "../lib/format.js";
 import { Menu, Popover, PopHead } from "../ui/overlay.js";
 import { motionStyle, SendStopIcon, usePresence, useReducedMotion } from "../ui/motion.js";
-import { Kbd, LogoMark, Spinner, Tip } from "../ui/primitives.js";
+import { Kbd, LogoMark, Segmented, Spinner, Tip } from "../ui/primitives.js";
 import { ApprovalDock, type PermissionRequestView } from "./Approval.js";
 import { attachmentProblem, ComposerAttachments } from "./Attachments.js";
 import { BrandIcon, providerBrand } from "./BrandIcon.js";
@@ -20,7 +20,7 @@ import { SearchPicker, type PickerOption } from "./SearchPicker.js";
 import { EFFORT_WORDS, PERMISSION_MEANINGS, PERMISSION_WORDS } from "../../../src/contracts/levels.js";
 import { EFFORT_LEVELS, PERMISSION_LEVELS, type EffortLevel, type PermissionLevel } from "../../../src/contracts/protocol.js";
 import { EFFORT_KEY, PERMISSION_KEY } from "../../../src/contracts/flavor.js";
-import { carryLevels, levelState, withEffort, withNativeOption, withPermission } from "../lib/levels.js";
+import { carryLevels, levelState, withEffort, withNativeOption, withPermission, withSpeed } from "../lib/levels.js";
 
 /** An approval that waits in the composer's place (ADR-054 §5), with what the dock needs to decide it. */
 export interface DockedApproval {
@@ -48,6 +48,8 @@ interface ComposerProps extends ChatProps {
   readonly below?: ReactNode;
   /** The Agent list of the merged picker, which ⌘J opens. */
   readonly agentPickerOpen: boolean;
+  /** One of the box's lists opened by its keys (⌥⌘M the model, ⌥⌘E the thinking level, ⌥⌘P the permission); a new `at` opens it again. */
+  readonly openList?: { readonly list: "model" | "thought" | "permission"; readonly at: number } | null | undefined;
   readonly onAgentPickerOpen: (open: boolean) => void;
   /** ↑ in an empty composer: takes the held message back, or the last sent message as a draft. */
   readonly onEditLast?: (() => void) | undefined;
@@ -424,6 +426,15 @@ export function Composer(props: ComposerProps) {
   const [list, setList] = useState<"add" | "permission" | "provider" | "model" | "thought" | "mode" | null>(null);
   const listOpen = (id: NonNullable<typeof list>) => ({ open: list === id && !docked, onOpenChange: (open: boolean) => setList(current => open ? id : current === id ? null : current) });
   const { agentPickerOpen, onAgentPickerOpen } = props;
+  // A list asked for by its keys opens where it is offered; the model's, where the box offers no list of its own, opens the Harness list with its models beside it.
+  const askedList = useRef<number | null>(null);
+  useEffect(() => {
+    const asked = props.openList;
+    if (!asked || askedList.current === asked.at || docked) return;
+    askedList.current = asked.at;
+    const offered = asked.list === "model" ? draft.harnessId !== "" : asked.list === "thought" ? thought !== null && thought !== undefined : draft.harnessId !== "" && !draft.providerId;
+    if (offered) setList(asked.list); else if (asked.list === "model") onAgentPickerOpen(true);
+  }, [props.openList?.at]);
   useEffect(() => { if (!docked) return; setList(null); if (agentPickerOpen) onAgentPickerOpen(false); }, [docked, agentPickerOpen, onAgentPickerOpen]);
   const openPanel = (kind: NonNullable<typeof panel>["kind"]) => setPanel({ kind, harnessId: draft.harnessId });
   const panelOpenChange = (kind: NonNullable<typeof panel>["kind"]) => (open: boolean) => setPanel(open ? { kind, harnessId: draft.harnessId } : null);
@@ -453,6 +464,10 @@ export function Composer(props: ComposerProps) {
     props.onDraft({ ...draft, model: value, nativeOptions: independent });
   };
   const changeEffort = (value: string) => changeLevels(withEffort(level, draft.nativeOptions, value === "" ? null : value as EffortLevel));
+  // The speed (2026-11-14, after T3 Code's Standard | Fast): offered where the model has a tier beyond standard; the Harness's own setting until the user picks one.
+  const speeds = level.levels.speed, speedOwn = level.levels.speedOwn, speedNow = level.speed ?? speedOwn ?? "standard";
+  const speedWord = (value: string): string => value === "standard" ? "标准" : value === "fast" ? "快" : value;
+  const changeSpeed = (value: string) => changeLevels(withSpeed(level, draft.nativeOptions, value === "own" ? null : value));
   const canModel = !disabled && (provider !== undefined && provider !== null || props.nativeModels?.canSelect === true);
   // Beside the Harnesses, in the same layer: the chosen one's models and — where its model has them — its thinking levels. A choice there leaves the layer open.
   const column = "flex min-h-0 min-w-0 flex-1 flex-col";
@@ -477,6 +492,12 @@ export function Composer(props: ComposerProps) {
           </div></div>; })
           : <p className="m-0 px-3 py-6 text-center text-ui-sm text-fg-3">{props.nativeModelsLoading ? "正在读取本机模型…" : "没有可选的模型"}</p>}
       </div>
+      {speeds.length > 0 ? <div className="flex flex-none flex-col gap-1.5 hairline-t px-3.5 py-2.5">
+        <span className="text-caption text-fg-3">速度</span>
+        <Segmented label="速度" value={level.speed ?? "own"} onChange={changeSpeed} options={[{ value: "own", label: "跟随设置" + (speedOwn ? "（" + speedWord(speedOwn) + "）" : "") },
+          ...speeds.map(entry => ({ value: entry.level, label: <span className="flex items-center gap-1" title={entry.note}>{entry.level !== "standard" ? <Zap size={12} aria-hidden="true"/> : null}{speedWord(entry.level)}</span>, disabled: disabled }))]}/>
+        {speeds.some(entry => entry.level !== "standard" && entry.note) ? <span className="text-caption text-fg-3">{speeds.find(entry => entry.level !== "standard" && entry.note)?.note}</span> : null}
+      </div> : null}
     </div>
     {thought ? <div className={cn(column, "max-w-[190px] hairline-l")}>
       <div className={heading}>思考</div>
@@ -667,6 +688,8 @@ export function Composer(props: ComposerProps) {
                   onChange={changeModel} footer={!provider ? <><span>{props.nativeModelsLoading ? "正在读取本机模型…" : "列表来自本机安装"}</span><button type="button" className="link-btn text-caption" onClick={props.onRefreshModels}>刷新本机模型</button></> : undefined}/> : null}
                 {thought ? <SearchPicker side={popSide} {...listOpen("thought")} label="思考强度" value={level.effort ?? ""} placeholder="跟随本机配置" options={effortChoices(thought)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "thought"}
                   className={cn(SEGMENT, "flex-none")} {...afterChoice} footer={nativeFooter} trigger={() => <Pill>思考 {thinkingShown}</Pill>} onChange={changeEffort}/> : null}
+                {speeds.length > 0 && speedNow !== "standard" ? <Tip label={"速度：" + speedWord(speedNow) + (level.speed === null ? "（跟随本机设置）" : "")}><button type="button" className={cn(SEGMENT, "flex-none")} disabled={disabled} aria-label={"速度：" + speedWord(speedNow)}
+                  onClick={() => onAgentPickerOpen(true)}><Pill><Zap size={11} aria-hidden="true"/>{speedWord(speedNow)}</Pill></button></Tip> : null}
                 {mode && modeInChip ? <SearchPicker side={popSide} {...listOpen("mode")} label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
                   className={cn(SEGMENT, "flex-none")} {...afterChoice} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
               </div>

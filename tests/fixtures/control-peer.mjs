@@ -76,6 +76,13 @@ let hooksStarted = 0, hooksEnded = 0;
 // Codex app-server gates experimental methods and fields per connection on initialize.capabilities.experimentalApi.
 let experimental = false;
 let selectedModel = "native-model-a", thinking = "low", fast = "off";
+// claude-agent-acp 0.99.1's speed ("claude-fast"): the session option `fast` (category model_config, "on"/"off") is there only while the session's model supports
+// fast mode (here "opus", not "haiku"). FIXTURE_FAST: the fast mode the user's own settings start a session with.
+let claudeModel = "opus", claudeFast = process.env.FIXTURE_FAST ?? "off";
+function claudeConfiguration() { return [
+  { id: "model", name: "Model", category: "model", type: "select", currentValue: claudeModel, options: [{ value: "opus", name: "Opus" }, { value: "haiku", name: "Haiku" }] },
+  ...(claudeModel === "opus" ? [{ id: "fast", name: "Fast mode", description: "Faster responses on supported models", category: "model_config", type: "select", currentValue: claudeFast, options: [{ value: "on", name: "On" }, { value: "off", name: "Off" }] }] : [])
+]; }
 function nativeConfiguration() { return [
  { id:"native-model",category:"model",type:"select",currentValue:selectedModel,options:[{value:"native-model-a",name:"Native A"},{value:"native-model-b",name:"Native B"}] },
  { id:"native-thinking",name:"Native effort",category:"thought_level",type:"select",currentValue:thinking,options:[{value:"low",name:"Low"},{value:"max",name:"Max"}] },
@@ -203,7 +210,7 @@ lines.on("line", line => {
     if (scenario === "stderr") process.stderr.write("diagnostic".repeat(100000));
     const result = protocol === "acp-v1"
       ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay", "native-config", "openclaw-settings", "session-list", "hermes", "claude"].includes(scenario), ...(scenario === "hermes" ? { sessionCapabilities: { resume: {}, list: {}, fork: {} }, promptCapabilities: { image: true } } : {}),
-        ...(scenario === "claude" ? { sessionCapabilities: { list: {}, fork: {}, resume: {}, close: {} }, promptCapabilities: { image: true, embeddedContext: true }, _meta: { claudeCode: { promptQueueing: true } } } : {}), ...(scenario === "session-list" ? { sessionCapabilities: { list: {} } } : {}), ...(scenario === "attachments" || scenario === "openclaw-settings" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}), ...(scenario === "claude-auth" ? { _meta: { claudeCode: { promptQueueing: true }, authStatus: {} } } : {}) }, ...(process.env.FIXTURE_AUTH === "none" ? {} : { authMethods: process.env.FIXTURE_AUTH === "terminal" ? [{ id: "hermes-setup", name: "Set up Hermes", type: "terminal", args: ["--setup"] }] : process.env.FIXTURE_AUTH === "invalid" ? { id: "fixture-login" } : [{ id: "fixture-login", name: "Fixture Login" }] }), agentInfo: agentInfo() }
+        ...(scenario === "claude" ? { sessionCapabilities: { list: {}, fork: {}, resume: {}, close: {} }, promptCapabilities: { image: true, embeddedContext: true }, _meta: { claudeCode: { promptQueueing: true } } } : {}), ...(scenario === "session-list" ? { sessionCapabilities: { list: {} } } : {}), ...(scenario === "claude-fast" ? { sessionCapabilities: { resume: {} } } : {}), ...(scenario === "attachments" || scenario === "openclaw-settings" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}), ...(scenario === "claude-auth" ? { _meta: { claudeCode: { promptQueueing: true }, authStatus: {} } } : {}) }, ...(process.env.FIXTURE_AUTH === "none" ? {} : { authMethods: process.env.FIXTURE_AUTH === "terminal" ? [{ id: "hermes-setup", name: "Set up Hermes", type: "terminal", args: ["--setup"] }] : process.env.FIXTURE_AUTH === "invalid" ? { id: "fixture-login" } : [{ id: "fixture-login", name: "Fixture Login" }] }), agentInfo: agentInfo() }
       : { userAgent: scenario === "plan-mode" ? "codex_cli_rs/0.162.1 (fixture)" : scenario === "plan-old" ? "codex_cli_rs/0.161.0 (fixture)" : "fixture-codex/1.0", codexHome: process.cwd(), platformFamily: "unix", platformOs: process.platform };
     if (protocol === "codex-app-server") experimental = message.params?.capabilities?.experimentalApi === true;
     // claude-agent-acp pushes its sign-in report after the initialize response. FIXTURE_AUTH_AT=initialize sends the report
@@ -227,7 +234,9 @@ lines.on("line", line => {
   if (message.method === "initialized") { initialized = true; return; }
   if (message.method === "config/read") { answer(message.id, { config: { model: "native-model-a", privateCredential: "synthetic-never-public", ...(["permissions-settings", "ignore-permissions"].includes(scenario) ? { approval_policy: "never", sandbox_mode: "danger-full-access" } : {}),
     // FIXTURE_DEVELOPER_INSTRUCTIONS: the user's own developer_instructions in the effective configuration.
-    ...(process.env.FIXTURE_DEVELOPER_INSTRUCTIONS === undefined ? {} : { developer_instructions: process.env.FIXTURE_DEVELOPER_INSTRUCTIONS }) } }); return; }
+    ...(process.env.FIXTURE_DEVELOPER_INSTRUCTIONS === undefined ? {} : { developer_instructions: process.env.FIXTURE_DEVELOPER_INSTRUCTIONS }),
+    // FIXTURE_SERVICE_TIER: the user's own service_tier (the speed every thread runs without being given one).
+    ...(process.env.FIXTURE_SERVICE_TIER === undefined ? {} : { service_tier: process.env.FIXTURE_SERVICE_TIER }) } }); return; }
   if (message.method === "collaborationMode/list") {
     // A Codex without collaboration modes, whatever version it states.
     if (scenario === "collab-missing") { emit({ id: message.id, error: { code: -32601, message: "Method not found" } }); return; }
@@ -247,7 +256,9 @@ lines.on("line", line => {
   if (message.method === "plugin/installed") {
     answer(message.id, { marketplaces: scenario === "skills" ? [{ name: "openai-curated", plugins: [{ name: "github", installed: true, enabled: true, localVersion: "1.2.0" }, { name: "not-here", installed: false, enabled: false }] }] : [], marketplaceLoadErrors: [] }); return;
   }
-  if (message.method === "model/list") { answer(message.id, { data: ["native-model-a", "native-model-b"].map(model => ({ model, displayName: model, ...(scenario === "attachments" ? { inputModalities: model === "native-model-a" ? ["text", "image", "audio"] : ["text"] } : {}) })), nextCursor: null }); return; }
+  // The "speed" scenario: model a offers a faster tier as app-server 0.166.0 lists it (serviceTiers, and the deprecated additionalSpeedTiers), model b none.
+  const speedTiers = model => scenario !== "speed" ? {} : model === "native-model-a" ? { serviceTiers: [{ id: "priority", name: "Fast", description: "2x speed, increased usage" }], additionalSpeedTiers: ["fast"], defaultServiceTier: null } : { serviceTiers: [], additionalSpeedTiers: [], defaultServiceTier: null };
+  if (message.method === "model/list") { answer(message.id, { data: ["native-model-a", "native-model-b"].map(model => ({ model, displayName: model, ...(scenario === "attachments" ? { inputModalities: model === "native-model-a" ? ["text", "image", "audio"] : ["text"] } : {}), ...speedTiers(model) })), nextCursor: null }); return; }
   if (scenario === "hermes" && message.method === "session/new") {
     if (process.env.FIXTURE_SESSION_ERROR) { hermesRefusal(message.id, process.env.FIXTURE_SESSION_ERROR); return; }
     if (typeof message.params?.cwd === "string") sessionCwd = message.params.cwd;
@@ -285,6 +296,16 @@ lines.on("line", line => {
   }
   if (message.method === "session/set_config_option" && scenario === "attachments") {
     answer(message.id, { configOptions: [{ id: "model", category: "model", type: "select", currentValue: message.params.value, options: [{ value: "native/model-a", name: "Model A" }, { value: "native/model-b", name: "Model B" }] }] }); return;
+  }
+  if (scenario === "claude-fast" && (message.method === "session/new" || message.method === "session/resume")) {
+    answer(message.id, { ...(message.method === "session/new" ? { sessionId: SESSION } : {}), configOptions: claudeConfiguration() }); return;
+  }
+  if (scenario === "claude-fast" && message.method === "session/set_config_option") {
+    const p = message.params;
+    if (p.configId === "model") claudeModel = p.value;
+    else if (p.configId === "fast" && claudeConfiguration().some(option => option.id === "fast") && (p.value === "on" || p.value === "off")) claudeFast = p.value;
+    else { emit({ id: message.id, error: { code: -32602, message: "Unknown config option: " + p.configId } }); return; }
+    answer(message.id, { configOptions: claudeConfiguration() }); return;
   }
   if (message.method === "session/new" && (scenario === "native-experience" || scenario === "native-config")) {
     notification("session/update",{sessionId:SESSION,update:{sessionUpdate:"available_commands_update",availableCommands:[{name:"native-help",description:"Native fixture help"},...(scenario==="native-config"?[{name:"native-fast",description:"Turns fast mode on or off"}]:[])]}});
@@ -391,7 +412,11 @@ lines.on("line", line => {
     const odd = process.env.FIXTURE_THREAD_POLICY === "odd", mode = message.method === "thread/resume" ? process.env.FIXTURE_THREAD_MODE : undefined;
     answer(message.id, { thread: { id, ...(rollout ? { path: rollout } : {}) }, approvalPolicy: odd ? { granular: { sandbox_approval: true } } : scenario === "ignore-permissions" ? "never" : message.params.approvalPolicy ?? "never",
       sandbox: { type: odd ? "externalSandbox" : scenario === "ignore-permissions" ? "dangerFullAccess" : sandboxType },
-      ...(mode === undefined ? {} : { collaborationMode: { mode, settings: { model: "native-model-a", reasoning_effort: null, developer_instructions: null } } }) }); return;
+      ...(mode === undefined ? {} : { collaborationMode: { mode, settings: { model: "native-model-a", reasoning_effort: null, developer_instructions: null } } }),
+      // The tier the thread runs, as 0.166.0 reports it (probe of 2026-11-14): the one given ("fast" read as priority), else the configuration's, else standard;
+      // a resumed thread given none keeps FIXTURE_THREAD_TIER (a tier an earlier turn set). FIXTURE_TIER_REPORT=none reports none, whatever was asked.
+      serviceTier: process.env.FIXTURE_TIER_REPORT === "none" ? null : message.params.serviceTier === "fast" ? "priority"
+        : message.params.serviceTier ?? (message.method === "thread/resume" ? process.env.FIXTURE_THREAD_TIER : undefined) ?? process.env.FIXTURE_SERVICE_TIER ?? "default" }); return;
   }
   if (message.method === "ping") { answer(message.id, { echoed: message.params }); return; }
   if (message.method === "thread/fork") {

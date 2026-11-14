@@ -148,17 +148,47 @@ export interface SessionSummary {
   /** The user pinned it to the top of the list (2026-11-14); a new Turn does not take the pin off. */
   readonly pinned?: true;
   /**
+   * Its place among the pinned (2026-11-14): the pinned are listed lowest first; any finite number (the page sets it on a drag, e.g. between its neighbours'). Only
+   * with `pinned`. One pinned before the order was kept has none: the page puts those after the ones that have one.
+   */
+  readonly pinnedOrder?: number;
+  /**
    * The user asked to be reminded of it later (2026-11-14): until this moment (milliseconds since the epoch) the list puts it aside. Whether the moment came is the
    * page's to tell; the Gateway only keeps it. A new Turn accepted in it takes it off.
    */
   readonly snoozedUntil?: number;
+  /**
+   * The Git worktree the conversation works in (2026-11-14, started with `worktree: true`): `root` is the repository's main checkout, under which the page groups it;
+   * `path` the worktree, `branch` its branch as last recorded (`GET …/worktree` reads it live), `baseSha` the commit it started from. Absent for a conversation that
+   * works in its folder as it is.
+   */
+  readonly worktree?: WorktreeMark;
 }
+/** A conversation's own Git worktree as its head and its row of the list carry it (`ConversationWorktree`). */
+export interface WorktreeMark { readonly root: string; readonly path: string; readonly branch: string; readonly baseSha: string }
+/**
+ * `GET /api/v1/sessions/:id/worktree` (2026-11-14): the conversation's worktree as it is now, also for a conversation the user deleted (the page asks before erasing
+ * it). `branch` is the branch checked out there (null on a detached head), `dirty` how many files are not committed (untracked ones included, one by one), `shared`
+ * whether another conversation that is not erased works in it (a delegated one, a branch of it); `missing` when its folder is no longer there. 404 when the
+ * conversation has no worktree.
+ */
+export interface WorktreeView { readonly path: string; readonly branch: string | null; readonly dirty: number; readonly shared: boolean; readonly missing?: true }
+/**
+ * `POST /api/v1/sessions/:id/purge` with `{ removeWorktree: true }` (2026-11-14): after the conversation is erased, its worktree is removed (`git worktree remove
+ * --force`, then `git worktree prune`; the branch stays) unless another conversation that is not erased works in it. `worktreeRemoved`: the worktree is no longer
+ * there; `worktreeKept`: it was left, `shared` (another conversation works in it) or `failed` (Git refused; `worktreeError` has its words). Without the flag the
+ * answer is 204 and the worktree is left alone.
+ */
+export interface PurgeSessionView { readonly worktreeRemoved?: true; readonly worktreeKept?: "shared" | "failed"; readonly worktreeError?: string }
 /**
  * `PATCH /api/v1/sessions/:id`: the user renames the conversation, archives it, pins it or puts it aside until a moment (at least one of these). A title is trimmed and
  * its line breaks made spaces; an empty one is refused. `snoozedUntil` is milliseconds since the epoch, null to take the reminder off. The answer is the conversation's
  * `SessionSummary` after the change, which also reaches every page that has it open as a commit (its head). None of these moves `updatedAt`.
+ * `pinnedOrder` (finite) places a pinned conversation among the pinned, or the one this change pins; `pinned: true` without it puts it first (an order lower than
+ * every other pinned one) and leaves one already pinned where it is; `pinned: false` drops the order and takes no `pinnedOrder` (400). An order for a conversation
+ * that is not pinned and that this change does not pin is refused, 409 PIN_REQUIRED (the page's list was out of date: it reads the row again).
  */
-export interface SessionChange { readonly title?: string; readonly archived?: boolean; readonly pinned?: boolean; readonly snoozedUntil?: number | null }
+export interface SessionChange { readonly title?: string; readonly archived?: boolean; readonly pinned?: boolean; readonly pinnedOrder?: number; readonly snoozedUntil?: number | null }
 /**
  * `GET /api/v1/sessions/:id/workspace`: the conversation's workspace and, when it is a Git repository or inside one, where that stands: the current branch (null on a
  * detached head) and how many entries `git status --porcelain` lists (changed, staged and untracked files). Read-only; a Git that fails or is slow leaves `git` out.
@@ -197,9 +227,9 @@ export interface GitPushView { readonly remote: string; readonly branch: string 
 /**
  * What the changes panel compares (2026-11-14), as T3 Code's does: `uncommitted` the working tree (staged and not, untracked files too) against HEAD; `commit` one commit
  * against its first parent; `branch` the working tree as it is against merge-base(`base`, HEAD), `base` being by default the branch origin/HEAD points to, else main, else
- * master. In the query: `scope=uncommitted`, `scope=commit&sha=<sha>`, `scope=branch[&base=<ref>]`.
+ * master. In the query: `scope=uncommitted`, `scope=commit&sha=<sha>`, `scope=branch[&base=<ref>]`. `turn` (`scope=turn&ordinal=<n>`) one Turn's checkpoints: GitTurnScope.
  */
-export type GitScope = { readonly kind: "uncommitted" } | { readonly kind: "commit"; readonly sha: string } | { readonly kind: "branch"; readonly base?: string };
+export type GitScope = { readonly kind: "uncommitted" } | { readonly kind: "commit"; readonly sha: string } | { readonly kind: "branch"; readonly base?: string } | GitTurnScope;
 export const GIT_CHANGE_STATUSES = ["added", "modified", "deleted", "renamed", "copied", "typechange", "untracked"] as const;
 export type GitChangeStatus = typeof GIT_CHANGE_STATUSES[number];
 /**
@@ -216,6 +246,7 @@ export interface GitChangesView {
   readonly files: readonly GitChangedFileView[];
   readonly base?: { readonly ref: string; readonly sha: string };
   readonly commit?: { readonly sha: string; readonly parent: string | null };
+  readonly turn?: GitTurnCompared;
 }
 /** `GET /api/v1/sessions/:id/git/diff?scope=…&path=…[&whitespace=ignore]` (2026-11-14): one file's unified diff in the scope ("" when it did not change there). */
 export interface GitFileDiffView { readonly path: string; readonly diff: string; readonly binary?: true }
@@ -228,6 +259,47 @@ export interface GitLogView { readonly commits: readonly GitCommitEntryView[]; r
  * branch (null on a detached head); the default branch a `branch` scope compares with when none is named (null when there is none).
  */
 export interface GitBranchesView { readonly current: string | null; readonly local: readonly string[]; readonly remote: readonly string[]; readonly defaultBranch: string | null }
+
+/*
+ * A Turn's checkpoints, putting files back, and a pull request (2026-11-14; docs/contracts/public-api.md "检查点、还原文件与拉取请求"). Before a Turn starts and after it
+ * ends the Hub keeps its workspace (when it is in a Git repository) as a commit only its own refs name, `refs/harnesshub/checkpoints/<sessionId>/<ordinal>/before|after`.
+ */
+/** The changes panel's scope of one Turn: `scope=turn&ordinal=<n>` (the Turn's ordinal, from 0). */
+export interface GitTurnScope { readonly kind: "turn"; readonly ordinal: number }
+/** What a Turn's scope compared: its checkpoint from before it, and the one after it (null: the working tree as it is now, the Turn running or no after kept). */
+export interface GitTurnCompared { readonly ordinal: number; readonly before: string; readonly after: string | null }
+/** One Turn's checkpoints, by their commits' hashes; a side not kept is absent. */
+export interface CheckpointView { readonly ordinal: number; readonly before?: string; readonly after?: string }
+/**
+ * `GET /api/v1/sessions/:id/checkpoints?before=<ordinal>&limit=<n>`: the Turns with a checkpoint, the latest first; `next` is the next page's `before`, null at the end.
+ * `restorable`: files can be put back here (the conversation works in a worktree of its own); none and false in a workspace that is in no repository.
+ */
+export interface CheckpointListView { readonly checkpoints: readonly CheckpointView[]; readonly next: number | null; readonly restorable: boolean }
+/** `POST /api/v1/sessions/:id/checkpoints/:ordinal/restore` `{}`: the commit the files were put back to, and the ref the files as they were just before are kept under. */
+export interface CheckpointRestoreView { readonly restoredTo: string; readonly savedAs: string }
+/** Whether the user's GitHub CLI is there and signed in. */
+export const GH_STATES = ["missing", "signed-out", "ready"] as const;
+export type GhState = typeof GH_STATES[number];
+/** A pull request as `gh pr view --json url,number,title,state` gives it (`state` OPEN, CLOSED or MERGED). */
+export interface GitPullRequestView { readonly url: string; readonly number: number; readonly title: string; readonly state: string }
+/**
+ * `GET /api/v1/sessions/:id/git/pr`: what a pull request of the current branch would take. `branch` null on a detached head; `defaultBranch` the branch the remote's HEAD
+ * names (else main, else master; null when none); `remote` the branch's upstream remote, else origin (its URL without any user or password in it; `github` when its
+ * host is GitHub's); `ahead` the commits of the branch not on the default branch; `unpushed` those not on its upstream (without one, those on no remote at all);
+ * `existing` the branch's pull request when gh finds one.
+ */
+export interface GitPullRequestStatusView {
+  readonly gh: GhState;
+  readonly branch: string | null;
+  readonly defaultBranch: string | null;
+  readonly remote?: { readonly name: string; readonly url: string; readonly github: boolean };
+  readonly upstream?: string;
+  readonly ahead: number;
+  readonly unpushed: number;
+  readonly existing?: GitPullRequestView;
+}
+/** `POST /api/v1/sessions/:id/git/pr` `{ title, body, base? }`: the pull request gh made (the branch pushed first when it had to be). */
+export interface GitPullRequestCreatedView { readonly url: string; readonly number: number }
 /** The first sentence of a wrap-up, or the step in progress of a task list, cut to what one line of a list holds. */
 export function summaryLine(text: string): string {
   const flat = text.replace(/\s+/gu, " ").trim(), end = /[。！？!?]|\.(?=\s|$)/u.exec(flat);
@@ -398,6 +470,12 @@ export interface CreateWebSession {
   readonly workspace?: string;
   /** Start without a folder: the Gateway gives the conversation one of its own. Not together with `workspace`. */
   readonly scratch?: true;
+  /**
+   * Work in a Git worktree of its own (2026-11-14), made from the repository `workspace` is in (required with it; 400 when it is in none): a new branch `hh/<8 hex>`
+   * from that checkout's HEAD, at `<worktree root>/<repository folder>/hh-<8 hex>` (the 8 hex are the first of sha256(commandId)); the conversation's workspace is
+   * `workspace`'s place in it. A repeat of the request answers the same conversation and makes no second worktree.
+   */
+  readonly worktree?: true;
   readonly selection: SelectionRequest;
   readonly commandId: string;
 }
@@ -630,8 +708,12 @@ export interface SessionHeadView extends Omit<SessionView, "messages" | "runs" |
   readonly archived?: true;
   /** The user pinned it (`SessionSummary.pinned`). */
   readonly pinned?: true;
+  /** Its place among the pinned (`SessionSummary.pinnedOrder`). */
+  readonly pinnedOrder?: number;
   /** The user put it aside until then (`SessionSummary.snoozedUntil`). */
   readonly snoozedUntil?: number;
+  /** The Git worktree it works in (`SessionSummary.worktree`). */
+  readonly worktree?: WorktreeMark;
   /** When the conversation last moved on (`SessionSummary.updatedAt`: a commit that only names or marks it leaves it); this Gateway always sends it. */
   readonly updatedAt?: number;
   /** When the Turn in progress was accepted (`SessionSummary.activeSince`); absent when none is. */
@@ -685,8 +767,11 @@ export interface DeletedSessionSummary extends SessionSummary { readonly deleted
  * them all (`PurgedView`). Nothing is erased by itself after a time.
  */
 export interface DeletedSessionListView { readonly sessions: readonly DeletedSessionSummary[]; readonly next: string | null }
-/** `POST /api/v1/sessions/purge-deleted`: how many conversations were erased. */
-export interface PurgedView { readonly purged: number }
+/**
+ * `POST /api/v1/sessions/purge-deleted`: how many conversations were erased. With `{ removeWorktree: true }` (2026-11-14) also how many of their worktrees were
+ * removed (`worktreesRemoved`, those no conversation left works in) and the ones Git refused to remove (`worktreeFailures`, with its words); absent without the flag.
+ */
+export interface PurgedView { readonly purged: number; readonly worktreesRemoved?: number; readonly worktreeFailures?: readonly { readonly path: string; readonly message: string }[] }
 /**
  * One place the words were found by `GET /api/v1/search?q=&cursor=` (across the conversations not deleted): a message of the user, a reply of a Harness, or the title.
  * Matching ignores case and takes the words as they are, a substring (Chinese included). `snippet` is the text around the place, line breaks made spaces, with "…" where it

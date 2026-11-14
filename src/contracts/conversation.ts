@@ -300,8 +300,12 @@ export interface HeadJson {
   readonly archived?: true;
   /** The user pinned it (`SessionSnapshot.pinned`). */
   readonly pinned?: true;
+  /** Its place among the pinned (`SessionSnapshot.pinnedOrder`). */
+  readonly pinnedOrder?: number;
   /** The user put it aside until then (`SessionSnapshot.snoozedUntil`). */
   readonly snoozedUntil?: number;
+  /** The Git worktree it was started in (`SessionSnapshot.worktree`). */
+  readonly worktree?: import("./session.js").ConversationWorktree;
 }
 /** One row of `sessions` of a converted conversation. */
 export interface HeadRow {
@@ -469,8 +473,12 @@ export interface SessionListRow {
   readonly archived?: true;
   /** The user pinned it (`SessionSnapshot.pinned`). */
   readonly pinned?: true;
+  /** Its place among the pinned (`SessionSnapshot.pinnedOrder`). */
+  readonly pinnedOrder?: number;
   /** The user put it aside until then (`SessionSnapshot.snoozedUntil`). */
   readonly snoozedUntil?: number;
+  /** The Git worktree it was started in (`SessionSnapshot.worktree`). */
+  readonly worktree?: import("./session.js").ConversationWorktree;
 }
 /** Opaque. A list reads on from it; there is no ceiling on how many conversations a list reaches. */
 export type SessionListCursor = string & { readonly __sessionListCursor: true };

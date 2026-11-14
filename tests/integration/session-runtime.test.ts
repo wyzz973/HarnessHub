@@ -1408,7 +1408,7 @@ test("a pin and a reminder are kept in the head and survive a restart; a new Tur
   const head = f.store.head(state.id), row = f.store.list().rows.find(entry => entry.id === state.id)!;
   assert.equal(head.updatedAt, moved); assert.equal(row.updatedAt, moved); assert.ok(head.lastSeq > seq);
   assert.deepEqual([head.head.pinned, head.head.snoozedUntil, row.pinned, row.snoozedUntil], [true, 1_900_000_000_000, true, 1_900_000_000_000]);
-  assert.deepEqual(told, ['session.pinned {"pinned":true}', 'session.snoozed {"until":1900000000000}']);
+  assert.deepEqual(told, ['session.pinned {"pinned":true,"order":0}', 'session.snoozed {"until":1900000000000}']);
   // Read again from the files by a new owner: the marks are there, and the time is still the one the Turn left.
   await app.close(); f.store.close();
   const reopened = appStore(join(f.root, "data")); f.stores.push(reopened);
@@ -1425,6 +1425,41 @@ test("a pin and a reminder are kept in the head and survive a restart; a new Tur
   // Taking the reminder off with null, and the pin with false.
   next.updateSession(state.id, { snoozedUntil: 1_900_000_000_000 }); next.updateSession(state.id, { snoozedUntil: null, pinned: false });
   assert.deepEqual([reopened.get(state.id).snoozedUntil, reopened.get(state.id).pinned, reopened.list().rows.find(entry => entry.id === state.id)?.pinned], [undefined, undefined, undefined]);
+});
+
+test("the pinned keep a place the user sets: a new pin goes first, a place is moved like the pin itself (the time does not move), only a pinned conversation has one, unpinning drops it, and the places survive a restart", async t => {
+  const f = await fixture(t), factory = new ControlledFactory([controlled(), controlled()]), told: string[] = [];
+  const app = runtime(f, factory, event => { if (event.type === "session.pinned") told.push(JSON.stringify(event.data)); });
+  const [a, b, c] = [await app.create(f.configuration, { harnessId: "alpha" }, "a"), await app.create(f.configuration, { harnessId: "alpha" }, "b"), await app.create(f.configuration, { harnessId: "alpha" }, "c")];
+  app.send(a.id, "a question", "first"); await app.wait(a.id);
+  const moved = f.store.head(a.id).updatedAt, place = (id: string) => f.store.get(id as typeof a.id).pinnedOrder, listed = (id: string) => f.store.list().rows.find(row => row.id === id);
+  await pause(15);
+  // Each pin without a place goes first: lower than every other pinned one.
+  app.updateSession(a.id, { pinned: true }); app.updateSession(b.id, { pinned: true }); app.updateSession(c.id, { pinned: true });
+  assert.deepEqual([place(a.id), place(b.id), place(c.id)], [0, -1, -2]);
+  // Pinning one already pinned keeps its place; a drag moves it (any finite number, between two others), and nothing of the time moves.
+  app.updateSession(b.id, { pinned: true }); assert.equal(place(b.id), -1);
+  app.updateSession(a.id, { pinnedOrder: -1.5 });
+  assert.deepEqual([place(a.id), listed(a.id)?.pinnedOrder, f.store.head(a.id).head.pinnedOrder, f.store.head(a.id).updatedAt], [-1.5, -1.5, -1.5, moved]);
+  const version = f.store.head(a.id).version; app.updateSession(a.id, { pinnedOrder: -1.5 }); assert.equal(f.store.head(a.id).version, version, "the same place commits nothing");
+  // Only a pinned conversation has a place; a change that pins it may give one; an order with the pin taken off, or one that is not a finite number, is refused.
+  app.updateSession(c.id, { pinned: false }); assert.deepEqual([f.store.get(c.id).pinned, place(c.id), listed(c.id)?.pinnedOrder], [undefined, undefined, undefined]);
+  assert.throws(() => app.updateSession(c.id, { pinnedOrder: 3 }), (error: unknown) => error instanceof SessionError && error.code === "PIN_REQUIRED");
+  for (const bad of [{ pinnedOrder: Number.NaN }, { pinnedOrder: Number.POSITIVE_INFINITY }, { pinned: false, pinnedOrder: 1 }])
+    assert.throws(() => app.updateSession(b.id, bad), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT", JSON.stringify(bad));
+  app.updateSession(c.id, { pinned: true, pinnedOrder: 7 }); assert.equal(place(c.id), 7);
+  // A deleted pinned conversation is no longer among the pinned: a new pin goes first among those listed.
+  await app.deleteSession(b.id);
+  app.updateSession(c.id, { pinned: false }); app.updateSession(c.id, { pinned: true }); assert.equal(place(c.id), -2.5);
+  assert.deepEqual(told, [{ pinned: true, order: 0 }, { pinned: true, order: -1 }, { pinned: true, order: -2 }, { pinned: true, order: -1.5 }, { pinned: false }, { pinned: true, order: 7 }, { pinned: false }, { pinned: true, order: -2.5 }].map(data => JSON.stringify(data)));
+  // Read again from the files by a new owner: the places are in the head, the conversation and the list.
+  await app.close(); f.store.close();
+  const reopened = appStore(join(f.root, "data")); f.stores.push(reopened);
+  assert.deepEqual([reopened.get(a.id).pinnedOrder, reopened.head(a.id).head.pinnedOrder, reopened.list().rows.find(row => row.id === a.id)?.pinnedOrder, reopened.get(c.id).pinnedOrder], [-1.5, -1.5, -1.5, -2.5]);
+  // A new Turn leaves the pin and its place.
+  const next = runtime({ ...f, store: reopened }, factory, () => {}, "restart-");
+  next.send(a.id, "a second question", "second"); await next.wait(a.id);
+  assert.deepEqual([reopened.get(a.id).pinned, reopened.get(a.id).pinnedOrder], [true, -1.5]);
 });
 
 test("a deleted conversation leaves the list and takes no new work, stays deleted after a restart with its file in place, and is restored where its own time puts it; one with a Turn going on is not deleted", async t => {

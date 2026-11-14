@@ -1685,7 +1685,7 @@ test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is 
   }
   // D03: the changes of this Turn or of the whole conversation, each file with its lines, the diff from its Harness.
   await expect(panel.getByRole("radio", { name: "这段对话", exact: true })).toHaveAttribute("aria-checked", "true");
-  await expect(panel.locator("[data-path] > button[aria-expanded]", { hasText: "README.md" })).toHaveAttribute("aria-expanded", "true");
+  await expect(panel.locator("[data-path] button[aria-expanded]", { hasText: "README.md" })).toHaveAttribute("aria-expanded", "true");
   await expect(panel.getByRole("region", { name: /^差异：README\.md/u })).toBeVisible();
   // C08: switching the model takes effect between Turns; the place is marked by the Turn that carries it, with a hairline and the pill in the middle.
   await pick("选择模型", "Native A");
@@ -1708,7 +1708,7 @@ test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is 
   await expect(log.locator(".assistant-message").last()).toHaveAttribute("data-run-status", "completed");
   // The latest Turn changed nothing: "本轮" says so, "这段对话" still lists the file; 过程 lists both Turns, oldest first.
   await panel.getByRole("radio", { name: "本轮", exact: true }).click(); await expect(panel).toContainText("这一轮没有改动文件");
-  await panel.getByRole("radio", { name: "这段对话", exact: true }).click(); await expect(panel.locator("[data-path] > button[aria-expanded]", { hasText: "README.md" })).toBeVisible();
+  await panel.getByRole("radio", { name: "这段对话", exact: true }).click(); await expect(panel.locator("[data-path] button[aria-expanded]", { hasText: "README.md" })).toBeVisible();
   await panel.getByRole("tab", { name: /^过程/u }).click();
   // Each Turn is listed by what was asked, with who ran it and what it did.
   await expect(panel.getByRole("tabpanel")).toContainText("NATIVE_ACTIVITYCodex · 运行了 1 条命令，修改了 README.md");
@@ -1806,11 +1806,20 @@ test("G054-DL7 an end dot on its own line after a code block closes that line as
   assert.deepEqual(errors, []);
 });
 
+/**
+ * Words written while a reply runs are kept for the Turn's end in the tests about that (since 2026-11-14 they go into the Turn by default where the Harness can take them,
+ * and the fixture Harness cannot): stored before the page first opens, unless the page stored its own preferences since.
+ */
+async function keepForTurnEnd<T extends { addInitScript: (script: () => void) => Promise<unknown> }>(context: T): Promise<T> {
+  await context.addInitScript(() => { try { if (localStorage.getItem("harnesshub:preferences") === null) localStorage.setItem("harnesshub:preferences", JSON.stringify({ whileRunning: "queue", version: 3 })); } catch { /* none */ } });
+  return context;
+}
+
 test("G054-FR4 a message written while a reply runs is sent once after a completed Turn, and goes back to the composer unsent otherwise", { timeout: 180000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
-  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  const context = await keepForTurnEnd(await isolatedContext(browser, { viewport: { width: 1280, height: 900 } })), page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   await page.goto(fixture.gateway.url);
   const origin = new URL(fixture.gateway.url).origin, composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
@@ -2096,7 +2105,7 @@ test("G054-DL6 the plan bar above the composer says how far the plan is and open
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   await mkdir(artifact, { recursive: true });
-  const context = await isolatedContext(browser, { viewport: { width: 1440, height: 960 } }), page = await context.newPage(), errors: string[] = [];
+  const context = await keepForTurnEnd(await isolatedContext(browser, { viewport: { width: 1440, height: 960 } })), page = await context.newPage(), errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   const shoot = async (name: string) => {
     // Shots show the settled page: the longest transition of these screens (the approval's 300 ms) has ended.

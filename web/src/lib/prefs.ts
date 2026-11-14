@@ -19,7 +19,8 @@ export interface Preferences {
   readonly sidebar: boolean;
   /**
    * What Enter does with a message written while a reply is in progress, where the Harness at work can be told something mid-Turn (2026-11-14, after T3 Code's queue or
-   * steer): keeps it until the Turn ends, or says it now. ⌘⏎ does the other.
+   * steer): keeps it until the Turn ends, or says it now. ⌘⏎ does the other. Said now by default (the user's decision of 2026-11-14, as T3 Code does); a Harness with no
+   * way into a Turn in progress keeps it either way.
    */
   readonly whileRunning: "queue" | "steer";
   /** The size of the conversation's text, in pixels (2026-11-14, after T3 Code's font size). */
@@ -33,14 +34,15 @@ export interface Preferences {
   /** Whether the frozen Harnesses (Cursor, Gemini CLI, Pi) are listed for new work as well (ADR-050); off by default. */
   readonly showFrozen: boolean;
 }
-export const DEFAULT_PREFERENCES: Preferences = { theme: "system", density: "compact", panel: false, sidebar: true, grouping: "project", whileRunning: "queue", readingSize: "14", chatWidth: "standard", sendKey: "enter", showFrozen: false };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "system", density: "compact", panel: false, sidebar: true, grouping: "project", whileRunning: "steer", readingSize: "14", chatWidth: "standard", sendKey: "enter", showFrozen: false };
 const KEY = "harnesshub:preferences";
 /**
  * The stored shape's version. Every write stores the whole set, so before version 2 each one also stored the details panel's
  * old default, open: a stored `panel` from then is not a choice, is not read, and the panel starts closed (decision E). From
- * version 2 on, an opening or a closing is the user's own and is kept.
+ * version 2 on, an opening or a closing is the user's own and is kept. Likewise before version 3 every write stored `whileRunning`'s
+ * old default, kept for the Turn's end: such a value is not read, and the new default (said now) applies.
  */
-const VERSION = 2;
+const VERSION = 3;
 const CHOICES: { readonly [K in keyof Preferences]: readonly Preferences[K][] } = {
   theme: ["system", "light", "dark"], density: ["compact", "detailed", "failures", "answer"], panel: [true, false], sidebar: [true, false], grouping: ["project", "state"], whileRunning: ["queue", "steer"], readingSize: ["14", "15", "16"], chatWidth: ["standard", "wide"], sendKey: ["enter", "mod-enter"], showFrozen: [false, true],
 };
@@ -61,7 +63,8 @@ export function readPreferences(): Preferences {
     if (value === null || typeof value !== "object" || Array.isArray(value)) return DEFAULT_PREFERENCES;
     const row = value as Record<string, unknown>, result: Record<string, unknown> = { ...DEFAULT_PREFERENCES };
     for (const key of Object.keys(CHOICES) as (keyof Preferences)[]) {
-      if (key === "panel" && row.version !== VERSION) continue;
+      const version = typeof row.version === "number" ? row.version : 1;
+      if (key === "panel" && version < 2 || key === "whileRunning" && version < 3) continue;
       if ((CHOICES[key] as readonly unknown[]).includes(row[key])) result[key] = row[key];
     }
     return result as unknown as Preferences;

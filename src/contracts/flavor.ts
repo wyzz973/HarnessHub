@@ -38,6 +38,18 @@ export interface EffortWays {
   readonly values: Partial<Record<EffortLevel, readonly string[]>>;
   readonly note?: string;
 }
+/**
+ * The speed choice (2026-11-14, T3 Code's Standard | Fast): the catalog option that holds this Harness's speed (by its ids, else its category),
+ * the native value that is standard speed, and the Hub's names for native values of a faster tier (`names`, native value → Hub value); every other
+ * native value of the option is a tier of its own, named as the Harness names it. The option is in the catalog only for a model that offers a
+ * tier beyond standard, so the speed is offered only there. Codex: `service_tier` (the model's `serviceTiers`); Claude Code: claude-agent-acp's
+ * `fast` (on a model with `supportsFastMode`).
+ */
+export interface SpeedWays {
+  readonly option: { readonly ids?: readonly string[]; readonly category: string };
+  readonly standard: string;
+  readonly names?: Readonly<Record<string, string>>;
+}
 /** Which operations this Harness asks about (sends a permission request for), which is what the Hub's policy can answer. */
 export interface AsksFor { readonly read: boolean; readonly edit: boolean; readonly execute: boolean; readonly note?: string }
 /**
@@ -94,6 +106,8 @@ export interface HarnessFlavor {
   /** Native values that undo one a level set, when the next level names none (a thread keeps its mode; OpenCode's build agent). */
   readonly neutral?: readonly NativeWant[];
   readonly effort: EffortWays;
+  /** How the speed choice is carried out; absent: this Harness offers none, and the choice is never listed for it. */
+  readonly speed?: SpeedWays;
   readonly asks: AsksFor;
   /** The Harness has a plan mode of its own (else "plan" is the Hub's policy refusing every change). */
   readonly nativePlan: boolean;
@@ -138,11 +152,22 @@ export function selectedEffort(values: NativeOptions | undefined): EffortLevel |
   const value = values?.[EFFORT_KEY];
   return value !== undefined && (EFFORT_LEVELS as readonly string[]).includes(value) ? value as EffortLevel : undefined;
 }
-/** The levels a selection names by the Hub's keys; either absent: the Harness's own setting for it. */
-export interface ChosenLevels { readonly permission?: PermissionLevel; readonly effort?: EffortLevel }
+/**
+ * The selection's speed, kept the same way (2026-11-14): `standard`, or a faster tier by the Hub's name for it (`fast`, or the Harness's own name for a
+ * further tier); the adapter makes it the running model's own value when the session opens (SpeedWays). Absent: the Harness's own setting.
+ */
+export const SPEED_KEY = "hub_speed";
+export const STANDARD_SPEED = "standard";
+/** The speed a selection names, when it names one. */
+export function selectedSpeed(values: NativeOptions | undefined): string | undefined {
+  const value = values?.[SPEED_KEY];
+  return value !== undefined && /^[A-Za-z][A-Za-z0-9_.-]{0,127}$/u.test(value) ? value : undefined;
+}
+/** The levels a selection names by the Hub's keys; any absent: the Harness's own setting for it. */
+export interface ChosenLevels { readonly permission?: PermissionLevel; readonly effort?: EffortLevel; readonly speed?: string }
 export function selectedLevels(values: NativeOptions | undefined): ChosenLevels {
-  const permission = selectedPermission(values), effort = selectedEffort(values);
-  return { ...(permission === undefined ? {} : { permission }), ...(effort === undefined ? {} : { effort }) };
+  const permission = selectedPermission(values), effort = selectedEffort(values), speed = selectedSpeed(values);
+  return { ...(permission === undefined ? {} : { permission }), ...(effort === undefined ? {} : { effort }), ...(speed === undefined ? {} : { speed }) };
 }
 
 // ---- reading a declaration with a catalog ------------------------------------------------------------------------------
@@ -157,6 +182,14 @@ export interface NativeLevels {
   readonly permissionNeutral?: NativeOptions;
   readonly effort: readonly LevelValues<EffortLevel>[];
   readonly effortMissing: string;
+  /**
+   * The speeds this model offers (SPEED_KEY values), `standard` first, each with its native value; empty when the model has no tier beyond standard (or the
+   * Harness declares no speed), and the choice is then not listed. `note`: the Harness's own name of the tier when it says more than the Hub's word.
+   */
+  readonly speed: readonly LevelValues<string>[];
+  /** The speed the Harness runs on its own setting (its configuration or the model's default), by the Hub's name; absent when it offers none. */
+  readonly speedOwn?: string;
+  readonly speedMissing: string;
 }
 function resolve(options: readonly NativeOption[], wants: readonly NativeWant[]): NativeOptions | null {
   const out: Record<string, string> = {};
@@ -212,7 +245,26 @@ export function nativeLevels(flavor: HarnessFlavor | undefined, options: readonl
     return { level, options: best.options, note: "这个模型没有这一档，用最接近的“" + EFFORT_NAMES[best.level] + "”", near: best.level };
   });
   const effort = [...exact, ...near];
-  return { permission, ...(neutral === null ? {} : { permissionNeutral: neutral }), effort, effortMissing: thought === undefined ? "这一家没有思考强度可选" : "这个模型没有这一档" };
+  const speeds = speedLevels(flavor?.speed, options);
+  return { permission, ...(neutral === null ? {} : { permissionNeutral: neutral }), effort, effortMissing: thought === undefined ? "这一家没有思考强度可选" : "这个模型没有这一档",
+    speed: speeds.speed, ...(speeds.own === undefined ? {} : { speedOwn: speeds.own }), speedMissing: flavor?.speed === undefined ? "这一家没有速度可选" : "这个模型没有更快的档" };
+}
+/** The Hub's name of a native speed value: `standard` for the declaration's standard value, its own name for a declared tier, else the native value. */
+function speedName(ways: SpeedWays, native: string): string { return native === ways.standard ? STANDARD_SPEED : ways.names?.[native] ?? native; }
+/** The speeds a model's catalog offers by the declaration: standard first and then each faster tier once, only when there is one beyond standard. */
+function speedLevels(ways: SpeedWays | undefined, options: readonly NativeOption[]): { readonly speed: readonly LevelValues<string>[]; readonly own?: string } {
+  const option = ways === undefined ? undefined : options.find(row => ways.option.ids !== undefined ? ways.option.ids.includes(row.id) : row.category === ways.option.category);
+  if (ways === undefined || option === undefined || !option.values.some(value => value.value === ways.standard)) return { speed: [] };
+  const speed: LevelValues<string>[] = [{ level: STANDARD_SPEED, options: { [option.id]: ways.standard } }];
+  for (const value of option.values) {
+    const level = speedName(ways, value.value);
+    if (speed.some(entry => entry.level === level) || !/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/u.test(level)) continue;
+    const said = value.name.trim();
+    speed.push({ level, options: { [option.id]: value.value }, ...(said && said.toLowerCase() !== level.toLowerCase() && said.toLowerCase() !== value.value.toLowerCase() ? { note: said } : {}) });
+  }
+  if (speed.length < 2) return { speed: [] };
+  const own = option.values.some(value => value.value === option.currentValue) ? speedName(ways, option.currentValue) : undefined;
+  return { speed, ...(own === undefined || !speed.some(entry => entry.level === own) ? {} : { own }) };
 }
 /**
  * The native values a session is opened with, as the adapter applies them once the session's catalog is known (its options, for the model it
@@ -221,10 +273,13 @@ export function nativeLevels(flavor: HarnessFlavor | undefined, options: readonl
  * level set); the effort level's are the model's own value for it, the nearest it has where it lacks it. A level wins over a native value of
  * the same option. A level whose values this catalog lacks adds none: the permission level is then the Hub's answers alone, and an effort level
  * on a model without a thinking option leaves the model's own. Undefined when there is nothing to apply and the selection named nothing.
+ * The speed's value is the model's own for it; a session opened new is given nothing where the Harness runs that speed on its own setting (standard
+ * is then never named, and nothing of the user's configuration is changed), a restored one is given it named (its thread may keep a tier an earlier
+ * Turn set). A model that offers no such speed gets none, and runs its own.
  */
 export function levelOptions(flavor: HarnessFlavor | undefined, options: readonly NativeOption[], selected: NativeOptions | undefined, levels: ChosenLevels, restored = false): NativeOptions | undefined {
   const own = nativeOnly(selected);
-  if (levels.permission === undefined && levels.effort === undefined) return own;
+  if (levels.permission === undefined && levels.effort === undefined && levels.speed === undefined) return own;
   const offered = nativeLevels(flavor, options), out: Record<string, string> = { ...own };
   if (levels.permission !== undefined) {
     const values = nativeOnly(offered.permission.find(entry => entry.level === levels.permission)?.options) ?? {};
@@ -232,6 +287,9 @@ export function levelOptions(flavor: HarnessFlavor | undefined, options: readonl
     Object.assign(out, values);
   }
   if (levels.effort !== undefined) Object.assign(out, offered.effort.find(entry => entry.level === levels.effort)?.options ?? {});
+  if (levels.speed !== undefined) for (const [id, value] of Object.entries(offered.speed.find(entry => entry.level === levels.speed)?.options ?? {})) {
+    if (!restored && options.find(option => option.id === id)?.currentValue === value) delete out[id]; else out[id] = value;
+  }
   return own === undefined && Object.keys(out).length === 0 ? undefined : out;
 }
 /** The level `values` are among `offered`, or null when they are none of them. */

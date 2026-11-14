@@ -1,7 +1,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, writeSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { Conversation } from "../../contracts/conversation.js";
-import type { HarnessSelection, NativeSessionBinding, RunId, SessionId, SessionSnapshot } from "../../contracts/session.js";
+import type { ConversationWorktree, HarnessSelection, NativeSessionBinding, RunId, SessionId, SessionSnapshot } from "../../contracts/session.js";
 import { conversationOf, isMainFile, loadSession, runFinished, sessionsDir, type Loaded } from "./session-file.js";
 import { listMarksOf } from "./rows.js";
 
@@ -32,7 +32,10 @@ export interface IndexRow {
   readonly archived?: true;
   /** The user pinned it, or put it aside until a moment (2026-11-14); a cache written before has neither, as no file then had one. */
   readonly pinned?: true;
+  readonly pinnedOrder?: number;
   readonly snoozedUntil?: number;
+  /** The Git worktree it works in (2026-11-14); a cache written before has none, as no file then had one. */
+  readonly worktree?: ConversationWorktree;
   /** When the user deleted it (2026-11-14): the list leaves it out, and it is still found by its id, to be restored. A cache written before has no deleted conversation. */
   readonly deletedAt?: number;
   readonly kept: boolean;

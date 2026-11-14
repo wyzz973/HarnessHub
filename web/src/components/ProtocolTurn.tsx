@@ -432,6 +432,8 @@ export interface ProtocolTurnProps {
   readonly onBranch?: ((runId: string) => void) | undefined;
   /** Sends this Turn's message again, edited, from its place: a branch of the conversation (ChatPage decides when it may). */
   readonly onResend?: ((runId: string, text: string, attachments: PublicRun["attachments"]) => void) | undefined;
+  /** Putting the files back as they were before a Turn, with its resend; absent where the Gateway cannot. */
+  readonly restore?: ((run: PublicRun) => UserMessageBranching["restore"]) | undefined;
   /** Makes another alternative of a Turn's place the conversation's path. */
   readonly onSelectBranch?: ((runId: string) => void) | undefined;
   /** A Turn goes on: neither of the two is taken now, and the page says why. */
@@ -483,7 +485,7 @@ export const ProtocolTurn = memo(function ProtocolTurn(props: ProtocolTurnProps)
   return props.run.protocol === undefined ? <UnreadableTurn run={props.run} message={props.message} arrived={props.arrived} onEdit={props.onEdit}/> : <TurnView {...props} turn={props.run.protocol}/>;
 });
 
-function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onResend, onSelectBranch, branchBusy, onDetails, detailsOpen, onViewPacket, startupHint, queue, waiting, reads, workspace, onOpenChanges, quiet: way, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
+function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onResend, restore, onSelectBranch, branchBusy, onDetails, detailsOpen, onViewPacket, startupHint, queue, waiting, reads, workspace, onOpenChanges, quiet: way, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
   // The reply is a message of the conversation, which arrives on the stream apart from the Turn's other items: its words are shown at once.
   const replyMessage = message(run.assistantMessageId), turn = useMemo(() => withReply(given, replyMessage), [given, replyMessage]);
   const arrangement = useMemo(() => arrange(turn, { asking: waiting === "approval" }), [turn, waiting]), over = arrangement.over, cancelling = run.cancelRequested;
@@ -531,7 +533,8 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
       // Words given to the Turn while it ran: where the Harness took them, without a branch of their own; those it took nothing of were sent as a message of their own, and are there.
       const steered = piece.item.steered === true ? { status: piece.item.status, at: piece.item.startedAt } : undefined;
       if (steered?.status === "declined") return null;
-      const branching: UserMessageBranching | undefined = steered !== undefined ? undefined : { branch: (run as { readonly branch?: TurnBranchView }).branch, onResend: onResend === undefined ? undefined : text => onResend(run.id, text, run.attachments), onSelectBranch, busy: branchBusy === true };
+      const branching: UserMessageBranching | undefined = steered !== undefined ? undefined : { branch: (run as { readonly branch?: TurnBranchView }).branch, onResend: onResend === undefined ? undefined : text => onResend(run.id, text, run.attachments), onSelectBranch, busy: branchBusy === true,
+        ...(restore === undefined ? {} : { restore: restore(run) }) };
       const bubble = <UserMessage message={sent} run={run} onEdit={onEdit} branching={branching} steered={steered}/>;
       return arrived(sent.id) ? <div key={"user:" + piece.item.id} className="motion-message-in">{bubble}</div> : <div key={"user:" + piece.item.id}>{bubble}</div>;
     }

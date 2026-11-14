@@ -782,6 +782,24 @@ test("over HTTP a conversation is pinned and put aside by PATCH without moving i
   assert.equal((await call(f, "/api/v1/sessions/session-nowhere/restore", "POST", {})).status, 404);
 });
 
+test("over HTTP the pinned keep the place a drag gives them: PATCH pinnedOrder moves a pinned conversation, a new pin goes first, one not pinned is refused with 409 PIN_REQUIRED, and the row, the head and the list carry the place", async t => {
+  const f = await fixture(t); await auth(f); const first = await create(f, "create-first"), second = await create(f, "create-second");
+  const patch = (id: string, change: Record<string, unknown>) => call(f, `/api/v1/sessions/${id}`, "PATCH", change);
+  const listed = async (id: string) => row((row((await call(f, "/api/v1/sessions")).data).sessions as Record<string, unknown>[]).find(entry => entry.id === id));
+  assert.equal(row((await patch(first, { pinned: true })).data).pinnedOrder, 0);
+  assert.equal(row((await patch(second, { pinned: true })).data).pinnedOrder, -1, "a new pin goes first");
+  const moved = await patch(first, { pinnedOrder: -2.25 });
+  assert.equal(moved.status, 200, moved.text); assert.equal(row(moved.data).pinnedOrder, -2.25);
+  assert.equal(row(row((await call(f, `/api/v1/sessions/${first}`)).data).head).pinnedOrder, -2.25);
+  assert.deepEqual([(await listed(first)).pinnedOrder, (await listed(second)).pinnedOrder], [-2.25, -1]);
+  for (const bad of [{ pinnedOrder: "1" }, { pinnedOrder: null }, { pinned: false, pinnedOrder: 1 }]) assert.equal((await patch(first, bad)).status, 400, JSON.stringify(bad));
+  const unpinned = await patch(second, { pinned: false });
+  assert.deepEqual([row(unpinned.data).pinned, row(unpinned.data).pinnedOrder], [undefined, undefined]);
+  const refused = await patch(second, { pinnedOrder: 5 });
+  assert.deepEqual([refused.status, row(refused.data).code], [409, "PIN_REQUIRED"], refused.text);
+  assert.equal(row((await patch(second, { pinned: true, pinnedOrder: 5 })).data).pinnedOrder, 5);
+});
+
 test("over HTTP the recently deleted are listed latest first a page at a time; purge erases one (not found after, its file, its own content and its part of the record gone, what a delegated conversation shares kept); one not deleted is refused; purge-deleted erases the rest; the delegated conversation reads as before", async t => {
   const f = await fixture(t, "attachments"); await auth(f);
   const upload = async (name: string, bytes: Buffer): Promise<Record<string, unknown>> => {

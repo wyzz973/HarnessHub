@@ -1,4 +1,4 @@
-import { ChevronDown, Folder, FolderOpen, MessageCircle } from "lucide-react";
+import { ChevronDown, Folder, FolderOpen, GitBranchPlus, MessageCircle } from "lucide-react";
 import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { HarnessReadinessView, HarnessView } from "../../../src/contracts/web.js";
@@ -6,11 +6,14 @@ import { cn } from "../lib/cn.js";
 import { folderName, homePath } from "../lib/format.js";
 import { Menu, Popover } from "../ui/overlay.js";
 import { motionStyle } from "../ui/motion.js";
-import { Segmented, Spinner } from "../ui/primitives.js";
+import { Segmented, Spinner, Tip } from "../ui/primitives.js";
 import { readinessStatus } from "./Composer.js";
 
-/** Where a new conversation works: in a folder of the user's (a project), or in none (the Gateway gives it one of its own). */
-export interface Place { readonly scratch: boolean; readonly workspace: string }
+/**
+ * Where a new conversation works: in a folder of the user's (a project), or in none (the Gateway gives it one of its own). In a project it may work in a git worktree
+ * of its own (`worktree`, the user's decision of 2026-11-14 after T3 Code): a branch and a folder made for it, so Harnesses can change one repository side by side.
+ */
+export interface Place { readonly scratch: boolean; readonly workspace: string; readonly worktree?: boolean }
 
 interface WelcomeProps {
   readonly harnesses: readonly HarnessView[]; readonly readiness: readonly HarnessReadinessView[];
@@ -76,6 +79,11 @@ function PlacePicker({ place, onPlace, recents, chooseFolder }: Pick<WelcomeProp
         ...(folders.length ? [{ separator: true as const }] : []),
         { icon: <FolderOpen size={14}/>, label: "选择文件夹…", onSelect: pick },
       ]}/>}
+    {/* Its own worktree, or the folder as it is (the default): the Gateway makes a branch and a folder for the conversation from the repository's current commit. */}
+    {place.scratch || !place.workspace ? null : <Tip label={place.worktree ? "新建工作树：开（为这段对话新建分支和文件夹，几家 Harness 可以同时改同一个仓库）" : "新建工作树：关（就在这个文件夹里改）"}>
+      <button type="button" className={cn("motion-fade-in flex h-7 flex-none items-center gap-1 rounded-row border-none bg-transparent px-2 text-ui-sm transition-[color,background-color] duration-120 ease-standard hover:bg-subtle",
+        place.worktree ? "bg-accent-soft text-accent-text hover:bg-accent-soft" : "text-fg-3")} aria-pressed={place.worktree === true} aria-label="新建工作树" onClick={() => onPlace({ ...place, worktree: !place.worktree })}>
+        <GitBranchPlus size={13} aria-hidden="true"/><span>新建工作树</span></button></Tip>}
     <Popover label="项目文件夹的路径" open={typing} onOpenChange={setTyping} anchor={chip} side="bottom" align="start" className="w-[420px] max-w-[calc(100vw-24px)]" initialFocus={field}>
       <form className="flex items-center gap-2 p-2.5" onSubmit={event => {
         event.preventDefault();

@@ -73,6 +73,11 @@ export interface ControlOptions {
    */
   readonly effort?: EffortLevel;
   /**
+   * The Hub's speed the conversation runs at (contracts/flavor.ts SPEED_KEY: `standard`, `fast`, or a further tier's name): the adapter makes it the running
+   * model's own value once the session's catalog is known, and gives nothing where the Harness runs it on its own setting. Absent: the Harness's own setting.
+   */
+  readonly speed?: string;
+  /**
    * The Harness's adapter declaration (src/adapters/flavors/<harnessId>.ts), set by createNativeControl: what the Driver resolves the levels by
    * when it opens a session (contracts/flavor.ts levelOptions). The levels are the declaration's word over the selection's native values.
    */

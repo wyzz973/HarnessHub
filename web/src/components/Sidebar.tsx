@@ -1,6 +1,6 @@
-import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, Bell, BellOff, Blocks, Bot, ChevronRight, CircleDot, CircleHelp, Copy, Folder, FolderOpen, Hash, Inbox as InboxIcon, ListFilter, MessageCircle, MoreHorizontal, PanelLeft, PencilLine, Pin, PinOff, Search, Settings, SlidersHorizontal, SquarePen, Trash2, X } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode, RefObject } from "react";
+import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, Bell, BellOff, Blocks, Bot, CalendarClock, ChevronRight, CircleDot, CircleHelp, Copy, Folder, FolderOpen, GitBranch, Hash, Inbox as InboxIcon, ListFilter, MessageCircle, MoreHorizontal, PanelLeft, PencilLine, Pin, PinOff, Search, Settings, SlidersHorizontal, SquarePen, Trash2, X } from "lucide-react";
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { DragEvent, ReactNode, RefObject } from "react";
 import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import type { AttentionItem, PermissionRequest } from "../../../src/contracts/session.js";
 import type { HarnessView, SessionSummary } from "../../../src/contracts/web.js";
@@ -82,8 +82,18 @@ export interface SessionActions {
   readonly remove: (id: string) => void;
   /** Shows it as moved on since it was last seen here, until it is opened or moves again. */
   readonly markUnread: (id: string) => void;
+  /** Gives a pinned conversation another place among the pinned (dragged there): the order it is listed by, lowest first. */
+  readonly reorderPin?: ((id: string, order: number) => void) | undefined;
   /** Puts a text of the conversation on the clipboard — its folder's path, its id — and says so. */
   readonly copy?: ((text: string, what: string) => void) | undefined;
+  /** The same for several conversations picked at once (⌘-click, ⇧-click; after T3 Code), each taken back together for a few seconds. */
+  readonly many?: {
+    readonly archive: (ids: readonly string[]) => void;
+    readonly pin: (ids: readonly string[], pinned: boolean) => void;
+    readonly snooze: (ids: readonly string[], until: number) => void;
+    readonly markUnread: (ids: readonly string[]) => void;
+    readonly remove: (ids: readonly string[]) => void;
+  } | undefined;
   /** What was deleted and can still come back (最近删除), read when the shelf is opened; absent where the Gateway keeps no such list. */
   readonly trash?: TrashAccess | undefined;
   /** How the list is grouped, and the way to change it. */
@@ -95,10 +105,12 @@ export interface SessionActions {
 export interface TrashAccess {
   readonly load: (before: string | undefined, signal: AbortSignal) => Promise<{ readonly sessions: readonly (SessionSummary & { readonly deletedAt: number })[]; readonly next: string | null }>;
   readonly restore: (id: string) => Promise<void>;
-  /** Deletes it for good, once the user has said so. */
-  readonly purge: (id: string) => Promise<void>;
-  /** Deletes every one for good, once the user has said so. */
-  readonly purgeAll: () => Promise<void>;
+  /** Deletes it for good, once the user has said so; with `removeWorktree`, its Git worktree too (its branch stays). */
+  readonly purge: (id: string, removeWorktree: boolean) => Promise<void>;
+  /** Deletes every one for good, once the user has said so; with `removeWorktrees`, the worktrees no conversation left works in too. */
+  readonly purgeAll: (removeWorktrees: boolean) => Promise<void>;
+  /** Where a deleted conversation's worktree stands (its branch, its files not committed, whether another conversation works in it); null when it has none. */
+  readonly worktree?: ((id: string, signal: AbortSignal) => Promise<{ readonly branch: string | null; readonly dirty: number; readonly shared: boolean; readonly missing?: true | undefined } | null>) | undefined;
   /** Changes whenever a conversation is deleted, brought back or deleted for good: the shelf reads its list again. */
   readonly stamp: number;
 }
@@ -126,6 +138,16 @@ const RANK: Readonly<Record<RowState, number>> = { wait: 0, run: 1, unknown: 2, 
  * first; inside one, those waiting for the user come first, then running ones, then the rest by recency. Projects whose
  * folder names collide carry their parent folder so they can be told apart.
  */
+/**
+ * The folder a conversation belongs to in the list: its workspace, or — for one working in a Git worktree of its own — the same place in the repository's main checkout,
+ * so that it stands with the project's other conversations.
+ */
+function projectOf(session: SessionSummary): string {
+  const worktree = session.worktree;
+  if (worktree === undefined) return session.workspace;
+  const inside = session.workspace === worktree.path ? "" : session.workspace.startsWith(worktree.path + "/") ? session.workspace.slice(worktree.path.length) : null;
+  return inside === null ? session.workspace : worktree.root + inside;
+}
 /** A conversation as a row: what waits in it for the user, and how it stands. */
 function rowOf(session: SessionSummary, waiting: ReadonlyMap<string, readonly AttentionItem[]>, failed: ReadonlySet<string>): Row {
   const items = waiting.get(session.id) ?? [];
@@ -137,7 +159,7 @@ function groupProjects(sessions: readonly SessionSummary[], waiting: ReadonlyMap
   const byWorkspace = new Map<string, Row[]>();
   for (const session of sessions) {
     const row = rowOf(session, waiting, failed);
-    const key = keyOf(session.workspace), rows = byWorkspace.get(key);
+    const key = keyOf(projectOf(session)), rows = byWorkspace.get(key);
     if (rows) rows.push(row); else byWorkspace.set(key, [row]);
   }
   const names = new Map<string, number>();
@@ -190,6 +212,15 @@ function writeProjectChoices(value: Readonly<Record<string, boolean>>): void {
  * Agents and capabilities, then conversations by project with a state dot each, and the settings with the local
  * service's port at the bottom.
  */
+/** Where a pinned conversation stands among the pinned: the order the user gave it, else after every ordered one. */
+const pinOrder = (session: SessionSummary): number => typeof session.pinnedOrder === "number" && Number.isFinite(session.pinnedOrder) ? session.pinnedOrder : Number.MAX_SAFE_INTEGER;
+/** How a pinned row is dropped at another one's place: before or after it. */
+interface PinDragging { readonly drop: (id: string, target: string, after: boolean) => void }
+const PinDragContext = createContext<PinDragging | null>(null);
+/** The conversations picked for an action on several at once, and how a click with ⌘ or ⇧ picks: it answers true when it picked (the row then does not open). */
+interface Picking { readonly picked: ReadonlySet<string>; readonly pick: (id: string, keys: { readonly metaKey: boolean; readonly ctrlKey: boolean; readonly shiftKey: boolean }) => boolean }
+const PickContext = createContext<Picking | null>(null);
+
 export function Sidebar(props: SidebarProps) {
   const { sessions, currentId, page, interactionBusy } = props;
   useKeys();
@@ -212,7 +243,17 @@ export function Sidebar(props: SidebarProps) {
   }, [sessions, aside]);
   const listed = useMemo(() => sessions.filter(session => !away.has(session.id) && !aside.has(session.id)), [sessions, away, aside]);
   // Pinned conversations lead the list, in either grouping, and are not listed a second time under their folder or their state.
-  const pinned = useMemo(() => nested(listed.filter(session => session.pinned === true).map(session => rowOf(session, bySession, props.failed))), [listed, bySession, props.failed]);
+  const pinned = useMemo(() => nested(listed.filter(session => session.pinned === true).sort((left, right) => pinOrder(left) - pinOrder(right) || right.updatedAt - left.updatedAt)
+    .map(session => rowOf(session, bySession, props.failed))), [listed, bySession, props.failed]);
+  // Dragging a pinned conversation to another place among the pinned (after T3 Code): the place it is dropped at gives it an order between its new neighbours.
+  const reorderPin = props.actions?.reorderPin;
+  const dragPin = useMemo<PinDragging | null>(() => reorderPin === undefined ? null : { drop: (id, target, after) => {
+    const order = pinned.map(row => row.session).filter(session => session.id !== id), at = order.findIndex(session => session.id === target);
+    if (at < 0) return;
+    const index = after ? at + 1 : at, before = order[index - 1], next = order[index];
+    const value = before === undefined && next === undefined ? 0 : before === undefined ? pinOrder(next!) - 1 : next === undefined ? pinOrder(before) + 1 : (pinOrder(before) + pinOrder(next)) / 2;
+    reorderPin(id, Number.isFinite(value) ? value : 0);
+  } }, [reorderPin, pinned]);
   const rest = useMemo(() => listed.filter(session => session.pinned !== true), [listed]);
   const grouping = props.actions?.grouping ?? "project";
   const groups = useMemo(() => grouping === "project" ? groupProjects(rest, bySession, props.failed, props.scratchRoot) : [], [grouping, rest, bySession, props.failed, props.scratchRoot]);
@@ -229,7 +270,7 @@ export function Sidebar(props: SidebarProps) {
   // conversation starting elsewhere never folds a project away by itself.
   const [choices, setChoices] = useState(readProjectChoices);
   const choose = (key: string, open: boolean) => setChoices(current => { const next = { ...current }; delete next[key]; next[key] = open; writeProjectChoices(next); return next; });
-  const currentWorkspace = sessions.find(session => session.id === currentId)?.workspace;
+  const currentRow = sessions.find(session => session.id === currentId), currentWorkspace = currentRow === undefined ? undefined : projectOf(currentRow);
   const currentProject = currentWorkspace === undefined ? undefined : inScratch(currentWorkspace, props.scratchRoot) ? SCRATCH_KEY : currentWorkspace;
   // Opening a conversation opens its project, so the selected row is always in view.
   useEffect(() => { if (currentProject !== undefined && choices[currentProject] === false) choose(currentProject, true); }, [currentId, currentProject]);
@@ -267,6 +308,32 @@ export function Sidebar(props: SidebarProps) {
   const shownOrder = [...pinned, ...(grouping === "project" ? groups.flatMap((project, index) => isOpen(project, index) ? project.rows : []) : [...byState.need, ...byState.work, ...byState.rest])].map(row => row.session.id);
   const orderKey = shownOrder.join(",");
   useEffect(() => { props.actions?.onOrder?.(shownOrder); }, [orderKey]);
+  // Several conversations picked at once (after T3 Code): ⌘-click picks or drops one, ⇧-click the run from the last one picked, Esc lets them go; a plain click opens
+  // one as ever and lets the others go. The actions on them stand at the foot of the list.
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set()), anchor = useRef<string | null>(null);
+  const many = props.actions?.many;
+  const picking = useMemo<Picking>(() => ({ picked, pick: (id, keys) => {
+    if (many === undefined) return false;
+    if (keys.metaKey || keys.ctrlKey) { anchor.current = id; setPicked(current => { const next = new Set(current); if (!next.delete(id)) next.add(id); return next; }); return true; }
+    if (keys.shiftKey) {
+      const order = shownOrder, from = anchor.current === null ? -1 : order.indexOf(anchor.current), to = order.indexOf(id);
+      if (to < 0) return false;
+      const [low, high] = from < 0 ? [to, to] : [Math.min(from, to), Math.max(from, to)];
+      setPicked(current => new Set([...current, ...order.slice(low, high + 1)])); if (from < 0) anchor.current = id;
+      return true;
+    }
+    if (picked.size > 0) setPicked(new Set());
+    return false;
+  } }), [picked, many, orderKey]);
+  // Picked conversations that left the list are let go.
+  useEffect(() => { if ([...picked].some(id => !sessions.some(session => session.id === id))) setPicked(current => new Set([...current].filter(id => sessions.some(session => session.id === id)))); }, [sessions]);
+  useEffect(() => {
+    if (picked.size === 0) return;
+    const off = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) { setPicked(new Set()); anchor.current = null; } };
+    document.addEventListener("keydown", off);
+    return () => document.removeEventListener("keydown", off);
+  }, [picked.size]);
+  const pickedIds = [...picked], done = () => { setPicked(new Set()); anchor.current = null; };
   const rowProps = { now, currentId: page === "chat" ? currentId : null, disabled: interactionBusy, harness: name, onSession: props.onSession, unread: (session: SessionSummary) => unseen(looked, session), actions: props.actions, arrivals: arriving };
   const count = waiting.length, firstWaiting = useRef<HTMLButtonElement>(null);
   const icon = (glyph: ReactNode) => <span className="flex w-4 flex-none justify-center text-fg-2" aria-hidden="true">{glyph}</span>;
@@ -304,8 +371,9 @@ export function Sidebar(props: SidebarProps) {
       </div>
       {/* `relative`: the labels for assistive technology in the rows are placed out of the flow, and are held (and clipped) by the list they scroll in. Placed by the
           page itself they made the whole page scrollable once a row stood below the window. */}
+      <PickContext.Provider value={picking}>
       <nav className="relative -mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-2" aria-label="对话列表">
-        {pinned.length > 0 ? <Plain title="置顶" icon={<Pin size={14} aria-hidden="true"/>} rows={pinned} {...rowProps} where={folder}/> : null}
+        {pinned.length > 0 ? <PinDragContext.Provider value={pinned.length > 1 ? dragPin : null}><Plain title="置顶" icon={<Pin size={14} aria-hidden="true"/>} rows={pinned} {...rowProps} where={folder}/></PinDragContext.Provider> : null}
         {sessions.length === 0 ? null : grouping === "project"
           ? groups.map((project, index) => <ProjectGroup key={project.key} project={project} open={isOpen(project, index)} onToggle={open => choose(project.key, open)}
             now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} arrivals={arriving} harness={name} onSession={props.onSession} unread={session => unseen(looked, session)} actions={props.actions}/>)
@@ -320,6 +388,17 @@ export function Sidebar(props: SidebarProps) {
         {props.actions?.trash ? <Trash access={props.actions.trash} now={now} harness={name}/> : null}
         {shelf.length > 0 ? <Shelf title="已归档" icon={<Archive size={16} className="text-fg-3" aria-hidden="true"/>} rows={shelf} now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} harness={name} onSession={props.onSession} actions={props.actions} away="archived"/> : null}
       </nav>
+      </PickContext.Provider>
+      {many !== undefined && picked.size > 0 ? <div className="pick-bar motion-enter mx-0.5 mt-1 flex flex-none flex-wrap items-center gap-1 rounded-block bg-surface p-1.5 shadow-pop" role="toolbar" aria-label={"已选 " + picked.size + " 段对话"}>
+        <span className="min-w-0 flex-1 pl-1.5 text-ui-sm text-fg-2 tabular-nums">已选 {picked.size} 段</span>
+        <Tip label="置顶"><button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label="全部置顶" onClick={() => { many.pin(pickedIds, true); done(); }}><Pin size={14} aria-hidden="true"/></button></Tip>
+        <Tip label="标为未读"><button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label="全部标为未读" onClick={() => { many.markUnread(pickedIds); done(); }}><CircleDot size={14} aria-hidden="true"/></button></Tip>
+        <Menu align="end" side="top" trigger={<button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label="全部稍后提醒"><AlarmClock size={14} aria-hidden="true"/></button>}
+          items={[{ heading: "稍后提醒" }, ...snoozeChoices(Date.now()).map(choice => ({ label: choice.label, icon: <AlarmClock size={14}/>, onSelect: () => { many.snooze(pickedIds, choice.until); done(); } }))]}/>
+        <Tip label="归档"><button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label="全部归档" onClick={() => { many.archive(pickedIds); done(); }}><Archive size={14} aria-hidden="true"/></button></Tip>
+        <Tip label="删除"><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:text-red" aria-label="全部删除" onClick={() => { many.remove(pickedIds); done(); }}><Trash2 size={14} aria-hidden="true"/></button></Tip>
+        <Tip label="取消选择（Esc）"><button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label="取消选择" onClick={done}><X size={14} aria-hidden="true"/></button></Tip>
+      </div> : null}
     </div>
     <div className="flex-none pt-1">
       <button type="button" className="nav-row w-full disabled:opacity-60" disabled={interactionBusy} aria-current={page === "settings" ? "page" : undefined} aria-label="设置" onClick={() => props.onPage("settings")}>
@@ -401,6 +480,16 @@ function Shelf({ title, icon, rows, now, currentId, disabled, harness, onSession
 function Trash({ access, now, harness }: { readonly access: TrashAccess; readonly now: number; readonly harness: (id: string) => string }) {
   const listId = useId(), [open, setOpen] = useState(false), [rows, setRows] = useState<readonly (SessionSummary & { readonly deletedAt: number })[]>([]), [next, setNext] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null), [asking, setAsking] = useState<{ readonly id: string | null; readonly title: string } | null>(null);
+  // Before erasing one with a worktree of its own, where that worktree stands; the choice to remove it starts off.
+  const [held, setHeld] = useState<{ readonly branch: string | null; readonly dirty: number; readonly shared: boolean } | null>(null), [withWorktree, setWithWorktree] = useState(false);
+  useEffect(() => {
+    setHeld(null); setWithWorktree(false);
+    const id = asking?.id, row = rows.find(item => item.id === id);
+    if (id === undefined || id === null || row?.worktree === undefined || reader.current.worktree === undefined) return;
+    const controller = new AbortController();
+    reader.current.worktree(id, controller.signal).then(view => { if (!controller.signal.aborted) setHeld(view); }, () => undefined);
+    return () => controller.abort();
+  }, [asking?.id]);
   const reader = useRef(access); reader.current = access;
   // Read at once for the count, again when something was deleted or brought back, and the next page when asked.
   useEffect(() => {
@@ -441,12 +530,19 @@ function Trash({ access, now, harness }: { readonly access: TrashAccess; readonl
     </Collapsible>
     <Dialog open={asking !== null} onOpenChange={value => { if (!value) setAsking(null); }} title={asking?.id === null ? "清空最近删除？" : "彻底删除这段对话？"}
       description={asking?.id === null ? "这里的 " + count + " 段对话会从这台 Mac 上删掉，找不回来。它们改过的文件不受影响。" : "“" + (asking?.title ?? "") + "”会从这台 Mac 上删掉，找不回来。它改过的文件不受影响。"}>
+      {/* A conversation that worked in a Git worktree of its own: the worktree may go with it (its branch and its commits stay); files not committed there would go too. */}
+      {asking !== null && (asking.id === null ? rows.some(row => row.worktree !== undefined) : held !== null) ? <label className="mx-5 flex cursor-pointer items-start gap-2 rounded-row bg-inset px-3 py-2 text-ui-sm text-fg-2">
+        <input type="checkbox" className="mt-0.5 size-3.5 flex-none accent-[var(--accent)]" checked={withWorktree} onChange={event => setWithWorktree(event.target.checked)}/>
+        <span className="flex flex-col gap-0.5"><span>{asking.id === null ? "同时删除这些对话自己的工作树" : "同时删除它的工作树" + (held?.branch ? "（分支 " + held.branch + " 保留）" : "（分支保留）")}</span>
+          {asking.id !== null && held !== null && held.shared ? <span className="text-caption text-fg-3">还有别的对话在这个工作树里，它会留下。</span>
+            : asking.id !== null && held !== null && held.dirty > 0 && withWorktree ? <span className="text-caption text-red">工作树里有 {held.dirty} 个没提交的文件，会一起删掉。</span>
+            : <span className="text-caption text-fg-3">已提交的内容都在分支上，删掉的只是那个文件夹。</span>}</span></label> : null}
       <div className="flex justify-end gap-2 px-5 pt-2 pb-5"><button type="button" className="btn" autoFocus onClick={() => setAsking(null)}>取消</button>
         <button type="button" className="btn btn-danger" onClick={() => {
-          const target = asking; setAsking(null);
+          const target = asking, worktreeToo = withWorktree; setAsking(null);
           if (target === null) return;
-          if (target.id === null) { setBusy("*"); access.purgeAll().then(() => { setRows([]); setNext(null); }, () => undefined).finally(() => setBusy(null)); }
-          else act(target.id, () => access.purge(target.id!));
+          if (target.id === null) { setBusy("*"); access.purgeAll(worktreeToo).then(() => { setRows([]); setNext(null); }, () => undefined).finally(() => setBusy(null)); }
+          else act(target.id, () => access.purge(target.id!, worktreeToo));
         }}>{asking?.id === null ? "全部彻底删除" : "彻底删除"}</button></div>
     </Dialog>
   </div>;
@@ -478,7 +574,18 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
   const { session, items, state } = row;
   const urgent = mostUrgent(items), left = urgent === null ? null : remaining(urgent, now);
   const id = useId(), metaId = id + "-meta", lineId = id + "-line", title = session.title || "新对话";
-  const [editing, setEditing] = useState<string | null>(null), [menu, setMenu] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null), [menu, setMenu] = useState(false), [custom, setCustom] = useState(false);
+  const picking = useContext(PickContext), picked = picking?.picked.has(session.id) === true;
+  // A pinned row can be dragged to another place among the pinned; a line shows where it would land.
+  const pinDrag = useContext(PinDragContext), [landing, setLanding] = useState<"before" | "after" | null>(null);
+  const dragging = pinDrag !== null && session.pinned === true && editing === null ? {
+    draggable: true,
+    onDragStart: (event: DragEvent) => { event.dataTransfer.setData("text/x-hh-pinned", session.id); event.dataTransfer.effectAllowed = "move"; },
+    onDragOver: (event: DragEvent) => { if (!event.dataTransfer.types.includes("text/x-hh-pinned")) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; const box = event.currentTarget.getBoundingClientRect(); setLanding(event.clientY > box.top + box.height / 2 ? "after" : "before"); },
+    onDragLeave: () => setLanding(null),
+    onDrop: (event: DragEvent) => { const id = event.dataTransfer.getData("text/x-hh-pinned"); const after = landing === "after"; setLanding(null); if (id && id !== session.id) { event.preventDefault(); pinDrag.drop(id, session.id, after); } },
+    onDragEnd: () => setLanding(null),
+  } : {};
   // Amber waits for you, grey that blinks is at work, red failed, and blue is what you have not looked at since it moved on.
   const indicator = state === "wait" ? <StatusDot tone="wait"/> : state === "run" ? <StatusDot tone="work"/> : state === "fail" ? <StatusDot tone="fail"/>
     : state === "unknown" ? <CircleHelp size={14} className="text-fg-3" aria-hidden="true"/> : unread ? <StatusDot tone="run" live={false}/> : row.delegating ? <StatusDot tone="work"/> : null;
@@ -489,7 +596,7 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
     : session.updatedAt ? agoShort(session.updatedAt, now) : "";
   // What asks nothing of you steps back: a conversation at rest that you have seen, and one that is put away.
   const quiet = !current && (away !== undefined || state === "idle" && !unread || state === "closed");
-  const look = cn("session-item nav-row relative h-auto w-full items-start gap-2 py-[5px] pr-2.5 disabled:opacity-60", row.child ? "pl-[26px]" : "pl-2", left && "has-attention");
+  const look = cn("session-item nav-row relative h-auto w-full items-start gap-2 py-[5px] pr-2.5 disabled:opacity-60", row.child ? "pl-[26px]" : "pl-2", left && "has-attention", picked && "is-picked bg-selected");
   const inside = <>
     {/* A delegated conversation hangs from the one above it. */}
     {row.child ? <span className="pointer-events-none absolute top-0 left-[15px] h-[15px] w-2 rounded-bl-[5px] border-b border-l border-line-strong" aria-hidden="true"/> : null}
@@ -509,13 +616,15 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
         : <span className="session-meta flex min-w-0 items-center gap-1 text-caption font-normal text-fg-3" aria-hidden="true" title={session.line}>
           {/* Whose it is, by its mark (after the rows of T3 Code); its name is read out with the rest of the row's description. */}
           <BrandIcon brand={session.selection.harnessId} name={harness} size={13} className="flex-none opacity-90"/>
+          {session.worktree ? <span className="flex flex-none items-center text-fg-3" title={"在自己的工作树里：" + session.worktree.branch}><GitBranch size={11} strokeWidth={2.2} aria-hidden="true"/></span> : null}
           <span className="min-w-0 trunc">{where ? where + " · " : ""}{standing || harness}</span></span>}
     </span>
     <span id={metaId} className="sr-only">{meta}</span>
   </>;
-  return <div className="session-row group/session relative" onContextMenu={actions && editing === null ? event => { event.preventDefault(); setMenu(true); } : undefined}>
+  return <div className="session-row group/session relative" {...dragging} onContextMenu={actions && editing === null ? event => { event.preventDefault(); setMenu(true); } : undefined}>
     {editing !== null ? <div className={cn(look, "bg-sidebar-hover")}>{inside}</div>
-      : <button type="button" disabled={disabled} onClick={onOpen} aria-current={current ? "page" : undefined} aria-label={title} aria-describedby={left ? metaId + " " + lineId : metaId} className={look}>{inside}</button>}
+      : <button type="button" disabled={disabled} onClick={event => { if (picking?.pick(session.id, event) === true) return; onOpen(); }} aria-current={current ? "page" : undefined} aria-label={title}
+        aria-describedby={left ? metaId + " " + lineId : metaId} {...(picking !== null && picking.picked.size > 0 ? { "aria-pressed": picked } : {})} className={look}>{inside}</button>}
     {actions && editing === null ? <span className={cn("session-actions absolute top-[3px] right-2 flex items-center transition-opacity duration-120 ease-standard", menu ? "opacity-100" : "opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100")}>
       {/* The one thing done most from a row stands beside the menu: putting it away, or — on a shelf — bringing it back. */}
       {away === "later" ? <Tip label="现在就看"><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={"现在就看：" + title} onClick={() => actions.snooze(session.id, null)}><AlarmClockOff size={14} aria-hidden="true"/></button></Tip>
@@ -529,13 +638,30 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
         ...(actions.copy ? [{ label: "复制文件夹路径", icon: <Copy size={14}/>, onSelect: () => actions.copy?.(session.workspace, "文件夹路径") },
           { label: "复制对话 ID", icon: <Hash size={14}/>, onSelect: () => actions.copy?.(session.id, "对话 ID") }] : []),
         ...(away === "later" ? [{ separator: true as const }, { label: "现在就看", icon: <AlarmClockOff size={14}/>, onSelect: () => actions.snooze(session.id, null) }]
-          : away === undefined && state !== "run" && state !== "wait" ? [{ separator: true as const }, { heading: "稍后提醒" }, ...snoozeChoices(Date.now()).map(choice => ({ label: choice.label, icon: <AlarmClock size={14}/>, onSelect: () => actions.snooze(session.id, choice.until) }))] : []),
+          : away === undefined && state !== "run" && state !== "wait" ? [{ separator: true as const }, { heading: "稍后提醒" }, ...snoozeChoices(Date.now()).map(choice => ({ label: choice.label, icon: <AlarmClock size={14}/>, onSelect: () => actions.snooze(session.id, choice.until) })),
+            { label: "自定义时间…", icon: <CalendarClock size={14}/>, onSelect: () => setCustom(true) }] : []),
         { separator: true as const },
         ...(away !== "later" ? [{ label: away === "archived" ? "取消归档" : "归档", icon: away === "archived" ? <ArchiveRestore size={14}/> : <Archive size={14}/>, onSelect: () => actions.archive(session.id, away !== "archived") }] : []),
         { label: "删除", icon: <Trash2 size={14}/>, danger: true, disabled: state === "run" || state === "wait", onSelect: () => actions.remove(session.id) },
       ]}/>
     </span> : null}
+    {landing !== null ? <span className={cn("pointer-events-none absolute inset-x-2 z-[1] h-0.5 rounded-full bg-accent", landing === "before" ? "-top-px" : "-bottom-px")} aria-hidden="true"/> : null}
+    {actions && custom ? <SnoozeDialog title={title} onClose={() => setCustom(false)} onChoose={until => { setCustom(false); actions.snooze(session.id, until); }}/> : null}
   </div>;
+}
+
+/** A moment of the user's own to be reminded of a conversation at (after T3 Code's custom snooze): a day and a time, tomorrow at 9:00 to start with, never one past. */
+function SnoozeDialog({ title, onClose, onChoose }: { readonly title: string; readonly onClose: () => void; readonly onChoose: (until: number) => void }) {
+  const local = (at: Date): string => { const pad = (value: number) => String(value).padStart(2, "0"); return at.getFullYear() + "-" + pad(at.getMonth() + 1) + "-" + pad(at.getDate()) + "T" + pad(at.getHours()) + ":" + pad(at.getMinutes()); };
+  const start = new Date(); start.setDate(start.getDate() + 1); start.setHours(9, 0, 0, 0);
+  const [value, setValue] = useState(local(start)), at = new Date(value).getTime(), valid = Number.isFinite(at) && at > Date.now();
+  return <Dialog open onOpenChange={open => { if (!open) onClose(); }} title="稍后提醒" description={"“" + title + "”先放到一边，到这个时间再回到列表。"}>
+    <form className="flex flex-col gap-3 px-5 pt-2 pb-5" onSubmit={event => { event.preventDefault(); if (valid) onChoose(at); }}>
+      <input type="datetime-local" className="h-9 rounded-control border border-line bg-surface px-2.5 text-ui-sm text-fg" value={value} min={local(new Date())} aria-label="提醒时间" autoFocus onChange={event => setValue(event.target.value)}/>
+      {!valid ? <p className="m-0 text-caption text-red">要选一个以后的时间</p> : null}
+      <div className="flex justify-end gap-2"><button type="button" className="btn" onClick={onClose}>取消</button><button type="submit" className="btn btn-primary" disabled={!valid}>稍后提醒</button></div>
+    </form>
+  </Dialog>;
 }
 
 const REFUSING = /reject|deny|decline|cancel|abort|拒绝|取消|中止/iu;

@@ -8,7 +8,7 @@ import type { DeferredWork, TextRange } from "../../../../src/contracts/conversa
 import type { HarnessSelection, NativeConfiguration, PublicSwitch, RunStatus, SelectionRequest } from "../../../../src/contracts/session.js";
 import type {
   NativeStateView, RelayStreamFrame, SessionFacts, SessionHeadView, SessionSummary, SessionView, WireRun, WireTurnHeader, WireTextAppend,
-  DeletedSessionListView, SearchView, SessionSearchView,
+  DeletedSessionListView, SearchView, SessionSearchView, PurgedView, PurgeSessionView, WorktreeMark, WorktreeView,
 } from "../../../../src/contracts/web.js";
 import { decodeRelayStreamEvent, decodeRunRelay } from "../../relay.js";
 
@@ -317,7 +317,9 @@ export function decodeHead(value: unknown): SessionHeadView {
     workspace: str(row.workspace, "a workspace"), selection: selection(row.selection), activeRunId: nullable(row.activeRunId, item => str(item, "a Run")), pendingSwitchId: nullable(row.pendingSwitchId, item => str(item, "a switch")),
     ...(permissions === undefined ? {} : { permissions }), ...(states === undefined ? {} : { nativeStates: states }), ...(quoted === undefined ? {} : { origin: quoted }), ...(parent === undefined ? {} : { parent }), ...(told === undefined ? {} : { delegationsTold: told }), ...(queue === undefined ? {} : { queue }), ...(retention === undefined ? {} : { retention }),
     title: str(row.title, "a title"), runCount: nat(row.runCount, "runCount"), ...(row.archived === true ? { archived: true as const } : {}), ...(row.pinned === true ? { pinned: true as const } : {}),
+    ...(row.pinned === true && typeof row.pinnedOrder === "number" && Number.isFinite(row.pinnedOrder) ? { pinnedOrder: row.pinnedOrder } : {}),
     ...((until => until === undefined ? {} : { snoozedUntil: until })(maybe(row.snoozedUntil, entry => amount(entry, "snoozedUntil")))),
+    ...((worktree => worktree === undefined ? {} : { worktree })(decodeWorktreeMark(row.worktree))),
     ...(row.updatedAt === undefined ? {} : { updatedAt: amount(row.updatedAt, "updatedAt") }), ...(row.activeSince === undefined || row.activeRunId === null ? {} : { activeSince: amount(row.activeSince, "activeSince") }),
     ...(last === undefined ? {} : { lastSwitch: last }), facts: sessionFacts(row.facts),
     ...(plan === undefined ? {} : { plan }), ...(recap === undefined ? {} : { recap }) };
@@ -358,7 +360,37 @@ export function decodeSessionSummary(item: unknown): SessionSummary {
     ...(activeRunId === null || activeSince === undefined ? {} : { activeSince }), ...(typeof made.line === "string" && made.line !== "" ? { line: made.line } : {}),
     ...(made.parent === undefined ? {} : { parent: (parent => ({ sessionId: str(parent.sessionId, "a conversation id"), afterRunId: nullable(parent.afterRunId, entry => str(entry, "a Run")), ...(parent.by === "harness" ? { by: "harness" as const } : {}) }))(rec(made.parent, "a delegating conversation")) }),
     ...(made.archived === true ? { archived: true as const } : {}), ...(made.pinned === true ? { pinned: true as const } : {}),
-    ...((until => until === undefined ? {} : { snoozedUntil: until })(maybe(made.snoozedUntil, entry => amount(entry, "snoozedUntil")))) };
+    ...(made.pinned === true && typeof made.pinnedOrder === "number" && Number.isFinite(made.pinnedOrder) ? { pinnedOrder: made.pinnedOrder } : {}),
+    ...((until => until === undefined ? {} : { snoozedUntil: until })(maybe(made.snoozedUntil, entry => amount(entry, "snoozedUntil")))),
+    ...((worktree => worktree === undefined ? {} : { worktree })(decodeWorktreeMark(made.worktree))) };
+}
+/**
+ * The Git worktree a head or a row of the list carries (2026-11-14, `SessionSummary.worktree`): its repository's main checkout (`root`, what the list groups by), its
+ * folder, its branch and the commit it started from; undefined when there is none. One that is not that shape is left out: the row stays.
+ */
+export function decodeWorktreeMark(value: unknown): WorktreeMark | undefined {
+  if (value === undefined || value === null || !isRecord(value)) return undefined;
+  return typeof value.root === "string" && typeof value.path === "string" && typeof value.branch === "string" && typeof value.baseSha === "string"
+    ? { root: value.root, path: value.path, branch: value.branch, baseSha: value.baseSha } : undefined;
+}
+/** `GET /api/v1/sessions/:id/worktree` (2026-11-14): where the conversation's worktree stands now. */
+export function decodeWorktreeView(value: unknown): WorktreeView {
+  const row = rec(value, "a worktree");
+  return { path: str(row.path, "a worktree's folder"), branch: nullable(row.branch, item => str(item, "a branch")), dirty: nat(row.dirty, "dirty"), shared: bool(row.shared, "shared"),
+    ...(row.missing === true ? { missing: true as const } : {}) };
+}
+/** `POST /api/v1/sessions/:id/purge {removeWorktree: true}` (2026-11-14): what became of the erased conversation's worktree. */
+export function decodePurgeSessionView(value: unknown): PurgeSessionView {
+  const row = rec(value, "an erasure");
+  const kept = row.worktreeKept === "shared" || row.worktreeKept === "failed" ? row.worktreeKept : undefined;
+  return { ...(row.worktreeRemoved === true ? { worktreeRemoved: true as const } : {}), ...(kept === undefined ? {} : { worktreeKept: kept }),
+    ...(typeof row.worktreeError === "string" ? { worktreeError: row.worktreeError } : {}) };
+}
+/** `POST /api/v1/sessions/purge-deleted`: how many were erased and, when their worktrees were asked to go, how many went and which Git refused. */
+export function decodePurgedView(value: unknown): PurgedView {
+  const row = rec(value, "an erasure"), removed = maybe(row.worktreesRemoved, item => nat(item, "worktreesRemoved"));
+  const failures = maybe(row.worktreeFailures, list => many(list, entry => { const made = rec(entry, "a worktree left"); return { path: str(made.path, "a worktree's folder"), message: str(made.message, "Git's words") }; }, "worktreeFailures"));
+  return { purged: nat(row.purged, "purged"), ...(removed === undefined ? {} : { worktreesRemoved: removed }), ...(failures === undefined ? {} : { worktreeFailures: failures }) };
 }
 /** `GET /api/v1/sessions/deleted?before=&limit=` (2026-11-14): the conversations the user deleted, the latest deleted first, each with when. */
 export function decodeDeletedSessionListView(value: unknown): DeletedSessionListView {

@@ -1,5 +1,5 @@
 import { BoardAdd, BoardEntries, TaskRoster, useTask, type TaskBoardAccess, type TaskSnapshot } from "./TaskBoard.js";
-import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Circle, CircleDollarSign, Clock, Columns2, Copy, FileText, Folder, FolderOpen, GitBranch, Plug, Plus, Shrink, Space, Timer, WrapText, X } from "lucide-react";
+import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Circle, CircleDollarSign, Clock, Columns2, Copy, FileText, Folder, FolderOpen, FolderTree, GitBranch, GitBranchPlus, Plug, Plus, Shrink, Space, Timer, WrapText, X } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { ITEM_STATUS_WORDS, TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
@@ -24,9 +24,10 @@ import { Collapsible } from "../ui/motion.js";
 import { EmptyState, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitives.js";
 import { DiffLines, type ToolDetailLoader } from "./Activity.js";
 import { DiffBody, type DiffRemark } from "./DiffBody.js";
-import { CommitDialog, EditorRow, FileView, type WorkspaceAccess } from "./WorkspaceTools.js";
+import { CommitDialog, EditorRow, FileView, PullRequestRow, type WorkspaceAccess } from "./WorkspaceTools.js";
 import { GitChanges, GitScopeMenu, type GitAccess, type GitScope } from "./GitChanges.js";
 import { FileMark, FilePath, Lines } from "./FileBits.js";
+import { FileTree, readTree, writeTree } from "./FileTree.js";
 import { dockedRequest } from "./Approval.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { TurnSteps } from "./ProtocolTurn.js";
@@ -249,7 +250,7 @@ interface PanelProps {
   /** What is done with the workspace: opened in an editor, committed and pushed, a file of it shown. Each part absent where the Gateway has none of it. */
   readonly tools?: WorkspaceAccess | undefined;
   /** Says something came of an action in a corner of the page (a commit made, a push done). */
-  readonly onSaid?: ((words: string) => void) | undefined;
+  readonly onSaid?: ((words: string, link?: string) => void) | undefined;
   /** Takes a remark on some lines of a diff: it goes into the message box. Absent where no message can be written. */
   readonly onRemark?: ((remark: DiffRemark) => void) | undefined;
   /** Reads where the conversation works: its folder and, when that is a repository, its branch and how many files are not committed. */
@@ -455,10 +456,15 @@ function EnvironmentSection({ session, stamp, load, onReveal, harness, tools, on
     {harness}
     {onReveal ? <button type="button" className="row -mx-2 flex min-h-7 min-w-0 items-center gap-2.5 border-none bg-transparent px-2 text-left text-ui-sm hover:bg-subtle" title={"在访达中显示 " + path} onClick={() => onReveal()}>{folder}</button>
       : <div className="flex min-h-7 min-w-0 items-center gap-2.5 text-ui-sm" title={path}>{folder}</div>}
+    {/* Working in a Git worktree of its own (made for it, from the repository's main checkout): said, with where it came from. */}
+    {session.worktree ? <div className="flex min-h-7 min-w-0 items-center gap-2.5 text-ui-sm" title={"工作树：" + session.worktree.path + "\n主检出：" + session.worktree.root}>
+      <span className="flex size-4 flex-none items-center justify-center text-fg-3"><GitBranchPlus size={14} aria-hidden="true"/></span>
+      <span className="min-w-0 flex-1 trunc text-fg-2">自己的工作树，从 {folderName(session.worktree.root)} 分出</span></div> : null}
     {tools?.editors?.length && tools.openIn ? <EditorRow editors={tools.editors} onOpenIn={tools.openIn}/> : null}
     {git !== undefined ? <Line icon={<GitBranch size={14} aria-hidden="true"/>} value={git.dirty > 0 && tools?.commit && tools.git
       ? <button type="button" className="link-btn text-ui-sm" onClick={() => setCommitting(true)}>{git.dirty} 个文件未提交 · 提交…</button> : git.dirty > 0 ? git.dirty + " 个文件未提交" : "没有未提交的改动"}><span className="mono text-caption">{git.branch ?? "不在分支上"}</span></Line> : null}
     {tools?.commit && tools.git ? <CommitDialog open={committing} onClose={() => setCommitting(false)} access={tools} suggestion={suggestion} onDone={said => { onSaid?.(said); setAgain(value => value + 1); }}/> : null}
+    {git !== undefined && tools?.prStatus ? <PullRequestRow access={tools} stamp={stamp + ":" + again} suggestion={session.title || suggestion} onSaid={onSaid}/> : null}
   </div></Section>;
 }
 /** The task list: a mark per step (done, in hand, to do), the steps themselves, and what the latest Turn said it came to. */
@@ -577,15 +583,19 @@ function RunTitle({ runs, run, onRun }: { readonly runs: readonly PublicRun[]; r
  * One changed file: its row, and under it — when opened — its diff as the program reported it, read-only. Under the pointer, or with the keyboard on it, the row's
  * counts give their place to what is done with the file: its path copied, the file shown in the Finder.
  */
-function FileDiff({ file, workspace, open, wrap, split, onToggle, name, onReveal, onRemark, onOpenFile }: { readonly file: ChangedFile; readonly workspace: string; readonly open: boolean; readonly wrap: boolean; readonly split: boolean; readonly onToggle: () => void; readonly name: (id: string) => string;
-    readonly onReveal?: ((path: string) => void) | undefined; readonly onRemark?: ((remark: DiffRemark) => void) | undefined; readonly onOpenFile?: ((path: string) => void) | undefined }) {
+function FileDiff({ file, workspace, open, wrap, split, onToggle, name, onReveal, onRemark, onOpenFile, depth = 0, label }: { readonly file: ChangedFile; readonly workspace: string; readonly open: boolean; readonly wrap: boolean; readonly split: boolean; readonly onToggle: () => void; readonly name: (id: string) => string;
+    readonly onReveal?: ((path: string) => void) | undefined; readonly onRemark?: ((remark: DiffRemark) => void) | undefined; readonly onOpenFile?: ((path: string) => void) | undefined;
+    /** How far in it stands, under its folders (the list by folder); and the name shown there in place of its path. */
+    readonly depth?: number; readonly label?: string | undefined }) {
   const panel = useId(), row = useRef<HTMLLIElement>(null), shown = workspacePath(file.path, workspace);
   const [copied, setCopied] = useState(false);
   useEffect(() => { if (!copied) return; const timer = setTimeout(() => setCopied(false), 1600); return () => clearTimeout(timer); }, [copied]);
+  // The file's row stays at the top of the panel while its diff scrolls under it (after T3 Code's sticky headers).
   return <li ref={row} className="group/file relative flex min-w-0 flex-col" data-path={file.path}>
-    <button type="button" className="row flex h-8 w-full min-w-0 items-center gap-2 border-none bg-transparent px-2 text-left text-ui-sm text-fg hover:bg-subtle" aria-expanded={open} aria-controls={panel} onClick={onToggle} title={file.path}>
+    <div className="sticky top-0 z-[2] bg-app">
+    <button type="button" className="row flex h-8 w-full min-w-0 items-center gap-2 border-none bg-app pr-2 text-left text-ui-sm text-fg hover:bg-subtle" style={{ paddingLeft: 8 + depth * 14 }} aria-expanded={open} aria-controls={panel} onClick={onToggle} title={file.path}>
       <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
-      <FileMark created={file.created}/><FilePath path={file.path} workspace={workspace}/>
+      <FileMark created={file.created}/>{label === undefined ? <FilePath path={file.path} workspace={workspace}/> : <span className="min-w-0 flex-1 trunc">{label}</span>}
       <span className="flex min-w-[52px] flex-none items-center justify-end gap-1.5 transition-opacity duration-120 ease-standard group-hover/file:opacity-0 group-has-[:focus-visible]/file:opacity-0">
         {file.harnessIds.map(id => <BrandIcon key={id} brand={id} name={name(id)} size={16}/>)}<Lines add={file.add} del={file.del}/></span>
     </button>
@@ -595,6 +605,7 @@ function FileDiff({ file, workspace, open, wrap, split, onToggle, name, onReveal
       {onOpenFile ? <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"打开文件：" + shown} title="打开文件" onClick={() => onOpenFile(file.path)}><FileText size={13} strokeWidth={2} aria-hidden="true"/></button> : null}
       {onReveal ? <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"在访达中显示：" + shown} title="在访达中显示" onClick={() => onReveal(file.path)}><FolderOpen size={13} strokeWidth={2} aria-hidden="true"/></button> : null}
     </span>
+    </div>
     <Collapsible open={open} id={panel}>
       <section className="mt-0.5 mb-2 min-w-0 overflow-hidden rounded-block bg-surface shadow-hairline" aria-label={"差异：" + shown}>
         {file.diffs.length > 0 ? file.diffs.map((diff, index) => <div key={index} className={cn(index > 0 && "hairline-t")}><DiffBody file={{ ...diff, path: shown }} wrap={wrap} split={split} onRemark={onRemark}/></div>)
@@ -620,7 +631,9 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
   const [scope, setScope] = useState<ChangesScope>("all");
   // A Git scope shown in place of the Hub's (2026-11-14): what is not committed, a commit, or the branch against another; and whether spaces count in its comparison.
   const [gitScope, setGitScope] = useState<GitScope | null>(null), [whitespace, setWhitespace] = useState(false);
-  const [wrap, setWrap] = useState(readWrap), [split, setSplit] = useState(readSplit);
+  const [wrap, setWrap] = useState(readWrap), [split, setSplit] = useState(readSplit), [tree, setTree] = useState(readTree);
+  const byFolder = () => setTree(value => { writeTree(!value); return !value; });
+  const treeButton = <button type="button" className="icon-btn size-7 text-fg-3" aria-label="按文件夹显示" aria-pressed={tree} title={tree ? "按文件夹显示：开" : "按文件夹显示：关"} onClick={byFolder}><FolderTree size={14} strokeWidth={2}/></button>;
   const beside = () => setSplit(value => { try { localStorage.setItem(SPLIT_KEY, value ? "0" : "1"); } catch { /* lasts for this page only */ } return !value; });
   const fold = () => setWrap(value => { try { localStorage.setItem(WRAP_KEY, value ? "0" : "1"); } catch { /* lasts for this page only */ } return !value; });
   // The files the user opened or closed by hand; until then a short list is open whole and a long one at its first file.
@@ -657,15 +670,17 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
       {git !== undefined ? <GitScopeMenu access={git} scope={gitScope} onScope={setGitScope}/> : null}
       {gitScope !== null ? <span className="ml-auto flex flex-none items-center gap-1">
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label="忽略空白" aria-pressed={whitespace} title={whitespace ? "忽略空白：开" : "忽略空白：关"} onClick={() => setWhitespace(value => !value)}><Space size={14} strokeWidth={2}/></button>
+        {treeButton}
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label="并排显示" aria-pressed={split} title={split ? "并排显示：开" : "并排显示：关"} onClick={beside}><Columns2 size={14} strokeWidth={2}/></button>
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap || split} disabled={split} title={split ? "并排时长行总是折行" : wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14} strokeWidth={2}/></button></span>
       : shownScope !== "task" && files.length > 0 ? <span className="ml-auto flex flex-none items-center gap-1"><span className="mr-1 flex items-center gap-1.5"><Lines add={add} del={del}/></span>
+        {treeButton}
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label="并排显示" aria-pressed={split} title={split ? "并排显示：开" : "并排显示：关"} onClick={beside}><Columns2 size={14} strokeWidth={2}/></button>
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap || split} disabled={split} title={split ? "并排时长行总是折行" : wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14} strokeWidth={2}/></button>
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label={every ? "全部收起" : "全部展开"} title={every ? "全部收起" : "全部展开"} onClick={() => setChosen(every ? new Set() : new Set(files.map(file => file.path)))}>
           {every ? <ChevronsDownUp size={14} strokeWidth={2}/> : <ChevronsUpDown size={14} strokeWidth={2}/>}</button></span> : null}
     </div>
-    {gitScope !== null && git !== undefined ? <GitChanges access={git} scope={gitScope} workspace={workspace} wrap={wrap} split={split} whitespace={whitespace} onRemark={onRemark}
+    {gitScope !== null && git !== undefined ? <GitChanges access={git} scope={gitScope} workspace={workspace} wrap={wrap} split={split} whitespace={whitespace} tree={tree} onRemark={onRemark}
       stamp={String(changes.edits) + ":" + changes.files.length + ":" + (selected?.id ?? "") + ":" + (selected?.status ?? "")}/>
       : shownScope === "task" ? <div className="flex flex-col gap-3 px-2.5 pb-4">{others.map(member => <section key={member.sessionId} className="flex min-w-0 flex-col" aria-label={member.harness + " 改动的文件"}>
       <div className="flex min-w-0 items-center gap-2 px-2 py-1.5"><BrandIcon brand={member.harnessId} name={member.harness} size={18}/>
@@ -673,8 +688,10 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
         {onOpenSession ? <button type="button" className="link-btn flex-none text-caption" onClick={() => onOpenSession(member.sessionId)}>打开这段对话</button> : null}</div>
       <ul className="m-0 flex list-none flex-col gap-px p-0">{member.files.map(path => <li key={path}><FileRow path={path} workspace={workspace}/></li>)}</ul>
     </section>)}</div> : <>
-      {files.length ? <ul ref={list} className="m-0 flex list-none flex-col gap-px px-2.5 pb-2" aria-label="改动的文件">{files.map(file =>
-        <FileDiff key={file.path} file={file} workspace={workspace} open={open.has(file.path)} wrap={wrap} split={split} onToggle={() => toggle(file.path)} name={name} onReveal={onReveal} onRemark={onRemark} onOpenFile={onOpenFile}/>)}</ul> : null}
+      {files.length ? <ul ref={list} className="m-0 flex list-none flex-col gap-px px-2.5 pb-2" aria-label="改动的文件">{tree
+        ? <FileTree items={files} workspace={workspace} pathOf={file => file.path} linesOf={file => ({ add: file.add, del: file.del })} renderFile={(file, depth, label) =>
+          <FileDiff key={file.path} file={file} workspace={workspace} open={open.has(file.path)} wrap={wrap} split={split} onToggle={() => toggle(file.path)} name={name} onReveal={onReveal} onRemark={onRemark} onOpenFile={onOpenFile} depth={depth} label={label}/>}/>
+        : files.map(file => <FileDiff key={file.path} file={file} workspace={workspace} open={open.has(file.path)} wrap={wrap} split={split} onToggle={() => toggle(file.path)} name={name} onReveal={onReveal} onRemark={onRemark} onOpenFile={onOpenFile}/>)}</ul> : null}
       {changes.unread > 0 ? <p className="m-0 flex items-center gap-2 px-4 pb-3 text-caption text-fg-3"><button type="button" className="link-btn text-caption" onClick={changes.more}>更早的 {changes.unread} 处编辑</button></p> : null}
       {changes.loading ? <p className="m-0 flex items-center gap-1.5 px-4 pb-3 text-caption text-fg-3"><Spinner size={12} label=""/>正在读取改动…</p> : null}
       {changes.failures.length ? <p className="m-0 px-4 pb-3 text-caption text-red">{changes.failures.length} 处改动读取失败：{changes.failures[0]}</p> : null}

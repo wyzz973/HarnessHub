@@ -3,12 +3,15 @@ import { readSseBlocks } from "./attention.js";
 import { WireError, decodeConversationChanges, decodeItemTextView, decodeItemView, decodeRunItemsPageView, decodeSessionListView, decodeSessionStreamFrameV14, decodeSessionViewV14, decodeTurnPageView,
   type ClientRunItemsPage, type ClientSessionList, type ClientSessionView, type ClientStreamFrame, type ClientWindow } from "./lib/protocol/wire.js";
 import { decodeDeletedSessionListView, decodeSearchView, decodeSessionSearchView } from "./lib/protocol/wire.js";
-import type { DeletedSessionListView, PurgedView, SearchView, SessionSearchView } from "../../src/contracts/web.js";
+import { decodePurgedView, decodePurgeSessionView, decodeWorktreeMark, decodeWorktreeView } from "./lib/protocol/wire.js";
+import type { DeletedSessionListView, PurgedView, PurgeSessionView, SearchView, SessionSearchView, WorktreeView } from "../../src/contracts/web.js";
 import { createRelayApi, decodeRelayFrame, relayBody, type RelayApi, type RelayEvent, type RelayReply, type RelayRequest, type RelayTransport } from "./relay.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, SteerView, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState, WorkspaceView,
   EditorView, GitBranchesView, GitChangedFileView, GitChangesView, GitCommitView, GitFileDiffView, GitLogView, GitPushView, GitScope, GitView, WorkspaceFileView } from "../../src/contracts/web.js";
+import { GH_STATES, type CheckpointListView, type CheckpointRestoreView, type GitPullRequestCreatedView, type GitPullRequestStatusView, type GitPullRequestView } from "../../src/contracts/web.js";
 import { GIT_CHANGE_STATUSES, HARNESS_TIERS } from "../../src/contracts/web.js";
+import type { TerminalExitView, TerminalOpenedView, TerminalView } from "../../src/contracts/terminal.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput, RuntimeRequirement, UpgradeSequenceCheck } from "../../src/contracts/management.js";
 import type { AttentionItem, BoardKind, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest, TaskBoard } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
@@ -63,6 +66,13 @@ function decodeTask(value: unknown): TaskSnapshot {
   }) };
 }
 function nullableNumber(value: unknown): number | null { return value === null ? null : number(value); }
+/** A row or column count a pseudoterminal can have (1 to 65535), from a size the page measured. */
+function terminalDimension(value: number): number { return Math.min(65535, Math.max(1, Math.floor(Number.isFinite(value) ? value : 1))); }
+function decodeTerminalExit(value: unknown): TerminalExitView { const row = record(value); return { code: nullableNumber(row.code), signal: nullableText(row.signal) }; }
+function decodeTerminal(value: unknown): TerminalView {
+  const row = record(value);
+  return { id: text(row.id), title: text(row.title), createdAt: number(row.createdAt), ...(row.exited === undefined ? {} : { exited: decodeTerminalExit(row.exited) }) };
+}
 /** A list of any length (2026-11-12): the page mirrors no count bound the Gateway does not have. */
 function list<T>(value: unknown, decode: (row: unknown) => T): readonly T[] {
   if (!Array.isArray(value)) return invalid();
@@ -75,6 +85,10 @@ function decodeFlavor(value: unknown): HarnessFlavor {
   return { harnessId: text(row.harnessId), permission: permission as unknown as HarnessFlavor["permission"], ...(row.neutral === undefined ? {} : { neutral: list(row.neutral, item => item) as NonNullable<HarnessFlavor["neutral"]> }),
     effort: { ...(effort.option === undefined ? {} : { option: record(effort.option) as unknown as NonNullable<HarnessFlavor["effort"]["option"]> }), values: record(effort.values) as HarnessFlavor["effort"]["values"], ...(typeof effort.note === "string" ? { note: effort.note } : {}) },
     asks: { read: bool(asks.read), edit: bool(asks.edit), execute: bool(asks.execute), ...(typeof asks.note === "string" ? { note: asks.note } : {}) }, nativePlan: bool(row.nativePlan),
+    // How the speed choice (`hub_speed`, 2026-11-14) is carried out: read by contracts/flavor.ts nativeLevels (`speed`, `speedOwn`) with the catalog's options.
+    ...(row.speed === undefined ? {} : { speed: (speed => { const option = record(speed.option);
+      return { option: { ...(option.ids === undefined ? {} : { ids: list(option.ids, text) }), category: text(option.category) }, standard: text(speed.standard),
+        ...(speed.names === undefined ? {} : { names: Object.fromEntries(Object.entries(record(speed.names)).map(([native, name]) => [native, text(name)])) }) }; })(record(row.speed)) }),
     // Of the capabilities the page reads one: whether the Harness takes words in the middle of a Turn (`steer`, 2026-11-14).
     ...(row.capabilities === undefined ? {} : { capabilities: (capabilities => capabilities.steer === undefined ? {} : { steer: choice(capabilities.steer, ["native", "none"] as const) })(record(row.capabilities)) }) };
 }
@@ -396,7 +410,9 @@ function decodeSummary(value: unknown): SessionSummary {
     ...(activeRunId === null || row.activeSince === undefined ? {} : { activeSince: number(row.activeSince) }), ...(typeof row.line === "string" && row.line !== "" ? { line: row.line } : {}),
     ...(row.parent === undefined ? {} : { parent: (parent => ({ sessionId: text(parent.sessionId), afterRunId: nullableText(parent.afterRunId), ...(parent.by === "harness" ? { by: "harness" as const } : {}) }))(record(row.parent)) }),
     ...(row.archived === true ? { archived: true as const } : {}), ...(row.pinned === true ? { pinned: true as const } : {}),
-    ...(row.snoozedUntil === undefined || row.snoozedUntil === null ? {} : { snoozedUntil: number(row.snoozedUntil) }) };
+    ...(row.pinned === true && typeof row.pinnedOrder === "number" && Number.isFinite(row.pinnedOrder) ? { pinnedOrder: row.pinnedOrder } : {}),
+    ...(row.snoozedUntil === undefined || row.snoozedUntil === null ? {} : { snoozedUntil: number(row.snoozedUntil) }),
+    ...((worktree => worktree === undefined ? {} : { worktree })(decodeWorktreeMark(row.worktree))) };
 }
 function decodeEditor(value: unknown): EditorView { const row = record(value); return { id: text(row.id), name: text(row.name) }; }
 function decodeFile(value: unknown): WorkspaceFileView {
@@ -417,9 +433,10 @@ function decodeGitChange(value: unknown): GitChangedFileView {
     ...(file.added === undefined ? {} : { added: number(file.added) }), ...(file.removed === undefined ? {} : { removed: number(file.removed) }), ...(file.binary === true ? { binary: true as const } : {}) };
 }
 function decodeGitChanges(value: unknown): GitChangesView {
-  const row = record(value), base = row.base === undefined ? undefined : record(row.base), commit = row.commit === undefined ? undefined : record(row.commit);
-  return { scope: choice(row.scope, ["uncommitted", "commit", "branch"] as const), files: list(row.files, decodeGitChange),
-    ...(base === undefined ? {} : { base: { ref: text(base.ref), sha: text(base.sha) } }), ...(commit === undefined ? {} : { commit: { sha: text(commit.sha), parent: nullableText(commit.parent) } }) };
+  const row = record(value), base = row.base === undefined ? undefined : record(row.base), commit = row.commit === undefined ? undefined : record(row.commit), turn = row.turn === undefined ? undefined : record(row.turn);
+  return { scope: choice(row.scope, ["uncommitted", "commit", "branch", "turn"] as const), files: list(row.files, decodeGitChange),
+    ...(base === undefined ? {} : { base: { ref: text(base.ref), sha: text(base.sha) } }), ...(commit === undefined ? {} : { commit: { sha: text(commit.sha), parent: nullableText(commit.parent) } }),
+    ...(turn === undefined ? {} : { turn: { ordinal: number(turn.ordinal), before: text(turn.before), after: nullableText(turn.after) } }) };
 }
 function decodeGitDiff(value: unknown): GitFileDiffView { const row = record(value); return { path: text(row.path), diff: text(row.diff), ...(row.binary === true ? { binary: true as const } : {}) }; }
 function decodeGitLog(value: unknown): GitLogView {
@@ -436,8 +453,24 @@ function gitScopeQuery(scope: GitScope, whitespace?: "ignore"): URLSearchParams 
   const query = new URLSearchParams({ scope: scope.kind });
   if (scope.kind === "commit") query.set("sha", scope.sha);
   if (scope.kind === "branch" && scope.base !== undefined) query.set("base", scope.base);
+  if (scope.kind === "turn") query.set("ordinal", String(scope.ordinal));
   if (whitespace === "ignore") query.set("whitespace", "ignore");
   return query;
+}
+/* A Turn's checkpoints, putting files back and a pull request (2026-11-14). */
+function decodeCheckpoints(value: unknown): CheckpointListView {
+  const row = record(value);
+  return { checkpoints: list(row.checkpoints, entry => { const item = record(entry);
+    return { ordinal: number(item.ordinal), ...(item.before === undefined ? {} : { before: text(item.before) }), ...(item.after === undefined ? {} : { after: text(item.after) }) }; }),
+    next: nullableNumber(row.next), restorable: bool(row.restorable) };
+}
+function decodeRestored(value: unknown): CheckpointRestoreView { const row = record(value); return { restoredTo: text(row.restoredTo), savedAs: text(row.savedAs) }; }
+function decodePullRequest(value: unknown): GitPullRequestView { const row = record(value); return { url: text(row.url), number: number(row.number), title: text(row.title), state: text(row.state) }; }
+function decodePullRequestStatus(value: unknown): GitPullRequestStatusView {
+  const row = record(value), remote = row.remote === undefined ? undefined : record(row.remote);
+  return { gh: choice(row.gh, GH_STATES), branch: nullableText(row.branch), defaultBranch: nullableText(row.defaultBranch),
+    ...(remote === undefined ? {} : { remote: { name: text(remote.name), url: text(remote.url), github: bool(remote.github) } }), ...(row.upstream === undefined ? {} : { upstream: text(row.upstream) }),
+    ahead: number(row.ahead), unpushed: number(row.unpushed), ...(row.existing === undefined ? {} : { existing: decodePullRequest(row.existing) }) };
 }
 function decodeWorkspace(value: unknown): WorkspaceView {
   const row = record(value), git = row.git === undefined ? undefined : record(row.git);
@@ -686,13 +719,32 @@ export class GatewayApi {
     }, signal);
   }
   decidePermission(id: string, permission: string, optionId: string, key: string, input?: string): Promise<{ replayed: boolean }> { return this.request(`/sessions/${encodeURIComponent(id)}/permissions/${encodeURIComponent(permission)}`, "POST", { optionId, commandId: key, ...(input===undefined?{}:{input}) }, value => { const row=record(value);return { replayed:bool(row.replayed) }; }); }
+  /** The conversation's terminals, the oldest first; one whose shell ended carries `exited` and stays until it is closed. */
+  terminals(id: string, signal?: AbortSignal): Promise<readonly TerminalView[]> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/terminals`, "GET", undefined, value => list(record(value).terminals, decodeTerminal), signal);
+  }
+  /** Starts a login shell in the conversation's workspace at this size; its title is `title`, or "终端 N" by default. It runs until it is closed, whatever sockets come and go. */
+  openTerminal(id: string, cols: number, rows: number, title?: string): Promise<TerminalOpenedView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/terminals`, "POST", { cols: terminalDimension(cols), rows: terminalDimension(rows), ...(title === undefined ? {} : { title }) },
+      value => { const row = record(value); return { id: text(row.id), title: text(row.title), createdAt: number(row.createdAt) }; }, undefined, 30_000);
+  }
+  /** Renames a terminal; the answer is the terminal as listed. */
+  renameTerminal(id: string, terminal: string, title: string): Promise<TerminalView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/terminals/${encodeURIComponent(terminal)}`, "PATCH", { title }, decodeTerminal);
+  }
+  /** Closes a terminal: its shell is ended (SIGTERM and a hang-up, SIGKILL a second later), its sockets get `exit` and close, its history is deleted. Resolves once it is. */
+  async closeTerminal(id: string, terminal: string): Promise<void> {
+    await this.request(`/sessions/${encodeURIComponent(id)}/terminals/${encodeURIComponent(terminal)}`, "DELETE", undefined, () => undefined, undefined, 30_000);
+  }
   /**
-   * The WebSocket address of a conversation's terminal (`ws://` here, `wss://` under https), opened with this page's login cookie once
-   * the page is logged in. Frames: `{type:"input",data}` and `{type:"resize",cols,rows}` out, `{type:"output",data}` and one
-   * `{type:"exit",code}` in (docs/contracts/public-api.md).
+   * The WebSocket address that attaches to a terminal (`ws://` here, `wss://` under https), opened with this page's login cookie; its size is applied
+   * as a resize. The Gateway sends `{type:"output",data}` frames of everything the shell printed since it started, then one `{type:"replayed"}`, then
+   * the live output, and `{type:"exit",code,signal}` once the shell has ended (at once after the history for one that already had), then closes;
+   * the page sends `{type:"input",data}` and `{type:"resize",cols,rows}`. Closing the socket only detaches (docs/contracts/public-api.md).
    */
-  terminalUrl(id: string, cols: number, rows: number): string {
-    return (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + `/api/v1/sessions/${encodeURIComponent(id)}/terminal?cols=${Math.max(1, Math.floor(cols))}&rows=${Math.max(1, Math.floor(rows))}`;
+  terminalSocketUrl(id: string, terminal: string, cols: number, rows: number): string {
+    return (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host
+      + `/api/v1/sessions/${encodeURIComponent(id)}/terminals/${encodeURIComponent(terminal)}/socket?cols=${terminalDimension(cols)}&rows=${terminalDimension(rows)}`;
   }
   /** A conversation as a page opens it: its head and its newest Turns (ADR-057 3.4); the rest is read by the routes below as the reader goes to it. */
   session(id: string, signal?: AbortSignal): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}`, "GET", undefined, decodeSessionViewV14, signal); }
@@ -800,6 +852,34 @@ export class GatewayApi {
   createSession(workspace: string | null, selection: SelectionRequest, key: string): Promise<ClientSessionView> {
     return this.request("/sessions", "POST", workspace === null ? { scratch: true, selection, commandId: key } : { workspace, selection, commandId: key }, decodeSessionViewV14);
   }
+  /**
+   * Starts a conversation in a Git worktree of its own (2026-11-14), made from the repository `workspace` is in: a new branch `hh/<8 hex>` from its HEAD (renamed once
+   * after the conversation's title), at `<worktree root>/<repository folder>/hh-<8 hex>`; the conversation works at `workspace`'s place in it. A repeat with the same
+   * `key` answers the same conversation and makes no second worktree. ApiError 400 INVALID_INPUT when `workspace` is in no repository; 409 GIT_* with Git's words
+   * when Git refuses (no commit yet, the place taken). The head and the list's row carry `worktree`.
+   */
+  createSessionInWorktree(workspace: string, selection: SelectionRequest, key: string): Promise<ClientSessionView> {
+    return this.request("/sessions", "POST", { workspace, worktree: true, selection, commandId: key }, decodeSessionViewV14, undefined, 10 * 60_000);
+  }
+  /**
+   * Where a conversation's worktree stands now: its branch, how many files are not committed (untracked included), whether another conversation not erased works in
+   * it (`shared`), whether its folder is gone (`missing`). Answers for a deleted conversation too, to ask before erasing it; ApiError 404 WORKTREE_NOT_FOUND when it has none.
+   */
+  sessionWorktree(id: string, signal?: AbortSignal): Promise<WorktreeView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/worktree`, "GET", undefined, decodeWorktreeView, signal, 60_000);
+  }
+  /**
+   * Erases a deleted conversation as `purgeSession` does, then removes its worktree (`git worktree remove --force`, then prune; the branch stays) unless another
+   * conversation not erased works in it: `worktreeRemoved`, or `worktreeKept` "shared" / "failed" (with Git's words in `worktreeError`). Nothing about a worktree for
+   * a conversation that has none.
+   */
+  purgeSessionAndWorktree(id: string): Promise<PurgeSessionView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/purge`, "POST", { removeWorktree: true }, decodePurgeSessionView, undefined, 10 * 60_000);
+  }
+  /** Erases every deleted conversation and the worktrees no conversation left works in: `purged`, `worktreesRemoved`, and `worktreeFailures` when Git refused some. */
+  purgeDeletedAndWorktrees(): Promise<PurgedView> {
+    return this.request("/sessions/purge-deleted", "POST", { removeWorktree: true }, decodePurgedView, undefined, 15 * 60_000);
+  }
   /** Shows the system's folder dialog on this Mac and gives the folder chosen, or null when it was cancelled. It waits as long as the dialog is open. */
   chooseFolder(start: string | undefined, signal?: AbortSignal): Promise<string | null> {
     return this.request("/workspaces/choose", "POST", start ? { start } : {}, value => nullableText(record(value).path), signal, null);
@@ -863,9 +943,11 @@ export class GatewayApi {
    * off; the answer is its row of the list after the change. A page that has the conversation open is also told by its stream (the commit's head), so no other read follows.
    * None of these moves the row's `updatedAt`.
    */
-  updateSession(id: string, change: { title?: string; archived?: boolean; pinned?: boolean; snoozedUntil?: number | null }): Promise<SessionSummary> {
+  updateSession(id: string, change: { title?: string; archived?: boolean; pinned?: boolean; pinnedOrder?: number; snoozedUntil?: number | null }): Promise<SessionSummary> {
+    // `pinnedOrder` (2026-11-14): the conversation's place among the pinned, lowest first; 409 PIN_REQUIRED for one that is not pinned (SessionChange).
     return this.request(`/sessions/${encodeURIComponent(id)}`, "PATCH", { ...(change.title === undefined ? {} : { title: change.title }), ...(change.archived === undefined ? {} : { archived: change.archived }),
-      ...(change.pinned === undefined ? {} : { pinned: change.pinned }), ...(change.snoozedUntil === undefined ? {} : { snoozedUntil: change.snoozedUntil }) }, decodeSummary);
+      ...(change.pinned === undefined ? {} : { pinned: change.pinned }), ...(change.pinnedOrder === undefined ? {} : { pinnedOrder: change.pinnedOrder }),
+      ...(change.snoozedUntil === undefined ? {} : { snoozedUntil: change.snoozedUntil }) }, decodeSummary);
   }
   /**
    * Deletes a conversation: it leaves the list and is not found until restored; its file stays. Refused (409 SESSION_ACTIVE) while a Turn of it goes on. Resolves once a
@@ -946,6 +1028,33 @@ export class GatewayApi {
   /** Pushes the current branch, to its upstream or else to origin (setting it as the upstream); a push that needs a password or takes over a minute fails with Git's words. */
   push(id: string): Promise<GitPushView> {
     return this.request(`/sessions/${encodeURIComponent(id)}/git/push`, "POST", {}, value => { const row = record(value); return { remote: text(row.remote), branch: text(row.branch) }; }, undefined, 75_000);
+  }
+  /*
+   * A Turn's checkpoints, putting files back and a pull request (2026-11-14). What one Turn changed is `gitChanges`/`gitDiff` with `{ kind: "turn", ordinal }`
+   * (404 CHECKPOINT_MISSING when it kept none from before it; compared with the working tree as it is now while it runs).
+   */
+  /** The Turns with a checkpoint, the latest first, a page from below the ordinal `before`; `restorable` when files can be put back in this conversation. */
+  checkpoints(id: string, before?: number, signal?: AbortSignal): Promise<CheckpointListView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/checkpoints${before === undefined ? "" : "?" + new URLSearchParams({ before: String(before) }).toString()}`, "GET", undefined, decodeCheckpoints, signal);
+  }
+  /**
+   * Puts the files back as they were before the Turn `ordinal`, the files as they are now kept first under `savedAs`. 409 WORKTREE_REQUIRED outside a worktree of the
+   * conversation's own, 409 SESSION_ACTIVE while a Turn runs, 404 CHECKPOINT_MISSING without a checkpoint from before it, 409 GIT_RESTORE_FAILED with Git's words.
+   */
+  restoreCheckpoint(id: string, ordinal: number): Promise<CheckpointRestoreView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/checkpoints/${ordinal}/restore`, "POST", {}, decodeRestored, undefined, 5 * 60_000);
+  }
+  /** What a pull request of the current branch would take: gh there and signed in, the branch, the default branch, the remote, what is not pushed, a pull request already made. */
+  pullRequest(id: string, signal?: AbortSignal): Promise<GitPullRequestStatusView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/git/pr`, "GET", undefined, decodePullRequestStatus, signal, 75_000);
+  }
+  /**
+   * Makes the pull request with the user's gh, pushing the branch first when it has to. 409 GIT_DETACHED_HEAD, GIT_PR_ON_DEFAULT_BRANCH, GH_UNAVAILABLE, GH_AUTH_REQUIRED,
+   * GIT_PUSH_FAILED and GIT_PR_FAILED (gh's words); 400 without a title or a default branch to merge into.
+   */
+  createPullRequest(id: string, input: { readonly title: string; readonly body: string; readonly base?: string }): Promise<GitPullRequestCreatedView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/git/pr`, "POST", { title: input.title, body: input.body, ...(input.base === undefined ? {} : { base: input.base }) },
+      value => { const row = record(value); return { url: text(row.url), number: number(row.number) }; }, undefined, 3 * 60_000);
   }
   /** Keeps this conversation's native process between Turns, or stops keeping it (which closes a kept process). */
   setRetention(id: string, enabled: boolean, key: string): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/retention`, "POST", { enabled, commandId: key }, decodeSessionViewV14); }

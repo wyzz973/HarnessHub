@@ -187,6 +187,31 @@ function permissionOptions(configured: Record<string, unknown>): NativeOption[] 
     return [{ id, name: setting.name, category: "permission", currentValue: current, values }];
   });
 }
+/**
+ * A model's speed as Codex lists it (app-server 0.166.0 `Model.serviceTiers`, `{id, name, description}`; the deprecated `additionalSpeedTiers` before it): standard
+ * ("default", the word `serviceTierForTurn` gives it) and each tier. The value the thread runs without being given one is the configuration's `service_tier` (Codex
+ * reads "fast" as priority), else the model's `defaultServiceTier`, else standard: what thread/start reports when it is given none (probe of 2026-11-14). Null for a
+ * model with no tier beyond standard. Its tiers are offered by their own ids; the configuration is only read.
+ */
+const SERVICE_TIER = "service_tier", STANDARD_TIER = "default";
+const tierOf = (value: unknown): unknown => value === "fast" ? "priority" : value;
+function serviceTierOption(row: Record<string, unknown>, configured: Record<string, unknown>): NativeOption | null {
+  let tiers: { readonly id: string; readonly name: string }[] = [];
+  if (row.serviceTiers != null) {
+    if (!Array.isArray(row.serviceTiers) || row.serviceTiers.length > 32) throw new ControlError("INVALID_PROTOCOL", "invalid service tier catalog");
+    tiers = row.serviceTiers.map(value => {
+      const tier = object(value, "service tier"), id = string(tier.id, "service tier", 128), name = typeof tier.name === "string" && tier.name.trim() ? line(tier.name, 256) : id;
+      return { id, name: typeof tier.description === "string" && tier.description.trim() ? name + " · " + line(tier.description, 512) : name };
+    });
+  }
+  if (!tiers.length && Array.isArray(row.additionalSpeedTiers)) tiers = row.additionalSpeedTiers.slice(0, 32).filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 128).map(id => ({ id, name: id === "fast" ? "Fast" : id }));
+  const values: { value: string; name: string }[] = [{ value: STANDARD_TIER, name: "标准" }];
+  for (const tier of tiers) if (!values.some(value => value.value === tier.id)) values.push({ value: tier.id, name: tier.name });
+  if (values.length < 2) return null;
+  const listed = (id: unknown): id is string => typeof id === "string" && values.some(value => value.value === id);
+  const set = configured.service_tier, own = listed(set) ? set : listed(tierOf(set)) ? tierOf(set) as string : listed(row.defaultServiceTier) ? row.defaultServiceTier : STANDARD_TIER;
+  return { id: SERVICE_TIER, name: "速度", category: "speed", currentValue: own, values };
+}
 /** Public title and detail (whole: nothing is cut to a preview here) for a Codex tool-like item; message, reasoning and lifecycle items return null. */
 function itemTool(item: Record<string, unknown>): { title: string; detail: NativeToolDetail } | null {
   switch (item.type) {
@@ -353,6 +378,8 @@ export class CodexControl implements HarnessControl {
           if (values.length && !values.some(row => row.value === currentValue)) throw new ControlError("INVALID_PROTOCOL", "configured reasoning effort unavailable");
           if (values.length) options = [{ id: "reasoning_effort", name: "思考强度", category: "thought_level", currentValue, values }];
         }
+        const tier = serviceTierOption(row, configured);
+        if (tier !== null) options = [...(options ?? []), tier];
         seen.add(id); models.push({ id, name, ...(options ? { options } : {}), inputs });
         if (models.length > 4095) throw new ControlError("MODEL_LIMIT", "native model catalog exceeds its bounds");
       }
@@ -369,7 +396,8 @@ export class CodexControl implements HarnessControl {
   async checkpoint(): Promise<string | null> { return this.conversation; }
   /** The levels this connection runs at (ControlOptions), which open() resolves against the thread's model. */
   private levels(): ChosenLevels {
-    return { ...(this.options.permission === undefined ? {} : { permission: this.options.permission }), ...(this.options.effort === undefined ? {} : { effort: this.options.effort }) };
+    return { ...(this.options.permission === undefined ? {} : { permission: this.options.permission }), ...(this.options.effort === undefined ? {} : { effort: this.options.effort }),
+      ...(this.options.speed === undefined ? {} : { speed: this.options.speed }) };
   }
   private assertOwned(id: NativeConversationId): void {
     this.assertInitialized();
@@ -443,7 +471,7 @@ export class CodexControl implements HarnessControl {
       this.effort = undefined; this.collaboration = null; this.confirmedMode = null;
       const overrides: Record<string, string> = {}, levels = this.levels();
       let selected: NativeModelCatalog["models"][number] | undefined;
-      if (model !== undefined || Object.keys(native ?? {}).length || levels.permission !== undefined || levels.effort !== undefined) {
+      if (model !== undefined || Object.keys(native ?? {}).length || levels.permission !== undefined || levels.effort !== undefined || levels.speed !== undefined) {
         const catalog = await this.nativeCatalog(); selected = catalog.models.find(row => row.id === (model ?? catalog.defaultModel));
         if (!selected) throw new ControlError("MODEL_UNAVAILABLE", "selected model is not in this Harness native catalog");
         // The levels as this thread's model makes them (contracts/flavor.ts levelOptions): the thread settings and mode of the permission
@@ -458,6 +486,11 @@ export class CodexControl implements HarnessControl {
           if (Object.hasOwn(PERMISSION_SETTINGS, id)) {
             if (!catalog.options?.find(option => option.id === id)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "permission setting unavailable in the native configuration");
             overrides[PERMISSION_SETTINGS[id as PermissionSetting].param] = value; continue;
+          }
+          // The speed as the thread's own `serviceTier` (thread/start and thread/resume), never written to the configuration.
+          if (id === SERVICE_TIER) {
+            if (!selected.options?.find(option => option.id === id)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "speed unavailable for selected native model");
+            overrides.serviceTier = value; continue;
           }
           if (id !== "reasoning_effort" || !selected.options?.find(option => option.id === id)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "reasoning effort unavailable for selected native model");
           this.effort = value;
@@ -495,6 +528,8 @@ export class CodexControl implements HarnessControl {
       // The thread reports the policy it actually runs with; an override it did not apply is a failure, not a silent default.
       if (overrides.approvalPolicy !== undefined && response.approvalPolicy !== overrides.approvalPolicy) throw new ControlError("NATIVE_OPTION_MISMATCH", "Codex did not apply the requested approval policy");
       if (overrides.sandbox !== undefined && SANDBOX_TYPES[String(object(response.sandbox, "Codex sandbox").type)] !== overrides.sandbox) throw new ControlError("NATIVE_OPTION_MISMATCH", "Codex did not apply the requested sandbox");
+      // A tier Codex does not know it reports as none (0.166.0), so the reported tier is held to the one asked for; null is standard.
+      if (overrides.serviceTier !== undefined && tierOf(response.serviceTier ?? STANDARD_TIER) !== tierOf(overrides.serviceTier)) throw new ControlError("NATIVE_OPTION_MISMATCH", "Codex did not apply the requested speed");
       const thread = object(response.thread, "Codex thread");
       this.threadPath = typeof thread.path === "string" && isAbsolute(thread.path) ? thread.path : null;
       const received = nativeConversationId(thread.id);

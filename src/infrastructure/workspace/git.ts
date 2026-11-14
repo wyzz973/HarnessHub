@@ -4,7 +4,7 @@ import { lstat, open, readlink } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { SessionError } from "../../contracts/session.js";
-import type { GitBranchesView, GitChangedFileView, GitChangeStatus, GitChangesView, GitCommitEntryView, GitCommitView, GitFileView, GitLogView, GitPushView, GitScope, GitView } from "../../contracts/web.js";
+import type { GitBranchesView, GitChangedFileView, GitChangeStatus, GitChangesView, GitCommitEntryView, GitCommitView, GitFileView, GitLogView, GitPushView, GitScope, GitTurnCompared, GitView } from "../../contracts/web.js";
 import { workspacePath, workspaceRoot } from "./place.js";
 
 /*
@@ -47,6 +47,8 @@ function gitMissing(error: unknown): never {
 async function run(cwd: string, args: readonly string[], options: { readonly read: boolean; readonly timeoutMs: number }): Promise<Ran> {
   try { return await git(cwd, args, options); } catch (error) { return gitMissing(error); }
 }
+/** The same Git, for the worktrees of conversations (worktree.ts): no shell, no terminal, nothing on stdin, within a time; what it said, cut as here. */
+export { run as runGit, said as gitSaid, type Ran as GitRan };
 /**
  * The workspace's real path, and where it is in its repository (`prefix`: "" at the repository's top, else its folder there with a slash at the end); refused as
  * NOT_A_REPOSITORY when it is in no Git repository. A workspace below the top sees and commits only what is in it (the pathspec `.`), and names its files from itself.
@@ -222,8 +224,18 @@ interface Compared {
   readonly worktree: boolean;
   readonly base?: { readonly ref: string; readonly sha: string };
   readonly commit?: { readonly sha: string; readonly parent: string | null };
+  readonly turn?: GitTurnCompared;
 }
-async function compared(root: string, scope: GitScope): Promise<Compared> {
+/**
+ * A Turn's scope with its checkpoints found (checkpoints.ts): its `before` commit against `after`, the commit after it or (`live`) a tree of the working tree as it is
+ * now, so that what was untracked before the Turn is compared as the file it was, not as gone.
+ */
+export interface TurnRange { readonly before: string; readonly after: string; readonly live: boolean }
+async function compared(root: string, scope: GitScope, turn?: TurnRange): Promise<Compared> {
+  if (scope.kind === "turn") {
+    if (turn === undefined) throw new SessionError("INVALID_INPUT", "scope=turn is read with the Turn's checkpoints");
+    return { range: [turn.before, turn.after], worktree: false, turn: { ordinal: scope.ordinal, before: turn.before, after: turn.live ? null : turn.after } };
+  }
   // Not committed: the working tree (staged and not alike) against HEAD, against the empty tree before the first commit.
   if (scope.kind === "uncommitted") return { range: [await headOf(root) ?? await emptyTree(root)], worktree: true };
   // One commit against its first parent; a root commit against the empty tree.
@@ -299,8 +311,8 @@ async function newFileLines(path: string): Promise<{ readonly added: number; rea
  * `git diff -w` does (a file whose changes are all whitespace stays listed, with 0 and 0). The list is in the order of the paths. NOT_A_REPOSITORY when the workspace is in
  * no repository; INVALID_INPUT for a sha or base that is not a commit here, or no base and no default branch; GIT_* (409) when Git refuses.
  */
-export async function gitChanges(workspace: string, scope: GitScope, options: { readonly ignoreWhitespace?: boolean } = {}): Promise<GitChangesView> {
-  const { root } = await repository(workspace), against = await compared(root, scope);
+export async function gitChanges(workspace: string, scope: GitScope, options: { readonly ignoreWhitespace?: boolean; readonly turn?: TurnRange } = {}): Promise<GitChangesView> {
+  const { root } = await repository(workspace), against = await compared(root, scope, options.turn);
   const [raw, numstat, untracked] = await Promise.all([
     run(root, ["diff", "--raw", "-z", ...DIFF, ...against.range, "--"], LIST),
     run(root, ["diff", "--numstat", "-z", ...DIFF, ...(options.ignoreWhitespace === true ? ["-w"] : []), ...against.range, "--"], LIST),
@@ -318,7 +330,8 @@ export async function gitChanges(workspace: string, scope: GitScope, options: { 
     batch.forEach((path, index) => { const lines = counted[index]; files.push({ path, status: "untracked", ...(lines ?? {}) }); });
   }
   files.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
-  return { scope: scope.kind, files, ...(against.base === undefined ? {} : { base: against.base }), ...(against.commit === undefined ? {} : { commit: against.commit }) };
+  return { scope: scope.kind, files, ...(against.base === undefined ? {} : { base: against.base }), ...(against.commit === undefined ? {} : { commit: against.commit }),
+    ...(against.turn === undefined ? {} : { turn: against.turn }) };
 }
 
 /** A streamed Git: its output a chunk at a time as it is read (Git waits while it is not), how it ended, and a stop that kills it with its process group. */
@@ -354,9 +367,9 @@ export interface GitDiffStream { readonly path: string; readonly text: AsyncGene
  * from Git as it is sent, without a length bound: a Git that fails before it has written anything throws here (409 with its words); one that fails or runs out of time
  * after makes the text throw. A binary file has Git's line that says so, and `binary()` true. `close` stops Git (the page went away).
  */
-export async function gitFileDiff(workspace: string, scope: GitScope, path: string, options: { readonly ignoreWhitespace?: boolean } = {}): Promise<GitDiffStream> {
+export async function gitFileDiff(workspace: string, scope: GitScope, path: string, options: { readonly ignoreWhitespace?: boolean; readonly turn?: TurnRange } = {}): Promise<GitDiffStream> {
   if (typeof path !== "string" || path === "" || path.includes("\0")) throw new SessionError("INVALID_INPUT", "path 是工作区里的一个文件");
-  const { root } = await repository(workspace), against = await compared(root, scope);
+  const { root } = await repository(workspace), against = await compared(root, scope, options.turn);
   const named = await workspacePath(root, workspace, path, "只能看这个对话工作区里的文件"), space = options.ignoreWhitespace === true ? ["-w"] : [];
   if (named === "") throw new SessionError("INVALID_INPUT", "path 是工作区里的一个文件，不是工作区本身");
   // The file as it changed in the scope; a file that is new or gone by itself may be one half of a rename, seen only with the whole scope.

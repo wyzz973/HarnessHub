@@ -16,6 +16,9 @@ export const codexFlavor: HarnessFlavor = {
     auto: CODEX("never", "workspace-write"), full: CODEX("never", "danger-full-access") }),
   neutral: [{ ids: ["collaboration_mode"], category: "mode", value: "default" }],
   effort: { option: { ids: ["reasoning_effort"], category: "thought_level" }, values: {} },
+  // app-server 0.166.0: model/list gives each model its `serviceTiers` (here `priority`, named "Fast"); thread/start and thread/resume take
+  // `serviceTier` for the thread and report the one it runs. "default" is standard (`serviceTierForTurn`'s own words), "fast" an alias of priority.
+  speed: { option: { ids: ["service_tier"], category: "speed" }, standard: "default", names: { priority: "fast", fast: "fast" } },
   asks: { read: false, edit: true, execute: true },
   nativePlan: true,
   // app-server 0.166.0 ThreadStartParams / ThreadResumeParams: `config` (dotted overrides of this thread alone, as `-c`) carries

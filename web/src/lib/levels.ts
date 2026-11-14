@@ -1,5 +1,5 @@
 import type { NativeOption, NativeOptions } from "../../../src/contracts/control.js";
-import { EFFORT_KEY, levelOf, levelOptions, nativeLevels, nativeOnly, PERMISSION_KEY, selectedEffort, selectedLevels, selectedPermission, type HarnessFlavor, type NativeLevels } from "../../../src/contracts/flavor.js";
+import { EFFORT_KEY, levelOf, levelOptions, nativeLevels, nativeOnly, PERMISSION_KEY, selectedEffort, selectedLevels, selectedPermission, SPEED_KEY, type HarnessFlavor, type NativeLevels } from "../../../src/contracts/flavor.js";
 import { closestLevel, EFFORT_WORDS, PERMISSION_WORDS } from "../../../src/contracts/levels.js";
 import { PERMISSION_LEVELS, type EffortLevel, type PermissionLevel } from "../../../src/contracts/protocol.js";
 
@@ -14,15 +14,17 @@ export interface LevelState {
   readonly levels: NativeLevels;
   readonly permission: PermissionLevel | "custom" | null;
   readonly effort: EffortLevel | "custom" | null;
+  /** The speed the draft names (the Hub's name: standard, fast or a Harness's own tier), or null for the Harness's own setting (2026-11-14, after T3 Code's Standard | Fast). */
+  readonly speed: string | null;
   /** The ids of the native options the levels set: changed through the levels, and shown whole only among the Harness's own options. */
   readonly ids: ReadonlySet<string>;
   /** The native values the draft's levels come to on this catalog, as the adapter will apply them: what the Harness's own options show for them. */
   readonly applied: NativeOptions;
 }
 const sorted = (values: Record<string, string>): NativeOptions => Object.fromEntries(Object.entries(values).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
-function ids(levels: NativeLevels): { readonly permission: ReadonlySet<string>; readonly effort: ReadonlySet<string> } {
+function ids(levels: NativeLevels): { readonly permission: ReadonlySet<string>; readonly effort: ReadonlySet<string>; readonly speed: ReadonlySet<string> } {
   return { permission: new Set([...levels.permission.flatMap(entry => Object.keys(nativeOnly(entry.options) ?? {})), ...Object.keys(levels.permissionNeutral ?? {})]),
-    effort: new Set(levels.effort.flatMap(entry => Object.keys(entry.options))) };
+    effort: new Set(levels.effort.flatMap(entry => Object.keys(entry.options))), speed: new Set(levels.speed.flatMap(entry => Object.keys(entry.options))) };
 }
 export function levelState(flavor: HarnessFlavor | undefined, options: readonly NativeOption[], chosen: NativeOptions): LevelState {
   const levels = nativeLevels(flavor, options), governed = ids(levels);
@@ -34,7 +36,8 @@ export function levelState(flavor: HarnessFlavor | undefined, options: readonly 
   const effortValues = Object.fromEntries([...governed.effort].map(id => [id, chosen[id] ?? options.find(option => option.id === id)?.currentValue ?? ""]));
   const effort = effortKey !== undefined ? effortEntry?.near ?? effortKey : named(governed.effort) ? levelOf(levels.effort, effortValues) ?? "custom" : null;
   const applied = levelOptions(flavor, options, {}, selectedLevels(chosen)) ?? {};
-  return { levels, permission, effort, ids: new Set([...governed.permission, ...governed.effort]), applied };
+  const speed = chosen[SPEED_KEY] !== undefined && levels.speed.some(entry => entry.level === chosen[SPEED_KEY]) ? chosen[SPEED_KEY]! : null;
+  return { levels, permission, effort, speed, ids: new Set([...governed.permission, ...governed.effort, ...governed.speed]), applied };
 }
 /**
  * The draft with a permission level (the Hub's key alone), or with none: the Harness's own setting back. The native values the levels set are
@@ -53,6 +56,12 @@ export function withEffort(state: LevelState, chosen: NativeOptions, level: Effo
   const used = level === null ? null : state.levels.effort.find(entry => entry.level === level)?.near ?? level;
   return sorted({ ...kept, ...(used === null ? {} : { [EFFORT_KEY]: used }) });
 }
+/** The draft with a speed (the Hub's key), or with none: the Harness's own setting. The native value is the adapter's to apply. */
+export function withSpeed(state: LevelState, chosen: NativeOptions, speed: string | null): NativeOptions {
+  const governed = ids(state.levels).speed;
+  const kept = Object.fromEntries(Object.entries(chosen).filter(([id]) => id !== SPEED_KEY && !governed.has(id)));
+  return sorted({ ...kept, ...(speed === null ? {} : { [SPEED_KEY]: speed }) });
+}
 /**
  * A native option changed in the Harness's own options. Changing one a level sets leaves that level: the draft then names the native value,
  * shown as "custom", and the Harness runs it (the adapter's levels would otherwise win over it).
@@ -62,6 +71,7 @@ export function withNativeOption(state: LevelState, chosen: NativeOptions, id: s
   if (value) choices[id] = value; else delete choices[id];
   if (governed.permission.has(id)) delete choices[PERMISSION_KEY];
   if (governed.effort.has(id)) delete choices[EFFORT_KEY];
+  if (governed.speed.has(id)) delete choices[SPEED_KEY];
   return sorted(choices);
 }
 /**
