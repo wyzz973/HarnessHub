@@ -1,6 +1,6 @@
 import type { ConversationReader, HeldItem, TurnItems } from "../../../contracts/conversation.js";
 import type { PublicMessage, PublicRun, RunId, SessionId } from "../../../contracts/session.js";
-import { fromItems, restored } from "./store-conversion.js";
+import { fromItems, restored, steeredWords } from "./store-conversion.js";
 import { withoutThinking } from "./relay/narration.js";
 
 /*
@@ -115,7 +115,10 @@ export function outlineOfRows(turn: TurnItems, reads: Required<OutlineReads>): T
     return { text, whole: true };
   };
   const user = sorted.find(item => item.itemId === "user"), segments = sorted.filter(item => item.itemId.startsWith("text:"));
-  const userWords: TurnWords = user === undefined ? plainWords("") : (() => {
+  // Words the user gave the Turn while it ran are the user's words too, after its input (steeredWords, as fromItems has them): read whole, as a Turn has few.
+  const steered = sorted.filter(item => item.itemId.startsWith("steer:") && item.status !== "declined");
+  const userWords: TurnWords = steered.length > 0 ? plainWords(steeredWords(user === undefined ? "" : user.textOmitted === true ? fetched(stub(user)) : restored(user), steered.map(item => item.textOmitted === true ? fetched(stub(item)) : restored(item))))
+    : user === undefined ? plainWords("") : (() => {
     const kept = stub(user), chars = user.textOmitted === true ? undefined : restored(user).length, bytes = user.textBytes;
     return { bytes, size: chars !== undefined ? { least: chars, most: chars, exact: () => chars } : sizeOf(bytes, () => fetched(kept).length, Math.ceil(bytes / 3), exceedsFrom(startOf([user]), false)), text: () => fetched(kept) };
   })();

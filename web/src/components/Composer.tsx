@@ -1,10 +1,11 @@
-import { ArrowLeftRight, History, ListPlus, Paperclip, Plus, RefreshCw, ShieldCheck, Split, SquareSlash, TriangleAlert } from "lucide-react";
+import { ArrowLeftRight, Check, CornerDownRight, History, ListPlus, Paperclip, Plus, RefreshCw, ShieldCheck, Split, SquareSlash, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { PublicRun } from "../../../src/contracts/session.js";
 import type { HarnessReadinessView, HarnessView } from "../../../src/contracts/web.js";
 import { failureMessage, protocolLabel } from "../api.js";
 import { cn } from "../lib/cn.js";
+import { keyText } from "../lib/keys.js";
 import { ago } from "../lib/format.js";
 import { Menu, Popover, PopHead } from "../ui/overlay.js";
 import { motionStyle, SendStopIcon, usePresence, useReducedMotion } from "../ui/motion.js";
@@ -250,7 +251,12 @@ export function Composer(props: ComposerProps) {
       : dockLayer.current?.contains(focused) || focused === document.body ? "plain" : null };
   }
 
-  const send = async () => {
+  // While a reply is in progress, a message is kept until it ends or — where the Harness can be told something mid-Turn — said now: Enter does the one the user
+  // chose in the settings, ⌘⏎ the other.
+  const canSteer = active !== null && !active.cancelRequested && props.onSteer !== undefined && !readonly && !blocked && props.messageDraft.trim() !== "" && bytes <= MAX_MESSAGE_BYTES && props.attachments.length === 0;
+  const steerFirst = props.preferences.whileRunning === "steer";
+  const send = async (other = false) => {
+    if (canSteer && (steerFirst !== other || !canQueue)) { props.onSteer!(); return; }
     if (canQueue) { props.onQueue!(); return; }
     if (disableSend || sending.current) return;
     sending.current = true;
@@ -334,6 +340,7 @@ export function Composer(props: ComposerProps) {
     : session?.retention?.outside ? `原程序的后台任务可能仍在运行（${session.retention.outside.count} 个进程）：它们已离开原程序的进程组，HarnessHub 没有结束它们。`
     // Only for the Harness's own setting: a level sets the mode itself (plan, or back to the default when a restored thread opens).
     : !draft.providerId && level.permission === null && draft.nativeOptions.collaboration_mode === undefined && nativeState?.observed?.options.collaboration_mode === "plan" ? `这个 ${harness?.name ?? "Harness"} 线程仍为计划模式：跟随本机配置不会改回，把协作模式改为“默认”即可退出。`
+    : active && canSteer && props.messageDraft.trim() ? steerFirst ? "回复进行中：按 Enter 现在就告诉它，⌘⏎ 留到这一轮结束后再发。" : "回复进行中：按 Enter 留到这一轮结束后再发，⌘⏎ 现在就告诉它。"
     : active && props.queued === null && props.messageDraft.trim() ? "回复进行中：按 Enter 先暂存这条消息，本轮正常结束后自动发出。"
     : problem;
   // The pending or failed switch speaks for itself in its own strip, and the blocked conversation in its notice; before any
@@ -428,6 +435,39 @@ export function Composer(props: ComposerProps) {
   const nativeFooter = <button type="button" className="link-btn text-caption" onClick={() => { setList(null); openPanel("advanced"); }}>{(harness?.name ?? "这一家") + " 的原生选项…"}</button>;
   const [levelNotes, setLevelNotes] = useState<readonly string[]>([]);
   const changeLevels = (options: Readonly<Record<string, string>>) => { setLevelNotes([]); props.onDraft({ ...draft, nativeOptions: options }); };
+  const changeModel = (value: string) => {
+    if (value === draft.model) return;
+    // The Hub's levels stay with the conversation across a change of model (the adapter resolves them against the new model's catalog);
+    // of the native values only those that do not depend on the model are kept.
+    const independent = Object.fromEntries(Object.entries(draft.nativeOptions).filter(([id]) => id.startsWith("hub_") || nativeOptions.some(option => option.id === id && option.category !== "thought_level")));
+    props.onDraft({ ...draft, model: value, nativeOptions: independent });
+  };
+  const changeEffort = (value: string) => changeLevels(withEffort(level, draft.nativeOptions, value === "" ? null : value as EffortLevel));
+  const canModel = !disabled && (provider !== undefined && provider !== null || props.nativeModels?.canSelect === true);
+  // Beside the Harnesses, in the same layer: the chosen one's models and — where its model has them — its thinking levels. A choice there leaves the layer open.
+  const column = "flex min-h-0 min-w-0 flex-1 flex-col";
+  const heading = "flex h-[45px] flex-none items-center px-3.5 text-caption text-fg-3 hairline-b";
+  const choice = (checked: boolean) => cn("picker-option flex w-full items-center gap-2 rounded-row border-none bg-transparent px-2.5 py-[7px] text-left text-ui-sm outline-offset-[-2px] transition-[color,background-color] duration-120 ease-standard hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-55", checked && "font-medium");
+  const tick = (checked: boolean) => <Check size={15} strokeWidth={2.2} className={cn("flex-none text-accent-text", !checked && "invisible")} aria-hidden="true"/>;
+  const agentAside = draft.harnessId ? <>
+    <div className={column}>
+      <div className={heading}>模型</div>
+      <div className="scroll-area min-h-0 flex-1 p-[5px]" role="radiogroup" aria-label={(harness?.name ?? "") + " 的模型"}>
+        {modelOptions.length ? modelOptions.map((option, index) => <div key={option.value}>
+          {option.group && (index === 0 || modelOptions[index - 1]?.group !== option.group) ? <div className="px-2.5 pt-2 pb-1 text-caption font-medium text-fg-3">{option.group}</div> : null}
+          <button type="button" role="radio" aria-checked={draft.model === option.value} disabled={!canModel || option.disabled} title={option.description} className={choice(draft.model === option.value)} onClick={() => changeModel(option.value)}>
+            <span className="min-w-0 flex-1 truncate">{option.label}</span>{tick(draft.model === option.value)}</button></div>)
+          : <p className="m-0 px-3 py-6 text-center text-ui-sm text-fg-3">{props.nativeModelsLoading ? "正在读取本机模型…" : "没有可选的模型"}</p>}
+      </div>
+    </div>
+    {thought ? <div className={cn(column, "max-w-[190px] hairline-l")}>
+      <div className={heading}>思考</div>
+      <div className="scroll-area min-h-0 flex-1 p-[5px]" role="radiogroup" aria-label="思考的档位">
+        {effortChoices(thought).map(option => <button key={option.value} type="button" role="radio" aria-checked={(level.effort ?? "") === option.value} disabled={disabled || props.nativeModelsLoading === true} className={choice((level.effort ?? "") === option.value)} onClick={() => changeEffort(option.value)}>
+          <span className="min-w-0 flex-1 truncate">{option.label}</span>{tick((level.effort ?? "") === option.value)}</button>)}
+      </div>
+    </div> : null}
+  </> : undefined;
   // Once the chosen Harness's catalog is read, the levels carried from the one before are applied (the nearest where it lacks one, said in the
   // note), and a new conversation's permission defaults to auto (the product's direction). Nothing is applied to a conversation just opened.
   const defaulted = useRef<string | null>(null);
@@ -563,7 +603,7 @@ export function Composer(props: ComposerProps) {
                 if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); chooseFile(mention); return; }
                 if (event.key === "Escape") { event.preventDefault(); setMention(null); return; }
               }
-              if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); }
+              if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(active !== null && (event.metaKey || event.ctrlKey)); }
               else if (event.key === "Escape" && !event.repeat && active && !active.cancelRequested && props.mutation === null) { event.preventDefault(); props.onCancel(); }
               else if (event.key === "ArrowUp" && plain && props.messageDraft === "" && props.onEditLast) { event.preventDefault(); props.onEditLast(); }
             }}
@@ -589,7 +629,7 @@ export function Composer(props: ComposerProps) {
                 role="group" aria-label="由谁来做：Harness、模型与思考强度">
                 <SearchPicker side={popSide} label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
                   open={agentPickerOpen && !docked} onOpenChange={onAgentPickerOpen} className={cn(SEGMENT, "flex-none gap-[7px] pl-1")}
-                  footer={agentFooter} triggerRef={agentButton} describedBy={outdated ? outdatedId : undefined} {...afterChoice}
+                  footer={agentFooter} triggerRef={agentButton} describedBy={outdated ? outdatedId : undefined} {...afterChoice} aside={agentAside} {...(agentAside ? { anchor: chip } : {})}
                   empty={<>这台电脑上还没有找到可用的 Harness。<button type="button" className="link-btn" onClick={props.onHarnesses}>查看安装方式</button></>}
                   trigger={selected => selected && harness ? <>
                     {/* A newer version of the model connection in use waits in the advanced settings: its amber dot stays in sight here. */}
@@ -603,21 +643,17 @@ export function Composer(props: ComposerProps) {
                   footer={<button type="button" className="link-btn text-caption" onClick={props.onProviders}>管理模型连接</button>}/> : null}
                 {draft.harnessId ? <SearchPicker side={popSide} {...listOpen("model")} label="选择模型" value={draft.model} placeholder="选择模型" options={modelOptions} disabled={disabled || !provider && !props.nativeModels?.canSelect} align="end" chevron={last === "model"} className={SEGMENT} {...afterChoice}
                   trigger={selected => <span className="max-w-[160px] truncate text-fg-3">{selected?.short ?? selected?.label ?? "选择模型"}</span>}
-                  onChange={value => {
-                    if (value === draft.model) return;
-                    // The Hub's levels stay with the conversation across a change of model (the adapter resolves them against the new model's catalog);
-                    // of the native values only those that do not depend on the model are kept.
-                    const independent = Object.fromEntries(Object.entries(draft.nativeOptions).filter(([id]) => id.startsWith("hub_") || nativeOptions.some(option => option.id === id && option.category !== "thought_level")));
-                    props.onDraft({ ...draft, model: value, nativeOptions: independent });
-                  }} footer={!provider ? <><span>{props.nativeModelsLoading ? "正在读取本机模型…" : "列表来自本机安装"}</span><button type="button" className="link-btn text-caption" onClick={props.onRefreshModels}>刷新本机模型</button></> : undefined}/> : null}
+                  onChange={changeModel} footer={!provider ? <><span>{props.nativeModelsLoading ? "正在读取本机模型…" : "列表来自本机安装"}</span><button type="button" className="link-btn text-caption" onClick={props.onRefreshModels}>刷新本机模型</button></> : undefined}/> : null}
                 {thought ? <SearchPicker side={popSide} {...listOpen("thought")} label="思考强度" value={level.effort ?? ""} placeholder="跟随本机配置" options={effortChoices(thought)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "thought"}
-                  className={cn(SEGMENT, "flex-none")} {...afterChoice} footer={nativeFooter} trigger={() => <Pill>思考 {thinkingShown}</Pill>} onChange={value => changeLevels(withEffort(level, draft.nativeOptions, value === "" ? null : value as EffortLevel))}/> : null}
+                  className={cn(SEGMENT, "flex-none")} {...afterChoice} footer={nativeFooter} trigger={() => <Pill>思考 {thinkingShown}</Pill>} onChange={changeEffort}/> : null}
                 {mode && modeInChip ? <SearchPicker side={popSide} {...listOpen("mode")} label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
                   className={cn(SEGMENT, "flex-none")} {...afterChoice} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
               </div>
-              {canQueue ? <Tip label="本轮结束后发送（Enter）"><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
+              {canSteer ? <Tip label={"现在就告诉它（" + (steerFirst || !canQueue ? "Enter" : "⌘⏎") + "）"}><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
+                aria-label="现在就告诉它" onClick={() => props.onSteer?.()}><CornerDownRight size={16}/></button></Tip> : null}
+              {canQueue ? <Tip label={"本轮结束后发送（" + (canSteer && steerFirst ? "⌘⏎" : "Enter") + "）"}><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
                 aria-label="本轮结束后发送" onClick={() => props.onQueue?.()}><ListPlus size={16}/></button></Tip> : null}
-              <Tip label={active ? "停止当前回复（⌘.）" : "发送（Enter）"}><button type={active ? "button" : "submit"} aria-label={active ? "停止当前回复" : "发送消息"}
+              <Tip label={active ? "停止当前回复（" + keyText("stop") + "）" : "发送（Enter）"}><button type={active ? "button" : "submit"} aria-label={active ? "停止当前回复" : "发送消息"}
                 className={cn("press ml-0.5 flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none disabled:cursor-default",
                   active ? "bg-fg text-app disabled:opacity-45" : "bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-35")}
                 style={{ transition: "background-color 200ms var(--ease-standard), opacity 200ms var(--ease-standard), transform 120ms var(--ease-snap)" }}

@@ -5,7 +5,7 @@ import {
 } from "../../contracts/conversation.js";
 import type { RelayRows } from "../../contracts/relay.js";
 import { SessionError, type EventDraft, type PublicSwitch, type SessionEvent, type SessionId } from "../../contracts/session.js";
-import { bindingRowOf, canonicalJson, commandRowOf, itemRowOf, runColumns, runRowOf, sourceThroughOrdinal, switchRowOf, utf8Length } from "./rows.js";
+import { bindingRowOf, canonicalJson, commandRowOf, itemRowOf, listMarksOf, runColumns, runRowOf, sourceThroughOrdinal, switchRowOf, utf8Length } from "./rows.js";
 
 /*
  * Stage 1 of ADR-057: the Runtime still reduces a whole `Conversation` and the store finds what changed. `diffConversation` compares the
@@ -49,7 +49,7 @@ function headOf(after: Conversation): HeadJson {
     ...(after.retained === undefined ? {} : { retained: after.retained }), ...(after.relayRecoveryFailed === undefined ? {} : { relayRecoveryFailed: after.relayRecoveryFailed }),
     ...(after.origin === undefined ? {} : { origin: after.origin }), ...(after.delegation === undefined ? {} : { delegation: after.delegation }), ...(after.delegationsTold === undefined ? {} : { delegationsTold: after.delegationsTold }),
     ...(after.taskBoard === undefined ? {} : { taskBoard: after.taskBoard }), ...(after.taskBoardTold === undefined ? {} : { taskBoardTold: after.taskBoardTold }), ...(after.taskEditsTold === undefined ? {} : { taskEditsTold: after.taskEditsTold }), ...(after.parentWordsTold === undefined ? {} : { parentWordsTold: after.parentWordsTold }),
-    ...(after.archived === true ? { archived: true as const } : {}) };
+    ...listMarksOf(after) };
 }
 function eventIndex(events: readonly EventDraft[], accept: (event: EventDraft) => boolean): number | undefined {
   const index = events.findIndex(accept);
@@ -183,7 +183,7 @@ export function diffConversation(before: Conversation | null, after: Conversatio
 
   const head = { row: { id: session, version: before?.version ?? 0, lastSeq: (before?.lastSeq ?? 0) + events.length, format: CONVERSATION_FORMAT, status: after.status, epoch: after.epoch,
     activeRunId: after.activeRunId, pendingSwitchId: after.pendingSwitchId, kept: after.retained !== undefined, title: context.title, runCount: after.runs.length, updatedAt: context.updatedAt,
-    deletedAt: null, lastError: null, head: headOf(after) } };
+    deletedAt: after.deletedAt ?? null, lastError: null, head: headOf(after) } };
   return { head, ...(runs.length === 0 ? {} : { runs }), ...(items.length === 0 ? {} : { items }), ...(text.length === 0 ? {} : { text }), ...(bindings.length === 0 ? {} : { bindings }),
     ...(commands.length === 0 ? {} : { commands }), ...(switches.length === 0 ? {} : { switches }), ...(refs.length === 0 ? {} : { contentRefs: refs }),
     ...(context.originHistory === undefined || context.originHistory.length === 0 ? {} : { originHistory: context.originHistory }),

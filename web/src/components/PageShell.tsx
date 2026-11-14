@@ -2,6 +2,7 @@ import { ArrowLeft, Menu as MenuIcon, PanelLeft } from "lucide-react";
 import { useState } from "react";
 import type { ReactNode, Ref } from "react";
 import { cn } from "../lib/cn.js";
+import { ariaKeys, keyText } from "../lib/keys.js";
 import { useMedia } from "../lib/prefs.js";
 import { Tip } from "../ui/primitives.js";
 
@@ -27,7 +28,7 @@ export function PageShell({ title, titleId, description, actions, belowHeader, c
   return <section ref={ref} className={cn("management-page flex h-full min-h-0 min-w-0 flex-1 flex-col bg-app", className)} aria-labelledby={titleId}>
     {bar ? <div className={cn("flex h-[52px] flex-none items-center gap-1 border-b-[0.5px] px-3 transition-[border-color] duration-120", scrolled ? "border-line" : "border-transparent")}>
       {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
-        : sidebarHidden ? <Tip label="展开侧栏 ⌘B"><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts="Meta+B" onClick={onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
+        : sidebarHidden ? <Tip label={"展开侧栏 " + keyText("sidebar")}><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts={ariaKeys("sidebar")} onClick={onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
       {onBack ? <Tip label={backLabel}><button type="button" className="icon-btn" aria-label={backLabel} onClick={onBack}><ArrowLeft size={16}/></button></Tip> : null}
     </div> : null}
     <div className={cn("management-body scroll-area min-h-0 flex-1", bodyClassName)} onScroll={event => setScrolled(event.currentTarget.scrollTop > 0)}>

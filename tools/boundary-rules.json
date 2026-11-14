@@ -118,7 +118,7 @@
       "kind": "imports",
       "appliesTo": ["src/**"],
       "packages": {
-        "allow": ["semver", "yaml", "jsonc-parser", "tar", "smol-toml", "json5", "yauzl", "unbzip2-stream"],
+        "allow": ["semver", "yaml", "jsonc-parser", "tar", "smol-toml", "json5", "yauzl", "unbzip2-stream", "node-pty", "ws"],
         "inPaths": ["src/infrastructure/**", "src/adapters/**"]
       },
       "exceptions": []

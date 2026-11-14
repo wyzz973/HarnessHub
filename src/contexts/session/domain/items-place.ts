@@ -3,7 +3,7 @@ import type { ContentRef } from "../../../contracts/content.js";
 import type { ContentRefRow, HeldItem, ItemFields, ItemRow, ItemWrite, Mutation, NativeFacts, RunRow, TextAppend } from "../../../contracts/conversation.js";
 import type { ControlEvent, NativeToolDetail } from "../../../contracts/control.js";
 import type { ApprovalItem, ApprovalRole, FileChange, ItemStatus, ItemType, PermissionLevel, PlanStep } from "../../../contracts/protocol.js";
-import { STREAM_WINDOW_BYTES, type PublicTool, type RunStatus } from "../../../contracts/session.js";
+import { STREAM_WINDOW_BYTES, type MessageId, type PublicTool, type RunStatus } from "../../../contracts/session.js";
 import { classifyTool, detailHead, itemStatus, runItemStatus } from "./protocol/index.js";
 import { derive, sound } from "./store-conversion.js";
 
@@ -24,6 +24,7 @@ import { derive, sound } from "./store-conversion.js";
  *   decided   the user answered an approval or a question.
  *   expired   the Turn's wait budget ran out: what waits is closed, and said to have timed out.
  *   notice    a notice of the Hub itself (not a Harness's, so it is not kept out as a repeat).
+ *   steer     the user gave the Turn words while it runs: their own `user_message` (`steer:<n>`), pending until `steered` says what the Harness did.
  *   settled   the Turn ended (or a restart found it so): see CLOSING.
  *
  * ORDER AND IDENTITY. An item takes its `seq` when it is first seen, and keeps it. The same id reported again is the same item: it is
@@ -183,6 +184,13 @@ export type PlaceInput =
    * (`recap`): a second call replaces it.
    */
   | { readonly kind: "recap"; readonly summary: string; readonly ask?: string; readonly actions?: readonly string[]; readonly at: number }
+  /**
+   * Words the user gives the Turn while it runs (2026-11-14): a `user_message` of their own (`steer:<n>`, `steered`), where the Turn stands now (the
+   * reply segment that was open is over), `pending` until the Harness answers (`steered`). The same message placed again is the same item.
+   */
+  | { readonly kind: "steer"; readonly messageId: MessageId; readonly text: string; readonly at: number }
+  /** What the Harness said of words given to the Turn: it took them (`completed`), took nothing (`declined`), or it could not be told (`unknown`). Only a `pending` one changes. */
+  | { readonly kind: "steered"; readonly messageId: MessageId; readonly outcome: "taken" | "not_taken" | "unknown"; readonly at: number }
   /** `stoppedBy`: who stopped a Turn that ended cancelled, when the Runtime knows; the user's stop is then the Turn's last item (`interrupt`). */
   | { readonly kind: "settled"; readonly status: TerminalStatus; readonly at: number; readonly stoppedBy?: "user" };
 export interface PlaceEnv {
@@ -693,6 +701,29 @@ export function finalItemSeq(items: readonly { readonly seq: number; readonly ty
   }
   return null;
 }
+/** The place of the item of words given to the Turn as `messageId`, when it has one. */
+function findSteer(s: Draft, messageId: string): number | undefined {
+  const at = vecList(s.entries).findIndex(entry => entry.item.itemId.startsWith("steer:") && (entry.item.fields as { readonly messageId?: unknown }).messageId === messageId);
+  return at < 0 ? undefined : at;
+}
+/** Words the user gives the Turn while it runs: their own user message where the Turn stands now, waiting for the Harness's answer. */
+function placeSteer(s: Draft, w: Writes, input: Extract<PlaceInput, { kind: "steer" }>): void {
+  if (findSteer(s, input.messageId) !== undefined) return;
+  // Kept exactly as the Turn's own input is (userItemOf): a lone surrogate is told in `native.surrogates`, nothing else changes.
+  const { text, marks } = sound(str(input.text).replace(/\0/gu, ""));
+  takePlace(s, w, input.at);
+  const count = vecList(s.entries).filter(entry => entry.item.itemId.startsWith("steer:")).length + 1;
+  const fields = { type: "user_message" as const, messageId: input.messageId, steered: true as const, ...(marks.length === 0 ? {} : { native: { surrogates: marks } }) } as ItemFields;
+  insert(s, w, { itemId: "steer:" + count, fields, status: "pending", at: input.at, text: [text] });
+}
+/** The Harness answered words given to the Turn: what became of them. An answer to words that are not waiting any more changes nothing. */
+function placeSteered(s: Draft, w: Writes, input: Extract<PlaceInput, { kind: "steered" }>): void {
+  const position = findSteer(s, input.messageId), entry = position === undefined ? undefined : vecAt(s.entries, position);
+  if (position === undefined || entry === undefined || entry.item.status !== "pending") return;
+  const status: ItemStatus = input.outcome === "taken" ? "completed" : input.outcome === "not_taken" ? "declined" : "unknown";
+  const { item: _was, ...beside } = entry;
+  change(s, w, position, { ...entry.item, status, endedAt: input.at }, beside);
+}
 /** The Hub's record of the workspace's changes: one item, `workspace`, after what the Turn did; a second record of the same Turn replaces the first. */
 function placeWorkspace(s: Draft, w: Writes, input: Extract<PlaceInput, { kind: "workspace" }>): void {
   if (input.changes.length === 0) return;
@@ -757,6 +788,8 @@ export function place(turn: ActiveTurn, input: PlaceInput, env: PlaceEnv = {}): 
       case "notice": flushWindow(s, w, false); placeNotice(s, w, input, input.at, env, false); break;
       case "workspace": flushWindow(s, w, false); placeWorkspace(s, w, input); break;
       case "recap": flushWindow(s, w, false); placeRecap(s, w, input, input.at); break;
+      case "steer": flushWindow(s, w, false); placeSteer(s, w, input); break;
+      case "steered": flushWindow(s, w, false); placeSteered(s, w, input); break;
       case "settled": settle(s, w, input.status, input.at, input.stoppedBy); break;
     }
   }

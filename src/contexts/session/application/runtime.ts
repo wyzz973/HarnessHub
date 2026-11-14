@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { parseProviderTarget } from "../../../contracts/provider.js";
 import { HUB_DELEGATION_INSTRUCTIONS, HUB_PROGRESS_INSTRUCTIONS, hubCommandCall, hubCommandInstructions, hubRecordInstructions } from "../../../contracts/table.js";
+import { cutTitle } from "../../../contracts/web.js";
 import { listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeUsage } from "../../../contracts/control.js";
 import { type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import { CONVERSATION_FORMAT, type Conversation, type ConversationCommit, type ConversationMutation, type ConversationRun, type ConversationStore, type HeldItem } from "../../../contracts/conversation.js";
@@ -9,6 +10,7 @@ import {
   type AttentionItem, type ForkedMessage, type HarnessSelection, type KeptProcessIdentity, type OutsideEvidence, type OutsideProcess, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicNotice, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionRuntimeOptions, type SwitchReceipt, type RunId, type DelegationsTold, type DelegationState, type BoardEntry, type BoardKind, type TaskBoard,
+  type MessageId, type SteerReceipt,
 } from "../../../contracts/session.js";
 import { buildPublicContext, type PublicContext, type PublicContextOptions } from "../domain/context.js";
 import { assertConversationTransition, inputOf, runIn, settledItems, updatedRun, userItemOf, withItems } from "../domain/conversation-state.js";
@@ -60,6 +62,13 @@ interface ActiveExecution {
   reads?: Map<string, "state" | "board">;
   binding: PreparedSessionBinding | null;
   run: ControlRun | null;
+  /**
+   * The native conversation the Turn's prompt went to, set when the prompt is sent, when that prompt is the user's words and not a native command (a clear, a
+   * compaction, an export): words the user gives the Turn while it runs go there (steer). Absent before and for a command.
+   */
+  steerTo?: NativeConversationId;
+  /** The answers of words given to the Turn that are still awaited (steer); the Turn ends only once they are in. */
+  steers?: Set<Promise<void>>;
   dispatched: boolean;
   backendSettled: boolean;
   stop: Promise<void> | null;
@@ -132,7 +141,7 @@ interface KeptProcess {
   readonly identity?: KeptProcessIdentity;
 }
 /** Why a kept process was closed; each close is recorded for its conversation. */
-type KeptRelease = "idle" | "disabled" | "ended_by_user" | "selection_changed" | "conversation_closed" | "native_reset" | "native_reseated" | "branched" | "exited" | "gateway_shutdown" | "harness_upgrade";
+type KeptRelease = "idle" | "disabled" | "ended_by_user" | "selection_changed" | "conversation_closed" | "conversation_deleted" | "native_reset" | "native_reseated" | "branched" | "exited" | "gateway_shutdown" | "harness_upgrade";
 /**
  * Why the Hub opens a new native session in the place of one a Turn would have resumed (2026-11-13, second reading). A Harness manages its own window — it compacts
  * its session itself, seeing all of it, and keeps what is its own (its list, the files it read, its processes) — and the Hub, which cannot see into that, does not
@@ -168,6 +177,8 @@ function logged(value: ControlEvent): ControlEvent | Readonly<Record<string, unk
   return value;
 }
 function safeName(value: string): string { return value.replace(/[^A-Za-z0-9._-]+/gu, "_").slice(0, 96) || "tool"; }
+/** The message of words given to a Turn in progress, named by the request's key: a repeat of the request finds the same one. */
+function steerMessage(command: CommandId): MessageId { return messageId("message-steer-" + createHash("sha256").update(command).digest("hex").slice(0, 32)); }
 /**
  * UTF-8 bytes of `prior + next` from `priorBytes`, re-encoding only the last code unit of `prior`: a surrogate pair split
  * between two chunks is three bytes on each side alone and four together, so a window's count stays exact (ADR-047).
@@ -373,6 +384,8 @@ export class SessionRuntime {
   /** Conversations whose next Turn waits for a slot while the operator's limit on conversations running at once is reached, with since when. */
   private readonly waitingForSlot = new Map<SessionId, { readonly runId: string; readonly since: number }>();
   private readonly permissions = new Map<string, { request: PermissionRequest; nativeId: string; execution: ActiveExecution; option: string | null; command: string | null; readonly harnessId: string }>();
+  /** Words given to a Turn in progress whose Harness has not answered yet, by conversation and key: a repeat of the request waits for the same answer. */
+  private readonly steering = new Map<string, Promise<SteerReceipt>>();
   permissionRequests(id: SessionId): readonly PermissionRequest[] { this.load(id); return [...this.permissions.values()].filter(value => value.execution.sessionId === id).map(value => value.request); }
   /**
    * Every approval or question still waiting for the user, across conversations, oldest first (ADR-035). Requests live only
@@ -591,8 +604,9 @@ export class SessionRuntime {
     // What this owner found of a process kept under the previous one is shown until the conversation's next Turn.
     this.lost.delete(id); this.outside.delete(id); this.upgraded.delete(id);
     this.commit(id, withArchived => {
-      // A Turn accepted in an archived conversation takes the mark off, in the same commit: the conversation is at work again (2026-11-14).
-      const { archived: _archived, ...current } = withArchived;
+      // A Turn accepted in an archived conversation takes the mark off, in the same commit: the conversation is at work again (2026-11-14). So does it a reminder
+      // the conversation was put aside with; a pin stays.
+      const { archived: _archived, snoozedUntil: _snoozed, ...current } = withArchived;
       const at = branchAt === undefined ? current.runs.length : branchAt;
       if (branchAt !== undefined && current.runs[branchAt]?.id !== branchFrom) throw new SessionError("VERSION_CONFLICT", "the conversation moved before the branch");
       // The input is the Run's first item (its `user` message); the Run's ordinal is its place among the Runs, and its input is the first event of the commit.
@@ -646,7 +660,7 @@ export class SessionRuntime {
    */
   hubProgress(id: SessionId, from: { readonly harnessId: string; readonly controlId: string }, made:
     | { readonly kind: "plan"; readonly items: readonly { readonly content: string; readonly status: "pending" | "in_progress" | "completed" }[]; readonly explanation?: string }
-    | { readonly kind: "recap"; readonly summary: string; readonly ask?: string; readonly actions?: readonly string[] }): void {
+    | { readonly kind: "recap"; readonly summary: string; readonly ask?: string; readonly actions?: readonly string[]; readonly title?: string }): void {
     this.admit();
     const execution = this.actives.get(id);
     if (execution === undefined) throw new SessionError("NO_TURN_IN_PROGRESS", "这个对话现在没有进行中的回合");
@@ -662,8 +676,72 @@ export class SessionRuntime {
       this.placed(execution, { kind: "event", event: value, at }, [event("run.output", { runId: run.id, event: logged(value), by: "hub_tool" })], { always: true });
     } else this.placed(execution, { kind: "recap", summary: made.summary, ...(made.ask === undefined ? {} : { ask: made.ask }), ...(made.actions === undefined ? {} : { actions: made.actions }), at },
       [event("run.recap", { runId: run.id, summary: made.summary, ...(made.ask === undefined ? {} : { ask: made.ask }), ...(made.actions === undefined ? {} : { actions: made.actions }) })], { always: true });
+    // The wrap-up of a first Turn may name the conversation (2026-11-14); a name the user gave, or one the Harness gave before, stays.
+    if (made.kind === "recap" && made.title !== undefined) this.nameByHarness(id, made.title);
     // Where the conversation stands changed: its STATE.md says so now, not at the Turn's end.
     this.refreshRecord(id);
+  }
+  /**
+   * Words the user gives the Turn of `id` while it runs (2026-11-14; T3 Code's steer): handed to its Harness, which takes them into the turn in progress and goes
+   * on with them, instead of the page keeping them until the Turn ends. Only while a Turn of the user's words (not a native command) runs in its Harness — its
+   * prompt was sent, it has not settled and is not being stopped — and only where its connection takes words mid-turn (HarnessControl.steering): otherwise
+   * STEER_NO_ACTIVE_TURN or STEER_UNSUPPORTED, nothing is written, and the page keeps the words for after the Turn (its queue).
+   *
+   * The words are the Turn's: a `user_message` of their own (`steer:<n>`, `steered`), committed `pending` with the command before the Harness is given them, then
+   * `completed` (it took them), `declined` (it took nothing: the Turn had just ended; the request fails with STEER_REFUSED and the page sends them as a message of
+   * their own, so they are not lost and not said twice), or `unknown` (it could not be told: they may have reached it, and they are never sent again). The Turn
+   * ends only once each answer is in. Nothing is ever done by stopping the Turn and sending again; the stop, the settlement and the cleanup are untouched. The
+   * same key answers as the first request did.
+   */
+  steer(id: SessionId, text: string, key: string): Promise<SteerReceipt> {
+    try {
+      this.admit(); assertInput(text);
+      if (text.trim() === "") throw new SessionError("INVALID_INPUT", "steering words must say something");
+      const command = commandId(key), fingerprint = this.fingerprint({ kind: "steer", text }), state = this.load(id), message = steerMessage(command);
+      const prior = replayCommand(state, command, "steer", fingerprint);
+      if (prior) return this.steerReplay(id, prior.id, runId(prior.resultId), message);
+      const execution = this.actives.get(id), run = execution === undefined ? undefined : runIn(state, execution.runId);
+      if (execution === undefined || run === undefined || run.status !== "running" || execution.run === null || execution.steerTo === undefined || execution.backendSettled
+        || execution.stop !== null || run.cancelRequested || run.stopRequested || (execution.turn !== null && execution.turn.settled !== null))
+        throw new SessionError("STEER_NO_ACTIVE_TURN", "这个对话现在没有正在 Harness 里进行的回合，这句话没有插进去，等这一轮结束后按普通消息发出。");
+      const control = execution.binding?.control;
+      if (control?.steer === undefined || control.steering !== true)
+        throw new SessionError("STEER_UNSUPPORTED", "这个 Harness 不能在一轮进行中接收新的话，这句话没有插进去，等这一轮结束后按普通消息发出。");
+      const to = execution.steerTo, target = run.id, at = this.options.now().getTime();
+      // The words are the Turn's before the Harness is given them: their item, the command and the event in one commit.
+      this.flushStream(execution);
+      this.placed(execution, { kind: "steer", messageId: message, text, at }, [event("message.steered", { runId: target, messageId: message, text, commandId: command })],
+        { patch: current => ({ ...current, commands: [...current.commands, { id: command, kind: "steer", fingerprint, resultId: target }] }), always: true });
+      const answered = this.answerSteer(execution, control, to, text, target, message);
+      const inflight = id + "\n" + command;
+      this.steering.set(inflight, answered);
+      const tracked = answered.then(() => undefined, () => undefined).finally(() => { this.steering.delete(inflight); execution.steers?.delete(tracked); });
+      (execution.steers ??= new Set()).add(tracked);
+      return answered;
+    } catch (error) { return Promise.reject(error); }
+  }
+  /** What the Harness says of words given to the Turn, written into their item while the Turn is open (it waits for it), and the receipt. */
+  private async answerSteer(execution: ActiveExecution, control: HarnessControl, to: NativeConversationId, text: string, target: RunId, message: MessageId): Promise<SteerReceipt> {
+    let outcome: "taken" | "not_taken" | "unknown";
+    try { outcome = await control.steer!(to, text); } catch { outcome = "unknown"; }
+    const id = execution.sessionId;
+    // A Turn whose program was ended early, or that ended meanwhile, closed the item as what it was left as; the answer is then only logged.
+    if (this.actives.get(id) === execution && (execution.turn === null || execution.turn.settled === null) && execution.earlyClose === null)
+      this.placed(execution, { kind: "steered", messageId: message, outcome, at: this.options.now().getTime() }, [event("message.steer_answered", { runId: target, messageId: message, outcome })], { always: true });
+    else this.commit(id, current => ({ next: current, events: [event("message.steer_answered", { runId: target, messageId: message, outcome, late: true })] }));
+    if (outcome === "not_taken") throw new SessionError("STEER_REFUSED", "Harness 没有收下这句话（这一轮刚好结束了），它没有插进去，按普通消息发出。");
+    return { sessionId: id, runId: target, messageId: message, outcome, replayed: false };
+  }
+  /** The answer to a steer request repeated with its key: the first request's, as it stands (still being answered, or as its item says). */
+  private steerReplay(id: SessionId, command: CommandId, target: RunId, message: MessageId): Promise<SteerReceipt> {
+    const inflight = this.steering.get(id + "\n" + command);
+    if (inflight !== undefined) return inflight.then(receipt => ({ ...receipt, replayed: true }));
+    const state = this.load(id), at = state.runs.findIndex(row => row.id === target), held = state.runs[at]?.items;
+    // A finished Turn is read from its rows (whole: a body left out would leave its fields empty).
+    const items = held ?? (at < 0 ? [] : this.store.turnAt(id, at, { inlineBytes: Infinity })?.items ?? []);
+    const status = items.find(item => item.itemId.startsWith("steer:") && (item.fields as { readonly messageId?: unknown }).messageId === message)?.status;
+    if (status === "declined") return Promise.reject(new SessionError("STEER_REFUSED", "Harness 没有收下这句话（这一轮刚好结束了），它没有插进去，按普通消息发出。"));
+    return Promise.resolve({ sessionId: id, runId: target, messageId: message, outcome: status === "completed" ? "taken" : "unknown", replayed: true });
   }
   /**
    * What changed in the task while the Turn in progress of `id` works (2026-11-13), for its Harness: said with the answer of a tool of the Hub's it calls, as a signal
@@ -1364,24 +1442,71 @@ export class SessionRuntime {
    * conversation opens and takes messages as any other (the next Turn accepted takes it off, `send`). One commit, published as every other, so that each page that has the
    * conversation open is told by its head and the list's row moves on. A change that changes nothing commits nothing. Allowed in any state: a closed conversation is
    * renamed and archived too.
+   * The same holds of the pin and the reminder (2026-11-14): `pinned` puts the conversation at the top of the list until taken off (a new Turn leaves it), `snoozedUntil`
+   * puts it aside until that moment (null takes it off; a new Turn takes it off too). Whether the moment came is the page's to tell. None of these moves the
+   * conversation's time (`marksOnly`): the list's order and its "how long ago" say how the conversation itself went on.
    */
-  updateSession(id: SessionId, change: { readonly title?: string; readonly archived?: boolean }): Conversation {
+  updateSession(id: SessionId, change: { readonly title?: string; readonly archived?: boolean; readonly pinned?: boolean; readonly snoozedUntil?: number | null }): Conversation {
     this.admit();
-    if (change.title === undefined && change.archived === undefined) throw new SessionError("INVALID_INPUT", "a change names a title, or whether the conversation is archived");
+    if (change.title === undefined && change.archived === undefined && change.pinned === undefined && change.snoozedUntil === undefined)
+      throw new SessionError("INVALID_INPUT", "a change names a title, whether the conversation is archived or pinned, or when it is put aside until");
     if (change.title !== undefined && typeof change.title !== "string") throw new SessionError("INVALID_INPUT", "a title is text");
     if (change.archived !== undefined && typeof change.archived !== "boolean") throw new SessionError("INVALID_INPUT", "archived is true or false");
+    if (change.pinned !== undefined && typeof change.pinned !== "boolean") throw new SessionError("INVALID_INPUT", "pinned is true or false");
+    if (change.snoozedUntil !== undefined && change.snoozedUntil !== null && (typeof change.snoozedUntil !== "number" || !Number.isSafeInteger(change.snoozedUntil) || change.snoozedUntil < 0))
+      throw new SessionError("INVALID_INPUT", "snoozedUntil is a moment in milliseconds since the epoch, or null");
     const title = change.title === undefined ? undefined : change.title.replace(/\s*[\r\n\u2028\u2029]+\s*/gu, " ").trim();
     if (title === "") throw new SessionError("INVALID_INPUT", "a title cannot be empty");
     const state = this.load(id);
     const renamed = title !== undefined && title !== state.userTitle, marked = change.archived !== undefined && change.archived !== (state.archived === true);
-    if (!renamed && !marked) return state;
+    const pinned = change.pinned !== undefined && change.pinned !== (state.pinned === true), snoozed = change.snoozedUntil !== undefined && (change.snoozedUntil ?? undefined) !== state.snoozedUntil;
+    if (!renamed && !marked && !pinned && !snoozed) return state;
     this.commit(id, current => {
-      const { userTitle: _title, archived: _archived, ...rest } = current;
-      const userTitle = title ?? current.userTitle, archived = change.archived ?? current.archived === true;
-      return { next: { ...rest, ...(userTitle === undefined ? {} : { userTitle }), ...(archived ? { archived: true as const } : {}) },
-        events: [...(renamed ? [event("session.renamed", { title })] : []), ...(marked ? [event("session.archived", { archived })] : [])] };
+      const { userTitle: _title, archived: _archived, pinned: _pinned, snoozedUntil: _snoozed, ...rest } = current;
+      const userTitle = title ?? current.userTitle, archived = change.archived ?? current.archived === true, pin = change.pinned ?? current.pinned === true;
+      const until = change.snoozedUntil === undefined ? current.snoozedUntil : change.snoozedUntil ?? undefined;
+      return { next: { ...rest, ...(userTitle === undefined ? {} : { userTitle }), ...(archived ? { archived: true as const } : {}), ...(pin ? { pinned: true as const } : {}), ...(until === undefined ? {} : { snoozedUntil: until }) },
+        events: [...(renamed ? [event("session.renamed", { title })] : []), ...(marked ? [event("session.archived", { archived })] : []), ...(pinned ? [event("session.pinned", { pinned: pin })] : []),
+          ...(snoozed ? [event("session.snoozed", { until: until ?? null })] : [])], marksOnly: true };
     });
     return this.load(id);
+  }
+  /**
+   * The user deletes the conversation (2026-11-14): it leaves the list, and every read of it is not found, until the user restores it (`restoreSession`). Its file stays where
+   * it is and nothing of it is erased. Refused while a Turn of it is queued or runs, or a switch of it is pending: the user stops it first. A native process it keeps is
+   * released on the way a closed conversation's is; resolves once that is recorded. The conversations it delegated work to are not touched. Deleting a deleted
+   * conversation changes nothing.
+   */
+  async deleteSession(id: SessionId): Promise<Conversation> {
+    this.admit();
+    const state = this.load(id);
+    if (state.deletedAt !== undefined) return state;
+    if (state.activeRunId !== null || state.pendingSwitchId !== null || state.runs.some(run => !terminal(run.status)) || this.closingSessions.has(id))
+      throw new SessionError("SESSION_ACTIVE", "这个对话有一轮正在进行：先停下它，再删除");
+    const at = this.options.now().getTime();
+    this.commit(id, current => ({ next: { ...current, deletedAt: at }, events: [event("session.deleted", {})], marksOnly: true }));
+    if (this.kept.has(id) || this.releasing.has(id)) await this.requestRelease(id, "conversation_deleted");
+    return this.load(id);
+  }
+  /** Undoes the user's deletion (2026-11-14): the conversation is in the list again, where its own time puts it, and is read as before. One that is not deleted is left as it is. */
+  restoreSession(id: SessionId): Conversation {
+    this.admit();
+    const state = this.load(id);
+    if (state.deletedAt === undefined) return state;
+    this.commit(id, current => { const { deletedAt: _deleted, ...rest } = current; return { next: rest, events: [event("session.restored", {})], marksOnly: true }; });
+    return this.load(id);
+  }
+  /**
+   * The name the conversation's Harness gives it with its wrap-up (2026-11-14, `hub_wrap_up`'s `title`): taken only while the user has not named the conversation and its
+   * Harness has not named it before, so that it is given once, at the first Turn's end, and a name the user gives later still goes before it. Its spaces are folded and it
+   * is cut as a title is; one with no words is passed over. It does not move the conversation's time (`marksOnly`).
+   */
+  private nameByHarness(id: SessionId, title: string): void {
+    const name = cutTitle(title.replace(/\s+/gu, " ").trim());
+    if (name === "") return;
+    const state = this.load(id);
+    if (state.userTitle !== undefined || state.harnessTitle !== undefined) return;
+    this.commit(id, current => ({ next: { ...current, harnessTitle: name }, events: [event("session.titled", { title: name })], marksOnly: true }));
   }
   /** Closes this conversation's kept process at the user's request, with the normal stop chain; resolves once it is recorded. */
   async endKept(id: SessionId, key: string): Promise<Conversation> {
@@ -1522,7 +1647,9 @@ export class SessionRuntime {
     try {
       this.commit(id, current => {
         const { retained, ...rest } = current;
-        return { next: rest, events: [event("native.process_closed", { runId: kept.runId, reason, backgroundUpdates, cleanup, outside, ...(problem === null ? {} : { error: problem }) })] };
+        // The close of a deleted conversation's process is not the conversation going on: restored, it stands where its own time put it.
+        return { next: rest, events: [event("native.process_closed", { runId: kept.runId, reason, backgroundUpdates, cleanup, outside, ...(problem === null ? {} : { error: problem }) })],
+          ...(current.deletedAt === undefined ? {} : { marksOnly: true as const }) };
       });
     } catch (error) {
       // A rule of the rows refused the record of the close: the process is closed all the same, and the conversation goes on saying it keeps one until the next start finds none (reapKept).
@@ -1665,6 +1792,8 @@ export class SessionRuntime {
     if (this.fatal) throw this.fatal;
   }
   private open(state: Conversation): void {
+    // A conversation the user deleted is not there for new work (2026-11-14), as it is not for any read; it is restored first.
+    if (state.deletedAt !== undefined) throw new SessionError("SESSION_NOT_FOUND", "public Session was not found");
     if (state.status !== "open" || this.closingSessions.has(state.id)) throw new SessionError("SESSION_UNAVAILABLE", "Session is closed or blocked; new dispatch is disabled for this Session");
   }
   private recoverySwitch(state: Conversation): boolean {
@@ -2752,6 +2881,7 @@ export class SessionRuntime {
       // Otherwise the task's STATE.md files are written again without waiting: what the user says here is news to work this conversation handed over (parentWords).
       else this.refreshRecord(id);
       execution.run = await control.startText(native, notes.length === 0 ? planned : withHubNote(planned, notes.join("\n\n")), value => this.output(execution, value), ...(files.length ? [files] : []));
+      if (command === null) execution.steerTo = native;
       this.owned(execution);
       void execution.run.result.then(() => { execution.backendSettled = true; }, () => { execution.backendSettled = true; });
       if (this.load(id).runs.find(run => run.id === target)!.cancelRequested || !this.accepting || this.fatal || this.closingSessions.has(id)) this.stop(execution);
@@ -2794,6 +2924,8 @@ export class SessionRuntime {
       if (execution.stop) {
         try { await execution.stop; } catch (error) { problem ??= fault(error); }
       }
+      // Words given to the Turn while it ran are answered before it ends, while its program is still owned: what the Harness said of them is the Turn's (steer).
+      while (execution.steers !== undefined && execution.steers.size > 0) await Promise.allSettled([...execution.steers]);
       if (execution.binding && execution.earlyClose === null) {
         try { await this.flushNative(execution); } catch (error) { problem ??= fault(error); }
       }

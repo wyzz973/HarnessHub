@@ -5,6 +5,7 @@ import { LOCAL_SKILL_SOURCE, type SkillTextView, type CapabilitiesView, type Cap
   type CapabilityKind, type CapabilityMechanism, type CapabilityOrphan, type CapabilityOwner, type CapabilityStatus, type CapabilityWarning, type HarnessCapabilityReads, type SkillUpdateView } from "../../../src/contracts/capabilities.js";
 import { errorMessage, type GatewayApi } from "../api.js";
 import { cn } from "../lib/cn.js";
+import { ariaKeys, keyText } from "../lib/keys.js";
 import { useMedia } from "../lib/prefs.js";
 import { Collapsible, FloatingBar } from "../ui/motion.js";
 import { Badge, EmptyState, Fact, Notice, Spinner, Tabs, Tip } from "../ui/primitives.js";
@@ -579,7 +580,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
   useEffect(() => setScrolled((frame?.scrollLeft ?? 0) > 0), [frame]);
   const wide = width === null || width >= WIDE_PAGE, narrowScreen = useMedia("(max-width: 759px)");
   const shellButton = narrowScreen ? <button type="button" className="icon-btn navigation-toggle" onClick={onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
-    : sidebarHidden ? <Tip label="展开侧栏 ⌘B"><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts="Meta+B" onClick={onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null;
+    : sidebarHidden ? <Tip label={"展开侧栏 " + keyText("sidebar")}><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts={ariaKeys("sidebar")} onClick={onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null;
   const reload = <Tip label="重新读取"><button type="button" className="icon-btn" aria-label="重新读取" onClick={() => load()} disabled={loading}>{loading ? <Spinner size={15} label=""/> : <RefreshCw size={16}/>}</button></Tip>;
   const title = <h1 id="capabilities-title" className="m-0 min-w-0 flex-1 trunc text-[22px] leading-[30px] font-semibold tracking-[-0.02em]">能力</h1>;
   const ready = view !== null && view.harnesses.length > 0;

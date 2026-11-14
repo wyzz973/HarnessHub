@@ -146,6 +146,10 @@ export class ClaudeControl extends AcpControl {
     return super.readsAsContent(prompt, attachments);
   }
   protected override promptRecorded(reason: string): boolean { return RECORDED_STOPS.has(reason); }
+  /** claude-agent-acp 0.99.1 `steer` also refuses words for a session whose query stream ended, before it pushes anything (SESSION_ENDED_MESSAGE). */
+  protected override steerRefused(error: ControlError): boolean {
+    return super.steerRefused(error) || error.remoteCode === -32603 && error.remoteMessage === SESSION_ENDED && error.remoteFields === undefined;
+  }
   /**
    * claude-agent-acp asks to leave plan mode with ExitPlanMode's request (a `switch_mode` call titled "Approve Plan", or "Ready to code?" in
    * permissions/presentation.js of 0.99.1); its "No, keep planning" ends the turn cancelled or refused, which here is the plan delivered (the

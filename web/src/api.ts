@@ -4,7 +4,8 @@ import { WireError, decodeConversationChanges, decodeItemTextView, decodeItemVie
   type ClientRunItemsPage, type ClientSessionList, type ClientSessionView, type ClientStreamFrame, type ClientWindow } from "./lib/protocol/wire.js";
 import { createRelayApi, decodeRelayFrame, relayBody, type RelayApi, type RelayEvent, type RelayReply, type RelayRequest, type RelayTransport } from "./relay.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState, WorkspaceView } from "../../src/contracts/web.js";
+import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, SteerView, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState, WorkspaceView,
+  EditorView, GitCommitView, GitPushView, GitView, WorkspaceFileView } from "../../src/contracts/web.js";
 import { HARNESS_TIERS } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput, RuntimeRequirement, UpgradeSequenceCheck } from "../../src/contracts/management.js";
 import type { AttentionItem, BoardKind, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest, TaskBoard } from "../../src/contracts/session.js";
@@ -71,7 +72,15 @@ function decodeFlavor(value: unknown): HarnessFlavor {
   for (const level of PERMISSION_LEVELS) record(permission[level]);
   return { harnessId: text(row.harnessId), permission: permission as unknown as HarnessFlavor["permission"], ...(row.neutral === undefined ? {} : { neutral: list(row.neutral, item => item) as NonNullable<HarnessFlavor["neutral"]> }),
     effort: { ...(effort.option === undefined ? {} : { option: record(effort.option) as unknown as NonNullable<HarnessFlavor["effort"]["option"]> }), values: record(effort.values) as HarnessFlavor["effort"]["values"], ...(typeof effort.note === "string" ? { note: effort.note } : {}) },
-    asks: { read: bool(asks.read), edit: bool(asks.edit), execute: bool(asks.execute), ...(typeof asks.note === "string" ? { note: asks.note } : {}) }, nativePlan: bool(row.nativePlan) };
+    asks: { read: bool(asks.read), edit: bool(asks.edit), execute: bool(asks.execute), ...(typeof asks.note === "string" ? { note: asks.note } : {}) }, nativePlan: bool(row.nativePlan),
+    // Of the capabilities the page reads one: whether the Harness takes words in the middle of a Turn (`steer`, 2026-11-14).
+    ...(row.capabilities === undefined ? {} : { capabilities: (capabilities => capabilities.steer === undefined ? {} : { steer: choice(capabilities.steer, ["native", "none"] as const) })(record(row.capabilities)) }) };
+}
+/** The answer to words given to the Turn in progress (`POST /sessions/:id/steer`). */
+function decodeSteer(value: unknown, session: string): SteerView {
+  const row = record(value);
+  if (row.sessionId !== session) return invalid();
+  return { sessionId: session, runId: text(row.runId), messageId: text(row.messageId), outcome: choice(row.outcome, ["taken", "unknown"] as const), replayed: bool(row.replayed) };
 }
 function choice<const T extends readonly string[]>(value: unknown, choices: T): T[number] {
   if (typeof value !== "string" || !choices.includes(value)) return invalid();
@@ -384,7 +393,21 @@ function decodeSummary(value: unknown): SessionSummary {
     selection: selection(row.selection), updatedSeq: number(row.updatedSeq), updatedAt: row.updatedAt === undefined ? 0 : number(row.updatedAt), activeRunId,
     ...(activeRunId === null || row.activeSince === undefined ? {} : { activeSince: number(row.activeSince) }), ...(typeof row.line === "string" && row.line !== "" ? { line: row.line } : {}),
     ...(row.parent === undefined ? {} : { parent: (parent => ({ sessionId: text(parent.sessionId), afterRunId: nullableText(parent.afterRunId), ...(parent.by === "harness" ? { by: "harness" as const } : {}) }))(record(row.parent)) }),
-    ...(row.archived === true ? { archived: true as const } : {}) };
+    ...(row.archived === true ? { archived: true as const } : {}), ...(row.pinned === true ? { pinned: true as const } : {}),
+    ...(row.snoozedUntil === undefined || row.snoozedUntil === null ? {} : { snoozedUntil: number(row.snoozedUntil) }) };
+}
+function decodeEditor(value: unknown): EditorView { const row = record(value); return { id: text(row.id), name: text(row.name) }; }
+function decodeFile(value: unknown): WorkspaceFileView {
+  const row = record(value);
+  if (row.binary === true) return { path: text(row.path), size: number(row.size), binary: true };
+  return { path: text(row.path), size: number(row.size), offset: number(row.offset), text: text(row.text), next: nullableNumber(row.next) };
+}
+function decodeGit(value: unknown): GitView {
+  const row = record(value), upstream = row.upstream === undefined ? undefined : record(row.upstream);
+  return { branch: nullableText(row.branch), ...(upstream === undefined ? {} : { upstream: { name: text(upstream.name), ahead: number(upstream.ahead), behind: number(upstream.behind) } }), remote: bool(row.remote),
+    files: list(row.files, entry => { const file = record(entry);
+      return { path: text(file.path), ...(file.from === undefined ? {} : { from: text(file.from) }), index: text(file.index), worktree: text(file.worktree),
+        ...(file.added === undefined ? {} : { added: number(file.added) }), ...(file.removed === undefined ? {} : { removed: number(file.removed) }) }; }) };
 }
 function decodeWorkspace(value: unknown): WorkspaceView {
   const row = record(value), git = row.git === undefined ? undefined : record(row.git);
@@ -633,6 +656,14 @@ export class GatewayApi {
     }, signal);
   }
   decidePermission(id: string, permission: string, optionId: string, key: string, input?: string): Promise<{ replayed: boolean }> { return this.request(`/sessions/${encodeURIComponent(id)}/permissions/${encodeURIComponent(permission)}`, "POST", { optionId, commandId: key, ...(input===undefined?{}:{input}) }, value => { const row=record(value);return { replayed:bool(row.replayed) }; }); }
+  /**
+   * The WebSocket address of a conversation's terminal (`ws://` here, `wss://` under https), opened with this page's login cookie once
+   * the page is logged in. Frames: `{type:"input",data}` and `{type:"resize",cols,rows}` out, `{type:"output",data}` and one
+   * `{type:"exit",code}` in (docs/contracts/public-api.md).
+   */
+  terminalUrl(id: string, cols: number, rows: number): string {
+    return (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + `/api/v1/sessions/${encodeURIComponent(id)}/terminal?cols=${Math.max(1, Math.floor(cols))}&rows=${Math.max(1, Math.floor(rows))}`;
+  }
   /** A conversation as a page opens it: its head and its newest Turns (ADR-057 3.4); the rest is read by the routes below as the reader goes to it. */
   session(id: string, signal?: AbortSignal): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}`, "GET", undefined, decodeSessionViewV14, signal); }
   /** The page of Turns before a cursor (the `older` of the Turns held); `limit` is a page size, not a bound on the conversation. */
@@ -752,6 +783,15 @@ export class GatewayApi {
     await this.request(`/sessions/${encodeURIComponent(id)}/messages`, "POST", { text: value, commandId: key, ...(attachments.length ? { attachments } : {}), ...(choices === null ? {} : { relay: choices }),
       ...(branchFrom === undefined ? {} : { branchFrom }) }, value => acknowledge(value, id, "runId"));
   }
+  /**
+   * Gives words to the Turn in progress (`POST /sessions/:id/steer`, 2026-11-14): its Harness takes them into the turn that runs and goes on with them; they
+   * appear in that Turn as a `user_message` item with `steered`. Offer it while a Turn runs on a Harness whose catalog `flavor.capabilities.steer` is "native".
+   * An ApiError 409 STEER_UNSUPPORTED, STEER_NO_ACTIVE_TURN or STEER_REFUSED means nothing went in: keep the words for after the Turn, as before. `outcome:
+   * "unknown"` — or a request that failed without an answer — means they may have gone in: do not send them again.
+   */
+  steer(id: string, text: string, key: string): Promise<SteerView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/steer`, "POST", { text, key }, value => decodeSteer(value, id), undefined, 30_000);
+  }
   /** Makes the branch through the Turn `runId` (an alternative of a Turn: its message sent again, its reply tried again) the conversation's path; nothing runs. */
   selectBranch(id: string, runId: string, key: string): Promise<ClientSessionView> {
     return this.request(`/sessions/${encodeURIComponent(id)}/branch`, "POST", { runId, commandId: key }, decodeSessionViewV14);
@@ -789,18 +829,52 @@ export class GatewayApi {
   async cancelRun(id: string, run: string, key: string): Promise<void> { await this.request(`/sessions/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key, runId: run }, value => acknowledge(value, id, "target")); }
   closeSession(id: string, key: string): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/close`, "POST", { commandId: key }, decodeSessionViewV14); }
   /**
-   * Renames a conversation or archives it (or takes the mark off); the answer is its row of the list after the change. A page that has the conversation open is also told
-   * by its stream (the commit's head), so no other read follows.
+   * Renames a conversation, archives it, pins it or puts it aside until a moment (`snoozedUntil`, milliseconds since the epoch; null takes the reminder off), or takes a mark
+   * off; the answer is its row of the list after the change. A page that has the conversation open is also told by its stream (the commit's head), so no other read follows.
+   * None of these moves the row's `updatedAt`.
    */
-  updateSession(id: string, change: { title?: string; archived?: boolean }): Promise<SessionSummary> {
-    return this.request(`/sessions/${encodeURIComponent(id)}`, "PATCH", { ...(change.title === undefined ? {} : { title: change.title }), ...(change.archived === undefined ? {} : { archived: change.archived }) }, decodeSummary);
+  updateSession(id: string, change: { title?: string; archived?: boolean; pinned?: boolean; snoozedUntil?: number | null }): Promise<SessionSummary> {
+    return this.request(`/sessions/${encodeURIComponent(id)}`, "PATCH", { ...(change.title === undefined ? {} : { title: change.title }), ...(change.archived === undefined ? {} : { archived: change.archived }),
+      ...(change.pinned === undefined ? {} : { pinned: change.pinned }), ...(change.snoozedUntil === undefined ? {} : { snoozedUntil: change.snoozedUntil }) }, decodeSummary);
   }
+  /**
+   * Deletes a conversation: it leaves the list and is not found until restored; its file stays. Refused (409 SESSION_ACTIVE) while a Turn of it goes on. Resolves once a
+   * native process it kept is released.
+   */
+  async deleteSession(id: string): Promise<void> { await this.request(`/sessions/${encodeURIComponent(id)}`, "DELETE", undefined, () => undefined); }
+  /** Undoes a deletion; the answer is the conversation's row of the list again. */
+  restoreSession(id: string): Promise<SessionSummary> { return this.request(`/sessions/${encodeURIComponent(id)}/restore`, "POST", {}, decodeSummary); }
   /** Shows the conversation's workspace in the Finder, or, given `path` (relative to the workspace or absolute, inside it), selects that file there. */
   async reveal(id: string, path?: string): Promise<void> {
     await this.request(`/sessions/${encodeURIComponent(id)}/reveal`, "POST", path === undefined ? {} : { path }, () => undefined);
   }
   /** The conversation's workspace and where it stands in Git (branch, uncommitted entries); `git` is absent when it is not a repository or Git did not answer. */
   workspace(id: string, signal?: AbortSignal): Promise<WorkspaceView> { return this.request(`/sessions/${encodeURIComponent(id)}/workspace`, "GET", undefined, decodeWorkspace, signal); }
+  /** The editors installed on this Mac, in the order to list them. */
+  async editors(signal?: AbortSignal): Promise<readonly EditorView[]> { return this.request("/editors", "GET", undefined, value => list(record(value).editors, decodeEditor), signal); }
+  /** Opens the conversation's workspace, or `path` in it (relative to the workspace or absolute), in the editor `editor` (an `EditorView.id`). */
+  async openIn(id: string, editor: string, path?: string): Promise<void> {
+    await this.request(`/sessions/${encodeURIComponent(id)}/open`, "POST", { editor, ...(path === undefined ? {} : { path }) }, () => undefined);
+  }
+  /** A page of a file of the workspace from byte `offset` (0 by default): read the next one from its `next`, until that is null. A binary file is told as such, not read. */
+  file(id: string, path: string, offset?: number, signal?: AbortSignal): Promise<WorkspaceFileView> {
+    const query = new URLSearchParams({ path, ...(offset === undefined ? {} : { offset: String(offset) }) });
+    return this.request(`/sessions/${encodeURIComponent(id)}/file?${query.toString()}`, "GET", undefined, decodeFile, signal);
+  }
+  /** Where the workspace stands in Git, a file at a time; 404 NOT_A_REPOSITORY when it is in no repository. */
+  git(id: string, signal?: AbortSignal): Promise<GitView> { return this.request(`/sessions/${encodeURIComponent(id)}/git`, "GET", undefined, decodeGit, signal); }
+  /**
+   * Commits in the workspace, at the user's word: `paths` only (relative to the workspace), or everything changed. A refusal of Git (nothing to commit, a hook, no identity)
+   * is a 409 with what Git said. Waits as long as the commit's hooks take (the Gateway stops one after five minutes).
+   */
+  commit(id: string, message: string, paths?: readonly string[]): Promise<GitCommitView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/git/commit`, "POST", { message, ...(paths === undefined ? {} : { paths }) },
+      value => { const row = record(value); return { commit: text(row.commit), subject: text(row.subject) }; }, undefined, 6 * 60_000);
+  }
+  /** Pushes the current branch, to its upstream or else to origin (setting it as the upstream); a push that needs a password or takes over a minute fails with Git's words. */
+  push(id: string): Promise<GitPushView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/git/push`, "POST", {}, value => { const row = record(value); return { remote: text(row.remote), branch: text(row.branch) }; }, undefined, 75_000);
+  }
   /** Keeps this conversation's native process between Turns, or stops keeping it (which closes a kept process). */
   setRetention(id: string, enabled: boolean, key: string): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/retention`, "POST", { enabled, commandId: key }, decodeSessionViewV14); }
   /** Ends the conversation's kept native process; resolves once its close is recorded. */

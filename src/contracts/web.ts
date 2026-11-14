@@ -30,7 +30,7 @@ function titleWords(text: string | undefined): string | undefined {
  * At most 80 UTF-16 units, never ending in half a character, and with no half character anywhere: a title is stored in a UTF-8 column that keeps U+FFFD in place of half a pair,
  * so a title that held one would not read back as it was written.
  */
-function cutTitle(text: string): string {
+export function cutTitle(text: string): string {
   let head = text.slice(0, 80);
   const last = head.charCodeAt(head.length - 1);
   if (last >= 0xd800 && last <= 0xdbff) head = head.slice(0, -1);
@@ -128,7 +128,10 @@ export interface SessionSummary {
   readonly workspace: string;
   readonly selection: HarnessSelection;
   readonly updatedSeq: number;
-  /** When the conversation's latest commit was made (milliseconds since the epoch): what the list is ordered by, newest first. A rename or an archive is a commit too. */
+  /**
+   * When the conversation last moved on (milliseconds since the epoch): what the list is ordered by, newest first. A commit that only names or marks it (a rename, the
+   * archive mark, a pin, a reminder, a name its Harness gave, a deletion and its undoing) does not move it; `updatedSeq` still grows with that commit.
+   */
   readonly updatedAt: number;
   readonly activeRunId: string | null;
   /** When the Turn in progress (`activeRunId`) was accepted, in milliseconds since the epoch; absent when none is in progress. */
@@ -142,17 +145,55 @@ export interface SessionSummary {
   readonly line?: string;
   /** The user archived it (2026-11-14). The list still carries it; it opens and takes messages as any other, and a new Turn accepted in it takes the mark off. */
   readonly archived?: true;
+  /** The user pinned it to the top of the list (2026-11-14); a new Turn does not take the pin off. */
+  readonly pinned?: true;
+  /**
+   * The user asked to be reminded of it later (2026-11-14): until this moment (milliseconds since the epoch) the list puts it aside. Whether the moment came is the
+   * page's to tell; the Gateway only keeps it. A new Turn accepted in it takes it off.
+   */
+  readonly snoozedUntil?: number;
 }
 /**
- * `PATCH /api/v1/sessions/:id`: the user renames the conversation or archives it (at least one of the two). A title is trimmed and its line breaks made spaces; an empty
- * one is refused. The answer is the conversation's `SessionSummary` after the change, which also reaches every page that has it open as a commit (its head).
+ * `PATCH /api/v1/sessions/:id`: the user renames the conversation, archives it, pins it or puts it aside until a moment (at least one of these). A title is trimmed and
+ * its line breaks made spaces; an empty one is refused. `snoozedUntil` is milliseconds since the epoch, null to take the reminder off. The answer is the conversation's
+ * `SessionSummary` after the change, which also reaches every page that has it open as a commit (its head). None of these moves `updatedAt`.
  */
-export interface SessionChange { readonly title?: string; readonly archived?: boolean }
+export interface SessionChange { readonly title?: string; readonly archived?: boolean; readonly pinned?: boolean; readonly snoozedUntil?: number | null }
 /**
  * `GET /api/v1/sessions/:id/workspace`: the conversation's workspace and, when it is a Git repository or inside one, where that stands: the current branch (null on a
  * detached head) and how many entries `git status --porcelain` lists (changed, staged and untracked files). Read-only; a Git that fails or is slow leaves `git` out.
  */
 export interface WorkspaceView { readonly path: string; readonly git?: { readonly branch: string | null; readonly dirty: number } }
+/** `GET /api/v1/editors` (2026-11-14): an editor installed on this Mac (its application bundle is in /Applications or ~/Applications), as `POST …/open` names it. */
+export interface EditorView { readonly id: string; readonly name: string }
+export interface EditorsView { readonly editors: readonly EditorView[] }
+/**
+ * `GET /api/v1/sessions/:id/file?path=&offset=` (2026-11-14): one page of a file of the workspace (at most 256 KiB, cut between UTF-8 characters), from byte `offset`;
+ * `next` is where the next page starts, null at the end. `path` is the file's from the workspace. A file with a NUL in its first 8 KiB is told as binary and not read.
+ */
+export type WorkspaceFileView =
+  | { readonly path: string; readonly size: number; readonly offset: number; readonly text: string; readonly next: number | null; readonly binary?: undefined }
+  | { readonly path: string; readonly size: number; readonly binary: true };
+/**
+ * One changed, staged or untracked file of `GitView`, named from the workspace: its index and worktree state as `git status --porcelain=v2` gives them (a letter of
+ * M A D R C T U, "." for unchanged; "?" and "?" for an untracked file), the path it was renamed or copied from, and its lines added and removed against HEAD (absent for an
+ * untracked or a binary file).
+ */
+export interface GitFileView { readonly path: string; readonly from?: string; readonly index: string; readonly worktree: string; readonly added?: number; readonly removed?: number }
+/**
+ * `GET /api/v1/sessions/:id/git` (2026-11-14): the branch (null on a detached head), its upstream and how far ahead and behind it is, whether the repository has any
+ * remote, and the changed files. 404 NOT_A_REPOSITORY when the workspace is in no Git repository.
+ */
+export interface GitView {
+  readonly branch: string | null;
+  readonly upstream?: { readonly name: string; readonly ahead: number; readonly behind: number };
+  readonly remote: boolean;
+  readonly files: readonly GitFileView[];
+}
+/** `POST /api/v1/sessions/:id/git/commit`, body `{ message, paths? }` (2026-11-14): the commit made, by its short hash and subject. */
+export interface GitCommitView { readonly commit: string; readonly subject: string }
+/** `POST /api/v1/sessions/:id/git/push` (2026-11-14): where the current branch was pushed. */
+export interface GitPushView { readonly remote: string; readonly branch: string }
 /** The first sentence of a wrap-up, or the step in progress of a task list, cut to what one line of a list holds. */
 export function summaryLine(text: string): string {
   const flat = text.replace(/\s+/gu, " ").trim(), end = /[。！？!?]|\.(?=\s|$)/u.exec(flat);
@@ -339,6 +380,13 @@ export interface TaskMemberView {
 }
 /** The task a conversation belongs to: its board, and — when it is read — the conversations working on it, the one it began in first. */
 export interface TaskView { readonly board: import("./session.js").TaskBoard; readonly members?: readonly TaskMemberView[] }
+/**
+ * `POST /api/v1/sessions/:id/steer {text, key}` (2026-11-14): words given to the Turn in progress. `runId` is the Turn they went into and `messageId` their
+ * `user_message` item there (`steered`); `outcome` is `taken` (the Harness took them into the turn) or `unknown` (it could not be told: they may have reached
+ * it, so the page must not send them again). When they did not go in the answer is 409 with STEER_UNSUPPORTED, STEER_NO_ACTIVE_TURN or STEER_REFUSED, and the
+ * page keeps them for after the Turn. Whether the page may offer it: the Harness's catalog `flavor.capabilities.steer === "native"` while a Turn runs.
+ */
+export interface SteerView { readonly sessionId: string; readonly runId: string; readonly messageId: string; readonly outcome: "taken" | "unknown"; readonly replayed: boolean }
 /** `POST /api/v1/sessions/:id/delegate`: a conversation of its own for `selection` to do `text`, starting from this one's history. `messageCommandId` is the task message's own identity. */
 export interface DelegateWebSession { readonly selection: SelectionRequest; readonly text: string; readonly commandId: string; readonly messageCommandId: string }
 export interface WebError {
@@ -546,7 +594,11 @@ export interface SessionHeadView extends Omit<SessionView, "messages" | "runs" |
   readonly runCount: number;
   /** The user archived the conversation (`SessionSummary.archived`). */
   readonly archived?: true;
-  /** When the commit this head is of was made (`SessionSummary.updatedAt`); this Gateway always sends it. */
+  /** The user pinned it (`SessionSummary.pinned`). */
+  readonly pinned?: true;
+  /** The user put it aside until then (`SessionSummary.snoozedUntil`). */
+  readonly snoozedUntil?: number;
+  /** When the conversation last moved on (`SessionSummary.updatedAt`: a commit that only names or marks it leaves it); this Gateway always sends it. */
   readonly updatedAt?: number;
   /** When the Turn in progress was accepted (`SessionSummary.activeSince`); absent when none is. */
   readonly activeSince?: number;

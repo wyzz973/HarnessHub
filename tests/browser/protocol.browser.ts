@@ -124,6 +124,8 @@ class FakeGateway {
     // The list of conversations, which the page reads again and again while one of them works.
     if (api === "/sessions" && method === "GET") return this.json(response, 200, { sessions: [{ id: this.session.id, title: String(this.session.messages[0]?.text ?? "新对话"), status: "open", workspace: this.session.workspace, selection: this.session.selection, updatedSeq: this.session.lastSeq, activeRunId: this.session.activeRunId }], next: null });
     if (api === "/harnesses/readiness") return this.json(response, 200, { readiness: [] });
+    // The editors on this Mac, which the page reads once it is signed in: none here.
+    if (api === "/editors") return this.json(response, 200, { editors: [] });
     if (api === "/attention/stream") {
       response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });
       this.others.add(response); response.on("close", () => this.others.delete(response)); response.write("event: attention\nid: 1\ndata: " + JSON.stringify({ revision: 1, items: [] }) + "\n\n"); return;

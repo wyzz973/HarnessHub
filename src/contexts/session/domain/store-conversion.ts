@@ -238,6 +238,11 @@ export function toItems(run: PublicRun, messages: { readonly user: PublicMessage
 // ---------------------------------------------------------------------------------------------------------------------------------
 
 /**
+ * The user's words of a Turn as its readers take them (the handoff packet, the record's turn files, the export, the Hub's tools): its input, then the words the
+ * user gave it while it ran (`steer:<n>` items the Harness did not refuse), each after a blank line, as the user typed them. The Turn's own items keep them apart.
+ */
+export function steeredWords(input: string, steered: readonly string[]): string { return steered.length === 0 ? input : [input, ...steered].join("\n\n"); }
+/**
  * The old shape of a Run from its rows: the inverse of `toItems`, and the adapter the readers that have not moved to items read through. It
  * reads only the native facts, the ids, the columns of the row and the fields no normalization makes (a plan's steps, an artifact's content and
  * link, a call's detail), in the order of `seq`. Several segments of a reply or of a thinking (a Turn that kept its order) are joined, and
@@ -247,9 +252,12 @@ export function fromItems(converted: ConvertedRun): { readonly run: PublicRun; r
   const { row } = converted, facts = row.facts, items = [...converted.items].sort((left, right) => left.seq - right.seq);
   const tools: PublicTool[] = [], activities: PublicActivity[] = [], notices: PublicNotice[] = [], outputs: PublicOutput[] = [];
   let input = "", thinking: string | undefined, plan: PublicPlan | undefined, reply: { text: string; seq: number } | undefined, workspace: PublicRun["workspace"];
+  const steered: string[] = [];
   for (const item of items) {
     const id = item.itemId, fields = item.fields, native = fields.native;
     if (id === "user") input += restored(item);
+    // Words the user gave the Turn while it ran (2026-11-14), unless its Harness took nothing of them: the user's words of the Turn, after its input (steeredWords).
+    else if (id.startsWith("steer:")) { if (item.status !== "declined") steered.push(restored(item)); }
     else if (id.startsWith("think:")) thinking = (thinking ?? "") + restored(item);
     else if (id.startsWith("text:")) { const text = restored(item); if (reply === undefined) reply = { text, seq: item.createdSeq ?? row.userSeq }; else reply.text += text; }
     else if (id === "workspace" && fields.type === "file_change") workspace = { changes: fields.changes, shared: fields.shared === true };
@@ -270,6 +278,7 @@ export function fromItems(converted: ConvertedRun): { readonly run: PublicRun; r
       else if (fields.content !== undefined) outputs.push({ kind: "content", content: fields.content });
     }
   }
+  input = steeredWords(input, steered);
   const empty = new Set(facts.emptyLists ?? []), listed = <T>(name: "tools" | "notices" | "activities" | "outputs", found: T[]): T[] | undefined => found.length > 0 || empty.has(name) ? found : undefined;
   const calls = listed("tools", tools), noted = listed("notices", notices), active = listed("activities", activities), made = listed("outputs", outputs);
   const run: PublicRun = {

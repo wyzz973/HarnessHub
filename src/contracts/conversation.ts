@@ -63,7 +63,9 @@ export const PAGE = {
 export type ItemId =
   | "user" | "plan" | "recap"
   | `tool:${string}` | `activity:${string}` | `permission:${string}`
-  | `text:${number}` | `think:${number}` | `notice:${number}` | `output:${number}`;
+  | `text:${number}` | `think:${number}` | `notice:${number}` | `output:${number}`
+  /** Words the user gave the Turn while it ran (a `user_message` with `steered`), counted in the Run from 1. */
+  | `steer:${number}`;
 
 /**
  * What the Harness reported of a call, an activity or a notice, verbatim, kept beside the item the Hub made of it. The readers that put a
@@ -296,6 +298,10 @@ export interface HeadJson {
   readonly parentWordsTold?: number;
   /** The user archived the conversation (`SessionSnapshot.archived`). */
   readonly archived?: true;
+  /** The user pinned it (`SessionSnapshot.pinned`). */
+  readonly pinned?: true;
+  /** The user put it aside until then (`SessionSnapshot.snoozedUntil`). */
+  readonly snoozedUntil?: number;
 }
 /** One row of `sessions` of a converted conversation. */
 export interface HeadRow {
@@ -427,6 +433,12 @@ export interface ConversationMutation {
    * the branch they were on, and `next.runs` is the conversation's new path (the Turns before `at` as they were, then what this commit adds). Nothing is erased.
    */
   readonly branch?: { readonly at: number };
+  /**
+   * The commit changes only how the conversation is named and marked (2026-11-14: a rename, the archive mark, a pin, a reminder, a name its Harness gave, a deletion
+   * and its undoing): its time (`updatedAt`, what the list is ordered by and says) stays where the conversation's own progress left it, also when its file is read again.
+   * Its version and cursor move on as with every commit, so that a page still learns of it.
+   */
+  readonly marksOnly?: true;
 }
 /**
  * What a relay packet's ledger counts of a finished Turn, worked out when it ended (relay/narration.ts `turnRelayCounts`, with no stored detail read): its items by kind, and its
@@ -455,6 +467,10 @@ export interface SessionListRow {
   readonly parent?: import("./session.js").DelegationOrigin;
   /** The user archived it (`SessionSnapshot.archived`). */
   readonly archived?: true;
+  /** The user pinned it (`SessionSnapshot.pinned`). */
+  readonly pinned?: true;
+  /** The user put it aside until then (`SessionSnapshot.snoozedUntil`). */
+  readonly snoozedUntil?: number;
 }
 /** Opaque. A list reads on from it; there is no ceiling on how many conversations a list reaches. */
 export type SessionListCursor = string & { readonly __sessionListCursor: true };

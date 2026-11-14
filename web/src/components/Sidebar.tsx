@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Bell, BellOff, Blocks, Bot, ChevronRight, CircleHelp, Folder, FolderOpen, Inbox as InboxIcon, MessageCircle, MoreHorizontal, PanelLeft, PencilLine, Search, Settings, SlidersHorizontal, SquarePen, X } from "lucide-react";
+import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, Bell, BellOff, Blocks, Bot, ChevronRight, CircleHelp, Folder, FolderOpen, Inbox as InboxIcon, ListFilter, MessageCircle, MoreHorizontal, PanelLeft, PencilLine, Pin, PinOff, Search, Settings, SlidersHorizontal, SquarePen, Trash2, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
@@ -9,7 +9,8 @@ import type { ClientSessionView } from "../lib/protocol/wire.js";
 import { errorMessage } from "../api.js";
 import { attentionKind, liveItems, mostUrgent, remaining } from "../attention.js";
 import { cn } from "../lib/cn.js";
-import { ago, agoShort, clock, folderName, homePath, inScratch } from "../lib/format.js";
+import { ariaKeys, keyText, useKeys } from "../lib/keys.js";
+import { ago, agoShort, clock, folderName, homePath, inScratch, untilShort } from "../lib/format.js";
 import { markSeen, startSeen, unseen, useSeen } from "../lib/seen.js";
 import { useNotificationChoice } from "../lib/notify.js";
 import { useNow } from "../lib/prefs.js";
@@ -72,6 +73,20 @@ export interface SessionActions {
   readonly rename: (id: string, title: string) => void;
   readonly archive: (id: string, archived: boolean) => void;
   readonly reveal: (id: string) => void;
+  /** Keeps it at the top of the list, or lets it go back among the rest. */
+  readonly pin: (id: string, pinned: boolean) => void;
+  /** Puts it aside until a moment (milliseconds since the epoch), or brings it back now (null). */
+  readonly snooze: (id: string, until: number | null) => void;
+  /** Takes it off the list; the way back is offered for a few seconds. */
+  readonly remove: (id: string) => void;
+  /** How the list is grouped, and the way to change it. */
+  readonly grouping: "project" | "state"; readonly onGrouping: (grouping: "project" | "state") => void;
+}
+/** The moments a conversation can be put aside until, from now: in an hour, this evening (or tomorrow morning once it is evening), tomorrow morning, next Monday morning. */
+function snoozeChoices(now: number): readonly { readonly label: string; readonly until: number }[] {
+  const at = (days: number, hour: number): number => { const day = new Date(now); day.setDate(day.getDate() + days); day.setHours(hour, 0, 0, 0); return day.getTime(); };
+  const today = new Date(now), toMonday = (8 - today.getDay()) % 7 || 7;
+  return [{ label: "1 小时后", until: now + 3_600_000 }, ...(today.getHours() < 17 ? [{ label: "今晚 18:00", until: at(0, 18) }] : []), { label: "明天 9:00", until: at(1, 9) }, ...(toMonday > 1 ? [{ label: "下周一 9:00", until: at(toMonday, 9) }] : [])];
 }
 type RowState = "wait" | "run" | "unknown" | "closed" | "fail" | "idle";
 interface Row { readonly session: SessionSummary; readonly items: readonly AttentionItem[]; readonly state: RowState;
@@ -91,14 +106,19 @@ const RANK: Readonly<Record<RowState, number>> = { wait: 0, run: 1, unknown: 2, 
  * first; inside one, those waiting for the user come first, then running ones, then the rest by recency. Projects whose
  * folder names collide carry their parent folder so they can be told apart.
  */
+/** A conversation as a row: what waits in it for the user, and how it stands. */
+function rowOf(session: SessionSummary, waiting: ReadonlyMap<string, readonly AttentionItem[]>, failed: ReadonlySet<string>): Row {
+  const items = waiting.get(session.id) ?? [];
+  const state: RowState = items.length ? "wait" : session.activeRunId !== null ? "run" : session.status === "blocked" ? "unknown" : session.status === "closed" ? "closed" : failed.has(session.id) ? "fail" : "idle";
+  return { session, items, state };
+}
 function groupProjects(sessions: readonly SessionSummary[], waiting: ReadonlyMap<string, readonly AttentionItem[]>, failed: ReadonlySet<string>, scratchRoot: string | undefined): readonly Project[] {
   const keyOf = (workspace: string) => inScratch(workspace, scratchRoot) ? SCRATCH_KEY : workspace;
   const byWorkspace = new Map<string, Row[]>();
   for (const session of sessions) {
-    const items = waiting.get(session.id) ?? [];
-    const state: RowState = items.length ? "wait" : session.activeRunId !== null ? "run" : session.status === "blocked" ? "unknown" : session.status === "closed" ? "closed" : failed.has(session.id) ? "fail" : "idle";
+    const row = rowOf(session, waiting, failed);
     const key = keyOf(session.workspace), rows = byWorkspace.get(key);
-    if (rows) rows.push({ session, items, state }); else byWorkspace.set(key, [{ session, items, state }]);
+    if (rows) rows.push(row); else byWorkspace.set(key, [row]);
   }
   const names = new Map<string, number>();
   for (const key of byWorkspace.keys()) { if (key === SCRATCH_KEY) continue; const name = folderName(key); names.set(name, (names.get(name) ?? 0) + 1); }
@@ -152,15 +172,33 @@ function writeProjectChoices(value: Readonly<Record<string, boolean>>): void {
  */
 export function Sidebar(props: SidebarProps) {
   const { sessions, currentId, page, interactionBusy } = props;
+  useKeys();
   const attention = props.inbox.items;
   // Remaining time is counted here, once a second, only while some waiting item has a deadline.
   const now = useNow(attention.some(item => item.expiresAt !== undefined) || sessions.some(session => session.activeRunId !== null));
   const waiting = useMemo(() => liveItems(attention, now), [attention, now]);
   const bySession = useMemo(() => { const map = new Map<string, AttentionItem[]>(); for (const item of waiting) map.set(item.sessionId, [...(map.get(item.sessionId) ?? []), item]); return map; }, [waiting]);
   // A conversation the user put away is listed apart, at the end; one that is at work or waits for them stands among the rest whatever it was.
-  const away = useMemo(() => new Set(sessions.filter(session => session.archived === true && session.activeRunId === null && !bySession.has(session.id)).map(session => session.id)), [sessions, bySession]);
-  const groups = useMemo(() => groupProjects(sessions.filter(session => !away.has(session.id)), bySession, props.failed, props.scratchRoot), [sessions, away, bySession, props.failed, props.scratchRoot]);
-  const shelf = useMemo(() => sessions.filter(session => away.has(session.id)).map((session): Row => ({ session, items: [], state: session.status === "closed" ? "closed" : "idle" })), [sessions, away]);
+  const quiet = (session: SessionSummary): boolean => session.activeRunId === null && !bySession.has(session.id);
+  const away = useMemo(() => new Set(sessions.filter(session => session.archived === true && quiet(session)).map(session => session.id)), [sessions, bySession]);
+  // One put aside until a moment stands apart until that moment (a timer brings the list round then), unless it is at work or waits for the user meanwhile.
+  const [, wake] = useState(0);
+  const aside = useMemo(() => new Set(sessions.filter(session => session.snoozedUntil !== undefined && session.snoozedUntil > Date.now() && !away.has(session.id) && quiet(session)).map(session => session.id)), [sessions, away, bySession, now]);
+  useEffect(() => {
+    const next = Math.min(...sessions.flatMap(session => session.snoozedUntil !== undefined && session.snoozedUntil > Date.now() ? [session.snoozedUntil] : []));
+    if (!Number.isFinite(next)) return;
+    const timer = setTimeout(() => wake(value => value + 1), Math.min(next - Date.now() + 500, 2_000_000_000));
+    return () => clearTimeout(timer);
+  }, [sessions, aside]);
+  const listed = useMemo(() => sessions.filter(session => !away.has(session.id) && !aside.has(session.id)), [sessions, away, aside]);
+  // Pinned conversations lead the list, in either grouping, and are not listed a second time under their folder or their state.
+  const pinned = useMemo(() => nested(listed.filter(session => session.pinned === true).map(session => rowOf(session, bySession, props.failed))), [listed, bySession, props.failed]);
+  const rest = useMemo(() => listed.filter(session => session.pinned !== true), [listed]);
+  const grouping = props.actions?.grouping ?? "project";
+  const groups = useMemo(() => grouping === "project" ? groupProjects(rest, bySession, props.failed, props.scratchRoot) : [], [grouping, rest, bySession, props.failed, props.scratchRoot]);
+  const shelfRow = (session: SessionSummary): Row => ({ session, items: [], state: session.status === "closed" ? "closed" : "idle" });
+  const shelf = useMemo(() => sessions.filter(session => away.has(session.id)).map(shelfRow), [sessions, away]);
+  const later = useMemo(() => sessions.filter(session => aside.has(session.id)).map(shelfRow), [sessions, aside]);
   // What this browser has seen of each conversation: the first list is all seen, the open conversation is seen as it moves, and the rest are unread once they move on.
   const looked = useSeen(), openRow = page === "chat" ? sessions.find(session => session.id === currentId) : undefined;
   useEffect(() => { if (sessions.length > 0) startSeen(sessions); }, [sessions.length > 0]);
@@ -198,6 +236,14 @@ export function Sidebar(props: SidebarProps) {
   }, [sessions]);
   useEffect(() => () => { for (const timer of timers.current) clearTimeout(timer); }, []);
 
+  // By state: a conversation that waits for you, failed, stands unknown or has moved on unseen needs you; one at work is at work; the rest are the rest.
+  const byState = useMemo(() => {
+    const rows = grouping === "state" ? nested(rest.map(session => rowOf(session, bySession, props.failed))) : [];
+    const needs = (row: Row): boolean => row.state === "wait" || row.state === "fail" || row.state === "unknown" || (row.state === "idle" && !(page === "chat" && row.session.id === currentId) && unseen(looked, row.session));
+    return { need: rows.filter(needs), work: rows.filter(row => !needs(row) && row.state === "run"), rest: rows.filter(row => !needs(row) && row.state !== "run") };
+  }, [grouping, rest, bySession, props.failed, looked, page, currentId]);
+  const folder = (session: SessionSummary): string => inScratch(session.workspace, props.scratchRoot) ? "临时对话" : folderName(session.workspace);
+  const rowProps = { now, currentId: page === "chat" ? currentId : null, disabled: interactionBusy, harness: name, onSession: props.onSession, unread: (session: SessionSummary) => unseen(looked, session), actions: props.actions, arrivals: arriving };
   const count = waiting.length, firstWaiting = useRef<HTMLButtonElement>(null);
   const icon = (glyph: ReactNode) => <span className="flex w-4 flex-none justify-center text-fg-2" aria-hidden="true">{glyph}</span>;
   const nav = (target: Page, label: string, glyph: ReactNode, extra?: ReactNode) => <button type="button" disabled={interactionBusy} aria-current={page === target ? "page" : undefined} onClick={() => props.onPage(target)}
@@ -212,12 +258,12 @@ export function Sidebar(props: SidebarProps) {
       <button type="button" className="flex min-w-0 flex-1 items-center gap-[9px] self-stretch rounded-row border-none bg-transparent p-0 text-left text-fg disabled:opacity-60" aria-label="HarnessHub 首页" onClick={props.onNew} disabled={interactionBusy}>
         <LogoMark/><span className="trunc text-[15px] leading-5 font-semibold tracking-[-0.01em]">HarnessHub</span></button>
       {props.onClose ? <button type="button" className="icon-btn h-7 w-7 text-fg-3 hover:bg-selected" aria-label="关闭导航" onClick={props.onClose}><X size={16}/></button>
-        : <Tip label="收起侧栏 ⌘B"><button type="button" className="icon-btn h-7 w-7 text-fg-3 hover:bg-selected" aria-label="收起侧栏" aria-keyshortcuts="Meta+B" onClick={props.onCollapse}><PanelLeft size={16}/></button></Tip>}
+        : <Tip label={"收起侧栏 " + keyText("sidebar")}><button type="button" className="icon-btn h-7 w-7 text-fg-3 hover:bg-selected" aria-label="收起侧栏" aria-keyshortcuts={ariaKeys("sidebar")} onClick={props.onCollapse}><PanelLeft size={16}/></button></Tip>}
     </div>
-    <Tip label="新对话 ⇧⌘O"><button type="button" className="new-chat-button btn btn-outline btn-lg mt-2 mb-2.5 w-full flex-none" onClick={props.onNew} disabled={interactionBusy} aria-keyshortcuts="Meta+Shift+O">
+    <Tip label={"新对话 " + keyText("new")}><button type="button" className="new-chat-button btn btn-outline btn-lg mt-2 mb-2.5 w-full flex-none" onClick={props.onNew} disabled={interactionBusy} aria-keyshortcuts={ariaKeys("new")}>
       <SquarePen size={15} aria-hidden="true"/>新对话</button></Tip>
-    <button type="button" className="nav-row w-full flex-none" onClick={props.onPalette} aria-label="搜索与命令" aria-keyshortcuts="Meta+K">
-      {icon(<Search size={16}/>)}<span className="flex-1">搜索</span><span className="text-caption text-fg-3" aria-hidden="true">⌘K</span></button>
+    <button type="button" className="nav-row w-full flex-none" onClick={props.onPalette} aria-label="搜索与命令" aria-keyshortcuts={ariaKeys("palette")}>
+      {icon(<Search size={16}/>)}<span className="flex-1">搜索</span><span className="text-caption text-fg-3" aria-hidden="true">{keyText("palette")}</span></button>
     {props.onInbox ? inboxRow : <Popover label="等你处理" open={props.inboxOpen} onOpenChange={props.onInboxOpenChange} side="right" align="start" sideOffset={20} initialFocus={firstWaiting}
       className="inbox-pop flex w-[440px] max-w-[calc(100vw-24px)] flex-col" trigger={inboxRow}><InboxList {...props.inbox} focusRef={firstWaiting}/></Popover>}
     {nav("harnesses", "Harness", <Bot size={16}/>, props.activeJobs ? <Spinner size={13} tone="run" label={`${props.activeJobs} 个安装任务进行中`}/>
@@ -225,15 +271,29 @@ export function Sidebar(props: SidebarProps) {
     {nav("capabilities", "能力", <Blocks size={16}/>)}
     {props.providerManagement ? nav("providers", "模型连接", <SlidersHorizontal size={16}/>) : null}
     <div className="session-section mt-3.5 flex min-h-0 flex-1 flex-col gap-0.5">
-      <h2 className="m-0 flex h-[30px] flex-none items-center pr-1 pl-2.5 text-ui-sm font-normal text-fg-3">对话</h2>
+      <div className="flex h-[30px] flex-none items-center pr-0.5 pl-2.5">
+        <h2 className="m-0 flex-1 text-ui-sm font-normal text-fg-3">对话</h2>
+        {props.actions ? <Menu align="end" trigger={<button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" aria-label="对话怎么分组" title="分组方式"><ListFilter size={14} aria-hidden="true"/></button>} items={[
+          { label: "按项目分组", checked: grouping === "project", onSelect: () => props.actions!.onGrouping("project") },
+          { label: "按状态分组", checked: grouping === "state", onSelect: () => props.actions!.onGrouping("state") },
+        ]}/> : null}
+      </div>
       {/* `relative`: the labels for assistive technology in the rows are placed out of the flow, and are held (and clipped) by the list they scroll in. Placed by the
           page itself they made the whole page scrollable once a row stood below the window. */}
       <nav className="relative -mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-2" aria-label="对话列表">
-        {sessions.length === 0 ? null
-          : groups.map((project, index) => <ProjectGroup key={project.key} project={project} open={isOpen(project, index)} onToggle={open => choose(project.key, open)}
-            now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} arrivals={arriving} harness={name} onSession={props.onSession} unread={session => unseen(looked, session)} actions={props.actions}/>)}
+        {pinned.length > 0 ? <Plain title="置顶" icon={<Pin size={14} aria-hidden="true"/>} rows={pinned} {...rowProps} where={folder}/> : null}
+        {sessions.length === 0 ? null : grouping === "project"
+          ? groups.map((project, index) => <ProjectGroup key={project.key} project={project} open={isOpen(project, index)} onToggle={open => choose(project.key, open)}
+            now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} arrivals={arriving} harness={name} onSession={props.onSession} unread={session => unseen(looked, session)} actions={props.actions}/>)
+          : <>
+            {/* By how they stand (after the sidebar of T3 Code): what needs you leads, then what is at work, then the rest by how lately they moved. */}
+            {byState.need.length > 0 ? <Plain title="要你看的" rows={byState.need} {...rowProps} where={folder}/> : null}
+            {byState.work.length > 0 ? <Plain title="进行中" rows={byState.work} {...rowProps} where={folder}/> : null}
+            {byState.rest.length > 0 ? <Plain title="最近" rows={byState.rest} {...rowProps} where={folder}/> : null}
+          </>}
         {props.more ? <MoreSessions onMore={props.onMore}/> : null}
-        {shelf.length > 0 ? <Shelf rows={shelf} now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} harness={name} onSession={props.onSession} actions={props.actions}/> : null}
+        {later.length > 0 ? <Shelf title="稍后提醒" icon={<AlarmClock size={16} className="text-fg-3" aria-hidden="true"/>} rows={later} now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} harness={name} onSession={props.onSession} actions={props.actions} away="later"/> : null}
+        {shelf.length > 0 ? <Shelf title="已归档" icon={<Archive size={16} className="text-fg-3" aria-hidden="true"/>} rows={shelf} now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} harness={name} onSession={props.onSession} actions={props.actions} away="archived"/> : null}
       </nav>
     </div>
     <div className="flex-none pt-1">
@@ -288,24 +348,39 @@ function ProjectGroup({ project, open, onToggle, now, currentId, disabled, arriv
  * The conversations the user put away, at the end of the list behind one row (after the Settled shelf of T3 Code): closed until opened, and open while the conversation
  * shown is one of them, so the selected row is in sight.
  */
-function Shelf({ rows, now, currentId, disabled, harness, onSession, actions }: { readonly rows: readonly Row[]; readonly now: number; readonly currentId: string | null; readonly disabled: boolean;
-  readonly harness: (id: string) => string; readonly onSession: (id: string) => void; readonly actions: SessionActions | undefined }) {
+function Shelf({ title, icon, rows, now, currentId, disabled, harness, onSession, actions, away }: { readonly title: string; readonly icon: ReactNode; readonly rows: readonly Row[]; readonly now: number; readonly currentId: string | null; readonly disabled: boolean;
+  readonly harness: (id: string) => string; readonly onSession: (id: string) => void; readonly actions: SessionActions | undefined; readonly away: "archived" | "later" }) {
   const listId = useId(), [choice, setChoice] = useState<boolean | null>(null), open = choice ?? rows.some(row => row.session.id === currentId);
   const shelf = useRef<HTMLDivElement>(null);
   // It stands at the list's end: opened, what it holds is brought into sight once it has its height.
   const toggle = () => { setChoice(!open); if (!open) setTimeout(() => shelf.current?.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 220); };
   return <div ref={shelf} className="session-shelf mt-1.5 flex flex-col gap-0.5">
     <button type="button" className="nav-row w-full gap-2 pr-2.5 pl-2 text-fg-2" aria-expanded={open} aria-controls={listId} onClick={toggle}>
-      <Archive size={16} className="text-fg-3" aria-hidden="true"/><span className="min-w-0 flex-1 trunc">已归档</span>
+      {icon}<span className="min-w-0 flex-1 trunc">{title}</span>
       <span className="text-caption text-fg-3" aria-hidden="true">{rows.length}</span>
       <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
       <span className="sr-only">{rows.length} 个对话</span>
     </button>
     <Collapsible open={open} id={listId}>
       <div className="flex flex-col gap-0.5">{rows.map(row => <SessionRow key={row.session.id} row={row} now={now} harness={harness(row.session.selection.harnessId)} current={currentId === row.session.id} disabled={disabled}
-        onOpen={() => onSession(row.session.id)} unread={false} actions={actions} away/>)}</div>
+        onOpen={() => onSession(row.session.id)} unread={false} actions={actions} away={away}/>)}</div>
     </Collapsible>
   </div>;
+}
+
+/**
+ * A run of conversations under a quiet title, always open: the pinned ones, and — when the list is grouped by state — what needs you, what is at work and the rest.
+ * `where` names the folder each works in, which the grouping by project says with its headings.
+ */
+function Plain({ title, icon, rows, now, currentId, disabled, harness, onSession, unread, actions, arrivals, where }: { readonly title: string; readonly icon?: ReactNode; readonly rows: readonly Row[]; readonly now: number; readonly currentId: string | null;
+  readonly disabled: boolean; readonly harness: (id: string) => string; readonly onSession: (id: string) => void; readonly unread: (session: SessionSummary) => boolean; readonly actions: SessionActions | undefined;
+  readonly arrivals: ReadonlySet<string>; readonly where: (session: SessionSummary) => string }) {
+  return <section className="session-run flex flex-col gap-0.5 pb-1.5" aria-label={title}>
+    <h3 className="m-0 flex h-[26px] items-center gap-1.5 px-2.5 text-caption font-normal text-fg-3">{icon}{title}<span className="tabular-nums" aria-hidden="true">{rows.length}</span></h3>
+    {rows.map(row => <div key={row.session.id} className={cn(arrivals.has(row.session.id) && "motion-list-insert")}><div>
+      <SessionRow row={row} now={now} harness={harness(row.session.selection.harnessId)} current={currentId === row.session.id} disabled={disabled} onOpen={() => onSession(row.session.id)}
+        unread={currentId !== row.session.id && row.state === "idle" && unread(row.session)} actions={actions} where={where(row.session)}/></div></div>)}
+  </section>;
 }
 
 /**
@@ -314,8 +389,8 @@ function Shelf({ rows, now, currentId, disabled, harness, onSession, actions }: 
  * One waiting for you also says for what and whose deadline runs; deciding happens in the conversation or the inbox. A row that asks nothing of you is drawn quieter
  * than one that does. Under the pointer, or with the keyboard on it, the time gives its place to the row's actions, so nothing in the row moves (both after T3 Code).
  */
-function SessionRow({ row, now, harness, current, disabled, onOpen, unread, actions, away = false }: { readonly row: Row; readonly now: number; readonly harness: string; readonly current: boolean; readonly disabled: boolean; readonly onOpen: () => void; readonly unread: boolean;
-  readonly actions?: SessionActions | undefined; readonly away?: boolean }) {
+function SessionRow({ row, now, harness, current, disabled, onOpen, unread, actions, away, where }: { readonly row: Row; readonly now: number; readonly harness: string; readonly current: boolean; readonly disabled: boolean; readonly onOpen: () => void; readonly unread: boolean;
+  readonly actions?: SessionActions | undefined; readonly away?: "archived" | "later" | undefined; readonly where?: string | undefined }) {
   const { session, items, state } = row;
   const urgent = mostUrgent(items), left = urgent === null ? null : remaining(urgent, now);
   const id = useId(), metaId = id + "-meta", lineId = id + "-line", title = session.title || "新对话";
@@ -324,11 +399,12 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
   const indicator = state === "wait" ? <StatusDot tone="wait"/> : state === "run" ? <StatusDot tone="work"/> : state === "fail" ? <StatusDot tone="fail"/>
     : state === "unknown" ? <CircleHelp size={14} className="text-fg-3" aria-hidden="true"/> : unread ? <StatusDot tone="run" live={false}/> : row.delegating ? <StatusDot tone="work"/> : null;
   // The second line: whose it is, then how it stands in a sentence (the step in progress, or what the last Turn came to), else the state's word.
-  const standing = row.delegating ? row.delegating + " 个委派进行中" : session.line ?? STATE_WORDS[state], meta = harness + (standing ? " · " + standing : "") + (unread ? " · 未读" : "");
+  const standing = row.delegating ? row.delegating + " 个委派进行中" : session.line ?? STATE_WORDS[state], whose = (where ? where + " · " : "") + harness, meta = whose + (standing ? " · " + standing : "") + (unread ? " · 未读" : "");
   // How long the Turn in progress has run, else how long ago the conversation last moved; nothing where the Gateway did not say.
-  const when = state === "run" && session.activeSince !== undefined ? clock(now - session.activeSince) : session.updatedAt ? agoShort(session.updatedAt, now) : "";
+  const when = state === "run" && session.activeSince !== undefined ? clock(now - session.activeSince) : away === "later" && session.snoozedUntil !== undefined ? untilShort(session.snoozedUntil, now)
+    : session.updatedAt ? agoShort(session.updatedAt, now) : "";
   // What asks nothing of you steps back: a conversation at rest that you have seen, and one that is put away.
-  const quiet = !current && (away || state === "idle" && !unread || state === "closed");
+  const quiet = !current && (away !== undefined || state === "idle" && !unread || state === "closed");
   const look = cn("session-item nav-row relative h-auto w-full items-start gap-2 py-[5px] pr-2.5 disabled:opacity-60", row.child ? "pl-[26px]" : "pl-2", left && "has-attention");
   const inside = <>
     {/* A delegated conversation hangs from the one above it. */}
@@ -346,7 +422,7 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
           actions && (menu ? "opacity-0" : "group-hover/session:opacity-0 group-has-[:focus-visible]/session:opacity-0"))} aria-hidden="true">{when}</span> : null}
       </span>
       {urgent && left ? <span id={lineId} className="attention-line line-clamp-2 text-caption font-normal text-amber-on-tint" title={left.hint}>{attentionKind(urgent)}{items.length > 1 ? `（${items.length} 项）` : ""}{urgent.expiresAt === undefined ? null : <>{left.source ? " · " + left.source : ""} <span className="whitespace-nowrap">{left.text}</span></>}</span>
-        : <span className="session-meta trunc text-caption font-normal text-fg-3" aria-hidden="true" title={session.line}>{harness}{standing ? " · " + standing : ""}</span>}
+        : <span className="session-meta trunc text-caption font-normal text-fg-3" aria-hidden="true" title={session.line}>{whose}{standing ? " · " + standing : ""}</span>}
     </span>
     <span id={metaId} className="sr-only">{meta}</span>
   </>;
@@ -354,13 +430,19 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
     {editing !== null ? <div className={cn(look, "bg-sidebar-hover")}>{inside}</div>
       : <button type="button" disabled={disabled} onClick={onOpen} aria-current={current ? "page" : undefined} aria-label={title} aria-describedby={left ? metaId + " " + lineId : metaId} className={look}>{inside}</button>}
     {actions && editing === null ? <span className={cn("session-actions absolute top-[3px] right-2 flex items-center transition-opacity duration-120 ease-standard", menu ? "opacity-100" : "opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100")}>
-      <Tip label={away ? "取消归档" : "归档"}><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={(away ? "取消归档：" : "归档：") + title} onClick={() => actions.archive(session.id, !away)}>
-        {away ? <ArchiveRestore size={14} aria-hidden="true"/> : <Archive size={14} aria-hidden="true"/>}</button></Tip>
+      {/* The one thing done most from a row stands beside the menu: putting it away, or — on a shelf — bringing it back. */}
+      {away === "later" ? <Tip label="现在就看"><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={"现在就看：" + title} onClick={() => actions.snooze(session.id, null)}><AlarmClockOff size={14} aria-hidden="true"/></button></Tip>
+        : <Tip label={away === "archived" ? "取消归档" : "归档"}><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={(away === "archived" ? "取消归档：" : "归档：") + title} onClick={() => actions.archive(session.id, away !== "archived")}>
+          {away === "archived" ? <ArchiveRestore size={14} aria-hidden="true"/> : <Archive size={14} aria-hidden="true"/>}</button></Tip>}
       <Menu align="start" open={menu} onOpenChange={setMenu} trigger={<button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={"更多操作：" + title}><MoreHorizontal size={14} aria-hidden="true"/></button>} items={[
+        ...(away === undefined ? [{ label: session.pinned === true ? "取消置顶" : "置顶", icon: session.pinned === true ? <PinOff size={14}/> : <Pin size={14}/>, onSelect: () => actions.pin(session.id, session.pinned !== true) }] : []),
         { label: "重命名", icon: <PencilLine size={14}/>, onSelect: () => setEditing(title) },
         { label: "在访达中显示", icon: <FolderOpen size={14}/>, onSelect: () => actions.reveal(session.id) },
-        { separator: true },
-        { label: away ? "取消归档" : "归档", icon: away ? <ArchiveRestore size={14}/> : <Archive size={14}/>, onSelect: () => actions.archive(session.id, !away) },
+        ...(away === "later" ? [{ separator: true as const }, { label: "现在就看", icon: <AlarmClockOff size={14}/>, onSelect: () => actions.snooze(session.id, null) }]
+          : away === undefined && state !== "run" && state !== "wait" ? [{ separator: true as const }, { heading: "稍后提醒" }, ...snoozeChoices(Date.now()).map(choice => ({ label: choice.label, icon: <AlarmClock size={14}/>, onSelect: () => actions.snooze(session.id, choice.until) }))] : []),
+        { separator: true as const },
+        ...(away !== "later" ? [{ label: away === "archived" ? "取消归档" : "归档", icon: away === "archived" ? <ArchiveRestore size={14}/> : <Archive size={14}/>, onSelect: () => actions.archive(session.id, away !== "archived") }] : []),
+        { label: "删除", icon: <Trash2 size={14}/>, danger: true, disabled: state === "run" || state === "wait", onSelect: () => actions.remove(session.id) },
       ]}/>
     </span> : null}
   </div>;

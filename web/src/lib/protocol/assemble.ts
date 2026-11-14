@@ -71,7 +71,11 @@ function draw(turn: WindowTurn): Drawn {
   const placed = turn.deferred === undefined ? items : gapIn(items, turn.deferred, run.ordinal);
   const drawn = placed.map((item): ReadItem => {
     if (item.type === "user_message") {
-      input += textOf(item) ?? "";
+      // Words given to the Turn while it ran (`steered`) are the user's words of the Turn after its input, a blank line apart, as the server reads them
+      // (steeredWords); words the Harness took nothing of (`declined`) are not: the page sent them as a message of their own.
+      const said = textOf(item) ?? "";
+      if (item.steered !== true) input += said;
+      else if (item.status !== "declined") input += (input === "" ? "" : "\n\n") + said;
       if (!taken.has(item.messageId)) { taken.add(item.messageId); messages.push({ id: item.messageId, runId: run.id, role: "user", text: textOf(item) ?? "", seq: run.userSeq, status: run.status }); }
       return item;
     }

@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { cn } from "../lib/cn.js";
+import { chordKeys, chordOf, DEFAULT_KEYS, KEY_ACTIONS, resetKey, sameChord, setKey, useKeys, type KeyAction } from "../lib/keys.js";
 import { Kbd } from "../ui/primitives.js";
 
 export interface PaletteCommand {
@@ -92,36 +93,60 @@ export function CommandPalette({ open, onOpenChange, commands, onClosed }: { rea
   </BaseDialog.Root>;
 }
 
-/** One action and its keys; `range` reads "1 – 9", `or` is another way to do the same, such as esc in the composer. */
-interface ShortcutRow { readonly label: string; readonly keys: readonly string[]; readonly range?: boolean; readonly or?: readonly string[] }
+/** One action and its keys; `range` reads "1 – 9", `or` is another way to do the same, such as esc in the composer. `action`: one whose keys the user may change. */
+interface ShortcutRow { readonly label: string; readonly keys: readonly string[]; readonly range?: boolean; readonly or?: readonly string[]; readonly action?: KeyAction }
+const chosen = (id: KeyAction): ShortcutRow => ({ label: KEY_ACTIONS.find(row => row.id === id)!.label, keys: [], action: id });
 /**
  * Every shortcut of the page (Interaction board, "键盘优先"; ADR-054 §5), in the board's words. The application handles
  * the first group; the conversation's composer, approval dock and details panel handle the others. The browser keeps
  * ⌘N, ⌘T and ⌘W, so HarnessHub takes none of them, and a lasting approval option has no key at all.
  */
 export const SHORTCUT_GROUPS: readonly { readonly title: string; readonly rows: readonly ShortcutRow[] }[] = [
-  { title: "通用", rows: [
-    { label: "新对话", keys: ["⇧", "⌘", "O"] }, { label: "搜索与命令", keys: ["⌘", "K"] }, { label: "下一件“等你处理”", keys: ["⌥", "⌘", "↓"] }, { label: "上一个对话", keys: ["⌥", "⌘", "["] }, { label: "下一个对话", keys: ["⌥", "⌘", "]"] },
-    { label: "收起或展开侧栏", keys: ["⌘", "B"] }, { label: "全部快捷键", keys: ["⌘", "/"] }, { label: "关闭弹出层", keys: ["esc"] },
-  ] },
+  { title: "通用", rows: [chosen("new"), chosen("palette"), chosen("nextWaiting"), chosen("previous"), chosen("next"), chosen("sidebar"), chosen("shortcuts"), { label: "关闭弹出层", keys: ["esc"] }] },
   { title: "对话", rows: [
-    { label: "发送；回复进行中时先暂存下一条", keys: ["⏎"] }, { label: "换行", keys: ["⇧", "⏎"] }, { label: "换 Harness", keys: ["⌘", "J"] }, { label: "停止当前回复", keys: ["⌘", "."], or: ["esc"] },
-    { label: "打开或收起详情面板", keys: ["⌘", "\\"] }, { label: "选下一步框里的第一个回答（输入框为空时）", keys: ["⌘", "⏎"] }, { label: "编辑上一条（输入框为空时）", keys: ["↑"] }, { label: "原生命令 · 引用文件", keys: ["/", "@"] },
+    { label: "发送；回复进行中时先暂存下一条", keys: ["⏎"] }, { label: "换行", keys: ["⇧", "⏎"] }, chosen("picker"), { ...chosen("stop"), or: ["esc"] }, chosen("panel"), chosen("terminal"),
+    { label: "选下一步框里的第一个回答（输入框为空时）", keys: ["⌘", "⏎"] }, { label: "编辑上一条（输入框为空时）", keys: ["↑"] }, { label: "原生命令 · 引用文件", keys: ["/", "@"] },
   ] },
   { title: "审批停在输入框时", rows: [
     { label: "允许一次", keys: ["⏎"] }, { label: "拒绝这次请求", keys: ["esc"] }, { label: "选择一次性选项", keys: ["1", "9"], range: true },
   ] },
 ];
-/** The shortcut groups as rows of words and keycaps; used by the ⌘/ sheet and the settings page. */
-export function ShortcutList({ className }: { readonly className?: string }) {
-  const id = useId();
+/**
+ * The keys of a shortcut the user may change, as a control (the settings): pressing it listens for the next chord — ⌘ with a key, and ⌥ or ⇧ if wanted — and takes it;
+ * Escape leaves the keys as they were. A chord another shortcut has is refused, with that shortcut's name. Beside it, the way back to its own keys once they differ.
+ */
+function KeyRecorder({ action }: { readonly action: KeyAction }) {
+  const keys = useKeys(), [listening, setListening] = useState(false), [problem, setProblem] = useState<string | null>(null);
+  const changed = !sameChord(keys[action], DEFAULT_KEYS[action]);
+  return <span className="flex flex-none items-center gap-2">
+    {problem ? <span className="text-caption text-red" role="status">{problem}</span> : null}
+    {changed && !listening ? <button type="button" className="link-btn text-caption" onClick={() => { resetKey(action); setProblem(null); }}>恢复</button> : null}
+    <button type="button" className={cn("key-recorder flex min-h-7 items-center gap-[3px] rounded-row border-none bg-transparent px-1.5 hover:bg-subtle", listening && "bg-subtle shadow-focus")} aria-label={"更改“" + KEY_ACTIONS.find(row => row.id === action)!.label + "”的快捷键"}
+      onClick={() => { setListening(true); setProblem(null); }} onBlur={() => setListening(false)}
+      onKeyDown={event => {
+        if (!listening) return;
+        event.preventDefault(); event.stopPropagation();
+        if (event.key === "Escape") { setListening(false); return; }
+        const chord = chordOf(event.nativeEvent);
+        if (chord === null) { if (!/^(Meta|Control|Alt|Shift)/u.test(event.code)) setProblem("要带 ⌘"); return; }
+        const refused = setKey(action, chord);
+        if (refused !== null) { setProblem("“" + KEY_ACTIONS.find(row => row.id === refused.taken)!.label + "”在用"); return; }
+        setProblem(null); setListening(false);
+      }}>
+      {listening ? <span className="px-1 text-caption text-fg-2">按下新的组合键</span> : chordKeys(keys[action]).map((key, index) => <Kbd key={index}>{key}</Kbd>)}
+    </button>
+  </span>;
+}
+/** The shortcut groups as rows of words and keycaps; used by the ⌘/ sheet and the settings, where (`editable`) the ones that are given other keys are changed in place. */
+export function ShortcutList({ className, editable = false }: { readonly className?: string; readonly editable?: boolean }) {
+  const id = useId(), keys = useKeys();
   return <div className={cn("flex flex-col gap-4", className)}>{SHORTCUT_GROUPS.map((group, index) => <div key={group.title} className="flex flex-col" role="group" aria-labelledby={`${id}-${index}`}>
     <h3 id={`${id}-${index}`} className="m-0 px-1 pb-1 text-caption font-medium text-fg-3">{group.title}</h3>
-    <dl className="m-0 flex flex-col">{group.rows.map(row => <div key={row.label} className="flex min-h-9 items-center gap-3 hairline-b px-1 last:border-b-0">
+    <dl className="m-0 flex flex-col">{group.rows.map(row => { const shown = row.action === undefined ? row.keys : chordKeys(keys[row.action]); return <div key={row.label} className="flex min-h-9 items-center gap-3 hairline-b px-1 last:border-b-0">
       <dt className="min-w-0 flex-1 text-ui-sm text-fg">{row.label}</dt>
-      <dd className="m-0 flex flex-none items-center gap-[3px]">{row.range ? <><Kbd>{row.keys[0]}</Kbd><span className="px-0.5 text-caption text-fg-3">–</span><Kbd>{row.keys[1]}</Kbd></> : row.keys.map((key, index) => <Kbd key={index}>{key}</Kbd>)}
+      <dd className="m-0 flex flex-none items-center gap-[3px]">{editable && row.action !== undefined ? <KeyRecorder action={row.action}/> : row.range ? <><Kbd>{shown[0]}</Kbd><span className="px-0.5 text-caption text-fg-3">–</span><Kbd>{shown[1]}</Kbd></> : shown.map((key, index) => <Kbd key={index}>{key}</Kbd>)}
         {row.or ? <><span className="px-1 text-caption text-fg-3">或</span>{row.or.map((key, index) => <Kbd key={"or-" + index}>{key}</Kbd>)}</> : null}</dd>
-    </div>)}</dl>
+    </div>; })}</dl>
   </div>)}</div>;
 }
 /**

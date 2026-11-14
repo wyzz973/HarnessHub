@@ -79,6 +79,13 @@ export interface FlavorCapabilities {
    * for), or with the Hub's reading tools (`tools`, the default: hub_turns, hub_read_turn, hub_search, hub_task, hub_board, or the conversation's command).
    */
   readonly record?: "files" | "tools";
+  /**
+   * Words the user sends while a Turn runs (2026-11-14): `native`, the Harness takes them into the turn in progress (`POST /sessions/:id/steer`,
+   * HarnessControl.steer), so the page may offer to send them now; `none` (the default), it cannot, and the page keeps them until the Turn
+   * ends (its queue). Never done by stopping the turn and sending again. The page reads this from the catalog's `flavor` and still falls back
+   * to its queue on any refusal of the steer (STEER_UNSUPPORTED, STEER_NO_ACTIVE_TURN, STEER_REFUSED).
+   */
+  readonly steer?: "native" | "none";
 }
 export interface HarnessFlavor {
   readonly harnessId: string;

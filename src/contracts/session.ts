@@ -176,7 +176,7 @@ export interface PublicSwitch {
 }
 export interface CommandRecord {
   readonly id: CommandId;
-  readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission" | "native-reset" | "retention" | "native-close" | "branch";
+  readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission" | "native-reset" | "retention" | "native-close" | "branch" | "steer";
   readonly fingerprint: string;
   readonly resultId: string;
 }
@@ -381,6 +381,23 @@ export interface SessionSnapshot {
    * `status`: an archived conversation opens and takes messages as any other.
    */
   readonly archived?: true;
+  /** The user pinned the conversation to the top of the list (2026-11-14): a mark of the list, kept until the user takes it off (a new Turn does not). */
+  readonly pinned?: true;
+  /**
+   * The user asked to be reminded of the conversation later (2026-11-14): until this moment (milliseconds since the epoch) the list puts it aside. The page tells
+   * whether the moment came; the Gateway only keeps it. A new Turn accepted in the conversation takes it off, as it does the archive mark.
+   */
+  readonly snoozedUntil?: number;
+  /**
+   * When the user deleted the conversation (2026-11-14, milliseconds since the epoch): it is then out of the list and not found by any read, and its file stays where
+   * it is, so that it can be restored. The conversations it delegated work to are not touched.
+   */
+  readonly deletedAt?: number;
+  /**
+   * The name the conversation's Harness gave it (2026-11-14, `hub_wrap_up`'s `title`), taken once, only while the user had not named it. The user's name
+   * (`userTitle`) still goes before it, whenever given.
+   */
+  readonly harnessTitle?: string;
 }
 export interface EventDraft { readonly type: string; readonly data: Readonly<Record<string, unknown>> }
 export interface SessionEvent extends EventDraft {
@@ -600,6 +617,12 @@ export interface SessionRuntimeOptions {
   readonly relayKeys?: import("./relay.js").RelayKeyPort;
 }
 export interface SendReceipt { readonly sessionId: SessionId; readonly runId: RunId; readonly replayed: boolean }
+/**
+ * Words given to the Turn in progress (SessionRuntime.steer): the Turn they went into, the message they are there (its `steer:<n>` item), and what its
+ * Harness said: `taken`, it took them into the turn; `unknown`, it could not be told (they may have reached it, and are never sent again). Words it
+ * did not take are no receipt: the request fails with STEER_REFUSED.
+ */
+export interface SteerReceipt { readonly sessionId: SessionId; readonly runId: RunId; readonly messageId: MessageId; readonly outcome: "taken" | "unknown"; readonly replayed: boolean }
 export interface SwitchReceipt { readonly sessionId: SessionId; readonly switchId: SwitchId; readonly replayed: boolean }
 export interface CancelReceipt { readonly sessionId: SessionId; readonly target: RunId | null; readonly replayed: boolean }
 export interface PermissionRequest {

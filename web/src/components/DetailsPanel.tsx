@@ -1,5 +1,5 @@
 import { BoardAdd, BoardEntries, TaskRoster, useTask, type TaskBoardAccess, type TaskSnapshot } from "./TaskBoard.js";
-import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Circle, CircleDollarSign, Clock, Copy, FileText, Folder, FolderOpen, GitBranch, Plug, Plus, Shrink, Timer, WrapText, X } from "lucide-react";
+import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Circle, CircleDollarSign, Clock, Columns2, Copy, FileText, Folder, FolderOpen, GitBranch, Plug, Plus, Shrink, Timer, WrapText, X } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { ITEM_STATUS_WORDS, TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
@@ -23,6 +23,8 @@ import { finished, knownToolDetail, parseUnifiedDiff, readToolDetail, type DiffF
 import { Collapsible } from "../ui/motion.js";
 import { EmptyState, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitives.js";
 import { DiffLines, type ToolDetailLoader } from "./Activity.js";
+import { DiffBody, type DiffRemark } from "./DiffBody.js";
+import { CommitDialog, EditorRow, FileView, type WorkspaceAccess } from "./WorkspaceTools.js";
 import { FileMark, FilePath, Lines } from "./FileBits.js";
 import { dockedRequest } from "./Approval.js";
 import { BrandIcon } from "./BrandIcon.js";
@@ -241,6 +243,12 @@ interface PanelProps {
   readonly want?: ChangesWant | null | undefined;
   /** Shows the workspace, or a file in it, in the Finder. */
   readonly onReveal?: ((path?: string) => void) | undefined;
+  /** What is done with the workspace: opened in an editor, committed and pushed, a file of it shown. Each part absent where the Gateway has none of it. */
+  readonly tools?: WorkspaceAccess | undefined;
+  /** Says something came of an action in a corner of the page (a commit made, a push done). */
+  readonly onSaid?: ((words: string) => void) | undefined;
+  /** Takes a remark on some lines of a diff: it goes into the message box. Absent where no message can be written. */
+  readonly onRemark?: ((remark: DiffRemark) => void) | undefined;
   /** Reads where the conversation works: its folder and, when that is a repository, its branch and how many files are not committed. */
   readonly loadWorkspace?: ((signal: AbortSignal) => Promise<WorkspaceFacts>) | undefined;
 }
@@ -287,14 +295,28 @@ export function DetailsPanel(props: PanelProps) {
     ...(window !== null || props.relay ? [{ id: "context" as const, label: "上下文", count: props.relay?.view.packets.length || null }] : []),
   ];
   const shown: PanelTab = tabs.some(item => item.id === tab) ? tab : "overview";
+  // The files opened beside the four pages (after the file tabs of T3 Code's right panel): each a tab of its own until closed; they are this conversation's, and gone with it.
+  const [opened, setOpened] = useState<readonly string[]>([]), [viewing, setViewing] = useState<string | null>(null);
+  useEffect(() => { setOpened([]); setViewing(null); }, [session.id]);
+  const openFile = props.tools?.file === undefined ? undefined : (path: string) => { const place = workspacePath(path, session.workspace); setOpened(current => current.includes(place) ? current : [...current, place]); setViewing(place); };
+  const closeFile = (path: string) => { setOpened(current => current.filter(item => item !== path)); setViewing(current => current === path ? null : current); };
+  const base = (path: string): string => path.split("/").at(-1) ?? path;
   return <div className="details-panel flex h-full min-h-0 w-full min-w-0 flex-col bg-app">
     <div className="flex h-[54px] flex-none items-stretch gap-2 pr-3 pl-[18px] hairline-b">
-      <Tabs className="h-full min-w-0 flex-1 [&>.tab]:h-full" items={tabs} value={shown} onChange={props.onTab} label="详情分类" idPrefix="details-tab" panelId="details-tabpanel"/>
+      <div className={cn("flex h-full min-w-0 flex-1 items-stretch gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none]", viewing !== null && "[&_.tab[aria-selected=true]]:text-fg-2 [&_.tabs-indicator]:opacity-0")}>
+        <Tabs className="h-full flex-none [&>.tab]:h-full" items={tabs} value={shown} onChange={value => { setViewing(null); props.onTab(value); }} label="详情分类" idPrefix="details-tab" panelId="details-tabpanel"/>
+        {/* The files stand apart from the four pages: a hairline between, then each file's tab. */}
+        {opened.length > 0 ? <span aria-hidden="true" className="mx-1.5 my-auto h-4 w-px flex-none bg-line-strong"/> : null}
+        {opened.map(path => <span key={path} className={cn("file-tab group/tab my-auto flex h-7 flex-none items-center rounded-row pr-0.5 pl-2 text-ui-sm transition-colors duration-120 ease-standard", viewing === path ? "bg-subtle text-fg" : "text-fg-2 hover:bg-subtle")}>
+          <button type="button" className="max-w-[140px] truncate border-none bg-transparent p-0 font-mono text-code text-inherit" title={path} aria-pressed={viewing === path} onClick={() => setViewing(path)}>{base(path)}</button>
+          <button type="button" className="icon-btn ml-0.5 size-5 text-fg-3" aria-label={"关闭 " + base(path)} title="关闭" onClick={() => closeFile(path)}><X size={11} strokeWidth={2.2}/></button></span>)}
+      </div>
       {props.onClose ? <button type="button" className="icon-btn size-7 self-center text-fg-3" aria-label="关闭详情栏" title="关闭详情栏" onClick={props.onClose}><X size={14} strokeWidth={2}/></button> : null}
     </div>
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${shown}`}>
-      {shown === "changes" ? <Changes changes={changes} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}
-          members={members} want={want} onOpenSession={props.onOpenSession} onReveal={props.onReveal}/>
+      {viewing !== null && props.tools ? <FileView path={viewing} access={props.tools} onReveal={props.onReveal}/>
+        : shown === "changes" ? <Changes changes={changes} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}
+          members={members} want={want} onOpenSession={props.onOpenSession} onReveal={props.onReveal} onRemark={props.onRemark} onOpenFile={openFile}/>
         : shown === "process" ? <>
           {kept || background.length || session.retention?.upgraded || session.retention?.outside ? <div className="hairline-b"><Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/></div> : null}
           {selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <EmptyState icon={<Clock size={22}/>} title="还没有执行记录"/>}
@@ -402,7 +424,7 @@ function Overview(props: PanelProps & { readonly selected: PublicRun | null; rea
     {window !== null ? <ContextSection window={window} runs={runs} relay={props.relay?.view} name={props.name} onOpen={() => props.onTab("context")}/> : null}
     {props.kept || active.length > 0 || session.retention?.upgraded || session.retention?.outside ? <Section title="后台" figure={props.kept || active.length > 0 ? (active.length + (props.kept ? 1 : 0)) + " 项在跑" : null} onOpen={() => props.onTab("process")}>
       <div className="-mx-4 -mb-3"><Background session={session} kept={props.kept} items={active} busy={props.busy} onEndProcess={props.onEndProcess} name={props.name}/></div></Section> : null}
-    <EnvironmentSection session={session} stamp={session.id + ":" + runs.length + ":" + (last?.status ?? "")} load={props.loadWorkspace} onReveal={props.onReveal}
+    <EnvironmentSection session={session} stamp={session.id + ":" + runs.length + ":" + (last?.status ?? "")} load={props.loadWorkspace} onReveal={props.onReveal} tools={props.tools} onSaid={props.onSaid} suggestion={oneLine(recap?.summary ?? session.title)}
       harness={selected ? null : <Line icon={<BrandIcon brand={session.selection.harnessId} name={props.name(session.selection.harnessId)} size={16}/>}><span className="text-fg">{props.name(session.selection.harnessId)}</span></Line>}/>
     {selected ? <div ref={facts}><RunSection {...props} run={selected} runs={runs}/></div> : null}
   </div>;
@@ -412,22 +434,28 @@ function Overview(props: PanelProps & { readonly selected: PublicRun | null; rea
  * it is on and how many files are not committed. Read when the panel shows it and again when a Turn begins or ends, which is when it may have changed; what was read
  * stays while the next reading is on its way.
  */
-function EnvironmentSection({ session, stamp, load, onReveal, harness }: { readonly session: ConversationView; readonly stamp: string; readonly load: PanelProps["loadWorkspace"]; readonly onReveal: PanelProps["onReveal"]; readonly harness: ReactNode }) {
+function EnvironmentSection({ session, stamp, load, onReveal, harness, tools, onSaid, suggestion }: { readonly session: ConversationView; readonly stamp: string; readonly load: PanelProps["loadWorkspace"]; readonly onReveal: PanelProps["onReveal"]; readonly harness: ReactNode;
+  readonly tools: WorkspaceAccess | undefined; readonly onSaid: PanelProps["onSaid"]; readonly suggestion: string }) {
   const [read, setRead] = useState<{ readonly id: string; readonly facts: WorkspaceFacts } | null>(null), reader = useRef(load);
+  // Committing is offered where there is something to commit, and reads the state again when it is done.
+  const [committing, setCommitting] = useState(false), [again, setAgain] = useState(0);
   reader.current = load;
   useEffect(() => {
     if (reader.current === undefined) return;
     const controller = new AbortController(), id = session.id;
     reader.current(controller.signal).then(facts => { if (!controller.signal.aborted) setRead({ id, facts }); }, () => { /* what was read stays */ });
     return () => controller.abort();
-  }, [stamp, session.id]);
+  }, [stamp, session.id, again]);
   const git = read?.id === session.id ? read.facts.git : undefined, path = session.workspace, shown = homePath(path) || folderName(path);
   const folder = <><span className="flex size-4 flex-none items-center justify-center text-fg-3"><Folder size={14} aria-hidden="true"/></span><span className="mono min-w-0 flex-1 trunc text-caption text-fg-2">{shown}</span></>;
   return <Section title="环境"><div className="mt-1 flex flex-col">
     {harness}
     {onReveal ? <button type="button" className="row -mx-2 flex min-h-7 min-w-0 items-center gap-2.5 border-none bg-transparent px-2 text-left text-ui-sm hover:bg-subtle" title={"在访达中显示 " + path} onClick={() => onReveal()}>{folder}</button>
       : <div className="flex min-h-7 min-w-0 items-center gap-2.5 text-ui-sm" title={path}>{folder}</div>}
-    {git !== undefined ? <Line icon={<GitBranch size={14} aria-hidden="true"/>} value={git.dirty > 0 ? git.dirty + " 个文件未提交" : "没有未提交的改动"}><span className="mono text-caption">{git.branch ?? "不在分支上"}</span></Line> : null}
+    {tools?.editors?.length && tools.openIn ? <EditorRow editors={tools.editors} onOpenIn={tools.openIn}/> : null}
+    {git !== undefined ? <Line icon={<GitBranch size={14} aria-hidden="true"/>} value={git.dirty > 0 && tools?.commit && tools.git
+      ? <button type="button" className="link-btn text-ui-sm" onClick={() => setCommitting(true)}>{git.dirty} 个文件未提交 · 提交…</button> : git.dirty > 0 ? git.dirty + " 个文件未提交" : "没有未提交的改动"}><span className="mono text-caption">{git.branch ?? "不在分支上"}</span></Line> : null}
+    {tools?.commit && tools.git ? <CommitDialog open={committing} onClose={() => setCommitting(false)} access={tools} suggestion={suggestion} onDone={said => { onSaid?.(said); setAgain(value => value + 1); }}/> : null}
   </div></Section>;
 }
 /** The task list: a mark per step (done, in hand, to do), the steps themselves, and what the latest Turn said it came to. */
@@ -546,8 +574,8 @@ function RunTitle({ runs, run, onRun }: { readonly runs: readonly PublicRun[]; r
  * One changed file: its row, and under it — when opened — its diff as the program reported it, read-only. Under the pointer, or with the keyboard on it, the row's
  * counts give their place to what is done with the file: its path copied, the file shown in the Finder.
  */
-function FileDiff({ file, workspace, open, wrap, onToggle, name, onReveal }: { readonly file: ChangedFile; readonly workspace: string; readonly open: boolean; readonly wrap: boolean; readonly onToggle: () => void; readonly name: (id: string) => string;
-    readonly onReveal?: ((path: string) => void) | undefined }) {
+function FileDiff({ file, workspace, open, wrap, split, onToggle, name, onReveal, onRemark, onOpenFile }: { readonly file: ChangedFile; readonly workspace: string; readonly open: boolean; readonly wrap: boolean; readonly split: boolean; readonly onToggle: () => void; readonly name: (id: string) => string;
+    readonly onReveal?: ((path: string) => void) | undefined; readonly onRemark?: ((remark: DiffRemark) => void) | undefined; readonly onOpenFile?: ((path: string) => void) | undefined }) {
   const panel = useId(), row = useRef<HTMLLIElement>(null), shown = workspacePath(file.path, workspace);
   const [copied, setCopied] = useState(false);
   useEffect(() => { if (!copied) return; const timer = setTimeout(() => setCopied(false), 1600); return () => clearTimeout(timer); }, [copied]);
@@ -561,17 +589,20 @@ function FileDiff({ file, workspace, open, wrap, onToggle, name, onReveal }: { r
     <span className="absolute top-1 right-1.5 flex items-center opacity-0 transition-opacity duration-120 ease-standard group-hover/file:opacity-100 group-has-[:focus-visible]/file:opacity-100">
       <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"复制路径：" + shown} title={copied ? "已复制" : "复制路径"} onClick={() => { void navigator.clipboard.writeText(shown).then(() => setCopied(true), () => undefined); }}>
         {copied ? <Check size={13} strokeWidth={2} aria-hidden="true"/> : <Copy size={13} strokeWidth={2} aria-hidden="true"/>}</button>
+      {onOpenFile ? <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"打开文件：" + shown} title="打开文件" onClick={() => onOpenFile(file.path)}><FileText size={13} strokeWidth={2} aria-hidden="true"/></button> : null}
       {onReveal ? <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"在访达中显示：" + shown} title="在访达中显示" onClick={() => onReveal(file.path)}><FolderOpen size={13} strokeWidth={2} aria-hidden="true"/></button> : null}
     </span>
     <Collapsible open={open} id={panel}>
       <section className="mt-0.5 mb-2 min-w-0 overflow-hidden rounded-block bg-surface shadow-hairline" aria-label={"差异：" + shown}>
-        {file.diffs.length > 0 ? <div className={cn("native-diff diff py-1.5", wrap && "is-wrapped")} role="group" aria-label="差异">{file.diffs.map((diff, index) => <div key={index} className={cn(index > 0 && "hairline-t")}><DiffLines file={diff} headers={false}/></div>)}</div>
+        {file.diffs.length > 0 ? file.diffs.map((diff, index) => <div key={index} className={cn(index > 0 && "hairline-t")}><DiffBody file={{ ...diff, path: shown }} wrap={wrap} split={split} onRemark={onRemark}/></div>)
           : <p className="m-0 px-3 py-2 text-caption text-fg-3">没有差异文本</p>}
       </section>
     </Collapsible>
   </li>;
 }
-const WRAP_KEY = "harnesshub:diff-wrap";
+const WRAP_KEY = "harnesshub:diff-wrap", SPLIT_KEY = "harnesshub:diff-split";
+/** Whether a diff shows its two sides beside each other in this browser: one under the other until the user says otherwise. */
+function readSplit(): boolean { try { return localStorage.getItem(SPLIT_KEY) === "1"; } catch { return false; } }
 /** Whether long lines of a diff fold to the panel's width in this browser: they do until the user says otherwise (the panel is narrow). */
 function readWrap(): boolean { try { return localStorage.getItem(WRAP_KEY) !== "0"; } catch { return true; } }
 /**
@@ -580,11 +611,12 @@ function readWrap(): boolean { try { return localStorage.getItem(WRAP_KEY) !== "
  * to its diff, read-only, and names the Harness that made it. The scopes carry the changes each holds, counted as the tab and the header's button count them. Another
  * conversation's files are named with the way to that conversation, where their diffs are.
  */
-function Changes({ changes, selected, workspace, name, sessionId, members, want, onOpenSession, onReveal }: { readonly changes: ConversationChanges; readonly selected: PublicRun | null;
+function Changes({ changes, selected, workspace, name, sessionId, members, want, onOpenSession, onReveal, onRemark, onOpenFile }: { readonly changes: ConversationChanges; readonly selected: PublicRun | null;
     readonly workspace: string; readonly name: (id: string) => string; readonly sessionId: string; readonly members: TaskSnapshot["members"]; readonly want: ChangesWant | null; readonly onOpenSession?: ((id: string) => void) | undefined;
-    readonly onReveal?: ((path: string) => void) | undefined }) {
+    readonly onReveal?: ((path: string) => void) | undefined; readonly onRemark?: ((remark: DiffRemark) => void) | undefined; readonly onOpenFile?: ((path: string) => void) | undefined }) {
   const [scope, setScope] = useState<ChangesScope>("all");
-  const [wrap, setWrap] = useState(readWrap);
+  const [wrap, setWrap] = useState(readWrap), [split, setSplit] = useState(readSplit);
+  const beside = () => setSplit(value => { try { localStorage.setItem(SPLIT_KEY, value ? "0" : "1"); } catch { /* lasts for this page only */ } return !value; });
   const fold = () => setWrap(value => { try { localStorage.setItem(WRAP_KEY, value ? "0" : "1"); } catch { /* lasts for this page only */ } return !value; });
   // The files the user opened or closed by hand; until then a short list is open whole and a long one at its first file.
   const [chosen, setChosen] = useState<ReadonlySet<string> | null>(null);
@@ -616,7 +648,8 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
     <div className="flex min-h-11 items-center gap-2 pr-2.5 pl-3.5">
       <Segmented label="改动范围" value={shownScope} onChange={setScope} options={[{ value: "turn" as const, label: "本轮" }, { value: "all" as const, label: "这段对话" }, ...(others.length > 0 ? [{ value: "task" as const, label: "其他对话" }] : [])]}/>
       {shownScope !== "task" && files.length > 0 ? <span className="ml-auto flex flex-none items-center gap-1"><span className="mr-1 flex items-center gap-1.5"><Lines add={add} del={del}/></span>
-        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap} title={wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14} strokeWidth={2}/></button>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="并排显示" aria-pressed={split} title={split ? "并排显示：开" : "并排显示：关"} onClick={beside}><Columns2 size={14} strokeWidth={2}/></button>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap || split} disabled={split} title={split ? "并排时长行总是折行" : wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14} strokeWidth={2}/></button>
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label={every ? "全部收起" : "全部展开"} title={every ? "全部收起" : "全部展开"} onClick={() => setChosen(every ? new Set() : new Set(files.map(file => file.path)))}>
           {every ? <ChevronsDownUp size={14} strokeWidth={2}/> : <ChevronsUpDown size={14} strokeWidth={2}/>}</button></span> : null}
     </div>
@@ -627,7 +660,7 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
       <ul className="m-0 flex list-none flex-col gap-px p-0">{member.files.map(path => <li key={path}><FileRow path={path} workspace={workspace}/></li>)}</ul>
     </section>)}</div> : <>
       {files.length ? <ul ref={list} className="m-0 flex list-none flex-col gap-px px-2.5 pb-2" aria-label="改动的文件">{files.map(file =>
-        <FileDiff key={file.path} file={file} workspace={workspace} open={open.has(file.path)} wrap={wrap} onToggle={() => toggle(file.path)} name={name} onReveal={onReveal}/>)}</ul> : null}
+        <FileDiff key={file.path} file={file} workspace={workspace} open={open.has(file.path)} wrap={wrap} split={split} onToggle={() => toggle(file.path)} name={name} onReveal={onReveal} onRemark={onRemark} onOpenFile={onOpenFile}/>)}</ul> : null}
       {changes.unread > 0 ? <p className="m-0 flex items-center gap-2 px-4 pb-3 text-caption text-fg-3"><button type="button" className="link-btn text-caption" onClick={changes.more}>更早的 {changes.unread} 处编辑</button></p> : null}
       {changes.loading ? <p className="m-0 flex items-center gap-1.5 px-4 pb-3 text-caption text-fg-3"><Spinner size={12} label=""/>正在读取改动…</p> : null}
       {changes.failures.length ? <p className="m-0 px-4 pb-3 text-caption text-red">{changes.failures.length} 处改动读取失败：{changes.failures[0]}</p> : null}

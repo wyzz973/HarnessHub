@@ -117,12 +117,16 @@ const TOOLS: readonly ToolDefinition[] = [
     description: "Show the user a short wrap-up of this turn above their message box in HarnessHub: call it once, last, when your work for this message is done (not for every message of a chat). "
       + "`recap`: two or three short sentences, addressed to the user, of what is now true or changed and what is not done or not verified. "
       + "When the next move is the user's decision (a choice of approach, a go-ahead), add `ask`: one short question, and `actions`: one or two answers as buttons, your recommendation first, "
-      + "each label one to four words as the user would say it (\"Yes, go ahead\", \"Not now\"); a button sends its label as the user's next message. Leave both out when nothing waits on the user.",
+      + "each label one to four words as the user would say it (\"Yes, go ahead\", \"Not now\"); a button sends its label as the user's next message. Leave both out when nothing waits on the user. "
+      + "In the first turn of a conversation only, add `title`: a name for the conversation, in the user's language, at most about ten characters (eight words in English), a name and not a sentence "
+      + "(\"Fix login timeout\", \"登录超时修复\"); leave it out in every later turn.",
     inputSchema: { type: "object", properties: {
       recap: { type: "string", minLength: 1, description: "Two or three short sentences: what is done, what is not." },
       ask: { type: "string", description: "Optional: the one question the user is to answer, in one short sentence." },
       actions: { type: "array", minItems: 1, maxItems: 2, description: "Optional, with ask: one or two answers, recommendation first.", items: { type: "object", properties: {
-        label: { type: "string", minLength: 1, description: "The answer as the user would say it, one to four words." } }, required: ["label"], additionalProperties: false } } }, required: ["recap"], additionalProperties: false },
+        label: { type: "string", minLength: 1, description: "The answer as the user would say it, one to four words." } }, required: ["label"], additionalProperties: false } },
+      title: { type: "string", minLength: 1, description: "Only in the conversation's first turn: its name, in the user's language, about ten characters at most (eight words in English); a name, not a sentence. Leave it out later." } },
+      required: ["recap"], additionalProperties: false },
     annotations: { title: "Wrap up this turn", ...PROGRESS } },
   { name: "hub_delegate", title: "Delegate a part of the work",
     description: "Hand a part of this task to another Harness on this computer (another coding agent the user has installed). It works in a conversation of its own, in the same folder, "
@@ -405,7 +409,9 @@ async function runTool(name: string, args: Readonly<Record<string, unknown>>, su
       }
       case "hub_wrap_up": {
         if (typeof args.recap !== "string" || args.recap.trim() === "") throw new ToolError("recap is required: two or three short sentences of what is done and what is not.");
-        await tell(connection, "/api/table/wrap-up", { recap: args.recap, ...(typeof args.ask === "string" ? { ask: args.ask } : {}), ...(Array.isArray(args.actions) ? { actions: args.actions } : {}) });
+        if (args.title !== undefined && typeof args.title !== "string") throw new ToolError("title must be a text: the conversation's name, given in its first turn only.");
+        await tell(connection, "/api/table/wrap-up", { recap: args.recap, ...(typeof args.ask === "string" ? { ask: args.ask } : {}), ...(Array.isArray(args.actions) ? { actions: args.actions } : {}),
+          ...(typeof args.title === "string" && args.title.trim() !== "" ? { title: args.title } : {}) });
         return { text: "Wrap-up shown to the user.", isError: false };
       }
       case "hub_task": {
@@ -547,8 +553,9 @@ const USAGE = [
   "  hub-tools search <words> [--limit N] [--after C] [--in all|words]",
   "                                                   find words in the whole conversation, a page at a time (C: the cursor the page before gave); --in words searches only the user's words and the replies, quickly",
   "  hub-tools plan <step>...                         show the user your task list: each step is \"[x] done\", \"[~] in progress\" or \"[ ] to do\"; give the whole list every time",
-  "  hub-tools wrap-up <recap> [--ask Q] [--action A]...",
-  "                                                   show the user a short wrap-up of this turn, with one question and one or two answers when the next move is theirs",
+  "  hub-tools wrap-up <recap> [--ask Q] [--action A]... [--title T]",
+  "                                                   show the user a short wrap-up of this turn, with one question and one or two answers when the next move is theirs;",
+  "                                                   --title names the conversation (its first turn only: a name of about ten characters, or eight words, in the user's language)",
   "  hub-tools delegate <harness> <task>              hand a self-contained part of the work to another Harness, which does it in a conversation of its own",
   "  hub-tools delegations [--wait N]                 how the work handed over stands; --wait N waits up to N seconds (25 at most) for what still runs",
   "  hub-tools board                                  the task board: the goal, the user's constraints, decisions and notes everyone on the task goes by",
@@ -571,7 +578,7 @@ export async function main(args: readonly string[], io: ToolIo = { env: process.
   let values: Record<string, string | undefined>, positionals: string[], actions: readonly string[] = [];
   try {
     const parsed = parseArgs({ args: rest, allowPositionals: true, strict: true, options: { from: { type: "string" }, limit: { type: "string" }, part: { type: "string" }, tool: { type: "string" }, offset: { type: "string" }, after: { type: "string" }, in: { type: "string" },
-      wait: { type: "string" }, ask: { type: "string" }, explanation: { type: "string" }, conversation: { type: "string" }, forget: { type: "string" }, action: { type: "string", multiple: true } } });
+      wait: { type: "string" }, ask: { type: "string" }, explanation: { type: "string" }, conversation: { type: "string" }, forget: { type: "string" }, title: { type: "string" }, action: { type: "string", multiple: true } } });
     const { action, ...single } = parsed.values;
     values = single; positionals = parsed.positionals; actions = action ?? [];
   } catch (error) { return misuse(io, error instanceof Error ? error.message : "bad arguments"); }
@@ -595,7 +602,7 @@ export async function main(args: readonly string[], io: ToolIo = { env: process.
     tool = "hub_update_plan"; input = { items, ...only(["explanation"]) };
   } else if (command === "wrap-up") {
     if (!positionals.length) return misuse(io, "wrap-up takes the recap: two or three short sentences of what is done and what is not.");
-    tool = "hub_wrap_up"; input = { recap: positionals.join(" "), ...only(["ask"]), ...(actions.length ? { actions: actions.map(label => ({ label })) } : {}) };
+    tool = "hub_wrap_up"; input = { recap: positionals.join(" "), ...only(["ask", "title"]), ...(actions.length ? { actions: actions.map(label => ({ label })) } : {}) };
   } else if (command === "delegate") {
     if (positionals.length < 2) return misuse(io, "delegate takes the Harness and the task: hub-tools delegate <harness> \"<task>\".");
     tool = "hub_delegate"; input = { harness: positionals[0], task: positionals.slice(1).join(" ") };

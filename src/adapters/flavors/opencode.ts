@@ -51,5 +51,7 @@ export const opencodeFlavor: HarnessFlavor = {
   // "until restart", nothing written). No per-session system prompt over ACP (an agent's `system` replaces its whole prompt), but MCP server
   // instructions go into the model's instructions as `<mcp_instructions>` (McpInstructions, core/mcp-guidance): the instructions go there.
   // The record is read as files with its own file tools (2026-11-13; verified on the installed program: it read the directory and answered from it).
-  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", resume: "native", fork: "native", attachments: "native", usage: "turn", record: "files" },
+  // No words in the middle of a turn: OpenCode's ACP (2.2.5) refuses a second prompt while one runs ("Session already has an active ACP
+  // prompt", opencode.ts BUSY) and its initialize advertises no steering method.
+  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", resume: "native", fork: "native", attachments: "native", usage: "turn", record: "files", steer: "none" },
 };

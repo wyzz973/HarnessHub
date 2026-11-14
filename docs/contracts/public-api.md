@@ -137,3 +137,37 @@ relay: { packetId: "relay-…" | null, kind: "packet" | "delta" | null,
 - `PATCH …`，请求体 `{ "title"?: string, "archived"?: boolean }`，至少一个，多余字段 400。标题去首尾空白、换行压成空格，空串 400 `INVALID_INPUT`；用户给的标题此后不再被第一句话算出的标题覆盖（第一轮之前改的也一样）。归档只是列表上的标记，和 `status`（结束会话）无关：归档的对话照样打开、照样发消息，新的一轮被受理时在同一次提交里自动取消归档。返回 200 与改后的 `SessionSummary`。改名、归档各是一次提交（事件 `session.renamed`、`session.archived`），和别的提交一样经事实流的提交帧（带 `head`）到达开着这个对话的页面，`lastSeq` 与 `updatedAt` 随之前移；什么都没变的请求不提交。
 - `POST …/reveal`，请求体 `{ "path"?: string }`：不带时在访达里打开工作区文件夹，带时在访达里选中这个文件（相对工作区或绝对路径）。路径取真实路径后必须在工作区里（就是工作区时打开它），否则 400；文件不在 404 `FILE_NOT_FOUND`，工作区不在 404 `WORKSPACE_NOT_FOUND`；非 macOS 409 `REVEAL_UNSUPPORTED`。成功 204。
 - `GET …/workspace` → `{ "path": "/…", "git"?: { "branch": "main" | null, "dirty": 3 } }`：工作区在 Git 仓库里时带 `git`，`branch` 在分离头指针时为 null，`dirty` 是 `git status --porcelain` 的条数（含未跟踪）。只读：一次 `git status --porcelain=v2 --branch`，`GIT_OPTIONAL_LOCKS=0`，3 秒没答完或失败就不带 `git`，不报错。
+
+## 对话的置顶、稍后提醒、删除与 Harness 起名（2026-11-14）
+
+状态：代码完成，合成测试通过（真实 HTTP、真实文件存储、夹具 Harness）；没有真机验证，没有真的让 Harness 调 `hub_wrap_up` 带 `title`。
+
+- `SessionSummary` 与 `SessionHeadView` 多了 `pinned: true`（置顶了才带）、`snoozedUntil`（毫秒时间戳，设了稍后提醒才带；到没到由页面判断，网关只存）。
+- `PATCH …` 的请求体多接受 `pinned?: boolean`、`snoozedUntil?: number | null`（非负整数毫秒；null 取消）。事件 `session.pinned`、`session.snoozed`。新的一轮被受理时，和取消归档同一次提交清掉 `snoozedUntil`；`pinned` 不清。
+- 只改名字和标记的提交（改名、归档、置顶、稍后提醒、Harness 起名、删除与恢复）不动 `updatedAt`：列表的先后和“多久以前”只说对话本身的进展。`updatedSeq`/`lastSeq` 照旧变大，页面靠它发现变化。这类提交写进文件的每一行带 `"marks": true`，重读文件时这些行不推时间，重启后一致。
+- `DELETE …` → 204：软删除。从列表消失，除恢复外的所有路由都 404 `SESSION_NOT_FOUND`（读、改、发消息、再删一次）；跨对话搜索也不再找它。有一轮在排队或进行、或有待生效的切换时 409 `SESSION_ACTIVE`（先停下）。它保留着的原生进程按结束对话的同一条路放掉（原因 `conversation_deleted`），放掉记下后才回 204。会话文件留在原处，不做清除（没有“彻底删除”）。被它委派出去的子对话不动。删除状态记在头里（`deletedAt`），重启后还在。事件 `session.deleted`。
+- `POST …/restore`，请求体 `{}` → 200 与 `SessionSummary`：撤销删除，回到列表里它自己的时间所在的位置。没删的对话原样返回。事件 `session.restored`。
+- `hub_wrap_up`（以及命令行 `hub wrap-up … --title T`）多一个可选参数 `title`：这段对话的名字，只在第一轮给。Hub 只在用户没改过名、而且这段对话还没被 Harness 起过名时采用（压空白、截到 80 个 UTF-16 单位），采用后列表和对话头的标题随之更新；这不算用户改的名，用户之后改名照样盖过它。存在头里（`harnessTitle`），重启后还在。事件 `session.titled`。
+
+## 在编辑器里打开、读文件、Git 明细、提交与推送（2026-11-14）
+
+状态：代码完成，合成测试通过（真实 HTTP、临时目录里 `git init` 的仓库、本地裸仓库当远端、测试自己的 Git 配置）；没有真机验证，测试里从没真的打开过编辑器。类型在 `src/contracts/web.ts`（`EditorView`、`EditorsView`、`WorkspaceFileView`、`GitView`、`GitFileView`、`GitCommitView`、`GitPushView`），实现在 `src/infrastructure/workspace/`（`place.ts` 是共用的路径判断，访达也改用它）。路径一律先取真实路径，必须是工作区或在工作区里（`..`、别处的绝对路径、指向外面的链接都 400）。删除了的对话这些路由都 404。
+
+- `GET /api/v1/editors` → `{ "editors": [{ "id": "vscode", "name": "VS Code" }, …] }`：`/Applications`、`~/Applications` 里有应用包的才列，每次现查。认得的 id：`vscode`、`cursor`、`windsurf`、`zed`、`sublime`、`xcode`、`nova`、`textmate`、`intellij`、`webstorm`、`pycharm`、`goland`、`rustrover`。
+- `POST …/open`，请求体 `{ "editor": string, "path"?: string }` → 204：`open -a <找到的应用包> <工作区或文件>`（`execFile`，不经 shell）。依次检查：不认识的编辑器 400，路径越界 400、不在 404 `FILE_NOT_FOUND`，没装 404 `EDITOR_NOT_FOUND`；都过了才打开。
+- `GET …/file?path=<相对或绝对>&offset=<字节>` → `{ path（相对工作区）, size, offset, text, next }`，一页最多 256 KiB，在 UTF-8 字符之间切开；`next` 是下一页的起始字节，读完为 null；`offset` 落在字符中间时从下一个字符起（回答里的 `offset` 是实际起点），超出文件长度 400。前 8 KiB 里有 NUL 的返回 `{ path, size, binary: true }`，不读内容。目录 400，不在 404。只读，打开时不阻塞（FIFO 之类直接 400）。
+- `GET …/git` → `{ branch: string | null, upstream?: { name, ahead, behind }, remote: boolean, files: [{ path, from?, index, worktree, added?, removed? }] }`。`git status --porcelain=v2 --branch --untracked-files=all -z` 加 `git diff --numstat -z HEAD`（第一次提交之前对空树比）；`index`/`worktree` 是 porcelain v2 的字母，`.` 表示没变，未跟踪文件是 `?`/`?` 且没有行数，二进制文件也没有行数；改名带 `from`。工作区在仓库的子目录里时只看这个子目录（pathspec `.`），路径都相对工作区。不在仓库里 404 `NOT_A_REPOSITORY`。只读的几条带 `GIT_OPTIONAL_LOCKS=0`。
+- `POST …/git/commit`，请求体 `{ "message": string, "paths"?: string[] }` → `{ commit（短哈希）, subject }`。给了 `paths`（相对或绝对、都在工作区里，工作区里已删掉的文件也可以点名）就 `git add -A -- <paths>` 再 `git commit -m <message> -- <paths>`，只提交这几项，别的已暂存内容原样留着；没给就 `git add -A` 再 `git commit -m`（子目录工作区是 pathspec `.`）。pathspec 按字面（`--literal-pathspecs`）。空说明、空的 `paths` 数组 400。没有可提交的 409 `GIT_NOTHING_TO_COMMIT`；钩子失败、没配身份等 409 `GIT_COMMIT_FAILED`；`message` 都是 git 自己的话（太长时掐掉中间，开头和结尾都留）。提交最多给 5 分钟（钩子可能跑检查）。
+- `POST …/git/push`，请求体 `{}` → `{ remote, branch }`。有上游 `git push`；没有上游但有 `origin` 就 `git push -u origin <当前分支>`；都没有 409 `GIT_NO_REMOTE`；分离头指针 409 `GIT_DETACHED_HEAD`；git 拒绝或 60 秒没完成 409 `GIT_PUSH_FAILED`，带 git 的话。
+- 所有 git 都是 `spawn` 参数数组、不经 shell，stdin 关着，`GIT_TERMINAL_PROMPT=0`，并且在自己的进程会话里跑（没有控制终端，ssh 也问不了密码），超时连同子进程组一起杀掉。提交和推送只在用户点了按钮时由页面调用，网关不自己触发。`code` 以 `GIT_` 开头的一律 409。
+
+## 对话的终端（2026-11-14）
+
+状态：代码完成，合成测试通过（`tests/integration/terminal.test.ts`：真实网关、真实 WebSocket、真实 zsh 与伪终端，用临时 HOME 隔开用户的 shell 配置）；页面还没接上，没有真机验证。伪终端在 `src/infrastructure/workspace/terminal.ts`（node-pty），连接在 `src/infrastructure/workspace/terminal-socket.ts`（ws），路由在 `src/web/server.ts`。
+
+`GET /api/v1/sessions/:id/terminal?cols=80&rows=24`，升级成 WebSocket（页面用 `GatewayApi.terminalUrl(id, cols, rows)` 拼地址）。一个连接一个 shell：用户的登录 shell（`$SHELL -l`，不是可执行文件时用 `/bin/zsh -l`）挂在一个伪终端上，起在对话的工作区里，能跑 `vim`、`top` 这类全屏程序。环境是网关给登录 shell 的那一套（`HOME USER LOGNAME LANG TMPDIR`，没有 `LANG` 时补 `en_US.UTF-8`），加 `SHELL`、`TERM=xterm-256color`、`COLORTERM=truecolor` 和 login(1) 的起始 `PATH`（`/usr/bin:/bin:/usr/sbin:/sbin`），其余由 shell 自己的登录配置设。
+
+- 放行：`Host` 必须是网关自己的；`Origin` **必须**等于网关自己的来源（不带也拒），否则 403 `ORIGIN_REJECTED`；没有或过期的登录 401 `AUTH_REQUIRED`（登录 cookie 照常续期，需要时随握手应答发回）；对话不存在或已删除 404；`cols`/`rows` 不是 1–65535 的整数、或带了别的参数 400 `INVALID_INPUT`（不带时 80×24）；工作区文件夹不在 409 `WORKSPACE_UNAVAILABLE`；网关正在关闭 503。拒绝都是普通 HTTP 应答，体为 `{ code, message }`。别的路径的升级请求 404。
+- 帧都是 JSON 文本帧。页面发 `{ "type": "input", "data": string }`（原样写进终端）、`{ "type": "resize", "cols": number, "rows": number }`；认不出的帧、二进制帧忽略。网关发 `{ "type": "output", "data": string }`（伪终端的输出，按 UTF-8 流式解码，跨块的多字节字符完整到达）和 shell 退出后的一条 `{ "type": "exit", "code": number | null }`（被信号结束时为 null，shell 没能起来也发 `code: null` 并以 1011 关闭），随后以 1000 关闭连接。
+- 背压：发出未写完的输出超过 1 MiB 就暂停读伪终端（shell 的写随之阻塞），降到 256 KiB 以下再读；不丢输出。
+- 结束：连接断开就挂断终端——shell 和终端上其他进程（后台作业、前台全屏程序）收到 SIGHUP（用 nohup 起的会忽略它），shell 每 200 毫秒再收一次直到退出，2 秒后还在就 SIGKILL 它和它的进程组。网关关闭时先这样结束所有终端、等 shell 退出，再关监听。

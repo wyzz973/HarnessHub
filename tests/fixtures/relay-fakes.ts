@@ -90,6 +90,12 @@ export class Fakes implements SessionBindingFactory {
   readonly emit = new Map<string, (event: Parameters<Parameters<HarnessControl["startText"]>[2]>[0]) => void>();
   /** Runs when the Runtime enables permissions: after the Turn's authorization, right before its dispatch. */
   onAuthorized: ((harnessId: string) => void) | null = null;
+  /** The Harnesses that take words in the middle of a turn (HarnessControl.steering): none unless added. */
+  readonly steerable = new Set<string>();
+  /** Words given to a turn in progress that a Harness took, in order. */
+  readonly steered: { readonly harnessId: string; readonly text: string; readonly session: string }[] = [];
+  /** What a Harness answers words given to its turn: taken while a prompt is held (it runs), not taken otherwise, unless this says so (an Error: the request failed). */
+  steerAnswer: ((harnessId: string, text: string) => "taken" | "not_taken" | Error) | null = null;
   relayCapabilities(selection: HarnessSelection): RelayCapabilities | null { return this.declarations[selection.harnessId] ?? null; }
   async relaySecrets(): Promise<readonly string[]> {
     if (this.secretsFail) throw new SessionError("RELAY_PREPARE_FAILED", "没能准备交接单：读取交接单必须隐去的凭据时出错，这条消息没有发出。");
@@ -140,6 +146,16 @@ export class Fakes implements SessionBindingFactory {
         return { result, requestStop: async () => { for (const held of this.held.splice(0)) held.stop(); return { requested: true }; } };
       },
       close: async () => { const closed = this.closing[harnessId] ?? CLEAN; if (closed instanceof Error) throw closed; return closed; },
+      ...(this.steerable.has(harnessId) ? {
+        steering: true,
+        // The words a turn took join its native history after its prompt, and its reply goes on with them.
+        steer: async (_id: unknown, text: string) => {
+          const answer = this.steerAnswer?.(harnessId, text) ?? (this.held.length > 0 ? "taken" : "not_taken");
+          if (answer instanceof Error) throw answer;
+          if (answer === "taken") { this.steered.push({ harnessId, text, session: session! }); entries().push(text); this.emit.get(harnessId)?.({ type: "text", text: "took: " + text }); }
+          return answer;
+        },
+      } : {}),
     };
     return { control, workspace: configuration.workspace, assertOwned: () => {}, close: () => control.close(), ...(this.hubTools.has(harnessId) ? { hubTools: true } : {}),
       ...(this.recordFiles.has(harnessId) ? { recordFiles: true } : {}) };

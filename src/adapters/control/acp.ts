@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { TABLE_ENV, TABLE_INSTRUCTIONS_ENV, TABLE_MCP_NAME, TABLE_RECORD_ENV } from "../../contracts/table.js";
 import { listedCommand, nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
-  type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
+  type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type SteerOutcome, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
 import { unifiedDiff } from "../../infrastructure/control/unified-diff.js";
 import { type NativeOutput, type NativeSessionImport, type NativeSessionPage, type NativeToolDetail, type NativeUsage } from "../../contracts/control.js";
@@ -57,6 +57,8 @@ const TRAILING_SETTLE_MS = 2000;
  * generous: it only ends a setup that has been silent for ten minutes, and the failure names the step that was waited for.
  */
 const SESSION_SETUP_MS = 10 * 60_000;
+/** The ACP steering extension's request (claude-agent-acp 0.99.1 STEER_METHOD): words for the turn in progress. */
+const STEER_METHOD = "_session/steering";
 /** How long an abandoned session's session/close is waited for; the session is abandoned whatever the agent answers. */
 const CLOSE_SESSION_MS = 2000;
 /** Display label from native text: control characters (including newlines in multi-line commands) become spaces. */
@@ -168,6 +170,8 @@ export class AcpControl implements HarnessControl {
   private initialized = false;
   private version: string | null = null;
   private capabilities: Record<string, unknown> = {};
+  /** The agent's initialize advertised the ACP steering extension (`_meta.steering.supported`). */
+  private steeringAdvertised = false;
   private conversation: NativeConversationId | null = null;
   private opening = false;
   private replaying = false;
@@ -231,6 +235,9 @@ export class AcpControl implements HarnessControl {
       if (response.protocolVersion !== 1) throw new ControlError("PROTOCOL_VERSION", "peer did not negotiate ACP v1");
       const capabilities = object(response.agentCapabilities, "ACP agent capabilities");
       this.capabilities = capabilities;
+      // The ACP steering extension (`_session/steering`) is advertised beside agentCapabilities, in the response's own `_meta` (claude-agent-acp 0.99.1).
+      const meta = response._meta, steering = meta !== null && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>).steering : undefined;
+      this.steeringAdvertised = steering !== null && typeof steering === "object" && (steering as Record<string, unknown>).supported === true;
       // ACP's schema defaults authMethods to an empty list; Hermes 0.12 leaves it out when it has no provider credentials.
       const advertised = response.authMethods === undefined ? [] : response.authMethods;
       if (!Array.isArray(advertised)) throw new ControlError("INVALID_PROTOCOL", "authMethods must be a bounded array");
@@ -848,6 +855,39 @@ export class AcpControl implements HarnessControl {
       return active.stop;
     } };
   }
+  /** HarnessControl.steering: the agent advertised the ACP steering extension at initialize. */
+  get steering(): boolean { return this.steeringAdvertised; }
+  /**
+   * HarnessControl.steer over the ACP steering extension (claude-agent-acp 0.99.1 acp-agent.js `steer`): `_session/steering {sessionId, prompt,
+   * _meta.steering.idleBehavior: "promptRequired"}`. The agent pushes the words into the turn it runs (`injected`: taken; the turn then settles
+   * only once a result answered them); with no turn running it answers `promptRequired` and keeps nothing, so words that come too late never
+   * start a turn of their own (not taken). A refusal steerRefused names took nothing either. Any other answer, or none, leaves it unknown
+   * (rejects). Asked only while this connection's prompt runs and is not being stopped; otherwise nothing is sent and nothing is taken.
+   */
+  async steer(id: NativeConversationId, text: string): Promise<SteerOutcome> {
+    this.assertOwned(id);
+    if (!this.steeringAdvertised) throw new ControlError("NATIVE_STEER_UNAVAILABLE", "this agent does not advertise the ACP steering extension");
+    if (typeof text !== "string" || text.length === 0) throw new ControlError("INVALID_INPUT", "steering words must contain text");
+    const active = this.active;
+    if (active === null || active.settled || active.stopping) return "not_taken";
+    let response: Record<string, unknown>;
+    try {
+      response = object(await this.rpc.request(STEER_METHOD, { sessionId: id, prompt: [{ type: "text", text }], _meta: { steering: { idleBehavior: "promptRequired" } } },
+        this.options.requestTimeoutMs, "reject"), "steering result");
+    } catch (error) {
+      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null && this.steerRefused(error)) return "not_taken";
+      throw errorFrom(error);
+    }
+    if (response.outcome === "injected") return "taken";
+    if (response.outcome === "promptRequired") return "not_taken";
+    // `startedNewTurn` is the answer of an agent that ignored the opt-in: a turn of its own, which the Hub neither started nor sees.
+    throw new ControlError("INVALID_PROTOCOL", "the agent answered steering with an outcome it was not asked for");
+  }
+  /**
+   * Whether the agent's refusal of a steering request says it took nothing: it refuses with these before it touches the turn (claude-agent-acp
+   * 0.99.1: an unknown method, invalid parameters, a session it does not have). A Driver whose agent refuses so in other words adds them.
+   */
+  protected steerRefused(error: ControlError): boolean { return error.remoteCode === -32601 || error.remoteCode === -32602 || error.remoteCode === -32002; }
   enablePermissions(): void { this.interactivePermissions = true; }
   async decidePermission(id: string, option: string, input?: string): Promise<void> {
     const pending = this.permissions.get(id); if (!pending || !pending.options.includes(option)) throw new ControlError("PERMISSION_UNAVAILABLE", "permission or actual option unavailable");

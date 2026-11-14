@@ -38,5 +38,10 @@ export const hermesFlavor: HarnessFlavor = {
   // prompt from the viewer (HERMES_EPHEMERAL_SYSTEM_PROMPT is read from a shell client's client_env, which the viewer does not send),
   // `/personality` writes config.yaml, and its MCP client never reads a server's instructions (tools/mcp_tool*.py): first-prompt.
   // The record is read as files with its own file tools (2026-11-13; verified on the installed program: it read the directory and answered from it).
-  capabilities: { sessionMcp: "acp", systemPrompt: "first-prompt", planTool: "hub", resume: "native", fork: "native", attachments: "pointer", usage: "turn", record: "files" },
+  // No words in the middle of a turn from the Hub, although Hermes has `/steer` (gateway `session.steer`): over ACP it goes as a second prompt,
+  // and acp_adapter/gateway_commands.py `_prompt`/`_steer` submits the words as a turn of their own whenever the steer is not queued (no turn of
+  // this prompt's admission started yet, the turn ended meanwhile, the gateway refused it); a steer queued after the turn's last tool batch is
+  // handed back by agent/turn_finalizer.py (`pending_steer`) as the next user turn. Either way Hermes would run a turn the Hub did not start
+  // and could not tell or stop, and ACP offers no way to say "only into the running turn".
+  capabilities: { sessionMcp: "acp", systemPrompt: "first-prompt", planTool: "hub", resume: "native", fork: "native", attachments: "pointer", usage: "turn", record: "files", steer: "none" },
 };

@@ -298,6 +298,12 @@ export interface NativeModelCatalog {
   readonly flavor?: HarnessFlavor;
 }
 export interface StopRequestReceipt { readonly requested: true }
+/**
+ * What the native side said of words given to its turn in progress (HarnessControl.steer): `taken`, it took them into the turn that runs
+ * (the model reads them at its next step, and the turn goes on with them); `not_taken`, it took nothing (no turn was running when they
+ * arrived, or it refused the request before taking them), so the words are still the Hub's to send as a Turn of their own.
+ */
+export type SteerOutcome = "taken" | "not_taken";
 export interface CleanupEvidence {
   readonly closed: true;
   readonly exitCode: number | null;
@@ -419,6 +425,18 @@ export interface HarnessControl {
    * (singleText by default). Attachments were accepted by checkAttachments; their private copies stay readable for the Turn.
    */
   startText(id: NativeConversationId, text: TurnText, onEvent: (event: ControlEvent) => void, attachments?: readonly ControlAttachment[]): Promise<ControlRun>;
+  /**
+   * Whether this connection's native side takes the user's words in the middle of a turn (steer): claude-agent-acp's `_session/steering`
+   * when its initialize advertises it, Codex's `turn/steer`. Read after initialize; absent is false. Never emulated by stopping the turn and
+   * sending again: a turn whose outcome is unknown is not run twice.
+   */
+  readonly steering?: boolean;
+  /**
+   * Gives the user's words to the turn of `id` that runs now (startText's, not yet settled), as text, without stopping it. Resolves with
+   * what the native side said of them (SteerOutcome); rejects when it cannot tell (the request failed or went unanswered), when the words
+   * may have reached it. Never starts a turn of its own: words that find no turn running are `not_taken`, and stay the Hub's.
+   */
+  steer?(id: NativeConversationId, text: string): Promise<SteerOutcome>;
   /** Enables interactive requests for a public Run. Standalone probes keep their explicit deny default. */
   enablePermissions?(): void;
   /** Selects an actual pending option; receipt does not assert backend acknowledgement. */

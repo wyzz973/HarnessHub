@@ -12,6 +12,15 @@ const BEGIN = "__HARNESSHUB_PATH_BEGIN__", END = "__HARNESSHUB_PATH_END__";
 const SCRIPT = `printf '%s\\n' ${BEGIN}; printf '%s\\n' "$PATH"; printf '%s\\n' ${END}`;
 
 /**
+ * What the Gateway hands a login shell it starts of the environment it was started with: who the user is, where home is,
+ * the language and the temporary directory. Everything else (PATH above all) is the login configuration's to set, as it is
+ * for a shell the user opens in a terminal of their own. The PATH read below and a conversation's terminal both start with it.
+ */
+export function loginShellEnvironment(values: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  return Object.fromEntries(["HOME", "USER", "LOGNAME", "LANG", "TMPDIR"].flatMap(name => values[name] === undefined ? [] : [[name, values[name]!]]));
+}
+
+/**
  * The PATH directories of the user's login shell, read once on the user's request: `$SHELL -l -c` runs the shell's login
  * configuration non-interactively and prints PATH between markers. The shell must be an absolute path to a file that the
  * system's shell list names. Only existing absolute directories are kept, at most 64. It fails with LOGIN_SHELL_UNAVAILABLE

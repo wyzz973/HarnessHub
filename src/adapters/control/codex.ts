@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { TABLE_ENV, TABLE_MCP_NAME, TABLE_RECORD_ENV } from "../../contracts/table.js";
 import { nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
-  type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
+  type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type SteerOutcome, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
 import { diffPath } from "../../infrastructure/control/unified-diff.js";
 import type { NativeToolDetail, NativeUsage } from "../../contracts/control.js";
@@ -74,6 +74,11 @@ interface ActiveTurn {
   begun: boolean;
   /** Wakes a stop that waits for the turn to begin (or to end); set only while one waits. */
   wake: (() => void) | null;
+  /**
+   * Words given to this turn with `turn/steer`, by the client identity each was sent with: whether Codex has reported it as a user message of the
+   * thread yet (it echoes the identity), which it does once it took the words into the turn's history.
+   */
+  readonly steers: Map<string, boolean>;
 }
 interface Tokens { readonly totalTokens: number; readonly inputTokens: number; readonly cachedInputTokens: number; readonly cacheWriteInputTokens: number; readonly outputTokens: number; readonly reasoningOutputTokens: number }
 const STREAM_MS = 300;
@@ -681,7 +686,7 @@ export class CodexControl implements HarnessControl {
     const active: ActiveTurn = { event: onEvent, resolve, reject,
       timer: this.options.runTimeoutMs === undefined ? undefined : setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Codex turn exceeded its deadline")), this.options.runTimeoutMs),
       started, signalStarted, rejectStarted, turnId: null, settled: false, stopping: false, stop: null, deltaItems: new Set(), items: new Map(), agents: new Map(), reads: new Set(), baseline: this.lastTotal, inputRecorded: false,
-      clientId, packetId, requests: [], begun: false, wake: null };
+      clientId, packetId, requests: [], begun: false, wake: null, steers: new Map() };
     this.active = active;
     // Images and audio are read by Codex from the private copies; files have no input type and are named by path.
     const input = [{ type: "text", text: text + mentions, text_elements: [] }, ...(skill ? [{ type: "skill", name: skill.name, path: skill.path }] : []),
@@ -721,6 +726,40 @@ export class CodexControl implements HarnessControl {
       active.stop = this.stopTurn(active, id);
       return active.stop;
     } };
+  }
+  /** HarnessControl.steering: app-server takes words for the turn in progress (`turn/steer`, 0.166.0). */
+  readonly steering = true;
+  /**
+   * HarnessControl.steer: `turn/steer {threadId, expectedTurnId, input, clientUserMessageId}`. Codex answers with the turn's identity once it
+   * took the words into that turn (taken), and refuses the request when the turn named is not the one that runs (it ended, or was replaced):
+   * nothing was taken then, and Codex starts nothing of its own. A steer before Codex named the turn waits for turn/start's answer. The words go
+   * with an identity of their own, which the user message Codex records echoes (`steers`); that message is never taken for the turn's own input.
+   */
+  async steer(id: NativeConversationId, text: string): Promise<SteerOutcome> {
+    this.assertInitialized();
+    if (!this.conversation || id !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "thread is not owned by this connection");
+    if (typeof text !== "string" || text.length === 0) throw new ControlError("INVALID_INPUT", "steering words must contain text");
+    const active = this.active;
+    if (active === null || active.settled || active.stopping) return "not_taken";
+    if (active.turnId === null) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const named = await Promise.race([active.started.then(() => true, () => false), new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), this.options.requestTimeoutMs); })]);
+      clearTimeout(timer);
+      if (!named) return "not_taken";
+    }
+    if (active.settled || active.stopping || this.active !== active || active.turnId === null) return "not_taken";
+    const clientId = randomUUID(), turnId = active.turnId;
+    active.steers.set(clientId, false);
+    try {
+      const response = object(await this.rpc.request("turn/steer", { threadId: id, expectedTurnId: turnId, input: [{ type: "text", text, text_elements: [] }], clientUserMessageId: clientId },
+        this.options.requestTimeoutMs, "reject"), "turn/steer result");
+      if (response.turnId !== turnId) throw new ControlError("INVALID_PROTOCOL", "Codex steered a turn it was not asked to");
+      return "taken";
+    } catch (error) {
+      // Codex refuses before it takes anything: the turn is not the active one any more (or there is none), or the request is malformed.
+      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) { active.steers.delete(clientId); return "not_taken"; }
+      throw errorFrom(error);
+    }
   }
   /** Reads the rollout file read-only within the content budget and returns it as an output of this Run. */
   private async exportThread(active: ActiveTurn, id: NativeConversationId): Promise<void> {
@@ -919,6 +958,8 @@ export class CodexControl implements HarnessControl {
         // A user message of this turn with another client's identity is not this turn's input (Codex echoes the identity a
         // turn was started with, as `clientId` or `clientUserMessageId`; an item without one is this turn's by its turn id).
         const echoed = echoedClientId(item);
+        // Words given to the turn in progress (turn/steer): recorded as their own user message, never this turn's input.
+        if (echoed !== null && active.steers.has(echoed)) { active.steers.set(echoed, true); return; }
         if (active.clientId !== null && echoed !== null && echoed !== active.clientId) return;
         // E1 (ADR-055 §7.1): Codex reports the input as a thread item once it recorded it; said once, with the packet it carries.
         if (!active.inputRecorded) {

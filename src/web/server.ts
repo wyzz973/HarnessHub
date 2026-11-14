@@ -1,9 +1,10 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { release, userInfo } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { application as composeApplication, builtinHarnessName } from "../cli/session-application.js";
 import { ProviderError } from "../contracts/provider.js";
@@ -11,7 +12,7 @@ import { ManagementError } from "../contracts/management.js";
 import type { ConversationCommit, StartupSample } from "../contracts/conversation.js";
 import { BOARD_KINDS, SessionError, parseNativeOptions, runId, sessionId, type BoardKind, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type TurnLimits } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES } from "../contracts/content.js";
-import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, MaintenanceView, NativeSessionListView, TaskView, UninstallCheckView, InstallCheckView, WebState, WorkspaceView } from "../contracts/web.js";
+import type { EditorsView, EventPage, GitCommitView, GitPushView, GitView, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, MaintenanceView, NativeSessionListView, SteerView, TaskView, UninstallCheckView, InstallCheckView, WebState, WorkspaceFileView, WorkspaceView } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
@@ -23,6 +24,9 @@ import type { InstallationJobView } from "../contracts/management.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { chooseFolder, FolderDialogUnavailable, scratchFolder } from "../infrastructure/workspace/choose-folder.js";
 import { revealInFinder } from "../infrastructure/workspace/finder.js";
+import { installedEditors, openInEditor } from "../infrastructure/workspace/editors.js";
+import { readWorkspaceFile } from "../infrastructure/workspace/workspace-file.js";
+import { gitCommit, gitDetail, gitPush } from "../infrastructure/workspace/git.js";
 import { workspaceGit } from "../infrastructure/workspace/git-status.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
@@ -42,7 +46,9 @@ import { exportJson, exportMarkdown, rowsExport, rowsJsonExport } from "./conver
 import { scrubDiagnostics, turnDiagnostics } from "./run-diagnostics.js";
 import { messageStarts, turnSource } from "../contexts/session/domain/turn-source.js";
 import { nativeResume } from "../infrastructure/management/verified-versions.js";
-import { LoginShellStore, readLoginShellPath, type LoginShellDirectories } from "../infrastructure/discovery/login-shell.js";
+import { LoginShellStore, loginShellEnvironment, readLoginShellPath, type LoginShellDirectories } from "../infrastructure/discovery/login-shell.js";
+import { terminalEnvironment, terminalShell } from "../infrastructure/workspace/terminal.js";
+import { TerminalSockets, terminalSize } from "../infrastructure/workspace/terminal-socket.js";
 import { CapabilityService, type InstalledChannel, type InstalledHarness } from "../infrastructure/capabilities/service.js";
 import { CapabilityChanges, homeText } from "../infrastructure/capabilities/changes.js";
 import { CapabilityError, INSTRUCTION_CHECK_OPTIONS, type InstructionCheckOption, type McpDefinitionView } from "../contracts/capabilities.js";
@@ -124,6 +130,13 @@ export interface WebServerOptions {
   readonly hubTools?: HubToolsOptions;
   /** Runs the user's `claude` for its own MCP commands (ADR-045 step 3b); the sandboxed system one by default. */
   readonly claude?: ClaudeRunner;
+  /** Where the editors' application bundles are looked for (2026-11-14); /Applications and ~/Applications by default. For tests, which must never open an editor. */
+  readonly applicationFolders?: readonly string[];
+  /**
+   * A conversation's terminal (GET /api/v1/sessions/:id/terminal): the shell it runs, the user's `$SHELL` (else /bin/zsh) by
+   * default, and what is set in its environment over the login shell's (terminalEnvironment); for tests that keep the user's profile out.
+   */
+  readonly terminal?: { readonly shell?: string; readonly env?: Readonly<Record<string, string>> };
 }
 export interface WebServer { readonly url: string; close(): Promise<void> }
 /** A list of Harness identities in a request body: unique, at most 16. */
@@ -236,6 +249,15 @@ function headers(response: ServerResponse): void {
   // Everything comes from this Gateway (ADR-054 §2): system fonts and a bundled Geist Mono, no other origin.
   response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
 }
+/** Answers an upgrade request that is not let in, as an HTTP error answer on its socket, which is then closed. */
+function refuse(socket: Duplex, status: number, code: string, message: string): void {
+  if (socket.destroyed || !socket.writable) { socket.destroy(); return; }
+  const bytes = Buffer.from(JSON.stringify({ code, message }));
+  socket.write("HTTP/1.1 " + status + " " + (STATUS_CODES[status] ?? "Error") + "\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: " + bytes.length
+    + "\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n");
+  socket.end(bytes);
+  setTimeout(() => socket.destroy(), 1000).unref();
+}
 function json(response: ServerResponse, status: number, value: unknown): void {
   if (response.destroyed || response.writableEnded) return;
   const bytes = Buffer.from(JSON.stringify(value));
@@ -318,7 +340,8 @@ function publicFailure(error: unknown, homes: readonly string[]): { readonly sta
   if (error instanceof HttpError || error instanceof SessionStreamError) return error;
   if (error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError || error instanceof CapabilityError) {
     const code = error.code;
-    const status = code.includes("NOT_FOUND") ? 404 : code === "INVALID_INPUT" || code === "INVALID_CURSOR" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
+    // A workspace in no Git repository is not found as a repository (2026-11-14); what Git refused (a commit, a push) is a conflict with where the repository stands.
+    const status = code.includes("NOT_FOUND") || code === "NOT_A_REPOSITORY" ? 404 : code.startsWith("GIT_") ? 409 : code === "INVALID_INPUT" || code === "INVALID_CURSOR" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
       : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code.endsWith("_CHANGED") || code.includes("REFUSED") || code.endsWith("_EXPIRED") || code.includes("INCOMPATIBLE") || code.endsWith("_REQUIRED") ? 409 : 502;
     // Write ~ before cutting: every whole spelling of the home is replaced first, so a home that crosses the 512th
     // character can no longer leave its first half in the answer; the cut then only shortens text that already says ~.
@@ -427,6 +450,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // Waiting approvals and questions of every conversation, refreshed after each published commit (ADR-035). A page with a
   // conversation open gets them on that conversation's stream; a page without one subscribes to them alone.
   const attention = new AttentionStreamHub(() => app.runtime.attention(), {}, frame => streams.attentionChanged(frame));
+  // The conversations' terminals, a shell per socket; the Gateway's close ends every one of them before the listener closes.
+  const terminals = new TerminalSockets({ maxPayload: MAX_MESSAGE_BODY_BYTES, report: problem => { process.stderr.write("HarnessGateway: " + problem + "\n"); } });
   const made = (options.application ?? ((root, publish) => composeApplication(root, publish, { ...(options.budgets === undefined ? {} : { budgets: options.budgets }),
     ...(options.workspaceLockRoot === undefined ? {} : { workspaceLockRoot: options.workspaceLockRoot }),
     ...(options.installations === undefined ? {} : { installations: options.installations }), ...(options.relayKeyFile === undefined ? {} : { relayKeyFile: options.relayKeyFile }),
@@ -620,13 +645,48 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     void pending.then(() => { if (scan === running) scan = null; }, () => { if (scan === running) scan = null; });
     return pending;
   };
-  const authenticated = (request: IncomingMessage, response: ServerResponse): Login => {
+  /** The login a request carries, and the Set-Cookie value to answer it with when the cookie is due to be sent again (null otherwise). */
+  const loginOf = (request: IncomingMessage): { readonly login: Login; readonly setCookie: string | null } => {
     const token = cookie(request), login = token === null ? undefined : logins.get(token), now = Date.now();
     if (!login || login.expires < now) { if (token !== null) logins.delete(token); throw new HttpError(401, "AUTH_REQUIRED", "Open the Gateway startup link to connect"); }
     // A request is activity: the login now ends LOGIN_MS after it, and the cookie says so (sent again once a minute has passed since it last was).
     login.expires = now + loginMs;
-    if (now - login.renewed >= loginRefreshMs) { login.renewed = now; response.setHeader("Set-Cookie", loginCookie(login.id, loginMs)); }
+    if (now - login.renewed < loginRefreshMs) return { login, setCookie: null };
+    login.renewed = now; return { login, setCookie: loginCookie(login.id, loginMs) };
+  };
+  const authenticated = (request: IncomingMessage, response: ServerResponse): Login => {
+    const { login, setCookie } = loginOf(request);
+    if (setCookie !== null) response.setHeader("Set-Cookie", setCookie);
     return login;
+  };
+  /**
+   * GET /api/v1/sessions/:id/terminal, upgraded to a WebSocket: the user's login shell in the conversation's workspace
+   * (docs/contracts/public-api.md, "对话的终端"). It is let in as any request of the page is (its Host, its login), and only from
+   * this Gateway's own page: a shell runs whatever it is sent, so a request without this Gateway's Origin is refused.
+   */
+  const upgrade = async (request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> => {
+    if (stopping) throw new HttpError(503, "GATEWAY_STOPPING", "Gateway is stopping");
+    if (request.headers.host !== host) throw new HttpError(403, "HOST_REJECTED", "Invalid local Host");
+    if (request.headers.origin !== origin) throw new HttpError(403, "ORIGIN_REJECTED", "A terminal opens only from this Gateway's page");
+    if (request.headers["sec-fetch-site"] === "cross-site") throw new HttpError(403, "ORIGIN_REJECTED", "Cross-site request rejected");
+    if (!request.url || !request.url.startsWith("/") || request.url.startsWith("//") || request.url.length > 4096 || /%(?:2f|5c|00)|\\/iu.test(request.url.split("?", 1)[0]!)) throw new HttpError(400, "INVALID_PATH", "Invalid request path");
+    const url = new URL(request.url, origin), route = /^\/api\/v1\/sessions\/([^/]+)\/terminal$/u.exec(url.pathname);
+    if (route === null || request.method !== "GET") throw new HttpError(404, "NOT_FOUND", "API route not found");
+    queries(url, ["cols", "rows"]);
+    const size = (name: "cols" | "rows", fallback: number): number => {
+      const value = url.searchParams.get(name);
+      if (value === null) return fallback;
+      if (!/^[1-9][0-9]{0,4}$/u.test(value) || !terminalSize(Number(value))) throw new HttpError(400, "INVALID_INPUT", "Invalid terminal " + name);
+      return Number(value);
+    };
+    const cols = size("cols", 80), rows = size("rows", 24), { setCookie } = loginOf(request);
+    // A conversation that is not there, or was deleted, is not found (404).
+    const workspace = conversations!.head(sessionId(route[1]!)).workspace;
+    if (!await stat(workspace).then(info => info.isDirectory(), () => false)) throw new HttpError(409, "WORKSPACE_UNAVAILABLE", "The conversation's folder is not there");
+    const shell = await terminalShell(options.terminal?.shell ?? app.factory.discoveryEnvironment.values.SHELL);
+    if (stopping) throw new HttpError(503, "GATEWAY_STOPPING", "Gateway is stopping");
+    if (socket.destroyed) return;
+    terminals.accept(request, socket, head, { shell, cwd: workspace, env: terminalEnvironment(app.factory.discoveryEnvironment.values, shell, options.terminal?.env), size: { cols, rows } }, setCookie);
   };
   async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (stopping) throw new HttpError(503, "GATEWAY_STOPPING", "Gateway is stopping");
@@ -671,6 +731,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       json(response, 200, output); return;
     }
     if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, harnesses); return; }
+    // The editors of this Mac a workspace opens in (2026-11-14), looked for each time: one installed since is there at once.
+    if (path === "/api/v1/editors" && method === "GET") { queries(url, []); json(response, 200, { editors: await installedEditors(options.applicationFolders) } satisfies EditorsView); return; }
     // The login shell's PATH, read once on the user's request: it runs the shell's login configuration (G(ii)).
     if (path === "/api/v1/discovery/login-shell") {
       if (method === "GET") { queries(url, []); json(response, 200, loginShellView()); return; }
@@ -678,7 +740,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         queries(url, []); record(await body(request), ["commandId"], ["commandId"]);
         const setting = options.loginShell;
         if (!setting || setting.shell === null) throw new HttpError(409, "LOGIN_SHELL_UNAVAILABLE", "reading the login shell is not offered here");
-        const values = app.factory.discoveryEnvironment.values, env = Object.fromEntries(["HOME", "USER", "LOGNAME", "LANG", "TMPDIR"].flatMap(name => values[name] === undefined ? [] : [[name, values[name]!]]));
+        const values = app.factory.discoveryEnvironment.values, env = loginShellEnvironment(values);
         // Only what the login shell adds: directories this Gateway already searches are not listed again.
         const known = new Set([...(values.PATH ?? "").split(":"), ...options.configuration.searchDirs]);
         loginDirs = { shell: setting.shell, readAt: Date.now(), dirs: (await readLoginShellPath(setting.shell, { shells: setting.shells, env })).filter(dir => !known.has(dir)) };
@@ -1172,18 +1234,59 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (textRoute && method === "GET") { queries(url, ["from", "to"]); json(response, 200, conversations!.itemText(textRoute[1]!, textRoute[2]!, textRoute[3]!, { from: url.searchParams.get("from") ?? undefined, to: url.searchParams.get("to") ?? undefined })); return; }
     const changesRoute = /^\/api\/v1\/sessions\/([^/]+)\/changes$/u.exec(path);
     if (changesRoute && method === "GET") { queries(url, ["before", "limit"]); json(response, 200, conversations!.changes(changesRoute[1]!, { before: url.searchParams.get("before") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
-    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|branch|delegate|task|retention|end-process|native-resume|reveal|workspace))?$/u.exec(path);
+    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|steer|switches|resume|cancel|close|events|export|fork|branch|delegate|task|retention|end-process|native-resume|reveal|workspace|restore|open|file|git|git\/commit|git\/push))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
+      // Undoes the user's deletion (2026-11-14): the one route a deleted conversation is found by. The answer is its row of the list, back where its own time puts it.
+      if (action === "restore" && method === "POST") { queries(url, []); record(await body(request), []); app.runtime.restoreSession(id); json(response, 200, conversations!.summary(id)); return; }
+      // A conversation the user deleted is not found by any other route, as one that is not there.
+      const stored = app.store.head(id);
+      if (stored.deletedAt !== null) throw new HttpError(404, "SESSION_NOT_FOUND", "public Session was not found");
+      const workspace = stored.head.configuration.workspace;
+      // The workspace in an editor of this Mac, or a file of it (2026-11-14); what leads out of the workspace is refused before the editor is looked for.
+      if (action === "open" && method === "POST") {
+        queries(url, []); const input = record(await body(request), ["editor", "path"], ["editor"]);
+        if (typeof input.editor !== "string" || input.editor === "") throw new HttpError(400, "INVALID_INPUT", "Invalid editor");
+        if (input.path !== undefined && (typeof input.path !== "string" || input.path === "" || input.path.includes("\0"))) throw new HttpError(400, "INVALID_INPUT", "Invalid path");
+        await openInEditor(workspace, input.editor, input.path as string | undefined, options.applicationFolders);
+        if (!response.destroyed && !response.writableEnded) { headers(response); response.statusCode = 204; response.end(); }
+        return;
+      }
+      // A page of a file of the workspace, read only (2026-11-14).
+      if (action === "file" && method === "GET") {
+        queries(url, ["path", "offset"]); const named = url.searchParams.get("path"), at = url.searchParams.get("offset");
+        if (named === null || named === "" || named.includes("\0")) throw new HttpError(400, "INVALID_INPUT", "Expected the file's path");
+        json(response, 200, await readWorkspaceFile(workspace, named, at === null ? 0 : cursor(at, 0, 0, Number.MAX_SAFE_INTEGER)) satisfies WorkspaceFileView); return;
+      }
+      // Where the workspace stands in Git, a file at a time; and the commit and the push the user asks for with a button (the Gateway never makes them by itself).
+      if (action === "git" && method === "GET") { queries(url, []); json(response, 200, await gitDetail(workspace) satisfies GitView); return; }
+      if (action === "git/commit" && method === "POST") {
+        queries(url, []); const input = record(await body(request), ["message", "paths"], ["message"]);
+        if (typeof input.message !== "string" || input.message.trim() === "") throw new HttpError(400, "INVALID_INPUT", "A commit needs a message");
+        if (input.paths !== undefined && (!Array.isArray(input.paths) || input.paths.some(entry => typeof entry !== "string"))) throw new HttpError(400, "INVALID_INPUT", "Invalid paths");
+        json(response, 200, await gitCommit(workspace, input.message, input.paths as readonly string[] | undefined) satisfies GitCommitView); return;
+      }
+      if (action === "git/push" && method === "POST") { queries(url, []); record(await body(request), []); json(response, 200, await gitPush(workspace) satisfies GitPushView); return; }
       if (action === undefined && method === "GET") { queries(url, []); json(response, 200, conversations!.session(id)); return; }
-      // The user renames the conversation or archives it (2026-11-14): one commit, which every page that has it open is told by its head; the answer is its row of the list.
+      // The user deletes the conversation (2026-11-14): out of the list and not found, its file kept; refused while a Turn of it goes on. 204 once a process it kept is released.
+      if (action === undefined && method === "DELETE") {
+        queries(url, []); await app.runtime.deleteSession(id);
+        if (!response.destroyed && !response.writableEnded) { headers(response); response.statusCode = 204; response.end(); }
+        return;
+      }
+      // The user renames the conversation, archives it, pins it or puts it aside until a moment (2026-11-14): one commit, which every page that has it open is told by its
+      // head, and which does not move the conversation's time; the answer is its row of the list.
       if (action === undefined && method === "PATCH") {
-        queries(url, []); const input = record(await body(request), ["title", "archived"]);
-        if (input.title === undefined && input.archived === undefined) throw new HttpError(400, "INVALID_INPUT", "Expected a title or whether the conversation is archived");
+        queries(url, []); const input = record(await body(request), ["title", "archived", "pinned", "snoozedUntil"]);
+        if (input.title === undefined && input.archived === undefined && input.pinned === undefined && input.snoozedUntil === undefined)
+          throw new HttpError(400, "INVALID_INPUT", "Expected a title, whether the conversation is archived or pinned, or when it is put aside until");
         if (input.title !== undefined && typeof input.title !== "string") throw new HttpError(400, "INVALID_INPUT", "Invalid title");
         if (input.archived !== undefined && typeof input.archived !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Invalid archived");
-        conversations!.head(id);
-        app.runtime.updateSession(id, { ...(input.title === undefined ? {} : { title: input.title as string }), ...(input.archived === undefined ? {} : { archived: input.archived as boolean }) });
+        if (input.pinned !== undefined && typeof input.pinned !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Invalid pinned");
+        if (input.snoozedUntil !== undefined && input.snoozedUntil !== null && (typeof input.snoozedUntil !== "number" || !Number.isSafeInteger(input.snoozedUntil) || input.snoozedUntil < 0))
+          throw new HttpError(400, "INVALID_INPUT", "Invalid snoozedUntil: milliseconds since the epoch, or null");
+        app.runtime.updateSession(id, { ...(input.title === undefined ? {} : { title: input.title as string }), ...(input.archived === undefined ? {} : { archived: input.archived as boolean }),
+          ...(input.pinned === undefined ? {} : { pinned: input.pinned as boolean }), ...(input.snoozedUntil === undefined ? {} : { snoozedUntil: input.snoozedUntil as number | null }) });
         json(response, 200, conversations!.summary(id)); return;
       }
       // The workspace and where it stands in Git, for the page's header: read-only, and a Git that does not answer leaves `git` out.
@@ -1258,6 +1361,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
           json(response, 202, app.runtime.send(id, input.text, command(input.commandId), (input.attachments ?? []) as string[], relay.choices, input.branchFrom as string | undefined));
           return;
         }
+        // Words for the Turn in progress (2026-11-14): its Harness takes them into the turn that runs. 409 STEER_UNSUPPORTED, STEER_NO_ACTIVE_TURN or
+        // STEER_REFUSED when they did not go in, and the page then keeps them for after the Turn; 200 with `outcome` when they did (`taken`) or may have (`unknown`).
+        if (action === "steer") {
+          const input = record(await body(request, MAX_MESSAGE_BODY_BYTES), ["text", "key"], ["text", "key"]);
+          if (typeof input.text !== "string") throw new HttpError(400, "INVALID_INPUT", "Message text required");
+          json(response, 200, await app.runtime.steer(id, input.text, command(input.key)) satisfies SteerView); return;
+        }
         // The user writes on the task's board, or takes an entry off it.
         if (action === "task") {
           const input = record(await body(request), ["kind", "text", "forget"]);
@@ -1314,6 +1424,14 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   });
   // The time a request takes to arrive is not limited (an upload takes as long as its bytes do, watchIdle ends one that falls silent); its headers must come within ten seconds.
   server.headersTimeout = 10000; server.requestTimeout = 0; server.keepAliveTimeout = 5000; server.maxConnections = MAX_CONNECTIONS;
+  // Only a conversation's terminal is upgraded (to a WebSocket); any other upgrade request is answered as a request of no route.
+  server.on("upgrade", (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+    socket.on("error", () => { /* a client that went away has nothing to be told */ });
+    void upgrade(request, socket, head).catch((error: unknown) => {
+      const fault = publicFailure(error, homeForms());
+      refuse(socket, fault.status, fault.code, app.providers.redact(fault.message));
+    });
+  });
   const close = (): Promise<void> => {
     if (closing) return closing;
     stopping = true; table.listening(null); table.toolsIn(null);
@@ -1323,9 +1441,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       // Bound even sockets that have not completed their headers; durable execution is closed separately.
       const deadline = setTimeout(() => server.closeAllConnections(), 12000); deadline.unref();
       server.closeIdleConnections();
+      // Every terminal's shell is ended (hung up on, then killed) and its socket closed: the listener waits for upgraded sockets too.
+      const shells = terminals.close();
       let failure: unknown = streams.readFailure?.error ?? streams.diagnosticFailure;
       try { await app.runtime.close(); } catch (error) { failure = error; }
       try { await nativeModels.close(); } catch (error) { failure ??= error; }
+      try { await shells; } catch (error) { failure ??= error; }
       try { await listener; } catch (error) { failure ??= error; } finally { clearTimeout(deadline); }
       try { await app.management.shutdown(); } catch (error) { failure ??= error; }
       try { await app.providers.shutdown(); } catch (error) { failure ??= error; }
@@ -1358,6 +1479,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     return { url: origin + "/#token=" + bootstrap, close };
   } catch (error) {
     streams.close(); attention.close();
+    await terminals.close();
     await nativeModels.close();
     try { await app.runtime.close(); } finally { try { await app.management.shutdown(); } finally { try { await app.providers.shutdown(); } finally { try { await capabilityChanges.close(); } finally { app.store.close(); } } } }
     throw error;

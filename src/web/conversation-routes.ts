@@ -93,6 +93,9 @@ function asked<T>(read: () => T): T {
   }
 }
 const missing = (code: string, message: string): never => { throw new SessionError(code, message); };
+/** The marks of the list a head or a row carries (2026-11-14): archived, pinned, put aside until a moment; absent when it has none. */
+const listMarks = (from: { readonly archived?: true | undefined; readonly pinned?: true | undefined; readonly snoozedUntil?: number | undefined }): { readonly archived?: true; readonly pinned?: true; readonly snoozedUntil?: number } =>
+  ({ ...(from.archived === true ? { archived: true as const } : {}), ...(from.pinned === true ? { pinned: true as const } : {}), ...(typeof from.snoozedUntil === "number" ? { snoozedUntil: from.snoozedUntil } : {}) });
 
 /** What the native session changed of its configuration by its own commands since its last Turn under the same epoch: the next Turn applies it (`carriedNativeConfiguration`, domain/state.ts, over the rows). */
 function carriedOf(selection: HarnessSelection, epoch: number, binding: NativeSessionBinding | undefined, last: RunRow | null): { readonly model?: string; readonly options?: NativeOptions } | null {
@@ -277,7 +280,7 @@ export class ConversationRoutes {
       pendingSwitchId: row.pendingSwitchId, permissions: live.permissions ?? [], nativeStates, ...(origin === null ? {} : { origin }), ...(json.delegation === undefined ? {} : { parent: { sessionId: json.delegation.parentId, afterRunId: json.delegation.afterRunId, ...(json.delegation.by === undefined ? {} : { by: json.delegation.by }) } }), ...(json.delegationsTold === undefined ? {} : { delegationsTold: json.delegationsTold }), ...(live.queue === undefined ? {} : { queue: live.queue }),
       retention: { enabled: json.retainNative === true, process: kept?.process ?? null, ...(kept?.lost === undefined ? {} : { lost: kept.lost }), ...(kept?.outside === undefined ? {} : { outside: kept.outside }),
         ...(kept?.upgraded === undefined ? {} : { upgraded: kept.upgraded }) },
-      title: row.title, runCount: row.runCount, ...(json.archived === true ? { archived: true as const } : {}), updatedAt: row.updatedAt, ...this.activeSinceOf(row),
+      title: row.title, runCount: row.runCount, ...listMarks(json), updatedAt: row.updatedAt, ...this.activeSinceOf(row),
       ...(last === null ? {} : { lastSwitch: last }), facts: this.factsOf(id, row.version), ...this.progressOf(id) };
   }
   /** When the active Run of a head was accepted (`SessionSummary.activeSince`); nothing when none is active or its row cannot be read. */
@@ -395,7 +398,7 @@ export class ConversationRoutes {
     return { id: row.id, title: row.title, status: row.status, workspace: row.workspace, selection: row.selection, updatedSeq: row.updatedSeq, updatedAt: row.updatedAt, activeRunId: row.activeRunId,
       ...(row.activeRunId === null || row.activeSince === undefined ? {} : { activeSince: row.activeSince }),
       ...(line => line === undefined ? {} : { line })(this.lineOf(row.id, row.updatedSeq, row.activeRunId)), ...(row.parent === undefined ? {} : { parent: { sessionId: row.parent.parentId, afterRunId: row.parent.afterRunId, ...(row.parent.by === undefined ? {} : { by: row.parent.by }) } }),
-      ...(row.archived === true ? { archived: true as const } : {}) };
+      ...listMarks(row) };
   }
   /** GET /api/v1/sessions?after=<cursor>&limit= */
   sessions(query: { readonly after?: string | undefined; readonly limit?: string | number | undefined }): SessionListView {
@@ -407,7 +410,7 @@ export class ConversationRoutes {
   summary(id: string): SessionSummary {
     const row = this.headRow(id), json = row.head;
     return this.listRow({ id: row.id, title: row.title, status: row.status, workspace: json.configuration.workspace, selection: json.selection, updatedSeq: row.lastSeq, updatedAt: row.updatedAt,
-      activeRunId: row.activeRunId, ...this.activeSinceOf(row), runCount: row.runCount, ...(json.delegation === undefined ? {} : { parent: json.delegation }), ...(json.archived === true ? { archived: true as const } : {}) });
+      activeRunId: row.activeRunId, ...this.activeSinceOf(row), runCount: row.runCount, ...(json.delegation === undefined ? {} : { parent: json.delegation }), ...listMarks(json) });
   }
 
   // ---- the stream ---------------------------------------------------------------------------------------------------

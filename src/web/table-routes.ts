@@ -66,7 +66,7 @@ export interface TableApiOptions {
 /** What the two writing tools bring: the whole task list, or the Turn's wrap-up. */
 export type TableProgress =
   | { readonly kind: "plan"; readonly items: readonly { readonly content: string; readonly status: "pending" | "in_progress" | "completed" }[]; readonly explanation?: string }
-  | { readonly kind: "recap"; readonly summary: string; readonly ask?: string; readonly actions?: readonly string[] };
+  | { readonly kind: "recap"; readonly summary: string; readonly ask?: string; readonly actions?: readonly string[]; readonly title?: string };
 const STEP_STATES = ["pending", "in_progress", "completed"] as const;
 /** The progress a request's body says, checked for its shape (never for its size: a task list or a recap is as long as the Harness makes it). */
 function progressOf(path: string, value: unknown): TableProgress {
@@ -87,7 +87,10 @@ function progressOf(path: string, value: unknown): TableProgress {
     return text(row.label, "actions[" + index + "].label");
   }) : invalid("actions must be a list of { label }");
   const ask = typeof body.ask === "string" && body.ask.trim() !== "" ? body.ask : undefined;
-  return { kind: "recap", summary: text(body.recap, "recap"), ...(ask === undefined ? {} : { ask }), ...(actions.length === 0 ? {} : { actions }) };
+  // The name the first Turn's wrap-up may give the conversation (2026-11-14); the Runtime decides whether it is taken.
+  if (body.title !== undefined && body.title !== null && typeof body.title !== "string") invalid("title must be a text");
+  const title = typeof body.title === "string" && body.title.trim() !== "" ? body.title : undefined;
+  return { kind: "recap", summary: text(body.recap, "recap"), ...(ask === undefined ? {} : { ask }), ...(actions.length === 0 ? {} : { actions }), ...(title === undefined ? {} : { title }) };
 }
 
 /** The known secrets are asked for again after this long; a failed ask is not repeated for the shorter time. */

@@ -1389,3 +1389,106 @@ test("a name the user gave and an archive mark are one commit each, survive a re
   next.send(state.id, "a second question", "second"); await next.wait(state.id);
   assert.equal(reopened.get(state.id).archived, undefined); assert.equal(reopened.head(state.id).title, "Launch plan");
 });
+
+const pause = (ms: number): Promise<void> => new Promise(done => setTimeout(done, ms));
+
+test("a pin and a reminder are kept in the head and survive a restart; a new Turn takes the reminder off and leaves the pin; naming and marking never move the conversation's time", async t => {
+  const f = await fixture(t), factory = new ControlledFactory([controlled(), controlled()]), told: string[] = [];
+  const app = runtime(f, factory, event => { if (event.type === "session.pinned" || event.type === "session.snoozed") told.push(event.type + " " + JSON.stringify(event.data)); });
+  const state = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(state.id, "the first question", "first"); await app.wait(state.id);
+  const moved = f.store.head(state.id).updatedAt, seq = f.store.head(state.id).lastSeq;
+  await pause(15);
+  app.updateSession(state.id, { pinned: true, snoozedUntil: 1_900_000_000_000 });
+  await pause(15);
+  app.updateSession(state.id, { title: "Pinned one", archived: true });
+  assert.throws(() => app.updateSession(state.id, { snoozedUntil: -1 }), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT");
+  assert.throws(() => app.updateSession(state.id, { snoozedUntil: 1.5 }), (error: unknown) => error instanceof SessionError && error.code === "INVALID_INPUT");
+  // Named and marked: the cursor went on (the page learns of it), the time did not (the list's order and its "how long ago" are the conversation's own).
+  const head = f.store.head(state.id), row = f.store.list().rows.find(entry => entry.id === state.id)!;
+  assert.equal(head.updatedAt, moved); assert.equal(row.updatedAt, moved); assert.ok(head.lastSeq > seq);
+  assert.deepEqual([head.head.pinned, head.head.snoozedUntil, row.pinned, row.snoozedUntil], [true, 1_900_000_000_000, true, 1_900_000_000_000]);
+  assert.deepEqual(told, ['session.pinned {"pinned":true}', 'session.snoozed {"until":1900000000000}']);
+  // Read again from the files by a new owner: the marks are there, and the time is still the one the Turn left.
+  await app.close(); f.store.close();
+  const reopened = appStore(join(f.root, "data")); f.stores.push(reopened);
+  const read = reopened.head(state.id), listed = reopened.list().rows.find(entry => entry.id === state.id)!;
+  assert.deepEqual([read.updatedAt, listed.updatedAt, read.title, read.head.pinned, read.head.snoozedUntil, read.head.archived], [moved, moved, "Pinned one", true, 1_900_000_000_000, true]);
+  assert.deepEqual([reopened.get(state.id).pinned, reopened.get(state.id).snoozedUntil], [true, 1_900_000_000_000]);
+  // A second Turn: the reminder and the archive mark come off in the commit that accepts it, the pin stays, and the time moves on.
+  await pause(15);
+  const next = runtime({ ...f, store: reopened }, factory, () => {}, "restart-");
+  next.send(state.id, "a second question", "second");
+  assert.deepEqual([reopened.get(state.id).snoozedUntil, reopened.get(state.id).archived, reopened.get(state.id).pinned], [undefined, undefined, true]);
+  await next.wait(state.id);
+  assert.ok(reopened.head(state.id).updatedAt > moved);
+  // Taking the reminder off with null, and the pin with false.
+  next.updateSession(state.id, { snoozedUntil: 1_900_000_000_000 }); next.updateSession(state.id, { snoozedUntil: null, pinned: false });
+  assert.deepEqual([reopened.get(state.id).snoozedUntil, reopened.get(state.id).pinned, reopened.list().rows.find(entry => entry.id === state.id)?.pinned], [undefined, undefined, undefined]);
+});
+
+test("a deleted conversation leaves the list and takes no new work, stays deleted after a restart with its file in place, and is restored where its own time puts it; one with a Turn going on is not deleted", async t => {
+  const f = await fixture(t), held = controlled({ holdResult: true }), factory = new ControlledFactory([controlled(), held, controlled()]), told: string[] = [];
+  const app = runtime(f, factory, event => { if (event.type === "session.deleted" || event.type === "session.restored") told.push(event.type); });
+  const gone = await app.create(f.configuration, { harnessId: "alpha" }, "gone"), busy = await app.create(f.configuration, { harnessId: "alpha" }, "busy");
+  app.send(gone.id, "a question", "first"); await app.wait(gone.id);
+  const moved = f.store.head(gone.id).updatedAt, file = f.store.fileOf(gone.id);
+  await pause(15);
+  await app.deleteSession(gone.id);
+  assert.equal(f.store.list().rows.some(row => row.id === gone.id), false); assert.notEqual(f.store.head(gone.id).deletedAt, null);
+  assert.throws(() => app.send(gone.id, "again", "again"), (error: unknown) => error instanceof SessionError && error.code === "SESSION_NOT_FOUND");
+  // Deleting it again changes nothing.
+  const version = f.store.head(gone.id).version; await app.deleteSession(gone.id); assert.equal(f.store.head(gone.id).version, version);
+  // A Turn going on: refused, and the conversation stays.
+  app.send(busy.id, "a long one", "long"); await held.started.promise;
+  await assert.rejects(app.deleteSession(busy.id), (error: unknown) => error instanceof SessionError && error.code === "SESSION_ACTIVE");
+  held.result.resolve({ status: "completed", reason: "fixture", input: "recorded" }); await app.wait(busy.id);
+  assert.equal(f.store.list().rows.some(row => row.id === busy.id), true);
+  // A new owner reads the files: still deleted, the file where it was.
+  await app.close(); f.store.close();
+  const reopened = appStore(join(f.root, "data")); f.stores.push(reopened);
+  assert.equal(reopened.list().rows.some(row => row.id === gone.id), false); assert.notEqual(reopened.head(gone.id).deletedAt, null); assert.equal(reopened.fileOf(gone.id), file);
+  const next = runtime({ ...f, store: reopened }, factory, () => {}, "restart-");
+  next.restoreSession(gone.id);
+  const row = reopened.list().rows.find(entry => entry.id === gone.id);
+  assert.equal(row?.updatedAt, moved, "restored where its own time puts it"); assert.equal(reopened.head(gone.id).deletedAt, null);
+  next.send(gone.id, "back again", "back"); await next.wait(gone.id);
+  assert.equal(reopened.get(gone.id).runs.length, 2);
+  assert.deepEqual(told, ["session.deleted"]);
+});
+
+test("the name a first Turn's wrap-up gives is taken once, while the user has not named the conversation; the user's name goes before it, given before or after", async t => {
+  const f = await fixture(t), peers = [controlled({ holdResult: true }), controlled({ holdResult: true }), controlled({ holdResult: true })], factory = new ControlledFactory(peers), told: string[] = [];
+  const app = runtime(f, factory, event => { if (event.type === "session.titled") told.push(JSON.stringify(event.data)); });
+  const from = { harnessId: "alpha", controlId: "alpha-acp" };
+  const turn = async (id: SessionId, peer: ControlledPeer, text: string, key: string, title?: string): Promise<void> => {
+    app.send(id, text, key); await peer.started.promise;
+    app.hubProgress(id, from, { kind: "recap", summary: "Done.", ...(title === undefined ? {} : { title }) });
+    peer.result.resolve({ status: "completed", reason: "fixture", input: "recorded" }); await app.wait(id);
+  };
+  const state = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  await turn(state.id, peers[0]!, "please look at the login page timeout", "first", "  Login\n timeout ");
+  const moved = f.store.head(state.id).updatedAt;
+  assert.equal(f.store.head(state.id).title, "Login timeout"); assert.equal(f.store.list().rows.find(row => row.id === state.id)?.title, "Login timeout");
+  assert.equal(f.store.get(state.id).harnessTitle, "Login timeout"); assert.equal(f.store.get(state.id).userTitle, undefined);
+  // A second Turn's title is not taken.
+  await turn(state.id, peers[1]!, "and the signup page", "second", "Signup page");
+  assert.equal(f.store.head(state.id).title, "Login timeout");
+  // The user's name goes before it, and the name is not what moves the time.
+  app.updateSession(state.id, { title: "Mine" }); assert.equal(f.store.head(state.id).title, "Mine");
+  // Read again from the files: both names kept, the user's the title.
+  await app.close(); f.store.close();
+  const reopened = appStore(join(f.root, "data")); f.stores.push(reopened);
+  assert.deepEqual([reopened.head(state.id).title, reopened.get(state.id).harnessTitle, reopened.get(state.id).userTitle], ["Mine", "Login timeout", "Mine"]);
+  assert.ok(reopened.head(state.id).updatedAt >= moved);
+  // Named by the user before its first Turn: the wrap-up's title is not taken.
+  const peer = controlled({ holdResult: true });
+  const named = runtime({ ...f, store: reopened }, new ControlledFactory([peer]), event => { if (event.type === "session.titled") told.push(JSON.stringify(event.data)); }, "named-");
+  const other = await named.create(f.configuration, { harnessId: "alpha" }, "other");
+  named.updateSession(other.id, { title: "User's own" });
+  named.send(other.id, "a question", "q"); await peer.started.promise;
+  named.hubProgress(other.id, from, { kind: "recap", summary: "Done.", title: "Harness name" });
+  peer.result.resolve({ status: "completed", reason: "fixture", input: "recorded" }); await named.wait(other.id);
+  assert.equal(reopened.head(other.id).title, "User's own"); assert.equal(reopened.get(other.id).harnessTitle, undefined);
+  assert.deepEqual(told, ['{"title":"Login timeout"}']);
+});

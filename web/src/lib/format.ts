@@ -32,6 +32,11 @@ export function agoShort(at: number, now = Date.now()): string {
   const day = new Date(at);
   return (day.getMonth() + 1) + "月" + day.getDate() + "日";
 }
+/** How long until a moment, as a list's narrow column says it: "50 分钟", "3 小时", "2 天". */
+export function untilShort(at: number, now = Date.now()): string {
+  const minutes = Math.max(1, Math.ceil((at - now) / 60000));
+  return minutes < 60 ? minutes + " 分钟" : minutes < 1440 ? Math.round(minutes / 60) + " 小时" : Math.round(minutes / 1440) + " 天";
+}
 /** Another conversation's title, short enough to name it within a sentence. */
 export function shortTitle(title: string | null | undefined): string {
   if (!title) return "另一个对话";

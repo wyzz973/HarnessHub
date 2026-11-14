@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import type { Conversation } from "../../contracts/conversation.js";
 import type { HarnessSelection, NativeSessionBinding, RunId, SessionId, SessionSnapshot } from "../../contracts/session.js";
 import { conversationOf, isMainFile, loadSession, runFinished, sessionsDir, type Loaded } from "./session-file.js";
+import { listMarksOf } from "./rows.js";
 
 /*
  * The list of conversations, kept as a cache beside the files (`sessions/index.json`): one row per file with what the list, the recovery and the lookups by native
@@ -29,6 +30,11 @@ export interface IndexRow {
   readonly parent?: Conversation["delegation"];
   /** The user archived it; a cache written before this was kept has no archived conversation, as no file then had one. */
   readonly archived?: true;
+  /** The user pinned it, or put it aside until a moment (2026-11-14); a cache written before has neither, as no file then had one. */
+  readonly pinned?: true;
+  readonly snoozedUntil?: number;
+  /** When the user deleted it (2026-11-14): the list leaves it out, and it is still found by its id, to be restored. A cache written before has no deleted conversation. */
+  readonly deletedAt?: number;
   readonly kept: boolean;
   /** A Turn not finished or a switch pending: what recovery visits. */
   readonly unfinished: boolean;
@@ -59,7 +65,8 @@ export function indexRowOf(conversation: Conversation, file: string, facts: { re
   if (conversation.activeRunId !== null) for (let index = conversation.runs.length - 1; index >= 0; index--) if (conversation.runs[index]!.id === conversation.activeRunId) { activeSince = conversation.runs[index]!.timing?.acceptedAt; break; }
   return { id: conversation.id, file, title: facts.title, status: conversation.status, workspace: conversation.configuration.workspace, selection: conversation.selection, updatedAt: facts.updatedAt,
     lastSeq: conversation.lastSeq, runCount: conversation.runs.length, activeRunId: conversation.activeRunId, ...(activeSince === undefined ? {} : { activeSince }),
-    ...(conversation.delegation === undefined ? {} : { parent: conversation.delegation }), ...(conversation.archived === true ? { archived: true as const } : {}), kept: conversation.retained !== undefined,
+    ...(conversation.delegation === undefined ? {} : { parent: conversation.delegation }), ...listMarksOf(conversation),
+    ...(conversation.deletedAt === undefined ? {} : { deletedAt: conversation.deletedAt }), kept: conversation.retained !== undefined,
     unfinished: conversation.pendingSwitchId !== null || conversation.runs.some(run => !runFinished(run.status)),
     bindings: (conversation.nativeBindings ?? []).map(binding => ({ harnessId: binding.harnessId, controlId: binding.controlId, checkpoint: binding.checkpoint, status: binding.status, ...(binding.opensNew === true ? { opensNew: true as const } : {}) })),
     createKey: facts.createKey, handoffs: facts.handoffs, samples: [...samples.values()].flat(), size: facts.size, mtimeMs: facts.mtimeMs };

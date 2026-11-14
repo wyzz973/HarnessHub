@@ -17,6 +17,14 @@ export function canonicalJson(value: unknown): string {
   });
 }
 export function utf8Length(text: string): number { return Buffer.byteLength(text, "utf8"); }
+/**
+ * The marks of the list a conversation carries (2026-11-14: archived, pinned, put aside until a moment), as its head (`HeadJson`) and its head line keep them. A conversation
+ * written before has none: it is neither archived nor pinned nor put aside.
+ */
+export function listMarksOf(from: { readonly archived?: true | undefined; readonly pinned?: true | undefined; readonly snoozedUntil?: number | undefined }): { readonly archived?: true; readonly pinned?: true; readonly snoozedUntil?: number } {
+  return { ...(from.archived === true ? { archived: true as const } : {}), ...(from.pinned === true ? { pinned: true as const } : {}),
+    ...(typeof from.snoozedUntil === "number" && Number.isSafeInteger(from.snoozedUntil) ? { snoozedUntil: from.snoozedUntil } : {}) };
+}
 const bit = (value: boolean): 0 | 1 => value ? 1 : 0;
 /** Whether a text holds no lone surrogate. */
 export function wellFormed(text: string): boolean { return !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(text); }

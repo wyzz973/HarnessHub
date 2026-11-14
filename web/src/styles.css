@@ -663,10 +663,27 @@
   .diff-line > .s { width: 16px; flex: none; text-align: center; color: var(--text-3); user-select: none; }
   .diff-line > .c { white-space: pre; padding-right: 12px; }
   .message-time::before { content: attr(data-time); }
+  /* A part of the settings is brought to the top of its column with a little room above its title. */
+  .settings-pop section { scroll-margin-top: 20px; }
   /* Long lines folded to the width there is (the details panel's switch): a line keeps its number and sign at its first row. */
   .diff.is-wrapped { overflow-x: hidden; }
   .diff.is-wrapped .diff-line { min-width: 0; }
   .diff.is-wrapped .diff-line > .c { min-width: 0; flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* A line's number starts a remark on it: under the pointer the number gives its place to the mark. */
+  .diff-number { display: inline-flex; align-items: center; justify-content: flex-end; border: none; background: transparent; font: inherit; cursor: pointer; }
+  .diff-number > svg { display: none; color: var(--accent-text); }
+  .diff-number:hover > span, .diff-number:focus-visible > span { display: none; }
+  .diff-number:hover > svg, .diff-number:focus-visible > svg { display: block; }
+  :is(.diff-line, .diff-pair).is-chosen { box-shadow: inset 2px 0 0 var(--accent); }
+  .diff-remark { padding: 6px 10px 8px 56px; background: var(--bg-subtle); min-width: 0; position: sticky; left: 0; }
+  /* The two sides of a change beside each other: each half its own lines, folded to its width. */
+  .diff-split { overflow-x: hidden; }
+  .diff-split .diff-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .diff-split .diff-side { min-width: 0; }
+  .diff-split .diff-side + .diff-side { box-shadow: inset .5px 0 0 var(--line-strong); }
+  .diff-split .diff-side > .c { min-width: 0; flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 8px; }
+  .diff-split .diff-side.is-blank { background: var(--bg-subtle); }
+  .diff-split .diff-remark { padding-left: 10px; }
   .diff-line.is-add { background: var(--add-bg); }
   .diff-line.is-add > .s { color: var(--add-on-tint); }
   .diff-line.is-remove { background: var(--del-bg); }

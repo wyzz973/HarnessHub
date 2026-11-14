@@ -11,7 +11,7 @@ import { useNow } from "../lib/prefs.js";
 import { endLine, quietLine, switchLine, turnByline, turnFooter } from "../lib/protocol/lines.js";
 import { liveStatus, type QueueNotice } from "../lib/protocol/live.js";
 import { changesTree, samePath, turnChanges, type TurnChanges } from "../lib/protocol/changes.js";
-import { arrange, gapOf, isGap, lay, opensByDefault, reasoningLabel, summarizeGroup, turnFold, withReply, workLabel, type Block, type GapRow, type TurnFold, type WorkBlock } from "../lib/protocol/work.js";
+import { arrange, gapOf, isGap, lay, opensByDefault, reasoningLabel, quietBlocks, summarizeGroup, turnFold, withReply, workLabel, type Block, type GapRow, type TurnFold, type WorkBlock } from "../lib/protocol/work.js";
 import { utf8Length } from "../lib/protocol/window.js";
 import { rememberShown, shownSteps } from "../lib/turn.js";
 import { Collapsible, motionStyle, SwapText } from "../ui/motion.js";
@@ -448,6 +448,8 @@ export interface ProtocolTurnProps {
   readonly children?: ReactNode;
   /** What the Turn reads of itself when shown; absent where nothing can be read (the details panel). */
   readonly reads?: TurnReads | undefined;
+  /** One of the two quieter ways of showing a Turn's process: only what failed, or only what it said last. Absent: a summary line, or every step (`detailed`). */
+  readonly quiet?: "failures" | "answer" | undefined;
   /** The conversation's workspace: the files a Turn changed are named from it. */
   readonly workspace?: string | undefined;
   /** Opens the diffs of what a Turn changed in the details panel: all of them, or one file's. */
@@ -481,7 +483,7 @@ export const ProtocolTurn = memo(function ProtocolTurn(props: ProtocolTurnProps)
   return props.run.protocol === undefined ? <UnreadableTurn run={props.run} message={props.message} arrived={props.arrived} onEdit={props.onEdit}/> : <TurnView {...props} turn={props.run.protocol}/>;
 });
 
-function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onResend, onSelectBranch, branchBusy, onDetails, detailsOpen, onViewPacket, startupHint, queue, waiting, reads, workspace, onOpenChanges, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
+function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onResend, onSelectBranch, branchBusy, onDetails, detailsOpen, onViewPacket, startupHint, queue, waiting, reads, workspace, onOpenChanges, quiet: way, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
   // The reply is a message of the conversation, which arrives on the stream apart from the Turn's other items: its words are shown at once.
   const replyMessage = message(run.assistantMessageId), turn = useMemo(() => withReply(given, replyMessage), [given, replyMessage]);
   const arrangement = useMemo(() => arrange(turn, { asking: waiting === "approval" }), [turn, waiting]), over = arrangement.over, cancelling = run.cancelRequested;
@@ -501,17 +503,17 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
     [turn, run, reads, over, cancelling, detailed, arrangement.children, message, loadToolDetail, seen, onViewPacket]);
   const pieces = useMemo(() => segments(arrangement.blocks), [arrangement.blocks]);
   // A Turn that ended well folds what it did before its answer behind one line; one that failed or was stopped stays as it stands, where it went wrong in sight.
-  const tail = pieces.at(-1), folds = over && !detailed && turn.status === "completed" && !stays.current;
+  const tail = pieces.at(-1), folds = over && !detailed && way === undefined && turn.status === "completed" && !stays.current;
   const fold = useMemo(() => folds && tail?.kind === "assistant" ? turnFold(tail.blocks) : null, [folds, tail]);
   useEffect(() => { if (fold !== null) settling.current = false; }, [fold !== null]);
   const changed = useMemo(() => over && workspace !== undefined ? turnChanges(turn, workspace) : null, [over, turn, workspace]);
   // Not said twice: a changed file whose own line stands in sight with its counts needs no card under the answer.
   const card = useMemo(() => {
     if (changed === null) return null;
-    const insight = pieces.flatMap(piece => piece.kind !== "assistant" ? [] : piece === tail && fold !== null ? [...fold.kept, ...fold.answer] : piece.blocks);
+    const insight = pieces.flatMap(piece => piece.kind !== "assistant" ? [] : piece === tail && fold !== null ? [...fold.kept, ...fold.answer] : way !== undefined ? quietBlocks(piece.blocks, way, over) : piece.blocks);
     const alone = insight.flatMap(block => block.kind === "work" && block.rows.length === 1 && block.work[0]?.type === "file_change" ? block.work[0].changes.map(change => change.path) : []);
     return !changed.shared && changed.files.every(file => alone.some(path => samePath(path, file.path))) ? null : changed;
-  }, [changed, pieces, tail, fold]);
+  }, [changed, pieces, tail, fold, way, over]);
   // What the Harness said in this Turn, for copying and for the line that says the Turn is replying: its segments, which stand between its actions, one after another.
   const replies = [...new Set(turn.items.flatMap(item => item.type === "assistant_message" ? [item.messageId] : []))].map(id => message(id)?.text ?? "");
   const reply = replies.filter(Boolean).join("\n\n");
@@ -526,14 +528,17 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
     if (piece.kind === "user") {
       const sent = message(piece.item.messageId);
       if (sent === undefined) return null;
-      const branching: UserMessageBranching = { branch: (run as { readonly branch?: TurnBranchView }).branch, onResend: onResend === undefined ? undefined : text => onResend(run.id, text, run.attachments), onSelectBranch, busy: branchBusy === true };
-      const bubble = <UserMessage message={sent} run={run} onEdit={onEdit} branching={branching}/>;
+      // Words given to the Turn while it ran: where the Harness took them, without a branch of their own; those it took nothing of were sent as a message of their own, and are there.
+      const steered = piece.item.steered === true ? { status: piece.item.status, at: piece.item.startedAt } : undefined;
+      if (steered?.status === "declined") return null;
+      const branching: UserMessageBranching | undefined = steered !== undefined ? undefined : { branch: (run as { readonly branch?: TurnBranchView }).branch, onResend: onResend === undefined ? undefined : text => onResend(run.id, text, run.attachments), onSelectBranch, busy: branchBusy === true };
+      const bubble = <UserMessage message={sent} run={run} onEdit={onEdit} branching={branching} steered={steered}/>;
       return arrived(sent.id) ? <div key={"user:" + piece.item.id} className="motion-message-in">{bubble}</div> : <div key={"user:" + piece.item.id}>{bubble}</div>;
     }
     const last = index === pieces.length - 1;
     return <article key={"turn:" + run.id + ":" + index} className={cn("message assistant-message protocol-turn group flex min-w-0 flex-col gap-2.5", !over && "is-active")} data-run-status={run.status} aria-busy={!over} aria-label={harness + " 的回复" + (over ? "" : "（进行中）")}>
       {last && fold !== null ? <TurnFoldView fold={fold} settle={settling.current}/> : null}
-      <Blocks blocks={last && fold !== null ? [...fold.kept, ...fold.answer] : piece.blocks}/>
+      <Blocks blocks={last && fold !== null ? [...fold.kept, ...fold.answer] : way !== undefined ? quietBlocks(piece.blocks, way, over) : piece.blocks}/>
       {last ? <>
         {!over ? <LiveLine queue={queue} startupHint={startupHint} waiting={waiting} replying={reply !== ""}/> : null}
         {queue !== undefined && run.status === "queued" && !cancelling ? <QueuedLine queue={queue}/> : null}

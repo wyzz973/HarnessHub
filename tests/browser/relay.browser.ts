@@ -245,6 +245,8 @@ class FakeGateway {
     // The list of conversations, which the page reads again and again while one of them works.
     if (api === "/sessions" && method === "GET") return this.json(response, 200, { sessions: [{ id: this.session.id, title: this.session.messages[0]?.text ?? "新对话", status: "open", workspace: this.session.workspace, selection: this.session.selection, updatedSeq: this.session.lastSeq, activeRunId: this.session.activeRunId }], next: null });
     if (api === "/harnesses/readiness") return this.json(response, 200, { readiness: [] });
+    // The editors on this Mac, which the page reads once it is signed in: none here.
+    if (api === "/editors") return this.json(response, 200, { editors: [] });
     if (api === "/attention/stream") {
       response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });
       this.others.add(response); response.on("close", () => this.others.delete(response)); response.write("event: attention\nid: 1\ndata: " + JSON.stringify({ revision: 1, items: [] }) + "\n\n"); return;
@@ -575,8 +577,9 @@ test("the settings page offers the one relay setting when the Gateway has it, sa
   await expect(group.getByRole("radio", { name: "关" })).toHaveAttribute("aria-checked", "true");
   await expect.poll(() => gateway.putPrefs).toEqual([{ key: "relay.attach", value: "off" }]);
   // It is the Gateway's: a new page reads it back.
+  // A reload keeps the settings open (they have a place of their own in the address, #settings), over the page they were opened from.
   await page.reload();
-  await settings.click();
+  await expect(page.getByRole("dialog", { name: "设置" })).toBeVisible();
   await expect(page.getByRole("radiogroup", { name: "换 Harness 时附上之前的对话", exact: true }).getByRole("radio", { name: "关" })).toHaveAttribute("aria-checked", "true");
 
   // A write the Gateway refuses puts the choice back and says so; nothing is left looking saved.
@@ -591,7 +594,7 @@ test("a Gateway without the relay setting shows none, and a value the page canno
   const none = await open(t, conversation("completed", packetRelay(CODEX)), { prefs: null }, [/404/u]);
   await none.page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true }).click();
   await expect(none.page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
-  await expect(none.page.locator("#main-content").getByRole("heading", { name: "对话", exact: true, level: 2 })).toBeVisible();
+  await expect(none.page.getByRole("dialog", { name: "设置" }).getByRole("heading", { name: "对话", exact: true, level: 2 })).toBeVisible();
   await expect(none.page.getByRole("radiogroup", { name: "换 Harness 时附上之前的对话" })).toHaveCount(0);
   assert.ok(none.gateway.reads.prefs >= 1, "the page asked, and was told there is no such setting");
   assert.deepEqual(none.errors, []);
@@ -639,7 +642,7 @@ test("a Gateway that does not say it has the relay API sees no relay request, no
   await expect(page.getByRole("tab", { name: /^概览/u })).toBeVisible(); await expect(page.getByRole("tab", { name: /上下文/u })).toHaveCount(0);
   await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
-  await expect(page.locator("#main-content").getByRole("heading", { name: "对话", exact: true, level: 2 })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "设置" }).getByRole("heading", { name: "对话", exact: true, level: 2 })).toBeVisible();
   await expect(page.getByRole("radiogroup", { name: "换 Harness 时附上之前的对话" })).toHaveCount(0);
   await page.waitForTimeout(300);
   assert.deepEqual(gateway.reads, { view: 0, text: 0, prefs: 0 }, "nothing of the relay was asked");

@@ -51,6 +51,13 @@ export interface UserMessageItem extends ItemBase {
   readonly type: "user_message"; readonly messageId: MessageId;
   /** ADR-057: the message's text, carried by the item; absent where a client reads it by `messageId` from the conversation's messages (the form before the store kept items). */
   readonly text?: string;
+  /**
+   * 2026-11-14: words the user gave the Turn while it ran (POST /sessions/:id/steer), not the Turn's own input; they stand where the Harness took
+   * them. Their status says what became of them: `pending` while the Harness is being given them, `completed` once it took them into the
+   * turn, `declined` when it took nothing (the Turn had just ended: the page sends them as a message of their own, so it does not show them
+   * here), `unknown` when it could not be told, and `cancelled` when the Turn ended (stopped) before the Harness answered.
+   */
+  readonly steered?: true;
 }
 /** `commentary`: said on the way; `final`: the Turn's answer. The text is the message's. */
 export interface AssistantMessageItem extends ItemBase {

@@ -4,6 +4,7 @@ import type { KeyboardEvent } from "react";
 import type { SessionHeadView } from "../../../src/contracts/web.js";
 import { remaining, secondsLeft } from "../attention.js";
 import { cn } from "../lib/cn.js";
+import { keyText } from "../lib/keys.js";
 import { useNow } from "../lib/prefs.js";
 import { Kbd, StatusDot, Tip } from "../ui/primitives.js";
 
@@ -177,7 +178,7 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
     </div>
     {/* The decisions keep to the right, the primary last, also when they wrap on a narrow screen. */}
     <div className="flex flex-wrap items-center justify-end gap-2">
-      {onStop ? <Tip label="停止当前回复（⌘.）" side="top"><button type="button" className="btn btn-ghost -ml-1.5 mr-auto px-2.5" aria-label="停止当前回复" disabled={stopDisabled} onClick={onStop}>
+      {onStop ? <Tip label={"停止当前回复（" + keyText("stop") + "）"} side="top"><button type="button" className="btn btn-ghost -ml-1.5 mr-auto px-2.5" aria-label="停止当前回复" disabled={stopDisabled} onClick={onStop}>
         <Square size={10} fill="currentColor" aria-hidden="true"/><span>停止</span></button></Tip> : null}
       {refusals.map(option => button(option, "ghost"))}
       {lasting.map(option => button(option, "plain"))}

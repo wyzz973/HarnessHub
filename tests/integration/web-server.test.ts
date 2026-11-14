@@ -26,7 +26,7 @@ function row(value: unknown): Record<string, unknown> {
   assert.ok(value !== null && typeof value === "object" && !Array.isArray(value)); return value as Record<string, unknown>;
 }
 interface Fixture { root: string; data: string; workspace: string; manifest: string; trace: string; assets: string; gateway: WebServer; origin: string; token: string; cookie: string; csrf: string; expectedShutdownError: boolean }
-async function fixture(t: test.TestContext, scenario = "basic", serverOptions: { readonly login?: { readonly idleMs?: number; readonly refreshMs?: number }; readonly requestIdleMs?: number } = {}): Promise<Fixture> {
+async function fixture(t: test.TestContext, scenario = "basic", serverOptions: { readonly login?: { readonly idleMs?: number; readonly refreshMs?: number }; readonly requestIdleMs?: number; readonly applicationFolders?: readonly string[] } = {}): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), "harness-web-")), workspace = join(root, "workspace"), assets = join(root, "assets"), manifest = join(root, "catalog.json"), trace = join(root, "trace.ndjson");
   await mkdir(workspace); await mkdir(assets);
   await writeFile(join(assets, "index.html"), "<!doctype html><title>HarnessGateway fixture</title>");
@@ -747,4 +747,127 @@ test("over HTTP a conversation is renamed and archived by PATCH, answered with i
   assert.equal((await call(f, `/api/v1/sessions/${id}/reveal`, "POST", { path: "link.txt" })).status, 400, "a link that leads out is refused by its real path");
   assert.equal((await call(f, `/api/v1/sessions/${id}/reveal`, "POST", { path: "missing.txt" })).status, 404);
   assert.equal((await call(f, `/api/v1/sessions/${id}/reveal`, "POST", { path: "" })).status, 400);
+});
+
+test("over HTTP a conversation is pinned and put aside by PATCH without moving its time; DELETE takes it out of the list and makes every route but restore not find it; restore brings it back", async t => {
+  const f = await fixture(t); await auth(f); const id = await create(f);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "first" })).status, 202);
+  await waitFor(f, id, value => value.runs[0]?.status === "completed");
+  const before = row((row((await call(f, "/api/v1/sessions")).data).sessions as Record<string, unknown>[]).find(entry => entry.id === id));
+  await delay(15);
+  const pinned = await call(f, `/api/v1/sessions/${id}`, "PATCH", { pinned: true, snoozedUntil: 1_900_000_000_000 });
+  assert.equal(pinned.status, 200, pinned.text);
+  assert.deepEqual([row(pinned.data).pinned, row(pinned.data).snoozedUntil, row(pinned.data).updatedAt], [true, 1_900_000_000_000, before.updatedAt]);
+  assert.ok(Number(row(pinned.data).updatedSeq) > Number(before.updatedSeq));
+  const head = row(row((await call(f, `/api/v1/sessions/${id}`)).data).head);
+  assert.deepEqual([head.pinned, head.snoozedUntil, head.updatedAt], [true, 1_900_000_000_000, before.updatedAt]);
+  for (const bad of [{ pinned: "yes" }, { snoozedUntil: -5 }, { snoozedUntil: "soon" }, { snoozedUntil: 1.5 }]) assert.equal((await call(f, `/api/v1/sessions/${id}`, "PATCH", bad)).status, 400, JSON.stringify(bad));
+  const unsnoozed = await call(f, `/api/v1/sessions/${id}`, "PATCH", { snoozedUntil: null });
+  assert.deepEqual([row(unsnoozed.data).pinned, row(unsnoozed.data).snoozedUntil], [true, undefined]);
+  // Deleted: 204, then out of the list, and not found by a read, a change or a message.
+  const send = (method: string, path: string) => fetch(f.origin + path, { method, headers: { Cookie: f.cookie, Origin: f.origin, "X-CSRF-Token": f.csrf } });
+  const deleted = await send("DELETE", `/api/v1/sessions/${id}`); assert.equal(deleted.status, 204, await deleted.clone().text());
+  assert.equal((row((await call(f, "/api/v1/sessions")).data).sessions as Record<string, unknown>[]).some(entry => entry.id === id), false);
+  assert.equal((await call(f, `/api/v1/sessions/${id}`)).status, 404);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/turns`)).status, 404);
+  assert.equal((await call(f, `/api/v1/sessions/${id}`, "PATCH", { title: "x" })).status, 404);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "again", commandId: "again" })).status, 404);
+  assert.equal((await send("DELETE", `/api/v1/sessions/${id}`)).status, 404, "a deleted conversation is not found to be deleted again");
+  assert.equal((await send("DELETE", "/api/v1/sessions/session-nowhere")).status, 404);
+  // Restored: its row again, where its own time puts it, with its pin; read as before.
+  const restored = await call(f, `/api/v1/sessions/${id}/restore`, "POST", {});
+  assert.equal(restored.status, 200, restored.text); assert.deepEqual([row(restored.data).id, row(restored.data).updatedAt, row(restored.data).pinned], [id, before.updatedAt, true]);
+  assert.equal((await call(f, `/api/v1/sessions/${id}`)).status, 200);
+  assert.equal((row((await call(f, "/api/v1/sessions")).data).sessions as Record<string, unknown>[]).some(entry => entry.id === id), true);
+  assert.equal((await call(f, "/api/v1/sessions/session-nowhere/restore", "POST", {})).status, 404);
+});
+
+test("over HTTP the editors are the bundles found, and an open that names an unknown editor, one not installed or a place outside the workspace is refused before anything opens; a file of the workspace is read a page at a time, cut between characters", async t => {
+  const apps = await mkdtemp(join(tmpdir(), "harness-apps-"));
+  t.after(() => rm(apps, { recursive: true, force: true }));
+  await mkdir(join(apps, "Zed.app")); await mkdir(join(apps, "Sublime Text.app")); await writeFile(join(apps, "Cursor.app"), "not a bundle");
+  const f = await fixture(t, "basic", { applicationFolders: [apps] }); await auth(f); const id = await create(f);
+  assert.deepEqual(row((await call(f, "/api/v1/editors")).data), { editors: [{ id: "zed", name: "Zed" }, { id: "sublime", name: "Sublime Text" }] });
+  // No call below reaches an editor: each is refused first (an installed editor is only ever named with a place that is refused).
+  assert.equal((await call(f, `/api/v1/sessions/${id}/open`, "POST", { editor: "nano" })).status, 400);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/open`, "POST", { editor: "vscode" })).status, 404);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/open`, "POST", {})).status, 400);
+  await writeFile(join(f.root, "outside.txt"), "x");
+  assert.equal((await call(f, `/api/v1/sessions/${id}/open`, "POST", { editor: "zed", path: "../outside.txt" })).status, 400);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/open`, "POST", { editor: "zed", path: "missing.txt" })).status, 404);
+  // A file longer than a page, with characters of three bytes across the page's end.
+  const text = "a" + "中文".repeat(100_000) + "end";
+  await writeFile(join(f.workspace, "long.txt"), text);
+  const pages: Record<string, unknown>[] = [];
+  for (let offset: number | null = 0; offset !== null;) {
+    const page = await call(f, `/api/v1/sessions/${id}/file?path=long.txt&offset=${offset}`); assert.equal(page.status, 200, page.text);
+    pages.push(row(page.data)); offset = row(page.data).next as number | null;
+  }
+  assert.ok(pages.length >= 3);
+  for (const page of pages) { assert.equal(page.path, "long.txt"); assert.equal(page.size, Buffer.byteLength(text)); assert.ok(Buffer.byteLength(String(page.text)) <= 256 * 1024); assert.equal(String(page.text).includes("�"), false); }
+  assert.equal(pages.map(page => String(page.text)).join(""), text);
+  // An offset inside a character starts at the next one; one past the end is refused.
+  const inner = row((await call(f, `/api/v1/sessions/${id}/file?path=long.txt&offset=2`)).data);
+  assert.deepEqual([inner.offset, String(inner.text).slice(0, 2)], [4, "文中"]);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/file?path=long.txt&offset=${Buffer.byteLength(text) + 1}`)).status, 400);
+  // By its absolute path too; a binary file is told as such; a folder, a file not there and what leads out are refused.
+  assert.equal(row((await call(f, `/api/v1/sessions/${id}/file?path=${encodeURIComponent(join(f.workspace, "long.txt"))}`)).data).offset, 0);
+  await writeFile(join(f.workspace, "blob.bin"), Buffer.from([0x50, 0x4b, 0x00, 0x01, 0x02]));
+  assert.deepEqual(row((await call(f, `/api/v1/sessions/${id}/file?path=blob.bin`)).data), { path: "blob.bin", size: 5, binary: true });
+  await mkdir(join(f.workspace, "folder"));
+  assert.equal((await call(f, `/api/v1/sessions/${id}/file?path=folder`)).status, 400);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/file?path=.`)).status, 400);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/file?path=missing.txt`)).status, 404);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/file?path=../outside.txt`)).status, 400);
+  await symlink(join(f.root, "outside.txt"), join(f.workspace, "link.txt"));
+  assert.equal((await call(f, `/api/v1/sessions/${id}/file?path=link.txt`)).status, 400, "a link that leads out is refused by its real path");
+  assert.equal((await call(f, `/api/v1/sessions/${id}/file`)).status, 400);
+  const empty = row((await call(f, `/api/v1/sessions/${id}/file?path=${encodeURIComponent("folder/../empty.txt")}`)));
+  assert.equal(empty.status, 404);
+  await writeFile(join(f.workspace, "empty.txt"), "");
+  assert.deepEqual(row((await call(f, `/api/v1/sessions/${id}/file?path=empty.txt`)).data), { path: "empty.txt", size: 0, offset: 0, text: "", next: null });
+});
+
+test("over HTTP a workspace's Git is told a file at a time, committed (some files, then the rest, then nothing left: 409) and pushed to a local bare repository, first setting its upstream; a workspace in no repository is not found as one", async t => {
+  const { execFileSync } = await import("node:child_process");
+  // Git here reads a configuration of the test's own, never the user's (no signing, no hooks, an identity): set for the Gateway's Git and the test's alike.
+  const saved = { global: process.env.GIT_CONFIG_GLOBAL, system: process.env.GIT_CONFIG_NOSYSTEM };
+  const f = await fixture(t); await auth(f); const id = await create(f);
+  const config = join(f.root, "gitconfig");
+  await writeFile(config, "[user]\n\tname = Fixture\n\temail = fixture@example.invalid\n[commit]\n\tgpgsign = false\n[init]\n\tdefaultBranch = trunk\n");
+  process.env.GIT_CONFIG_GLOBAL = config; process.env.GIT_CONFIG_NOSYSTEM = "1";
+  t.after(() => { for (const [key, value] of [["GIT_CONFIG_GLOBAL", saved.global], ["GIT_CONFIG_NOSYSTEM", saved.system]] as const) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
+  const sh = (args: readonly string[], cwd = f.workspace): string => execFileSync("git", [...args], { cwd, encoding: "utf8" }).trim();
+  const notRepo = await call(f, `/api/v1/sessions/${id}/git`); assert.equal(notRepo.status, 404); assert.equal(row(notRepo.data).code, "NOT_A_REPOSITORY");
+  sh(["init", "-q"]);
+  await writeFile(join(f.workspace, "a.txt"), "one\ntwo\nthree\n"); await writeFile(join(f.workspace, "b.txt"), "bee\n");
+  sh(["add", "-A"]); sh(["commit", "-q", "-m", "first"]);
+  await writeFile(join(f.workspace, "a.txt"), "one\nTWO\nthree\nfour\n"); await rm(join(f.workspace, "b.txt")); await writeFile(join(f.workspace, "c d.txt"), "new\n");
+  const detail = row((await call(f, `/api/v1/sessions/${id}/git`)).data);
+  assert.deepEqual([detail.branch, detail.remote, detail.upstream], ["trunk", false, undefined]);
+  const files = (detail.files as Record<string, unknown>[]).sort((left, right) => String(left.path).localeCompare(String(right.path)));
+  assert.deepEqual(files, [{ path: "a.txt", index: ".", worktree: "M", added: 2, removed: 1 }, { path: "b.txt", index: ".", worktree: "D", added: 0, removed: 1 }, { path: "c d.txt", index: "?", worktree: "?" }]);
+  // Commit one file: only it goes in; the deletion and the new file stay as they were.
+  for (const bad of [{ message: "  " }, { message: "x", paths: [] }, { message: "x", paths: ["../outside.txt"] }, { message: "x", paths: [3] }, {}]) assert.equal((await call(f, `/api/v1/sessions/${id}/git/commit`, "POST", bad)).status, 400, JSON.stringify(bad));
+  const one = await call(f, `/api/v1/sessions/${id}/git/commit`, "POST", { message: "Change a\n\nwith a body", paths: ["a.txt"] });
+  assert.equal(one.status, 200, one.text); assert.deepEqual([row(one.data).subject, row(one.data).commit], ["Change a", sh(["rev-parse", "--short", "HEAD"])]);
+  assert.deepEqual(execFileSync("git", ["status", "--porcelain"], { cwd: f.workspace, encoding: "utf8" }).split("\n").filter(line => line !== "").sort(), [" D b.txt", "?? \"c d.txt\""]);
+  // Commit the rest (the deletion included), then nothing is left: 409 with Git's words.
+  const rest = await call(f, `/api/v1/sessions/${id}/git/commit`, "POST", { message: "The rest" }); assert.equal(rest.status, 200, rest.text);
+  assert.equal(sh(["status", "--porcelain"]), ""); assert.equal(sh(["rev-list", "--count", "HEAD"]), "3");
+  const nothing = await call(f, `/api/v1/sessions/${id}/git/commit`, "POST", { message: "Nothing" });
+  assert.equal(nothing.status, 409); assert.equal(row(nothing.data).code, "GIT_NOTHING_TO_COMMIT"); assert.ok(String(row(nothing.data).message).length > 0);
+  // Push: no remote at all, then origin (a bare repository on this disk) with the upstream set, then to that upstream.
+  const none = await call(f, `/api/v1/sessions/${id}/git/push`, "POST", {}); assert.equal(none.status, 409); assert.equal(row(none.data).code, "GIT_NO_REMOTE");
+  const bare = join(f.root, "remote.git"); sh(["init", "-q", "--bare", bare], f.root); sh(["remote", "add", "origin", bare]);
+  const first = await call(f, `/api/v1/sessions/${id}/git/push`, "POST", {}); assert.equal(first.status, 200, first.text);
+  assert.deepEqual(row(first.data), { remote: "origin", branch: "trunk" }); assert.equal(sh(["rev-parse", "trunk"], bare), sh(["rev-parse", "HEAD"]));
+  await writeFile(join(f.workspace, "a.txt"), "again\n"); sh(["commit", "-q", "-am", "again"]);
+  assert.deepEqual(row((await call(f, `/api/v1/sessions/${id}/git`)).data), { branch: "trunk", upstream: { name: "origin/trunk", ahead: 1, behind: 0 }, remote: true, files: [] });
+  const second = await call(f, `/api/v1/sessions/${id}/git/push`, "POST", {}); assert.equal(second.status, 200, second.text);
+  assert.equal(sh(["rev-parse", "trunk"], bare), sh(["rev-parse", "HEAD"]));
+  // A detached head is pushed nowhere.
+  sh(["checkout", "-q", "--detach"]);
+  const detached = await call(f, `/api/v1/sessions/${id}/git/push`, "POST", {}); assert.equal(detached.status, 409); assert.equal(row(detached.data).code, "GIT_DETACHED_HEAD");
+  assert.equal(row((await call(f, `/api/v1/sessions/${id}/git`)).data).branch, null);
 });

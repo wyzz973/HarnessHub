@@ -100,6 +100,8 @@ async function showFrozenHarnesses(page: Page): Promise<void> {
   await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "设置", exact: true }).click();
   const toggle = page.getByRole("switch", { name: FROZEN_SWITCH });
   await toggle.click(); await expect(toggle).toBeChecked();
+  // The settings are a layer over the page (2026-11-14): closed again, the page and its sidebar are there as they were.
+  await page.keyboard.press("Escape"); await expect(page.getByRole("dialog", { name: "设置" })).toHaveCount(0);
 }
 /**
  * Opens the composer's advanced settings (控制入口、原生选项与后台进程) as a user does since ruling R2: from the footer of
@@ -2354,19 +2356,21 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   // Nor do ⇧⌘O and ⌘B while composing: away from the conversation the page stays, and so does the sidebar. ⌘. is the
   // conversation's stop key alone (ADR-054 §5): outside a conversation it does nothing, and never opens or closes the
   // details panel, as the application's ⌘. once did.
-  const heading = page.getByRole("heading", { name: "设置", exact: true }), panel = () => page.evaluate(() => localStorage.getItem("harnesshub:preferences"));
-  await navigation.getByRole("button", { name: "设置", exact: true }).click(); await expect(heading).toBeVisible();
+  // A page of the application, away from the conversation: the Harness page (the settings are a layer over the page since 2026-11-14, and the sidebar behind
+  // them is out of reach while they are open).
+  const heading = page.getByRole("heading", { name: "Harness", exact: true, level: 1 }), panel = () => page.evaluate(() => localStorage.getItem("harnesshub:preferences"));
+  await navigation.getByRole("button", { name: "Harness", exact: true }).click(); await expect(heading).toBeVisible();
   await page.evaluate(() => { for (const [key, shiftKey] of [["o", true], ["b", false]] as const) document.body.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, shiftKey, isComposing: true, bubbles: true, cancelable: true })); });
   await expect(heading).toBeVisible(); await expect(navigation).toBeVisible();
   const before = await panel(); await page.keyboard.press("ControlOrMeta+."); await expect(heading).toBeVisible(); assert.equal(await panel(), before);
   // ⌘B hides the sidebar and brings it back. A control of the page keeps focus; one in the sidebar leaves with it, and
   // focus moves to the button that shows the sidebar again, then to the one that hides it: the keyboard keeps its place.
-  const frozen = page.getByRole("switch", { name: FROZEN_SWITCH }), expand = page.locator("#main-content").getByRole("button", { name: "展开侧栏", exact: true });
+  const frozen = page.locator("#main-content").getByRole("button", { name: "重新检测", exact: true }), expand = page.locator("#main-content").getByRole("button", { name: "展开侧栏", exact: true });
   const collapse = navigation.getByRole("button", { name: "收起侧栏", exact: true });
   await frozen.focus();
   await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toHaveCount(0); await expect(frozen).toBeFocused();
   await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toBeVisible(); await expect(frozen).toBeFocused();
-  await navigation.getByRole("button", { name: "设置", exact: true }).focus();
+  await navigation.getByRole("button", { name: "Harness", exact: true }).focus();
   await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toHaveCount(0); await expect(expand).toBeFocused();
   await page.keyboard.press("ControlOrMeta+B"); await expect(navigation).toBeVisible(); await expect(collapse).toBeFocused();
   // The two buttons do the same from the keyboard.
@@ -4118,6 +4122,7 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   const toggle = page.getByRole("switch", { name: FROZEN_SWITCH });
   await expect(page.locator(".frozen-setting")).toContainText("不再打磨的 Harness；用过它们的对话照常打开。");
   await expect(toggle).not.toBeChecked(); await toggle.click(); await expect(toggle).toBeChecked();
+  await page.keyboard.press("Escape");
   // Shown: the installed one is listed with its mark, and only it carries one (only the Harnesses the Hub carries in full are offered for
   // installation, so the others are not listed).
   await navigation.getByRole("button", { name: "Harness", exact: true }).click();
@@ -4133,6 +4138,7 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   // Hidden again: the conversation still opens on Gemini CLI and keeps it chosen and offered; a new conversation does not offer it.
   await navigation.getByRole("button", { name: "设置", exact: true }).click();
   await expect(toggle).toBeChecked(); await toggle.click(); await expect(toggle).not.toBeChecked();
+  await page.keyboard.press("Escape");
   await navigation.getByRole("button", { name: "frozen work", exact: true }).click();
   await expect(page.locator("#chat-title")).toHaveText("frozen work");
   await expect(log).toContainText("你好 fixture");
@@ -4558,7 +4564,9 @@ test("G054-DL10 the Agent page and an Agent's details, the capabilities, the set
   await go("设置");
   const settings = page.getByRole("heading", { level: 1, name: "设置", exact: true });
   await expect(settings).toBeVisible();
-  await dl10Shoot(page, "settings", { anchors: () => [settings], drawer: "check" });
+  // The settings are a layer over the page (2026-11-14): the drawer is checked on the pages, and the layer is closed before the next one is gone to.
+  await dl10Shoot(page, "settings", { anchors: () => [settings] });
+  await page.keyboard.press("Escape"); await expect(page.getByRole("dialog", { name: "设置" })).toHaveCount(0);
 
   await go("模型连接");
   const providers = page.getByRole("heading", { level: 1, name: "模型连接", exact: true });

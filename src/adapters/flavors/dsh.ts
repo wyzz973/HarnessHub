@@ -43,5 +43,7 @@ export const dshFlavor: HarnessFlavor = {
   // session, on new and resume; dsh-mcp-client registerServerContext puts each server's instructions into the system prompt (section
   // `mcp:<name>`). No other per-session system prompt entry (dsh-system-prompt and dsh-agent-instructions read files and the profile).
   // The record is read as files with its own file tools (2026-11-13; verified on the installed program: it read the directory and answered from it).
-  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", resume: "native", fork: "none", attachments: "native", usage: "turn", record: "files" },
+  // No words in the middle of a turn: dsh-acp (installed 2026-11-14) refuses a second prompt while one runs ("a prompt is already in flight for
+  // this session", lib/index.js prompt) and its initialize advertises no steering method.
+  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", resume: "native", fork: "none", attachments: "native", usage: "turn", record: "files", steer: "none" },
 };

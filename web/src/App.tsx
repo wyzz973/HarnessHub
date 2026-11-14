@@ -31,7 +31,8 @@ import { ProvidersPage } from "./components/ProvidersPage.js";
 import type { ProviderProbeState } from "./components/ProvidersPage.js";
 import { byUrgency, InboxList, Sidebar } from "./components/Sidebar.js";
 import type { InboxSource, Page, SessionActions } from "./components/Sidebar.js";
-import { SettingsPage } from "./components/SettingsPage.js";
+import type { EditorChoice, WorkspaceAccess } from "./components/WorkspaceTools.js";
+import { SettingsDialog } from "./components/SettingsPage.js";
 import { CapabilitiesPage } from "./components/CapabilitiesPage.js";
 import { CommandPalette, ShortcutsDialog, type PaletteCommand } from "./components/CommandPalette.js";
 import { BrandIcon } from "./components/BrandIcon.js";
@@ -45,6 +46,7 @@ import { endedAt, over, userStopped } from "./lib/protocol/runs.js";
 import { finished } from "./lib/turn.js";
 import { cn } from "./lib/cn.js";
 import { inScratch, shortTitle } from "./lib/format.js";
+import { actionOf, keyText, useKeys } from "./lib/keys.js";
 import { markSeen, unseenNow } from "./lib/seen.js";
 import { summaryLine } from "../../src/contracts/web.js";
 import { backgroundOutcome, enableNotifications, markNotificationAsked, notificationsOfferable, notifyTurnEnded } from "./lib/notify.js";
@@ -268,7 +270,7 @@ export function App() {
   }, []);
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootAttempt, setBootAttempt] = useState(0);
-  const [page, setPage] = useState<Page>(pageRoute);
+  const [page, setPage] = useState<Page>(pageRoute), [behind, setBehind] = useState<Page>("chat");
   // The Harness the capability page opens on, when it was opened from that Harness's details.
   const [capabilityHarness, setCapabilityHarness] = useState<string | null>(null);
   // On a narrow screen the sidebar is a drawer; on a wide one the user may hide it (a preference of this browser).
@@ -276,6 +278,7 @@ export function App() {
   const [preferences, setPreference] = usePreferences();
   const narrow = useMedia("(max-width: 759px)");
   const [palette, setPalette] = useState(false);
+  useKeys();
   const [shortcuts, setShortcuts] = useState(false);
   // The inbox of everything waiting for the user: beside its sidebar row, or a sheet of its own on a narrow screen.
   const [inboxOpen, setInboxOpen] = useState(false);
@@ -464,7 +467,7 @@ export function App() {
       const summary: SessionSummary = { id: value.id, title: value.title,
         status: value.status, workspace: value.workspace, selection: value.selection, updatedSeq: value.lastSeq, activeRunId: value.activeRunId, ...(value.parent === undefined ? {} : { parent: value.parent }),
         // When it last moved and since when its Turn runs, as its head says; a head that does not say keeps what the list knew.
-        updatedAt: value.updatedAt ?? known?.updatedAt ?? 0, ...(value.activeRunId === null ? {} : (since => since === undefined ? {} : { activeSince: since })(value.activeSince ?? known?.activeSince)), ...(value.archived === true ? { archived: true as const } : {}),
+        updatedAt: value.updatedAt ?? known?.updatedAt ?? 0, ...(value.activeRunId === null ? {} : (since => since === undefined ? {} : { activeSince: since })(value.activeSince ?? known?.activeSince)), ...(value.archived === true ? { archived: true as const } : {}), ...(value.pinned === true ? { pinned: true as const } : {}), ...(value.snoozedUntil === undefined ? {} : { snoozedUntil: value.snoozedUntil }),
         // The list's second line, as the Gateway makes it for the others: the step in progress while a Turn goes on, the wrap-up's first sentence after.
         ...(line => line ? { line: summaryLine(line) } : {})(value.activeRunId !== null ? (value.plan?.runId === value.activeRunId ? value.plan.steps.find(step => step.status === "in_progress")?.text : undefined) : value.recap?.summary) };
       return { ...current, sessions: current.sessions.some(item => item.id === value.id)
@@ -685,6 +688,8 @@ export function App() {
     finish();
   };
   const navigate = (next: Page) => leave(() => {
+    // The settings are a layer over the page they were opened from, which stays behind them and is there again when they close.
+    if (next === "settings" && page !== "settings") setBehind(page);
     setPage(next); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null);
     if (next === "chat") writeSessionRoute(sessionIdRef.current); else writePageRoute(next);
   });
@@ -745,21 +750,69 @@ export function App() {
    * What a conversation's row, and the open conversation's header, do to it: another title, put away or brought back. The list has the Gateway's answer at once;
    * putting one away says so with the way back for a few seconds, and asks nothing first (after T3 Code).
    */
-  const changeSession = useCallback((id: string, change: { readonly title?: string; readonly archived?: boolean }): Promise<void> => {
+  const changeSession = useCallback((id: string, change: { readonly title?: string; readonly archived?: boolean; readonly pinned?: boolean; readonly snoozedUntil?: number | null }): Promise<void> => {
     // A change this page makes itself is not news to it: a conversation that was read stays read, though the change moved it on.
     const before = state?.sessions.find(item => item.id === id), read = before !== undefined && !unseenNow(before);
     return api.updateSession(id, change).then(row => { if (read) markSeen([row]); setState(current => current ? { ...current, sessions: current.sessions.map(item => item.id === row.id ? row : item) } : current); });
   }, [api, state?.sessions]);
+  /**
+   * Where the page goes when the conversation it shows leaves the list (archived, put aside, deleted): to the one listed after it, else the one before, else a new
+   * conversation; and the way back to it, for when that is taken back. Nothing for a conversation that is not the one shown.
+   */
+  const leaving = (id: string): { readonly go: () => void; readonly back: () => void } => {
+    if (!(page === "chat" && id === sessionIdRef.current)) return { go: () => undefined, back: () => undefined };
+    const stays = (item: SessionSummary): boolean => item.archived !== true && !(item.snoozedUntil !== undefined && item.snoozedUntil > Date.now());
+    const rest = (state?.sessions ?? []).filter(item => item.id === id || stays(item)), at = rest.findIndex(item => item.id === id), next = rest[at + 1] ?? rest[at - 1];
+    return { go: () => { if (next !== undefined) selectSession(next.id); else newChat(); }, back: () => selectSession(id) };
+  };
   const sessionActions = useMemo<SessionActions>(() => ({
     rename: (id, title) => { changeSession(id, { title }).catch((failure: unknown) => toast.show({ title: "没有改成", description: errorMessage(failure) })); },
     archive: (id, archived) => {
+      // Putting the open conversation away goes on to the one listed after it (after T3 Code's settle-and-advance); taking that back comes back to it.
+      const gone = archived ? leaving(id) : null;
       changeSession(id, { archived }).then(() => {
         if (!archived) return;
-        const note = toast.show({ title: "已归档", action: { label: "撤销", onClick: () => { toast.close(note); changeSession(id, { archived: false }).catch(() => undefined); } }, timeout: 5000 });
+        gone?.go();
+        const note = toast.show({ title: "已归档", action: { label: "撤销", onClick: () => { toast.close(note); changeSession(id, { archived: false }).then(() => gone?.back(), () => undefined); } }, timeout: 5000 });
       }, (failure: unknown) => toast.show({ title: archived ? "没有归档" : "没有取消归档", description: errorMessage(failure) }));
     },
+    pin: (id, pinned) => { changeSession(id, { pinned }).catch((failure: unknown) => toast.show({ title: pinned ? "没有置顶" : "没有取消置顶", description: errorMessage(failure) })); },
+    snooze: (id, until) => {
+      const gone = until === null ? null : leaving(id);
+      changeSession(id, { snoozedUntil: until }).then(() => {
+        if (until === null) return;
+        gone?.go();
+        const note = toast.show({ title: "稍后再提醒", action: { label: "撤销", onClick: () => { toast.close(note); changeSession(id, { snoozedUntil: null }).then(() => gone?.back(), () => undefined); } }, timeout: 5000 });
+      }, (failure: unknown) => toast.show({ title: "没有设成稍后提醒", description: errorMessage(failure) }));
+    },
+    remove: id => {
+      const gone = leaving(id);
+      api.deleteSession(id).then(() => {
+        setState(current => current ? { ...current, sessions: current.sessions.filter(item => item.id !== id) } : current);
+        gone.go();
+        // The way back, for a few seconds: the conversation is put back where it stood in the list (newest first).
+        const note = toast.show({ title: "已删除", action: { label: "撤销", onClick: () => { toast.close(note); api.restoreSession(id).then(row => {
+          setState(current => current ? { ...current, sessions: [...current.sessions.filter(item => item.id !== row.id), row].sort((left, right) => right.updatedAt - left.updatedAt) } : current);
+          gone.back();
+        }, (failure: unknown) => toast.show({ title: "没有恢复", description: errorMessage(failure) })); } }, timeout: 6000 });
+      }, (failure: unknown) => toast.show({ title: "没有删除", description: errorMessage(failure) }));
+    },
     reveal: id => { api.reveal(id).catch((failure: unknown) => toast.show({ title: "无法在访达中显示", description: errorMessage(failure) })); },
-  }), [api, changeSession, toast]);
+    grouping: preferences.grouping, onGrouping: value => setPreference("grouping", value),
+  }), [api, changeSession, toast, page, state?.sessions, preferences.grouping]);
+  // The editors installed on this Mac, read once the page is signed in and has its state (a read before that is refused): what the details panel offers to open the
+  // workspace in.
+  const [editors, setEditors] = useState<readonly EditorChoice[]>([]), signedIn = state !== null;
+  useEffect(() => { if (!signedIn) return; const controller = new AbortController(); api.editors(controller.signal).then(found => setEditors(found), () => undefined); return () => controller.abort(); }, [api, signedIn]);
+  /** What the page does with the open conversation's workspace: an editor, a file shown, a commit and a push. Each is done when its control is pressed. */
+  const workspaceTools = useMemo<WorkspaceAccess | undefined>(() => sessionId === null ? undefined : {
+    editors,
+    openIn: (editor, path) => { api.openIn(sessionId, editor, path).catch((failure: unknown) => toast.show({ title: "没有打开", description: errorMessage(failure) })); },
+    file: (path, offset, signal) => api.file(sessionId, path, offset, signal),
+    git: signal => api.git(sessionId, signal),
+    commit: (message, paths) => api.commit(sessionId, message, paths),
+    push: () => api.push(sessionId),
+  }, [api, sessionId, editors, toast]);
   /** Opens the conversation listed before or after the open one; from another page, or with none open, the newest. The ends of the list are where it stops. */
   const stepSession = (by: -1 | 1) => {
     const list = state?.sessions ?? [];
@@ -805,14 +858,18 @@ export function App() {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.isComposing || event.keyCode === 229 || !(event.metaKey || event.ctrlKey)) return;
-      const key = event.key.toLowerCase();
-      if (event.shiftKey && !event.altKey && key === "o") { event.preventDefault(); newChat(); return; }
-      if (!event.shiftKey && !event.altKey && key === "k") { event.preventDefault(); if (!narrow) setInboxOpen(false); if (palette) setPalette(false); else openLayer(() => setPalette(true)); return; }
-      if (!event.altKey && event.key === "/") { event.preventDefault(); if (!narrow) setInboxOpen(false); if (shortcuts) setShortcuts(false); else openLayer(() => setShortcuts(true)); return; }
-      if (event.altKey && !event.shiftKey && event.key === "ArrowDown") { event.preventDefault(); nextWaiting(); return; }
-      // ⌥⌘[ and ⌥⌘]: the conversation before and after the open one, in the list's order (⇧⌘[ and ⇧⌘] are the browser's own, for its tabs). Read by the key's place: ⌥ changes what it types.
-      if (event.altKey && !event.shiftKey && (event.code === "BracketLeft" || event.code === "BracketRight")) { event.preventDefault(); stepSession(event.code === "BracketLeft" ? -1 : 1); return; }
-      if (!event.shiftKey && !event.altKey && key === "b" && !(event.target instanceof Element && event.target.closest(SHORTCUT_TARGETS))) { event.preventDefault(); if (narrow) setSidebarOpen(value => !value); else showSidebar(!preferences.sidebar); return; }
+      // Which shortcut it is by the keys chosen now (lib/keys.ts); ⇧⌘[ and ⇧⌘] also step through the conversations where the page is given them (an installed
+      // app window: a browser keeps them for its tabs and the page never sees them).
+      const action = actionOf(event) ?? (event.shiftKey && !event.altKey && event.code === "BracketLeft" ? "previous" : event.shiftKey && !event.altKey && event.code === "BracketRight" ? "next" : null);
+      switch (action) {
+        case "new": event.preventDefault(); newChat(); return;
+        case "palette": event.preventDefault(); if (!narrow) setInboxOpen(false); if (palette) setPalette(false); else openLayer(() => setPalette(true)); return;
+        case "shortcuts": event.preventDefault(); if (!narrow) setInboxOpen(false); if (shortcuts) setShortcuts(false); else openLayer(() => setShortcuts(true)); return;
+        case "nextWaiting": event.preventDefault(); nextWaiting(); return;
+        case "previous": case "next": event.preventDefault(); stepSession(action === "previous" ? -1 : 1); return;
+        case "sidebar": if (event.target instanceof Element && event.target.closest(SHORTCUT_TARGETS)) return; event.preventDefault(); if (narrow) setSidebarOpen(value => !value); else showSidebar(!preferences.sidebar); return;
+        default: return;
+      }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
   });
@@ -889,6 +946,32 @@ export function App() {
    * the same idempotent path as a click, only if that Turn completed, the conversation still accepts messages and no
    * selection change waits; otherwise it goes back into the composer unsent. Only this tab sends it.
    */
+  /**
+   * Says the message in the box to the Harness now, in the Turn in progress (2026-11-14, after T3 Code's steer), where its Harness can be told something mid-Turn. The words
+   * leave the box at once and stand in the Turn while the Harness is being given them. When the Gateway refuses them (no Turn to take them, this Harness cannot, or the Turn
+   * had just ended) they are kept to be sent when the Turn ends, as Enter keeps them where nothing can be said mid-Turn. When the page cannot tell whether they reached it,
+   * they are put back in the box and never sent again by themselves: the Turn shows them if they did.
+   */
+  const steering = useRef(false);
+  const steerMessage = () => {
+    const live = liveView(), run = live?.runs.find(item => item.id === live.activeRunId), text = messageDraft;
+    if (!live || !run || steering.current || !text.trim() || attachments.length > 0) return;
+    steering.current = true;
+    const selection = JSON.stringify(selectionDraft(live.selection));
+    setMessageDraft("");
+    api.steer(live.id, text, requestKey()).then(() => undefined, (failure: unknown) => {
+      if (failure instanceof ApiError && failure.code.startsWith("STEER_")) {
+        setQueued(current => current ?? { text, attachments: [], afterRunId: run.id, selection });
+        if (queued !== null) setMessageDraft(current => mergeHeld(text, current));
+        toast.show({ title: failure.code === "STEER_REFUSED" ? "这一轮刚好结束，留到下一条发" : "它这时接不了插话，留到这一轮结束后发" });
+        return;
+      }
+      setMessageDraft(current => mergeHeld(text, current));
+      toast.show({ title: "没确认它收到", description: "话放回了输入框；先看看这一轮里有没有这句话，再决定要不要重发。" });
+    }).finally(() => { steering.current = false; });
+  };
+  // Mid-Turn words go to the Harness at work, never to one the box was switched to meanwhile, and only where its adapter says it can take them.
+  const canSteer = session !== null && session.activeRunId !== null && draft.harnessId === session.selection.harnessId && !draft.providerId && nativeCatalog?.flavor?.capabilities?.steer === "native";
   const queueMessage = () => {
     const live = liveView(), run = live?.runs.find(item => item.id === live.activeRunId);
     if (!live || !run || queued !== null || !messageDraft.trim() || attachments.some(item => item.status !== "ready")) return;
@@ -1224,7 +1307,7 @@ export function App() {
           if (current === null) return current;
           const fresh = new Map(page.sessions.map(row => [row.id, row]));
           let changed = false;
-          const sessions = current.sessions.map(row => { const now = fresh.get(row.id); if (now === undefined || now.updatedSeq < row.updatedSeq || (now.updatedSeq === row.updatedSeq && now.activeRunId === row.activeRunId && now.title === row.title && now.archived === row.archived)) return row; changed = true; return now; });
+          const sessions = current.sessions.map(row => { const now = fresh.get(row.id); if (now === undefined || now.updatedSeq < row.updatedSeq || (now.updatedSeq === row.updatedSeq && now.activeRunId === row.activeRunId && now.title === row.title && now.archived === row.archived && now.pinned === row.pinned && now.snoozedUntil === row.snoozedUntil)) return row; changed = true; return now; });
           const added = page.sessions.filter(row => !current.sessions.some(known => known.id === row.id));
           return changed || added.length ? { ...current, sessions: [...added, ...sessions] } : current;
         });
@@ -1272,9 +1355,9 @@ export function App() {
     const theme = (value: "system" | "light" | "dark") => () => setPreference("theme", value);
     const waiting = liveItems(attentionItems, Date.now()).length;
     return [
-      { id: "new", group: "操作", label: "新对话", icon: <SquarePen size={16}/>, shortcut: "⇧⌘O", run: newChat },
+      { id: "new", group: "操作", label: "新对话", icon: <SquarePen size={16}/>, shortcut: keyText("new"), run: newChat },
       { id: "inbox", group: "操作", label: "等你处理", ...(waiting ? { hint: waiting + " 项" } : {}), keywords: "收件箱 审批 提问", icon: <Inbox size={16}/>, run: openInbox },
-      { id: "next-waiting", group: "操作", label: "下一件“等你处理”", keywords: "下一件等你处理 审批 提问", icon: <ArrowDown size={16}/>, shortcut: "⌥⌘↓", run: nextWaiting },
+      { id: "next-waiting", group: "操作", label: "下一件“等你处理”", keywords: "下一件等你处理 审批 提问", icon: <ArrowDown size={16}/>, shortcut: keyText("nextWaiting"), run: nextWaiting },
       ...state.sessions.map(item => ({ id: "session:" + item.id, group: "对话", label: item.title || "新对话", hint: harnessName(item.selection.harnessId), keywords: item.workspace, icon: <BrandIcon brand={item.selection.harnessId} name={harnessName(item.selection.harnessId)} size={16}/>, run: () => selectSession(item.id) })),
       ...state.harnesses.filter(harness => !hidden.has(harness.id) && harness.controls.some(control => control.available)).map(harness => ({ id: "start:" + harness.id, group: "用 Harness 开始新对话", label: "用 " + harness.name + " 开始新对话", keywords: harness.id, icon: <BrandIcon brand={harness.id} name={harness.name} size={16}/>, run: () => chooseHarness(harness) })),
       // This page was called "我的 Agent" before ADR-054 and "Agent" until the user's decision of 2026-11-02 ("改成harness");
@@ -1284,13 +1367,13 @@ export function App() {
       { id: "settings", group: "前往", label: "设置", keywords: "主题 通知 发现 快捷键", icon: <Settings size={16}/>, run: go("settings") },
       // The provider page has one name, 模型连接 (ruling O); the name it had before still finds it.
       ...(state.providerManagement !== false ? [{ id: "providers", group: "前往", label: "模型连接", keywords: "Provider 模型与账号", icon: <SlidersHorizontal size={16}/>, run: go("providers") }] : []),
-      { id: "panel", group: "显示", label: preferences.panel ? "收起详情面板" : "打开详情面板", icon: <PanelRight size={16}/>, shortcut: "⌘\\", run: () => setPreference("panel", !preferences.panel) },
-      { id: "sidebar", group: "显示", label: preferences.sidebar ? "收起侧栏" : "展开侧栏", icon: <PanelLeft size={16}/>, shortcut: "⌘B", run: () => showSidebar(!preferences.sidebar) },
-      { id: "density", group: "显示", label: preferences.density === "compact" ? "过程显示：详细" : "过程显示：简洁", icon: <ListCollapse size={16}/>, run: () => setPreference("density", preferences.density === "compact" ? "detailed" : "compact") },
+      { id: "panel", group: "显示", label: preferences.panel ? "收起详情面板" : "打开详情面板", icon: <PanelRight size={16}/>, shortcut: keyText("panel"), run: () => setPreference("panel", !preferences.panel) },
+      { id: "sidebar", group: "显示", label: preferences.sidebar ? "收起侧栏" : "展开侧栏", icon: <PanelLeft size={16}/>, shortcut: keyText("sidebar"), run: () => showSidebar(!preferences.sidebar) },
+      { id: "density", group: "显示", label: preferences.density === "detailed" ? "过程显示：一行小结" : "过程显示：每一步", icon: <ListCollapse size={16}/>, run: () => setPreference("density", preferences.density === "detailed" ? "compact" : "detailed") },
       { id: "theme-system", group: "显示", label: "主题：跟随系统", icon: <Monitor size={16}/>, run: theme("system") },
       { id: "theme-light", group: "显示", label: "主题：浅色", icon: <Sun size={16}/>, run: theme("light") },
       { id: "theme-dark", group: "显示", label: "主题：深色", icon: <Moon size={16}/>, run: theme("dark") },
-      { id: "shortcuts", group: "帮助", label: "全部快捷键", keywords: "快捷键 键盘", icon: <Keyboard size={16}/>, shortcut: "⌘/", run: () => setShortcuts(true) },
+      { id: "shortcuts", group: "帮助", label: "全部快捷键", keywords: "快捷键 键盘", icon: <Keyboard size={16}/>, shortcut: keyText("shortcuts"), run: () => setShortcuts(true) },
     ];
   })();
   if (!state) return <div className="flex h-dvh flex-col items-center justify-center gap-4 bg-app px-6 text-center">
@@ -1302,6 +1385,8 @@ export function App() {
   const chooseAndClose = (id: string) => { setSidebarOpen(false); selectSession(id); };
   // An address naming the Provider page where Provider management is off opens the conversation instead.
   const shown: Page = page === "providers" && state.providerManagement === false ? "chat" : page;
+  // What the main area shows: the page itself, or — under the settings — the page they were opened from.
+  const base: Page = shown !== "settings" ? shown : behind === "settings" || (behind === "providers" && state.providerManagement === false) ? "chat" : behind;
   const inbox: InboxSource = { items: attentionItems, sessions: state.sessions, harnesses: state.harnesses, current: session, onLoad: (id, signal) => api.session(id, signal), onDecide: decideWaiting,
     onOpen: id => { setInboxOpen(false); setSidebarOpen(false); selectSession(id); } };
   const sidebar = <Sidebar providerManagement={state.providerManagement !== false} page={shown} sessions={state.sessions} harnesses={state.harnesses} currentId={sessionId} scratchRoot={state.scratchRoot}
@@ -1315,7 +1400,7 @@ export function App() {
     {narrow ? <Layer open={sidebarOpen} onOpenChange={setSidebarOpen} onClosed={layerClosed} title="主导航" className="drawer-left-pop">{sidebar}</Layer>
       : preferences.sidebar ? <div className="w-sidebar flex-none hairline-r">{sidebar}</div> : null}
     <main id="main-content" className={cn("flex min-w-0 flex-1 flex-col outline-none")} tabIndex={-1}>
-      {shown === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} onToolDetail={content => api.toolDetail(content)} {...(sessionId === null ? {} : { onDiagnostics: (run: string, includeContent: boolean) => api.runDiagnostics(sessionId, run, includeContent) })} onNativeBranch={()=>{ if(!session||!startOperation("native-branch"))return; void api.branchNative(session.id,session.epoch,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
+      {base === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} onToolDetail={content => api.toolDetail(content)} {...(sessionId === null ? {} : { onDiagnostics: (run: string, includeContent: boolean) => api.runDiagnostics(sessionId, run, includeContent) })} onNativeBranch={()=>{ if(!session||!startOperation("native-branch"))return; void api.branchNative(session.id,session.epoch,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         retainNew={keepNew}
         onRetention={enabled=>{ if(!session){ setKeepNew(enabled); return; } if(!startOperation("retention"))return; void api.setRetention(session.id,enabled,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         onEndProcess={()=>{ if(!session||!startOperation("ending-process"))return; void api.endKeptProcess(session.id,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
@@ -1328,20 +1413,20 @@ export function App() {
         onRetryConnection={() => setStreamAttempt(value => value + 1)} onLoadOlder={readOlder} reads={turnReads} {...(sessionId === null ? {} : { onLoadChanges: (before: string | undefined, signal: AbortSignal) => api.changes(sessionId, before, undefined, signal),
           onRename: (title: string) => changeSession(sessionId, { title }).catch((failure: unknown) => { toast.show({ title: "没有改成", description: errorMessage(failure) }); throw failure; }),
           onReveal: (path?: string) => { api.reveal(sessionId, path).catch((failure: unknown) => toast.show({ title: "无法在访达中显示", description: errorMessage(failure) })); },
-          onLoadWorkspace: (signal: AbortSignal) => api.workspace(sessionId, signal) })} onDraft={changeSelection} place={{ scratch, workspace }} onPlace={choosePlace} recentFolders={recentFolders} onChooseFolder={start => api.chooseFolder(start)} scratchRoot={state.scratchRoot} delegations={delegations} onLoadDelegation={loadDelegation} onDelegate={delegate} taskBoard={taskBoard} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
+          onLoadWorkspace: (signal: AbortSignal) => api.workspace(sessionId, signal), workspaceTools, terminalUrl: (cols: number, rows: number) => api.terminalUrl(sessionId, cols, rows) })} onDraft={changeSelection} place={{ scratch, workspace }} onPlace={choosePlace} recentFolders={recentFolders} onChooseFolder={start => api.chooseFolder(start)} scratchRoot={state.scratchRoot} delegations={delegations} onLoadDelegation={loadDelegation} onDelegate={delegate} taskBoard={taskBoard} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
         sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued}
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
         onImportNative={importNative} focusOnOpen={sessionId !== null && openedFromPage === sessionId} onOpenFocused={() => setOpenedFromPage(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}
         onProviders={() => navigate("providers")} onNew={newChat} onMenu={shell.onMenu}
         {...(relayPresence.known ? { relay: { api: api.relay, view: relayView, fresh: relayFresh, prefs: relayPrefs.prefs, next: relayNext, onNext: setRelayNext } } : {})}
-        queued={queued} onQueue={queueMessage} onEditQueued={() => { if (queued) returnQueued(queued, null); }} onWithdrawQueued={withdrawQueued} queueNotice={queueNotice} onDismissQueueNotice={() => setQueueNotice(null)}
+        queued={queued} onQueue={queueMessage} {...(canSteer ? { onSteer: steerMessage } : {})} onEditQueued={() => { if (queued) returnQueued(queued, null); }} onWithdrawQueued={withdrawQueued} queueNotice={queueNotice} onDismissQueueNotice={() => setQueueNotice(null)}
         preferences={preferences} onPreference={setPreference} conversations={state.sessions.length} sidebarHidden={!narrow && !preferences.sidebar} onExpandSidebar={shell.onExpandSidebar} onHarnesses={() => navigate("harnesses")} onSettings={() => navigate("settings")} onRescan={() => void rescan()} scanning={mutation === "scanning"}/>
-        : shown === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
-        : shown === "capabilities" ? <CapabilitiesPage api={api} initialHarness={capabilityHarness} hidden={hidden} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
-        : shown === "settings" ? <SettingsPage api={api} relay={relayPrefs} preferences={preferences} onPreference={setPreference} onRescan={() => void rescan()} scanning={mutation === "scanning"} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
+        : base === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
+        : base === "capabilities" ? <CapabilitiesPage api={api} initialHarness={capabilityHarness} hidden={hidden} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
         : <HarnessesPage api={api} harnesses={state.harnesses} hidden={hidden} onSettings={() => navigate("settings")} installationPolicy={state.installationPolicy} onUninstall={uninstall} onInstallOfficial={installOfficial} onUpgradeInstallation={upgradeInstallation} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onOpenSession={openFromPage} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onChoose={chooseHarness} onCapabilities={id => { setCapabilityHarness(id); navigate("capabilities"); }}
           readiness={state.readiness} sessions={state.sessions} onMenu={shell.onMenu} onExpandSidebar={shell.onExpandSidebar} sidebarHidden={!narrow && !preferences.sidebar}/>}
     </main>
+    <SettingsDialog open={shown === "settings"} onOpenChange={open => { if (!open) navigate(base); }} api={api} relay={relayPrefs} preferences={preferences} onPreference={setPreference} onRescan={() => void rescan()} scanning={mutation === "scanning"}/>
     {leaveAction ? <div className="motion-enter fixed right-4 bottom-4 left-4 z-[70] mx-auto max-w-[560px] rounded-block bg-surface shadow-pop"><Notice tone="amber" title="有尚未保存的修改" action={<><button type="button" className="btn btn-sm" onClick={() => setLeaveAction(null)}>继续编辑</button><button type="button" className="btn btn-sm btn-primary" onClick={() => { const action = leaveAction; setLeaveAction(null); setEditorDirty(false); action(); }}>放弃修改，离开</button></>} onDismiss={() => setLeaveAction(null)}>离开会丢弃编辑草稿。已受理的请求可在列表中查看。</Notice></div> : null}
     {narrow ? <Layer open={inboxOpen} onOpenChange={setInboxOpen} onClosed={layerClosed} title="等你处理" className="sheet-pop inbox-pop" initialFocus={firstWaiting}><InboxList {...inbox} focusRef={firstWaiting} onClose={() => setInboxOpen(false)}/></Layer> : null}
     <CommandPalette open={palette} onOpenChange={setPalette} commands={commands} onClosed={layerClosed}/>

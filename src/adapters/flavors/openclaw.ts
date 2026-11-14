@@ -32,5 +32,8 @@ export const openclawFlavor: HarnessFlavor = {
   // (dist/mcp-transport-*.mjs: the configured env only). So the Hub's tools are a command of the conversation the agent runs with its exec
   // tool (`cli`; 2026-11-13: run without asking in the workspace mode), and the instructions that name it go after the first prompt of a new
   // session. Not in read-only ("plan"), where OpenClaw refuses every command.
-  capabilities: { sessionMcp: "cli", systemPrompt: "first-prompt", planTool: "hub", resume: "native", fork: "none", attachments: "native", usage: "turn" },
+  // No words in the middle of a turn: the ACP bridge's `prompt` (dist/server-*.mjs) cancels the session's running work (`cancelSessionWork`)
+  // before it admits another prompt, which is a stop and a new turn, not a steer; its `/steer` sends the words as a normal prompt whenever the
+  // run cannot take them (docs/tools/steer.md). Neither may stand in for a steer.
+  capabilities: { sessionMcp: "cli", systemPrompt: "first-prompt", planTool: "hub", resume: "native", fork: "none", attachments: "native", usage: "turn", steer: "none" },
 };

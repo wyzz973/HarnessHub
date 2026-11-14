@@ -1,5 +1,5 @@
 import type { ProviderTextRedactor } from "../../contracts/provider.js";
-import type { CleanupEvidence, ControlEvent, ControlRun, HarnessControl, NativeConversationId, NativeOptions, NativeToolDetail, ProtocolObservation, TurnText } from "../../contracts/control.js";
+import type { CleanupEvidence, ControlEvent, ControlRun, HarnessControl, NativeConversationId, NativeOptions, NativeToolDetail, ProtocolObservation, SteerOutcome, TurnText } from "../../contracts/control.js";
 import type { RelayCapabilities } from "../../contracts/relay.js";
 import { SessionError } from "../../contracts/session.js";
 import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
@@ -63,6 +63,12 @@ export class RedactedHarnessControl implements HarnessControl {
   decidePermission(id: string, option: string, input?: string): Promise<void> {
     if (!this.inner.decidePermission) return Promise.reject(new SessionError("UNSUPPORTED_PERMISSION", "native permission decisions unavailable"));
     return this.safe(() => this.inner.decidePermission!(id, option, input));
+  }
+  /** Whether the inner Driver takes words in the middle of a turn. */
+  get steering(): boolean { return this.inner.steering === true; }
+  steer(id: NativeConversationId, text: string): Promise<SteerOutcome> {
+    if (!this.inner.steer) return Promise.reject(new SessionError("NATIVE_STEER_UNAVAILABLE", "this Harness interface takes no words in the middle of a turn"));
+    return this.safe(() => this.inner.steer!(id, text));
   }
   fork(checkpoint: string, cwd: string): Promise<string> {
     if (!this.inner.fork) return Promise.reject(new SessionError("NATIVE_FORK_UNAVAILABLE", "this Harness interface cannot branch its native session"));

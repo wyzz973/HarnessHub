@@ -13,7 +13,7 @@ import {
   type SessionSnapshot, type SwitchId,
 } from "../../contracts/session.js";
 import { conversationRunOf } from "../../contexts/session/domain/run-row.js";
-import { utf8Length } from "./rows.js";
+import { listMarksOf, utf8Length } from "./rows.js";
 
 /*
  * A conversation as one append-only JSONL file (Pi's way of keeping a session, docs/decisions/LOG.md 2026-11-12): THE FILE IS THE FACT. Everything else the store keeps (the
@@ -47,12 +47,17 @@ export interface HeadState {
   readonly configuration: SessionConfiguration; readonly selection: HarnessSelection;
   readonly retainNative?: true; readonly retained?: RetainedProcess; readonly relayRecoveryFailed?: number; readonly origin?: StoredOrigin;
   readonly delegation?: Conversation["delegation"]; readonly delegationsTold?: Conversation["delegationsTold"]; readonly taskBoard?: Conversation["taskBoard"]; readonly taskBoardTold?: number; readonly taskEditsTold?: Conversation["taskEditsTold"]; readonly parentWordsTold?: number;
-  /** What the user named and marked (2026-11-14); a file written before has neither, and its conversation is then neither named by the user nor archived. */
-  readonly userTitle?: string; readonly archived?: true;
+  /**
+   * What the user named and marked (2026-11-14): the name, the archive mark, the pin, the moment a reminder puts it aside until, when it was deleted; and the name its
+   * Harness gave it. A file written before has none of these, and its conversation is then neither named nor marked nor deleted.
+   */
+  readonly userTitle?: string; readonly archived?: true; readonly pinned?: true; readonly snoozedUntil?: number; readonly deletedAt?: number; readonly harnessTitle?: string;
 }
-/** The user's name and mark of a conversation, as the head line keeps them and the conversation carries them. */
-const userMarks = (from: { readonly userTitle?: string | undefined; readonly archived?: true | undefined }): { readonly userTitle?: string; readonly archived?: true } =>
-  ({ ...(typeof from.userTitle === "string" ? { userTitle: from.userTitle } : {}), ...(from.archived === true ? { archived: true as const } : {}) });
+type UserMarks = Pick<HeadState, "userTitle" | "archived" | "pinned" | "snoozedUntil" | "deletedAt" | "harnessTitle">;
+/** The user's names and marks of a conversation (and the name its Harness gave it), as the head line keeps them and the conversation carries them. */
+const userMarks = (from: { readonly [Key in keyof UserMarks]?: UserMarks[Key] | undefined }): UserMarks =>
+  ({ ...(typeof from.userTitle === "string" ? { userTitle: from.userTitle } : {}), ...listMarksOf(from),
+    ...(typeof from.deletedAt === "number" && Number.isSafeInteger(from.deletedAt) ? { deletedAt: from.deletedAt } : {}), ...(typeof from.harnessTitle === "string" ? { harnessTitle: from.harnessTitle } : {}) });
 /** A Run's row as a `turn` line holds it (the conversation's id is the file's). */
 export type StoredRun = Omit<RunRow, "sessionId">;
 /** An item as an `item` line holds it: the row with its whole text, without the counts (they are the text's). */
@@ -75,7 +80,7 @@ export function headJsonOf(conversation: Conversation): HeadJson {
     ...(conversation.retained === undefined ? {} : { retained: conversation.retained }), ...(conversation.relayRecoveryFailed === undefined ? {} : { relayRecoveryFailed: conversation.relayRecoveryFailed }),
     ...(conversation.origin === undefined ? {} : { origin: conversation.origin }), ...(conversation.delegation === undefined ? {} : { delegation: conversation.delegation }), ...(conversation.delegationsTold === undefined ? {} : { delegationsTold: conversation.delegationsTold }),
     ...(conversation.taskBoard === undefined ? {} : { taskBoard: conversation.taskBoard }), ...(conversation.taskBoardTold === undefined ? {} : { taskBoardTold: conversation.taskBoardTold }), ...(conversation.taskEditsTold === undefined ? {} : { taskEditsTold: conversation.taskEditsTold }), ...(conversation.parentWordsTold === undefined ? {} : { parentWordsTold: conversation.parentWordsTold }),
-    ...(conversation.archived === true ? { archived: true as const } : {}) };
+    ...listMarksOf(conversation) };
 }
 export function storedItemOf(item: HeldItem, createdSeq: number | null): StoredItem {
   return { seq: item.seq, itemId: item.itemId, type: item.type, status: item.status, startedAt: item.startedAt, endedAt: item.endedAt, parentId: item.parentId, createdSeq,
@@ -266,8 +271,9 @@ function foldLine(loaded: Loaded, byRun: Map<string, LoadedRun>, value: Record<s
   const seq = typeof value.seq === "number" ? value.seq : 0, id = String(value.id);
   if (seq !== loaded.commitSeq) { loaded.commitSeq = seq; loaded.commitParent = typeof value.parentId === "string" ? value.parentId : null; }
   if (seq > loaded.lastSeq) loaded.lastSeq = seq;
+  // A line of a commit that only named or marked the conversation (`marks`, ConversationMutation.marksOnly) does not say it moved on.
   const at = Date.parse(String(value.timestamp));
-  if (Number.isFinite(at) && at > loaded.updatedAt) loaded.updatedAt = at;
+  if (value.marks !== true && Number.isFinite(at) && at > loaded.updatedAt) loaded.updatedAt = at;
   if (value.type === "turn" && value.phase === "start") {
     const runId = String((value.run as { runId?: unknown }).runId);
     loaded.starts.push({ runId, anchor: typeof value.anchor === "string" ? value.anchor : loaded.commitParent, entry: id });

@@ -30,7 +30,7 @@ const TONES = { success: "badge-accent", warning: "badge-amber", danger: "badge-
  * control that opened the list) and says so by `onFocusHandedOver`; one closed without a choice still gives it back to where it came from.
  */
 export function SearchPicker({ label, value, placeholder, options, onChange, disabled = false, footer, prefix, className, wide = false, side = "top", align = "start",
-  open: controlledOpen, onOpenChange, title, trigger, chevron = true, size = "md", empty, triggerRef: outerTrigger, describedBy, focusAfterChoice, onFocusHandedOver }: {
+  open: controlledOpen, onOpenChange, title, trigger, chevron = true, size = "md", empty, triggerRef: outerTrigger, describedBy, focusAfterChoice, onFocusHandedOver, aside, anchor }: {
   label: string; value: string; placeholder: string; options: readonly PickerOption[];
   onChange: (value: string) => void; disabled?: boolean; footer?: ReactNode; prefix?: string; className?: string; wide?: boolean; side?: "top" | "bottom";
   align?: "start" | "end";
@@ -53,6 +53,14 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
   focusAfterChoice?: RefObject<HTMLElement | null>;
   /** Called when a choice handed the focus to `focusAfterChoice`: what the page does with the next key there (an Esc, say) can depend on it. */
   onFocusHandedOver?: () => void;
+  /**
+   * More to choose beside the list, in the same layer (2026-11-14, after the model picker of T3 Code: the Harnesses, then the current one's models, then its thinking
+   * levels). A choice in the list closes the layer and hands the keys to the message box, as ever; a choice beside it leaves the layer open, so the model and then
+   * the level can be chosen one after the other. The focus going elsewhere closes it. On a narrow screen the list stands alone.
+   */
+  aside?: ReactNode;
+  /** What the layer is placed against, in place of its trigger: the group the trigger is a part of, so a wide layer lines up with the group's edge. */
+  anchor?: RefObject<HTMLElement | null>;
 }) {
   const [ownOpen, setOwnOpen] = useState(false);
   const open = controlledOpen ?? ownOpen;
@@ -100,7 +108,7 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
       {chevron ? <ChevronDown size={12} strokeWidth={2} className="flex-none text-fg-3" aria-hidden="true"/> : null}
     </BasePopover.Trigger>
     <BasePopover.Portal>
-      <BasePopover.Positioner side={side} align={align} sideOffset={8} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-[55]">
+      <BasePopover.Positioner side={side} align={align} sideOffset={8} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-[55]" {...(anchor ? { anchor } : {})}>
         <BasePopover.Popup aria-label={label} initialFocus={search} ref={popup} finalFocus={() => {
           // Focus the user already moved elsewhere (into the message, say) stays there.
           const focused = document.activeElement;
@@ -108,8 +116,10 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
           const next = chosen.current ? target() : null;
           if (next !== null) { onFocusHandedOver?.(); return next; }
           return returnTo.current instanceof HTMLElement && returnTo.current.isConnected ? returnTo.current : true;
-        }} className={cn("picker-popover surface-pop flex max-h-[min(460px,var(--available-height))] flex-col overflow-hidden",
-          wide ? "w-[360px]" : "w-[320px]", "max-w-[calc(100vw-24px)]")}>
+        }} onBlur={aside === undefined ? undefined : event => { const next = event.relatedTarget; if (next instanceof Node && !event.currentTarget.contains(next)) setOpen(false); }}
+          className={cn("picker-popover surface-pop flex max-h-[min(460px,var(--available-height))] overflow-hidden", aside === undefined ? "flex-col" : "flex-row",
+          aside !== undefined ? "w-[320px] sm:w-[760px]" : wide ? "w-[360px]" : "w-[320px]", "max-w-[calc(100vw-24px)]")}>
+          <div className={cn("flex min-h-0 min-w-0 flex-col", aside === undefined ? "flex-1" : "w-[300px] flex-none max-sm:w-full")}>
           {title ? <div className="px-3.5 pt-2.5 text-caption text-fg-3">{title}</div> : null}
           <div className="flex items-center gap-2 px-3.5 py-1.5 hairline-b">
             <Search size={15} className="flex-none text-fg-3" aria-hidden="true"/>
@@ -146,6 +156,8 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
             }) : <p className="m-0 px-3 py-6 text-center text-ui-sm text-fg-3">{options.length === 0 && empty !== undefined ? empty : "没有匹配的选项"}</p>}
           </div>
           <div className="flex items-center justify-between gap-2 px-3.5 py-2 text-caption text-fg-3 hairline-t">{footer ?? <span>↑ ↓ 选择 · Enter 确认 · Esc 关闭</span>}</div>
+          </div>
+          {aside !== undefined ? <div className="picker-aside flex min-h-0 min-w-0 flex-1 hairline-l max-sm:hidden">{aside}</div> : null}
         </BasePopover.Popup>
       </BasePopover.Positioner>
     </BasePopover.Portal>

@@ -9,15 +9,25 @@ import type { HarnessView } from "../../../src/contracts/web.js";
 export interface Preferences {
   /** "system" follows the operating system's appearance. */
   readonly theme: "system" | "light" | "dark";
-  /** How much of each Turn's process shows by default: one summary line, or every step. */
-  readonly density: "compact" | "detailed";
+  /**
+   * How much of each Turn's process shows (2026-11-14, after T3 Code's four levels): every step, one summary line, only what failed, or nothing but what the Harness
+   * said last. The two quieter ones leave lines out of the timeline; the details panel's 过程 page always has every step.
+   */
+  readonly density: "compact" | "detailed" | "failures" | "answer";
   /** Whether the details panel stands beside a conversation on wide screens: closed until the user opens it (ADR-054 decision E). */
   readonly panel: boolean;
   readonly sidebar: boolean;
+  /**
+   * What Enter does with a message written while a reply is in progress, where the Harness at work can be told something mid-Turn (2026-11-14, after T3 Code's queue or
+   * steer): keeps it until the Turn ends, or says it now. ⌘⏎ does the other.
+   */
+  readonly whileRunning: "queue" | "steer";
+  /** How the sidebar lists conversations (2026-11-14): by the folder they work in, or by how they stand (what needs you, what is at work, the rest), after T3 Code. */
+  readonly grouping: "project" | "state";
   /** Whether the frozen Harnesses (Cursor, Gemini CLI, Pi) are listed for new work as well (ADR-050); off by default. */
   readonly showFrozen: boolean;
 }
-export const DEFAULT_PREFERENCES: Preferences = { theme: "system", density: "compact", panel: false, sidebar: true, showFrozen: false };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "system", density: "compact", panel: false, sidebar: true, grouping: "project", whileRunning: "queue", showFrozen: false };
 const KEY = "harnesshub:preferences";
 /**
  * The stored shape's version. Every write stores the whole set, so before version 2 each one also stored the details panel's
@@ -26,7 +36,7 @@ const KEY = "harnesshub:preferences";
  */
 const VERSION = 2;
 const CHOICES: { readonly [K in keyof Preferences]: readonly Preferences[K][] } = {
-  theme: ["system", "light", "dark"], density: ["compact", "detailed"], panel: [true, false], sidebar: [true, false], showFrozen: [false, true],
+  theme: ["system", "light", "dark"], density: ["compact", "detailed", "failures", "answer"], panel: [true, false], sidebar: [true, false], grouping: ["project", "state"], whileRunning: ["queue", "steer"], showFrozen: [false, true],
 };
 /**
  * The Harnesses that the lists offering one for new work leave out (ADR-050, ADR-048 decision 1): the frozen ones, unless

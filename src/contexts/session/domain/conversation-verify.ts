@@ -193,7 +193,7 @@ export const verify: VerifyConversation = (conversation: Conversation, reader: C
   for (const entry of switches) if (commands.filter(command => command.id === entry.commandId && command.kind === "switch" && command.resultId === entry.id).length !== 1) say("switch-switch-command", "switch " + entry.id, "it does not answer exactly one switch command named " + entry.commandId);
   for (const command of commands) {
     const ok = command.kind === "send" ? byId.has(command.resultId) : command.kind === "switch" ? switchById.has(command.resultId) : command.kind === "cancel" ? command.resultId === "none" || byId.has(command.resultId)
-      : command.kind === "permission" ? byId.has(command.resultId) : command.resultId === conversation.id;
+      : command.kind === "permission" || command.kind === "steer" ? byId.has(command.resultId) : command.resultId === conversation.id;
     if (!ok) say("command-result-exists", "command " + command.id, "its " + command.kind + " result " + command.resultId + " is not there");
   }
 

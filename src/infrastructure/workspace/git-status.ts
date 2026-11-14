@@ -26,7 +26,8 @@ export function workspaceGit(workspace: string, timeoutMs = STATUS_MS): Promise<
     };
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn("git", ["status", "--porcelain=v2", "--branch"], { cwd: workspace, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" }, stdio: ["ignore", "pipe", "ignore"] });
+      // Counted as the commit dialog lists them (`gitDetail`): untracked files one by one, and only under the workspace when it is a folder inside a repository.
+      child = spawn("git", ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "--", "."], { cwd: workspace, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" }, stdio: ["ignore", "pipe", "ignore"] });
     } catch { finish(null); return; }
     timer = setTimeout(() => { child.kill("SIGKILL"); finish(null); }, timeoutMs);
     timer.unref();

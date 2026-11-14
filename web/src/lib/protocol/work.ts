@@ -364,6 +364,25 @@ export function opensByDefault(block: WorkBlock, active: boolean, detailed: bool
 }
 
 /**
+ * The blocks of a Turn as the two quieter ways of showing its process leave them (the `density` preference). `failures`: of its actions only those that failed or whose
+ * result is unknown, each as its own line, and no thoughts. `answer`: no actions and no thoughts at all, and — once the Turn is over — of what the Harness said only
+ * the last, which is its answer. Everything else (a failure, a notice, something it made, a question) stays, in the order it came.
+ */
+export function quietBlocks(blocks: readonly Block[], way: "failures" | "answer", over: boolean): readonly Block[] {
+  const last = blocks.findLastIndex(block => block.kind === "item" && block.item.type === "assistant_message");
+  return blocks.flatMap((block, index): readonly Block[] => {
+    if (block.kind === "work") {
+      if (way === "answer") return [];
+      const bad = block.work.filter(item => item.status === "failed" || item.status === "unknown");
+      return bad.map(item => ({ kind: "work" as const, key: block.key + ":" + item.id, rows: [item], work: [item], tail: false }));
+    }
+    if (block.item.type === "reasoning") return [];
+    if (way === "answer" && over && block.item.type === "assistant_message" && index !== last) return [];
+    return [block];
+  });
+}
+
+/**
  * What a Turn that is over folds behind one line (2026-11-14, after T3 Code's "Worked for 1m 3s"): everything it did before its final answer — its runs of actions, the
  * thoughts and the words it said between them — when that is more than the one line a single run of actions already is. The answer stays below it, and so does whatever
  * must stay in sight (`kept`: a failure, a notice, something it made, a plan it proposes, an interruption, what happened to the context), in the order it came.

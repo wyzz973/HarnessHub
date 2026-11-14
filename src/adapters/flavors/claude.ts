@@ -11,5 +11,7 @@ export const claudeFlavor: HarnessFlavor = {
   // claude-agent-acp 0.99.1 acp-agent.js createSession: `mcpServers` go to the SDK as the session's own servers; `_meta.systemPrompt`
   // as an object keeps Claude Code's preset and adds `append`.
   // The record is read as files with its own file tools (2026-11-13; verified on the installed program: it read the directory and answered from it).
-  capabilities: { sessionMcp: "acp", systemPrompt: "acp-meta", planTool: "hub", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native", record: "files" },
+  // Words in the middle of a turn: claude-agent-acp's `_session/steering` (0.99.1 acp-agent.js `steer`, advertised by initialize's top-level
+  // `_meta.steering.supported`), asked with `idleBehavior: "promptRequired"` so that words finding no turn are refused and never start one.
+  capabilities: { sessionMcp: "acp", systemPrompt: "acp-meta", planTool: "hub", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native", record: "files", steer: "native" },
 };

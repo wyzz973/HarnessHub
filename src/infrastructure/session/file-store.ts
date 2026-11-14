@@ -26,7 +26,7 @@ import { outlineOfRecord } from "../../contexts/session/domain/turn-source.js";
 import { diffConversation, settleConversation, type Applied } from "./diff.js";
 import { readJson, readOwner, seedGeneration, writeOwner, writeWhole, type OwnerFile } from "./file-owner.js";
 import { emptyFields } from "./item-fields.js";
-import { canonicalJson, itemRowOf, utf8Length } from "./rows.js";
+import { canonicalJson, itemRowOf, listMarksOf, utf8Length } from "./rows.js";
 import {
   SESSION_FILE_VERSION, conversationOf, entryId, entryLine, fileStamp, headJsonOf, headStateOf, itemFinished, lines, loadSession, pathsOf, readPacketBody, readRange, readRunItems, runFinished,
   sessionsDir, storedItemOf, workspaceSlug,
@@ -115,6 +115,8 @@ interface Plan {
   readonly eventLines: readonly string[];
   readonly leaf: string | null;
   readonly nextEntry: number;
+  /** The commit only names or marks the conversation: its time stays (ConversationMutation.marksOnly). */
+  readonly marksOnly: boolean;
   readonly spans: ReadonlyMap<string, { from: number; to: number }>;
   readonly ends: ReadonlyMap<string, string>;
   readonly placed: ReadonlyMap<string, number>;
@@ -220,11 +222,12 @@ function append(path: string, text: string, sync: boolean): void {
 }
 
 /**
- * The title the head keeps: the one the user gave it, whenever it was given (before the first Turn included, which then does not replace it); else worked out when the
- * first Turn arrives and never again (`conversationTitle`).
+ * The title the head keeps: the one the user gave it, whenever it was given (before the first Turn included, which then does not replace it); else the one its Harness
+ * gave it (`hub_wrap_up`'s `title`, 2026-11-14); else worked out when the first Turn arrives and never again (`conversationTitle`).
  */
 function titleOf(previous: Held | null, next: Conversation, history: readonly OriginHistoryRow[] | undefined): string {
   if (next.userTitle !== undefined) return next.userTitle;
+  if (next.harnessTitle !== undefined) return next.harnessTitle;
   if (previous !== null && previous.conversation.runs.length > 0) return previous.title;
   const first = next.runs[0]?.items?.find(item => item.itemId === "user")?.text.join("");
   if (previous !== null && history === undefined && (first === undefined || first.trim() === "")) return previous.title;
@@ -493,9 +496,11 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
       if (was === undefined || now === undefined || JSON.stringify(was) !== JSON.stringify(now)) throw new SessionError("INVALID_DATA", "transaction cannot replace Session create identity");
     }
     const events = drafts(mutation.events), title = titleOf(held, next, mutation.originHistory), timestamp = at.toISOString();
+    // A commit that only names or marks the conversation leaves its time where its progress left it (ConversationMutation.marksOnly); its lines say so, for the next read.
+    const marksOnly = mutation.marksOnly === true && held !== null;
     const made = diffConversation(before, next, { events, ...(mutation.relay === undefined ? {} : { relay: mutation.relay }),
       ...(mutation.originHistory === undefined ? {} : { originHistory: mutation.originHistory }), ...(mutation.noticePrints === undefined ? {} : { noticePrints: mutation.noticePrints }),
-      ...(mutation.createdBy === undefined ? {} : { createdBy: mutation.createdBy }), title, updatedAt: at.getTime() });
+      ...(mutation.createdBy === undefined ? {} : { createdBy: mutation.createdBy }), title, updatedAt: marksOnly ? held.updatedAt : at.getTime() });
     const applied = numbered(before, made, this.generation, timestamp);
     const settled = settleConversation(next, applied), changes = applied.changes, seq = changes.head!.row.lastSeq;
     const relay = mutation.relay === undefined ? { packets: [] as StoredPacket[], deliveries: [] as DeliveryRecord[] } : this.checkRelay(held, settled, mutation.relay);
@@ -510,7 +515,7 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     if (create !== null && create !== undefined) { const line = JSON.stringify(create.header) + "\n"; text += line; offset += Buffer.byteLength(line, "utf8"); }
     const placed = new Map<string, number>(), anchor = leaf, starts: TurnStart[] = [];
     const add = (type: string, rest: Readonly<Record<string, unknown>>): { readonly id: string; readonly offset: number; readonly length: number } => {
-      const id = entryId(nextEntry++), line = entryLine(type, id, leaf, timestamp, seq, rest), length = Buffer.byteLength(line, "utf8");
+      const id = entryId(nextEntry++), line = entryLine(type, id, leaf, timestamp, seq, marksOnly ? { ...rest, marks: true } : rest), length = Buffer.byteLength(line, "utf8");
       const where = { id, offset, length };
       text += line + "\n"; offset += length + 1; leaf = id;
       return where;
@@ -590,7 +595,7 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
       : JSON.stringify({ type: "wip", seq, timestamp, ...(wipRuns.length === 0 ? {} : { runs: wipRuns }), ...(wipItems.length === 0 ? {} : { items: wipItems }), ...(wipText.length === 0 ? {} : { text: wipText }) }) + "\n";
     const eventLines = applied.events.map(event => JSON.stringify({ seq: event.seq, type: event.type, sessionId: event.sessionId, ownerGeneration: event.ownerGeneration, timestamp: event.timestamp, data: event.data }) + "\n");
     const frozen = freezeConversation(settled, before);
-    return { held, create: create ?? null, settled: frozen, commit: { conversation: frozen, events: applied.events, changes }, title, headJson, main: text, wipLine, endWip, eventLines, leaf, nextEntry,
+    return { held, create: create ?? null, settled: frozen, commit: { conversation: frozen, events: applied.events, changes }, title, headJson, main: text, wipLine, endWip, eventLines, leaf, nextEntry, marksOnly,
       spans, ends, placed, written, finished, starts, origin: originPlaces, facts, left: branchAt === undefined || whole === null ? [] : whole.runs.slice(branchAt).map(run => run.id as string), prints, packets: relay.packets, packetLine, deliveries: relay.deliveries };
   }
 
@@ -616,7 +621,8 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
       wip: false, events: null };
     const base = held.size;
     held.conversation = plan.settled; held.title = plan.title; held.headJson = plan.headJson; held.leaf = plan.leaf; held.nextEntry = plan.nextEntry;
-    held.size = base + Buffer.byteLength(plan.main, "utf8"); held.endsInNewline = true; held.updatedAt = Date.parse(plan.commit.events[0]?.timestamp ?? "") || Date.now();
+    held.size = base + Buffer.byteLength(plan.main, "utf8"); held.endsInNewline = true;
+    if (!plan.marksOnly) held.updatedAt = Date.parse(plan.commit.events[0]?.timestamp ?? "") || Date.now();
     for (const runId of plan.left) held.runs.delete(runId);
     for (const [runId, ordinal] of plan.placed) { if (!held.runs.has(runId)) held.runs.set(runId, { ordinal, span: null, endEntry: null, facts: noFacts() }); this.runOwner.set(runId, held.id); }
     for (const [runId, made] of plan.facts) held.runs.get(runId)!.facts = made;
@@ -917,7 +923,7 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     this.assertOwner(); sessionId(id);
     const held = this.entry(id), conversation = held.conversation;
     return { id, version: conversation.version, lastSeq: conversation.lastSeq, format: CONVERSATION_FORMAT, status: conversation.status, epoch: conversation.epoch, activeRunId: conversation.activeRunId,
-      pendingSwitchId: conversation.pendingSwitchId, kept: conversation.retained !== undefined, title: held.title, runCount: conversation.runs.length, updatedAt: held.updatedAt, deletedAt: null, lastError: null,
+      pendingSwitchId: conversation.pendingSwitchId, kept: conversation.retained !== undefined, title: held.title, runCount: conversation.runs.length, updatedAt: held.updatedAt, deletedAt: conversation.deletedAt ?? null, lastError: null,
       head: headJsonOf(conversation) };
   }
   window(id: SessionId, options: { readonly turns?: number; readonly bytes?: number } = {}): TurnWindow {
@@ -980,7 +986,8 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
       return hits;
     }
     let place = 0;
-    const rows = [...this.index.rows.values()].sort((left, right) => right.updatedAt - left.updatedAt || (left.id < right.id ? -1 : 1));
+    // A conversation the user deleted is found by no search across conversations.
+    const rows = [...this.index.rows.values()].filter(row => row.deletedAt === undefined).sort((left, right) => right.updatedAt - left.updatedAt || (left.id < right.id ? -1 : 1));
     for (const row of rows) {
       let held: Held;
       try { held = this.entry(row.id); } catch { continue; }
@@ -1023,11 +1030,12 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
   list(query: SessionListQuery = {}): SessionListPage {
     this.assertOwner();
     const limit = counted(query.limit, PAGE.sessions, "limit"), after = query.after === undefined ? undefined : decodeListCursor(query.after);
-    const rows = [...this.index.rows.values()].sort((left, right) => right.updatedAt - left.updatedAt || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+    // A conversation the user deleted is out of the list (it is still read by its id, to be restored: `get`, `head`).
+    const rows = [...this.index.rows.values()].filter(row => row.deletedAt === undefined).sort((left, right) => right.updatedAt - left.updatedAt || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
       .filter(row => after === undefined || row.updatedAt < after.updatedAt || (row.updatedAt === after.updatedAt && row.id > after.id));
     const page = rows.slice(0, limit).map((row): SessionListRow => ({ id: row.id, title: row.title, status: row.status, workspace: row.workspace, selection: row.selection, updatedSeq: row.lastSeq,
       updatedAt: row.updatedAt, activeRunId: row.activeRunId, ...(row.activeRunId === null || row.activeSince === undefined ? {} : { activeSince: row.activeSince }), runCount: row.runCount,
-      ...(row.parent === undefined ? {} : { parent: row.parent }), ...(row.archived === true ? { archived: true as const } : {}) }));
+      ...(row.parent === undefined ? {} : { parent: row.parent }), ...listMarksOf(row) }));
     const last = page[page.length - 1];
     return { rows: page, next: rows.length > limit && last !== undefined ? encodeListCursor(last.updatedAt, last.id) : null };
   }
