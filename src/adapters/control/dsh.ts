@@ -11,8 +11,14 @@ import { AcpControl, dshRelayCapabilities } from "./acp.js";
 const LOG_SETTLE_MS = 2000;
 const zstd = typeof (zlib as { zstdDecompress?: unknown }).zstdDecompress === "function" ? promisify((zlib as unknown as { zstdDecompress: (buffer: Buffer, done: (error: Error | null, result: Buffer) => void) => void }).zstdDecompress) : null;
 type Counters = { input: number; output: number; cachedInput: number; cacheWrite: number; total: number };
-/** One session-log entry as far as this driver reads it: its type, the turn it belongs to and a model request's usage. */
-interface LogEntry { readonly type: string; readonly turn: number | null; readonly usage: Counters | null }
+/** One session-log entry as far as this driver reads it: its type, the turn it belongs to, a model request's usage and how a turn ended. */
+interface LogEntry { readonly type: string; readonly turn: number | null; readonly usage: Counters | null; readonly ended: string | null }
+/** dsh's ACP reports a turn that ended in these as `end_turn`; its log says how it really ended. */
+const DSH_FAILURES: Readonly<Record<string, { readonly code: string; readonly message: string }>> = {
+  error: { code: "MODEL_REQUEST_FAILED", message: "dsh 这一轮出错结束了，原因记在 dsh 的会话日志里。" },
+  blocked: { code: "NATIVE_TURN_BLOCKED", message: "dsh 拦下了这一轮，没有做完。" },
+  aborted: { code: "NATIVE_TURN_ABORTED", message: "dsh 中止了这一轮，没有做完。" },
+};
 
 /** dsh-session-persistence-jsonl `encodeSegment`: one path segment, every character outside [A-Za-z0-9._-] written ~XXXX. */
 function encodeSegment(raw: string): string {
@@ -45,7 +51,8 @@ function amount(value: unknown): number { return typeof value === "number" && Nu
  * totalTokens}` under the turn number of its `turn/start` (dsh 0.2.1-rc.5; DeepSeek's Anthropic-format API: the input leaves out the cache,
  * the output holds the thinking). The log is `<DSH_HOME>/sessions/<projectKey(cwd)>/<encodeSegment(id)>/session.v<N>.jsonl[.zstd]`
  * (dsh-session-persistence-jsonl); it is only read, after the prompt answered, and the Turn's numbers are the sum of the requests of the
- * turns it added. A log that cannot be found or read gives no numbers (the Turn's usage stays as dsh reported it, the context alone).
+ * turns it added. A log that cannot be found or read gives no numbers (the Turn's usage stays as dsh reported it, the context alone). The log also says
+ * how the last turn ended, which its ACP does not (an error, blocked or aborted turn arrives as end_turn).
  * Requests of a subagent run in a session of its own and are not in this sum.
  */
 export class DshControl extends AcpControl {
@@ -88,16 +95,18 @@ export class DshControl extends AcpControl {
       if (path.endsWith(".zstd") && zstd === null) return null;
       const text = (path.endsWith(".zstd") ? await zstd!(raw) : raw).toString("utf8");
       return text.split("\n").filter(line => line.trim()).map(line => {
-        const row = JSON.parse(line) as { type?: unknown; data?: { turn?: unknown; usage?: Record<string, unknown> } };
-        const usage = row.data?.usage;
+        const row = JSON.parse(line) as { type?: unknown; data?: { turn?: unknown; usage?: Record<string, unknown>; reason?: unknown } };
+        const usage = row.data?.usage, reason = row.data?.reason;
+        const kind = typeof reason === "string" ? reason : reason !== null && typeof reason === "object" && typeof (reason as { kind?: unknown }).kind === "string" ? (reason as { kind: string }).kind : null;
         return { type: typeof row.type === "string" ? row.type : "", turn: typeof row.data?.turn === "number" ? row.data.turn : null,
-          usage: usage !== null && typeof usage === "object" ? { input: amount(usage.inputTokens), output: amount(usage.outputTokens), cachedInput: amount(usage.cacheReadTokens), cacheWrite: amount(usage.cacheWriteTokens), total: amount(usage.totalTokens) } : null };
+          usage: usage !== null && typeof usage === "object" ? { input: amount(usage.inputTokens), output: amount(usage.outputTokens), cachedInput: amount(usage.cacheReadTokens), cacheWrite: amount(usage.cacheWriteTokens), total: amount(usage.totalTokens) } : null,
+          ended: row.type === "turn/end" ? kind : null };
       });
     } catch { return null; }
   }
   private static lastTurn(entries: readonly LogEntry[]): number { return entries.reduce((high, entry) => entry.type === "turn/start" && entry.turn !== null ? Math.max(high, entry.turn) : high, 0); }
-  /** The Turn's usage: the requests of the turns the log gained after `before`, once the last of them ended (or the wait is over). */
-  private async turnUsage(id: string, cwd: string, before: number): Promise<Counters | null> {
+  /** The Turn's usage and how its last turn ended: from the turns the log gained after `before`, once the last of them ended (or the wait is over). */
+  private async turnOutcome(id: string, cwd: string, before: number): Promise<{ readonly usage: Counters | null; readonly ended: string | null } | null> {
     const path = await this.logPath(id, cwd);
     if (path === null) return null;
     let entries: readonly LogEntry[] | null = null;
@@ -109,11 +118,13 @@ export class DshControl extends AcpControl {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     if (entries === null) return null;
-    this.turns.set(id, DshControl.lastTurn(entries));
+    const last = DshControl.lastTurn(entries);
+    this.turns.set(id, last);
+    const ended = last > before ? entries.find(entry => entry.type === "turn/end" && entry.turn === last)?.ended ?? null : null;
     const requests = entries.filter(entry => entry.type === "assistant/message" && entry.turn !== null && entry.turn > before && entry.usage !== null);
-    if (!requests.length) return null;
-    return requests.reduce<Counters>((sum, entry) => ({ input: sum.input + entry.usage!.input, output: sum.output + entry.usage!.output, cachedInput: sum.cachedInput + entry.usage!.cachedInput,
-      cacheWrite: sum.cacheWrite + entry.usage!.cacheWrite, total: sum.total + entry.usage!.total }), { input: 0, output: 0, cachedInput: 0, cacheWrite: 0, total: 0 });
+    const usage = requests.length === 0 ? null : requests.reduce<Counters>((sum, entry) => ({ input: sum.input + entry.usage!.input, output: sum.output + entry.usage!.output,
+      cachedInput: sum.cachedInput + entry.usage!.cachedInput, cacheWrite: sum.cacheWrite + entry.usage!.cacheWrite, total: sum.total + entry.usage!.total }), { input: 0, output: 0, cachedInput: 0, cacheWrite: 0, total: 0 });
+    return { usage, ended };
   }
   override async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
     const cwd = this.opened?.cwd ?? null;
@@ -128,9 +139,10 @@ export class DshControl extends AcpControl {
     return { ...run, result: run.result.then(async result => {
       // The Hub's clear and a refused relay Turn sent nothing to dsh.
       if (before === null || cwd === null || result.input === "not_recorded") return result;
-      const usage = await this.turnUsage(id, cwd, before);
-      if (usage !== null) onEvent({ type: "usage", usage: { turn: usage } });
-      return result;
+      const outcome = await this.turnOutcome(id, cwd, before);
+      if (outcome?.usage) onEvent({ type: "usage", usage: { turn: outcome.usage } });
+      const failure = result.status === "completed" && outcome?.ended ? DSH_FAILURES[outcome.ended] : undefined;
+      return failure === undefined ? result : { ...result, status: "failed", reason: "native_error", error: failure };
     }) };
   }
 }
