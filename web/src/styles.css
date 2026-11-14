@@ -663,6 +663,11 @@
   .diff-line > .s { width: 16px; flex: none; text-align: center; color: var(--text-3); user-select: none; }
   .diff-line > .c { white-space: pre; padding-right: 12px; }
   .message-time::before { content: attr(data-time); }
+  /* Find in the conversation: every match in sight, and the one gone to. */
+  ::highlight(hh-find-match) { background-color: color-mix(in srgb, var(--amber-dot) 26%, transparent); }
+  ::highlight(hh-find-current) { background-color: color-mix(in srgb, var(--amber-dot) 62%, transparent); color: var(--text); }
+  /* The words found in what was said, in the palette's places. */
+  .palette-mark { background-color: color-mix(in srgb, var(--amber-dot) 30%, transparent); color: inherit; border-radius: 2px; }
   /* A part of the settings is brought to the top of its column with a little room above its title. */
   .settings-pop section { scroll-margin-top: 20px; }
   /* Long lines folded to the width there is (the details panel's switch): a line keeps its number and sign at its first row. */

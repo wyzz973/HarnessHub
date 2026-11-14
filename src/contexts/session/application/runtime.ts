@@ -1164,10 +1164,24 @@ export class SessionRuntime {
     for (let hops = 0; hops < 16; hops++) { let parent: SessionId | undefined; try { parent = this.load(root).delegation?.parentId; } catch { parent = undefined; } if (parent === undefined) break; root = parent; }
     return root;
   }
+  /**
+   * The conversation a task's board is kept on: the highest of the chain that is still there. Where the task began may have been erased (2026-11-14), and its board with it:
+   * what it delegated then keeps a board of its own.
+   */
+  private boardRoot(id: SessionId): SessionId {
+    let root = id;
+    for (let hops = 0; hops < 16; hops++) {
+      let parent: SessionId | undefined; try { parent = this.load(root).delegation?.parentId; } catch { parent = undefined; }
+      if (parent === undefined) break;
+      try { this.load(parent); } catch { break; }
+      root = parent;
+    }
+    return root;
+  }
   /** The board of the task a conversation belongs to (session.ts TaskBoard): empty until something is written on it. */
   taskBoard(id: SessionId): TaskBoard {
     this.admit();
-    return this.load(this.taskRoot(id)).taskBoard ?? { version: 0, entries: [] };
+    return this.load(this.boardRoot(id)).taskBoard ?? { version: 0, entries: [] };
   }
   /**
    * Writes on the task's board, or takes an entry off it (`forget`). `by`: a Harness's id when its tool wrote it — only the Harness of the conversation's Turn in
@@ -1178,7 +1192,7 @@ export class SessionRuntime {
     // A Harness writes in its Turn in progress: the entry names that Turn, whose user's words it is the Harness's reading of (2026-11-14).
     const running = by === "user" ? null : this.runningFor(id, by);
     const from: BoardEntry["from"] = running === null ? undefined : { sessionId: id, runId: running, ordinal: this.load(id).runs.findIndex(run => run.id === running) };
-    const root = this.taskRoot(id), author = by === "user" ? "user" : by.harnessId, at = this.options.now().getTime();
+    const root = this.boardRoot(id), author = by === "user" ? "user" : by.harnessId, at = this.options.now().getTime();
     let made: TaskBoard = { version: 0, entries: [] };
     this.commit(root, current => {
       const board = current.taskBoard ?? { version: 0, entries: [] };
@@ -1208,7 +1222,7 @@ export class SessionRuntime {
    */
   private boardNews(state: Conversation, files: boolean): { readonly text: string; readonly line: string; readonly version: number } | null {
     let board: TaskBoard | undefined;
-    try { board = this.load(this.taskRoot(state.id)).taskBoard; } catch { board = undefined; }
+    try { board = this.load(this.boardRoot(state.id)).taskBoard; } catch { board = undefined; }
     const told = state.taskBoardTold ?? 0;
     // An empty board is told only to a Harness that was given entries before: that they are withdrawn.
     if (board === undefined || board.version <= told || (board.entries.length === 0 && told === 0)) return null;
@@ -1495,6 +1509,68 @@ export class SessionRuntime {
     if (state.deletedAt === undefined) return state;
     this.commit(id, current => { const { deletedAt: _deleted, ...rest } = current; return { next: rest, events: [event("session.restored", {})], marksOnly: true }; });
     return this.load(id);
+  }
+  /**
+   * Erases a conversation the user deleted (2026-11-14, "recently deleted"): its file and its row, the content only it mentioned, and its part of the record's directory.
+   * One that is not deleted is refused (DELETION_REQUIRED: delete it first). A native process it still keeps is released first, as its deletion does. The conversations
+   * it delegated work to are not touched. Nothing of it can be restored after.
+   */
+  async purgeSession(id: SessionId): Promise<void> { await this.purge([id], true); }
+  /** Erases every conversation the user deleted; how many were erased. One that cannot be erased now (it was restored meanwhile, its process would not be released) stays. */
+  async purgeDeleted(): Promise<number> {
+    this.admit();
+    const list = this.store.listDeleted?.bind(this.store);
+    if (list === undefined) return 0;
+    const ids: SessionId[] = [];
+    for (let before: string | undefined; ;) {
+      const page = list(before === undefined ? {} : { before });
+      ids.push(...page.rows.map(row => row.id));
+      if (page.next === null || page.rows.length === 0) break;
+      before = page.next;
+    }
+    return (await this.purge(ids, false)).length;
+  }
+  /**
+   * Erases conversations: each is checked (`strict`: one that cannot be erased refuses the call; otherwise it is passed over), then the record's directories are told what
+   * they lose (read now, while the conversations are there), the store erases them (one step, all checked first), the content only they mentioned goes, and what this
+   * Runtime held of them is let go; the directories are written last.
+   */
+  private async purge(ids: readonly SessionId[], strict: boolean): Promise<readonly SessionId[]> {
+    this.admit();
+    const erase = this.store.purgeSessions?.bind(this.store);
+    if (erase === undefined) throw new SessionError("PURGE_UNSUPPORTED", "这里不能彻底删除对话");
+    const ready: SessionId[] = [];
+    for (const id of new Set(ids)) {
+      const refuse = (code: string, message: string): void => { if (strict) throw new SessionError(code, message); };
+      let state: Conversation;
+      try { state = this.load(id); } catch (error) { if (strict || !(error instanceof SessionError && error.code === "SESSION_NOT_FOUND")) throw error; continue; }
+      if (state.deletedAt === undefined) { refuse("DELETION_REQUIRED", "先删除这个对话，再彻底删除"); continue; }
+      if (this.kept.has(id) || this.releasing.has(id)) {
+        await this.requestRelease(id, "conversation_deleted");
+        this.admit(); state = this.load(id);
+        if (state.deletedAt === undefined) { refuse("DELETION_REQUIRED", "这个对话刚被恢复了，没有彻底删除"); continue; }
+      }
+      if (state.activeRunId !== null || state.pendingSwitchId !== null || state.runs.some(run => !terminal(run.status)) || state.retained !== undefined || this.kept.has(id) || this.releasing.has(id)
+        || this.closingSessions.has(id) || this.actives.has(id)) { refuse("SESSION_ACTIVE", "这个对话还有一轮没结束或还留着原生进程：等它结束再彻底删除"); continue; }
+      ready.push(id);
+    }
+    if (ready.length === 0) return [];
+    // From here to the store's erasure nothing waits: the directories' work is queued behind their writers and runs once the rows are gone.
+    const purging = new Set(ready), records: Promise<void>[] = [];
+    for (const id of ready) { try { const work = this.options.context?.forget?.(id, purging); if (work !== undefined) records.push(work.catch(() => undefined)); } catch { /* the directory keeps what it had */ } }
+    let result: { readonly purged: readonly SessionId[]; readonly content: ReadonlySet<string> | null };
+    try { result = erase(ready); } catch (error) { if (storeUntrusted(error)) this.fail(error); throw error; }
+    for (const id of result.purged) this.forgetConversation(id);
+    // Content is user data: it goes only when the store could say no other conversation mentions it.
+    if (result.content !== null && result.content.size > 0) { try { this.options.content?.purge?.(result.content); } catch { /* what is left is kept, as unmentioned content always was */ } }
+    await Promise.all(records);
+    return result.purged;
+  }
+  /** Lets go of what this Runtime held of a conversation that was erased. */
+  private forgetConversation(id: SessionId): void {
+    this.versions.delete(id); this.quoted.delete(id); this.managedSessions.delete(id); this.outside.delete(id); this.lost.delete(id); this.upgraded.delete(id); this.pinned.delete(id);
+    this.waitingForSlot.delete(id);
+    for (const [key, entry] of this.diagnostics) if (entry.sessionId === id) this.diagnostics.delete(key);
   }
   /**
    * The name the conversation's Harness gives it with its wrap-up (2026-11-14, `hub_wrap_up`'s `title`): taken only while the user has not named the conversation and its

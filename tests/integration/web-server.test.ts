@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { appendFileSync, readFileSync, readdirSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, request } from "node:http";
@@ -782,6 +782,158 @@ test("over HTTP a conversation is pinned and put aside by PATCH without moving i
   assert.equal((await call(f, "/api/v1/sessions/session-nowhere/restore", "POST", {})).status, 404);
 });
 
+test("over HTTP the recently deleted are listed latest first a page at a time; purge erases one (not found after, its file, its own content and its part of the record gone, what a delegated conversation shares kept); one not deleted is refused; purge-deleted erases the rest; the delegated conversation reads as before", async t => {
+  const f = await fixture(t, "attachments"); await auth(f);
+  const upload = async (name: string, bytes: Buffer): Promise<Record<string, unknown>> => {
+    const response = await fetch(f.origin + "/api/v1/attachments?" + new URLSearchParams({ name, commandId: "up-" + name.replace(/[^a-z]/giu, "") }),
+      { method: "POST", headers: { Cookie: f.cookie, Origin: f.origin, "X-CSRF-Token": f.csrf, "Content-Type": "image/png" }, body: new Uint8Array(bytes) });
+    assert.equal(response.status, 201); return row(await response.json());
+  };
+  const png = (last: number) => Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, last]);
+  const shown = async (id: unknown) => (await fetch(f.origin + "/api/v1/content/" + String(id), { headers: { Cookie: f.cookie } })).status;
+  // A: a message with an attachment, then a delegation (C quotes A's history, so it mentions that attachment too), then a message with an attachment only A mentions.
+  const a = await create(f, "create-a"), quoted = await upload("quoted.png", png(1));
+  assert.equal((await call(f, `/api/v1/sessions/${a}/messages`, "POST", { text: "alpha words", commandId: "a-1", attachments: [quoted.id] })).status, 202);
+  await waitFor(f, a, value => value.runs[0]?.status === "completed");
+  const delegated = await call(f, `/api/v1/sessions/${a}/delegate`, "POST", { selection: { harnessId: "web-a" }, text: "child task", commandId: "delegate-a", messageCommandId: "delegate-a-task" });
+  assert.equal(delegated.status, 201, delegated.text); const c = String(row(row(delegated.data).head).id);
+  await waitFor(f, c, value => value.runs[0]?.status === "completed");
+  const own = await upload("own.png", png(2));
+  assert.equal((await call(f, `/api/v1/sessions/${a}/messages`, "POST", { text: "later words", commandId: "a-2", attachments: [own.id] })).status, 202);
+  await waitFor(f, a, value => value.runs[1]?.status === "completed");
+  const b = await create(f, "create-b");
+  // The record's directory of A's task, as the Turns wrote it (made here where a Turn did not): A's own part, C's part beside it.
+  const { taskLabel } = await import("../../src/web/task-family.js");
+  const task = join(f.data, "context", taskLabel(sessionId(a))), mine = join(task, taskLabel(sessionId(a))), theirs = join(task, taskLabel(sessionId(c)));
+  for (const dir of [mine, theirs]) { await mkdir(dir, { recursive: true }); if (!existsSync(join(dir, "index.md"))) await writeFile(join(dir, "index.md"), "made by the test"); }
+  if (!existsSync(join(task, "task.md"))) await writeFile(join(task, "task.md"), "made by the test");
+  const fileOf = (id: string): string | undefined => {
+    for (const folder of readdirSync(join(f.data, "sessions"), { withFileTypes: true })) if (folder.isDirectory())
+      for (const name of readdirSync(join(f.data, "sessions", folder.name))) if (name.includes(id)) return join(folder.name, name);
+    return undefined;
+  };
+  assert.ok(fileOf(a) !== undefined);
+  // Not deleted: refused, and nothing changes.
+  const early = await call(f, `/api/v1/sessions/${a}/purge`, "POST", {}); assert.equal(early.status, 409, early.text); assert.equal(row(early.data).code, "DELETION_REQUIRED");
+  assert.equal((await call(f, `/api/v1/sessions/${a}`)).status, 200);
+  const send = (method: string, path: string) => fetch(f.origin + path, { method, headers: { Cookie: f.cookie, Origin: f.origin, "X-CSRF-Token": f.csrf } });
+  assert.equal((await send("DELETE", `/api/v1/sessions/${a}`)).status, 204); await delay(5);
+  assert.equal((await send("DELETE", `/api/v1/sessions/${b}`)).status, 204);
+  // Recently deleted: the latest deleted first, each its row and when; a page at a time.
+  const listed = row((await call(f, "/api/v1/sessions/deleted")).data), rows = listed.sessions as Record<string, unknown>[];
+  assert.deepEqual(rows.map(entry => entry.id), [b, a]); assert.equal(listed.next, null);
+  assert.ok(typeof rows[0]!.deletedAt === "number" && Number(rows[0]!.deletedAt) >= Number(rows[1]!.deletedAt)); assert.equal(typeof rows[1]!.title, "string");
+  const first = row((await call(f, "/api/v1/sessions/deleted?limit=1")).data);
+  assert.deepEqual((first.sessions as Record<string, unknown>[]).map(entry => entry.id), [b]); assert.equal(typeof first.next, "string");
+  const second = row((await call(f, `/api/v1/sessions/deleted?limit=1&before=${encodeURIComponent(String(first.next))}`)).data);
+  assert.deepEqual([(second.sessions as Record<string, unknown>[]).map(entry => entry.id), second.next], [[a], null]);
+  assert.equal((await call(f, "/api/v1/sessions/deleted?before=nonsense")).status, 400);
+  assert.equal((await call(f, "/api/v1/sessions/deleted?limit=0")).status, 400);
+  assert.equal((await call(f, `/api/v1/sessions/${a}/purge`, "POST", { force: true })).status, 400);
+  // Purged: 204, then not found by any route (restore included), not listed anywhere; its file is gone and nothing is left in trash/.
+  const purged = await send("POST", `/api/v1/sessions/${a}/purge`); assert.equal(purged.status, 415, "a write takes a JSON body");
+  const purge = async (id: string) => { const response = await fetch(f.origin + `/api/v1/sessions/${id}/purge`, { method: "POST", headers: { Cookie: f.cookie, Origin: f.origin, "X-CSRF-Token": f.csrf, "Content-Type": "application/json" }, body: "{}" });
+    const text = await response.text(); return { status: response.status, text }; };
+  const erased = await purge(a); assert.equal(erased.status, 204, erased.text); assert.equal(erased.text, "");
+  for (const path of [`/api/v1/sessions/${a}`, `/api/v1/sessions/${a}/turns?before=x`]) assert.equal((await call(f, path)).status, 404, path);
+  assert.equal((await call(f, `/api/v1/sessions/${a}/restore`, "POST", {})).status, 404);
+  assert.equal((await purge(a)).status, 404);
+  assert.equal((await purge("session-nowhere")).status, 404);
+  assert.deepEqual((row((await call(f, "/api/v1/sessions/deleted")).data).sessions as Record<string, unknown>[]).map(entry => entry.id), [b]);
+  assert.equal((row((await call(f, "/api/v1/sessions")).data).sessions as Record<string, unknown>[]).some(entry => entry.id === a), false);
+  assert.equal(fileOf(a), undefined);
+  assert.deepEqual(readdirSync(join(f.data, "trash"), { withFileTypes: true }).filter(entry => entry.name.startsWith("purged-")).map(entry => entry.name), []);
+  // Content: what only A mentioned is gone (record and bytes); what C mentions too is kept.
+  assert.equal(await shown(own.id), 404); assert.equal(await shown(quoted.id), 200);
+  const { createHash } = await import("node:crypto"), blob = (bytes: Buffer) => join(f.data, "content", "blobs", createHash("sha256").update(bytes).digest("hex"));
+  assert.equal(readdirSync(join(f.data, "content", "blobs")).includes(blob(png(2)).split("/").at(-1)!), false);
+  assert.equal(readdirSync(join(f.data, "content", "blobs")).includes(blob(png(1)).split("/").at(-1)!), true);
+  // The record: A's own part is gone; C's part and the task's directory stay, and the task's file now names only C.
+  assert.equal(readdirSync(task).includes(taskLabel(sessionId(a))), false); assert.equal(existsSync(join(theirs, "index.md")), true);
+  const taskText = readFileSync(join(task, "task.md"), "utf8");
+  assert.match(taskText, new RegExp("## " + taskLabel(sessionId(c)))); assert.doesNotMatch(taskText, new RegExp("## " + taskLabel(sessionId(a))));
+  // C, whose `parent` now names a conversation that is not there, reads as before: in the list, its head, its task.
+  const child = (row((await call(f, "/api/v1/sessions")).data).sessions as Record<string, unknown>[]).find(entry => entry.id === c)!;
+  assert.equal(row(child.parent).sessionId, a);
+  const head = await call(f, `/api/v1/sessions/${c}`); assert.equal(head.status, 200, head.text); assert.equal(row(row(row(head.data).head).parent).sessionId, a);
+  const board = await call(f, `/api/v1/sessions/${c}/task`); assert.equal(board.status, 200, board.text);
+  assert.deepEqual((row(board.data).members as Record<string, unknown>[]).map(member => member.sessionId), [c]);
+  assert.equal((await call(f, `/api/v1/sessions/${c}/task`, "POST", { kind: "note", text: "kept on C now" })).status, 200);
+  await state(f, c);
+  // Purge-deleted: the rest of the recently deleted, then nothing; once C goes too, the task's whole directory goes.
+  const rest = await call(f, "/api/v1/sessions/purge-deleted", "POST", {}); assert.equal(rest.status, 200, rest.text); assert.deepEqual(rest.data, { purged: 1 });
+  assert.equal((await call(f, `/api/v1/sessions/${b}`)).status, 404);
+  assert.deepEqual(row((await call(f, "/api/v1/sessions/deleted")).data), { sessions: [], next: null });
+  assert.deepEqual((await call(f, "/api/v1/sessions/purge-deleted", "POST", {})).data, { purged: 0 });
+  assert.equal((await send("DELETE", `/api/v1/sessions/${c}`)).status, 204);
+  assert.deepEqual((await call(f, "/api/v1/sessions/purge-deleted", "POST", {})).data, { purged: 1 });
+  assert.equal(readdirSync(join(f.data, "context")).includes(taskLabel(sessionId(a))), false);
+  assert.equal(await shown(quoted.id), 404, "with the last conversation that mentioned it, the shared content goes too");
+  // After a restart the erased are still not there.
+  await f.gateway.close();
+  const reopened = appStore(f.data);
+  try { assert.deepEqual(reopened.list().rows.map(entry => entry.id), []); assert.deepEqual(reopened.listDeleted().rows, []); } finally { reopened.close(); }
+});
+
+test("over HTTP the page's search finds the words in titles and messages of every conversation not deleted, grouped by conversation, with snippets and places; one conversation's search gives every place in order with its offset; both read on by cursor", async t => {
+  const f = await fixture(t); await auth(f);
+  const talk = async (id: string, texts: readonly string[]) => {
+    for (const [index, text] of texts.entries()) {
+      assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text, commandId: id.slice(-8) + "-" + index })).status, 202);
+      await waitFor(f, id, value => value.runs[index]?.status === "completed");
+    }
+  };
+  const a = await create(f, "create-a"); await talk(a, ["Find the Needle here", "nothing to see", "needle and NEEDLE again"]);
+  const b = await create(f, "create-b"); await talk(b, ["中文的针在这里"]);
+  assert.equal((await call(f, `/api/v1/sessions/${b}`, "PATCH", { title: "针的标题" })).status, 200);
+  const gone = await create(f, "create-gone"); await talk(gone, ["needle deleted"]);
+  assert.equal((await fetch(f.origin + `/api/v1/sessions/${gone}`, { method: "DELETE", headers: { Cookie: f.cookie, Origin: f.origin, "X-CSRF-Token": f.csrf } })).status, 204);
+  type Hit = Record<string, unknown> & { snippet: string; match: [number, number] };
+  const found = (hit: Hit) => hit.snippet.slice(hit.match[0], hit.match[1]);
+  const all = async (path: string, limit?: number): Promise<{ hits: Hit[]; pages: number }> => {
+    const hits: Hit[] = []; let cursor: string | null = null, pages = 0;
+    do {
+      const query = path + (path.includes("?") ? "&" : "?") + (limit === undefined ? "" : "limit=" + limit + "&") + (cursor === null ? "" : "cursor=" + encodeURIComponent(cursor));
+      const page = await call(f, query); assert.equal(page.status, 200, page.text);
+      hits.push(...(row(page.data).hits as Hit[])); cursor = row(page.data).next as string | null; pages++;
+    } while (cursor !== null);
+    return { hits, pages };
+  };
+  // Across conversations: A's title (made from its first message), then its messages newest first; nothing of the deleted one; case ignored, the case found kept.
+  const needle = await all("/api/v1/search?q=needle");
+  assert.deepEqual(needle.hits.map(hit => [hit.sessionId, hit.role, hit.ordinal]), [[a, "title", null], [a, "assistant", 2], [a, "user", 2], [a, "assistant", 0], [a, "user", 0]]);
+  assert.deepEqual(needle.hits.map(found), ["Needle", "needle", "needle", "Needle", "Needle"]);
+  assert.deepEqual([needle.hits[0]!.runId, needle.hits[0]!.messageId], [null, null]);
+  assert.equal(needle.hits[4]!.snippet, "Find the Needle here"); assert.equal(needle.hits[4]!.messageId, "user"); assert.equal(typeof needle.hits[4]!.runId, "string");
+  for (const hit of needle.hits) assert.equal(hit.title, needle.hits[0]!.title);
+  // Paged by two: the same hits, in the same order.
+  const paged = await all("/api/v1/search?q=needle", 2);
+  assert.deepEqual(paged.hits, needle.hits); assert.equal(paged.pages, 3);
+  // Chinese, by substring: B's title, its reply and its message.
+  const zhen = await all("/api/v1/search?q=" + encodeURIComponent("针"));
+  assert.deepEqual(zhen.hits.map(hit => [hit.sessionId, hit.role]), [[b, "title"], [b, "assistant"], [b, "user"]]);
+  assert.deepEqual(zhen.hits.map(found), ["针", "针", "针"]); assert.equal(zhen.hits[0]!.title, "针的标题");
+  assert.deepEqual((await all("/api/v1/search?q=zzz-nowhere")).hits, []);
+  for (const bad of ["/api/v1/search", "/api/v1/search?q=", "/api/v1/search?q=%20%20", "/api/v1/search?q=x&cursor=nonsense", "/api/v1/search?q=x&limit=0", "/api/v1/search?q=x&other=1"])
+    assert.equal((await call(f, bad)).status, 400, bad);
+  // In one conversation: every place, from the first Turn on, each with its item and its offset in the message.
+  const inA = await all(`/api/v1/sessions/${a}/search?q=needle`);
+  assert.deepEqual(inA.hits.map(hit => [hit.ordinal, hit.role, hit.offset]), [[0, "user", 9], [0, "assistant", 11], [2, "user", 0], [2, "user", 11], [2, "assistant", 2], [2, "assistant", 13]]);
+  assert.deepEqual(inA.hits.map(found), ["Needle", "Needle", "needle", "NEEDLE", "needle", "NEEDLE"]);
+  const texts = new Map<string, string>([["0:user", "Find the Needle here"], ["0:assistant", "a:Find the Needle here"], ["2:user", "needle and NEEDLE again"], ["2:assistant", "a:needle and NEEDLE again"]]);
+  for (const hit of inA.hits) {
+    const text = texts.get(hit.ordinal + ":" + hit.role)!, offset = Number(hit.offset);
+    assert.equal(text.slice(offset, offset + 6).toLowerCase(), "needle");
+    const item = row(row((await call(f, `/api/v1/sessions/${a}/runs/${hit.ordinal}/items/${hit.itemSeq}`)).data).item);
+    assert.deepEqual([item.id, item.text], [hit.messageId, text]);
+  }
+  const inPages = await all(`/api/v1/sessions/${a}/search?q=needle`, 4);
+  assert.deepEqual(inPages.hits, inA.hits); assert.equal(inPages.pages, 2);
+  assert.equal((await call(f, `/api/v1/sessions/${gone}/search?q=needle`)).status, 404, "a deleted conversation is not found");
+  assert.equal((await call(f, "/api/v1/sessions/session-nowhere/search?q=needle")).status, 404);
+  assert.equal((await call(f, `/api/v1/sessions/${a}/search?q=`)).status, 400);
+});
+
 test("over HTTP the editors are the bundles found, and an open that names an unknown editor, one not installed or a place outside the workspace is refused before anything opens; a file of the workspace is read a page at a time, cut between characters", async t => {
   const apps = await mkdtemp(join(tmpdir(), "harness-apps-"));
   t.after(() => rm(apps, { recursive: true, force: true }));
@@ -870,4 +1022,130 @@ test("over HTTP a workspace's Git is told a file at a time, committed (some file
   sh(["checkout", "-q", "--detach"]);
   const detached = await call(f, `/api/v1/sessions/${id}/git/push`, "POST", {}); assert.equal(detached.status, 409); assert.equal(row(detached.data).code, "GIT_DETACHED_HEAD");
   assert.equal(row((await call(f, `/api/v1/sessions/${id}/git`)).data).branch, null);
+});
+
+test("over HTTP the changes panel lists what is not committed, one commit and the branch against merge-base(main, HEAD), a file's diff at a time (renamed, untracked, binary, -w), the log a page at a time and the branches; a workspace below the top sees only itself", async t => {
+  const { execFileSync } = await import("node:child_process");
+  // Git here reads a configuration of the test's own, never the user's: set for the Gateway's Git and the test's alike.
+  const saved = { global: process.env.GIT_CONFIG_GLOBAL, system: process.env.GIT_CONFIG_NOSYSTEM };
+  const f = await fixture(t); await auth(f); const id = await create(f);
+  const config = join(f.root, "gitconfig");
+  await writeFile(config, "[user]\n\tname = Fixture\n\temail = fixture@example.invalid\n[commit]\n\tgpgsign = false\n[init]\n\tdefaultBranch = main\n");
+  process.env.GIT_CONFIG_GLOBAL = config; process.env.GIT_CONFIG_NOSYSTEM = "1";
+  t.after(() => { for (const [key, value] of [["GIT_CONFIG_GLOBAL", saved.global], ["GIT_CONFIG_NOSYSTEM", saved.system]] as const) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
+  const sh = (args: readonly string[]): string => execFileSync("git", [...args], { cwd: f.workspace, encoding: "utf8" }).trim();
+  const put = (name: string, content: string | Buffer) => writeFile(join(f.workspace, name), content);
+  const api = (path: string, query: Record<string, string> = {}, session = id) => call(f, `/api/v1/sessions/${session}/git/${path}${Object.keys(query).length === 0 ? "" : "?" + new URLSearchParams(query).toString()}`);
+  const files = async (query: Record<string, string>, session = id) => { const answer = await api("changes", query, session); assert.equal(answer.status, 200, answer.text); return row(answer.data); };
+  const diff = async (query: Record<string, string>, session = id) => { const answer = await api("diff", query, session); assert.equal(answer.status, 200, answer.text); return row(answer.data); };
+
+  // No repository: every one of these is not found as one.
+  for (const [path, query] of [["changes", {}], ["diff", { path: "a.txt" }], ["log", {}], ["branches", {}]] as const) {
+    const answer = await api(path, query); assert.equal(answer.status, 404, path); assert.equal(row(answer.data).code, "NOT_A_REPOSITORY");
+  }
+  // main: the first commit (the root). Then a branch with a commit of its own, and main moves on after it left (main-only.txt is not the branch's).
+  sh(["init", "-q"]); await mkdir(join(f.workspace, "sub"));
+  await put(".gitignore", "ignored.log\n"); await put("keep.txt", "k1\nk2\n"); await put("staged.txt", "s1\ns2\n"); await put("unstaged.txt", "u1\nu2\nu3\n");
+  await put("old-name.txt", "r1\nr2\nr3\nr4\nr5\n"); await put("gone.txt", "g1\ng2\n"); await put("image.bin", Buffer.from([0, 1, 2, 3])); await put("spaces.txt", "a b\nc d\n"); await put("sub/inside.txt", "i1\n");
+  sh(["add", "-A"]); sh(["commit", "-q", "-m", "root"]); const root = sh(["rev-parse", "HEAD"]);
+  sh(["checkout", "-q", "-b", "feature"]); await put("feature.txt", "x\ny\n"); sh(["add", "feature.txt"]); sh(["commit", "-q", "-m", "Add the feature"]); const feature = sh(["rev-parse", "HEAD"]);
+  sh(["checkout", "-q", "main"]); await put("main-only.txt", "m\n"); sh(["add", "main-only.txt"]); sh(["commit", "-q", "-m", "main moves on"]); sh(["checkout", "-q", "feature"]);
+  // Not committed: staged then changed again, not staged, renamed (staged), deleted (not staged), binary, whitespace only, below a folder, untracked (text, binary, below a folder), ignored.
+  await put("staged.txt", "s1\ns2\ns3\n"); sh(["add", "staged.txt"]); await put("staged.txt", "s0\ns1\ns2\ns3\n");
+  await put("unstaged.txt", "u1\nU2\nu3\n"); sh(["mv", "old-name.txt", "new-name.txt"]); await rm(join(f.workspace, "gone.txt"));
+  await put("image.bin", Buffer.from([0, 1, 2, 3, 4])); await put("spaces.txt", "a  b\nc\td\n"); await put("sub/inside.txt", "i1\ni2\n");
+  await put("fresh.txt", "f1\nf2\nf3"); await put("fresh.bin", Buffer.from([0, 5])); await put("sub/new.txt", "n1\n"); await put("ignored.log", "noise\n");
+  const statusBefore = sh(["status", "--porcelain=v2"]);
+
+  const uncommitted = [
+    { path: "fresh.bin", status: "untracked", binary: true }, { path: "fresh.txt", status: "untracked", added: 3, removed: 0 },
+    { path: "gone.txt", status: "deleted", added: 0, removed: 2 }, { path: "image.bin", status: "modified", binary: true },
+    { path: "new-name.txt", oldPath: "old-name.txt", status: "renamed", added: 0, removed: 0 }, { path: "spaces.txt", status: "modified", added: 2, removed: 2 },
+    { path: "staged.txt", status: "modified", added: 2, removed: 0 }, { path: "sub/inside.txt", status: "modified", added: 1, removed: 0 },
+    { path: "sub/new.txt", status: "untracked", added: 1, removed: 0 }, { path: "unstaged.txt", status: "modified", added: 1, removed: 1 }];
+  assert.deepEqual(await files({ scope: "uncommitted" }), { scope: "uncommitted", files: uncommitted });
+  assert.deepEqual(await files({}), { scope: "uncommitted", files: uncommitted }, "uncommitted is the default");
+  // -w counts the lines only: the file whose changes are all whitespace stays, with none.
+  assert.deepEqual((await files({ scope: "uncommitted", whitespace: "ignore" })).files, uncommitted.map(file => file.path === "spaces.txt" ? { ...file, added: 0, removed: 0 } : file));
+  // One commit against its parent; the root commit against nothing.
+  assert.deepEqual(await files({ scope: "commit", sha: feature }), { scope: "commit", files: [{ path: "feature.txt", status: "added", added: 2, removed: 0 }], commit: { sha: feature, parent: root } });
+  const first = await files({ scope: "commit", sha: root.slice(0, 10) });
+  assert.deepEqual(first.commit, { sha: root, parent: null });
+  assert.deepEqual((first.files as Record<string, unknown>[]).map(file => [file.path, file.status, file.added ?? "binary"]),
+    [[".gitignore", "added", 1], ["gone.txt", "added", 2], ["image.bin", "added", "binary"], ["keep.txt", "added", 2], ["old-name.txt", "added", 5], ["spaces.txt", "added", 2], ["staged.txt", "added", 2], ["sub/inside.txt", "added", 1], ["unstaged.txt", "added", 3]]);
+  // The branch against main (the default): from where it left main (the root commit), to the working tree as it is; main-only.txt is main's, not the branch's.
+  const branch = { scope: "branch", files: [{ path: "feature.txt", status: "added", added: 2, removed: 0 }, ...uncommitted], base: { ref: "main", sha: root } };
+  assert.deepEqual(await files({ scope: "branch" }), branch);
+  assert.deepEqual(await files({ scope: "branch", base: "main" }), branch);
+
+  // A file at a time: as it changed, a rename with where it came from, an untracked file as new, binary marked, -w, a file that did not change, a deleted one.
+  const unstaged = await diff({ scope: "uncommitted", path: "unstaged.txt" });
+  assert.equal(unstaged.path, "unstaged.txt"); assert.match(String(unstaged.diff), /^diff --git a\/unstaged\.txt b\/unstaged\.txt\n/u); assert.match(String(unstaged.diff), /\n-u2\n\+U2\n/u); assert.equal(unstaged.binary, undefined);
+  const staged = String((await diff({ scope: "uncommitted", path: "staged.txt" })).diff); assert.match(staged, /\n\+s0\n/u); assert.match(staged, /\n\+s3\n/u);
+  const renamed = String((await diff({ scope: "uncommitted", path: "new-name.txt" })).diff); assert.match(renamed, /\nrename from old-name\.txt\nrename to new-name\.txt/u);
+  const fresh = await diff({ scope: "uncommitted", path: "fresh.txt" });
+  assert.match(String(fresh.diff), /\nnew file mode \d+\n/u); assert.match(String(fresh.diff), /\n--- \/dev\/null\n\+\+\+ b\/fresh\.txt\n@@ -0,0 \+1,3 @@\n\+f1\n\+f2\n\+f3\n\\ No newline at end of file\n/u);
+  for (const name of ["image.bin", "fresh.bin"]) { const binary = await diff({ scope: "uncommitted", path: name }); assert.equal(binary.binary, true, name); assert.match(String(binary.diff), /Binary files .* differ/u); }
+  assert.match(String((await diff({ scope: "uncommitted", path: "spaces.txt" })).diff), /\n@@ /u);
+  assert.equal(String((await diff({ scope: "uncommitted", path: "spaces.txt", whitespace: "ignore" })).diff).includes("@@"), false, "-w leaves no hunk of a whitespace change");
+  assert.deepEqual(await diff({ scope: "uncommitted", path: "keep.txt" }), { path: "keep.txt", diff: "" });
+  assert.match(String((await diff({ scope: "uncommitted", path: "gone.txt" })).diff), /\ndeleted file mode \d+\n[^]*\n\+\+\+ \/dev\/null\n/u);
+  assert.match(String((await diff({ scope: "uncommitted", path: join(f.workspace, "unstaged.txt") })).diff), /\+U2/u, "by its absolute path too");
+  assert.match(String((await diff({ scope: "commit", sha: feature, path: "feature.txt" })).diff), /\n\+x\n\+y\n/u);
+  assert.deepEqual(await diff({ scope: "commit", sha: feature, path: "unstaged.txt" }), { path: "unstaged.txt", diff: "" }, "not changed by that commit");
+  assert.match(String((await diff({ scope: "branch", path: "feature.txt" })).diff), /\nnew file mode /u);
+  assert.match(String((await diff({ scope: "branch", path: "fresh.txt" })).diff), /\+f1/u, "the branch takes untracked files too");
+  // A long diff comes whole (it is streamed, not held or cut).
+  const long = Array.from({ length: 40_000 }, (_, index) => "line " + index + " 行").join("\n") + "\n";
+  await put("long.txt", long);
+  const longDiff = String((await diff({ scope: "uncommitted", path: "long.txt" })).diff);
+  assert.equal(longDiff.split("\n").filter(line => line.startsWith("+") && !line.startsWith("+++")).length, 40_000); assert.ok(longDiff.endsWith("+line 39999 行\n"));
+  assert.equal(longDiff.includes("�"), false, "no character is cut where Git's output is read in pieces");
+  await rm(join(f.workspace, "long.txt"));
+
+  // Refused: a scope that is not one, a sha or base that is no commit here (or could be read as an option), a path out of the workspace, whitespace that is not ignore.
+  for (const query of [{ scope: "everything" }, { scope: "commit" }, { scope: "commit", sha: "" }, { scope: "commit", sha: "0123456789abcdef0123" }, { scope: "commit", sha: "--output=/tmp/x" },
+    { scope: "uncommitted", sha: feature }, { scope: "branch", base: "no-such-branch" }, { scope: "branch", base: "-h" }, { scope: "branch", sha: feature }, { scope: "uncommitted", whitespace: "all" }]) {
+    const answer = await api("changes", query); assert.equal(answer.status, 400, JSON.stringify(query) + " " + answer.text); assert.equal(row(answer.data).code, "INVALID_INPUT");
+  }
+  for (const query of [{ scope: "uncommitted" }, { scope: "uncommitted", path: "" }, { scope: "uncommitted", path: "../outside.txt" }, { scope: "commit", sha: "nope", path: "keep.txt" }])
+    assert.equal((await api("diff", query)).status, 400, JSON.stringify(query));
+  // A base with no common ancestor is Git's refusal: 409.
+  const orphan = sh(["commit-tree", sh(["hash-object", "-t", "tree", "/dev/null"]), "-m", "orphan"]);
+  const unrelated = await api("changes", { scope: "branch", base: orphan }); assert.equal(unrelated.status, 409, unrelated.text); assert.equal(row(unrelated.data).code, "GIT_NO_MERGE_BASE");
+
+  // The log a page at a time, and the branches: no remote yet (main is the default), then origin/HEAD pointing at origin/main.
+  const page1 = row((await api("log", { limit: "1" })).data);
+  const time = Number(sh(["log", "-1", "--format=%ct", feature])) * 1000;
+  assert.equal((page1.commits as unknown[]).length, 1); const top = row((page1.commits as unknown[])[0]);
+  assert.deepEqual([top.sha, top.subject, top.author, top.committedAt, page1.next], [feature, "Add the feature", "Fixture", time, feature]); assert.ok(feature.startsWith(String(top.shortSha)));
+  const page2 = row((await api("log", { limit: "1", before: String(page1.next) })).data);
+  assert.deepEqual([(page2.commits as Record<string, unknown>[]).map(commit => commit.sha), page2.next], [[root], null]);
+  assert.deepEqual((row((await api("log")).data).commits as Record<string, unknown>[]).map(commit => commit.subject), ["Add the feature", "root"]);
+  assert.equal((await api("log", { before: "nope" })).status, 400);
+  assert.equal((await api("log", { before: sh(["rev-parse", "main"]) })).status, 409, "a commit that is not in the branch's history");
+  const branches = row((await api("branches")).data);
+  assert.deepEqual([branches.current, [...(branches.local as string[])].sort(), branches.remote, branches.defaultBranch], ["feature", ["feature", "main"], [], "main"]);
+  sh(["update-ref", "refs/remotes/origin/main", "main"]); sh(["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+  assert.deepEqual([row((await api("branches")).data).remote, row((await api("branches")).data).defaultBranch], [["origin/main"], "origin/main"]);
+  assert.deepEqual((await files({ scope: "branch" })).base, { ref: "origin/main", sha: root });
+
+  // A workspace below the repository's top sees only itself, named from itself; its log is of the commits that touched it.
+  const below = await call(f, "/api/v1/sessions", "POST", { workspace: join(f.workspace, "sub"), selection: { harnessId: "web-a" }, commandId: "create-below" }); assert.equal(below.status, 201, below.text);
+  const sub = String(row(row(below.data).head).id), inSub = [{ path: "inside.txt", status: "modified", added: 1, removed: 0 }, { path: "new.txt", status: "untracked", added: 1, removed: 0 }];
+  assert.deepEqual((await files({ scope: "uncommitted" }, sub)).files, inSub);
+  assert.deepEqual((await files({ scope: "branch" }, sub)).files, inSub);
+  assert.deepEqual((await files({ scope: "commit", sha: feature }, sub)).files, []);
+  assert.deepEqual((await files({ scope: "commit", sha: root }, sub)).files, [{ path: "inside.txt", status: "added", added: 1, removed: 0 }]);
+  assert.match(String((await diff({ scope: "uncommitted", path: "inside.txt" }, sub)).diff), /^diff --git a\/inside\.txt b\/inside\.txt\n[^]*\n\+i2\n/u);
+  assert.match(String((await diff({ scope: "uncommitted", path: "new.txt" }, sub)).diff), /\+\+\+ b\/new\.txt\n/u);
+  assert.equal((await api("diff", { scope: "uncommitted", path: "../keep.txt" }, sub)).status, 400, "the repository's top is out of this workspace");
+  assert.deepEqual((row((await api("log", {}, sub)).data).commits as Record<string, unknown>[]).map(commit => commit.sha), [root]);
+
+  // No default branch at all: a branch scope without a base is refused.
+  sh(["update-ref", "-d", "refs/remotes/origin/HEAD"]); sh(["update-ref", "-d", "refs/remotes/origin/main"]); sh(["branch", "-q", "-m", "main", "trunk"]);
+  const nobase = await api("changes", { scope: "branch" }); assert.equal(nobase.status, 400, nobase.text);
+  assert.equal(row((await api("branches")).data).defaultBranch, null);
+  // Only read: the index and the working tree are as they were (ignoring the refs the test itself moved).
+  assert.equal(sh(["status", "--porcelain=v2"]), statusBefore);
 });

@@ -247,6 +247,9 @@ class FakeGateway {
     if (api === "/harnesses/readiness") return this.json(response, 200, { readiness: [] });
     // The editors on this Mac, which the page reads once it is signed in: none here.
     if (api === "/editors") return this.json(response, 200, { editors: [] });
+    // 最近删除, which the sidebar reads for its count, and the palette's search of what was said: nothing here.
+    if (api === "/sessions/deleted" && method === "GET") return this.json(response, 200, { sessions: [], next: null });
+    if (api === "/search" && method === "GET") return this.json(response, 200, { hits: [], next: null });
     if (api === "/attention/stream") {
       response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });
       this.others.add(response); response.on("close", () => this.others.delete(response)); response.write("event: attention\nid: 1\ndata: " + JSON.stringify({ revision: 1, items: [] }) + "\n\n"); return;

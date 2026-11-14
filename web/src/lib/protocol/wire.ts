@@ -8,6 +8,7 @@ import type { DeferredWork, TextRange } from "../../../../src/contracts/conversa
 import type { HarnessSelection, NativeConfiguration, PublicSwitch, RunStatus, SelectionRequest } from "../../../../src/contracts/session.js";
 import type {
   NativeStateView, RelayStreamFrame, SessionFacts, SessionHeadView, SessionSummary, SessionView, WireRun, WireTurnHeader, WireTextAppend,
+  DeletedSessionListView, SearchView, SessionSearchView,
 } from "../../../../src/contracts/web.js";
 import { decodeRelayStreamEvent, decodeRunRelay } from "../../relay.js";
 
@@ -346,14 +347,47 @@ export function decodeItemTextView(value: unknown): TextRange {
 export interface ClientSessionList { readonly sessions: readonly SessionSummary[]; readonly next: string | null }
 export function decodeSessionListView(value: unknown): ClientSessionList {
   const row = rec(value, "a list of conversations");
-  return { sessions: many(row.sessions, item => { const made = rec(item, "a conversation"), activeRunId = nullable(made.activeRunId, entry => str(entry, "a Run")), activeSince = maybe(made.activeSince, entry => amount(entry, "activeSince"));
-    // A row without a time (a Gateway from before 2026-11-14) is the oldest, not a failure.
-    return { id: str(made.id, "an id"), title: str(made.title, "a title"), status: pick(made.status, ["open", "closed", "blocked"] as const, "a state"), workspace: str(made.workspace, "a workspace"),
+  return { sessions: many(row.sessions, decodeSessionSummary, "conversations"), next: nullable(row.next, item => str(item, "a cursor")) };
+}
+/** One row of a list of conversations (`SessionSummary`). */
+export function decodeSessionSummary(item: unknown): SessionSummary {
+  const made = rec(item, "a conversation"), activeRunId = nullable(made.activeRunId, entry => str(entry, "a Run")), activeSince = maybe(made.activeSince, entry => amount(entry, "activeSince"));
+  // A row without a time (a Gateway from before 2026-11-14) is the oldest, not a failure.
+  return { id: str(made.id, "an id"), title: str(made.title, "a title"), status: pick(made.status, ["open", "closed", "blocked"] as const, "a state"), workspace: str(made.workspace, "a workspace"),
     selection: selection(made.selection), updatedSeq: nat(made.updatedSeq, "updatedSeq"), updatedAt: maybe(made.updatedAt, entry => amount(entry, "updatedAt")) ?? 0, activeRunId,
     ...(activeRunId === null || activeSince === undefined ? {} : { activeSince }), ...(typeof made.line === "string" && made.line !== "" ? { line: made.line } : {}),
     ...(made.parent === undefined ? {} : { parent: (parent => ({ sessionId: str(parent.sessionId, "a conversation id"), afterRunId: nullable(parent.afterRunId, entry => str(entry, "a Run")), ...(parent.by === "harness" ? { by: "harness" as const } : {}) }))(rec(made.parent, "a delegating conversation")) }),
     ...(made.archived === true ? { archived: true as const } : {}), ...(made.pinned === true ? { pinned: true as const } : {}),
-    ...((until => until === undefined ? {} : { snoozedUntil: until })(maybe(made.snoozedUntil, entry => amount(entry, "snoozedUntil")))) }; }, "conversations"), next: nullable(row.next, item => str(item, "a cursor")) };
+    ...((until => until === undefined ? {} : { snoozedUntil: until })(maybe(made.snoozedUntil, entry => amount(entry, "snoozedUntil")))) };
+}
+/** `GET /api/v1/sessions/deleted?before=&limit=` (2026-11-14): the conversations the user deleted, the latest deleted first, each with when. */
+export function decodeDeletedSessionListView(value: unknown): DeletedSessionListView {
+  const row = rec(value, "a list of deleted conversations");
+  return { sessions: many(row.sessions, item => ({ ...decodeSessionSummary(item), deletedAt: amount(rec(item, "a conversation").deletedAt, "deletedAt") }), "conversations"), next: nullable(row.next, item => str(item, "a cursor")) };
+}
+/** A snippet and the place of the words in it: `[start, end)` inside it. */
+function snippetOf(row: Record<string, unknown>): { readonly snippet: string; readonly match: readonly [number, number] } {
+  const snippet = str(row.snippet, "a snippet"), match = many(row.match, (entry, index) => nat(entry, "match " + index), "a match");
+  if (match.length !== 2 || match[0]! > match[1]! || match[1]! > snippet.length) fail("a match is not a place in its snippet");
+  return { snippet, match: [match[0]!, match[1]!] };
+}
+/** `GET /api/v1/search?q=&cursor=` (2026-11-14): the places the words were found, by conversation. */
+export function decodeSearchView(value: unknown): SearchView {
+  const row = rec(value, "a search");
+  return { hits: many(row.hits, item => {
+    const hit = rec(item, "a hit"), role = pick(hit.role, ["user", "assistant", "title"] as const, "a hit's role");
+    return { sessionId: str(hit.sessionId, "a conversation id"), title: str(hit.title, "a title"), runId: nullable(hit.runId, entry => str(entry, "a Run")), ordinal: nullable(hit.ordinal, entry => nat(entry, "a Turn")),
+      messageId: nullable(hit.messageId, entry => str(entry, "a message")), role, ...snippetOf(hit) };
+  }, "hits"), next: nullable(row.next, item => str(item, "a cursor")) };
+}
+/** `GET /api/v1/sessions/:id/search?q=&cursor=` (2026-11-14): every place in one conversation, in its order, with where to go. */
+export function decodeSessionSearchView(value: unknown): SessionSearchView {
+  const row = rec(value, "a search");
+  return { hits: many(row.hits, item => {
+    const hit = rec(item, "a hit");
+    return { sessionId: str(hit.sessionId, "a conversation id"), title: str(hit.title, "a title"), runId: str(hit.runId, "a Run"), ordinal: nat(hit.ordinal, "a Turn"), messageId: str(hit.messageId, "a message"),
+      role: pick(hit.role, ["user", "assistant"] as const, "a hit's role"), itemSeq: nat(hit.itemSeq, "an item"), offset: nat(hit.offset, "an offset"), ...snippetOf(hit) };
+  }, "hits"), next: nullable(row.next, item => str(item, "a cursor")) };
 }
 
 /** `GET …/changes?before=&limit=`: the changes of the whole conversation that have a stored detail, newest first; the first page also names the newest plan. */

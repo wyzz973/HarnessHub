@@ -476,6 +476,25 @@ export interface SessionListRow {
 export type SessionListCursor = string & { readonly __sessionListCursor: true };
 export interface SessionListQuery { readonly after?: SessionListCursor; readonly limit?: number }
 export interface SessionListPage { readonly rows: readonly SessionListRow[]; readonly next: SessionListCursor | null }
+/** A conversation the user deleted (2026-11-14), as the list of the recently deleted has it: its row and when it was deleted. */
+export interface DeletedListRow extends SessionListRow { readonly deletedAt: number }
+/** `before`: the `next` of the page before (opaque); the latest deleted come first. */
+export interface DeletedListQuery { readonly before?: string; readonly limit?: number }
+export interface DeletedListPage { readonly rows: readonly DeletedListRow[]; readonly next: string | null }
+/**
+ * What erasing conversations the user deleted did (`ConversationStore.purgeSessions`): the ones erased, and the content ids only they mentioned — what the content store may
+ * erase with them. `content` is null when another conversation could not be read: then nothing is said to be theirs alone, and their content stays.
+ */
+export interface PurgeResult { readonly purged: readonly SessionId[]; readonly content: ReadonlySet<string> | null }
+/** A finished message of a conversation's current path as a search of the page reads it (2026-11-14): its Turn, its item and its text whole. */
+export interface FoundMessage {
+  readonly runId: RunId; readonly ordinal: number; readonly seq: number;
+  /** The item's id in its Turn: the `id` the wire gives it. */
+  readonly itemId: string;
+  readonly type: "user_message" | "assistant_message";
+  /** The text as stored (what the wire sends, a lone surrogate it held being U+FFFD here and put back there: the same length, the same offsets). */
+  readonly text: string;
+}
 /** One Turn's start of a Harness entry, for the usual startup time: a column read of the latest few, not a scan of every Run. */
 export interface StartupSample { readonly harnessId: string; readonly controlId: string; readonly preparingAt: number; readonly readyAt: number }
 
@@ -517,6 +536,14 @@ export interface ConversationStore extends ConversationReader {
   get(id: SessionId): Conversation;
   findByCreateKey(key: CommandId): Conversation | null;
   list(query?: SessionListQuery): SessionListPage;
+  /** The conversations the user deleted (2026-11-14), the latest deleted first, a page at a time; every one is reached by the cursor. Optional: a store without it lists none. */
+  listDeleted?(query?: DeletedListQuery): DeletedListPage;
+  /**
+   * Erases conversations the user deleted (2026-11-14): each one's files and its row of the list, so that it is not there for any read and not there after a start. Each must be
+   * deleted (DELETION_REQUIRED otherwise) with no Turn open, no switch pending and no native process kept (SESSION_ACTIVE); all are checked before any is erased. The conversations
+   * they delegated work to are not touched. Optional: a store without it erases nothing.
+   */
+  purgeSessions?(ids: readonly SessionId[]): PurgeResult;
   /** The conversations whose head records a kept native process, whatever their age (`sessions.kept`). */
   listKept(): readonly SessionId[];
   /** The conversations with a Run not finished or a switch pending: what recovery visits (the partial indexes). */

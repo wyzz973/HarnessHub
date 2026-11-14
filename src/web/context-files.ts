@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ContentPort } from "../contracts/content.js";
 import type { Conversation, ConversationReader } from "../contracts/conversation.js";
@@ -115,6 +115,31 @@ export class ContextFiles {
       for (const member of members) await this.stateFile(member, dir);
     }).catch(() => undefined);
   }
+  /**
+   * Takes a conversation the user erases (2026-11-14) out of its task's directory. Called while it is still there, right before its rows go (`purging`: all erased with it):
+   * where its task's directory is and who else is in the task are read now; the files go after, behind the task's other writers, so the rows are gone by then and nothing
+   * writes its directory again.
+   * - The task began in it: the conversations it delegated stay in the task's directory (their chain still names it). Its own directory goes, and the whole task's when no
+   *   other conversation of the task is left (deleted ones count: they can still be restored).
+   * - It was delegated work inside a task: its directory goes, and so do those of the conversations under it, whose chain went through it and which from now on are a task
+   *   of their own (named after it, `place`); theirs is written there when they next need it. The task's own files then say who is left.
+   */
+  forget(id: SessionId, purging: ReadonlySet<SessionId>): Promise<void> {
+    const place = this.place(id), members = taskFamily(this.options.reader, id, this.options.name), began = place.dir === join(this.options.root, place.self);
+    const under = new Set<string>([place.self]);
+    if (!began) for (const member of members) if (member.parent !== null && under.has(member.parent)) under.add(member.label);
+    const left = members.filter(member => !purging.has(member.sessionId) && (began || !under.has(member.label)));
+    return this.serialized(id, async dir => {
+      if (left.length === 0) { await rm(dir, { recursive: true, force: true }); this.unwritten(dir); return; }
+      for (const label of under) { await rm(join(dir, label), { recursive: true, force: true }); this.unwritten(join(dir, label)); }
+      if (!await stat(dir).then(info => info.isDirectory(), () => false)) return;
+      const members = taskFamily(this.options.reader, left[0]!.sessionId, this.options.name);
+      await this.common(left[0]!.sessionId, dir, members);
+      for (const member of members) await this.stateFile(member, dir);
+    });
+  }
+  /** What this process remembers having written under a path that is gone, so that a file written there again is written. */
+  private unwritten(path: string): void { for (const key of [...this.texts.keys()]) if (key === path || key.startsWith(path + "/")) this.texts.delete(key); }
   /** One writer a task at a time: `work` runs after what was asked of the task's directory before it. */
   private serialized(id: SessionId, work: (dir: string) => Promise<void>): Promise<void> {
     const place = this.place(id), before = this.working.get(place.dir) ?? Promise.resolve();

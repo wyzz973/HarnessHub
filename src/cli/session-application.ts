@@ -181,7 +181,7 @@ export function application(root: string, publish: (commit: ConversationCommit) 
     const context = new ContextFiles({ root: join(root, CONTEXT_DIR), reader: store, content, name: harnessName, board: id => runtime.taskBoard(id), changes: id => runtime.recordSignals(id),
       secrets: (configuration, harnessIds) => factory.relaySecrets === undefined ? Promise.resolve([]) : factory.relaySecrets(configuration, harnessIds) });
     const runtime: SessionRuntime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, workspace: new WorkspaceRecorder(), flavor: flavorOf, ...(options.budgets ?? {}),
-      context: { place: id => context.place(id), ensure: id => context.ensure(id), refresh: id => context.refresh(id),
+      context: { place: id => context.place(id), ensure: id => context.ensure(id), refresh: id => context.refresh(id), forget: (id, purging) => context.forget(id, purging),
         state: (id, upTo, record, scope, words) => context.state(id, upTo ?? undefined, record, scope, words === null ? "none" : words) },
       ...reseatSetting(process.env.HARNESSHUB_RESEAT_AT),
       ...(relayKeys === null ? {} : { relayKeys }),

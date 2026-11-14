@@ -1,5 +1,5 @@
 import type { TaskBoardAccess } from "./components/TaskBoard.js";
-import { ArrowDown, Blocks, Bot, Inbox, Keyboard, ListCollapse, Monitor, Moon, PanelLeft, PanelRight, RefreshCw, Settings, SlidersHorizontal, SquarePen, Sun } from "lucide-react";
+import { ArrowDown, Blocks, Bot, Inbox, Keyboard, ListCollapse, MessageSquare, Monitor, Moon, PanelLeft, PanelRight, RefreshCw, Settings, SlidersHorizontal, SquarePen, Sun, User } from "lucide-react";
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
@@ -7,7 +7,7 @@ import type { TurnStatus } from "../../src/contracts/protocol.js";
 import type { AttentionItem, PublicRun, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import { parseProviderTarget } from "../../src/contracts/provider.js";
-import type { AttentionFrame, HarnessView, InstallationView, SessionSummary, WebState } from "../../src/contracts/web.js";
+import type { AttentionFrame, HarnessView, InstallationView, SearchHitView, SessionSummary, WebState } from "../../src/contracts/web.js";
 import type { NativeModelCatalog } from "../../src/contracts/control.js";
 import type { InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import { parseNativeOptions, sessionId as validateSessionId } from "../../src/contracts/session.js";
@@ -16,7 +16,7 @@ import { conversationOf, type ConversationView } from "./lib/conversation.js";
 import { fillDeferred, fillItem, fillText, incomplete, prependOlder, replaceWithSnapshot, type Incomplete, type WindowState } from "./lib/protocol/window.js";
 import type { ClientSessionView } from "./lib/protocol/wire.js";
 import type { TurnReads } from "./components/ProtocolTurn.js";
-import { liveItems, notifyWaiting } from "./attention.js";
+import { attentionKind, liveItems, notifyWaiting } from "./attention.js";
 import { ApiError, errorMessage, GatewayApi, requestKey } from "./api.js";
 import type { Place } from "./components/Welcome.js";
 import type { DelegationResult } from "./components/Delegation.js";
@@ -34,7 +34,9 @@ import type { InboxSource, Page, SessionActions } from "./components/Sidebar.js"
 import type { EditorChoice, WorkspaceAccess } from "./components/WorkspaceTools.js";
 import { SettingsDialog } from "./components/SettingsPage.js";
 import { CapabilitiesPage } from "./components/CapabilitiesPage.js";
-import { CommandPalette, ShortcutsDialog, type PaletteCommand } from "./components/CommandPalette.js";
+import { CommandPalette, ShortcutsDialog, type PaletteCommand, type PaletteSearch } from "./components/CommandPalette.js";
+import type { FindAccess, FindTarget } from "./components/FindBar.js";
+import type { GitAccess } from "./components/GitChanges.js";
 import { BrandIcon } from "./components/BrandIcon.js";
 import { attachmentKind, MAX_ATTACHMENT_BYTES, MAX_MESSAGE_ATTACHMENT_BYTES, type AttachmentDraft } from "./components/Attachments.js";
 import type { RelayNext } from "./components/RelayCard.js";
@@ -46,8 +48,9 @@ import { endedAt, over, userStopped } from "./lib/protocol/runs.js";
 import { finished } from "./lib/turn.js";
 import { cn } from "./lib/cn.js";
 import { inScratch, shortTitle } from "./lib/format.js";
+import { setBadge } from "./lib/badge.js";
 import { actionOf, keyText, useKeys } from "./lib/keys.js";
-import { markSeen, unseenNow } from "./lib/seen.js";
+import { markSeen, markUnseen, unseenNow } from "./lib/seen.js";
 import { summaryLine } from "../../src/contracts/web.js";
 import { backgroundOutcome, enableNotifications, markNotificationAsked, notificationsOfferable, notifyTurnEnded } from "./lib/notify.js";
 import { useToast } from "./ui/overlay.js";
@@ -547,6 +550,24 @@ export function App() {
     } catch (failure: unknown) { if (mounted.current) setError(errorMessage(failure)); }
     finally { reading.current.delete(key); }
   }, [api, moveLive]);
+  /**
+   * Reads the conversation's Turns down to the one at `ordinal` (find going to an early place in a long conversation): the older pages before the oldest held, as many
+   * Turns as the gap has, in one read where the Gateway gives them. False when the Turn cannot be reached (another conversation opened meanwhile, or none is older).
+   */
+  const readTo = useCallback(async (ordinal: number): Promise<boolean> => {
+    for (;;) {
+      const state = liveWindow.current, first = state?.turns[0]?.run.ordinal;
+      if (state === null || first === undefined) return false;
+      if (first <= ordinal) return true;
+      if (state.older === null) return false;
+      const page = await api.turns(state.head.id, state.older, first - ordinal);
+      const now = liveWindow.current;
+      if (now === null || now.head.id !== state.head.id) return false;
+      const next = prependOlder(now, page);
+      if (next === now) return false;
+      moveLive(next);
+    }
+  }, [api, moveLive]);
   const readMore = useCallback(async (need: Incomplete, bytes = TEXT_RANGE_BYTES): Promise<void> => {
     const id = liveWindow.current?.head.id, key = need.runId + "/" + need.seq + "/" + need.kind;
     if (id === undefined || reading.current.has(key)) return;
@@ -679,8 +700,9 @@ export function App() {
   const turns = session?.runs;
   useEffect(() => { if (!relayPresence.known && turns !== undefined && turns.some(run => runRelayInfo(run)?.delivery != null)) learnRelay(); }, [turns, relayPresence.known, learnRelay]);
   const { view: relayView, fresh: relayFresh } = useRelayView(api.relay, session, relayPushed, relayPresence.known, relayPresence.forget);
-  // The Gateway's relay settings (they apply to every browser): the settings page changes them, the line above the message box reads them.
-  const relayPrefs = useRelayPrefs(api.relay, relayPresence.known);
+  // The Gateway's relay settings (they apply to every browser): the settings page changes them, the line above the message box reads them. Read once the page is
+  // signed in: a read before that is refused, and would leave them unread (the presence can be remembered from an earlier visit).
+  const relayPrefs = useRelayPrefs(api.relay, relayPresence.known && state !== null);
   const leave = (action: () => void) => {
     if (operation.current) return;
     const finish = () => { pendingProviderWrite.current = null; action(); };
@@ -765,41 +787,99 @@ export function App() {
     const rest = (state?.sessions ?? []).filter(item => item.id === id || stays(item)), at = rest.findIndex(item => item.id === id), next = rest[at + 1] ?? rest[at - 1];
     return { go: () => { if (next !== undefined) selectSession(next.id); else newChat(); }, back: () => selectSession(id) };
   };
+  /**
+   * The way back from the sidebar's latest change (after T3 Code: every sidebar action can be taken back for five seconds, with ⌘Z or from its note, and none asks
+   * first). One at a time: a later change replaces the way back from an earlier one.
+   */
+  const undo = useRef<{ readonly run: () => void; readonly until: number } | null>(null);
+  const offerUndo = (title: string, back: () => void, note = true) => {
+    let done = false;
+    const run = () => { if (done) return; done = true; undo.current = null; back(); };
+    undo.current = { run, until: Date.now() + 5000 };
+    if (!note) return;
+    const id = toast.show({ title, action: { label: "撤销", onClick: () => { toast.close(id); run(); } }, timeout: 5000 });
+  };
+  // Changes whenever a conversation is deleted, comes back or is deleted for good: 最近删除 reads its list again.
+  const [trashStamp, setTrashStamp] = useState(0);
+  const bumpTrash = () => setTrashStamp(value => value + 1);
+  const putBack = (row: SessionSummary) => setState(current => current ? { ...current, sessions: [...current.sessions.filter(item => item.id !== row.id), row].sort((left, right) => right.updatedAt - left.updatedAt) } : current);
   const sessionActions = useMemo<SessionActions>(() => ({
-    rename: (id, title) => { changeSession(id, { title }).catch((failure: unknown) => toast.show({ title: "没有改成", description: errorMessage(failure) })); },
+    rename: (id, title) => {
+      const before = state?.sessions.find(item => item.id === id)?.title;
+      changeSession(id, { title }).then(() => { if (before !== undefined && before !== title) offerUndo("已改名", () => { changeSession(id, { title: before }).catch(() => undefined); }, false); },
+        (failure: unknown) => toast.show({ title: "没有改成", description: errorMessage(failure) }));
+    },
     archive: (id, archived) => {
       // Putting the open conversation away goes on to the one listed after it (after T3 Code's settle-and-advance); taking that back comes back to it.
       const gone = archived ? leaving(id) : null;
       changeSession(id, { archived }).then(() => {
-        if (!archived) return;
+        if (!archived) { offerUndo("已取消归档", () => { changeSession(id, { archived: true }).catch(() => undefined); }, false); return; }
         gone?.go();
-        const note = toast.show({ title: "已归档", action: { label: "撤销", onClick: () => { toast.close(note); changeSession(id, { archived: false }).then(() => gone?.back(), () => undefined); } }, timeout: 5000 });
+        offerUndo("已归档", () => { changeSession(id, { archived: false }).then(() => gone?.back(), () => undefined); });
       }, (failure: unknown) => toast.show({ title: archived ? "没有归档" : "没有取消归档", description: errorMessage(failure) }));
     },
-    pin: (id, pinned) => { changeSession(id, { pinned }).catch((failure: unknown) => toast.show({ title: pinned ? "没有置顶" : "没有取消置顶", description: errorMessage(failure) })); },
+    pin: (id, pinned) => {
+      changeSession(id, { pinned }).then(() => offerUndo(pinned ? "已置顶" : "已取消置顶", () => { changeSession(id, { pinned: !pinned }).catch(() => undefined); }, false),
+        (failure: unknown) => toast.show({ title: pinned ? "没有置顶" : "没有取消置顶", description: errorMessage(failure) }));
+    },
     snooze: (id, until) => {
-      const gone = until === null ? null : leaving(id);
+      const gone = until === null ? null : leaving(id), before = state?.sessions.find(item => item.id === id)?.snoozedUntil ?? null;
       changeSession(id, { snoozedUntil: until }).then(() => {
-        if (until === null) return;
+        if (until === null) { offerUndo("已提前回到列表", () => { changeSession(id, { snoozedUntil: before }).catch(() => undefined); }, false); return; }
         gone?.go();
-        const note = toast.show({ title: "稍后再提醒", action: { label: "撤销", onClick: () => { toast.close(note); changeSession(id, { snoozedUntil: null }).then(() => gone?.back(), () => undefined); } }, timeout: 5000 });
+        offerUndo("稍后再提醒", () => { changeSession(id, { snoozedUntil: null }).then(() => gone?.back(), () => undefined); });
       }, (failure: unknown) => toast.show({ title: "没有设成稍后提醒", description: errorMessage(failure) }));
     },
     remove: id => {
       const gone = leaving(id);
       api.deleteSession(id).then(() => {
         setState(current => current ? { ...current, sessions: current.sessions.filter(item => item.id !== id) } : current);
+        bumpTrash();
         gone.go();
-        // The way back, for a few seconds: the conversation is put back where it stood in the list (newest first).
-        const note = toast.show({ title: "已删除", action: { label: "撤销", onClick: () => { toast.close(note); api.restoreSession(id).then(row => {
-          setState(current => current ? { ...current, sessions: [...current.sessions.filter(item => item.id !== row.id), row].sort((left, right) => right.updatedAt - left.updatedAt) } : current);
-          gone.back();
-        }, (failure: unknown) => toast.show({ title: "没有恢复", description: errorMessage(failure) })); } }, timeout: 6000 });
+        // The way back: the conversation is put back where it stood in the list (newest first); later it is still in 最近删除.
+        offerUndo("已删除", () => { api.restoreSession(id).then(row => { putBack(row); bumpTrash(); gone.back(); },
+          (failure: unknown) => toast.show({ title: "没有恢复", description: errorMessage(failure) })); });
       }, (failure: unknown) => toast.show({ title: "没有删除", description: errorMessage(failure) }));
     },
+    trash: {
+      load: (before, signal) => api.deletedSessions(before, signal),
+      restore: id => api.restoreSession(id).then(row => { putBack(row); bumpTrash(); toast.show({ title: "已恢复", description: shortTitle(row.title || "新对话"), action: { label: "打开", onClick: () => selectSession(row.id) }, timeout: 5000 }); },
+        (failure: unknown) => { toast.show({ title: "没有恢复", description: errorMessage(failure) }); throw failure; }),
+      purge: id => api.purgeSession(id).then(() => { bumpTrash(); toast.show({ title: "已彻底删除" }); }, (failure: unknown) => { toast.show({ title: "没有彻底删除", description: errorMessage(failure) }); throw failure; }),
+      purgeAll: () => api.purgeDeleted().then(result => { bumpTrash(); toast.show({ title: "已彻底删除 " + result.purged + " 段对话" }); },
+        (failure: unknown) => { toast.show({ title: "没有清空", description: errorMessage(failure) }); throw failure; }),
+      stamp: trashStamp,
+    },
+    markUnread: id => { const row = state?.sessions.find(item => item.id === id); if (row !== undefined) { markUnseen(row); offerUndo("已标为未读", () => markSeen([row]), false); } },
     reveal: id => { api.reveal(id).catch((failure: unknown) => toast.show({ title: "无法在访达中显示", description: errorMessage(failure) })); },
+    copy: (text, what) => { navigator.clipboard.writeText(text).then(() => toast.show({ title: "已复制" + what, timeout: 2500 }), () => toast.show({ title: "没有复制成", description: "浏览器没有让页面写剪贴板" })); },
     grouping: preferences.grouping, onGrouping: value => setPreference("grouping", value),
-  }), [api, changeSession, toast, page, state?.sessions, preferences.grouping]);
+    onOrder: ids => { sidebarOrder.current = ids; },
+  }), [api, changeSession, toast, page, state?.sessions, preferences.grouping, trashStamp]);
+  // What waits for the user, said where they look when the page is not the one they read (after T3 Code): a count on the tab's icon, and — for a conversation that
+  // is not the one open — a note in the corner with the way to it, once per request. The first reading is not news.
+  const toldAttention = useRef<ReadonlySet<string> | null>(null);
+  useEffect(() => {
+    const items = liveItems(attention?.items ?? [], Date.now());
+    setBadge(items.length);
+    const before = toldAttention.current;
+    toldAttention.current = new Set(items.map(item => item.permissionId));
+    if (before === null || document.visibilityState === "hidden") return;
+    for (const item of items) {
+      if (before.has(item.permissionId) || (page === "chat" && item.sessionId === sessionIdRef.current)) continue;
+      const row = state?.sessions.find(entry => entry.id === item.sessionId);
+      const id = toast.show({ title: harnessName(item.harnessId) + " " + attentionKind(item), ...(row === undefined ? {} : { description: shortTitle(row.title || "新对话") }),
+        action: { label: "打开", onClick: () => { toast.close(id); selectSession(String(item.sessionId)); } }, timeout: 8000 });
+    }
+  }, [attention?.items]);
+  // The conversation's text size and column width, as the settings say: the stylesheet's own variables, set on the page.
+  useEffect(() => {
+    const root = document.documentElement.style, size = Number(preferences.readingSize);
+    root.setProperty("--text-reading", size + "px"); root.setProperty("--text-reading--line-height", (size === 14 ? 22 : size === 15 ? 24 : 26) + "px");
+    root.setProperty("--container-reading", preferences.chatWidth === "wide" ? "1040px" : "768px");
+  }, [preferences.readingSize, preferences.chatWidth]);
+  // The conversations in the order the sidebar shows them, for ⌥⌘1–9.
+  const sidebarOrder = useRef<readonly string[]>([]);
   // The editors installed on this Mac, read once the page is signed in and has its state (a read before that is refused): what the details panel offers to open the
   // workspace in.
   const [editors, setEditors] = useState<readonly EditorChoice[]>([]), signedIn = state !== null;
@@ -813,6 +893,21 @@ export function App() {
     commit: (message, paths) => api.commit(sessionId, message, paths),
     push: () => api.push(sessionId),
   }, [api, sessionId, editors, toast]);
+  /** ⌘F: the Gateway finds the words in the whole conversation; going to a place reads the Turns down to it. */
+  const find = useMemo<FindAccess | undefined>(() => sessionId === null ? undefined : {
+    search: (query, cursor, signal) => api.searchSession(sessionId, query, cursor, signal).then(page => ({
+      hits: page.hits.map(hit => ({ runId: hit.runId, ordinal: hit.ordinal, itemId: hit.messageId, itemSeq: hit.itemSeq, offset: hit.offset })), next: page.next })),
+    readTo,
+  }, [api, sessionId, readTo]);
+  /** The workspace as Git sees it, for the changes page: what is not committed, the branch against its base, one commit; spaces can be left out of the comparison. */
+  const git = useMemo<GitAccess | undefined>(() => sessionId === null ? undefined : {
+    changes: (scope, whitespace, signal) => api.gitChanges(sessionId, scope, { ...(whitespace ? { whitespace: "ignore" as const } : {}), signal }).then(view => ({ files: view.files, ...(view.base === undefined ? {} : { base: view.base }) })),
+    diff: (scope, path, whitespace, signal) => api.gitDiff(sessionId, scope, path, { ...(whitespace ? { whitespace: "ignore" as const } : {}), signal }),
+    log: (before, signal) => api.gitLog(sessionId, before, signal).then(view => ({ commits: view.commits.map(commit => ({ sha: commit.sha, short: commit.shortSha, subject: commit.subject, author: commit.author, at: commit.committedAt })), next: view.next })),
+    branches: signal => api.gitBranches(sessionId, signal),
+  }, [api, sessionId]);
+  // A message the palette found: its conversation opens with find on the words, at that message.
+  const [findRequest, setFindRequest] = useState<(FindTarget & { readonly sessionId: string; readonly stamp: number }) | null>(null);
   /** Opens the conversation listed before or after the open one; from another page, or with none open, the newest. The ends of the list are where it stops. */
   const stepSession = (by: -1 | 1) => {
     const list = state?.sessions ?? [];
@@ -858,6 +953,18 @@ export function App() {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.isComposing || event.keyCode === 229 || !(event.metaKey || event.ctrlKey)) return;
+      // ⌘Z takes back the sidebar's latest change for five seconds after it, where nothing typed would take the key for its own undo.
+      if (event.code === "KeyZ" && !event.shiftKey && !event.altKey && !(event.target instanceof Element && event.target.closest(SHORTCUT_TARGETS))) {
+        const way = undo.current;
+        if (way !== null && way.until > Date.now()) { event.preventDefault(); way.run(); toast.show({ title: "已撤销" }); return; }
+      }
+      // ⌥⌘1 to ⌥⌘9 (and ⌘1 to ⌘9 where the browser gives them to the page): the conversation at that place in the sidebar.
+      const digit = /^Digit([1-9])$/u.exec(event.code);
+      if (digit !== null && !event.shiftKey) {
+        const id = sidebarOrder.current[Number(digit[1]) - 1];
+        if (id !== undefined) { event.preventDefault(); selectSession(id); }
+        return;
+      }
       // Which shortcut it is by the keys chosen now (lib/keys.ts); ⇧⌘[ and ⇧⌘] also step through the conversations where the page is given them (an installed
       // app window: a browser keeps them for its tabs and the page never sees them).
       const action = actionOf(event) ?? (event.shiftKey && !event.altKey && event.code === "BracketLeft" ? "previous" : event.shiftKey && !event.altKey && event.code === "BracketRight" ? "next" : null);
@@ -953,16 +1060,16 @@ export function App() {
    * they are put back in the box and never sent again by themselves: the Turn shows them if they did.
    */
   const steering = useRef(false);
-  const steerMessage = () => {
-    const live = liveView(), run = live?.runs.find(item => item.id === live.activeRunId), text = messageDraft;
-    if (!live || !run || steering.current || !text.trim() || attachments.length > 0) return;
+  const steerText = (text: string, from: "box" | "kept") => {
+    const live = liveView(), run = live?.runs.find(item => item.id === live.activeRunId);
+    if (!live || !run || steering.current || !text.trim()) return;
     steering.current = true;
     const selection = JSON.stringify(selectionDraft(live.selection));
-    setMessageDraft("");
+    if (from === "box") setMessageDraft(""); else setQueued(null);
     api.steer(live.id, text, requestKey()).then(() => undefined, (failure: unknown) => {
       if (failure instanceof ApiError && failure.code.startsWith("STEER_")) {
         setQueued(current => current ?? { text, attachments: [], afterRunId: run.id, selection });
-        if (queued !== null) setMessageDraft(current => mergeHeld(text, current));
+        if (from === "box" && queued !== null) setMessageDraft(current => mergeHeld(text, current));
         toast.show({ title: failure.code === "STEER_REFUSED" ? "这一轮刚好结束，留到下一条发" : "它这时接不了插话，留到这一轮结束后发" });
         return;
       }
@@ -970,6 +1077,8 @@ export function App() {
       toast.show({ title: "没确认它收到", description: "话放回了输入框；先看看这一轮里有没有这句话，再决定要不要重发。" });
     }).finally(() => { steering.current = false; });
   };
+  const steerMessage = () => { if (attachments.length === 0) steerText(messageDraft, "box"); };
+  const steerQueued = () => { if (queued !== null && queued.attachments.length === 0) steerText(queued.text, "kept"); };
   // Mid-Turn words go to the Harness at work, never to one the box was switched to meanwhile, and only where its adapter says it can take them.
   const canSteer = session !== null && session.activeRunId !== null && draft.harnessId === session.selection.harnessId && !draft.providerId && nativeCatalog?.flavor?.capabilities?.steer === "native";
   const queueMessage = () => {
@@ -1383,6 +1492,19 @@ export function App() {
       : <div className="flex items-center gap-2 text-ui-sm text-fg-2" role="status"><Spinner label=""/>正在连接你的工作空间</div>}
   </div>;
   const chooseAndClose = (id: string) => { setSidebarOpen(false); selectSession(id); };
+  // The palette searches what was said in every conversation (after T3 Code's search of threads): a message found opens its conversation with find on the words, there.
+  const openHit = (hit: SearchHitView, query: string) => {
+    setSidebarOpen(false); selectSession(hit.sessionId);
+    if (hit.runId !== null && hit.messageId !== null) setFindRequest({ sessionId: hit.sessionId, query, runId: hit.runId, itemId: hit.messageId, stamp: Date.now() });
+  };
+  const paletteSearch: PaletteSearch = (query, cursor, signal) => api.search(query, cursor, signal).then(view => ({
+    found: view.hits.map(hit => {
+      const harness = state.sessions.find(item => item.id === hit.sessionId)?.selection.harnessId;
+      return { id: hit.role === "title" ? "session:" + hit.sessionId : "hit:" + hit.sessionId + ":" + hit.runId + ":" + hit.messageId, label: hit.snippet, match: hit.match,
+        hint: hit.role === "title" ? "对话标题" : shortTitle(hit.title || "新对话"),
+        icon: hit.role === "user" ? <User size={16}/> : hit.role === "assistant" && harness !== undefined ? <BrandIcon brand={harness} name={harnessName(harness)} size={16}/> : <MessageSquare size={16}/>,
+        run: () => openHit(hit, query) };
+    }), next: view.next }));
   // An address naming the Provider page where Provider management is off opens the conversation instead.
   const shown: Page = page === "providers" && state.providerManagement === false ? "chat" : page;
   // What the main area shows: the page itself, or — under the settings — the page they were opened from.
@@ -1413,13 +1535,13 @@ export function App() {
         onRetryConnection={() => setStreamAttempt(value => value + 1)} onLoadOlder={readOlder} reads={turnReads} {...(sessionId === null ? {} : { onLoadChanges: (before: string | undefined, signal: AbortSignal) => api.changes(sessionId, before, undefined, signal),
           onRename: (title: string) => changeSession(sessionId, { title }).catch((failure: unknown) => { toast.show({ title: "没有改成", description: errorMessage(failure) }); throw failure; }),
           onReveal: (path?: string) => { api.reveal(sessionId, path).catch((failure: unknown) => toast.show({ title: "无法在访达中显示", description: errorMessage(failure) })); },
-          onLoadWorkspace: (signal: AbortSignal) => api.workspace(sessionId, signal), workspaceTools, terminalUrl: (cols: number, rows: number) => api.terminalUrl(sessionId, cols, rows) })} onDraft={changeSelection} place={{ scratch, workspace }} onPlace={choosePlace} recentFolders={recentFolders} onChooseFolder={start => api.chooseFolder(start)} scratchRoot={state.scratchRoot} delegations={delegations} onLoadDelegation={loadDelegation} onDelegate={delegate} taskBoard={taskBoard} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
+          onLoadWorkspace: (signal: AbortSignal) => api.workspace(sessionId, signal), workspaceTools, find, findRequest, git, terminalUrl: (cols: number, rows: number) => api.terminalUrl(sessionId, cols, rows) })} onDraft={changeSelection} place={{ scratch, workspace }} onPlace={choosePlace} recentFolders={recentFolders} onChooseFolder={start => api.chooseFolder(start)} scratchRoot={state.scratchRoot} delegations={delegations} onLoadDelegation={loadDelegation} onDelegate={delegate} taskBoard={taskBoard} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
         sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued}
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
         onImportNative={importNative} focusOnOpen={sessionId !== null && openedFromPage === sessionId} onOpenFocused={() => setOpenedFromPage(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}
         onProviders={() => navigate("providers")} onNew={newChat} onMenu={shell.onMenu}
         {...(relayPresence.known ? { relay: { api: api.relay, view: relayView, fresh: relayFresh, prefs: relayPrefs.prefs, next: relayNext, onNext: setRelayNext } } : {})}
-        queued={queued} onQueue={queueMessage} {...(canSteer ? { onSteer: steerMessage } : {})} onEditQueued={() => { if (queued) returnQueued(queued, null); }} onWithdrawQueued={withdrawQueued} queueNotice={queueNotice} onDismissQueueNotice={() => setQueueNotice(null)}
+        queued={queued} onQueue={queueMessage} {...(canSteer ? { onSteer: steerMessage, onSteerQueued: steerQueued } : {})} onEditQueued={() => { if (queued) returnQueued(queued, null); }} onWithdrawQueued={withdrawQueued} queueNotice={queueNotice} onDismissQueueNotice={() => setQueueNotice(null)}
         preferences={preferences} onPreference={setPreference} conversations={state.sessions.length} sidebarHidden={!narrow && !preferences.sidebar} onExpandSidebar={shell.onExpandSidebar} onHarnesses={() => navigate("harnesses")} onSettings={() => navigate("settings")} onRescan={() => void rescan()} scanning={mutation === "scanning"}/>
         : base === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
         : base === "capabilities" ? <CapabilitiesPage api={api} initialHarness={capabilityHarness} hidden={hidden} {...shell} sidebarHidden={!narrow && !preferences.sidebar}/>
@@ -1429,7 +1551,7 @@ export function App() {
     <SettingsDialog open={shown === "settings"} onOpenChange={open => { if (!open) navigate(base); }} api={api} relay={relayPrefs} preferences={preferences} onPreference={setPreference} onRescan={() => void rescan()} scanning={mutation === "scanning"}/>
     {leaveAction ? <div className="motion-enter fixed right-4 bottom-4 left-4 z-[70] mx-auto max-w-[560px] rounded-block bg-surface shadow-pop"><Notice tone="amber" title="有尚未保存的修改" action={<><button type="button" className="btn btn-sm" onClick={() => setLeaveAction(null)}>继续编辑</button><button type="button" className="btn btn-sm btn-primary" onClick={() => { const action = leaveAction; setLeaveAction(null); setEditorDirty(false); action(); }}>放弃修改，离开</button></>} onDismiss={() => setLeaveAction(null)}>离开会丢弃编辑草稿。已受理的请求可在列表中查看。</Notice></div> : null}
     {narrow ? <Layer open={inboxOpen} onOpenChange={setInboxOpen} onClosed={layerClosed} title="等你处理" className="sheet-pop inbox-pop" initialFocus={firstWaiting}><InboxList {...inbox} focusRef={firstWaiting} onClose={() => setInboxOpen(false)}/></Layer> : null}
-    <CommandPalette open={palette} onOpenChange={setPalette} commands={commands} onClosed={layerClosed}/>
+    <CommandPalette open={palette} onOpenChange={setPalette} commands={commands} onClosed={layerClosed} search={paletteSearch}/>
     <ShortcutsDialog open={shortcuts} onOpenChange={setShortcuts} onClosed={layerClosed}/>
   </div></TipProvider>;
 }

@@ -1,5 +1,5 @@
 import { BoardAdd, BoardEntries, TaskRoster, useTask, type TaskBoardAccess, type TaskSnapshot } from "./TaskBoard.js";
-import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Circle, CircleDollarSign, Clock, Columns2, Copy, FileText, Folder, FolderOpen, GitBranch, Plug, Plus, Shrink, Timer, WrapText, X } from "lucide-react";
+import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Circle, CircleDollarSign, Clock, Columns2, Copy, FileText, Folder, FolderOpen, GitBranch, Plug, Plus, Shrink, Space, Timer, WrapText, X } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { ITEM_STATUS_WORDS, TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
@@ -25,6 +25,7 @@ import { EmptyState, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitive
 import { DiffLines, type ToolDetailLoader } from "./Activity.js";
 import { DiffBody, type DiffRemark } from "./DiffBody.js";
 import { CommitDialog, EditorRow, FileView, type WorkspaceAccess } from "./WorkspaceTools.js";
+import { GitChanges, GitScopeMenu, type GitAccess, type GitScope } from "./GitChanges.js";
 import { FileMark, FilePath, Lines } from "./FileBits.js";
 import { dockedRequest } from "./Approval.js";
 import { BrandIcon } from "./BrandIcon.js";
@@ -243,6 +244,8 @@ interface PanelProps {
   readonly want?: ChangesWant | null | undefined;
   /** Shows the workspace, or a file in it, in the Finder. */
   readonly onReveal?: ((path?: string) => void) | undefined;
+  /** The workspace's changes as Git sees them (not committed, a commit, the branch against another), where it is a repository. */
+  readonly git?: GitAccess | undefined;
   /** What is done with the workspace: opened in an editor, committed and pushed, a file of it shown. Each part absent where the Gateway has none of it. */
   readonly tools?: WorkspaceAccess | undefined;
   /** Says something came of an action in a corner of the page (a commit made, a push done). */
@@ -316,7 +319,7 @@ export function DetailsPanel(props: PanelProps) {
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${shown}`}>
       {viewing !== null && props.tools ? <FileView path={viewing} access={props.tools} onReveal={props.onReveal}/>
         : shown === "changes" ? <Changes changes={changes} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}
-          members={members} want={want} onOpenSession={props.onOpenSession} onReveal={props.onReveal} onRemark={props.onRemark} onOpenFile={openFile}/>
+          members={members} want={want} onOpenSession={props.onOpenSession} onReveal={props.onReveal} onRemark={props.onRemark} onOpenFile={openFile} git={props.git}/>
         : shown === "process" ? <>
           {kept || background.length || session.retention?.upgraded || session.retention?.outside ? <div className="hairline-b"><Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/></div> : null}
           {selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <EmptyState icon={<Clock size={22}/>} title="还没有执行记录"/>}
@@ -611,22 +614,24 @@ function readWrap(): boolean { try { return localStorage.getItem(WRAP_KEY) !== "
  * to its diff, read-only, and names the Harness that made it. The scopes carry the changes each holds, counted as the tab and the header's button count them. Another
  * conversation's files are named with the way to that conversation, where their diffs are.
  */
-function Changes({ changes, selected, workspace, name, sessionId, members, want, onOpenSession, onReveal, onRemark, onOpenFile }: { readonly changes: ConversationChanges; readonly selected: PublicRun | null;
+function Changes({ changes, selected, workspace, name, sessionId, members, want, onOpenSession, onReveal, onRemark, onOpenFile, git }: { readonly changes: ConversationChanges; readonly selected: PublicRun | null;
     readonly workspace: string; readonly name: (id: string) => string; readonly sessionId: string; readonly members: TaskSnapshot["members"]; readonly want: ChangesWant | null; readonly onOpenSession?: ((id: string) => void) | undefined;
-    readonly onReveal?: ((path: string) => void) | undefined; readonly onRemark?: ((remark: DiffRemark) => void) | undefined; readonly onOpenFile?: ((path: string) => void) | undefined }) {
+    readonly onReveal?: ((path: string) => void) | undefined; readonly onRemark?: ((remark: DiffRemark) => void) | undefined; readonly onOpenFile?: ((path: string) => void) | undefined; readonly git?: GitAccess | undefined }) {
   const [scope, setScope] = useState<ChangesScope>("all");
+  // A Git scope shown in place of the Hub's (2026-11-14): what is not committed, a commit, or the branch against another; and whether spaces count in its comparison.
+  const [gitScope, setGitScope] = useState<GitScope | null>(null), [whitespace, setWhitespace] = useState(false);
   const [wrap, setWrap] = useState(readWrap), [split, setSplit] = useState(readSplit);
   const beside = () => setSplit(value => { try { localStorage.setItem(SPLIT_KEY, value ? "0" : "1"); } catch { /* lasts for this page only */ } return !value; });
   const fold = () => setWrap(value => { try { localStorage.setItem(WRAP_KEY, value ? "0" : "1"); } catch { /* lasts for this page only */ } return !value; });
   // The files the user opened or closed by hand; until then a short list is open whole and a long one at its first file.
   const [chosen, setChosen] = useState<ReadonlySet<string> | null>(null);
   const list = useRef<HTMLUListElement>(null);
-  useEffect(() => { setChosen(null); setScope("all"); }, [sessionId]);
+  useEffect(() => { setChosen(null); setScope("all"); setGitScope(null); }, [sessionId]);
   // An asking is met once: at once for a scope, and for a file when the files are read (it names the file as its Turn does, which may be from another root).
   const met = useRef(0);
   useEffect(() => {
     if (want === null || met.current === want.at) return;
-    if (want.scope !== undefined) setScope(want.scope);
+    if (want.scope !== undefined) { setScope(want.scope); setGitScope(null); }
     const asked = want.path, found = asked === undefined ? undefined : changes.files.find(file => samePath(file.path, asked));
     if (asked !== undefined && found === undefined && changes.loading) return;
     met.current = want.at;
@@ -636,7 +641,7 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
     requestAnimationFrame(() => { for (const item of list.current?.children ?? []) if ((item as HTMLElement).dataset.path === path) item.scrollIntoView({ block: "nearest" }); });
   }, [want, changes.files, changes.loading]);
   const others = members.filter(member => member.sessionId !== sessionId && member.files.length > 0);
-  if (!changes.edits && others.length === 0) return <EmptyState icon={<FileText size={22}/>} title="还没有改动"/>;
+  if (!changes.edits && others.length === 0 && git === undefined) return <EmptyState icon={<FileText size={22}/>} title="还没有改动"/>;
   const turn = selected ? changes.files.filter(file => file.runIds.has(selected.id)).map(file => fileIn(file, selected.id)) : [];
   const shownScope: ChangesScope = scope === "task" && others.length === 0 ? "all" : scope;
   const files = shownScope === "turn" ? turn : changes.files;
@@ -646,14 +651,23 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
   const add = files.reduce((sum, file) => sum + file.add, 0), del = files.reduce((sum, file) => sum + file.del, 0);
   return <div className="flex flex-col">
     <div className="flex min-h-11 items-center gap-2 pr-2.5 pl-3.5">
-      <Segmented label="改动范围" value={shownScope} onChange={setScope} options={[{ value: "turn" as const, label: "本轮" }, { value: "all" as const, label: "这段对话" }, ...(others.length > 0 ? [{ value: "task" as const, label: "其他对话" }] : [])]}/>
-      {shownScope !== "task" && files.length > 0 ? <span className="ml-auto flex flex-none items-center gap-1"><span className="mr-1 flex items-center gap-1.5"><Lines add={add} del={del}/></span>
+      {/* The Hub's scopes, and Git's beside them; while a Git scope is shown, none of the Hub's is chosen. */}
+      <Segmented label="改动范围" value={gitScope !== null ? "none" as unknown as ChangesScope : shownScope} onChange={value => { setGitScope(null); setScope(value); }}
+        options={[{ value: "turn" as const, label: "本轮" }, { value: "all" as const, label: "这段对话" }, ...(others.length > 0 ? [{ value: "task" as const, label: "其他对话" }] : [])]}/>
+      {git !== undefined ? <GitScopeMenu access={git} scope={gitScope} onScope={setGitScope}/> : null}
+      {gitScope !== null ? <span className="ml-auto flex flex-none items-center gap-1">
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="忽略空白" aria-pressed={whitespace} title={whitespace ? "忽略空白：开" : "忽略空白：关"} onClick={() => setWhitespace(value => !value)}><Space size={14} strokeWidth={2}/></button>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="并排显示" aria-pressed={split} title={split ? "并排显示：开" : "并排显示：关"} onClick={beside}><Columns2 size={14} strokeWidth={2}/></button>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap || split} disabled={split} title={split ? "并排时长行总是折行" : wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14} strokeWidth={2}/></button></span>
+      : shownScope !== "task" && files.length > 0 ? <span className="ml-auto flex flex-none items-center gap-1"><span className="mr-1 flex items-center gap-1.5"><Lines add={add} del={del}/></span>
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label="并排显示" aria-pressed={split} title={split ? "并排显示：开" : "并排显示：关"} onClick={beside}><Columns2 size={14} strokeWidth={2}/></button>
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap || split} disabled={split} title={split ? "并排时长行总是折行" : wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14} strokeWidth={2}/></button>
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label={every ? "全部收起" : "全部展开"} title={every ? "全部收起" : "全部展开"} onClick={() => setChosen(every ? new Set() : new Set(files.map(file => file.path)))}>
           {every ? <ChevronsDownUp size={14} strokeWidth={2}/> : <ChevronsUpDown size={14} strokeWidth={2}/>}</button></span> : null}
     </div>
-    {shownScope === "task" ? <div className="flex flex-col gap-3 px-2.5 pb-4">{others.map(member => <section key={member.sessionId} className="flex min-w-0 flex-col" aria-label={member.harness + " 改动的文件"}>
+    {gitScope !== null && git !== undefined ? <GitChanges access={git} scope={gitScope} workspace={workspace} wrap={wrap} split={split} whitespace={whitespace} onRemark={onRemark}
+      stamp={String(changes.edits) + ":" + changes.files.length + ":" + (selected?.id ?? "") + ":" + (selected?.status ?? "")}/>
+      : shownScope === "task" ? <div className="flex flex-col gap-3 px-2.5 pb-4">{others.map(member => <section key={member.sessionId} className="flex min-w-0 flex-col" aria-label={member.harness + " 改动的文件"}>
       <div className="flex min-w-0 items-center gap-2 px-2 py-1.5"><BrandIcon brand={member.harnessId} name={member.harness} size={18}/>
         <span className="flex min-w-0 flex-1 flex-col"><span className="trunc text-ui-sm">{oneLine(member.task) || member.harness}</span><span className="trunc text-caption text-fg-3">{member.harness} · {member.files.length} 个文件</span></span>
         {onOpenSession ? <button type="button" className="link-btn flex-none text-caption" onClick={() => onOpenSession(member.sessionId)}>打开这段对话</button> : null}</div>

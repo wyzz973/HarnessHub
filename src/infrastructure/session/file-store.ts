@@ -1,9 +1,10 @@
 import { randomUUID, createHash } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   CONVERSATION_FORMAT, PAGE,
+  type DeletedListPage, type DeletedListQuery, type FoundMessage, type PurgeResult,
   type Conversation, type ConversationCommit, type ConversationMutation, type ConversationRun, type ConversationStore, type ConversationStoreOptions, type DeferredWork, type HeadRow, type HeldItem,
   type ItemPage, type ItemRow, type ItemWrite, type Mutation, type OriginHistoryRow, type ReadOptions, type RunRow, type RunWrite, type SearchHit, type SessionListCursor, type SessionListPage,
   type SessionListQuery, type SessionListRow, type StartupSample, type TextAppend, type TextRange, type TurnBranch, type TurnRelayCounts, type TurnCursor, type TurnItems, type TurnWindow,
@@ -183,6 +184,22 @@ function decodeListCursor(cursor: string): { readonly updatedAt: number; readonl
   } catch { /* told below */ }
   return invalid("INVALID_CURSOR", "the cursor is not one this list gave");
 }
+function encodeDeletedCursor(deletedAt: number, id: string): string { return Buffer.from(JSON.stringify({ deletedAt, id }), "utf8").toString("base64url"); }
+function decodeDeletedCursor(cursor: string): { readonly deletedAt: number; readonly id: string } {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>;
+    if (typeof value.deletedAt === "number" && Number.isSafeInteger(value.deletedAt) && typeof value.id === "string") return { deletedAt: value.deletedAt, id: value.id };
+  } catch { /* told below */ }
+  return invalid("INVALID_CURSOR", "the cursor is not one this list gave");
+}
+/** A conversation's row of a list, from its row of the index. */
+function listRowOf(row: IndexRow): SessionListRow {
+  return { id: row.id, title: row.title, status: row.status, workspace: row.workspace, selection: row.selection, updatedSeq: row.lastSeq,
+    updatedAt: row.updatedAt, activeRunId: row.activeRunId, ...(row.activeRunId === null || row.activeSince === undefined ? {} : { activeSince: row.activeSince }), runCount: row.runCount,
+    ...(row.parent === undefined ? {} : { parent: row.parent }), ...listMarksOf(row) };
+}
+/** The folder of `trash/` an erasure moves a conversation's files into before it erases them; one left by an erasure that failed is erased by the next. */
+const ERASING = "purged-";
 function boundary(buffer: Buffer, index: number): number {
   let at = Math.max(0, index);
   while (at < buffer.length && (buffer[at]! & 0xc0) === 0x80) at++;
@@ -974,10 +991,10 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     const limit = counted(scope.limit, 1, "limit"), words = String(query).trim().toLowerCase();
     if (words === "") return [];
     const after = scope.after === undefined ? undefined : wholeNumber(scope.after, "the search's cursor");
-    const hits: SearchHit[] = [];
+    const hits: SearchHit[] = [], holds = (text: string): boolean => text.toLowerCase().includes(words);
     if (scope.sessionId !== undefined) {
       const held = this.entry(scope.sessionId);
-      for (const hit of this.scan(held, words)) {
+      for (const hit of this.scan(held, holds)) {
         const id = hit.offset + 1;
         if (after !== undefined && id >= after) continue;
         hits.push({ id, sessionId: held.id, runId: hit.runId, ordinal: hit.ordinal, itemSeq: hit.seq, type: hit.type, via: "scan" });
@@ -991,7 +1008,7 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     for (const row of rows) {
       let held: Held;
       try { held = this.entry(row.id); } catch { continue; }
-      for (const hit of this.scan(held, words)) {
+      for (const hit of this.scan(held, holds)) {
         place++;
         const id = Number.MAX_SAFE_INTEGER - place;
         if (after !== undefined && id >= after) continue;
@@ -1005,21 +1022,64 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
    * The finished messages and segments of the current path that hold the words, newest first: the file read from its end a piece at a time, so a search that has its page stops
    * reading (the last line of an item is the one that counts, and it is the first met from the end).
    */
-  private *scan(held: Held, words: string): Generator<{ readonly offset: number; readonly runId: RunId; readonly ordinal: number; readonly seq: number; readonly type: ItemType }> {
+  private *scan(held: Held, holds: (text: string) => boolean, before = Number.POSITIVE_INFINITY): Generator<{ readonly offset: number; readonly runId: RunId; readonly ordinal: number; readonly seq: number; readonly type: ItemType;
+    readonly itemId: string; readonly text: string }> {
     const seen = new Set<string>();
     let reader: Generator<{ readonly offset: number; readonly text: string }>;
     try { reader = linesBackward(held.paths.main); } catch (error) { throw storageFailure(error); }
     for (const line of reader) {
       if (!line.text.startsWith('{"type":"item"')) continue;
-      let value: { runId?: unknown; item?: { seq?: unknown; type?: unknown; status?: unknown; text?: unknown } };
+      let value: { runId?: unknown; item?: { seq?: unknown; itemId?: unknown; type?: unknown; status?: unknown; text?: unknown } };
       try { value = JSON.parse(line.text) as typeof value; } catch { continue; }
       const item = value.item, runId = String(value.runId) as RunId, key = runId + "\u0000" + String(item?.seq);
       if (item === undefined || seen.has(key)) continue;
       seen.add(key);
+      // A page that goes on from a place: the lines after it are still read, so that an item is still taken by its last line only.
+      if (line.offset >= before) continue;
       if (!SEARCHED.has(String(item.type)) || !itemFinished(String(item.status)) || typeof item.text !== "string" || item.text === "") continue;
       const ordinal = held.runs.get(runId)?.ordinal;
-      if (ordinal === undefined || !item.text.toLowerCase().includes(words)) continue;
-      yield { offset: line.offset, runId, ordinal, seq: Number(item.seq), type: item.type as ItemType };
+      if (ordinal === undefined || !holds(item.text)) continue;
+      yield { offset: line.offset, runId, ordinal, seq: Number(item.seq), type: item.type as ItemType, itemId: String(item.itemId), text: item.text };
+    }
+  }
+
+  // ---- The page's search (2026-11-14): the same scan, with each message's text, and the messages of one conversation in order --------------------------------
+
+  /** The conversations a search across them goes through: those not deleted, the latest activity first (the list's order). */
+  searchRows(): readonly { readonly id: SessionId; readonly title: string; readonly updatedAt: number }[] {
+    this.assertOwner();
+    return [...this.index.rows.values()].filter(row => row.deletedAt === undefined).sort((left, right) => right.updatedAt - left.updatedAt || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+      .map(row => ({ id: row.id, title: row.title, updatedAt: row.updatedAt }));
+  }
+  /**
+   * The finished messages of a conversation's current path whose text `holds`, newest first, each with its text whole: the scan `search` makes (the file read from its end, a
+   * piece at a time, so that a page that has its hits stops reading). `place` is where its line is in the file; `before` goes on below the place of the last one a page gave.
+   */
+  *newestMessages(id: SessionId, holds: (text: string) => boolean, before?: number): Generator<FoundMessage & { readonly place: number }> {
+    this.assertOwner(); sessionId(id);
+    const held = this.entry(id);
+    for (const hit of this.scan(held, holds, before)) yield { place: hit.offset, runId: hit.runId, ordinal: hit.ordinal, seq: hit.seq, itemId: hit.itemId, type: hit.type as FoundMessage["type"], text: hit.text };
+  }
+  /**
+   * Every finished message of a conversation's current path in the conversation's order (by Turn, then by place in the Turn), from the item `from` on, each with its text whole:
+   * a finished Turn is read from its lines (from the cache when it is there, and not put in it: a search goes through Turns no page shows), one going on from memory.
+   */
+  *messagesInOrder(id: SessionId, from?: { readonly ordinal: number; readonly seq: number }): Generator<FoundMessage> {
+    this.assertOwner(); sessionId(id);
+    const held = this.entry(id), runs = held.conversation.runs;
+    for (let ordinal = Math.max(0, from?.ordinal ?? 0); ordinal < runs.length; ordinal++) {
+      const run = runs[ordinal]!;
+      let items: readonly HeldItem[];
+      if (run.items !== undefined) items = run.items;
+      else {
+        const cached = this.turnCache.get(run.id), span = held.runs.get(run.id)?.span ?? null;
+        try { items = cached?.items ?? (span === null ? [] : readRunItems(held.paths.main, run.id, span)); } catch (error) { throw storageFailure(error); }
+      }
+      for (const item of items) {
+        if (!SEARCHED.has(item.type) || !itemFinished(item.status) || (from !== undefined && ordinal === from.ordinal && item.seq < from.seq)) continue;
+        const text = item.text.length === 1 ? item.text[0]! : item.text.join("");
+        if (text !== "") yield { runId: run.id, ordinal, seq: item.seq, itemId: item.itemId, type: item.type as FoundMessage["type"], text };
+      }
     }
   }
 
@@ -1033,11 +1093,19 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
     // A conversation the user deleted is out of the list (it is still read by its id, to be restored: `get`, `head`).
     const rows = [...this.index.rows.values()].filter(row => row.deletedAt === undefined).sort((left, right) => right.updatedAt - left.updatedAt || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
       .filter(row => after === undefined || row.updatedAt < after.updatedAt || (row.updatedAt === after.updatedAt && row.id > after.id));
-    const page = rows.slice(0, limit).map((row): SessionListRow => ({ id: row.id, title: row.title, status: row.status, workspace: row.workspace, selection: row.selection, updatedSeq: row.lastSeq,
-      updatedAt: row.updatedAt, activeRunId: row.activeRunId, ...(row.activeRunId === null || row.activeSince === undefined ? {} : { activeSince: row.activeSince }), runCount: row.runCount,
-      ...(row.parent === undefined ? {} : { parent: row.parent }), ...listMarksOf(row) }));
+    const page = rows.slice(0, limit).map(listRowOf);
     const last = page[page.length - 1];
     return { rows: page, next: rows.length > limit && last !== undefined ? encodeListCursor(last.updatedAt, last.id) : null };
+  }
+  /** The conversations the user deleted (2026-11-14), the latest deleted first, a page at a time (`before`: the `next` of the page before). */
+  listDeleted(query: DeletedListQuery = {}): DeletedListPage {
+    this.assertOwner();
+    const limit = counted(query.limit, PAGE.sessions, "limit"), before = query.before === undefined ? undefined : decodeDeletedCursor(query.before);
+    const rows = [...this.index.rows.values()].filter((row): row is IndexRow & { readonly deletedAt: number } => row.deletedAt !== undefined)
+      .sort((left, right) => right.deletedAt - left.deletedAt || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+      .filter(row => before === undefined || row.deletedAt < before.deletedAt || (row.deletedAt === before.deletedAt && row.id > before.id));
+    const page = rows.slice(0, limit), last = page[page.length - 1];
+    return { rows: page.map(row => ({ ...listRowOf(row), deletedAt: row.deletedAt })), next: rows.length > limit && last !== undefined ? encodeDeletedCursor(last.deletedAt, last.id) : null };
   }
   changedFiles(id: SessionId): readonly string[] {
     const files: string[] = [];
@@ -1290,6 +1358,54 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
       this.held.delete(id); this.index.drop(id);
       if (held.header.createKey !== undefined) this.createKeys.delete(held.header.createKey);
       for (const runId of held.runs.keys()) { this.runOwner.delete(runId); this.turnCache.delete(runId); }
+    });
+  }
+  /**
+   * Erases conversations the user deleted (2026-11-14; `ConversationStore.purgeSessions`). All are checked before any is erased. Each one's files (the conversation, its WIP
+   * log, its events, the fold beside it) are moved into a folder of `trash/` of their own, its main file first — from that rename on it is not there, for this process or
+   * for a start — then its row, its create key and what memory held of it go, and the folder is erased. A folder an erasure could not erase stays in `trash/` and is erased
+   * by the next one; nothing else of `trash/` is touched. What it delegated work to keeps its rows (their `parent` names a conversation that is not there any more).
+   * `content`: what the erased conversations mentioned and no other conversation does (every other one is read for it: deleted ones too, which can still be restored).
+   */
+  purgeSessions(ids: readonly SessionId[]): PurgeResult {
+    this.assertOwner();
+    return this.transaction(() => {
+      const unique = [...new Set(ids.map(id => sessionId(id)))], helds = unique.map(id => this.entry(id));
+      for (const held of helds) {
+        const state = held.conversation;
+        if (state.deletedAt === undefined) throw new SessionError("DELETION_REQUIRED", "先删除这个对话，再彻底删除");
+        if (state.activeRunId !== null || state.pendingSwitchId !== null || held.wip || state.runs.some(run => !runFinished(run.status)) || state.retained !== undefined)
+          throw new SessionError("SESSION_ACTIVE", "这个对话还有一轮没结束或还留着原生进程：等它结束再彻底删除");
+      }
+      const mentioned = new Set<string>();
+      for (const held of helds) { try { for (const ref of this.references(held.id)) mentioned.add(ref); } catch { /* what cannot be read is not erased from the content store */ } }
+      const trash = join(this.root, "trash"), purged: SessionId[] = [];
+      for (const held of helds) {
+        const bin = join(trash, ERASING + randomUUID());
+        try {
+          mkdirSync(bin, { recursive: true, mode: 0o700 });
+          for (const path of [held.paths.main, held.paths.wip, held.paths.events, held.paths.index]) if (existsSync(path)) renameSync(path, join(bin, basename(path)));
+        } catch (error) { throw storageFailure(error); }
+        this.held.delete(held.id); this.index.drop(held.id); this.sidecars.delete(held.id);
+        if (held.header.createKey !== undefined) this.createKeys.delete(held.header.createKey);
+        for (const runId of held.runs.keys()) {
+          this.runOwner.delete(runId);
+          const cached = this.turnCache.get(runId);
+          if (cached !== undefined) { this.turnCache.delete(runId); this.turnCacheBytes -= cached.bytes; }
+        }
+        purged.push(held.id);
+        // The workspace's folder of conversations goes when it is left empty.
+        try { rmdirSync(dirname(held.paths.main)); } catch { /* another conversation of the workspace is in it */ }
+      }
+      try { for (const name of readdirSync(trash)) if (name.startsWith(ERASING)) rmSync(join(trash, name), { recursive: true, force: true }); }
+      catch (error) { this.log("SESSIONS (an erased conversation's files are left in trash/ for the next erasure: " + (error instanceof Error ? error.message : "unerasable") + ")"); }
+      // What any other conversation mentions stays; when one of them cannot be read, nothing is said to be the erased ones' alone.
+      let content: Set<string> | null = new Set(mentioned);
+      for (const row of this.index.rows.values()) {
+        if (content === null || content.size === 0) break;
+        try { for (const ref of this.references(row.id)) content.delete(ref); } catch { content = null; }
+      }
+      return { purged, content };
     });
   }
   relayDeliveries(id: SessionId): readonly DeliveryRecord[] { this.assertOwner(); sessionId(id); return this.deliveriesOf(this.entry(id)); }

@@ -2,11 +2,13 @@ import { consumeSessionEventStream, SessionStreamError } from "./session-stream.
 import { readSseBlocks } from "./attention.js";
 import { WireError, decodeConversationChanges, decodeItemTextView, decodeItemView, decodeRunItemsPageView, decodeSessionListView, decodeSessionStreamFrameV14, decodeSessionViewV14, decodeTurnPageView,
   type ClientRunItemsPage, type ClientSessionList, type ClientSessionView, type ClientStreamFrame, type ClientWindow } from "./lib/protocol/wire.js";
+import { decodeDeletedSessionListView, decodeSearchView, decodeSessionSearchView } from "./lib/protocol/wire.js";
+import type { DeletedSessionListView, PurgedView, SearchView, SessionSearchView } from "../../src/contracts/web.js";
 import { createRelayApi, decodeRelayFrame, relayBody, type RelayApi, type RelayEvent, type RelayReply, type RelayRequest, type RelayTransport } from "./relay.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, SteerView, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState, WorkspaceView,
-  EditorView, GitCommitView, GitPushView, GitView, WorkspaceFileView } from "../../src/contracts/web.js";
-import { HARNESS_TIERS } from "../../src/contracts/web.js";
+  EditorView, GitBranchesView, GitChangedFileView, GitChangesView, GitCommitView, GitFileDiffView, GitLogView, GitPushView, GitScope, GitView, WorkspaceFileView } from "../../src/contracts/web.js";
+import { GIT_CHANGE_STATUSES, HARNESS_TIERS } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput, RuntimeRequirement, UpgradeSequenceCheck } from "../../src/contracts/management.js";
 import type { AttentionItem, BoardKind, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest, TaskBoard } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
@@ -408,6 +410,34 @@ function decodeGit(value: unknown): GitView {
     files: list(row.files, entry => { const file = record(entry);
       return { path: text(file.path), ...(file.from === undefined ? {} : { from: text(file.from) }), index: text(file.index), worktree: text(file.worktree),
         ...(file.added === undefined ? {} : { added: number(file.added) }), ...(file.removed === undefined ? {} : { removed: number(file.removed) }) }; }) };
+}
+function decodeGitChange(value: unknown): GitChangedFileView {
+  const file = record(value);
+  return { path: text(file.path), ...(file.oldPath === undefined ? {} : { oldPath: text(file.oldPath) }), status: choice(file.status, GIT_CHANGE_STATUSES),
+    ...(file.added === undefined ? {} : { added: number(file.added) }), ...(file.removed === undefined ? {} : { removed: number(file.removed) }), ...(file.binary === true ? { binary: true as const } : {}) };
+}
+function decodeGitChanges(value: unknown): GitChangesView {
+  const row = record(value), base = row.base === undefined ? undefined : record(row.base), commit = row.commit === undefined ? undefined : record(row.commit);
+  return { scope: choice(row.scope, ["uncommitted", "commit", "branch"] as const), files: list(row.files, decodeGitChange),
+    ...(base === undefined ? {} : { base: { ref: text(base.ref), sha: text(base.sha) } }), ...(commit === undefined ? {} : { commit: { sha: text(commit.sha), parent: nullableText(commit.parent) } }) };
+}
+function decodeGitDiff(value: unknown): GitFileDiffView { const row = record(value); return { path: text(row.path), diff: text(row.diff), ...(row.binary === true ? { binary: true as const } : {}) }; }
+function decodeGitLog(value: unknown): GitLogView {
+  const row = record(value);
+  return { commits: list(row.commits, entry => { const commit = record(entry);
+    return { sha: text(commit.sha), shortSha: text(commit.shortSha), subject: text(commit.subject), author: text(commit.author), committedAt: number(commit.committedAt) }; }), next: nullableText(row.next) };
+}
+function decodeGitBranches(value: unknown): GitBranchesView {
+  const row = record(value);
+  return { current: nullableText(row.current), local: list(row.local, text), remote: list(row.remote, text), defaultBranch: nullableText(row.defaultBranch) };
+}
+/** A scope of the changes panel as the query names it. */
+function gitScopeQuery(scope: GitScope, whitespace?: "ignore"): URLSearchParams {
+  const query = new URLSearchParams({ scope: scope.kind });
+  if (scope.kind === "commit") query.set("sha", scope.sha);
+  if (scope.kind === "branch" && scope.base !== undefined) query.set("base", scope.base);
+  if (whitespace === "ignore") query.set("whitespace", "ignore");
+  return query;
 }
 function decodeWorkspace(value: unknown): WorkspaceView {
   const row = record(value), git = row.git === undefined ? undefined : record(row.git);
@@ -844,6 +874,30 @@ export class GatewayApi {
   async deleteSession(id: string): Promise<void> { await this.request(`/sessions/${encodeURIComponent(id)}`, "DELETE", undefined, () => undefined); }
   /** Undoes a deletion; the answer is the conversation's row of the list again. */
   restoreSession(id: string): Promise<SessionSummary> { return this.request(`/sessions/${encodeURIComponent(id)}/restore`, "POST", {}, decodeSummary); }
+  /** The conversations the user deleted (2026-11-14, "recently deleted"), the latest deleted first, a page at a time: `before` is the `next` of the page before. */
+  deletedSessions(before?: string, signal?: AbortSignal): Promise<DeletedSessionListView> {
+    return this.request(`/sessions/deleted${before === undefined ? "" : "?before=" + encodeURIComponent(before)}`, "GET", undefined, decodeDeletedSessionListView, signal);
+  }
+  /**
+   * Erases a deleted conversation: its file and row, the content only it mentioned, its part of the record's directory; nothing of it can be restored after. An ApiError 409
+   * DELETION_REQUIRED for one that is not deleted (delete it first). The conversations it delegated work to stay, their `parent` naming one that is not there.
+   */
+  async purgeSession(id: string): Promise<void> { await this.request(`/sessions/${encodeURIComponent(id)}/purge`, "POST", {}, () => undefined, undefined, 60_000); }
+  /** Erases every deleted conversation; `purged` is how many. */
+  purgeDeleted(): Promise<PurgedView> {
+    return this.request("/sessions/purge-deleted", "POST", {}, value => ({ purged: number(record(value).purged) }), undefined, 5 * 60_000);
+  }
+  /**
+   * ⌘K: the words in every conversation not deleted — titles, the user's words, the Harnesses' replies (never a tool's output) — ignoring case, as a substring; hits grouped by
+   * conversation, the latest activity first; `cursor` is the `next` of the page before.
+   */
+  search(q: string, cursor?: string, signal?: AbortSignal): Promise<SearchView> {
+    return this.request(`/search?${new URLSearchParams({ q, ...(cursor === undefined ? {} : { cursor }) }).toString()}`, "GET", undefined, decodeSearchView, signal, 60_000);
+  }
+  /** ⌘F: every place of the words in one conversation's messages, from its first Turn to its newest; each says the Turn (`ordinal`), the item (`itemSeq`) and the `offset` in its text. */
+  searchSession(id: string, q: string, cursor?: string, signal?: AbortSignal): Promise<SessionSearchView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/search?${new URLSearchParams({ q, ...(cursor === undefined ? {} : { cursor }) }).toString()}`, "GET", undefined, decodeSessionSearchView, signal, 60_000);
+  }
   /** Shows the conversation's workspace in the Finder, or, given `path` (relative to the workspace or absolute, inside it), selects that file there. */
   async reveal(id: string, path?: string): Promise<void> {
     await this.request(`/sessions/${encodeURIComponent(id)}/reveal`, "POST", path === undefined ? {} : { path }, () => undefined);
@@ -871,6 +925,24 @@ export class GatewayApi {
     return this.request(`/sessions/${encodeURIComponent(id)}/git/commit`, "POST", { message, ...(paths === undefined ? {} : { paths }) },
       value => { const row = record(value); return { commit: text(row.commit), subject: text(row.subject) }; }, undefined, 6 * 60_000);
   }
+  /**
+   * The files changed in a scope of the changes panel (not committed, one commit, the branch against its base), without their text; `whitespace: "ignore"` counts lines as
+   * `git diff -w`. 404 NOT_A_REPOSITORY; 400 for a sha or base that is not a commit of the repository, or no base and no default branch; 409 with Git's words when it refuses.
+   */
+  gitChanges(id: string, scope: GitScope, options?: { whitespace?: "ignore"; signal?: AbortSignal }): Promise<GitChangesView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/git/changes?${gitScopeQuery(scope, options?.whitespace).toString()}`, "GET", undefined, decodeGitChanges, options?.signal, 75_000);
+  }
+  /** One file's unified diff in a scope (`path` from the workspace); "" when it did not change there, Git's line and `binary` for a binary file. As long as it is. */
+  gitDiff(id: string, scope: GitScope, path: string, options?: { whitespace?: "ignore"; signal?: AbortSignal }): Promise<GitFileDiffView> {
+    const query = gitScopeQuery(scope, options?.whitespace); query.set("path", path);
+    return this.request(`/sessions/${encodeURIComponent(id)}/git/diff?${query.toString()}`, "GET", undefined, decodeGitDiff, options?.signal, 6 * 60_000);
+  }
+  /** A page of the current branch's commits, newest first, from the one after `before` (the previous page's `next`); `next` is null at the end. */
+  gitLog(id: string, before?: string, signal?: AbortSignal): Promise<GitLogView> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/git/log${before === undefined ? "" : "?" + new URLSearchParams({ before }).toString()}`, "GET", undefined, decodeGitLog, signal, 75_000);
+  }
+  /** The local and remote-tracking branches, the current one and the default one a branch is compared with. */
+  gitBranches(id: string, signal?: AbortSignal): Promise<GitBranchesView> { return this.request(`/sessions/${encodeURIComponent(id)}/git/branches`, "GET", undefined, decodeGitBranches, signal); }
   /** Pushes the current branch, to its upstream or else to origin (setting it as the upstream); a push that needs a password or takes over a minute fails with Git's words. */
   push(id: string): Promise<GitPushView> {
     return this.request(`/sessions/${encodeURIComponent(id)}/git/push`, "POST", {}, value => { const row = record(value); return { remote: text(row.remote), branch: text(row.branch) }; }, undefined, 75_000);

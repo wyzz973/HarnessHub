@@ -90,6 +90,10 @@ export function SettingsDialog({ open, onOpenChange, api, relay, preferences, on
       <Card className={ROWS}>
         <Row title="主题" control={<Segmented size="md" label="主题" value={preferences.theme} onChange={value => onPreference("theme", value)}
           options={THEMES.map(theme => ({ value: theme.value, label: <span className="inline-flex items-center gap-1.5"><theme.icon size={14} aria-hidden="true"/>{theme.label}</span> }))}/>}/>
+        <Row title="对话字号" control={<Segmented label="对话字号" value={preferences.readingSize} onChange={value => onPreference("readingSize", value)} options={[{ value: "14" as const, label: "小" }, { value: "15" as const, label: "中" }, { value: "16" as const, label: "大" }]}/>}>
+          消息和回复的文字大小。</Row>
+        <Row title="对话宽度" control={<Segmented label="对话宽度" value={preferences.chatWidth} onChange={value => onPreference("chatWidth", value)} options={[{ value: "standard" as const, label: "标准" }, { value: "wide" as const, label: "宽" }]}/>}>
+          宽一些，长代码和表格少折行。</Row>
       </Card>
     </Section>
     <Section title="对话" id="settings-conversation">
@@ -97,6 +101,8 @@ export function SettingsDialog({ open, onOpenChange, api, relay, preferences, on
         <Row title="过程显示" control={<Segmented label="默认过程显示" value={preferences.density} onChange={value => onPreference("density", value)}
           options={[{ value: "detailed", label: "每一步" }, { value: "compact", label: "一行小结" }, { value: "failures", label: "只留出错的" }, { value: "answer", label: "只看回答" }]}/>}>
           {preferences.density === "detailed" ? "每个动作一行，都展开。" : preferences.density === "compact" ? "一轮结束后，过程收成一行，可以点开。" : preferences.density === "failures" ? "只显示失败或结果未知的动作。" : "只显示最后说的话；过程在详情栏里。"}</Row>
+        <Row title="发送" control={<Segmented label="发送" value={preferences.sendKey} onChange={value => onPreference("sendKey", value)} options={[{ value: "enter" as const, label: "Enter" }, { value: "mod-enter" as const, label: "⌘Enter" }]}/>}>
+          {preferences.sendKey === "enter" ? "Enter 发送，⇧Enter 换行。" : "⌘Enter 发送，Enter 换行。"}</Row>
         <Row title="回复进行中时按回车" control={<Segmented label="回复进行中时按回车" value={preferences.whileRunning} onChange={value => onPreference("whileRunning", value)}
           options={[{ value: "queue", label: "留到结束后发" }, { value: "steer", label: "现在就告诉它" }]}/>}>
           ⌘⏎ 做另一种。只有支持中途插话的 Harness 才能现在就告诉它，其余的都留到结束后发。</Row>

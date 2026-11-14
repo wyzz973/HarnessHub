@@ -36,6 +36,12 @@ export function markSeen(rows: readonly Row[], onlyNew = false): void {
   }
   if (changed) write(next);
 }
+/** Marks a conversation as not seen where it stands now (the sidebar's 标为未读): it reads as moved on until it is opened or moves again. */
+export function markUnseen(row: Row): void {
+  const now = read(), next: Record<string, number> = { ...now };
+  delete next[row.id]; next[row.id] = row.updatedSeq - 1;
+  write(next);
+}
 /** The first list this browser shows is all seen: called with every listed conversation, it remembers them only when nothing was remembered before. */
 export function startSeen(rows: readonly Row[]): void { read(); if (!started) write(Object.fromEntries(rows.map(row => [row.id, row.updatedSeq]))); }
 /** Whether a conversation has moved on since it was last seen here (one nothing is remembered of has). */

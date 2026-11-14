@@ -397,7 +397,7 @@ test("real browser validates Provider management, public chat switching, cancell
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeDisabled();
   // The palette names the page as the sidebar and its heading do; the name it had before still finds it (ruling O).
   await page.keyboard.press("ControlOrMeta+K");
-  const palette = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true }); await palette.fill("模型与账号");
+  const palette = page.getByRole("combobox", { name: "搜索对话、消息、页面或操作", exact: true }); await palette.fill("模型与账号");
   await expect(page.getByRole("option")).toHaveCount(1); await expect(page.getByRole("option")).toHaveAccessibleName(/^模型连接/u);
   await palette.press("Enter"); await expect(page.getByRole("heading", { name: "模型连接", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "添加 Provider", exact: true }).click();
@@ -2321,7 +2321,7 @@ test("G054-FR5 the command palette searches conversations and actions, and the s
   await page.keyboard.press("ControlOrMeta+Shift+O");
   await expect(page.getByRole("heading", { name: "新对话", exact: true })).toBeVisible();
   await page.keyboard.press("ControlOrMeta+K");
-  const search = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true });
+  const search = page.getByRole("combobox", { name: "搜索对话、消息、页面或操作", exact: true });
   await expect(search).toBeFocused();
   await search.fill("PALETTE_TARGET");
   // Composition never runs a command.
@@ -2377,7 +2377,7 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   await page.keyboard.press("Enter"); await expect(navigation).toHaveCount(0); await expect(expand).toBeFocused();
   await page.keyboard.press("Enter"); await expect(navigation).toBeVisible(); await expect(collapse).toBeFocused();
   // So does the palette's command: the palette gives focus back to the button it was opened from, which then leaves.
-  const command = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true });
+  const command = page.getByRole("combobox", { name: "搜索对话、消息、页面或操作", exact: true });
   await page.keyboard.press("ControlOrMeta+K"); await command.fill("收起侧栏"); await command.press("Enter");
   await expect(navigation).toHaveCount(0); await expect(expand).toBeFocused();
   await page.keyboard.press("ControlOrMeta+K"); await command.fill("展开侧栏"); await command.press("Enter");
@@ -2397,7 +2397,7 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   await page.keyboard.press("Escape"); await expect(sheet).toHaveCount(0);
   // ⌘K finds commands with their keys beside them; ⌘/ swaps it for the sheet.
   await page.keyboard.press("ControlOrMeta+K");
-  const search = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true }); await expect(search).toBeFocused();
+  const search = page.getByRole("combobox", { name: "搜索对话、消息、页面或操作", exact: true }); await expect(search).toBeFocused();
   await search.fill("下一件"); await expect(page.getByRole("option", { name: /^下一件“等你处理”/u })).toContainText("⌥⌘↓");
   // The details panel's command carries its key, ⌘\, not the ⌘. it once had.
   await search.fill("详情面板"); await expect(page.getByRole("option", { name: /详情面板/u })).toHaveText(/详情面板⌘\\$/u);
@@ -4110,7 +4110,7 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   await picker.click(); await expect(page.getByRole("option", { name: "Codex", exact: true })).toBeVisible();
   for (const name of frozen) await expect(page.getByRole("option", { name, exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await page.keyboard.press("ControlOrMeta+K"); await page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true }).fill("开始新对话");
+  await page.keyboard.press("ControlOrMeta+K"); await page.getByRole("combobox", { name: "搜索对话、消息、页面或操作", exact: true }).fill("开始新对话");
   await expect(page.getByText("用 Codex 开始新对话", { exact: true })).toBeVisible(); await expect(page.getByText("用 Gemini CLI 开始新对话", { exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
   await navigation.getByRole("button", { name: "Harness", exact: true }).click();
@@ -4513,7 +4513,7 @@ test("G054-DL10 the home on first use and on return, a finished Turn with its st
   await page.keyboard.press("Escape"); await expect(inbox).toHaveCount(0);
 
   // ⌘K and ⌘/.
-  const search = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true }), palette = page.getByRole("dialog").filter({ has: search });
+  const search = page.getByRole("combobox", { name: "搜索对话、消息、页面或操作", exact: true }), palette = page.getByRole("dialog").filter({ has: search });
   await page.keyboard.press("ControlOrMeta+K"); await expect(search).toBeFocused();
   await expect(palette.getByRole("option", { name: /NATIVE_ACTIVITY/u })).toBeVisible();
   await dl10Shoot(page, "palette", { anchors: () => [palette.getByRole("listbox")] });
@@ -4593,7 +4593,7 @@ test("G054-DL10 with reduced motion a Turn, the palette, the details, an Agent's
   await dl10Still(page, "the home as it opens");
   // The palette: opened with the pointer it fades in (so the record is known to catch a fade) and fades out when the scrim beside it is
   // clicked; ⌘K and esc open and close it at once.
-  const search = page.getByRole("combobox", { name: "搜索对话、页面或操作", exact: true }), palette = page.getByRole("dialog").filter({ has: search });
+  const search = page.getByRole("combobox", { name: "搜索对话、消息、页面或操作", exact: true }), palette = page.getByRole("dialog").filter({ has: search });
   const paletteBoth = async (where: string) => {
     await navigation.getByRole("button", { name: "搜索与命令", exact: true }).click(); await expect(search).toBeFocused();
     const opened = await dl10Still(page, `the palette opened with the pointer on ${where}`);

@@ -22,12 +22,18 @@ export interface Preferences {
    * steer): keeps it until the Turn ends, or says it now. ⌘⏎ does the other.
    */
   readonly whileRunning: "queue" | "steer";
+  /** The size of the conversation's text, in pixels (2026-11-14, after T3 Code's font size). */
+  readonly readingSize: "14" | "15" | "16";
+  /** How wide the conversation's column is: the reading width, or a wider one for code and tables (after T3 Code's chat width). */
+  readonly chatWidth: "standard" | "wide";
+  /** What sends a message: Enter (⇧Enter makes a new line), or ⌘Enter (Enter makes a new line), after T3 Code's send key. */
+  readonly sendKey: "enter" | "mod-enter";
   /** How the sidebar lists conversations (2026-11-14): by the folder they work in, or by how they stand (what needs you, what is at work, the rest), after T3 Code. */
   readonly grouping: "project" | "state";
   /** Whether the frozen Harnesses (Cursor, Gemini CLI, Pi) are listed for new work as well (ADR-050); off by default. */
   readonly showFrozen: boolean;
 }
-export const DEFAULT_PREFERENCES: Preferences = { theme: "system", density: "compact", panel: false, sidebar: true, grouping: "project", whileRunning: "queue", showFrozen: false };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "system", density: "compact", panel: false, sidebar: true, grouping: "project", whileRunning: "queue", readingSize: "14", chatWidth: "standard", sendKey: "enter", showFrozen: false };
 const KEY = "harnesshub:preferences";
 /**
  * The stored shape's version. Every write stores the whole set, so before version 2 each one also stored the details panel's
@@ -36,7 +42,7 @@ const KEY = "harnesshub:preferences";
  */
 const VERSION = 2;
 const CHOICES: { readonly [K in keyof Preferences]: readonly Preferences[K][] } = {
-  theme: ["system", "light", "dark"], density: ["compact", "detailed", "failures", "answer"], panel: [true, false], sidebar: [true, false], grouping: ["project", "state"], whileRunning: ["queue", "steer"], showFrozen: [false, true],
+  theme: ["system", "light", "dark"], density: ["compact", "detailed", "failures", "answer"], panel: [true, false], sidebar: [true, false], grouping: ["project", "state"], whileRunning: ["queue", "steer"], readingSize: ["14", "15", "16"], chatWidth: ["standard", "wide"], sendKey: ["enter", "mod-enter"], showFrozen: [false, true],
 };
 /**
  * The Harnesses that the lists offering one for new work leave out (ADR-050, ADR-048 decision 1): the frozen ones, unless

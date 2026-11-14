@@ -31,7 +31,9 @@ import { Composer, type DockedApproval } from "./Composer.js";
 import { DetailsPanel, type ChangesLoader, type ChangesWant, type PanelTab, type WorkspaceFacts } from "./DetailsPanel.js";
 import type { DiffRemark } from "./DiffBody.js";
 import type { WorkspaceAccess } from "./WorkspaceTools.js";
-import { TerminalDrawer } from "./TerminalDrawer.js";
+import { TerminalDrawer, type ProjectScript } from "./TerminalDrawer.js";
+import { FindBar, type FindAccess, type FindHit, type FindTarget } from "./FindBar.js";
+import type { GitAccess } from "./GitChanges.js";
 import { RelayPacketDialog, type PacketTarget } from "./RelayDetails.js";
 import { RelayCard, RelayInstallation, SEND_ALONE, type RelayNext } from "./RelayCard.js";
 import { ProtocolTurn, type TurnReads } from "./ProtocolTurn.js";
@@ -169,6 +171,8 @@ export interface ChatProps {
   /** The message held until the current Turn ends, and its actions (ADR-042). */
   /** Says the message in the box to the Harness now, in the Turn in progress; absent when that Harness cannot be told anything mid-Turn. */
   onSteer?: (() => void) | undefined;
+  /** Says the message kept for after the Turn to the Harness now (it can be told something mid-Turn); absent where it cannot. */
+  onSteerQueued?: (() => void) | undefined;
   queued: QueuedMessage | null; onQueue?: () => void; onEditQueued?: () => void; onWithdrawQueued?: () => void;
   /** Why the page put a held message back into the composer instead of sending it. */
   queueNotice?: string | null; onDismissQueueNotice?: () => void;
@@ -177,6 +181,12 @@ export interface ChatProps {
   onRename?: ((title: string) => Promise<void>) | undefined;
   /** Shows the open conversation's workspace, or a file in it, in the Finder. */
   onReveal?: ((path?: string) => void) | undefined;
+  /** The open conversation's workspace as Git sees it, for the changes page; absent where the Gateway cannot read it. */
+  git?: GitAccess | undefined;
+  /** Finds words in the open conversation, all of it, and reads its Turns down to a place; absent where the Gateway cannot search. */
+  find?: FindAccess | undefined;
+  /** Find opened from elsewhere — a message the palette found: in this conversation, with these words, at this item. A new `stamp` opens it again. */
+  findRequest?: (FindTarget & { readonly sessionId: string; readonly stamp: number }) | null | undefined;
   /** The address of the open conversation's terminal, for a size in columns and rows; absent where the Gateway has none. */
   terminalUrl?: ((cols: number, rows: number) => string) | undefined;
   /** What is done with the open conversation's workspace: an editor, a commit and a push, a file shown. */
@@ -201,7 +211,7 @@ export interface ChatProps {
 }
 
 /** The latest values the page's shortcuts act on, read when a key is pressed rather than bound into the listener. */
-interface ShortcutState { readonly stop: (() => void) | null; readonly togglePanel: (() => void) | null; readonly openPicker: (() => void) | null; readonly answer: (() => void) | null; readonly toggleTerminal: (() => void) | null }
+interface ShortcutState { readonly stop: (() => void) | null; readonly togglePanel: (() => void) | null; readonly openPicker: (() => void) | null; readonly answer: (() => void) | null; readonly toggleTerminal: (() => void) | null; readonly find: (() => void) | null }
 /** A local decision on an approval, kept until the page leaves the conversation, to write its result back into the Turn. */
 type DecisionRecord = Decision & { readonly runId: string };
 
@@ -252,6 +262,30 @@ function PanelEdge({ width, dragging, onDrag, onWidth }: { readonly width: numbe
   </div>;
 }
 
+/**
+ * The project's scripts, as its package.json lists them, each run with the project's own package manager: the one package.json names (`packageManager`), else the one
+ * whose lockfile the project has, else npm. None where the workspace has no package.json.
+ */
+function projectScripts(file: NonNullable<WorkspaceAccess["file"]>): (signal: AbortSignal) => Promise<readonly ProjectScript[]> {
+  return async signal => {
+    const page = await file("package.json", 0, signal).catch(() => null);
+    if (page === null || page.binary === true || typeof page.text !== "string") return [];
+    let manifest: { readonly scripts?: unknown; readonly packageManager?: unknown };
+    try { manifest = JSON.parse(page.text) as typeof manifest; } catch { return []; }
+    const scripts = manifest.scripts !== null && typeof manifest.scripts === "object" ? Object.keys(manifest.scripts as Record<string, unknown>) : [];
+    if (scripts.length === 0) return [];
+    let manager = typeof manifest.packageManager === "string" ? manifest.packageManager.split("@")[0] ?? "" : "";
+    if (!["pnpm", "yarn", "bun", "npm"].includes(manager)) {
+      manager = "npm";
+      // npm's lockfile first: the commonest, and found with one read.
+      for (const [lock, name] of [["package-lock.json", "npm"], ["pnpm-lock.yaml", "pnpm"], ["yarn.lock", "yarn"], ["bun.lock", "bun"], ["bun.lockb", "bun"]] as const) {
+        if (await file(lock, 0, signal).then(() => true, () => false)) { manager = name; break; }
+      }
+    }
+    return scripts.map(name => ({ name, command: manager === "yarn" ? "yarn " + name : manager + " run " + name }));
+  };
+}
+
 /** The conversation's title as a field, in the title's place: Enter or leaving it keeps what was typed, Escape leaves the title as it was. */
 function TitleField({ value, onDone }: { readonly value: string; readonly onDone: (next: string | null) => void }) {
   const [draft, setDraft] = useState(value), field = useRef<HTMLInputElement>(null), done = useRef(false);
@@ -274,8 +308,16 @@ export function ChatPage(props: ChatProps) {
   const [panelFocus, setPanelFocus] = useState<"run" | null>(null);
   const [changesWant, setChangesWant] = useState<ChangesWant | null>(null);
   // The terminal under the conversation: closed until asked for, and closed again when another conversation opens (its shell belongs to this one's workspace).
-  const [terminal, setTerminal] = useState(false);
-  useEffect(() => { setTerminal(false); }, [session?.id]);
+  const [terminal, setTerminal] = useState(false), [finding, setFinding] = useState(false), [findFrom, setFindFrom] = useState<{ readonly target: FindTarget; readonly stamp: number } | null>(null);
+  useEffect(() => { setTerminal(false); setFinding(false); setFindFrom(null); }, [session?.id]);
+  // Find opened by the palette's search, once the conversation it found is the one shown (after the effect above, which closes find as another opens).
+  const findHandled = useRef<number | null>(null);
+  useEffect(() => {
+    const request = props.findRequest;
+    if (!request || session?.id !== request.sessionId || findHandled.current === request.stamp) return;
+    findHandled.current = request.stamp;
+    setFindFrom({ target: { query: request.query, runId: request.runId, itemId: request.itemId }, stamp: request.stamp }); setFinding(true);
+  }, [props.findRequest?.stamp, session?.id]);
   const [overlay, setOverlay] = useState(false);
   const [agentPicker, setAgentPicker] = useState(false);
   const [decisions, setDecisions] = useState<ReadonlyMap<string, DecisionRecord>>(() => new Map());
@@ -584,12 +626,13 @@ export function ChatPage(props: ChatProps) {
 
   // ⌘J opens the Agent list, ⌘. stops the reply, ⌘\ opens or closes the details (ADR-054 §5); ⌘⏎ with an empty message box presses the
   // next-step box's first answer. The page's own listener runs first and keeps these keys, so none of them reaches another binding while the conversation is shown.
-  const shortcuts = useRef<ShortcutState>({ stop: null, togglePanel: null, openPicker: null, answer: null, toggleTerminal: null });
+  const shortcuts = useRef<ShortcutState>({ stop: null, togglePanel: null, openPicker: null, answer: null, toggleTerminal: null, find: null });
   const firstAnswer = nextStep?.actions?.[0];
   shortcuts.current = {
     stop: active && !active.cancelRequested && mutation === null ? props.onCancel : null,
     togglePanel: session ? () => setPanel(!panelOpen) : null,
     toggleTerminal: session && props.terminalUrl ? () => setTerminal(value => !value) : null,
+    find: session && props.find ? () => setFinding(true) : null,
     openPicker: docked === null && !props.loading && props.sessionError === null && session?.status !== "closed" && (mutation === null || mutation === "switching") ? () => setAgentPicker(true) : null,
     answer: firstAnswer !== undefined && answerBlocked === null && props.messageDraft.trim() === "" ? () => answer(firstAnswer) : null,
   };
@@ -597,15 +640,17 @@ export function ChatPage(props: ChatProps) {
     const handler = (event: KeyboardEvent) => {
       if (event.isComposing || event.keyCode === 229 || !(event.metaKey || event.ctrlKey)) return;
       // The conversation's own shortcuts, by the keys chosen now (lib/keys.ts); ⌘⏎, the first answer of the next-step box, is not one that is given other keys.
-      const action = actionOf(event), key = action === "stop" || action === "panel" || action === "picker" || action === "terminal" ? action : !event.altKey && !event.shiftKey && event.key === "Enter" ? "answer" : null;
+      const action = actionOf(event), key = action === "stop" || action === "panel" || action === "picker" || action === "terminal" || action === "find" ? action : !event.altKey && !event.shiftKey && event.key === "Enter" ? "answer" : null;
       if (key === null) return;
       // A dialog (a confirmation, the palette) keeps its own keys; toasts are dialogs that never take them.
       if (event.target instanceof Element && event.target.closest("[role='dialog']:not(.toast)")) return;
       const current = shortcuts.current;
       // ⌘⏎ with nothing to answer, or with words in the box, is the box's own (it sends them).
       if (key === "answer" && current.answer === null) return;
+      // Find where it is offered; elsewhere ⌘F stays the browser's own.
+      if (key === "find" && current.find === null) return;
       event.preventDefault(); event.stopPropagation();
-      if (key === "stop") current.stop?.(); else if (key === "panel") current.togglePanel?.(); else if (key === "answer") current.answer?.(); else if (key === "terminal") current.toggleTerminal?.(); else current.openPicker?.();
+      if (key === "stop") current.stop?.(); else if (key === "panel") current.togglePanel?.(); else if (key === "answer") current.answer?.(); else if (key === "terminal") current.toggleTerminal?.(); else if (key === "find") current.find?.(); else current.openPicker?.();
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
@@ -626,6 +671,7 @@ export function ChatPage(props: ChatProps) {
         <CircleDashed size={15} className="flex-none text-fg-3" aria-hidden="true"/>
         <span className="flex-none text-caption text-fg-3">将在本轮结束后发送</span><span className="min-w-0 flex-1 truncate" title={props.queued.text}>{props.queued.text}</span>
         {props.queued.attachments.length ? <span className="flex-none text-caption text-fg-3">附件 {props.queued.attachments.length}</span> : null}
+        {props.onSteerQueued && props.queued.attachments.length === 0 ? <button type="button" className="btn btn-ghost btn-sm" onClick={props.onSteerQueued}>现在就告诉它</button> : null}
         <button type="button" className="btn btn-ghost btn-sm" onClick={props.onEditQueued}>编辑</button><button type="button" className="btn btn-ghost btn-sm" onClick={props.onWithdrawQueued}>撤回</button>
       </div> : null}
       {nextStep ? <NextStep recap={nextStep} harness={harnessName(nextStep.harnessId)} blocked={answerBlocked} onAnswer={answer}/> : <PlanBar session={session} active={active} harness={harnessName}/>}
@@ -639,7 +685,7 @@ export function ChatPage(props: ChatProps) {
     : TURN_STATUS_WORDS[stateOf(current)];
   const status = props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史"
     : currentState ?? (pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话");
-  const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} loadChanges={props.onLoadChanges} tab={panelTab} onTab={chooseTab} runId={panelRun} onRun={setPanelRun} onOpenSession={props.onOpenSession} focus={panelFocus} want={changesWant} onReveal={props.onReveal} loadWorkspace={props.onLoadWorkspace} onRemark={session.status === "open" ? remark : undefined} tools={props.workspaceTools} onSaid={words => toast.show({ title: words })}
+  const panel = session ? <DetailsPanel session={session} harnesses={harnesses} providers={providers} loadChanges={props.onLoadChanges} tab={panelTab} onTab={chooseTab} runId={panelRun} onRun={setPanelRun} onOpenSession={props.onOpenSession} focus={panelFocus} want={changesWant} onReveal={props.onReveal} loadWorkspace={props.onLoadWorkspace} onRemark={session.status === "open" ? remark : undefined} tools={props.workspaceTools} git={props.git} onSaid={words => toast.show({ title: words })}
     loadToolDetail={props.onToolDetail} loadDiagnostics={props.onDiagnostics} onEndProcess={props.onEndProcess} busy={mutation !== null} onClose={() => setPanel(false)} board={props.taskBoard}
     relay={relay?.view && relayHasStory(relay.view) ? { view: relay.view, onViewPacket: viewPacket } : undefined}/> : null;
   // #23: the panel opens by widening (300 ms) and pushes the conversation aside; its content follows 60 ms later from 24 px to
@@ -700,7 +746,14 @@ export function ChatPage(props: ChatProps) {
         {failedSwitch.error ? failureMessage(failedSwitch.error) : "目标连接没有通过验证。"} 当前选择仍是 {harnessName(session.selection.harnessId)}。</Notice></div> : null}
     </div>
     <div ref={row} className="flex min-h-0 flex-1">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {finding && session && props.find ? <FindBar key={session.id + ":" + (findFrom?.stamp ?? 0)} access={props.find} initial={findFrom?.target} onClose={() => { setFinding(false); setFindFrom(null); }}
+          scroller={() => scroll.current} textOf={id => messageOf(id)?.text} messageAt={(hit: FindHit) => {
+            // The page's message an item of a held Turn draws: your words and the replies are found by the message id their item names.
+            const run = runs.get(hit.runId as Parameters<typeof runs.get>[0]) as { readonly protocol?: { readonly items: readonly { readonly seq: number; readonly type: string; readonly messageId?: unknown }[] } } | undefined;
+            const item = run?.protocol?.items.find(entry => entry.seq === hit.itemSeq);
+            return item !== undefined && (item.type === "user_message" || item.type === "assistant_message") && typeof item.messageId === "string" ? item.messageId : undefined;
+          }}/> : null}
         <div className={cn("chat-scroll scroll-area min-h-0 flex-1 px-4 sm:px-8", session === null ? "welcome-scroll" : "pt-[30px] pb-5")} ref={scroll} onScroll={() => {
           const element = scroll.current;
           if (!element || viewport.current.width !== element.clientWidth || viewport.current.height !== element.clientHeight) return;
@@ -736,7 +789,8 @@ export function ChatPage(props: ChatProps) {
           {refused && props.onFreeWorkspace ? <Notice tone="amber" className="kept-conflict" title="工作区正被另一个对话占用" action={<button type="button" className="btn btn-sm" disabled={freeing || mutation !== null} onClick={() => { setFreeing(true); void props.onFreeWorkspace!(refused).finally(() => setFreeing(false)); }}>{freeing ? "正在结束…" : "结束那个对话的后台进程并重试"}</button>}>那个对话保留着原生进程，它的后台任务可能还在运行。可以结束它的后台进程后重试这条消息，也可以稍后再试。</Notice> : null}
           {composer}
         </div></footer> : null}
-        {session && terminal && props.terminalUrl ? <TerminalDrawer key={session.id} place={inScratch(session.workspace, props.scratchRoot) ? "临时对话" : homePath(session.workspace)} url={props.terminalUrl} onClose={() => setTerminal(false)}/> : null}
+        {session && terminal && props.terminalUrl ? <TerminalDrawer key={session.id} place={inScratch(session.workspace, props.scratchRoot) ? "临时对话" : homePath(session.workspace)} url={props.terminalUrl} onClose={() => setTerminal(false)}
+          {...(props.workspaceTools?.file ? { scripts: projectScripts(props.workspaceTools.file) } : {})}/> : null}
       </div>
       {inline && asidePresence !== "closed" ? <aside className={cn("details-aside relative flex-none overflow-hidden bg-app hairline-l ease-panel keyboard:duration-0", dragging ? "transition-none" : "transition-[width]",
         panelOpen ? "w-(--panel-width) duration-300 starting:w-0" : "w-0 duration-200")} style={{ "--panel-width": shownWidth + "px" } as CSSProperties} aria-label="详情栏" aria-hidden={!panelOpen || undefined} inert={!panelOpen}>

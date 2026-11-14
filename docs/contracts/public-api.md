@@ -145,9 +145,20 @@ relay: { packetId: "relay-…" | null, kind: "packet" | "delta" | null,
 - `SessionSummary` 与 `SessionHeadView` 多了 `pinned: true`（置顶了才带）、`snoozedUntil`（毫秒时间戳，设了稍后提醒才带；到没到由页面判断，网关只存）。
 - `PATCH …` 的请求体多接受 `pinned?: boolean`、`snoozedUntil?: number | null`（非负整数毫秒；null 取消）。事件 `session.pinned`、`session.snoozed`。新的一轮被受理时，和取消归档同一次提交清掉 `snoozedUntil`；`pinned` 不清。
 - 只改名字和标记的提交（改名、归档、置顶、稍后提醒、Harness 起名、删除与恢复）不动 `updatedAt`：列表的先后和“多久以前”只说对话本身的进展。`updatedSeq`/`lastSeq` 照旧变大，页面靠它发现变化。这类提交写进文件的每一行带 `"marks": true`，重读文件时这些行不推时间，重启后一致。
-- `DELETE …` → 204：软删除。从列表消失，除恢复外的所有路由都 404 `SESSION_NOT_FOUND`（读、改、发消息、再删一次）；跨对话搜索也不再找它。有一轮在排队或进行、或有待生效的切换时 409 `SESSION_ACTIVE`（先停下）。它保留着的原生进程按结束对话的同一条路放掉（原因 `conversation_deleted`），放掉记下后才回 204。会话文件留在原处，不做清除（没有“彻底删除”）。被它委派出去的子对话不动。删除状态记在头里（`deletedAt`），重启后还在。事件 `session.deleted`。
+- `DELETE …` → 204：软删除。从列表消失，除恢复外的所有路由都 404 `SESSION_NOT_FOUND`（读、改、发消息、再删一次）；跨对话搜索也不再找它。有一轮在排队或进行、或有待生效的切换时 409 `SESSION_ACTIVE`（先停下）。它保留着的原生进程按结束对话的同一条路放掉（原因 `conversation_deleted`），放掉记下后才回 204。会话文件留在原处，进“最近删除”（见下一节），彻底删除要用户另点。被它委派出去的子对话不动。删除状态记在头里（`deletedAt`），重启后还在。事件 `session.deleted`。
 - `POST …/restore`，请求体 `{}` → 200 与 `SessionSummary`：撤销删除，回到列表里它自己的时间所在的位置。没删的对话原样返回。事件 `session.restored`。
 - `hub_wrap_up`（以及命令行 `hub wrap-up … --title T`）多一个可选参数 `title`：这段对话的名字，只在第一轮给。Hub 只在用户没改过名、而且这段对话还没被 Harness 起过名时采用（压空白、截到 80 个 UTF-16 单位），采用后列表和对话头的标题随之更新；这不算用户改的名，用户之后改名照样盖过它。存在头里（`harnessTitle`），重启后还在。事件 `session.titled`。
+
+## 最近删除、彻底删除与页面的搜索（2026-11-14）
+
+状态：代码完成，合成测试通过（`tests/integration/web-server.test.ts` 两条：真实 HTTP、真实文件存储与内容存储、夹具 Harness）；没有真机验证，页面还没接上。类型在 `src/contracts/web.ts`（`DeletedSessionSummary`、`DeletedSessionListView`、`PurgedView`、`SearchHitView`、`SearchView`、`SessionSearchHitView`、`SessionSearchView`），路由在 `src/web/recall-routes.ts`，搜索在 `src/web/message-search.ts`。
+
+- `GET /api/v1/sessions/deleted?before=<cursor>&limit=` → `{ sessions: [SessionSummary + deletedAt], next }`：软删除的对话，新删的在前；页大小同列表（默认 100，`limit` 没有上限），`next` 为 null 时到头。坏的 `before` 400。
+- `POST /api/v1/sessions/:id/purge`，请求体 `{}` → 204：彻底删除一段已软删除的对话；没软删的 409 `DELETION_REQUIRED`（先删除），不存在的 404，还留着原生进程的先放掉，放不掉 409 `SESSION_ACTIVE`。删掉的：会话文件和它旁边的 WIP 日志、事件日志、折叠缓存（先整体挪进 `trash/purged-<随机>/`，主文件最先挪，挪走那一刻起它就不在了，然后删掉这个文件夹；删不掉的留给下一次彻底删除清理），列表索引行和建立键；只有它提到、别的对话（含其他已删除的）都没提到的内容记录、`content/files/<id>/` 副本和不再有记录用的 blob（读不了某个别的对话时一个内容都不删）；记录目录里它自己的那份 `context/<任务>/<它的标签>/`，任务里没有别的对话时整个任务目录。它是被委派出来的时，它下面那些子对话的目录也一并删掉（它们的链断在它这里，此后自成一个任务，下次需要时在以它命名的新任务目录里重写）。不删：被它委派出去的子对话（`parent` 指向一个不存在的对话；列表、对话头、`…/task` 照常读，任务板从链上还在的最高一段起算）、无文件夹对话的 `chats/` 工作区、Harness 自己保存的原生会话。之后再读、恢复、再删都是 404，重启后也不在。
+- `POST /api/v1/sessions/purge-deleted`，请求体 `{}` → `{ "purged": n }`：把最近删除里的全部彻底删除；不能删的（刚被恢复、进程放不掉）跳过。不做定时自动清空。
+- `GET /api/v1/search?q=&cursor=&limit=` → `{ hits, next }`：在所有未删除对话的标题、用户的话、Harness 的回复（已结束的消息；不搜工具输出）里找，大小写不敏感（Unicode 大小写折叠），按原样子串匹配（中文不用分词）。按对话分组，对话按最近活动从新到旧；每段先是标题命中，再是消息命中（从新到旧）。一条消息一个命中（它第一处）。每条：`sessionId`、`title`、`runId`、`ordinal`、`messageId`（条目在那一轮里的 `id`，即 `WireItem.id`）、`role`（`user`｜`assistant`｜`title`；标题命中的 `runId`/`ordinal`/`messageId` 为 null）、`snippet`（命中处前约 32、后约 80 个 UTF-16 单位，换行变空格，截断处加“…”）、`match: [start, end)`（在 `snippet` 里的 UTF-16 下标）。默认一页 50，没有总数上限。空查询 400。
+- `GET /api/v1/sessions/:id/search?q=&cursor=&limit=` → `{ hits, next }`：只在这段对话的消息里，每一处都给，从第一轮到最新（按轮、轮内按条目顺序、条目内按位置）；每条多 `itemSeq`（条目的 seq，`GET …/runs/:ordinal/items/:itemSeq` 读得到）和 `offset`（命中在那条消息全文里的起点，UTF-16 下标，与页面拿到的文字一致）。删除了的对话 404。
+- 没有索引：两者都用 `hub_search` 用的同一个文件扫描（跨对话从每个文件尾往前读，凑够一页就停；单个对话按轮读它的字节段，不进轮次缓存）。实测（本机，合成数据 101 MB：一段 5000 轮 + 300 段各 20 轮，每轮约 2 KB 回复和一次工具调用）：生僻词要读完全部文件，跨对话约 95 ms（冷启动后第一次约 180 ms，含读入各对话的折叠），单段 5000 轮约 90 ms；常见词第一页 1 ms 以内。耗时随文件总量线性增长，主要花在逐行 `JSON.parse` 条目行（工具条目行也解析）；要更快可以先在原始行上筛（查询不含引号、反斜杠和控制字符时，行里没有就不解析），再不够才做索引。
 
 ## 在编辑器里打开、读文件、Git 明细、提交与推送（2026-11-14）
 
@@ -160,6 +171,16 @@ relay: { packetId: "relay-…" | null, kind: "packet" | "delta" | null,
 - `POST …/git/commit`，请求体 `{ "message": string, "paths"?: string[] }` → `{ commit（短哈希）, subject }`。给了 `paths`（相对或绝对、都在工作区里，工作区里已删掉的文件也可以点名）就 `git add -A -- <paths>` 再 `git commit -m <message> -- <paths>`，只提交这几项，别的已暂存内容原样留着；没给就 `git add -A` 再 `git commit -m`（子目录工作区是 pathspec `.`）。pathspec 按字面（`--literal-pathspecs`）。空说明、空的 `paths` 数组 400。没有可提交的 409 `GIT_NOTHING_TO_COMMIT`；钩子失败、没配身份等 409 `GIT_COMMIT_FAILED`；`message` 都是 git 自己的话（太长时掐掉中间，开头和结尾都留）。提交最多给 5 分钟（钩子可能跑检查）。
 - `POST …/git/push`，请求体 `{}` → `{ remote, branch }`。有上游 `git push`；没有上游但有 `origin` 就 `git push -u origin <当前分支>`；都没有 409 `GIT_NO_REMOTE`；分离头指针 409 `GIT_DETACHED_HEAD`；git 拒绝或 60 秒没完成 409 `GIT_PUSH_FAILED`，带 git 的话。
 - 所有 git 都是 `spawn` 参数数组、不经 shell，stdin 关着，`GIT_TERMINAL_PROMPT=0`，并且在自己的进程会话里跑（没有控制终端，ssh 也问不了密码），超时连同子进程组一起杀掉。提交和推送只在用户点了按钮时由页面调用，网关不自己触发。`code` 以 `GIT_` 开头的一律 409。
+
+### 改动面板的范围：未提交、某次提交、相对分支（2026-11-14）
+
+状态：代码完成，合成测试通过（`tests/integration/web-server.test.ts` 里“changes panel”一条：真实 HTTP、临时仓库、测试自己的 Git 配置）；页面还没接上，没有真机验证。类型在 `src/contracts/web.ts`（`GitScope`、`GitChangedFileView`、`GitChangesView`、`GitFileDiffView`、`GitLogView`、`GitCommitEntryView`、`GitBranchesView`），实现在 `src/infrastructure/workspace/git.ts`。全部只读（`GIT_OPTIONAL_LOCKS=0`，不刷新索引、不写对象）；工作区在仓库子目录里时只看这个子目录，路径都相对工作区（`git diff --relative`，git 在工作区里跑）。用户的 Git 配置照常生效，只是去掉会改输出的几样：`--no-color --no-ext-diff --no-textconv`，补丁两边固定 `a/`、`b/`，路径不做八进制转义；改名检测固定开（`-M`）。
+
+- 范围（查询参数）：`scope=uncommitted`（缺省）是工作区相对 HEAD（已暂存和未暂存合在一起，加上逐个列出的未跟踪文件；还没有提交时相对空树）；`scope=commit&sha=<提交>` 是这次提交相对它的第一个父提交（根提交相对空树）；`scope=branch[&base=<分支>]` 是 `merge-base(<base>, HEAD)` 到工作区现在的内容（含未提交和未跟踪）。`base` 缺省时用默认分支：`origin/HEAD` 指向的（写作 `origin/main`），没有就 `main`，再没有 `master`，都没有 400。`sha`、`base` 先过 `git rev-parse --verify <x>^{commit}`，不是这个仓库里的提交 400；以 `-` 开头或带控制字符的直接 400。`uncommitted` 带 `sha`/`base`、`commit` 不带 `sha` 都 400。没有共同祖先 409 `GIT_NO_MERGE_BASE`，当前分支还没有提交时比分支 409 `GIT_NO_COMMITS`。`whitespace=ignore` 让行数和差异文本按 `-w` 算，不影响文件列表；别的值 400。
+- `GET …/git/changes?scope=…` → `{ scope, files: [{ path, oldPath?, status, added?, removed?, binary? }], base?: { ref, sha }, commit?: { sha, parent } }`。`status` 是 `added`/`modified`/`deleted`/`renamed`/`copied`/`typechange`/`untracked`（git 的 U、X 记作 `modified`）。行数来自 `git diff --numstat`；二进制文件不带行数、带 `binary: true`；`-w` 下只改了空白的文件仍列出，行数 0 和 0。未跟踪文件（不含忽略的，`git ls-files --others --exclude-standard`）的行数网关自己数：全部算新增（换行数，最后一行没有换行再加一），前 8000 字节里有 NUL 算二进制，链接算一行；嵌套仓库是一条以 `/` 结尾、不带行数的。按路径排序。`base` 只在 `branch` 有（`ref` 是用的分支名，`sha` 是 merge-base），`commit` 只在 `commit` 有（完整 sha 和第一个父提交，根提交为 null）。
+- `GET …/git/diff?scope=…&path=<文件>[&whitespace=ignore]` → `{ path, diff, binary? }`：这个文件在这个范围里的统一差异。`path` 相对或绝对、必须在工作区里（越界 400），工作区里已删掉的也可以。改名的带上原路径一起比（`rename from`/`rename to`）；未跟踪文件给成新文件的差异（`git diff --no-index /dev/null <文件>`，`--- /dev/null`）；这个范围里没变的给 `""`。二进制文件是 git 那一行 `Binary files … differ` 加 `binary: true`。差异不设长度上限：边读 git 边写进应答（分块传输），不在内存里拼整段；git 一开始就失败的照常 409，写出一部分后才失败或超过 5 分钟的直接断开连接（页面拿到的是失败，不是看似完整的半截）。页面断开时 git 被杀掉。
+- `GET …/git/log?before=<sha>&limit=<n>` → `{ commits: [{ sha, shortSha, subject, author, committedAt（毫秒） }], next }`：当前分支的提交，按 `git log` 的顺序从新到旧；子目录工作区只列碰过这个子目录的提交。`limit` 缺省 50；`before` 是上一页最后一条（即上一页的 `next`），`next` 为 null 表示没有了。`before` 不是提交 400，不在当前分支的历史里（分支变了）409 `GIT_HISTORY_CHANGED`，从第一页重读。还没有提交时是空页。
+- `GET …/git/branches` → `{ current, local, remote, defaultBranch }`：本地分支和远端跟踪分支（不含 `origin/HEAD` 这种符号引用）的名字，最近提交的在前；`current` 分离头指针时为 null；`defaultBranch` 按上面的规则推测，没有为 null。
 
 ## 对话的终端（2026-11-14）
 

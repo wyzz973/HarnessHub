@@ -277,6 +277,40 @@ export class LocalContentStore implements ContentPort {
     return { records, blobs, files, partial };
   }
   /**
+   * Erases content that only conversations the user erased mentioned (2026-11-14; ContentPort.purge): the records named, then each one's copy in `files/`, then each blob no
+   * record is left for (a blob is kept once per digest: another record, of another conversation or an upload not sent yet, may share it). One that is being written meanwhile
+   * is a record of its own, made after this, and links its blob again. Ids it does not hold, or that are not content ids, are passed over.
+   */
+  purge(ids: ReadonlySet<string>): { readonly records: number; readonly blobs: number; readonly files: number } {
+    this.owner();
+    const named = [...ids].filter(value => /^content-[a-zA-Z0-9-]{1,96}$/u.test(value));
+    if (named.length === 0) return { records: 0, blobs: 0, files: 0 };
+    let records = 0, blobs = 0, files = 0;
+    const digests = new Set<string>(), erased: string[] = [];
+    const live = this.use(db => {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        for (const id of named) {
+          const stored = db.prepare("SELECT * FROM content WHERE id=?").get(id);
+          if (stored === undefined) continue;
+          const item = parseRow(stored);
+          db.prepare("DELETE FROM content WHERE id=?").run(item.id); records++; digests.add(item.sha256); erased.push(item.id);
+        }
+        db.exec("COMMIT");
+      } catch (error) { try { db.exec("ROLLBACK"); } catch { /* the connection closes */ } throw error; }
+      return new Set([...digests].filter(sha256 => db.prepare("SELECT 1 FROM content WHERE sha256=? LIMIT 1").get(sha256) !== undefined));
+    });
+    for (const id of erased) {
+      const path = join(this.root, "files", id);
+      if (existsSync(path)) { rmSync(path, { recursive: true, force: true }); files++; }
+    }
+    for (const sha256 of digests) {
+      if (live.has(sha256)) continue;
+      try { unlinkSync(join(this.root, "blobs", sha256)); blobs++; } catch (error) { if (code(error) !== "ENOENT") throw error; }
+    }
+    return { records, blobs, files };
+  }
+  /**
    * What `collect` would delete, counted and not deleted: the same records, then the blobs and files that would have nothing left to be kept for, and the partial uploads past
    * their retention. The first start after an upgrade reports this and collects nothing (ADR-057 3.6).
    */

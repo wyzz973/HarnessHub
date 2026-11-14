@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Check, CornerDownRight, History, ListPlus, Paperclip, Plus, RefreshCw, ShieldCheck, Split, SquareSlash, TriangleAlert } from "lucide-react";
+import { ArrowLeftRight, Check, CornerDownRight, History, ListPlus, Star, Paperclip, Plus, RefreshCw, ShieldCheck, Split, SquareSlash, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { PublicRun } from "../../../src/contracts/session.js";
@@ -76,6 +76,12 @@ const APPROVAL_NOTES: Readonly<Record<string, string>> = {
 };
 export const THINKING_NAMES: Readonly<Record<string, string>> = { off: "关闭", minimal: "最少", low: "低", medium: "中", high: "高", xhigh: "极高", max: "最大", ultra: "最高", adaptive: "自适应" };
 export const OPTION_NAMES: Readonly<Record<string, string>> = { thought_level: "思考强度", fast_mode: "快速模式", verbose_level: "工具详情", reasoning_level: "思考输出", response_usage: "用量详情", elevated_level: "执行权限", collaboration_mode: "协作模式" };
+const FAVOURITES_KEY = "harnesshub:model-favourites";
+/** The models marked as favourites in this browser, as "<Harness>\u0000<model>"; none without storage. */
+function readFavourites(): ReadonlySet<string> {
+  try { const value: unknown = JSON.parse(localStorage.getItem(FAVOURITES_KEY) ?? "[]"); return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").slice(0, 500) : []); } catch { return new Set(); }
+}
+function writeFavourites(value: ReadonlySet<string>): void { try { localStorage.setItem(FAVOURITES_KEY, JSON.stringify([...value])); } catch { /* lasts for this page only */ } }
 function approximately(ms: number): string { return Math.max(1, Math.round(ms / 1000)) + " 秒"; }
 /** The readiness badge of one Harness entry, from its latest catalog read; nothing when it has not been read. */
 export function readinessStatus(harness: HarnessView, readiness: HarnessReadinessView | undefined): PickerOption["status"] {
@@ -255,6 +261,8 @@ export function Composer(props: ComposerProps) {
   // chose in the settings, ⌘⏎ the other.
   const canSteer = active !== null && !active.cancelRequested && props.onSteer !== undefined && !readonly && !blocked && props.messageDraft.trim() !== "" && bytes <= MAX_MESSAGE_BYTES && props.attachments.length === 0;
   const steerFirst = props.preferences.whileRunning === "steer";
+  // The keys that send, and the other way of sending while a reply runs, as the settings make them.
+  const sendWord = props.preferences.sendKey === "mod-enter" ? "⌘⏎" : "Enter", otherWord = props.preferences.sendKey === "mod-enter" ? "⌥⌘⏎" : "⌘⏎";
   const send = async (other = false) => {
     if (canSteer && (steerFirst !== other || !canQueue)) { props.onSteer!(); return; }
     if (canQueue) { props.onQueue!(); return; }
@@ -340,8 +348,8 @@ export function Composer(props: ComposerProps) {
     : session?.retention?.outside ? `原程序的后台任务可能仍在运行（${session.retention.outside.count} 个进程）：它们已离开原程序的进程组，HarnessHub 没有结束它们。`
     // Only for the Harness's own setting: a level sets the mode itself (plan, or back to the default when a restored thread opens).
     : !draft.providerId && level.permission === null && draft.nativeOptions.collaboration_mode === undefined && nativeState?.observed?.options.collaboration_mode === "plan" ? `这个 ${harness?.name ?? "Harness"} 线程仍为计划模式：跟随本机配置不会改回，把协作模式改为“默认”即可退出。`
-    : active && canSteer && props.messageDraft.trim() ? steerFirst ? "回复进行中：按 Enter 现在就告诉它，⌘⏎ 留到这一轮结束后再发。" : "回复进行中：按 Enter 留到这一轮结束后再发，⌘⏎ 现在就告诉它。"
-    : active && props.queued === null && props.messageDraft.trim() ? "回复进行中：按 Enter 先暂存这条消息，本轮正常结束后自动发出。"
+    : active && canSteer && props.messageDraft.trim() ? steerFirst ? `回复进行中：按 ${sendWord} 现在就告诉它，${otherWord} 留到这一轮结束后再发。` : `回复进行中：按 ${sendWord} 留到这一轮结束后再发，${otherWord} 现在就告诉它。`
+    : active && props.queued === null && props.messageDraft.trim() ? `回复进行中：按 ${sendWord} 先暂存这条消息，本轮正常结束后自动发出。`
     : problem;
   // The pending or failed switch speaks for itself in its own strip, and the blocked conversation in its notice; before any
   // Agent is chosen, the merged picker's "选择 Agent" already says what is missing.
@@ -434,6 +442,8 @@ export function Composer(props: ComposerProps) {
     ...(level.effort === "custom" ? [{ value: "custom", label: "自定义", short: "自定义", description: "改过这一家的原生选项，不对应任何一档", disabled: true }] : [])];
   const nativeFooter = <button type="button" className="link-btn text-caption" onClick={() => { setList(null); openPanel("advanced"); }}>{(harness?.name ?? "这一家") + " 的原生选项…"}</button>;
   const [levelNotes, setLevelNotes] = useState<readonly string[]>([]);
+  const [favourites, setFavourites] = useState<ReadonlySet<string>>(readFavourites);
+  const toggleFavourite = (key: string) => setFavourites(current => { const next = new Set(current); if (!next.delete(key)) next.add(key); writeFavourites(next); return next; });
   const changeLevels = (options: Readonly<Record<string, string>>) => { setLevelNotes([]); props.onDraft({ ...draft, nativeOptions: options }); };
   const changeModel = (value: string) => {
     if (value === draft.model) return;
@@ -449,14 +459,22 @@ export function Composer(props: ComposerProps) {
   const heading = "flex h-[45px] flex-none items-center px-3.5 text-caption text-fg-3 hairline-b";
   const choice = (checked: boolean) => cn("picker-option flex w-full items-center gap-2 rounded-row border-none bg-transparent px-2.5 py-[7px] text-left text-ui-sm outline-offset-[-2px] transition-[color,background-color] duration-120 ease-standard hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-55", checked && "font-medium");
   const tick = (checked: boolean) => <Check size={15} strokeWidth={2.2} className={cn("flex-none text-accent-text", !checked && "invisible")} aria-hidden="true"/>;
+  // Models marked as favourites lead the column under 收藏 (after T3 Code's starred models), each Harness's its own; kept in this browser.
+  const favourite = (model: string): string => draft.harnessId + "\u0000" + model;
+  const asideModels: readonly PickerOption[] = [...modelOptions.filter(option => favourites.has(favourite(option.value))).map(option => ({ ...option, group: "收藏" })), ...modelOptions.filter(option => !favourites.has(favourite(option.value)))];
   const agentAside = draft.harnessId ? <>
     <div className={column}>
       <div className={heading}>模型</div>
       <div className="scroll-area min-h-0 flex-1 p-[5px]" role="radiogroup" aria-label={(harness?.name ?? "") + " 的模型"}>
-        {modelOptions.length ? modelOptions.map((option, index) => <div key={option.value}>
-          {option.group && (index === 0 || modelOptions[index - 1]?.group !== option.group) ? <div className="px-2.5 pt-2 pb-1 text-caption font-medium text-fg-3">{option.group}</div> : null}
-          <button type="button" role="radio" aria-checked={draft.model === option.value} disabled={!canModel || option.disabled} title={option.description} className={choice(draft.model === option.value)} onClick={() => changeModel(option.value)}>
-            <span className="min-w-0 flex-1 truncate">{option.label}</span>{tick(draft.model === option.value)}</button></div>)
+        {asideModels.length ? asideModels.map((option, index) => { const starred = favourites.has(favourite(option.value)); return <div key={(starred ? "★" : "") + option.value}>
+          {option.group && (index === 0 || asideModels[index - 1]?.group !== option.group) ? <div className="px-2.5 pt-2 pb-1 text-caption font-medium text-fg-3">{option.group}</div> : null}
+          <div className="group/model relative flex min-w-0 items-center">
+            <button type="button" role="radio" aria-checked={draft.model === option.value} disabled={!canModel || option.disabled} title={option.description} className={cn(choice(draft.model === option.value), "pr-8")} onClick={() => changeModel(option.value)}>
+              <span className="min-w-0 flex-1 truncate">{option.label}</span>{tick(draft.model === option.value)}</button>
+            <button type="button" className={cn("icon-btn icon-btn-sm absolute right-1 text-fg-3 transition-opacity duration-120 ease-standard", starred ? "text-amber-dot opacity-100" : "opacity-0 group-hover/model:opacity-100 focus-visible:opacity-100")}
+              aria-label={(starred ? "取消收藏：" : "收藏：") + option.label} aria-pressed={starred} title={starred ? "取消收藏" : "收藏"} onClick={() => toggleFavourite(favourite(option.value))}>
+              <Star size={13} strokeWidth={2} fill={starred ? "currentColor" : "none"} aria-hidden="true"/></button>
+          </div></div>; })
           : <p className="m-0 px-3 py-6 text-center text-ui-sm text-fg-3">{props.nativeModelsLoading ? "正在读取本机模型…" : "没有可选的模型"}</p>}
       </div>
     </div>
@@ -603,12 +621,15 @@ export function Composer(props: ComposerProps) {
                 if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); chooseFile(mention); return; }
                 if (event.key === "Escape") { event.preventDefault(); setMention(null); return; }
               }
-              if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(active !== null && (event.metaKey || event.ctrlKey)); }
+              // Enter sends (⇧Enter makes a new line), or — as the settings say — ⌘Enter sends and Enter makes a new line. While a reply runs the other way of sending
+              // (said now, or kept until it ends) is ⌘Enter, or ⌥⌘Enter where ⌘Enter already sends.
+              const modifier = event.metaKey || event.ctrlKey, byCommand = props.preferences.sendKey === "mod-enter";
+              if (event.key === "Enter" && !event.shiftKey && (byCommand ? modifier : true)) { event.preventDefault(); void send(active !== null && (byCommand ? event.altKey : modifier)); }
               else if (event.key === "Escape" && !event.repeat && active && !active.cancelRequested && props.mutation === null) { event.preventDefault(); props.onCancel(); }
               else if (event.key === "ArrowUp" && plain && props.messageDraft === "" && props.onEditLast) { event.preventDefault(); props.onEditLast(); }
             }}
             onBlur={() => { handedOver.current = false; setMention(null); }}/>
-          <p id="composer-keyboard-hint" className="sr-only">Enter 发送，Shift+Enter 换行{commands.length ? "，/ 原生命令" : ""}，@ 添加文件，输入框为空时 ↑ 编辑上一条{active ? "，Esc 或 ⌘. 停止当前回复" : ""}</p>
+          <p id="composer-keyboard-hint" className="sr-only">{props.preferences.sendKey === "mod-enter" ? "Command+Enter 发送，Enter 换行" : "Enter 发送，Shift+Enter 换行"}{commands.length ? "，/ 原生命令" : ""}，@ 添加文件，输入框为空时 ↑ 编辑上一条{active ? "，Esc 或 ⌘. 停止当前回复" : ""}</p>
           <input ref={picker} type="file" multiple hidden tabIndex={-1} aria-hidden="true" onChange={event => { attach(event.target.files); event.target.value = ""; }}/>
           <div className="flex flex-wrap items-center gap-x-1 gap-y-2">
             <div className="-ml-2 flex flex-none items-center gap-0.5" role="group" aria-label="附件与权限">
@@ -641,7 +662,7 @@ export function Composer(props: ComposerProps) {
                   trigger={selected => <>{selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}<span className="max-w-[140px] truncate text-fg-2">{selected?.short ?? selected?.label ?? "选择 Provider"}</span></>}
                   onChange={value => { const next = providers.find(row => row.id === value); props.onDraft({ ...draft, providerId: next?.id ?? "", providerRevision: next?.revision ?? null, model: next?.defaultModel ?? "", nativeOptions: {} }); }}
                   footer={<button type="button" className="link-btn text-caption" onClick={props.onProviders}>管理模型连接</button>}/> : null}
-                {draft.harnessId ? <SearchPicker side={popSide} {...listOpen("model")} label="选择模型" value={draft.model} placeholder="选择模型" options={modelOptions} disabled={disabled || !provider && !props.nativeModels?.canSelect} align="end" chevron={last === "model"} className={SEGMENT} {...afterChoice}
+                {draft.harnessId ? <SearchPicker side={popSide} {...listOpen("model")} label="选择模型" value={draft.model} placeholder="选择模型" options={asideModels} disabled={disabled || !provider && !props.nativeModels?.canSelect} align="end" chevron={last === "model"} className={SEGMENT} {...afterChoice}
                   trigger={selected => <span className="max-w-[160px] truncate text-fg-3">{selected?.short ?? selected?.label ?? "选择模型"}</span>}
                   onChange={changeModel} footer={!provider ? <><span>{props.nativeModelsLoading ? "正在读取本机模型…" : "列表来自本机安装"}</span><button type="button" className="link-btn text-caption" onClick={props.onRefreshModels}>刷新本机模型</button></> : undefined}/> : null}
                 {thought ? <SearchPicker side={popSide} {...listOpen("thought")} label="思考强度" value={level.effort ?? ""} placeholder="跟随本机配置" options={effortChoices(thought)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "thought"}
@@ -649,11 +670,11 @@ export function Composer(props: ComposerProps) {
                 {mode && modeInChip ? <SearchPicker side={popSide} {...listOpen("mode")} label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
                   className={cn(SEGMENT, "flex-none")} {...afterChoice} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
               </div>
-              {canSteer ? <Tip label={"现在就告诉它（" + (steerFirst || !canQueue ? "Enter" : "⌘⏎") + "）"}><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
+              {canSteer ? <Tip label={"现在就告诉它（" + (steerFirst || !canQueue ? sendWord : otherWord) + "）"}><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
                 aria-label="现在就告诉它" onClick={() => props.onSteer?.()}><CornerDownRight size={16}/></button></Tip> : null}
-              {canQueue ? <Tip label={"本轮结束后发送（" + (canSteer && steerFirst ? "⌘⏎" : "Enter") + "）"}><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
+              {canQueue ? <Tip label={"本轮结束后发送（" + (canSteer && steerFirst ? otherWord : sendWord) + "）"}><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
                 aria-label="本轮结束后发送" onClick={() => props.onQueue?.()}><ListPlus size={16}/></button></Tip> : null}
-              <Tip label={active ? "停止当前回复（" + keyText("stop") + "）" : "发送（Enter）"}><button type={active ? "button" : "submit"} aria-label={active ? "停止当前回复" : "发送消息"}
+              <Tip label={active ? "停止当前回复（" + keyText("stop") + "）" : "发送（" + sendWord + "）"}><button type={active ? "button" : "submit"} aria-label={active ? "停止当前回复" : "发送消息"}
                 className={cn("press ml-0.5 flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none disabled:cursor-default",
                   active ? "bg-fg text-app disabled:opacity-45" : "bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-35")}
                 style={{ transition: "background-color 200ms var(--ease-standard), opacity 200ms var(--ease-standard), transform 120ms var(--ease-snap)" }}

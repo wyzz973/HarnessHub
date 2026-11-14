@@ -53,7 +53,7 @@ function filesOf(store: FamilyStore, id: SessionId): string[] {
 
 /**
  * The task a conversation belongs to, as its members: the conversation it began in first, then each delegated one under the one that
- * delegated it, oldest first. A conversation that cannot be read is left out with what it delegated.
+ * delegated it, oldest first. A conversation that cannot be read is left out, and what it delegated takes its place.
  */
 export function taskFamily(store: FamilyStore, id: SessionId, name: (harnessId: string) => string | null): readonly TaskMember[] {
   // Up to where the task began (a chain is short; the bound is against a ring).
@@ -64,7 +64,8 @@ export function taskFamily(store: FamilyStore, id: SessionId, name: (harnessId: 
     if (seen.has(at) || members.length >= 64) return;
     seen.add(at);
     let conversation: Conversation;
-    try { conversation = store.get(at); } catch { return; }
+    // One that is not there (the user erased where the task began, 2026-11-14) leaves its place to what it delegated: the task goes on without it.
+    try { conversation = store.get(at); } catch { for (const child of store.delegatedBy?.(at) ?? []) visit(child, parent, depth); return; }
     const last = conversation.runs.at(-1), harnessId = (last ?? conversation).selection.harnessId;
     let task = "", reply = "";
     try {

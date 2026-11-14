@@ -1,4 +1,4 @@
-import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, Bell, BellOff, Blocks, Bot, ChevronRight, CircleHelp, Folder, FolderOpen, Inbox as InboxIcon, ListFilter, MessageCircle, MoreHorizontal, PanelLeft, PencilLine, Pin, PinOff, Search, Settings, SlidersHorizontal, SquarePen, Trash2, X } from "lucide-react";
+import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, Bell, BellOff, Blocks, Bot, ChevronRight, CircleDot, CircleHelp, Copy, Folder, FolderOpen, Hash, Inbox as InboxIcon, ListFilter, MessageCircle, MoreHorizontal, PanelLeft, PencilLine, Pin, PinOff, Search, Settings, SlidersHorizontal, SquarePen, Trash2, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
@@ -15,9 +15,10 @@ import { markSeen, startSeen, unseen, useSeen } from "../lib/seen.js";
 import { useNotificationChoice } from "../lib/notify.js";
 import { useNow } from "../lib/prefs.js";
 import { Collapsible } from "../ui/motion.js";
-import { Menu, Popover } from "../ui/overlay.js";
+import { Dialog, Menu, Popover } from "../ui/overlay.js";
 import { Badge, LogoMark, Spinner, StatusDot, Tip } from "../ui/primitives.js";
 import { lastingOption } from "./Approval.js";
+import { BrandIcon } from "./BrandIcon.js";
 
 export type Page = "chat" | "providers" | "harnesses" | "capabilities" | "settings";
 
@@ -79,14 +80,33 @@ export interface SessionActions {
   readonly snooze: (id: string, until: number | null) => void;
   /** Takes it off the list; the way back is offered for a few seconds. */
   readonly remove: (id: string) => void;
+  /** Shows it as moved on since it was last seen here, until it is opened or moves again. */
+  readonly markUnread: (id: string) => void;
+  /** Puts a text of the conversation on the clipboard — its folder's path, its id — and says so. */
+  readonly copy?: ((text: string, what: string) => void) | undefined;
+  /** What was deleted and can still come back (最近删除), read when the shelf is opened; absent where the Gateway keeps no such list. */
+  readonly trash?: TrashAccess | undefined;
   /** How the list is grouped, and the way to change it. */
   readonly grouping: "project" | "state"; readonly onGrouping: (grouping: "project" | "state") => void;
+  /** Told the conversations in the order the list shows them (closed groups and shelves left out), for the keys that open one by its place. */
+  readonly onOrder?: ((ids: readonly string[]) => void) | undefined;
+}
+/** The conversations deleted and not yet gone for good: read a page at a time, each brought back or deleted for good, or all of them at once. */
+export interface TrashAccess {
+  readonly load: (before: string | undefined, signal: AbortSignal) => Promise<{ readonly sessions: readonly (SessionSummary & { readonly deletedAt: number })[]; readonly next: string | null }>;
+  readonly restore: (id: string) => Promise<void>;
+  /** Deletes it for good, once the user has said so. */
+  readonly purge: (id: string) => Promise<void>;
+  /** Deletes every one for good, once the user has said so. */
+  readonly purgeAll: () => Promise<void>;
+  /** Changes whenever a conversation is deleted, brought back or deleted for good: the shelf reads its list again. */
+  readonly stamp: number;
 }
 /** The moments a conversation can be put aside until, from now: in an hour, this evening (or tomorrow morning once it is evening), tomorrow morning, next Monday morning. */
 function snoozeChoices(now: number): readonly { readonly label: string; readonly until: number }[] {
   const at = (days: number, hour: number): number => { const day = new Date(now); day.setDate(day.getDate() + days); day.setHours(hour, 0, 0, 0); return day.getTime(); };
   const today = new Date(now), toMonday = (8 - today.getDay()) % 7 || 7;
-  return [{ label: "1 小时后", until: now + 3_600_000 }, ...(today.getHours() < 17 ? [{ label: "今晚 18:00", until: at(0, 18) }] : []), { label: "明天 9:00", until: at(1, 9) }, ...(toMonday > 1 ? [{ label: "下周一 9:00", until: at(toMonday, 9) }] : [])];
+  return [{ label: "1 小时后", until: now + 3_600_000 }, { label: "3 小时后", until: now + 3 * 3_600_000 }, ...(today.getHours() < 17 ? [{ label: "今晚 18:00", until: at(0, 18) }] : []), { label: "明天 9:00", until: at(1, 9) }, ...(toMonday > 1 ? [{ label: "下周一 9:00", until: at(toMonday, 9) }] : [])];
 }
 type RowState = "wait" | "run" | "unknown" | "closed" | "fail" | "idle";
 interface Row { readonly session: SessionSummary; readonly items: readonly AttentionItem[]; readonly state: RowState;
@@ -243,6 +263,10 @@ export function Sidebar(props: SidebarProps) {
     return { need: rows.filter(needs), work: rows.filter(row => !needs(row) && row.state === "run"), rest: rows.filter(row => !needs(row) && row.state !== "run") };
   }, [grouping, rest, bySession, props.failed, looked, page, currentId]);
   const folder = (session: SessionSummary): string => inScratch(session.workspace, props.scratchRoot) ? "临时对话" : folderName(session.workspace);
+  // The rows in the order they stand, for ⌥⌘1–9: the pinned, then the groups as they are drawn (a closed project's rows are not in sight, and not counted).
+  const shownOrder = [...pinned, ...(grouping === "project" ? groups.flatMap((project, index) => isOpen(project, index) ? project.rows : []) : [...byState.need, ...byState.work, ...byState.rest])].map(row => row.session.id);
+  const orderKey = shownOrder.join(",");
+  useEffect(() => { props.actions?.onOrder?.(shownOrder); }, [orderKey]);
   const rowProps = { now, currentId: page === "chat" ? currentId : null, disabled: interactionBusy, harness: name, onSession: props.onSession, unread: (session: SessionSummary) => unseen(looked, session), actions: props.actions, arrivals: arriving };
   const count = waiting.length, firstWaiting = useRef<HTMLButtonElement>(null);
   const icon = (glyph: ReactNode) => <span className="flex w-4 flex-none justify-center text-fg-2" aria-hidden="true">{glyph}</span>;
@@ -293,6 +317,7 @@ export function Sidebar(props: SidebarProps) {
           </>}
         {props.more ? <MoreSessions onMore={props.onMore}/> : null}
         {later.length > 0 ? <Shelf title="稍后提醒" icon={<AlarmClock size={16} className="text-fg-3" aria-hidden="true"/>} rows={later} now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} harness={name} onSession={props.onSession} actions={props.actions} away="later"/> : null}
+        {props.actions?.trash ? <Trash access={props.actions.trash} now={now} harness={name}/> : null}
         {shelf.length > 0 ? <Shelf title="已归档" icon={<Archive size={16} className="text-fg-3" aria-hidden="true"/>} rows={shelf} now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} harness={name} onSession={props.onSession} actions={props.actions} away="archived"/> : null}
       </nav>
     </div>
@@ -369,6 +394,65 @@ function Shelf({ title, icon, rows, now, currentId, disabled, harness, onSession
 }
 
 /**
+ * 最近删除 (2026-11-14, after macOS's Recently Deleted; T3 Code takes a deletion back for five seconds only): the conversations deleted and not yet gone for good,
+ * newest first, read when the shelf is opened. Each comes back to the list, or is deleted for good after the user says so; so can all of them at once. Nothing
+ * here empties itself with time. The shelf is not shown while nothing is in it.
+ */
+function Trash({ access, now, harness }: { readonly access: TrashAccess; readonly now: number; readonly harness: (id: string) => string }) {
+  const listId = useId(), [open, setOpen] = useState(false), [rows, setRows] = useState<readonly (SessionSummary & { readonly deletedAt: number })[]>([]), [next, setNext] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null), [asking, setAsking] = useState<{ readonly id: string | null; readonly title: string } | null>(null);
+  const reader = useRef(access); reader.current = access;
+  // Read at once for the count, again when something was deleted or brought back, and the next page when asked.
+  useEffect(() => {
+    const controller = new AbortController();
+    reader.current.load(undefined, controller.signal).then(page => { if (!controller.signal.aborted) { setRows(page.sessions); setNext(page.next); } }, () => undefined);
+    return () => controller.abort();
+  }, [access.stamp]);
+  const more = () => { if (next === null) return; reader.current.load(next, new AbortController().signal).then(page => { setRows(current => [...current, ...page.sessions.filter(row => !current.some(known => known.id === row.id))]); setNext(page.next); }, () => undefined); };
+  const act = (id: string, run: () => Promise<void>) => { setBusy(id); run().then(() => setRows(current => current.filter(row => row.id !== id)), () => undefined).finally(() => setBusy(null)); };
+  if (rows.length === 0 && next === null) return null;
+  const count = rows.length + (next !== null ? "+" : "");
+  return <div className="session-shelf trash-shelf mt-1.5 flex flex-col gap-0.5">
+    <div className="group/trash relative flex items-center">
+      <button type="button" className="nav-row w-full gap-2 pr-2.5 pl-2 text-fg-2" aria-expanded={open} aria-controls={listId} onClick={() => setOpen(!open)}>
+        <Trash2 size={16} className="text-fg-3" aria-hidden="true"/><span className="min-w-0 flex-1 trunc">最近删除</span>
+        <span className="text-caption text-fg-3 transition-opacity duration-120 ease-standard group-hover/trash:opacity-0" aria-hidden="true">{count}</span>
+        <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
+      </button>
+      <button type="button" className="link-btn absolute right-7 text-caption opacity-0 transition-opacity duration-120 ease-standard group-hover/trash:opacity-100 focus-visible:opacity-100" onClick={() => setAsking({ id: null, title: "" })}>清空</button>
+    </div>
+    <Collapsible open={open} id={listId}>
+      <ul className="m-0 flex list-none flex-col gap-0.5 p-0" aria-label="最近删除的对话">{rows.map(row => <li key={row.id} className="group/deleted relative flex min-w-0 items-start gap-2 rounded-row py-[5px] pr-2.5 pl-2 hover:bg-sidebar-hover">
+        <span className="flex h-5 w-4 flex-none items-center justify-center"/>
+        <span className="flex min-w-0 flex-1 flex-col">
+          {/* As a conversation's row: the title, and beside it when it was deleted — the place the actions stand in on hover, never over the title. */}
+          <span className="flex min-w-0 items-center gap-1.5"><span className="min-w-0 flex-1 trunc text-ui text-fg-2">{row.title || "新对话"}</span>
+            <span className="flex h-5 min-w-[46px] flex-none items-center justify-end text-caption text-fg-3 tabular-nums transition-opacity duration-120 ease-standard group-hover/deleted:opacity-0 group-has-[:focus-visible]/deleted:opacity-0"
+              title={"删除于 " + new Date(row.deletedAt).toLocaleString()} aria-hidden="true">{agoShort(row.deletedAt, now)}</span></span>
+          <span className="flex min-w-0 items-center gap-1 text-caption text-fg-3"><BrandIcon brand={row.selection.harnessId} name={harness(row.selection.harnessId)} size={13} className="flex-none opacity-90"/>
+            <span className="min-w-0 trunc">{harness(row.selection.harnessId)}</span></span>
+        </span>
+        <span className="absolute top-[3px] right-2 flex items-center gap-0.5 opacity-0 transition-opacity duration-120 ease-standard group-hover/deleted:opacity-100 group-has-[:focus-visible]/deleted:opacity-100">
+          <Tip label="恢复"><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={busy !== null} aria-label={"恢复：" + (row.title || "新对话")} onClick={() => act(row.id, () => access.restore(row.id))}><ArchiveRestore size={14} aria-hidden="true"/></button></Tip>
+          <Tip label="彻底删除"><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={busy !== null} aria-label={"彻底删除：" + (row.title || "新对话")} onClick={() => setAsking({ id: row.id, title: row.title || "新对话" })}><Trash2 size={14} aria-hidden="true"/></button></Tip>
+        </span>
+      </li>)}</ul>
+      {next !== null ? <button type="button" className="btn btn-ghost btn-sm mx-1 my-1" onClick={more}>更多</button> : null}
+    </Collapsible>
+    <Dialog open={asking !== null} onOpenChange={value => { if (!value) setAsking(null); }} title={asking?.id === null ? "清空最近删除？" : "彻底删除这段对话？"}
+      description={asking?.id === null ? "这里的 " + count + " 段对话会从这台 Mac 上删掉，找不回来。它们改过的文件不受影响。" : "“" + (asking?.title ?? "") + "”会从这台 Mac 上删掉，找不回来。它改过的文件不受影响。"}>
+      <div className="flex justify-end gap-2 px-5 pt-2 pb-5"><button type="button" className="btn" autoFocus onClick={() => setAsking(null)}>取消</button>
+        <button type="button" className="btn btn-danger" onClick={() => {
+          const target = asking; setAsking(null);
+          if (target === null) return;
+          if (target.id === null) { setBusy("*"); access.purgeAll().then(() => { setRows([]); setNext(null); }, () => undefined).finally(() => setBusy(null)); }
+          else act(target.id, () => access.purge(target.id!));
+        }}>{asking?.id === null ? "全部彻底删除" : "彻底删除"}</button></div>
+    </Dialog>
+  </div>;
+}
+
+/**
  * A run of conversations under a quiet title, always open: the pinned ones, and — when the list is grouped by state — what needs you, what is at work and the rest.
  * `where` names the folder each works in, which the grouping by project says with its headings.
  */
@@ -422,11 +506,14 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
           actions && (menu ? "opacity-0" : "group-hover/session:opacity-0 group-has-[:focus-visible]/session:opacity-0"))} aria-hidden="true">{when}</span> : null}
       </span>
       {urgent && left ? <span id={lineId} className="attention-line line-clamp-2 text-caption font-normal text-amber-on-tint" title={left.hint}>{attentionKind(urgent)}{items.length > 1 ? `（${items.length} 项）` : ""}{urgent.expiresAt === undefined ? null : <>{left.source ? " · " + left.source : ""} <span className="whitespace-nowrap">{left.text}</span></>}</span>
-        : <span className="session-meta trunc text-caption font-normal text-fg-3" aria-hidden="true" title={session.line}>{whose}{standing ? " · " + standing : ""}</span>}
+        : <span className="session-meta flex min-w-0 items-center gap-1 text-caption font-normal text-fg-3" aria-hidden="true" title={session.line}>
+          {/* Whose it is, by its mark (after the rows of T3 Code); its name is read out with the rest of the row's description. */}
+          <BrandIcon brand={session.selection.harnessId} name={harness} size={13} className="flex-none opacity-90"/>
+          <span className="min-w-0 trunc">{where ? where + " · " : ""}{standing || harness}</span></span>}
     </span>
     <span id={metaId} className="sr-only">{meta}</span>
   </>;
-  return <div className="session-row group/session relative">
+  return <div className="session-row group/session relative" onContextMenu={actions && editing === null ? event => { event.preventDefault(); setMenu(true); } : undefined}>
     {editing !== null ? <div className={cn(look, "bg-sidebar-hover")}>{inside}</div>
       : <button type="button" disabled={disabled} onClick={onOpen} aria-current={current ? "page" : undefined} aria-label={title} aria-describedby={left ? metaId + " " + lineId : metaId} className={look}>{inside}</button>}
     {actions && editing === null ? <span className={cn("session-actions absolute top-[3px] right-2 flex items-center transition-opacity duration-120 ease-standard", menu ? "opacity-100" : "opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100")}>
@@ -437,7 +524,10 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
       <Menu align="start" open={menu} onOpenChange={setMenu} trigger={<button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={"更多操作：" + title}><MoreHorizontal size={14} aria-hidden="true"/></button>} items={[
         ...(away === undefined ? [{ label: session.pinned === true ? "取消置顶" : "置顶", icon: session.pinned === true ? <PinOff size={14}/> : <Pin size={14}/>, onSelect: () => actions.pin(session.id, session.pinned !== true) }] : []),
         { label: "重命名", icon: <PencilLine size={14}/>, onSelect: () => setEditing(title) },
+        ...(away === undefined && !unread && !current ? [{ label: "标为未读", icon: <CircleDot size={14}/>, onSelect: () => actions.markUnread(session.id) }] : []),
         { label: "在访达中显示", icon: <FolderOpen size={14}/>, onSelect: () => actions.reveal(session.id) },
+        ...(actions.copy ? [{ label: "复制文件夹路径", icon: <Copy size={14}/>, onSelect: () => actions.copy?.(session.workspace, "文件夹路径") },
+          { label: "复制对话 ID", icon: <Hash size={14}/>, onSelect: () => actions.copy?.(session.id, "对话 ID") }] : []),
         ...(away === "later" ? [{ separator: true as const }, { label: "现在就看", icon: <AlarmClockOff size={14}/>, onSelect: () => actions.snooze(session.id, null) }]
           : away === undefined && state !== "run" && state !== "wait" ? [{ separator: true as const }, { heading: "稍后提醒" }, ...snoozeChoices(Date.now()).map(choice => ({ label: choice.label, icon: <AlarmClock size={14}/>, onSelect: () => actions.snooze(session.id, choice.until) }))] : []),
         { separator: true as const },

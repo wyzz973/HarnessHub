@@ -221,7 +221,7 @@ function ItemView({ item }: { readonly item: ReadItem }) {
     case "reasoning": return <ul className="m-0 list-none p-0"><ReasoningRow item={item}/></ul>;
     case "assistant_message": {
       const text = ctx.message(item.messageId)?.text ?? "", rest = leftOut(item, text);
-      return text || rest > 0 ? <>{text ? <StreamingMarkdown text={text} isStreaming={!ctx.over && !ctx.cancelling && item.status === "running" && rest === 0} caret={rest === 0} className="text-reading"/> : null}
+      return text || rest > 0 ? <>{text ? <div className="contents" data-message-id={item.messageId}><StreamingMarkdown text={text} isStreaming={!ctx.over && !ctx.cancelling && item.status === "running" && rest === 0} caret={rest === 0} className="text-reading"/></div> : null}
         {rest > 0 ? <MoreText runId={ctx.run.id} seq={item.seq} rest={rest} label={text ? "显示更多" : "显示这段回复"}/> : null}</> : null;
     }
     case "plan_proposal": return <div className="plan-proposal flex min-w-0 flex-col gap-1"><span className="px-1.5 text-caption text-fg-3">方案</span><StreamingMarkdown text={item.markdown} isStreaming={false} className="text-reading"/></div>;
@@ -465,7 +465,7 @@ function UnreadableTurn({ run, message, arrived, onEdit }: Pick<ProtocolTurnProp
   const sent = message(run.userMessageId), answer = message(run.assistantMessageId), bubble = sent === undefined ? null : <UserMessage message={sent} run={run} onEdit={onEdit}/>;
   return <>
     {sent === undefined ? null : arrived(sent.id) ? <div className="motion-message-in">{bubble}</div> : <div>{bubble}</div>}
-    <article className="message assistant-message unreadable-turn flex min-w-0 flex-col gap-2.5" data-run-status={run.status} aria-label="这一轮无法显示">
+    <article className="message assistant-message unreadable-turn flex min-w-0 flex-col gap-2.5" data-run-status={run.status} data-run-id={run.id} aria-label="这一轮无法显示">
       <QuietLine item="unreadable" icon={<CircleHelp size={14}/>} tone="failed">这一轮无法显示：{run.protocolProblem ?? "服务没有给出这一轮的协议数据"}</QuietLine>
       {/* The reply is a message of the conversation, not part of the Turn: its words are not lost with the Turn that could not be read. */}
       {answer?.text ? <StreamingMarkdown text={answer.text} isStreaming={false} className="text-reading"/> : null}
@@ -536,7 +536,7 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
       return arrived(sent.id) ? <div key={"user:" + piece.item.id} className="motion-message-in">{bubble}</div> : <div key={"user:" + piece.item.id}>{bubble}</div>;
     }
     const last = index === pieces.length - 1;
-    return <article key={"turn:" + run.id + ":" + index} className={cn("message assistant-message protocol-turn group flex min-w-0 flex-col gap-2.5", !over && "is-active")} data-run-status={run.status} aria-busy={!over} aria-label={harness + " 的回复" + (over ? "" : "（进行中）")}>
+    return <article key={"turn:" + run.id + ":" + index} className={cn("message assistant-message protocol-turn group flex min-w-0 flex-col gap-2.5", !over && "is-active")} data-run-status={run.status} data-run-id={run.id} aria-busy={!over} aria-label={harness + " 的回复" + (over ? "" : "（进行中）")}>
       {last && fold !== null ? <TurnFoldView fold={fold} settle={settling.current}/> : null}
       <Blocks blocks={last && fold !== null ? [...fold.kept, ...fold.answer] : way !== undefined ? quietBlocks(piece.blocks, way, over) : piece.blocks}/>
       {last ? <>

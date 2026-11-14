@@ -1,12 +1,14 @@
 import {
-  PAGE, type ConversationCommit, type ConversationReader, type HeadRow, type ItemRow, type RunRow, type SessionListCursor, type SessionListPage, type SessionListQuery, type SessionListRow, type TurnCursor,
+  PAGE, type ConversationCommit, type ConversationReader, type DeletedListPage, type DeletedListQuery, type HeadRow, type ItemRow, type RunRow, type SessionListCursor, type SessionListPage, type SessionListQuery,
+  type SessionListRow, type TurnCursor,
 } from "../contracts/conversation.js";
 import type { HarnessSelection, NativeConfiguration, NativeSessionBinding, PublicSwitch, RunId, SessionId, SessionOrigin } from "../contracts/session.js";
 import { SessionError, sessionId } from "../contracts/session.js";
 import type { NativeOptions } from "../contracts/control.js";
 import type { PlanStep } from "../contracts/protocol.js";
 import type {
-  ConversationChangesView, ConversationEdit, ItemTextView, ItemView, KeptProcessView, NativeStateView, RunItemsPageView, SessionFacts, SessionHeadView, SessionListView, SessionSummary, SessionView, SessionViewV14, TurnPageView, TurnWindowView,
+  ConversationChangesView, ConversationEdit, DeletedSessionListView, ItemTextView, ItemView, KeptProcessView, NativeStateView, RunItemsPageView, SessionFacts, SessionHeadView, SessionListView, SessionSummary, SessionView,
+  SessionViewV14, TurnPageView, TurnWindowView,
 } from "../contracts/web.js";
 import { summaryLine } from "../contracts/web.js";
 import type { FrameViews } from "./commit-frame.js";
@@ -62,7 +64,7 @@ export interface ViewFacts extends ConversationFactsPort {
   /** The wrap-up of the latest finished Turn, when it gave one; optional. */
   latestRecap?(id: SessionId): { readonly ordinal: number; readonly runId: RunId; readonly harnessId: string; readonly row: ItemRow } | null;
 }
-export interface ConversationSource extends ConversationReader { list(query?: SessionListQuery): SessionListPage }
+export interface ConversationSource extends ConversationReader { list(query?: SessionListQuery): SessionListPage; listDeleted?(query?: DeletedListQuery): DeletedListPage }
 export interface ConversationRoutesOptions {
   readonly reader: ConversationSource;
   readonly facts: ViewFacts;
@@ -405,6 +407,13 @@ export class ConversationRoutes {
     const limit = whole(query.limit, "limit", 1);
     const page = asked(() => this.options.reader.list({ ...(query.after === undefined ? {} : { after: query.after as SessionListCursor }), ...(limit === undefined ? {} : { limit }) }));
     return { sessions: page.rows.map(row => this.listRow(row)), next: page.next };
+  }
+  /** GET /api/v1/sessions/deleted?before=<cursor>&limit= (2026-11-14): the conversations the user deleted, the latest deleted first; each its row of the list and when it was deleted. */
+  deleted(query: { readonly before?: string | undefined; readonly limit?: string | number | undefined }): DeletedSessionListView {
+    const limit = whole(query.limit, "limit", 1), reader = this.options.reader;
+    if (reader.listDeleted === undefined) return { sessions: [], next: null };
+    const page = asked(() => reader.listDeleted!({ ...(query.before === undefined ? {} : { before: query.before }), ...(limit === undefined ? {} : { limit }) }));
+    return { sessions: page.rows.map(row => ({ ...this.listRow(row), deletedAt: row.deletedAt })), next: page.next };
   }
   /** One conversation's row of the list as it is now, made from its head (the answer of `PATCH /api/v1/sessions/:id`). A conversation not there, or deleted, is not found. */
   summary(id: string): SessionSummary {

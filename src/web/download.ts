@@ -35,3 +35,24 @@ export async function sendPieces(response: ServerResponse, pieces: Iterator<stri
     response.destroy();
   }
 }
+
+/**
+ * Sends a body of pieces that come as they are read from elsewhere (a Git diff, 2026-11-14), the socket setting the pace as `sendPieces` does. The first piece is awaited
+ * before anything is sent, so that its failure is the caller's to answer; a client that went away ends the pieces (and whatever reads them); a piece that fails after
+ * the status was sent ends the connection, never a body that looks whole.
+ */
+export async function sendStream(response: ServerResponse, pieces: AsyncIterator<string>, begin: () => void): Promise<void> {
+  let step = await pieces.next();
+  begin();
+  try {
+    while (step.done !== true) {
+      if (response.destroyed) { await pieces.return?.(); return; }
+      if (!response.write(step.value)) await writable(response);
+      if (response.destroyed) { await pieces.return?.(); return; }
+      step = await pieces.next();
+    }
+    response.end();
+  } catch {
+    response.destroy();
+  }
+}

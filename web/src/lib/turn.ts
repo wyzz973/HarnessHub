@@ -38,7 +38,8 @@ export function parseUnifiedDiff(text: string, fallback: string): readonly DiffF
     if (line.startsWith("+")) { file.add++; file.lines.push({ kind: "add", text: line.slice(1), newNo: newNo++ }); continue; }
     if (line.startsWith("-")) { file.del++; file.lines.push({ kind: "remove", text: line.slice(1), oldNo: oldNo++ }); continue; }
     if (line.startsWith("\\")) { file.lines.push({ kind: "meta", text: line }); continue; }
-    if (/^(index |new file mode|deleted file mode|similarity index|rename from|rename to|old mode|new mode)/u.test(line)) { file.created ||= line.startsWith("new file mode"); file.lines.push({ kind: "meta", text: line }); continue; }
+    // Git's extended header lines say what the file row already says (new, renamed, its mode): kept as the file's header, not drawn.
+    if (/^(index |new file mode|deleted file mode|similarity index|dissimilarity index|rename from|rename to|copy from|copy to|old mode|new mode)/u.test(line)) { file.created ||= line.startsWith("new file mode"); file.lines.push({ kind: "file", text: line }); continue; }
     file.lines.push({ kind: "context", text: line.startsWith(" ") ? line.slice(1) : line, oldNo: oldNo++, newNo: newNo++ });
   }
   return files;

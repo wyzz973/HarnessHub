@@ -608,7 +608,13 @@ export interface SessionRuntimeOptions {
      * Writes again what changes in the middle of a Turn (2026-11-14): the task's `task.md`, `board.md` and the `STATE.md` of each of its conversations, so that a Harness
      * that reads them after it compacted reads them as they are now. Light, one writer a task at a time; a failure leaves what was there.
      */
-    refresh?(id: SessionId): Promise<void> };
+    refresh?(id: SessionId): Promise<void>;
+    /**
+     * Takes a conversation the user erases (2026-11-14) out of its task's directory. Called while the conversation is still there, right before its rows go (`purging`: every
+     * conversation erased with it): what it needs of the task is read then, and the files go after, with the task's other writers. Its own directory goes; the whole task's goes
+     * when no other conversation of the task is left. Optional.
+     */
+    forget?(id: SessionId, purging: ReadonlySet<SessionId>): Promise<void> };
   /**
    * The installation's relay key (ADR-055 §10.2, D5; relay-keys.ts): the HMACs of delivery rows and of a request's relay
    * choice. Without it the Runtime keys them under a key it keeps only in memory and names EPHEMERAL_KEY_ID (A17), which no

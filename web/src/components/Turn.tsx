@@ -1,5 +1,5 @@
-import { ChevronLeft, ChevronRight, CircleDashed, Pencil, PencilLine } from "lucide-react";
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import { Check, ChevronLeft, ChevronRight, CircleDashed, Copy, Pencil, PencilLine } from "lucide-react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { PublicMessage, PublicRun } from "../../../src/contracts/session.js";
 import { cn } from "../lib/cn.js";
@@ -66,6 +66,8 @@ export const UserMessage = memo(function UserMessage({ message, run, onEdit, bra
   const bubble = useRef<HTMLDivElement>(null), [long, setLong] = useState(false), [whole, setWhole] = useState(false);
   useLayoutEffect(() => { const element = bubble.current; if (element !== null) setLong(element.scrollHeight > 352); }, [message.text, editing === null]);
   const sent = steered !== undefined ? steered.at : run?.timing?.acceptedAt;
+  const [copied, setCopied] = useState(false);
+  useEffect(() => { if (!copied) return; const timer = setTimeout(() => setCopied(false), 1600); return () => clearTimeout(timer); }, [copied]);
   const note = steered === undefined ? null : steered.status === "pending" || steered.status === "running" ? "正在告诉它…" : steered.status === "unknown" ? "不确定它收到没有"
     : steered.status === "cancelled" || steered.status === "failed" ? "这一轮先停了，没交给它" : null;
   // Whether it rises into place (Motion board #15) is the conversation's call: ChatPage wraps a message that arrived after
@@ -84,12 +86,13 @@ export const UserMessage = memo(function UserMessage({ message, run, onEdit, bra
       </div>
     </article>;
   }
-  return <article className="message user-message group flex flex-col items-end gap-1.5">
+  return <article className="message user-message group flex flex-col items-end gap-1.5" data-message-id={message.id}>
     {steered === undefined && run?.attachments?.length ? <MessageAttachments attachments={run.attachments}/> : null}
     <div className="flex w-full min-w-0 items-end justify-end gap-1">
       <div className="flex h-7 flex-none items-center transition-opacity duration-150 [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
         {/* Drawn from an attribute: when it was sent is beside the message, not part of its words (a selection or a copy takes the message alone). */}
         {sent !== undefined ? <time className="message-time mr-1.5 text-caption whitespace-nowrap text-fg-3 tabular-nums" dateTime={new Date(sent).toISOString()} title={new Date(sent).toLocaleString()} data-time={messageTime(sent)}/> : null}
+        <ActionButton label={copied ? "已复制" : "复制"} onClick={() => { void navigator.clipboard.writeText(message.text).then(() => setCopied(true), () => undefined); }}>{copied ? <Check size={14}/> : <Copy size={14}/>}</ActionButton>
         <ActionButton label="放回输入框" onClick={() => onEdit(message.text)}><PencilLine size={14}/></ActionButton>
         {branching?.onResend ? <ActionButton label={busy ? BUSY : "编辑并重发"} onClick={() => { if (!busy) setEditing(message.text); }}><Pencil size={14}/></ActionButton> : null}
       </div>

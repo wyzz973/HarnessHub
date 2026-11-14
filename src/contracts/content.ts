@@ -115,4 +115,9 @@ export interface ContentPort {
    * item (a tool's detail: the command of a call whose output is megabytes long). Read-only; absent when the owner cannot read back.
    */
   readChunks?(ref: ContentRef): Promise<AsyncIterable<Uint8Array> | null>;
+  /**
+   * Erases content that only conversations the user erased mentioned (2026-11-14; `PurgeResult.content`): its records, the copies made for a native session to read, and
+   * the bytes no record is left for (content is kept once per digest, and another record may share it). Ids it does not hold are passed over. Optional.
+   */
+  purge?(ids: ReadonlySet<string>): { readonly records: number; readonly blobs: number; readonly files: number };
 }

@@ -12,7 +12,7 @@ import { ManagementError } from "../contracts/management.js";
 import type { ConversationCommit, StartupSample } from "../contracts/conversation.js";
 import { BOARD_KINDS, SessionError, parseNativeOptions, runId, sessionId, type BoardKind, type SelectionRequest, type SessionBindingFactory, type SessionConfiguration, type SessionEvent, type SessionId, type TurnLimits } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES } from "../contracts/content.js";
-import type { EditorsView, EventPage, GitCommitView, GitPushView, GitView, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, MaintenanceView, NativeSessionListView, SteerView, TaskView, UninstallCheckView, InstallCheckView, WebState, WorkspaceFileView, WorkspaceView } from "../contracts/web.js";
+import type { EditorsView, EventPage, GitBranchesView, GitChangesView, GitCommitView, GitLogView, GitPushView, GitScope, GitView, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, MaintenanceView, NativeSessionListView, SteerView, TaskView, UninstallCheckView, InstallCheckView, WebState, WorkspaceFileView, WorkspaceView } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
@@ -26,16 +26,17 @@ import { chooseFolder, FolderDialogUnavailable, scratchFolder } from "../infrast
 import { revealInFinder } from "../infrastructure/workspace/finder.js";
 import { installedEditors, openInEditor } from "../infrastructure/workspace/editors.js";
 import { readWorkspaceFile } from "../infrastructure/workspace/workspace-file.js";
-import { gitCommit, gitDetail, gitPush } from "../infrastructure/workspace/git.js";
+import { gitBranches, gitChanges, gitCommit, gitDetail, gitFileDiff, gitLog, gitPush } from "../infrastructure/workspace/git.js";
 import { workspaceGit } from "../infrastructure/workspace/git-status.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
 import { RelayApi, parseSendRelay } from "./relay-routes.js";
 import { ConversationRoutes, type HeadLive } from "./conversation-routes.js";
+import { RecallRoutes } from "./recall-routes.js";
 import { commitFrame } from "./commit-frame.js";
 import { DetailHeads } from "./detail-heads.js";
-import { sendPieces } from "./download.js";
+import { sendPieces, sendStream } from "./download.js";
 import { RunRelayReader } from "./run-relay.js";
 import { TableApi } from "./table-routes.js";
 import type { TableGrants } from "../contracts/table.js";
@@ -366,6 +367,19 @@ function importFailure(error: unknown): unknown {
 function queries(url: URL, allowed: readonly string[]): void {
   for (const key of url.searchParams.keys()) if (!allowed.includes(key) || url.searchParams.getAll(key).length !== 1) throw new HttpError(400, "INVALID_INPUT", "Unexpected query parameters");
 }
+/** What the changes panel compares, from the query (2026-11-14): `scope=uncommitted` (the default), `scope=commit&sha=`, `scope=branch[&base=]`; and `whitespace=ignore`. */
+function gitScope(url: URL): GitScope {
+  const kind = url.searchParams.get("scope") ?? "uncommitted", sha = url.searchParams.get("sha"), base = url.searchParams.get("base");
+  if (kind === "uncommitted" && sha === null && base === null) return { kind };
+  if (kind === "commit" && sha !== null && sha !== "" && base === null) return { kind, sha };
+  if (kind === "branch" && sha === null && base !== "") return base === null ? { kind } : { kind, base };
+  throw new HttpError(400, "INVALID_INPUT", "Expected scope=uncommitted, scope=commit&sha=<commit> or scope=branch[&base=<branch>]");
+}
+function ignoreWhitespace(url: URL): boolean {
+  const value = url.searchParams.get("whitespace");
+  if (value !== null && value !== "ignore") throw new HttpError(400, "INVALID_INPUT", "whitespace is ignore or absent");
+  return value === "ignore";
+}
 const MIME: Readonly<Record<string, string>> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".woff2": "font/woff2" };
 async function asset(root: string, pathname: string, response: ServerResponse, method: string): Promise<void> {
   const path = resolve(root, pathname === "/" ? "index.html" : "." + pathname);
@@ -511,6 +525,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       return { permissions: app.runtime.permissionRequests(id), ...(queue === null ? {} : { queue }),
         retention: { process: app.runtime.keptProcess(id), ...(lost === null ? {} : { lost }), ...(outside === null ? {} : { outside }), ...(upgraded === null ? {} : { upgraded }) } };
     } });
+  // The recently deleted and their erasure, and the page's search (2026-11-14): src/web/recall-routes.ts.
+  const recall = new RecallRoutes({ conversations: () => conversations!, runtime: app.runtime, search: app.store, http: { json, headers, queries, body: request => body(request) } });
   /** A conversation's title for the lists of conversations a maintenance step names; the generic name for one that is gone. */
   const titleOf = (id: string): string => { try { const row = app.store.head(sessionId(id)); return row.deletedAt === null ? row.title : "对话"; } catch { return "对话"; } };
   // Directories the user took from the login shell's PATH (G(ii)) extend discovery and new conversations until removed.
@@ -1153,6 +1169,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       catch (error) { throw importFailure(error); }
       return;
     }
+    if (await recall.handle(request, response, url, method)) return;
     if (path === "/api/v1/sessions") {
       if (method === "GET") { queries(url, ["after", "limit"]); json(response, 200, conversations!.sessions({ after: url.searchParams.get("after") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
       if (method === "POST") {
@@ -1234,7 +1251,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (textRoute && method === "GET") { queries(url, ["from", "to"]); json(response, 200, conversations!.itemText(textRoute[1]!, textRoute[2]!, textRoute[3]!, { from: url.searchParams.get("from") ?? undefined, to: url.searchParams.get("to") ?? undefined })); return; }
     const changesRoute = /^\/api\/v1\/sessions\/([^/]+)\/changes$/u.exec(path);
     if (changesRoute && method === "GET") { queries(url, ["before", "limit"]); json(response, 200, conversations!.changes(changesRoute[1]!, { before: url.searchParams.get("before") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
-    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|steer|switches|resume|cancel|close|events|export|fork|branch|delegate|task|retention|end-process|native-resume|reveal|workspace|restore|open|file|git|git\/commit|git\/push))?$/u.exec(path);
+    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|steer|switches|resume|cancel|close|events|export|fork|branch|delegate|task|retention|end-process|native-resume|reveal|workspace|restore|open|file|git|git\/commit|git\/push|git\/changes|git\/diff|git\/log|git\/branches))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
       // Undoes the user's deletion (2026-11-14): the one route a deleted conversation is found by. The answer is its row of the list, back where its own time puts it.
@@ -1267,6 +1284,33 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         json(response, 200, await gitCommit(workspace, input.message, input.paths as readonly string[] | undefined) satisfies GitCommitView); return;
       }
       if (action === "git/push" && method === "POST") { queries(url, []); record(await body(request), []); json(response, 200, await gitPush(workspace) satisfies GitPushView); return; }
+      // The changes panel as T3 Code has it (2026-11-14), read only: the files changed in a scope (not committed, one commit, the branch), one file's diff a piece at a
+      // time as Git writes it, a page of the branch's commits, and the branches to compare with.
+      if (action === "git/changes" && method === "GET") {
+        queries(url, ["scope", "sha", "base", "whitespace"]);
+        json(response, 200, await gitChanges(workspace, gitScope(url), { ignoreWhitespace: ignoreWhitespace(url) }) satisfies GitChangesView); return;
+      }
+      if (action === "git/diff" && method === "GET") {
+        queries(url, ["scope", "sha", "base", "path", "whitespace"]); const named = url.searchParams.get("path");
+        if (named === null || named === "" || named.includes("\0")) throw new HttpError(400, "INVALID_INPUT", "Expected the file's path");
+        const diff = await gitFileDiff(workspace, gitScope(url), named, { ignoreWhitespace: ignoreWhitespace(url) });
+        // A diff has no length bound: it is written into the JSON as Git writes it, never held whole. A Git that fails once it is sent ends the connection.
+        response.once("close", diff.close);
+        async function* pieces(): AsyncGenerator<string, void> {
+          yield "{\"path\":" + JSON.stringify(diff.path) + ",\"diff\":\"";
+          for await (const piece of diff.text) yield JSON.stringify(piece).slice(1, -1);
+          yield "\"" + (diff.binary() ? ",\"binary\":true" : "") + "}";
+        }
+        if (response.destroyed || response.writableEnded) { diff.close(); return; }
+        await sendStream(response, pieces(), () => { headers(response); response.statusCode = 200; response.setHeader("Content-Type", "application/json; charset=utf-8"); });
+        return;
+      }
+      if (action === "git/log" && method === "GET") {
+        queries(url, ["before", "limit"]); const before = url.searchParams.get("before");
+        if (before === "") throw new HttpError(400, "INVALID_INPUT", "Invalid before");
+        json(response, 200, await gitLog(workspace, { ...(before === null ? {} : { before }), limit: cursor(url.searchParams.get("limit"), 50, 1, Number.MAX_SAFE_INTEGER) }) satisfies GitLogView); return;
+      }
+      if (action === "git/branches" && method === "GET") { queries(url, []); json(response, 200, await gitBranches(workspace) satisfies GitBranchesView); return; }
       if (action === undefined && method === "GET") { queries(url, []); json(response, 200, conversations!.session(id)); return; }
       // The user deletes the conversation (2026-11-14): out of the list and not found, its file kept; refused while a Turn of it goes on. 204 once a process it kept is released.
       if (action === undefined && method === "DELETE") {

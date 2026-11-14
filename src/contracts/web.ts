@@ -194,6 +194,40 @@ export interface GitView {
 export interface GitCommitView { readonly commit: string; readonly subject: string }
 /** `POST /api/v1/sessions/:id/git/push` (2026-11-14): where the current branch was pushed. */
 export interface GitPushView { readonly remote: string; readonly branch: string }
+/**
+ * What the changes panel compares (2026-11-14), as T3 Code's does: `uncommitted` the working tree (staged and not, untracked files too) against HEAD; `commit` one commit
+ * against its first parent; `branch` the working tree as it is against merge-base(`base`, HEAD), `base` being by default the branch origin/HEAD points to, else main, else
+ * master. In the query: `scope=uncommitted`, `scope=commit&sha=<sha>`, `scope=branch[&base=<ref>]`.
+ */
+export type GitScope = { readonly kind: "uncommitted" } | { readonly kind: "commit"; readonly sha: string } | { readonly kind: "branch"; readonly base?: string };
+export const GIT_CHANGE_STATUSES = ["added", "modified", "deleted", "renamed", "copied", "typechange", "untracked"] as const;
+export type GitChangeStatus = typeof GIT_CHANGE_STATUSES[number];
+/**
+ * One file changed in a scope, named from the workspace: how it changed, the path it was renamed or copied from, its lines added and removed (an untracked file's all
+ * added; none for a binary file, which is marked `binary`).
+ */
+export interface GitChangedFileView { readonly path: string; readonly oldPath?: string; readonly status: GitChangeStatus; readonly added?: number; readonly removed?: number; readonly binary?: true }
+/**
+ * `GET /api/v1/sessions/:id/git/changes?scope=…[&whitespace=ignore]` (2026-11-14): the files changed in the scope, in the order of their paths, without their text.
+ * `base` (branch) is the base as named and the merge base's hash; `commit` (commit) is the commit's full hash and its first parent's (null for a root commit).
+ */
+export interface GitChangesView {
+  readonly scope: GitScope["kind"];
+  readonly files: readonly GitChangedFileView[];
+  readonly base?: { readonly ref: string; readonly sha: string };
+  readonly commit?: { readonly sha: string; readonly parent: string | null };
+}
+/** `GET /api/v1/sessions/:id/git/diff?scope=…&path=…[&whitespace=ignore]` (2026-11-14): one file's unified diff in the scope ("" when it did not change there). */
+export interface GitFileDiffView { readonly path: string; readonly diff: string; readonly binary?: true }
+/** One commit of `GitLogView`: its full and short hash, subject, author's name and commit time (milliseconds since the epoch). */
+export interface GitCommitEntryView { readonly sha: string; readonly shortSha: string; readonly subject: string; readonly author: string; readonly committedAt: number }
+/** `GET /api/v1/sessions/:id/git/log?before=<sha>&limit=<n>` (2026-11-14): a page of the current branch's commits, newest first; `next` is the next page's `before`, null at the end. */
+export interface GitLogView { readonly commits: readonly GitCommitEntryView[]; readonly next: string | null }
+/**
+ * `GET /api/v1/sessions/:id/git/branches` (2026-11-14): the local and the remote-tracking branches by name (`main`, `origin/main`), most recently committed first; the current
+ * branch (null on a detached head); the default branch a `branch` scope compares with when none is named (null when there is none).
+ */
+export interface GitBranchesView { readonly current: string | null; readonly local: readonly string[]; readonly remote: readonly string[]; readonly defaultBranch: string | null }
 /** The first sentence of a wrap-up, or the step in progress of a task list, cut to what one line of a list holds. */
 export function summaryLine(text: string): string {
   const flat = text.replace(/\s+/gu, " ").trim(), end = /[。！？!?]|\.(?=\s|$)/u.exec(flat);
@@ -640,6 +674,50 @@ export interface ItemView { readonly item: WireItem }
 export type ItemTextView = TextRange;
 /** `GET /api/v1/sessions?after=<cursor>&limit=`: the conversations newest first, a page at a time; every conversation is reached by the cursor. */
 export interface SessionListView { readonly sessions: readonly SessionSummary[]; readonly next: string | null }
+
+// ---- Recently deleted, erasing, and the page's search (2026-11-14) --------------------------------------------------------
+
+/** A row of the recently deleted: the conversation's row of the list, and when the user deleted it (milliseconds since the epoch). */
+export interface DeletedSessionSummary extends SessionSummary { readonly deletedAt: number }
+/**
+ * `GET /api/v1/sessions/deleted?before=<cursor>&limit=`: the conversations the user deleted, the latest deleted first, a page at a time (the page size of the list, and like
+ * it no ceiling). `POST /api/v1/sessions/:id/purge` erases one of them (204; 409 DELETION_REQUIRED for one that is not deleted); `POST /api/v1/sessions/purge-deleted` erases
+ * them all (`PurgedView`). Nothing is erased by itself after a time.
+ */
+export interface DeletedSessionListView { readonly sessions: readonly DeletedSessionSummary[]; readonly next: string | null }
+/** `POST /api/v1/sessions/purge-deleted`: how many conversations were erased. */
+export interface PurgedView { readonly purged: number }
+/**
+ * One place the words were found by `GET /api/v1/search?q=&cursor=` (across the conversations not deleted): a message of the user, a reply of a Harness, or the title.
+ * Matching ignores case and takes the words as they are, a substring (Chinese included). `snippet` is the text around the place, line breaks made spaces, with "…" where it
+ * was cut; `match` is where the words are in `snippet`, `[start, end)` in UTF-16 units. A message is one hit, at its first place.
+ */
+export interface SearchHitView {
+  readonly sessionId: string;
+  readonly title: string;
+  /** The Turn and the message (the `id` of its item in the Turn, `WireItem.id`); null for a hit in the title. */
+  readonly runId: string | null;
+  readonly ordinal: number | null;
+  readonly messageId: string | null;
+  readonly role: "user" | "assistant" | "title";
+  readonly snippet: string;
+  readonly match: readonly [number, number];
+}
+/** The hits grouped by conversation (the title first, then its messages newest first), the conversations by their latest activity; `next` reads on (null at the end). */
+export interface SearchView { readonly hits: readonly SearchHitView[]; readonly next: string | null }
+/**
+ * One place the words were found by `GET /api/v1/sessions/:id/search?q=&cursor=` (in one conversation's messages): every place, from the first Turn to the newest. `itemSeq`
+ * is the item's seq in its Turn and `offset` where the words start in the message's whole text (UTF-16 units): what the page loads the Turn by and goes to.
+ */
+export interface SessionSearchHitView extends Omit<SearchHitView, "runId" | "ordinal" | "messageId" | "role"> {
+  readonly runId: string;
+  readonly ordinal: number;
+  readonly messageId: string;
+  readonly role: "user" | "assistant";
+  readonly itemSeq: number;
+  readonly offset: number;
+}
+export interface SessionSearchView { readonly hits: readonly SessionSearchHitView[]; readonly next: string | null }
 
 /** An item that is new or changed in a commit: placed by `(runId, item.seq)`, the item replacing the page's copy (its text is `texts`'s to extend). */
 export interface WireItemUpsert { readonly runId: string; readonly item: WireItem }
