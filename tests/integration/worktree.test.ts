@@ -154,8 +154,15 @@ test("the branch is renamed once after the conversation's first title: the user'
     await until(() => worktreeOf(f, id), view => view.branch === branch, "the branch was not renamed to " + branch);
     await until(() => headOf(f, id), head => row(head.worktree).branch === branch, "the new branch was not recorded");
   };
+  // One `a` delegates to before its branch has a name: its own first Turn names nothing; it takes the name `a` gives.
+  const delegated = await call(f, `/api/v1/sessions/${a.id}/delegate`, "POST", { selection: { harnessId: "web-a" }, text: "a part", commandId: "name-child", messageCommandId: "name-child-message" });
+  assert.equal(delegated.status, 201, delegated.text);
+  const child = String(row(row(delegated.data).head).id);
+  await settled(f, child); await delay(400);
+  assert.equal((await worktreeOf(f, String(a.id))).branch, "hh/" + keyOf("name-a"));
   assert.equal((await call(f, `/api/v1/sessions/${a.id}`, "PATCH", { title: "修复 登录页: Bug #12" })).status, 200);
   await renamed(String(a.id), "hh/修复-登录页-bug-12");
+  await until(() => headOf(f, child), head => row(head.worktree).branch === "hh/修复-登录页-bug-12", "the delegated one did not take the new name");
   assert.equal((await call(f, `/api/v1/sessions/${b.id}`, "PATCH", { title: "修复 登录页: Bug #12" })).status, 200);
   await renamed(String(b.id), "hh/修复-登录页-bug-12-2");
   // The first message names it when nothing did before.
@@ -187,13 +194,13 @@ test("GET …/worktree says the branch, what is not committed (untracked one by 
   await writeFile(join(path, "README.md"), "# app\nmore\n"); sh(path, "mv", "packages/web/index.ts", "packages/web/main.ts");
   await writeFile(join(path, "new.txt"), "new\n"); await mkdir(join(path, "docs")); await writeFile(join(path, "docs", "a.md"), "a\n");
   assert.deepEqual(await worktreeOf(f, id), { path, branch: "hh/" + key, dirty: 4, shared: false });
-  // A conversation it delegated to works in the same folder: shared. That one has no worktree of its own.
+  // A conversation it delegated to works in the same folder: shared, and it carries the record, marked inherited.
   const delegated = await call(f, `/api/v1/sessions/${id}/delegate`, "POST", { selection: { harnessId: "web-a" }, text: "look at the README", commandId: "info-child", messageCommandId: "info-child-message" });
   assert.equal(delegated.status, 201, delegated.text);
   const child = row(row(delegated.data).head);
-  assert.equal(child.workspace, path); assert.equal(child.worktree, undefined);
+  assert.equal(child.workspace, path); assert.deepEqual(child.worktree, { ...row(head.worktree), inherited: true });
   assert.equal((await worktreeOf(f, id)).shared, true);
-  const none = await call(f, `/api/v1/sessions/${String(child.id)}/worktree`); assert.equal(none.status, 404); assert.equal(row(none.data).code, "WORKTREE_NOT_FOUND");
+  assert.deepEqual(await worktreeOf(f, String(child.id)), { path, branch: "hh/" + key, dirty: 4, shared: true });
   const plain = await call(f, "/api/v1/sessions", "POST", { selection: { harnessId: "web-a" }, commandId: "info-plain" });
   assert.equal((await call(f, `/api/v1/sessions/${String(row(row(plain.data).head).id)}/worktree`)).status, 404);
   assert.equal((await call(f, "/api/v1/sessions/session-nowhere/worktree")).status, 404);
@@ -234,10 +241,15 @@ test("erasing with removeWorktree removes the worktree (uncommitted work with it
   // Another conversation works in it (one it delegated to): erased, the worktree kept.
   const shared = await inWorktree(f, repo, "purge-shared"), sharedPath = String(row(shared.worktree).path);
   const delegated = await call(f, `/api/v1/sessions/${String(shared.id)}/delegate`, "POST", { selection: { harnessId: "web-a" }, text: "a part", commandId: "purge-child", messageCommandId: "purge-child-message" });
-  assert.equal(delegated.status, 201, delegated.text); await settled(f, String(row(row(delegated.data).head).id));
+  const childId = String(row(row(delegated.data).head).id);
+  assert.equal(delegated.status, 201, delegated.text); await settled(f, childId);
   await remove(String(shared.id));
   const left = await erase(String(shared.id), { removeWorktree: true });
   assert.equal(left.status, 200, left.text); assert.deepEqual(left.data, { worktreeKept: "shared" }); assert.ok(existsSync(sharedPath));
+  // Erased last, the one it delegated to takes the worktree with it.
+  await remove(childId);
+  const last = await erase(childId, { removeWorktree: true });
+  assert.equal(last.status, 200, last.text); assert.deepEqual(last.data, { worktreeRemoved: true }); assert.equal(existsSync(sharedPath), false);
   // A conversation with no worktree: erased, nothing said of one.
   const none = await call(f, "/api/v1/sessions", "POST", { selection: { harnessId: "web-a" }, commandId: "purge-none" }), noneId = String(row(row(none.data).head).id);
   await remove(noneId); assert.deepEqual((await erase(noneId, { removeWorktree: true })).data, {});
@@ -249,8 +261,8 @@ test("erasing with removeWorktree removes the worktree (uncommitted work with it
   const all = await call(f, "/api/v1/sessions/purge-deleted", "POST", { removeWorktree: true });
   assert.equal(all.status, 200, all.text); assert.deepEqual(all.data, { purged: 2, worktreesRemoved: 2 });
   for (const item of [one, two]) assert.equal(existsSync(String(row(item.worktree).path)), false);
-  assert.ok(existsSync(String(row(three.worktree).path))); assert.ok(existsSync(keptPath)); assert.ok(existsSync(sharedPath));
-  assert.deepEqual(new Set(worktreesOf(repo)), new Set([repo, keptPath, sharedPath, String(row(three.worktree).path)]));
+  assert.ok(existsSync(String(row(three.worktree).path))); assert.ok(existsSync(keptPath));
+  assert.deepEqual(new Set(worktreesOf(repo)), new Set([repo, keptPath, String(row(three.worktree).path)]));
   // Without the flag purge-deleted says what it always did.
   assert.deepEqual((await call(f, "/api/v1/sessions/purge-deleted", "POST", {})).data, { purged: 0 });
 });

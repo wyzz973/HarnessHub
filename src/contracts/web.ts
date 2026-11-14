@@ -164,8 +164,8 @@ export interface SessionSummary {
    */
   readonly worktree?: WorktreeMark;
 }
-/** A conversation's own Git worktree as its head and its row of the list carry it (`ConversationWorktree`). */
-export interface WorktreeMark { readonly root: string; readonly path: string; readonly branch: string; readonly baseSha: string }
+/** A conversation's Git worktree as its head and its row of the list carry it (`ConversationWorktree`); `inherited`: shared with the conversation it came from. */
+export interface WorktreeMark { readonly root: string; readonly path: string; readonly branch: string; readonly baseSha: string; readonly inherited?: true }
 /**
  * `GET /api/v1/sessions/:id/worktree` (2026-11-14): the conversation's worktree as it is now, also for a conversation the user deleted (the page asks before erasing
  * it). `branch` is the branch checked out there (null on a detached head), `dirty` how many files are not committed (untracked ones included, one by one), `shared`

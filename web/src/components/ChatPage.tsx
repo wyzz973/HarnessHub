@@ -12,7 +12,7 @@ import type { ConversationView } from "../lib/conversation.js";
 import { failureMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { actionOf, ariaKeys, keyText, useKeys } from "../lib/keys.js";
-import { clock, folderName, homePath, inScratch, shortTitle } from "../lib/format.js";
+import { clock, folderName, homePath, inScratch, projectOf, shortTitle } from "../lib/format.js";
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
 import { bannerOf, installationNotices, relayHasStory, relayLine } from "../lib/relay-state.js";
 import { useClosedNotices } from "../lib/use-relay.js";
@@ -348,7 +348,8 @@ export function ChatPage(props: ChatProps) {
   const [renaming, setRenaming] = useState<string | null>(null), [renamed, setRenamed] = useState<{ readonly id: string; readonly title: string } | null>(null);
   useEffect(() => { setRenaming(null); }, [session?.id]);
   useEffect(() => { if (renamed !== null && (session === null || session.id !== renamed.id || session.title === renamed.title)) setRenamed(null); }, [session?.id, session?.title, renamed]);
-  const place = session === null ? "" : inScratch(session.workspace, props.scratchRoot) ? "临时对话" : folderName(session.workspace);
+  const place = session === null ? "" : inScratch(session.workspace, props.scratchRoot) ? "临时对话" : folderName(projectOf(session));
+  const crumb = <>{session?.worktree ? <GitBranch size={12} className="mr-1 inline-block align-[-1px]" aria-hidden="true"/> : null}{place}</>;
   const title = session !== null ? renamed?.id === session.id ? renamed.title : session.title : branchedTitle ? "分支 · " + branchedTitle : props.sessionRequested || props.sessionError ? "打开对话" : "新对话";
   const runs = useMemo(() => new Map(session?.runs.map(run => [run.id, run])), [session?.runs]);
   const harnessName = (id: string) => harnesses.find(row => row.id === id)?.name ?? id;
@@ -709,8 +710,8 @@ export function ChatPage(props: ChatProps) {
         : props.sidebarHidden ? <Tip label={"展开侧栏 " + keyText("sidebar")}><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts={ariaKeys("sidebar")} onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
       {/* Where the conversation runs, then what it is called (after the header of T3 Code): the folder quiet, the title plain, one line. */}
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        {session ? <>{props.onReveal ? <Tip label={<>在访达中显示 <span className="text-fg-3">{homePath(session.workspace)}</span></>}><button type="button" className="crumb hidden max-w-[34%] min-w-0 flex-none truncate rounded-row border-none bg-transparent px-1.5 py-1 text-ui text-fg-3 transition-colors duration-120 ease-standard hover:bg-subtle hover:text-fg-2 sm:block" onClick={() => props.onReveal?.()}>{place}</button></Tip>
-          : <span className="hidden max-w-[34%] min-w-0 flex-none truncate px-1.5 text-ui text-fg-3 sm:block" title={session.workspace}>{place}</span>}
+        {session ? <>{props.onReveal ? <Tip label={<>在访达中显示 <span className="text-fg-3">{homePath(session.workspace)}</span></>}><button type="button" className="crumb hidden max-w-[34%] min-w-0 flex-none truncate rounded-row border-none bg-transparent px-1.5 py-1 text-ui text-fg-3 transition-colors duration-120 ease-standard hover:bg-subtle hover:text-fg-2 sm:block" onClick={() => props.onReveal?.()}>{crumb}</button></Tip>
+          : <span className="hidden max-w-[34%] min-w-0 flex-none truncate px-1.5 text-ui text-fg-3 sm:block" title={session.workspace}>{crumb}</span>}
           <span className="hidden flex-none text-ui text-fg-3 opacity-50 sm:block" aria-hidden="true">/</span></> : null}
         {renaming !== null && session ? <TitleField value={renaming} onDone={next => { setRenaming(null); const text = next?.trim().replace(/\s+/gu, " "); if (text && text !== session.title) { setRenamed({ id: session.id, title: text }); props.onRename?.(text).catch(() => setRenamed(null)); } }}/> : null}
         <h1 ref={heading} id="chat-title" tabIndex={-1} className={cn("m-0 min-w-0 truncate rounded-row px-1.5 py-1 text-ui font-medium outline-none", !session && "sr-only", renaming !== null && "sr-only", session && props.onRename && "cursor-text")} title={props.onRename && session ? "双击改名" : title}

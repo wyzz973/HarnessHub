@@ -89,21 +89,24 @@ export class WorktreeRoutes {
 
   /** The conversations not erased (the deleted ones included), other than `except`, whose workspace is in the worktree at `path`. */
   usedBy(path: string, except: ReadonlySet<string>): SessionId[] {
-    const found: SessionId[] = [], take = (rows: readonly SessionListRow[]) => { for (const row of rows) if (!except.has(row.id) && inside(path, row.workspace)) found.push(row.id); };
-    const { store } = this.options;
+    return this.rows().filter(row => !except.has(row.id) && inside(path, row.workspace)).map(row => row.id);
+  }
+  /** Every conversation not erased, the deleted ones included. */
+  private rows(): SessionListRow[] {
+    const { store } = this.options, rows: SessionListRow[] = [];
     for (let after: SessionListCursor | undefined; ;) {
       const page = store.list({ ...(after === undefined ? {} : { after }), limit: 10_000 });
-      take(page.rows);
+      rows.push(...page.rows);
       if (page.next === null || page.rows.length === 0) break;
       after = page.next;
     }
     if (store.listDeleted !== undefined) for (let before: string | undefined; ;) {
       const page = store.listDeleted({ ...(before === undefined ? {} : { before }), limit: 10_000 });
-      take(page.rows);
+      rows.push(...page.rows);
       if (page.next === null || page.rows.length === 0) break;
       before = page.next;
     }
-    return found;
+    return rows;
   }
 
   /** The worktrees of conversations about to be erased, read while they are there: those of `ids`, or (no `ids`) those of every conversation the user deleted. */
@@ -149,7 +152,8 @@ export class WorktreeRoutes {
   observe(commit: ConversationCommit): void {
     if (this.closed) return;
     const conversation = commit.conversation, worktree = conversation.worktree, title = commit.changes.head?.row.title;
-    if (worktree === undefined || title === undefined || conversation.deletedAt !== undefined) return;
+    // Only the conversation it was made for names it.
+    if (worktree === undefined || worktree.inherited === true || title === undefined || conversation.deletedAt !== undefined) return;
     const temporary = temporaryBranchOf(worktree);
     if (temporary === null || worktree.branch !== temporary) return;
     // The name waits for the best title there will be: the user's or the one its Harness gives (a few words, in its first wrap-up); the first message's only once the
@@ -168,6 +172,11 @@ export class WorktreeRoutes {
       const named = await nameWorktreeBranch(worktree, title);
       if ("kept" in named) { this.options.report("a conversation's worktree keeps its branch " + worktree.branch + " (" + named.kept + ")"); return; }
       this.options.record(id, worktree.branch, named.branch);
+      // The conversations sharing it (delegated, branched) carry the new name too.
+      for (const row of this.rows()) {
+        if (row.id === id || row.worktree?.path !== worktree.path) continue;
+        try { this.options.record(row.id, worktree.branch, named.branch); } catch (error) { this.options.report("a conversation sharing a worktree keeps the branch name " + worktree.branch + " (" + reason(error) + ")"); }
+      }
     } catch (error) { this.options.report("a conversation's worktree keeps its branch " + worktree.branch + " (" + reason(error) + ")"); }
   }
 

@@ -371,7 +371,7 @@ export function decodeSessionSummary(item: unknown): SessionSummary {
 export function decodeWorktreeMark(value: unknown): WorktreeMark | undefined {
   if (value === undefined || value === null || !isRecord(value)) return undefined;
   return typeof value.root === "string" && typeof value.path === "string" && typeof value.branch === "string" && typeof value.baseSha === "string"
-    ? { root: value.root, path: value.path, branch: value.branch, baseSha: value.baseSha } : undefined;
+    ? { root: value.root, path: value.path, branch: value.branch, baseSha: value.baseSha, ...(value.inherited === true ? { inherited: true as const } : {}) } : undefined;
 }
 /** `GET /api/v1/sessions/:id/worktree` (2026-11-14): where the conversation's worktree stands now. */
 export function decodeWorktreeView(value: unknown): WorktreeView {

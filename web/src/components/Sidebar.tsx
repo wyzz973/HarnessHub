@@ -10,7 +10,7 @@ import { errorMessage } from "../api.js";
 import { attentionKind, liveItems, mostUrgent, remaining, secondsLeft } from "../attention.js";
 import { cn } from "../lib/cn.js";
 import { ariaKeys, keyText, useKeys } from "../lib/keys.js";
-import { ago, agoShort, clock, folderName, homePath, inScratch, untilShort } from "../lib/format.js";
+import { ago, agoShort, clock, folderName, homePath, inScratch, projectOf, untilShort } from "../lib/format.js";
 import { markSeen, startSeen, unseen, useSeen } from "../lib/seen.js";
 import { useNotificationChoice } from "../lib/notify.js";
 import { useNow } from "../lib/prefs.js";
@@ -138,16 +138,6 @@ const RANK: Readonly<Record<RowState, number>> = { wait: 0, run: 1, unknown: 2, 
  * first; inside one, those waiting for the user come first, then running ones, then the rest by recency. Projects whose
  * folder names collide carry their parent folder so they can be told apart.
  */
-/**
- * The folder a conversation belongs to in the list: its workspace, or — for one working in a Git worktree of its own — the same place in the repository's main checkout,
- * so that it stands with the project's other conversations.
- */
-function projectOf(session: SessionSummary): string {
-  const worktree = session.worktree;
-  if (worktree === undefined) return session.workspace;
-  const inside = session.workspace === worktree.path ? "" : session.workspace.startsWith(worktree.path + "/") ? session.workspace.slice(worktree.path.length) : null;
-  return inside === null ? session.workspace : worktree.root + inside;
-}
 /** A conversation as a row: what waits in it for the user, and how it stands. */
 function rowOf(session: SessionSummary, waiting: ReadonlyMap<string, readonly AttentionItem[]>, failed: ReadonlySet<string>): Row {
   const items = waiting.get(session.id) ?? [];
@@ -303,7 +293,7 @@ export function Sidebar(props: SidebarProps) {
     const needs = (row: Row): boolean => row.state === "wait" || row.state === "fail" || row.state === "unknown" || (row.state === "idle" && !(page === "chat" && row.session.id === currentId) && unseen(looked, row.session));
     return { need: rows.filter(needs), work: rows.filter(row => !needs(row) && row.state === "run"), rest: rows.filter(row => !needs(row) && row.state !== "run") };
   }, [grouping, rest, bySession, props.failed, looked, page, currentId]);
-  const folder = (session: SessionSummary): string => inScratch(session.workspace, props.scratchRoot) ? "临时对话" : folderName(session.workspace);
+  const folder = (session: SessionSummary): string => inScratch(session.workspace, props.scratchRoot) ? "临时对话" : folderName(projectOf(session));
   // The rows in the order they stand, for ⌥⌘1–9: the pinned, then the groups as they are drawn (a closed project's rows are not in sight, and not counted).
   const shownOrder = [...pinned, ...(grouping === "project" ? groups.flatMap((project, index) => isOpen(project, index) ? project.rows : []) : [...byState.need, ...byState.work, ...byState.rest])].map(row => row.session.id);
   const orderKey = shownOrder.join(",");

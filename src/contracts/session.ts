@@ -412,9 +412,10 @@ export interface SessionSnapshot {
 /**
  * A conversation's own Git worktree (2026-11-14), made from the repository its folder was in: `root` is that repository's main checkout (its top level; the page groups
  * such conversations under it), `path` the worktree's top level, `branch` the branch checked out there (made as `hh/<8 hex>`, renamed once after the conversation's
- * title), `baseSha` the commit it started from. All paths are real paths.
+ * title), `baseSha` the commit it started from. All paths are real paths. `inherited`: made for the conversation this one was delegated or branched from, which it
+ * shares; the worktree goes when the last conversation working in it is erased.
  */
-export interface ConversationWorktree { readonly root: string; readonly path: string; readonly branch: string; readonly baseSha: string }
+export interface ConversationWorktree { readonly root: string; readonly path: string; readonly branch: string; readonly baseSha: string; readonly inherited?: true }
 export interface EventDraft { readonly type: string; readonly data: Readonly<Record<string, unknown>> }
 export interface SessionEvent extends EventDraft {
   readonly sessionId: SessionId;

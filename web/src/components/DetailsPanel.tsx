@@ -456,10 +456,9 @@ function EnvironmentSection({ session, stamp, load, onReveal, harness, tools, on
     {harness}
     {onReveal ? <button type="button" className="row -mx-2 flex min-h-7 min-w-0 items-center gap-2.5 border-none bg-transparent px-2 text-left text-ui-sm hover:bg-subtle" title={"在访达中显示 " + path} onClick={() => onReveal()}>{folder}</button>
       : <div className="flex min-h-7 min-w-0 items-center gap-2.5 text-ui-sm" title={path}>{folder}</div>}
-    {/* Working in a Git worktree of its own (made for it, from the repository's main checkout): said, with where it came from. */}
     {session.worktree ? <div className="flex min-h-7 min-w-0 items-center gap-2.5 text-ui-sm" title={"工作树：" + session.worktree.path + "\n主检出：" + session.worktree.root}>
       <span className="flex size-4 flex-none items-center justify-center text-fg-3"><GitBranchPlus size={14} aria-hidden="true"/></span>
-      <span className="min-w-0 flex-1 trunc text-fg-2">自己的工作树，从 {folderName(session.worktree.root)} 分出</span></div> : null}
+      <span className="min-w-0 flex-1 trunc text-fg-2">{session.worktree.inherited ? "和原对话共用工作树" : "自己的工作树，从 " + folderName(session.worktree.root) + " 分出"}</span></div> : null}
     {tools?.editors?.length && tools.openIn ? <EditorRow editors={tools.editors} onOpenIn={tools.openIn}/> : null}
     {git !== undefined ? <Line icon={<GitBranch size={14} aria-hidden="true"/>} value={git.dirty > 0 && tools?.commit && tools.git
       ? <button type="button" className="link-btn text-ui-sm" onClick={() => setCommitting(true)}>{git.dirty} 个文件未提交 · 提交…</button> : git.dirty > 0 ? git.dirty + " 个文件未提交" : "没有未提交的改动"}><span className="mono text-caption">{git.branch ?? "不在分支上"}</span></Line> : null}

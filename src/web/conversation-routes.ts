@@ -100,7 +100,8 @@ const listMarks = (from: { readonly archived?: true | undefined; readonly pinned
   { readonly archived?: true; readonly pinned?: true; readonly pinnedOrder?: number; readonly snoozedUntil?: number; readonly worktree?: WorktreeMark } =>
   ({ ...(from.archived === true ? { archived: true as const } : {}), ...(from.pinned === true ? { pinned: true as const } : {}),
     ...(from.pinned === true && typeof from.pinnedOrder === "number" && Number.isFinite(from.pinnedOrder) ? { pinnedOrder: from.pinnedOrder } : {}), ...(typeof from.snoozedUntil === "number" ? { snoozedUntil: from.snoozedUntil } : {}),
-    ...(from.worktree === undefined ? {} : { worktree: { root: from.worktree.root, path: from.worktree.path, branch: from.worktree.branch, baseSha: from.worktree.baseSha } }) });
+    ...(from.worktree === undefined ? {} : { worktree: { root: from.worktree.root, path: from.worktree.path, branch: from.worktree.branch, baseSha: from.worktree.baseSha,
+      ...(from.worktree.inherited === true ? { inherited: true as const } : {}) } }) });
 
 /** What the native session changed of its configuration by its own commands since its last Turn under the same epoch: the next Turn applies it (`carriedNativeConfiguration`, domain/state.ts, over the rows). */
 function carriedOf(selection: HarnessSelection, epoch: number, binding: NativeSessionBinding | undefined, last: RunRow | null): { readonly model?: string; readonly options?: NativeOptions } | null {

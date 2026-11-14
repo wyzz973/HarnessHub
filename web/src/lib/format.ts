@@ -45,6 +45,13 @@ export function shortTitle(title: string | null | undefined): string {
 }
 /** The last path segment of a workspace, for compact display; the full path stays in the title attribute. */
 export function folderName(path: string): string { return path.split(/[\\/]/u).filter(Boolean).at(-1) ?? path; }
+/** The project a conversation works on: its workspace, or, in a Git worktree, the same place in the repository's main checkout. */
+export function projectOf(session: { readonly workspace: string; readonly worktree?: { readonly root: string; readonly path: string } | undefined }): string {
+  const worktree = session.worktree;
+  if (worktree === undefined) return session.workspace;
+  const inside = session.workspace === worktree.path ? "" : session.workspace.startsWith(worktree.path + "/") ? session.workspace.slice(worktree.path.length) : null;
+  return inside === null ? session.workspace : worktree.root + inside;
+}
 /** Whether a conversation's workspace is one the Gateway made for it (it was started without a folder). */
 export function inScratch(workspace: string, scratchRoot: string | undefined): boolean {
   return scratchRoot !== undefined && scratchRoot !== "" && workspace.startsWith(scratchRoot.replace(/\/+$/u, "") + "/");

@@ -48,7 +48,7 @@ import { hiddenHarnesses, readPreferences, useMedia, useNow, usePreferences } fr
 import { endedAt, over, userStopped } from "./lib/protocol/runs.js";
 import { finished } from "./lib/turn.js";
 import { cn } from "./lib/cn.js";
-import { inScratch, shortTitle } from "./lib/format.js";
+import { inScratch, projectOf, shortTitle } from "./lib/format.js";
 import { setBadge } from "./lib/badge.js";
 import { actionOf, keyText, useKeys } from "./lib/keys.js";
 import { markSeen, markUnseen, unseenNow } from "./lib/seen.js";
@@ -1525,7 +1525,7 @@ export function App() {
     }
   }, [state?.sessions]);
   // The folders of earlier conversations, newest first, then the Gateway's own; those the Gateway made for a 临时对话 are not projects.
-  const recentFolders = useMemo(() => [...new Set([...(state?.sessions ?? []).map(item => item.workspace), state?.workspace ?? ""].filter(path => path !== "" && !inScratch(path, state?.scratchRoot)))].slice(0, 8), [state?.sessions, state?.workspace, state?.scratchRoot]);
+  const recentFolders = useMemo(() => [...new Set([...(state?.sessions ?? []).map(projectOf), state?.workspace ?? ""].filter(path => path !== "" && !inScratch(path, state?.scratchRoot)))].slice(0, 8), [state?.sessions, state?.workspace, state?.scratchRoot]);
   const failed = useMemo(() => new Set((state?.sessions ?? []).flatMap(item => {
     const known = outcomes.get(item.id);
     return known?.status === "failed" && known.seq === item.updatedSeq ? [item.id] : [];

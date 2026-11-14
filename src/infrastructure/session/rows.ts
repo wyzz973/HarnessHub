@@ -30,12 +30,12 @@ export function listMarksOf(from: { readonly archived?: true | undefined; readon
     ...(from.pinned === true && typeof from.pinnedOrder === "number" && Number.isFinite(from.pinnedOrder) ? { pinnedOrder: from.pinnedOrder } : {}),
     ...(typeof from.snoozedUntil === "number" && Number.isSafeInteger(from.snoozedUntil) ? { snoozedUntil: from.snoozedUntil } : {}), ...(worktree === null ? {} : { worktree }) };
 }
-/** A worktree record as it was written: four texts, kept as they are (in this key order); anything else is no record. */
+/** A worktree record as it was written: four texts and the `inherited` mark, kept as they are (in this key order); anything else is no record. */
 export function worktreeOf(value: unknown): ConversationWorktree | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as Record<string, unknown>;
   return typeof item.root === "string" && typeof item.path === "string" && typeof item.branch === "string" && typeof item.baseSha === "string"
-    ? { root: item.root, path: item.path, branch: item.branch, baseSha: item.baseSha } : null;
+    ? { root: item.root, path: item.path, branch: item.branch, baseSha: item.baseSha, ...(item.inherited === true ? { inherited: true as const } : {}) } : null;
 }
 const bit = (value: boolean): 0 | 1 => value ? 1 : 0;
 /** Whether a text holds no lone surrogate. */

@@ -286,6 +286,10 @@ function wroteRows(changes: Placed["changes"]): boolean {
   return (changes.items?.length ?? 0) > 0 || (changes.text?.length ?? 0) > 0 || (changes.contentRefs?.length ?? 0) > 0 || (changes.noticePrints?.length ?? 0) > 0;
 }
 function event(type: string, data: Readonly<Record<string, unknown>>): EventDraft { return { type, data }; }
+/** A delegation or branch works in its source's folder, so in its source's worktree too: it carries the record, so the last one erased can still remove it. */
+function sharedWorktree(source: Conversation): { readonly worktree?: ConversationWorktree } {
+  return source.worktree === undefined ? {} : { worktree: { ...source.worktree, inherited: true } };
+}
 const BOARD_WORDS: Readonly<Record<BoardKind, string>> = { goal: "目标", constraint: "约束", decision: "决定", note: "备注" };
 /**
  * The task's board as a Harness reads it: its goal, then the constraints, the decisions and the notes, each with who wrote it — the user's own, or a Harness's reading
@@ -1116,7 +1120,7 @@ export class SessionRuntime {
     const parts = originToRows(id, { kind: "fork", sessionId: sourceId, throughRunId: through.id, history }, last);
     const state: Conversation = { id, version: 0, lastSeq: 0, format: CONVERSATION_FORMAT, epoch: 1, status: "open", configuration: loaded.configuration, selection: loaded.selection,
       activeRunId: null, pendingSwitchId: null, runs: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
-      origin: parts.stored,
+      origin: parts.stored, ...sharedWorktree(loaded),
       ...(nativeFork ? { nativeBindings: [{ harnessId: native.harnessId, controlId: native.controlId, checkpoint: native.checkpoint, throughRunId: null, status: "fork-pending" as const,
         relay: initialBindingRelay([], native.harnessId, native.controlId, "fork") }] } : {}) };
     try {
@@ -1157,7 +1161,7 @@ export class SessionRuntime {
     const parts = through === undefined ? null : originToRows(id, { kind: "fork", sessionId: sourceId, throughRunId: through.id, history }, last);
     const state: Conversation = { id, version: 0, lastSeq: 0, format: CONVERSATION_FORMAT, epoch: 1, status: "open", configuration: loaded.configuration, selection: validated,
       activeRunId: null, pendingSwitchId: null, runs: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
-      ...(parts === null ? {} : { origin: parts.stored }), delegation: asking === undefined ? { parentId: sourceId, afterRunId: through?.id ?? null } : { parentId: sourceId, afterRunId: asking, by: "harness" } };
+      ...(parts === null ? {} : { origin: parts.stored }), ...sharedWorktree(loaded), delegation: asking === undefined ? { parentId: sourceId, afterRunId: through?.id ?? null } : { parentId: sourceId, afterRunId: asking, by: "harness" } };
     try {
       const committed = this.store.create(state, [event("session.created", { selection: validated, continuity: "public_context_rehydrate",
         ...(through === undefined ? {} : { origin: { sessionId: sourceId, throughRunId: through.id, messages: history.length, nativeFork: false } }) })], parts?.rows);
