@@ -1224,8 +1224,8 @@ test("a waiting approval is marked in the sidebar with whose deadline it is, cou
   await page.getByRole("button", { name: "新对话", exact: true }).click();
   const waiting = page.locator(".session-item.has-attention");
   await expect(waiting).toHaveCount(1); await expect(page.locator(".attention-count")).toHaveText("1");
-  const line = waiting.locator(".attention-line");
-  await expect(line).toHaveText(/^等你批准 · 原程序期限 \d+ 秒后自动拒绝$/u);
+  const line = waiting.locator(".session-when");
+  await expect(line).toHaveText(/^\d+ 秒$/u); await expect(line).toHaveAttribute("title", /原程序/u);
   const seconds = async () => Number(/(\d+) 秒/u.exec((await line.textContent()) ?? "")?.[1]);
   const first = await seconds(); await page.waitForTimeout(2200); const later = await seconds();
   assert.ok(first <= 60 && later < first, `${first} then ${later}`);
@@ -1283,7 +1283,7 @@ test("a Turn that comes to a directory another conversation works in does not wa
   const card = page.getByRole("region", { name: "工具审批", exact: true });
   await expect(card).toContainText("rm -rf build", { timeout: 15000 });
   await expect(card.locator(".permission-deadline")).toHaveCount(0);
-  await expect(page.locator(".session-item.has-attention .attention-line")).toHaveText("等你批准"); await expect(page.locator(".session-item.has-attention .attention-line")).toHaveAttribute("title", "原程序会一直等待你的决定。");
+  await expect(page.locator(".session-item.has-attention .session-when")).toHaveText("等你批准"); await expect(page.locator(".session-item.has-attention .session-when")).toHaveAttribute("title", "原程序会一直等待你的决定。");
   // A second conversation in the same directory does not queue behind it: it runs, and its Turn says the other one is there, as every notice of a Turn does.
   await page.getByRole("button", { name: "新对话", exact: true }).click();
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Shared Agent", exact: true }).click();
@@ -2395,8 +2395,8 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
   // also takes esc in the composer, so its row gives both.
   await page.keyboard.press("ControlOrMeta+/");
   const sheet = page.getByRole("dialog", { name: "快捷键" });
-  for (const [label, keys, caps = [...keys.matchAll(/[A-Za-z]{2,}|\S/gu)].length] of [["新对话", "⇧⌘O"], ["搜索与命令", "⌘K"], ["换 Harness", "⌘J"], ["停止当前回复", "⌘.或esc", 3], ["打开或收起详情面板", "⌘\\"],
-    ["下一件“等你处理”", "⌥⌘↓"], ["允许一次", "⏎"], ["拒绝这次请求", "esc"], ["编辑上一条（输入框为空时）", "↑"], ["原生命令 · 引用文件", "/@"], ["全部快捷键", "⌘/"], ["关闭弹出层", "esc"]] as readonly (readonly [string, string, number?])[]) {
+  for (const [label, keys, caps = [...keys.matchAll(/[A-Za-z]{2,}|\S/gu)].length] of [["新对话", "⇧⌘O"], ["搜索与命令", "⌘K"], ["换 Harness", "⌘J"], ["停止回复", "⌘.或esc", 3], ["详情栏", "⌘\\"],
+    ["下一件等你处理", "⌥⌘↓"], ["允许一次", "⏎"], ["拒绝", "esc"], ["编辑上一条", "↑"], ["命令 · 引用文件", "/@"], ["全部快捷键", "⌘/"], ["关闭", "esc"]] as readonly (readonly [string, string, number?])[]) {
     const line = sheet.locator("dl > div").filter({ has: page.getByText(label, { exact: true }) });
     await expect(line).toHaveText(label + keys); await expect(line.locator("kbd")).toHaveCount(caps);
   }
@@ -2574,7 +2574,7 @@ test("G054-UP1 an upgrade first says what it restarts, closes and leaves on the 
   // The old refusal, which told users to end a task that did not exist, is explained as what it was.
   await detail.getByRole("combobox", { name: "选择安装任务" }).selectOption(legacy.id);
   await expect(detail.locator(".installation-state")).toContainText("没有升级");
-  await expect(detail).toContainText("开始前发现这个程序正在运行（例如它的后台服务），按当时的规则没有升级。现在再点升级，会先列出需要重启或关闭的程序，由你确认后再升级。");
+  await expect(detail).toContainText("它正在运行，没有升级；再点升级会先列出要重启的程序。");
   await expect(detail).not.toContainText("请结束对应任务");
   await page.screenshot({ path: join(artifact, "upgrade-unchanged.png"), animations: "disabled" });
   assert.deepEqual(errors, []);
@@ -2740,7 +2740,7 @@ test("G054-OC1 a Harness lists each official installation with the one in use, a
   await expect(codex.getByRole("button", { name: /^卸载/u })).toHaveCount(3);
   await expect(codex.locator(".harness-installations li").first().locator("[title]")).toHaveAttribute("title", "按 HarnessHub 服务进程的 PATH 顺序；终端里可能不同");
   // A development Gateway says it accepts unofficial entries; this fixture is one.
-  await expect(page.locator(".development-entries")).toHaveText("开发模式：接受非官网安装。服务以 --allow-unofficial 启动，列表里的开发入口不是正式安装。");
+  await expect(page.locator(".development-entries")).toHaveText("开发模式：也接受非官网安装。");
   await expect(codex.locator(".harness-unofficial")).toHaveText("在 PATH 中发现一个非官网安装（开发目录、npm link 或其他），命令名 codex；平台不使用也不维护它。终端里 codex 运行的是这份非官网安装；HarnessHub 使用的是标为“当前使用”的官网安装。");
   // Pictured once the details have slid in.
   await expect.poll(() => codex.evaluate(element => getComputedStyle(element).opacity === "1" && getComputedStyle(element).transform === "none")).toBe(true);
@@ -3165,7 +3165,7 @@ test("G054-CA2 turning a skill off shows the file and the exact change first, se
   await expect(switches.getByRole("button")).toHaveText(["在 Claude Code 中停用", "在 Codex 中停用（共享目录）", "在 Codex 中停用（自有目录）", "在 Hermes Agent 中停用", "在 OpenClaw 中停用"]);
   await switches.getByRole("button", { name: "在 Claude Code 中停用", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "在 Claude Code 中停用 alpha" });
-  for (const text of ["~/.claude/settings.json", "不是 HarnessHub 写的", "原来是 user-invocable-only", "写入前先备份原文件"]) await expect(dialog).toContainText(text);
+  for (const text of ["~/.claude/settings.json", "不是 HarnessHub 写的", "原来是 user-invocable-only", "先备份"]) await expect(dialog).toContainText(text);
   await expect(dialog.locator(".capability-diff .text-red")).toHaveText(["-    \"alpha\": \"user-invocable-only\""]);
   await expect(dialog.locator(".capability-diff .text-green")).toHaveText(["+    \"alpha\": \"off\""]);
   assert.deepEqual(Object.fromEntries(checks[0]!), { harnessId: "claude", name: "alpha", enabled: "false" }, "no copy is named for a Harness that switches by name");
@@ -3336,7 +3336,7 @@ test("G054-CA4 what HarnessHub wrote and someone else then removed is shown with
   await page.getByRole("complementary", { name: "主导航" }).getByRole("button", { name: "能力", exact: true }).click();
   // Each one says what HarnessHub wrote, where, and what became of it; nothing was sent yet.
   const notice = page.locator(".capability-drift");
-  await expect(notice).toContainText("HarnessHub 写过的 2 项设置已不在原处"); await expect(notice).toContainText("HarnessHub 不会自动改回");
+  await expect(notice).toContainText("HarnessHub 写过的 2 项设置已不在原处"); await expect(notice).toContainText("可以重新应用，或不再跟踪");
   await expect(notice.locator("li")).toHaveText([/Hermes Agent · 共享目录 · ~\/\.agents\/skills已被外部移除~\/\.hermes\/config\.yaml/u, /Claude Code · 技能开关 · alpha已被外部改动~\/\.claude\/settings\.json/u]);
   assert.deepEqual([requests, posted, forgotten], [[], [], []]);
   // Re-applying shows the usual check first and sends exactly that check.
@@ -3587,7 +3587,7 @@ test("G054-CA7 the instructions are edited and saved without touching any Harnes
   await captureDialog(page, dialog, "instructions-blocked-dialog");
   await dialog.getByRole("button", { name: "我知道，仍然写入" }).click();
   await expect(dialog.locator(".capability-diff .text-green")).toHaveText(["+<!-- harnesshub:begin id=instructions sha=0123456789ab -->", "+回复使用中文。", "+<!-- harnesshub:end id=instructions -->"]);
-  await expect(dialog).toContainText("只改 HarnessHub 的区块，区块外的内容不变");
+  await expect(dialog).toContainText("只改 HarnessHub 的区块");
   await dialog.getByRole("button", { name: "写入", exact: true }).click(); await expect(dialog).toBeHidden();
   await expect(gemini).toContainText("已写入");
   assert.deepEqual(checks, ["instructions/sync?harnessId=gemini", "instructions/sync?harnessId=gemini&options=acknowledge-cc-switch"]);
@@ -3715,7 +3715,7 @@ test("G054-CA9 the plugins tab says whose plugins can be switched and why the ot
   await page.screenshot({ path: join(artifact, "capabilities-plugins.png"), animations: "disabled", fullPage: true }); await captureDark(page, "capabilities-plugins");
   await switches.getByRole("button", { name: "在 Claude Code 中停用", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "在 Claude Code 中停用插件 tool@market" });
-  for (const text of ["~/.claude/settings.json", "/reload-plugins", "关不掉项目启用的插件", "写入前先备份原文件"]) await expect(dialog).toContainText(text);
+  for (const text of ["~/.claude/settings.json", "/reload-plugins", "关不掉项目启用的插件", "先备份"]) await expect(dialog).toContainText(text);
   await expect(dialog.locator(".capability-diff .text-red")).toHaveText(["-    \"tool@market\": true,"]);
   await expect(dialog.locator(".capability-diff .text-green")).toHaveText(["+    \"tool@market\": false,"]);
   assert.deepEqual(Object.fromEntries(checks[0]!), { harnessId: "claude", id: "tool@market", enabled: "false" });
@@ -4129,7 +4129,7 @@ test("G054-FZ1 the frozen Harnesses stay out of the picker, the welcome, the pal
   await navigation.getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
   const toggle = page.getByRole("switch", { name: FROZEN_SWITCH });
-  await expect(page.locator(".frozen-setting")).toContainText("不再打磨的 Harness；用过它们的对话照常打开。");
+  await expect(page.locator(".frozen-setting")).toContainText("显示冻结的 Harness");
   await expect(toggle).not.toBeChecked(); await toggle.click(); await expect(toggle).toBeChecked();
   await page.keyboard.press("Escape");
   // Shown: the installed one is listed with its mark, and only it carries one (only the Harnesses the Hub carries in full are offered for

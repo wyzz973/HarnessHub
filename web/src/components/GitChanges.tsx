@@ -69,7 +69,7 @@ export function GitScopeMenu({ access, scope, onScope }: { readonly access: GitA
     ...(branch?.defaultBranch && branch.defaultBranch !== branch.current ? [{ value: "branch:" + branch.defaultBranch, label: "相对 " + branch.defaultBranch + " 的全部改动", group: "范围" }] : []),
     ...others.map(name => ({ value: "branch:" + name, label: "相对 " + name, group: "相对别的分支" })),
     // What each Turn changed, from the snapshots before and after it (after T3 Code's per-Turn diff).
-    ...turns.map(turn => ({ value: "turn:" + turn.ordinal, label: "第 " + (turn.ordinal + 1) + " 轮", ...(turn.after === undefined ? { description: "还没有结束时的快照：对比现在的文件" } : {}), group: "每一轮改了什么" })),
+    ...turns.map(turn => ({ value: "turn:" + turn.ordinal, label: "第 " + (turn.ordinal + 1) + " 轮", ...(turn.after === undefined ? { description: "进行中" } : {}), group: "每一轮改了什么" })),
     ...(commits ?? []).map(commit => ({ value: "commit:" + commit.sha, label: commit.short + " " + commit.subject, ...(commit.author ? { description: commit.author } : {}), group: "这个分支的提交" })),
   ];
   const value = scope === null ? "" : scope.kind === "uncommitted" ? "uncommitted" : scope.kind === "branch" ? "branch:" + (scope.base ?? branch?.defaultBranch ?? "") : scope.kind === "turn" ? "turn:" + scope.ordinal : "commit:" + scope.sha;

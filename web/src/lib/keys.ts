@@ -8,12 +8,12 @@ import { useSyncExternalStore } from "react";
 export type KeyAction = "new" | "palette" | "shortcuts" | "nextWaiting" | "previous" | "next" | "sidebar" | "panel" | "picker" | "model" | "effort" | "permission" | "stop" | "terminal" | "find";
 export interface Chord { readonly code: string; readonly alt: boolean; readonly shift: boolean }
 export const KEY_ACTIONS: readonly { readonly id: KeyAction; readonly label: string; readonly group: "通用" | "对话" }[] = [
-  { id: "new", label: "新对话", group: "通用" }, { id: "palette", label: "搜索与命令", group: "通用" }, { id: "nextWaiting", label: "下一件“等你处理”", group: "通用" },
-  { id: "previous", label: "上一个对话", group: "通用" }, { id: "next", label: "下一个对话", group: "通用" }, { id: "sidebar", label: "收起或展开侧栏", group: "通用" },
+  { id: "new", label: "新对话", group: "通用" }, { id: "palette", label: "搜索与命令", group: "通用" }, { id: "nextWaiting", label: "下一件等你处理", group: "通用" },
+  { id: "previous", label: "上一个对话", group: "通用" }, { id: "next", label: "下一个对话", group: "通用" }, { id: "sidebar", label: "侧栏", group: "通用" },
   { id: "shortcuts", label: "全部快捷键", group: "通用" },
   { id: "picker", label: "换 Harness", group: "对话" }, { id: "model", label: "选模型", group: "对话" }, { id: "effort", label: "选思考强度", group: "对话" }, { id: "permission", label: "选权限", group: "对话" },
-  { id: "stop", label: "停止当前回复", group: "对话" }, { id: "panel", label: "打开或收起详情面板", group: "对话" },
-  { id: "terminal", label: "打开或收起终端", group: "对话" }, { id: "find", label: "在对话里查找", group: "对话" },
+  { id: "stop", label: "停止回复", group: "对话" }, { id: "panel", label: "详情栏", group: "对话" },
+  { id: "terminal", label: "终端", group: "对话" }, { id: "find", label: "查找", group: "对话" },
 ];
 export const DEFAULT_KEYS: Readonly<Record<KeyAction, Chord>> = {
   new: { code: "KeyO", alt: false, shift: true }, palette: { code: "KeyK", alt: false, shift: false }, shortcuts: { code: "Slash", alt: false, shift: false },

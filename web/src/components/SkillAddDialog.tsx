@@ -32,7 +32,7 @@ export function SkillAddDialog({ api, open, onClose, onChange }: { readonly api:
     onClose();
   };
   const toggle = (name: string) => setChosen(current => { const next = new Set(current); if (next.has(name)) next.delete(name); else next.add(name); return next; });
-  return <Dialog open={open} onOpenChange={value => { if (!value && !busy) onClose(); }} title="从 GitHub 添加技能" description="技能放进共享目录 ~/.agents/skills，各 Harness 按自己的方式读取。" className="skill-add-dialog w-[min(640px,calc(100vw-32px))]">
+  return <Dialog open={open} onOpenChange={value => { if (!value && !busy) onClose(); }} title="从 GitHub 添加技能" description="放进共享目录 ~/.agents/skills。" className="skill-add-dialog w-[min(640px,calc(100vw-32px))]">
     <div className={DIALOG_BODY}>
       <form className="flex gap-2" onSubmit={event => { event.preventDefault(); read(); }}>
         <label className="flex h-[34px] min-w-0 flex-1 items-center gap-2 rounded-control bg-surface px-2.5 text-fg-3 shadow-[inset_0_0_0_1px_var(--border-strong)] focus-within:shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_var(--accent-soft)]">
@@ -40,7 +40,7 @@ export function SkillAddDialog({ api, open, onClose, onChange }: { readonly api:
           <input className="h-full min-w-0 flex-1 border-0 bg-transparent p-0 text-ui-sm text-fg outline-none placeholder:text-placeholder" aria-label="GitHub 仓库" placeholder="owner/repo 或 https://github.com/owner/repo" value={source} onChange={event => setSource(event.target.value)}/></label>
         <button type="submit" className="btn" disabled={busy || !source.trim()}>{busy ? <Spinner size={13} label=""/> : null}读取</button>
       </form>
-      <p className="m-0 text-caption text-fg-3">只读取 GitHub 上的公开仓库，不使用任何令牌。metadata.json、.git 等不会复制，与 npx skills 一致。</p>
+      <p className="m-0 text-caption text-fg-3">只读 GitHub 公开仓库，不用令牌。</p>
       {failure ? <Notice tone="red">{failure}</Notice> : null}
       {busy ? <p className="m-0 flex items-center gap-2 text-fg-2" role="status"><Spinner size={14} label=""/>正在下载并读取仓库…</p> : null}
       {listing ? <>

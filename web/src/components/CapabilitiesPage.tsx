@@ -28,9 +28,9 @@ const KIND_ICON: Readonly<Record<CapabilityKind, LucideIcon>> = { skill: BookOpe
 /** What the first column of a category's matrix names. */
 const KIND_HEAD: Readonly<Record<CapabilityKind, string>> = { skill: "技能 · 来源", mcp: "服务器 · 位置", instructions: "指令文件", subagent: "子 Agent · 位置", plugin: "插件 · 来源", hook: "Hook · 位置", command: "命令 · 位置" };
 /** One line under a category's title: what it shows, then what the user can do there (results first, ADR-054 F11). */
-const KIND_HINT: Readonly<Record<CapabilityKind, string>> = { skill: "各 Harness 读到的技能，以及经由哪里读到。", mcp: "各 Harness 读到的 MCP 服务器；读取时不启动它们。下方的统一清单可以按每家的写法写入。",
-  instructions: "各 Harness 读的用户级指令文件。下方可以写一份共享指令，以带标记的区块写进去。", subagent: "各 Harness 读到的子 Agent。下方的统一清单可以按每家的格式写进去。",
-  plugin: "各 Harness 装的插件；这里只读。", hook: "各 Harness 在用户级配置里登记的 Hooks；这里只读。", command: "各 Harness 的自定义命令；这里只读。" };
+const KIND_HINT: Readonly<Record<CapabilityKind, string>> = { skill: "各 Harness 读到的技能，以及经由哪里读到。", mcp: "各 Harness 的 MCP 服务器。",
+  instructions: "各 Harness 的用户级指令。", subagent: "各 Harness 的子 Agent。",
+  plugin: "各 Harness 装的插件；这里只读。", hook: "各 Harness 的 Hooks，只读。", command: "各 Harness 的自定义命令；这里只读。" };
 const PICK_HINT = "点格子启用，写入前先给你看改动。";
 const MECHANISM_LABEL: Readonly<Record<CapabilityMechanism, string>> = { "native-shared": "共享目录", linked: "链接", "own-copy": "自有目录", "compat-root": "兼容读取", "external-dir": "外加目录",
   plugin: "插件", bundled: "内置", synced: "账户同步", config: "配置" };
@@ -313,7 +313,7 @@ function DriftNotice({ api, drift, harnesses, onChange, onForgotten }: { readonl
   const [busy, setBusy] = useState<string | null>(null), [failure, setFailure] = useState<string | null>(null);
   const forget = (id: string) => { setBusy(id); setFailure(null); api.forgetDrift(id).then(() => { setBusy(null); onForgotten(); }, error => { setBusy(null); setFailure(errorMessage(error)); }); };
   return <Notice tone="amber" className="capability-drift" title={"HarnessHub 写过的 " + drift.length + " 项设置已不在原处"}>
-    <p className="m-0">多半是 Harness 自己重写了配置文件，或在别处改过。HarnessHub 不会自动改回：可以重新应用（先显示改动），或不再跟踪（文件不变）。</p>
+    <p className="m-0">配置在别处被改过：可以重新应用，或不再跟踪。</p>
     <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">{drift.map(item => <li key={item.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-fg">
       <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {item.kind === "mcp" ? "MCP" : item.kind === "instructions" ? "指令区块" : item.kind === "subagent" ? "子 Agent" : item.kind === "plugin" ? "插件" : CHANGE_LABEL[item.kind]} · {item.subject}</strong>
       <Badge tone="amber">{item.kind === "mcp" && item.harnessId === "claude" && item.state === "removed" ? "写入丢失（可能被运行中的 Claude Code 会话冲掉）" : DRIFT_LABEL[item.state]}</Badge><code className="text-caption break-all text-fg-2">{item.file}</code>
@@ -331,8 +331,8 @@ function DriftNotice({ api, drift, harnesses, onChange, onForgotten }: { readonl
 function OrphanNotice({ api, orphans, harnesses, onChange }: { readonly api: GatewayApi; readonly orphans: readonly CapabilityOrphan[]; readonly harnesses: readonly HarnessCapabilityReads[]; readonly onChange: (request: ChangeRequest) => void }) {
   const skills = orphans.some(item => item.kind === "skill"), plugins = orphans.some(item => item.kind === "plugin");
   return <Notice tone="neutral" className="capability-orphans" title={"孤立的停用设置（" + (skills && plugins ? "技能已删除或插件已卸载" : plugins ? "插件已卸载" : "技能已删除") + "）" + orphans.length + " 项"}>
-    <p className="m-0">{skills && plugins ? "HarnessHub 写的这些停用设置还在，技能已经不在或插件已经卸载：现在不起作用，以后再出现同名的技能或插件时会再次生效。"
-      : plugins ? "HarnessHub 为这些插件写的停用设置还在，插件已经卸载：现在不起作用，以后再装同名插件时会再次生效。" : "HarnessHub 为这些技能写的停用设置还在，技能已经不在了：现在不起作用，以后添加同名技能时会再次生效。"}</p>
+    <p className="m-0">{skills && plugins ? "这些停用设置还在，对象已不在；同名的再出现时会生效。"
+      : plugins ? "这些插件已卸载，停用设置还在；再装同名插件时生效。" : "这些技能已不在，停用设置还在；再加同名技能时生效。"}</p>
     <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">{orphans.map(item => <li key={item.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-fg">
       <strong className="font-medium">{harnesses.find(harness => harness.harnessId === item.harnessId)?.name ?? item.harnessId} · {skills && plugins ? (item.kind === "plugin" ? "插件 · " : "技能 · ") : ""}{item.subject}</strong><code className="text-caption break-all text-fg-2">{item.file}</code>
       <button type="button" className="btn btn-sm" onClick={() => onChange({ title: "清除停用设置：" + item.subject, verb: "清除", on: true, done: "已清除 " + item.subject + " 的停用设置", load: () => api.checkOrphanClear(item.id) })}>清除</button>
@@ -710,7 +710,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
           {view === null ? <>
             {problem ? <Notice tone="red" action={<button type="button" className="btn btn-sm" onClick={() => load()}>重试</button>}>{problem}</Notice> : null}
             {loading ? <p className="m-0 flex items-center gap-2 text-ui-sm text-fg-2" role="status"><Spinner size={14} label=""/>正在读取各 Harness 的配置</p> : null}
-          </> : !ready ? <EmptyState title="没有找到官网安装的 Harness">在 Harness 页安装或重新检测后，这里会列出它们读取的能力。</EmptyState>
+          </> : !ready ? <EmptyState title="没有找到官网安装的 Harness"/>
             : <div role="tabpanel" id="capability-tabpanel" aria-labelledby={"capability-tab-" + kind} className="flex flex-col gap-5">{content}</div>}
         </div>
       </div>

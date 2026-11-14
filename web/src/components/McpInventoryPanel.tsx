@@ -61,7 +61,7 @@ function ServerDialog({ api, editing, onClose, onSaved }: { readonly api: Gatewa
       <button type="button" className="icon-btn icon-btn-sm" aria-label="删除这一行" onClick={() => set(items.filter((_, at) => at !== index))}><Trash2 size={14}/></button>
     </div>)}
     <button type="button" className="btn btn-ghost btn-sm -ml-2.5 self-start" onClick={() => set([...items, { kind: "variable", key: "", variable: "", value: "", prefix: headerRows ? "Bearer " : "" }])}><Plus size={13}/>添加</button></fieldset>;
-  return <Dialog open={editing !== null} onOpenChange={open => { if (!open && !busy) onClose(); }} title={editing?.name ? "编辑 " + editing.name : "新建 MCP 服务器"} description="只保存变量名与普通设置；密钥留在你的环境里，HarnessHub 不保存任何密钥值。" className="mcp-server-dialog w-[min(640px,calc(100vw-32px))]">
+  return <Dialog open={editing !== null} onOpenChange={open => { if (!open && !busy) onClose(); }} title={editing?.name ? "编辑 " + editing.name : "新建 MCP 服务器"} description="只存变量名，不存密钥值。" className="mcp-server-dialog w-[min(640px,calc(100vw-32px))]">
     <div className={DIALOG_BODY}>
       {failure ? <Notice tone="red">{failure}</Notice> : null}
       {editing?.name ? null : <Field label="名称"><input className="field" aria-label="服务器名称" value={name} placeholder="filesystem" onChange={event => setName(event.target.value)}/></Field>}
@@ -94,7 +94,7 @@ function ImportDialog({ api, view, open, onClose, onImported }: { readonly api: 
     try { for (const [id, claim] of chosen) await api.importMcpServer(id, [...claim]); setBusy(false); onImported(chosen.size); }
     catch (error) { setBusy(false); setFailure(errorMessage(error)); }
   };
-  return <Dialog open={open} onOpenChange={value => { if (!value && !busy) onClose(); }} title="从现有配置导入 MCP 服务器" description="收进 HarnessHub 的清单；勾选“认领”的 Harness 里那一项会记为 HarnessHub 管理的。不改任何配置文件。" className="mcp-import-dialog w-[min(680px,calc(100vw-32px))]">
+  return <Dialog open={open} onOpenChange={value => { if (!value && !busy) onClose(); }} title="从现有配置导入 MCP 服务器" description="收进清单，不改配置文件。" className="mcp-import-dialog w-[min(680px,calc(100vw-32px))]">
     <div className={DIALOG_BODY}>
       {failure ? <Notice tone="red">{failure}</Notice> : null}
       {view.candidates.length === 0 ? <p className="m-0 text-fg-3">各 Harness 的用户级配置里没有 MCP 服务器。</p>
@@ -138,7 +138,7 @@ export function McpInventoryPanel({ api, harness, reload, onChange, onNotice }: 
   return <section className="mcp-inventory card px-4 py-3.5 text-ui-sm" aria-label="MCP 统一清单">
     <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
       <div className="flex min-w-0 max-w-reading flex-col gap-0.5"><h3 className="m-0 text-ui font-semibold">MCP 统一清单</h3>
-        <span className="text-caption text-fg-3">HarnessHub 保存一份服务器清单（不保存任何密钥值），按各 Harness 自己的写法写入它们的用户级配置。</span></div>
+        <span className="text-caption text-fg-3">一份清单，按各家的写法写进它们的配置。</span></div>
       <div className="flex flex-wrap gap-1.5">
         <button type="button" className="btn btn-sm" disabled={view === null} onClick={() => setImporting(true)}><Download size={13}/>从现有配置导入{fresh ? "（" + fresh + "）" : ""}</button>
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing({ name: null, definition: EMPTY })}><Plus size={13}/>新建服务器</button>
@@ -146,7 +146,7 @@ export function McpInventoryPanel({ api, harness, reload, onChange, onNotice }: 
     </div>
     {problem ? <Notice tone="red" className="mt-3">{problem}</Notice> : null}
     {view === null ? problem ? null : <p className="m-0 mt-3 flex items-center gap-2 text-fg-2" role="status"><Spinner size={13} label=""/>正在读取清单</p>
-      : view.servers.length === 0 ? <p className="m-0 mt-3 text-fg-3">清单是空的。可以从各 Harness 现有的配置导入，或新建一个。</p>
+      : view.servers.length === 0 ? <p className="m-0 mt-3 text-fg-3">清单是空的。</p>
       : <div className="mt-3 overflow-x-auto"><table className="mcp-servers w-full border-collapse text-left">
         <thead><tr className="hairline-b"><th scope="col" className="min-w-[220px] py-2 pr-3 text-caption font-normal text-fg-3">服务器</th>
           {columns.map(item => <th key={item.harnessId} scope="col" className="min-w-[96px] px-2 py-2 text-caption font-normal text-fg-2" title={item.reason ?? undefined}>

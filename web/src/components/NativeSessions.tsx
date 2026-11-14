@@ -65,7 +65,7 @@ export function NativeSessionsPanel({ load, onImport, onOpen, disabled, side = "
       {state.loading ? <p className="m-0 flex items-center gap-2 px-2 py-1.5 text-ui-sm text-fg-3"><Spinner size={13} label=""/>正在从本机安装读取…</p> : null}
       {state.value?.nextCursor && !state.loading ? <button type="button" className="btn btn-ghost btn-sm self-start" onClick={() => read(state.value!.nextCursor!)}>加载更早的会话</button> : null}
       {hidden > 0 && !state.loading ? <p className="m-0 px-2 text-caption text-fg-3">已隐藏 {hidden} 个 HarnessHub 读取模型列表时建立的空会话。<button type="button" className="link-btn" onClick={() => { setProbes(true); read(undefined, true); }}>显示</button></p> : null}
-      <p className="m-0 mt-1 px-2 pt-2 pb-1 text-caption text-fg-3 hairline-t">接续后，新消息直接发给这个本机会话，它记得自己的全部历史；对话里引用最近的消息。请不要同时在原程序中继续它。</p>
+      <p className="m-0 mt-1 px-2 pt-2 pb-1 text-caption text-fg-3 hairline-t">接续后别在原程序里同时继续它。</p>
     </div>
   </Popover>;
 }

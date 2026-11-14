@@ -102,10 +102,10 @@ export const UserMessage = memo(function UserMessage({ message, run, onEdit, bra
           onChange={event => setEditing(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void send(); } else if (event.key === "Escape") setEditing(null); }}/>
         {restorable ? <label className="flex cursor-pointer items-center gap-2 text-caption text-fg-2">
           <input type="checkbox" className="size-3.5 accent-[var(--accent)]" checked={revert} onChange={event => setRevert(event.target.checked)}/>
-          同时把文件还原到这一轮之前（现在的文件先存一份，可以找回）</label> : null}
+          同时还原文件到这一轮之前</label> : null}
         {restoreProblem ? <p className="m-0 text-caption break-words text-red" role="alert">{restoreProblem}</p> : null}
         <div className="flex items-center justify-end gap-2">
-          <small className="mr-auto text-caption text-fg-3">{busy ? BUSY : "从这里开一个分支重发，原来的回合留在另一个分支上"}</small>
+          <small className="mr-auto text-caption text-fg-3">{busy ? BUSY : "原来的回合留在另一个分支"}</small>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(null)}>取消</button>
           <button type="button" className="btn btn-primary btn-sm branch-send" disabled={busy || restoring || editing.trim() === ""} onClick={() => void send()}>{restoring ? "正在还原…" : revert ? "还原并发送" : "发送"}</button>
         </div>

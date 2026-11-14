@@ -785,9 +785,9 @@ function RunSection(props: PanelProps & { readonly run: PublicRun; readonly runs
       {provider ? <Line icon={<Plug size={14} aria-hidden="true"/>} value={<span>{provider.name}</span>}>模型连接</Line> : null}
       {turn?.durationMs !== undefined ? <Line icon={<Timer size={14} aria-hidden="true"/>} value={spentText(turn.durationMs)}>用时</Line> : null}
       {counted && usage!.input !== undefined ? <Line icon={<ArrowDownToLine size={14} aria-hidden="true"/>} title={usage!.input.toLocaleString() + " tokens" + (usage!.cachedInput !== undefined ? "，其中缓存 " + usage!.cachedInput.toLocaleString() : "")}
-        value={tokens(usage!.input)}>{usage!.completeness === "complete" ? "输入" : "输入（可能不全）"}{usage!.cachedInput !== undefined && usage!.cachedInput > 0 ? <span className="text-fg-3">（其中缓存 {tokens(usage!.cachedInput)}）</span> : null}</Line> : null}
+        value={tokens(usage!.input)}>{usage!.completeness === "complete" ? "输入" : "输入（可能不全）"}</Line> : null}
       {counted && usage!.output !== undefined ? <Line icon={<ArrowUpFromLine size={14} aria-hidden="true"/>} title={usage!.output.toLocaleString() + " tokens"} value={tokens(usage!.output)}>输出</Line> : null}
-      {usage?.cost !== undefined && usage.cost.amount > 0 ? <Line icon={<CircleDollarSign size={14} aria-hidden="true"/>} value={moneyText(usage.cost)}>费用{usage.cost.scope === "turn" ? "" : <span className="text-fg-3">（{usage.cost.scope === "session" ? "原生会话累计" : "整个对话累计"}）</span>}</Line> : null}
+      {usage?.cost !== undefined && usage.cost.amount > 0 ? <Line icon={<CircleDollarSign size={14} aria-hidden="true"/>} value={moneyText(usage.cost)} title={usage.cost.scope === "turn" ? "这一轮" : usage.cost.scope === "session" ? "原生会话累计" : "整个对话累计"}>{usage.cost.scope === "turn" ? "费用" : "累计费用"}</Line> : null}
     </div>
     {run.timing ? <div className="mt-3"><Phases run={run}/></div> : null}
     {turn === undefined ? <p className="m-0 mt-3 text-caption text-red">这一轮无法显示：{run.protocolProblem ?? "服务没有给出这一轮的协议数据"}</p> : null}

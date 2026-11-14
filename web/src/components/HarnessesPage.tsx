@@ -61,7 +61,7 @@ const LEGACY_BUSY = ["本机程序仍有活动进程，请结束对应任务后�
 function jobError(job: InstallationJobView): string | null {
   if (!job.error || job.status === "cancelled") return null;
   if (job.error.code === "HARNESS_BUSY" && LEGACY_BUSY.includes(job.error.message))
-    return "开始前发现这个程序正在运行（例如它的后台服务），按当时的规则没有升级。现在再点升级，会先列出需要重启或关闭的程序，由你确认后再升级。";
+    return "它正在运行，没有升级；再点升级会先列出要重启的程序。";
   return /[\u4e00-\u9fff]/u.test(job.error.message) ? job.error.message : failureMessage(job.error);
 }
 function jobSummary(job: InstallationJobView, name: string): string {
@@ -445,7 +445,7 @@ export function HarnessesPage(props: HarnessProps) {
     belowHeader={<>
       {props.installationPolicy === "any" || pageError || props.connectionError || props.unconfirmed.length ? <div className="mt-5 flex flex-col gap-2">
         {/* Amber is kept for what waits for the user (ADR-054 §1): the Gateway's mode and a lost connection are said plainly. */}
-        {props.installationPolicy === "any" ? <Notice className="development-entries">开发模式：接受非官网安装。服务以 --allow-unofficial 启动，列表里的开发入口不是正式安装。</Notice> : null}
+        {props.installationPolicy === "any" ? <Notice className="development-entries">开发模式：也接受非官网安装。</Notice> : null}
         {pageError ? <Notice tone="red" onDismiss={props.onDismissError}>{pageError}</Notice> : null}
         {props.connectionError ? <Notice className="connection-notice">{props.connectionError} · 安装状态暂时显示最后一次观察，正在重新连接，不会重跑任务。</Notice> : null}
         {props.unconfirmed.map(intent => <Notice key={intent.harnessId} tone="amber" title={`${harnesses.find(h => h.id === intent.harnessId)?.name ?? intent.harnessId} 的请求尚未确认`}

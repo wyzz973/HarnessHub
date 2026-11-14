@@ -25,7 +25,7 @@ export function ProvidersPage(props: ProvidersProps) {
   const add = <button type="button" className="btn btn-primary" onClick={() => props.onEdit("new")}><Plus size={15} aria-hidden="true"/>添加 Provider</button>;
   // With no connection yet the empty place offers the one way forward; the head offers it once there is a list.
   return <PageShell title="模型连接" titleId="providers-title" onMenu={props.onMenu} sidebarHidden={props.sidebarHidden} onExpandSidebar={props.onExpandSidebar} onBack={props.onChat}
-    description="一个连接，一组模型；在兼容的 Harness 里单独选择。连接保存在本机，不改 Harness 自己的全局配置。" {...(props.providers.length ? { actions: add } : {})}>
+    description="连接只存在本机，不改 Harness 自己的配置。" {...(props.providers.length ? { actions: add } : {})}>
     {props.error ? <Notice tone="red" onDismiss={props.onDismissError}>{props.error}</Notice> : null}
     {props.providers.length === 0 ? <EmptyState icon={<SlidersHorizontal size={22}/>} title="连接你的第一个模型服务" action={add}>填写服务地址和密钥，再添加要使用的模型。</EmptyState> : <>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -43,10 +43,10 @@ export function ProvidersPage(props: ProvidersProps) {
               <Tip label="编辑"><button type="button" className="icon-btn" aria-label={`编辑 ${provider.name}`} onClick={() => props.onEdit(provider)}><Pencil size={15}/></button></Tip></div></div>
           {currentProbe ? <div className="text-ui-sm" role="status">{currentProbe.status === "checking" ? <span className="text-fg-3">正在读取模型目录…</span> : currentProbe.status === "failed" ? <span className="text-red">{currentProbe.message}</span>
             : <details className="group"><summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-accent-text [&::-webkit-details-marker]:hidden"><ShieldCheck size={13} aria-hidden="true"/>模型目录可达 · 返回 {currentProbe.models.length} 个模型 <ChevronRight size={13} className="motion-rotate group-open:rotate-90" aria-hidden="true"/></summary>
-              <p className="m-0 my-1.5 text-fg-3">这项测试只验证模型目录接口，实际对话仍要在会话里验证。</p><div className="flex flex-wrap gap-1.5">{currentProbe.models.map(model => <Badge key={model} className="mono font-normal">{model}</Badge>)}</div></details>}</div> : null}
+              <p className="m-0 my-1.5 text-fg-3">只测了模型目录。</p><div className="flex flex-wrap gap-1.5">{currentProbe.models.map(model => <Badge key={model} className="mono font-normal">{model}</Badge>)}</div></details>}</div> : null}
         </article>;
       })}</div>
-      <p className="m-0 flex items-center gap-2 text-ui-sm text-fg-3"><ShieldCheck size={14} aria-hidden="true"/>密钥只保存在本机。对话固定引用 Provider 的配置版本，编辑不会改写已有调用。</p>
+      <p className="m-0 flex items-center gap-2 text-ui-sm text-fg-3"><ShieldCheck size={14} aria-hidden="true"/>密钥只存在本机。</p>
     </>}
   </PageShell>;
 }
@@ -104,14 +104,14 @@ function ProviderEditor(props: ProvidersProps & { current: ProviderView | undefi
           <label className={field}><span className="label m-0">API 协议</span><select className="field" aria-label="API 协议" value={protocol} onChange={event => { const value = PROVIDER_PROTOCOLS.find(item => item === event.target.value); if (value) setProtocol(value); }}>{PROVIDER_PROTOCOLS.map(value => <option key={value} value={value}>{protocolLabel(value)}</option>)}</select></label>
         </div>
         <label className={field}><span className="label m-0">Base URL</span><input className="field mono" aria-label="Base URL" aria-describedby="provider-url-hint" type="url" value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder={protocol === "gemini" ? "https://generativelanguage.googleapis.com" : "https://your-api.example/v1"} required autoComplete="off" spellCheck={false}/>
-          <small id="provider-url-hint" className="text-caption text-fg-3">{protocol === "gemini" ? "填写服务根地址，例如 https://generativelanguage.googleapis.com，不添加 /v1beta 或 /models。" : "填写模型服务提供的 API 地址，常见格式以 /v1 结尾，也可以用本机服务。"}</small></label>
+          <small id="provider-url-hint" className="text-caption text-fg-3">{protocol === "gemini" ? "服务根地址，如 https://generativelanguage.googleapis.com" : "API 地址，常以 /v1 结尾"}</small></label>
         <label className={field}><span className="label m-0">API Key <em className="font-normal not-italic text-fg-3">{protocol === "gemini" ? "必填" : "可选"}</em></span>
           <span className="flex items-center gap-1"><input className="field mono" aria-label="API Key" aria-describedby="provider-key-hint" type={showKey ? "text" : "password"} value={apiKey} onChange={event => setApiKey(event.target.value)} required={protocol === "gemini" && !current?.hasCredential} placeholder={current?.hasCredential ? "已保存密钥，留空保留" : protocol === "gemini" ? "填入 Gemini API Key" : "填入密钥；无认证的本地服务可留空"} autoComplete="new-password" spellCheck={false}/>
             <button type="button" className="icon-btn" onClick={() => setShowKey(value => !value)} aria-label={showKey ? "隐藏密钥" : "显示密钥"} aria-pressed={showKey}>{showKey ? <EyeOff size={16}/> : <Eye size={16}/>}</button></span>
-          <small id="provider-key-hint" className="text-caption text-fg-3">{current?.hasCredential ? "不会读取或显示已有密钥。填写新值会替换密钥，留空保留。" : protocol === "gemini" ? "Gemini 受管连接需要密钥；密钥只保存在本机，不写入浏览器存储。" : "密钥只写入本机连接配置，不保存在浏览器里。"}</small></label>
+          <small id="provider-key-hint" className="text-caption text-fg-3">{current?.hasCredential ? "不会读取或显示已有密钥。填写新值会替换密钥，留空保留。" : protocol === "gemini" ? "需要密钥，只存在本机。" : "密钥只写入本机连接配置，不保存在浏览器里。"}</small></label>
       </FieldGroup>
       <FieldGroup title="可用模型" disabled={props.saving}>
-        <div className="-mt-2 flex flex-wrap items-center justify-between gap-2"><p className="m-0 text-ui-sm text-fg-2">使用服务提供的模型 ID，每行一个。</p>{current ? <button type="button" className="btn btn-sm" disabled={dirty || currentProbe?.status === "checking"} onClick={() => props.onProbe(current)} title={dirty ? "先保存修改，再读取这个连接的模型目录" : undefined}>{currentProbe?.status === "checking" ? <Spinner size={13} label=""/> : <Link2 size={13} aria-hidden="true"/>}读取模型目录</button> : null}</div>
+        <div className="-mt-2 flex flex-wrap items-center justify-between gap-2"><p className="m-0 text-ui-sm text-fg-2">每行一个模型 ID。</p>{current ? <button type="button" className="btn btn-sm" disabled={dirty || currentProbe?.status === "checking"} onClick={() => props.onProbe(current)} title={dirty ? "先保存修改，再读取这个连接的模型目录" : undefined}>{currentProbe?.status === "checking" ? <Spinner size={13} label=""/> : <Link2 size={13} aria-hidden="true"/>}读取模型目录</button> : null}</div>
         {currentProbe?.status === "reachable" ? <div className="flex flex-wrap items-center gap-2 text-ui-sm text-fg-2" role="status"><span>模型目录可达，返回 {currentProbe.models.length} 个 ID。</span><button type="button" className="link-btn" disabled={currentProbe.models.length === 0} onClick={() => setModelsText(currentProbe.models.join("\n"))}>填入返回的模型</button></div> : currentProbe?.status === "failed" ? <Notice tone="red">{currentProbe.message ?? "无法读取模型目录"}</Notice> : null}
         <label className={field}><span className="sr-only">模型 ID 列表</span><textarea className="field mono" aria-label="模型 ID 列表" value={modelsText} onChange={event => setModelsText(event.target.value)} placeholder={"model-id-1\nmodel-id-2"} rows={4} required spellCheck={false}/></label>
         <label className={cn(field, "sm:max-w-sm")}><span className="label m-0">默认模型</span><select className="field" aria-label="默认模型" value={defaultModel} onChange={event => setDefaultModel(event.target.value)} required><option value="">选择默认模型</option>{defaultModel && !models.includes(defaultModel) ? <option value={defaultModel}>{defaultModel} · 不在列表中</option> : null}{models.map(model => <option value={model} key={model}>{model}</option>)}</select></label>

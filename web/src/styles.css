@@ -497,6 +497,11 @@
     color: var(--text); font-size: 13px; line-height: 20px; text-align: left; text-decoration: none; transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
   }
   .nav-row:hover { background: var(--bg-sidebar-hover); text-decoration: none; }
+  /* A group of the conversation list: a quiet line, not another row. */
+  .group-heading { display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; margin-top: 6px; padding: 0 8px 0 9px; border: none; border-radius: var(--radius-row); background: transparent;
+    color: var(--text-3); font-size: 12px; line-height: 16px; text-align: left; transition: color var(--dur-fast) var(--ease-standard); }
+  button.group-heading:hover { color: var(--text-2); }
+  .group-heading:focus-visible { outline-offset: -2px; }
   .nav-row[aria-current="page"], .nav-row[aria-current="true"], .nav-row[data-selected="true"] { background: var(--bg-selected); font-weight: 500; }
   /* Full-width rows keep their focus ring inside, where a scrolling list cannot clip it */
   :is(.nav-row, .row):focus-visible { outline-offset: -2px; }

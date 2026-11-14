@@ -147,8 +147,8 @@ export function ChangeDialog({ api, request, onClose, onDone }: { readonly api: 
             {check.orphans.map(orphan => <code key={orphan.harnessId + orphan.file} className="break-all">{orphan.harnessId} · {orphan.file}</code>)}</div> : null}
           <ChangeBody check={check}/>
           {check.notes.map(note => <p key={note} className="switch-note m-0 text-fg-2">{note}</p>)}
-          <p className="m-0 text-caption text-fg-3">{pkg ? "被替换或删除的文件夹会先存快照；改动记在“修改与备份”里，可以撤销。" : check.links.length ? "只改列出的这些链接；改动会记在“修改与备份”里，可以撤销。"
-            : check.kind === "instructions-sync" || check.kind === "instructions-remove" ? "只改 HarnessHub 的区块，区块外的内容不变；改动前先备份原文件，可以在“修改与备份”里恢复。" : "只改这一项设置，文件的其他内容不变；写入前先备份原文件，可以在“修改与备份”里恢复。"}确认 15 分钟内有效。</p>
+          <p className="m-0 text-caption text-fg-3">{pkg ? "先存快照，可在“修改与备份”里撤销。" : check.links.length ? "只改列出的这些链接；改动会记在“修改与备份”里，可以撤销。"
+            : check.kind === "instructions-sync" || check.kind === "instructions-remove" ? "只改 HarnessHub 的区块，先备份，可恢复。" : "只改这一项，先备份，可恢复。"}确认 15 分钟内有效。</p>
         </>}
     </div>
     <div className={DIALOG_FOOT}>
@@ -336,7 +336,7 @@ export function WriteDialog({ api, open, items, onCheck, onClose }: {
           </div>
         </section>;
       })}
-      <p className="m-0 text-caption text-fg-3">只改列出的这些行与链接，文件的其他内容不变；写入前先备份原文件。</p>
+      <p className="m-0 text-caption text-fg-3">只改列出的行，先备份。</p>
     </div>
     <div className={DIALOG_FOOT}>
       <button type="button" className="btn" disabled={busy} onClick={() => onClose(written(progress), false)}>{wroteAny ? "关闭" : "取消"}</button>
@@ -365,7 +365,7 @@ function undoSteps(written: readonly Written[]): readonly UndoStep[] {
     if (at !== undefined) { const known = steps[at]!; steps[at] = { ...known, changes: known.changes + 1 }; continue; }
     edited.set(view.file, steps.length);
     steps.push(view.backupId ? { ...base, id: "restore:" + view.file, kind: "restore", backupId: view.backupId, changes: 1 }
-      : { ...base, id: "none:" + view.file, kind: "none", changes: 1, reason: view.status === "applied" ? "写入之前没有这个文件，没有可以恢复的备份；HarnessHub 不删除它。" : "这一处没有写入，不用撤销。" });
+      : { ...base, id: "none:" + view.file, kind: "none", changes: 1, reason: view.status === "applied" ? "之前没有这个文件，没有备份可恢复。" : "这一处没有写入，不用撤销。" });
   }
   return steps;
 }

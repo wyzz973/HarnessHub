@@ -574,7 +574,7 @@ test("the settings page offers the one relay setting when the Gateway has it, sa
   await expect(group.getByRole("radio")).toHaveText(["开（默认）", "关"]);
   await expect(group.getByRole("radio", { name: "开（默认）" })).toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("radiogroup", { name: "跨厂商交接" })).toHaveCount(0); await expect(page.getByRole("radiogroup", { name: "送达拿不准时" })).toHaveCount(0);
-  await expect(page.getByText("换过去的第一条消息，自动带上它没看过的部分")).toBeVisible();
+  await expect(page.getByText("换 Harness 时附上之前的对话", { exact: true })).toBeVisible();
   await shoot(page, "settings-relay");
   await group.getByRole("radio", { name: "关" }).click();
   await expect(group.getByRole("radio", { name: "关" })).toHaveAttribute("aria-checked", "true");

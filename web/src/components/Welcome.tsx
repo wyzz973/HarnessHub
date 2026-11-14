@@ -79,8 +79,7 @@ function PlacePicker({ place, onPlace, recents, chooseFolder }: Pick<WelcomeProp
         ...(folders.length ? [{ separator: true as const }] : []),
         { icon: <FolderOpen size={14}/>, label: "选择文件夹…", onSelect: pick },
       ]}/>}
-    {/* Its own worktree, or the folder as it is (the default): the Gateway makes a branch and a folder for the conversation from the repository's current commit. */}
-    {place.scratch || !place.workspace ? null : <Tip label={place.worktree ? "新建工作树：开（为这段对话新建分支和文件夹，几家 Harness 可以同时改同一个仓库）" : "新建工作树：关（就在这个文件夹里改）"}>
+    {place.scratch || !place.workspace ? null : <Tip label={place.worktree ? "在新分支的工作树里做" : "直接在文件夹里改"}>
       <button type="button" className={cn("motion-fade-in flex h-7 flex-none items-center gap-1 rounded-row border-none bg-transparent px-2 text-ui-sm transition-[color,background-color] duration-120 ease-standard hover:bg-subtle",
         place.worktree ? "bg-accent-soft text-accent-text hover:bg-accent-soft" : "text-fg-3")} aria-pressed={place.worktree === true} aria-label="新建工作树" onClick={() => onPlace({ ...place, worktree: !place.worktree })}>
         <GitBranchPlus size={13} aria-hidden="true"/><span>新建工作树</span></button></Tip>}

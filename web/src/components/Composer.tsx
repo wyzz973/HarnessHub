@@ -74,7 +74,7 @@ const SETUP_COMMANDS: Readonly<Record<string, string>> = { hermes: "hermes model
  * reports the preset nor runs /permission, which only switches the dsh session it is typed in. So the Hub states the rule.
  */
 const APPROVAL_NOTES: Readonly<Record<string, string>> = {
-  dsh: "由 dsh 自己为新会话设定的默认权限预设决定（workspace-write 超出工作区时请求审批；danger-full-access 不请求审批）。要改变 HarnessHub 会话的预设，请在 dsh 自己的设置中修改默认预设；HarnessHub 不读取、不修改它的设置。",
+  dsh: "由 dsh 自己的默认权限设置决定，在 dsh 里改。",
 };
 export const THINKING_NAMES: Readonly<Record<string, string>> = { off: "关闭", minimal: "最少", low: "低", medium: "中", high: "高", xhigh: "极高", max: "最大", ultra: "最高", adaptive: "自适应" };
 export const OPTION_NAMES: Readonly<Record<string, string>> = { thought_level: "思考强度", fast_mode: "快速模式", verbose_level: "工具详情", reasoning_level: "思考输出", response_usage: "用量详情", elevated_level: "执行权限", collaboration_mode: "协作模式" };
@@ -325,7 +325,7 @@ export function Composer(props: ComposerProps) {
   const authTitle = `${harness?.name ?? "所选 Harness"} 的本机认证尚未就绪`;
   const authText = !authMissing ? null : SETUP_COMMANDS[draft.harnessId]
     ? `它还没有可用的模型提供方。请在终端运行 ${SETUP_COMMANDS[draft.harnessId]} 完成配置，然后刷新本机模型；也可以换一个 Harness。`
-    : "请在它自己的程序中完成登录或 Gateway 连接配置，然后刷新本机模型；也可以换一个 Harness。";
+    : "先在它自己的程序里登录，再刷新本机模型。";
   const noteDanger = bytes > MAX_MESSAGE_BYTES || problem !== null && !onboarding;
   const note = bytes > MAX_MESSAGE_BYTES ? "单条消息不能超过 32 MiB，请缩短内容。"
     : active?.cancelRequested ? "停止已受理，正在等待执行结束和资源清理。"
@@ -334,7 +334,7 @@ export function Composer(props: ComposerProps) {
     : dirty ? problem ?? (selectionFailed ? "所选连接未生效，可以重试切换或换一个 Harness。" : props.mutation === "switching" ? "正在切换所选 Harness 或模型，草稿已保留。" : "发送时改用所选 Harness 或模型。")
     : authText !== null ? authText
     : uploading ? "附件上传中，完成后即可发送。"
-    : attachmentBlocked ? "有附件无法随这条消息发送，请移除标记的附件或切换到支持它的 Harness 或模型。"
+    : attachmentBlocked ? "有附件发不了：移除它，或换个 Harness。"
     : props.attachments.length && !props.messageDraft.trim() ? "请写一句说明，再和附件一起发送。"
     // Codex's collaboration mode stays with its thread: plan mode answers with a plan, and following the native configuration
     // does not leave it (ADR-034).
@@ -594,7 +594,7 @@ export function Composer(props: ComposerProps) {
         <div role="listbox" aria-label="引用文件" id={listId} className="p-[5px]">
           <button type="button" role="option" id={`${listId}-file`} aria-selected="true" tabIndex={-1} onMouseDown={event => event.preventDefault()} onClick={() => chooseFile(mention)}
             className="flex w-full items-center gap-2.5 rounded-row border-none bg-subtle px-2.5 py-2 text-left"><Paperclip size={15} className="flex-none text-fg-2" aria-hidden="true"/>
-            <span className="flex min-w-0 flex-col"><span className="text-ui-sm font-medium">从这台电脑选择文件…</span><span className="text-caption text-fg-3">作为附件随这条消息发出；HarnessHub 不浏览工作区目录</span></span></button>
+            <span className="flex min-w-0 flex-col"><span className="text-ui-sm font-medium">从这台电脑选择文件…</span><span className="text-caption text-fg-3">作为附件发出</span></span></button>
         </div>
         <div className="px-3.5 py-2 text-caption text-fg-3 hairline-t">Enter 选择 · Esc 保留 @ 作为文字</div>
       </div> : null}
@@ -775,13 +775,13 @@ function AdvancedSettings(props: ComposerProps & {
       : <p className="m-0 px-3.5 py-3 text-ui-sm text-fg-2 hairline-b">沿用本机已安装 Harness 的模型配置和登录状态。</p>}
     {!provider && props.onRetention ? <div className={cn(row, "kept-setting")}><span className={heading}>后台任务</span>
       <label className="flex items-center gap-2 text-ui-sm font-medium"><input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={session ? session.retention?.enabled === true : props.retainNew === true} disabled={disabled || props.mutation !== null} onChange={event => props.onRetention!(event.target.checked)}/>保持原生进程</label>
-      <small className="text-caption text-fg-2">开启后，回合结束时不关闭原程序：它在后台运行的任务可以继续，下一条消息也不必重新启动它。空闲 30 分钟后结束，同时最多保留 4 个。</small>
+      <small className="text-caption text-fg-2">一轮结束后原程序继续在后台运行，空闲 30 分钟后结束。</small>
       {session?.retention?.process ? <><small className="native-observed text-caption text-accent-text">原生进程保留中 · 后台活动 {session.retention.process.backgroundUpdates} 条 · {Math.max(1, Math.round((session.retention.process.idleEndsAt - Date.now()) / 60000))} 分钟后结束</small>
         <button type="button" className="btn btn-sm self-start" disabled={props.mutation !== null} onClick={props.onEndProcess}>结束后台进程</button></> : null}</div> : null}
     {nativeState ? <div className={row}><span className={heading}>原生会话</span><strong className="text-ui-sm font-medium">{nativeState.status === "ready" ? "继续已有会话" : "状态待确认"}</strong>
       {nativeState.observed ? <small className="native-observed text-caption text-fg-2">原生当前：{props.describeNative(nativeState.observed.model ?? undefined, nativeState.observed.options) || "未报告"}</small> : null}
       <small className="text-caption text-fg-3">公共历史与旧原生记录保留；原生内部状态重新建立。</small>
       <button type="button" className="btn btn-sm self-start" disabled={disabled || props.dirty || props.pending || props.active !== null} onClick={props.onNativeBranch}>重新建立原生会话</button></div> : null}
-    <p className="m-0 bg-subtle px-3.5 py-2.5 text-caption text-fg-3">选择后直接切换；当前回复继续使用原配置，下一次发送使用新选择。</p>
+    <p className="m-0 bg-subtle px-3.5 py-2.5 text-caption text-fg-3">当前回复照旧，下一条用新选择。</p>
   </Popover>;
 }

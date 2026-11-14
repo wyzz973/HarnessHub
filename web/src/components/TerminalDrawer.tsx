@@ -124,16 +124,16 @@ export function TerminalDrawer({ session, place, access, onClose, scripts, onQuo
       <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none]" role="tablist" aria-label="终端">
         {groups.map((group, index) => <span key={group.join("+")} className={cn("group/tab flex h-6 flex-none items-center rounded-row pr-0.5 pl-2 transition-colors duration-120 ease-standard", index === current ? "bg-subtle text-fg" : "hover:bg-subtle")}>
           <button type="button" role="tab" aria-selected={index === current} className="max-w-[200px] truncate border-none bg-transparent p-0 text-caption text-inherit" title={place} onClick={() => setCurrent(index)}>{tabTitle(group)}</button>
-          <button type="button" className="icon-btn ml-0.5 size-5 text-fg-3" aria-label={"关闭" + tabTitle(group)} title="关闭（结束它的 shell）" onClick={() => end(group)}><X size={11} strokeWidth={2.2}/></button>
+          <button type="button" className="icon-btn ml-0.5 size-5 text-fg-3" aria-label={"关闭" + tabTitle(group)} title="关闭" onClick={() => end(group)}><X size={11} strokeWidth={2.2}/></button>
         </span>)}
         <Tip label="新开一个终端"><button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="新开一个终端" onClick={() => void add()}><Plus size={13} strokeWidth={2}/></button></Tip>
       </div>
       <span className="mono hidden min-w-0 max-w-[30%] truncate px-1 sm:block" title={place}>{place}</span>
-      {onQuote ? <Tip label="把选中的内容放进输入框"><button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="把选中的内容放进输入框" disabled={selection.trim() === ""} onClick={() => { onQuote(selection); setSelection(""); }}><TextQuote size={12} strokeWidth={2.2}/></button></Tip> : null}
-      <Tip label="左右分开再开一个"><button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="左右分开再开一个终端" disabled={(groups[current]?.length ?? 2) >= 2} onClick={() => void split()}><Columns2 size={12} strokeWidth={2.2}/></button></Tip>
+      {onQuote ? <Tip label="引用到输入框"><button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="把选中的内容放进输入框" disabled={selection.trim() === ""} onClick={() => { onQuote(selection); setSelection(""); }}><TextQuote size={12} strokeWidth={2.2}/></button></Tip> : null}
+      <Tip label="分屏"><button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="左右分开再开一个终端" disabled={(groups[current]?.length ?? 2) >= 2} onClick={() => void split()}><Columns2 size={12} strokeWidth={2.2}/></button></Tip>
       {scripts !== undefined ? <Menu align="end" onOpenChange={readScripts} trigger={<button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="运行项目脚本" title="运行项目脚本"><Play size={12} strokeWidth={2.2}/></button>}
         items={found === null ? [{ heading: "正在读取 package.json…" }] : found.length === 0 ? [{ heading: "package.json 里没有脚本" }] : found.map(script => ({ label: script.name, hint: script.command, onSelect: () => void add(script) }))}/> : null}
-      <Tip label="收起终端（shell 继续运行）"><button type="button" className="icon-btn size-6 flex-none" aria-label="收起终端" onClick={onClose}><X size={13} strokeWidth={2}/></button></Tip>
+      <Tip label="收起"><button type="button" className="icon-btn size-6 flex-none" aria-label="收起终端" onClick={onClose}><X size={13} strokeWidth={2}/></button></Tip>
     </header>
     <div className="relative min-h-0 flex-1">
       {terminals === null ? <p className="m-0 flex items-center gap-2 px-4 py-3 text-caption text-fg-3"><Spinner size={12} label=""/>正在打开终端</p> : null}

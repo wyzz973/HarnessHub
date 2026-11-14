@@ -70,14 +70,14 @@ export function InstructionsPanel({ api, harness, reload, onChange, onNotice }: 
   };
   return <section className="instructions-panel card px-4 py-3.5 text-ui-sm" aria-label="统一指令">
     <div className="flex min-w-0 max-w-reading flex-col gap-0.5"><h3 className="m-0 text-ui font-semibold">统一指令</h3>
-      <span className="text-caption text-fg-3">HarnessHub 保存一份共享指令和每个 Harness 的追加文本，以带标记的区块写进各家的用户级指令文件；区块外的内容不动。</span></div>
+      <span className="text-caption text-fg-3">一份共享指令，写进各家的指令文件；标记区块外不动。</span></div>
     {problem ? <Notice tone="red" className="mt-3">{problem}</Notice> : null}
     {view === null ? problem ? null : <p className="m-0 mt-3 flex items-center gap-2 text-fg-2" role="status"><Spinner size={13} label=""/>正在读取指令</p> : <>
       <label className="mt-3 flex flex-col gap-1.5">
         <span className="flex items-baseline justify-between gap-2 text-caption"><span className="font-medium text-fg-2">共享指令</span><span className={utf8(shared) > limit ? "text-red" : "text-fg-3"}>{kib(utf8(shared))} / {kib(limit)}</span></span>
         <textarea className="field min-h-[132px] font-mono text-code" aria-label="共享指令" aria-describedby="instructions-hint" value={shared} placeholder="例如：回复使用中文；提交信息写清改了什么、为什么。"
           onChange={event => { setEdited(true); setShared(event.target.value); }}/>
-        <span id="instructions-hint" className="text-caption text-fg-3">家目录请写成 ~（例如 ~/projects），不要写完整路径；不要写密钥。各 Harness 会把这段文字当作你的长期指令。</span>
+        <span id="instructions-hint" className="text-caption text-fg-3">别写密钥；家目录写成 ~。</span>
       </label>
       <button type="button" className="btn btn-ghost btn-sm mt-2 -ml-2.5 self-start" aria-expanded={open} aria-controls="instruction-additions" onClick={() => setOpen(value => !value)}>
         <ChevronRight size={13} aria-hidden="true" className={open ? "motion-rotate rotate-90" : "motion-rotate"}/>每个 Harness 的追加文本{written ? "（" + written + "）" : ""}</button>

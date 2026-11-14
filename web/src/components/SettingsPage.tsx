@@ -90,28 +90,22 @@ export function SettingsDialog({ open, onOpenChange, api, relay, preferences, on
       <Card className={ROWS}>
         <Row title="主题" control={<Segmented size="md" label="主题" value={preferences.theme} onChange={value => onPreference("theme", value)}
           options={THEMES.map(theme => ({ value: theme.value, label: <span className="inline-flex items-center gap-1.5"><theme.icon size={14} aria-hidden="true"/>{theme.label}</span> }))}/>}/>
-        <Row title="对话字号" control={<Segmented label="对话字号" value={preferences.readingSize} onChange={value => onPreference("readingSize", value)} options={[{ value: "14" as const, label: "小" }, { value: "15" as const, label: "中" }, { value: "16" as const, label: "大" }]}/>}>
-          消息和回复的文字大小。</Row>
-        <Row title="对话宽度" control={<Segmented label="对话宽度" value={preferences.chatWidth} onChange={value => onPreference("chatWidth", value)} options={[{ value: "standard" as const, label: "标准" }, { value: "wide" as const, label: "宽" }]}/>}>
-          宽一些，长代码和表格少折行。</Row>
+        <Row title="对话字号" control={<Segmented label="对话字号" value={preferences.readingSize} onChange={value => onPreference("readingSize", value)} options={[{ value: "14" as const, label: "小" }, { value: "15" as const, label: "中" }, { value: "16" as const, label: "大" }]}/>}/>
+        <Row title="对话宽度" control={<Segmented label="对话宽度" value={preferences.chatWidth} onChange={value => onPreference("chatWidth", value)} options={[{ value: "standard" as const, label: "标准" }, { value: "wide" as const, label: "宽" }]}/>}/>
       </Card>
     </Section>
     <Section title="对话" id="settings-conversation">
       <Card className={ROWS}>
         <Row title="过程显示" control={<Segmented label="默认过程显示" value={preferences.density} onChange={value => onPreference("density", value)}
-          options={[{ value: "detailed", label: "每一步" }, { value: "compact", label: "一行小结" }, { value: "failures", label: "只留出错的" }, { value: "answer", label: "只看回答" }]}/>}>
-          {preferences.density === "detailed" ? "每个动作一行，都展开。" : preferences.density === "compact" ? "一轮结束后，过程收成一行，可以点开。" : preferences.density === "failures" ? "只显示失败或结果未知的动作。" : "只显示最后说的话；过程在详情栏里。"}</Row>
-        <Row title="发送" control={<Segmented label="发送" value={preferences.sendKey} onChange={value => onPreference("sendKey", value)} options={[{ value: "enter" as const, label: "Enter" }, { value: "mod-enter" as const, label: "⌘Enter" }]}/>}>
-          {preferences.sendKey === "enter" ? "Enter 发送，⇧Enter 换行。" : "⌘Enter 发送，Enter 换行。"}</Row>
+          options={[{ value: "detailed", label: "每一步" }, { value: "compact", label: "一行小结" }, { value: "failures", label: "只留出错的" }, { value: "answer", label: "只看回答" }]}/>}/>
+        <Row title="发送" control={<Segmented label="发送" value={preferences.sendKey} onChange={value => onPreference("sendKey", value)} options={[{ value: "enter" as const, label: "Enter" }, { value: "mod-enter" as const, label: "⌘Enter" }]}/>}/>
         <Row title="回复进行中时按回车" control={<Segmented label="回复进行中时按回车" value={preferences.whileRunning} onChange={value => onPreference("whileRunning", value)}
           options={[{ value: "queue", label: "留到结束后发" }, { value: "steer", label: "现在就告诉它" }]}/>}>
-          ⌘⏎ 做另一种。只有支持中途插话的 Harness 才能现在就告诉它，其余的都留到结束后发。</Row>
+          ⌘⏎ 反过来。</Row>
         {relay.prefs === null ? null : <Row title="换 Harness 时附上之前的对话" control={<Segmented label="换 Harness 时附上之前的对话" value={relay.prefs.attach} onChange={value => relay.change("attach", value)}
           options={[{ value: "auto", label: "开（默认）", disabled: relay.saving }, { value: "off", label: "关", disabled: relay.saving }]}/>}>
-          换过去的第一条消息，自动带上它没看过的部分。
           {relay.problem ? <span className="mt-1 block text-red" role="status">{relay.problem}</span> : null}</Row>}
         {relay.prefs === null ? null : <Row title={PROGRESS_LABEL} control={<Switch checked={relay.prefs.progress === "on"} onChange={value => relay.change("progress", value ? "on" : "off")} disabled={relay.saving} label={PROGRESS_LABEL}/>}>
-          任务清单和每轮的小结显示在输入框上方。
           <details className="progress-instructions mt-1.5"><summary className="cursor-pointer text-fg-3">给 Harness 的说明</summary>
             <pre className="m-0 mt-1 rounded-row bg-inset px-3 py-2 text-code whitespace-pre-wrap">{HUB_PROGRESS_INSTRUCTIONS}</pre></details></Row>}
       </Card>
@@ -119,18 +113,14 @@ export function SettingsDialog({ open, onOpenChange, api, relay, preferences, on
     <Section title="通知" id="settings-notifications">
       <Card className={ROWS}>
         <Row title="系统通知" control={<Switch checked={notify.on} onChange={() => void notify.toggle()} disabled={!notify.supported || notify.blocked} label="系统通知"/>}>
-          页面在后台时，有事等你处理或一轮结束会通知，不含对话内容。
-          {!notify.supported ? <span className="mt-1 block text-fg-3">这个浏览器不支持通知。</span> : notify.blocked ? <span className="mt-1 block text-fg-3">浏览器已阻止本页的通知，可在浏览器的网站设置中允许。</span> : null}</Row>
+          {!notify.supported ? "这个浏览器不支持通知。" : notify.blocked ? "浏览器拦了通知，到网站设置里允许。" : "页面在后台时提醒你。"}</Row>
       </Card>
     </Section>
     <Section title="发现" id="settings-discovery">
       <Card className={ROWS}>
         <LoginShellPanel api={api} onChanged={onRescan}/>
-        <Row title="重新检测" control={<button type="button" className="btn" onClick={onRescan} disabled={scanning}>{scanning ? <Spinner size={13} label=""/> : <RefreshCw size={14} aria-hidden="true"/>}立即检测</button>}>
-          在终端里装好或升级 Harness 之后用。</Row>
-        {/* Cursor, Gemini CLI and Pi are frozen (ADR-048): listed for new work only when the user asks (ADR-050). */}
-        <Row className="frozen-setting" title={FROZEN_LABEL} control={<Switch checked={preferences.showFrozen} onChange={value => onPreference("showFrozen", value)} label={FROZEN_LABEL}/>}>
-          不再打磨的 Harness；用过它们的对话照常打开。</Row>
+        <Row title="重新检测" control={<button type="button" className="btn" onClick={onRescan} disabled={scanning}>{scanning ? <Spinner size={13} label=""/> : <RefreshCw size={14} aria-hidden="true"/>}立即检测</button>}/>
+        <Row className="frozen-setting" title={FROZEN_LABEL} control={<Switch checked={preferences.showFrozen} onChange={value => onPreference("showFrozen", value)} label={FROZEN_LABEL}/>}/>
       </Card>
     </Section>
     <Section title="快捷键" id="settings-shortcuts">
@@ -138,9 +128,8 @@ export function SettingsDialog({ open, onOpenChange, api, relay, preferences, on
     </Section>
     <Section title="数据" id="settings-data">
       <Card className={ROWS}>
-        <div className="px-4 py-3.5 text-ui-sm text-fg-2">对话和附件保存在这台 Mac 上；各 Harness 的配置和登录留在原处，HarnessHub 不改。</div>
-        <Row title="显示偏好" control={<button type="button" className="btn btn-sm" onClick={() => (Object.keys(DEFAULT_PREFERENCES) as (keyof Preferences)[]).forEach(key => onPreference(key, DEFAULT_PREFERENCES[key] as never))}>恢复默认</button>}>
-          主题、过程显示和面板回到默认。</Row>
+        <div className="px-4 py-3.5 text-ui-sm text-fg-2">对话和附件只存在这台 Mac 上。</div>
+        <Row title="显示偏好" control={<button type="button" className="btn btn-sm" onClick={() => (Object.keys(DEFAULT_PREFERENCES) as (keyof Preferences)[]).forEach(key => onPreference(key, DEFAULT_PREFERENCES[key] as never))}>恢复默认</button>}/>
       </Card>
     </Section>
           </div>
