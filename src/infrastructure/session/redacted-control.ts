@@ -34,6 +34,8 @@ function publicEvent(event: ControlEvent, redact: (text: string) => string): Con
 export class RedactedHarnessControl implements HarnessControl {
   /** The relay's optional member passes through as the inner Driver has it (absent stays absent, ADR-055 §3.2). */
   readonly setTitle?: (id: NativeConversationId, title: string) => Promise<void>;
+  /** Present only when the inner Driver can take turns out of its native history, so the Runtime tells the capability by it. */
+  readonly rollback?: (id: NativeConversationId, turns: number) => Promise<void>;
   /** The inner Driver's static relay declaration, the same object (ADR-055 §3.2). */
   readonly relayCapabilities?: RelayCapabilities;
   /** Whether the inner Driver hands the Hub's tools to its sessions itself. */
@@ -44,6 +46,7 @@ export class RedactedHarnessControl implements HarnessControl {
     // A title carries no secret the Driver was given; failures are withheld as any other.
     if (inner.relayCapabilities !== undefined) this.relayCapabilities = inner.relayCapabilities;
     if (inner.setTitle) this.setTitle = (id, title) => this.safe(() => inner.setTitle!(id, title));
+    if (inner.rollback) this.rollback = (id, turns) => this.safe(() => inner.rollback!(id, turns));
     if (inner.setSessionInstructions) this.setSessionInstructions = (text, tools) => inner.setSessionInstructions!(text, tools);
   }
 
