@@ -367,7 +367,7 @@ test("Codex /compact runs the native compaction turn instead of a prompt", async
   const driver = control("basic", { FIXTURE_TRACE: trace });
   try {
     await driver.initialize();
-    assert.deepEqual((await driver.models()).commands?.map(command => command.name), ["compact", "export"]);
+    assert.deepEqual((await driver.models()).commands?.map(command => command.name), ["compact", "export", "review"], "/review is its own command (review/start)");
     const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
     assert.equal((await (await driver.startText(id, "/compact", event => events.push(event))).result).status, "completed");
     assert.deepEqual(events.filter(event => event.type === "activity").map(event => event.type === "activity" ? event.status : null), ["running", "completed"]);
@@ -441,7 +441,7 @@ test("Codex lists its skills, MCP servers and installed plugins and invokes an e
       mcpServers: [{ name: "docs", status: "notStarted", auth: "unsupported", tools: 2, failed: false }, { name: "remote", status: "failed", auth: "notLoggedIn", tools: 0, failed: true }],
       plugins: [{ name: "github", enabled: true, version: "1.2.0", source: "openai-curated" }],
     });
-    assert.deepEqual((await driver.models()).commands?.map(command => command.name), ["compact", "export", "skill:review-helper"], "only enabled skills become commands");
+    assert.deepEqual((await driver.models()).commands?.map(command => command.name), ["compact", "export", "review", "skill:review-helper"], "only enabled skills become commands");
     const id = await driver.open(process.cwd());
     assert.equal((await (await driver.startText(id, "/skill:review-helper check the diff", () => {})).result).status, "completed");
     assert.equal((await (await driver.startText(id, "/skill:dormant hello", () => {})).result).status, "completed");
@@ -450,7 +450,7 @@ test("Codex lists its skills, MCP servers and installed plugins and invokes an e
     assert.deepEqual(turns[1], [{ type: "text", text: "/skill:dormant hello", text_elements: [] }], "a disabled skill is not invoked");
   } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
   const older = control("no-skills");
-  try { await older.initialize(); assert.deepEqual((await older.models()).commands?.map(command => command.name), ["compact", "export"], "an app-server without skills/list has no skills"); }
+  try { await older.initialize(); assert.deepEqual((await older.models()).commands?.map(command => command.name), ["compact", "export", "review"], "an app-server without skills/list has no skills"); }
   finally { await older.close(); }
 });
 

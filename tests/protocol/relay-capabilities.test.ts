@@ -55,7 +55,7 @@ const TABLE: Readonly<Record<Harness, Cells>> = {
     classify: [["/compact", null, ["command", "compact", "compact", ""]], ["/export", null, ["command", "export", "none", ""]], [" /compact", null, ["content"]],
       ["/clear", null, ["command", "clear", "clear", ""]], ["/new  ", null, ["command", "new", "clear", ""]], ["/reset", listed(["compact", "compact"]), ["command", "reset", "clear", ""]],
       ["/clear now", null, ["content"]], [" /clear", null, ["content"]],
-      ["/skill:review it", listed(["skill:review", "keep"]), ["command", "skill:review", "keep", "it", "relay"]], ["/review", listed(["skill:review", "keep"]), ["content"]]],
+      ["/skill:review it", listed(["skill:review", "keep"]), ["command", "skill:review", "keep", "it", "relay"]], ["/status", listed(["skill:review", "keep"]), ["content"]], ["/review", listed(["skill:review", "keep"]), ["command", "review", "keep", ""]]],
   },
   opencode: {
     // Its own server: the inbox says the prompt arrived (`session.inbox.delivered`), one text, a native title by PATCH.

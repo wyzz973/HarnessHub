@@ -32,5 +32,8 @@ export const codexFlavor: HarnessFlavor = {
   // refuses when the turn named is not the active one, so words that find no turn are never a turn of their own.
   // Tools load on demand natively: Codex 0.169.0 always defers MCP tools behind its tool_search for a model with `supports_search_tool` (feature
   // tool_search_always_defer_mcp_tools, removed and on; gpt-5.6-luna on 2026-11-15: ten tools cost 9 input tokens up front, and a Turn that needed hub_turns found it).
-  capabilities: { sessionMcp: "thread-config", systemPrompt: "developer-instructions", planTool: "native", toolLoad: "native", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native", record: "files", steer: "native" },
+  // A new thread waits for its MCP servers before its first model request (0.169.0, the user's twelve: ready after 4–5 s), so the Hub opens it ahead
+  // and keeps the process between Turns (prewarm). Edit and resend, and retry, take Turns off the thread itself (`thread/revert`).
+  capabilities: { sessionMcp: "thread-config", systemPrompt: "developer-instructions", planTool: "native", toolLoad: "native", resume: "native", fork: "native", attachments: "native", usage: "turn", questions: "native", record: "files", steer: "native",
+    prewarm: "session", rollback: "native" },
 };

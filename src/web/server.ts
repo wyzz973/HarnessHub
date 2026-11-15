@@ -540,7 +540,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     live: id => {
       const lost = app.runtime.keptLoss(id), outside = app.runtime.keptOutside(id), upgraded = app.runtime.keptUpgrade(id), queue = queueOf(id);
       return { permissions: app.runtime.permissionRequests(id), ...(queue === null ? {} : { queue }),
-        retention: { process: app.runtime.keptProcess(id), ...(lost === null ? {} : { lost }), ...(outside === null ? {} : { outside }), ...(upgraded === null ? {} : { upgraded }) } };
+        retention: { enabled: app.runtime.retains(id), process: app.runtime.keptProcess(id), ...(lost === null ? {} : { lost }), ...(outside === null ? {} : { outside }), ...(upgraded === null ? {} : { upgraded }) } };
     } });
   // The recently deleted and their erasure, and the page's search (2026-11-14): src/web/recall-routes.ts.
   const recall = new RecallRoutes({ conversations: () => conversations!, runtime: app.runtime, search: app.store, http: { json, headers, queries, body: request => body(request) },
@@ -1216,6 +1216,17 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         json(response, 201, conversations!.session((await app.runtime.create(configuration, select(input.selection), command(input.commandId))).id)); return;
       }
     }
+    // The process of a conversation not made yet, opened ahead with the body its create will carry (same workspace or scratch, selection and commandId): { warming, reason? }.
+    if (path === "/api/v1/sessions/warm" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["workspace", "scratch", "worktree", "selection", "commandId"], ["selection", "commandId"]);
+      if (input.worktree === true) { json(response, 202, { warming: false, reason: "worktree" }); return; }
+      if (input.scratch !== undefined && (input.scratch !== true || input.workspace !== undefined)) throw new HttpError(400, "INVALID_INPUT", "Invalid scratch");
+      const configuration = input.scratch === true ? await workspaceConfiguration(await scratchFolder(scratchRoot, command(input.commandId)))
+        : input.workspace === undefined ? options.configuration : await workspaceConfiguration(text(input.workspace, "workspace"));
+      json(response, 202, await app.runtime.warmNew(configuration, select(input.selection), command(input.commandId))); return;
+    }
+    // Each Harness's account limits as its latest Turn reported them: { limits: [{ harnessId, controlId, limits: NativeLimit[], plan?, at }] }.
+    if (path === "/api/v1/limits" && method === "GET") { queries(url, []); json(response, 200, { limits: app.runtime.limits() }); return; }
     const streamRoute = /^\/api\/v1\/sessions\/([^/]+)\/events\/stream$/u.exec(path);
     if (streamRoute && method === "GET") {
       queries(url, ["afterSeq"]);
@@ -1287,7 +1298,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     const changesRoute = /^\/api\/v1\/sessions\/([^/]+)\/changes$/u.exec(path);
     if (changesRoute && method === "GET") { queries(url, ["before", "limit"]); json(response, 200, conversations!.changes(changesRoute[1]!, { before: url.searchParams.get("before") ?? undefined, limit: url.searchParams.get("limit") ?? undefined })); return; }
     if (await checkpoints.handle(request, response, url, method)) return;
-    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|steer|switches|resume|cancel|close|events|export|fork|branch|delegate|task|retention|end-process|native-resume|reveal|workspace|restore|open|file|git|git\/commit|git\/push|git\/changes|git\/diff|git\/log|git\/branches))?$/u.exec(path);
+    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|steer|switches|resume|cancel|close|events|export|fork|branch|delegate|task|retention|warm|end-process|native-resume|reveal|workspace|restore|open|file|git|git\/commit|git\/push|git\/changes|git\/diff|git\/log|git\/branches))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
       // Undoes the user's deletion (2026-11-14): the one route a deleted conversation is found by. The answer is its row of the list, back where its own time puts it.
@@ -1488,6 +1499,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
           if (typeof input.enabled !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Expected whether to keep the native process");
           json(response, 200, conversations!.session(app.runtime.setRetention(id, input.enabled, command(input.commandId)).id)); return;
         }
+        // Opens the process of the conversation's next Turn ahead of it (its Harness declares prewarm); answers at once: { warming, reason? }.
+        if (action === "warm") { record(await body(request), [], []); json(response, 202, app.runtime.warm(id)); return; }
         // Ends the kept process with the normal stop chain; answers once its close is recorded.
         if (action === "end-process") { const input = record(await body(request), ["commandId"], ["commandId"]); json(response, 200, conversations!.session((await app.runtime.endKept(id, command(input.commandId))).id)); return; }
       }

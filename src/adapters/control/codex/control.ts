@@ -12,12 +12,13 @@ import type { RelayCapabilities, RelayPacketId } from "../../../contracts/relay.
 import { levelOptions, type ChosenLevels } from "../../../contracts/flavor.js";
 import { ControlError, SKIP_REPLY, errorFrom, object, string, type RpcRequest } from "../../../infrastructure/control/json-rpc-process.js";
 import { checkInputs, fileMentions } from "../../../infrastructure/control/attachments.js";
-import { CODEX_SKILL_INPUT as SKILL_INPUT, CODEX_THREAD_COMMANDS as THREAD_COMMANDS, codexClassify, codexNativeClassify, codexThreadOperation as threadOperation, relayDeclaration, relayEntries } from "../relay-classify.js";
+import { CODEX_SKILL_INPUT as SKILL_INPUT, CODEX_THREAD_COMMANDS as THREAD_COMMANDS, codexClassify, codexNativeClassify, codexReviewArgs, codexThreadOperation as threadOperation, relayDeclaration, relayEntries } from "../relay-classify.js";
 import { bodyWithoutFirstLine, boundedRequests, carriesPacket, clearedNotice, COMMAND_REFUSED, exceedsInput, hubCleared, INPUT_LIMIT_REFUSED, TITLE_DEADLINE_MS, usageRequest, measureBy } from "../relay-turn.js";
 import { CodexHost, ConsumerFailure } from "./host.js";
 import { COLLABORATION_MODE, COLLABORATION_OPTION, PERMISSION_SETTINGS, SANDBOX_TYPES, SERVICE_TIER, STANDARD_TIER, gitRootOf, permissionOptions, reasoningSummary,
   serviceTierOption, threadReport, tierOf, trustOverride, type PermissionSetting } from "./levels.js";
-import { asyncQuestions, echoedClientId, fileDiff, importTurn, inputText, itemTool, line, record, status, threadSource, threadTitle, tokens, turnFailure, turnTokens, TurnUsage, type Row, type Tokens } from "./mapping.js";
+import { asyncQuestions, echoedClientId, fileDiff, importTurn, inputText, itemTool, limitsOf, line, mergeLimits, record, reviewTarget, status, threadSource, threadTitle, tokens, turnFailure, turnTokens, TurnUsage,
+  type LimitBucket, type Row, type Tokens } from "./mapping.js";
 import { commandApproval, elicitation, fileChangeApproval, legacyApproval, permissionsApproval, refusalOf, userInputQuestions, type Prompt, type Question } from "./requests.js";
 import type { CodexFeature } from "./schema.js";
 
@@ -89,6 +90,12 @@ interface Run {
   begun: boolean;
   wake: (() => void) | null;
   readonly steers: Map<string, boolean>;
+  /** Some reply text was said (a review's result is said only when nothing else was). */
+  spoke: boolean;
+  /** A review (`review/start`): Codex announces a turn of its own beside the review's, which never completes; only the one it named is the Run's. */
+  readonly review: boolean;
+  /** What the review found (exitedReviewMode), said at its end when Codex said no reply of its own. */
+  found: string | null;
 }
 const WITHDRAWN = Symbol("withdrawn"), STOPPED = Symbol("stopped");
 type Answer = { readonly option: string; readonly input?: string } | typeof WITHDRAWN | typeof STOPPED;
@@ -145,6 +152,10 @@ export class CodexControl implements HarnessControl {
   private cleared: NativeConversationId | null = null;
   /** Turns Codex ran by itself between Runs, said once in the next Run. */
   private idleTurns = 0;
+  /** The account's rate-limit buckets as last read or updated; `limitsRead` once asked on this connection, `limitsDue` when an update came between Runs. */
+  private limitBuckets = new Map<string, LimitBucket>();
+  private limitsRead = false;
+  private limitsDue = false;
   get unattributedUpdates(): number { return this.host.unattributed; }
   get steering(): boolean { return this.has("steer"); }
   healthy(): boolean { return this.initialized && this.failure === null && this.host.rpc.failure === null && !this.threadGone; }
@@ -275,10 +286,20 @@ export class CodexControl implements HarnessControl {
     if (wanted === "auto_review" && !this.has("autoReview")) { this.notes.push("这个 Codex 没有自动审查（auto_review），“自动执行”时由 Hub 按档位答复它的请求。"); return "user"; }
     return typeof wanted === "string" ? wanted : "user";
   }
-  async open(cwd: string, model?: string, native?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
+  open(cwd: string, model?: string, native?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
+    return checkpoint === undefined ? this.openAs("start", cwd, model, native) : this.openAs("resume", cwd, model, native, checkpoint);
+  }
+  /** HarnessControl.openFork: `thread/fork` of `source` with everything a resume gives a thread, and the copy is this connection's thread. */
+  openFork(cwd: string, model: string | undefined, native: NativeOptions | undefined, source: string): Promise<NativeConversationId> {
+    if (!this.has("fork")) return Promise.reject(new ControlError("NATIVE_FORK_UNAVAILABLE", "这个 Codex 不能在同一个连接上分叉会话。"));
+    return this.openAs("fork", cwd, model, native, source);
+  }
+  /** Opens the connection's thread: a new one (`start`), the one behind `ref` (`resume`), or a copy of it (`fork`). */
+  private async openAs(kind: "start" | "resume" | "fork", cwd: string, model: string | undefined, native: NativeOptions | undefined, ref?: string): Promise<NativeConversationId> {
     this.assertInitialized();
     if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "conversation cwd must be absolute");
     if (this.conversation || this.opening || this.forkConnection) throw new ControlError("INVALID_STATE", "this connection already owns a thread");
+    const checkpoint = kind === "resume" ? ref : undefined;
     this.opening = true;
     try {
       this.effort = undefined; this.collaboration = null; this.confirmedMode = null; this.turnSettings = {}; this.threadGone = false;
@@ -288,7 +309,7 @@ export class CodexControl implements HarnessControl {
       if (model !== undefined || Object.keys(native ?? {}).length || levels.permission !== undefined || levels.effort !== undefined || levels.speed !== undefined) {
         const catalog = await this.nativeCatalog(configured); selected = catalog.models.find(row => row.id === (model ?? catalog.defaultModel));
         if (!selected) throw new ControlError("MODEL_UNAVAILABLE", "selected model is not in this Harness native catalog");
-        native = levelOptions(this.options.flavor, [...catalog.options, ...(selected.options ?? [])], native, levels, checkpoint !== undefined);
+        native = levelOptions(this.options.flavor, [...catalog.options, ...(selected.options ?? [])], native, levels, kind !== "start");
         for (const [id, value] of Object.entries(native ?? {})) {
           if (id === COLLABORATION_MODE) {
             if (!catalog.options?.find(option => option.id === id)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "Codex has no such collaboration mode");
@@ -336,10 +357,10 @@ export class CodexControl implements HarnessControl {
       // Codex would write this directory's trust into config.toml for an explicit writable sandbox; the same decision for this thread alone does not (levels.ts).
       const trust = trustOverride(configured.projects, cwd, sandbox, gitRootOf(cwd, existsSync));
       const config = { ...entry.config, ...(trust === null ? {} : { projects: trust }) };
-      const clear = checkpoint === undefined && this.cleared !== null && this.has("sessionStartSource");
+      const clear = kind === "start" && this.cleared !== null && this.has("sessionStartSource");
       if (checkpoint !== undefined) { this.conversation = nativeConversationId(checkpoint); this.host.own(this.conversation); }
-      const response = await this.openThread(checkpoint === undefined ? "thread/start" : "thread/resume", {
-        cwd, ...(checkpoint === undefined ? { ephemeral: false, ...(clear ? { sessionStartSource: "clear" } : {}) } : { threadId: nativeConversationId(checkpoint), excludeTurns: true }),
+      const response = await this.openThread(kind === "start" ? "thread/start" : kind === "resume" ? "thread/resume" : "thread/fork", {
+        cwd, ...(kind === "start" ? { ephemeral: false, ...(clear ? { sessionStartSource: "clear" } : {}) } : { threadId: nativeConversationId(ref), excludeTurns: true }),
         ...(model === undefined ? {} : { model }), ...overrides, ...(entry.developerInstructions === undefined ? {} : { developerInstructions: entry.developerInstructions }), ...(Object.keys(config).length ? { config } : {}),
       }, checkpoint);
       if (overrides.approvalPolicy !== undefined && response.approvalPolicy !== overrides.approvalPolicy) throw new ControlError("NATIVE_OPTION_MISMATCH", "Codex did not apply the requested approval policy");
@@ -354,11 +375,12 @@ export class CodexControl implements HarnessControl {
       this.threadPath = typeof thread.path === "string" && isAbsolute(thread.path) ? thread.path : null;
       const received = nativeConversationId(thread.id);
       if (checkpoint !== undefined && received !== checkpoint) throw new ControlError("IDENTITY_MISMATCH", "native restore returned a different thread");
+      if (kind === "fork" && received === ref) throw new ControlError("IDENTITY_MISMATCH", "thread/fork returned its source thread");
       if (checkpoint === undefined && this.host.isReleased(received)) throw new ControlError("IDENTITY_MISMATCH", "Codex answered a new thread with one this connection gave up");
       if (this.conversation && this.conversation !== received) throw new ControlError("IDENTITY_MISMATCH", "thread/start response does not match thread/started");
       this.conversation = received; this.host.own(received);
       const report = threadReport(response);
-      this.threadSettings = report.settings; this.threadMode = report.mode; this.resumed = checkpoint !== undefined;
+      this.threadSettings = report.settings; this.threadMode = report.mode; this.resumed = kind !== "start";
       // Every setting goes with every turn (T3 Code): what the thread was opened with, else what it says it runs with.
       const turnModel = model ?? optional(response.model), turnEffort = this.effort ?? optional(response.reasoningEffort);
       this.turnSettings = { ...(turnModel === undefined ? {} : { model: turnModel }), ...(turnEffort === undefined ? {} : { effort: turnEffort }),
@@ -371,7 +393,10 @@ export class CodexControl implements HarnessControl {
       // The thread the Hub's clear gave up is unloaded now that its successor is open.
       if (this.cleared !== null) { const old = this.cleared; this.cleared = null; if (this.has("unsubscribe")) void this.rpc.request("thread/unsubscribe", { threadId: old }, this.options.requestTimeoutMs, "reject").catch(() => {}); }
       return received;
-    } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
+    } catch (error) {
+      const failed = kind === "fork" && error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null ? new ControlError("NATIVE_FORK_UNAVAILABLE", "Codex refused to fork the thread") : error;
+      this.rpc.abort(errorFrom(failed)); throw failed;
+    }
     finally { this.opening = false; }
   }
   /**
@@ -500,6 +525,41 @@ export class CodexControl implements HarnessControl {
       this.rpc.abort(errorFrom(error)); throw error;
     }
   }
+  /**
+   * HarnessControl.rollback: `thread/revert` before the turn the user's `turns`-th last message began (T3 Code's way, its turns read newest first
+   * with `thread/turns/list`); turns Codex began by itself after it (a goal's continuation, a compaction) go with it. Only the thread's history
+   * changes, not the files. A thread with fewer such turns, or one Codex will not cut (a legacy history), is NATIVE_ROLLBACK_UNAVAILABLE.
+   */
+  async rollback(id: NativeConversationId, turns: number): Promise<void> {
+    this.assertOwned(id);
+    if (this.active !== null) throw new ControlError("INVALID_STATE", "a turn is active");
+    if (!Number.isSafeInteger(turns) || turns < 1) throw new ControlError("INVALID_INPUT", "a rollback takes at least one turn");
+    if (this.threadGone) throw new ControlError("NATIVE_SESSION_NOT_FOUND", "Codex closed this thread");
+    if (!this.has("revert")) throw new ControlError("NATIVE_ROLLBACK_UNAVAILABLE", "这个 Codex 不能退回轮次：它的协议里没有 thread/revert。");
+    let remaining = turns, before: string | null = null, cursor: string | undefined;
+    const seen = new Set<string>();
+    for (;;) {
+      const page = object(await this.rpc.request("thread/turns/list", { threadId: id, limit: IMPORT_TURNS_PER_PAGE, sortDirection: "desc", itemsView: "summary", ...(cursor === undefined ? {} : { cursor }) }), "Codex turns");
+      if (!Array.isArray(page.data) || page.data.length > IMPORT_TURNS_PER_PAGE) throw new ControlError("INVALID_PROTOCOL", "invalid Codex turn page");
+      for (const value of page.data) {
+        const turn = object(value, "Codex turn"), items = Array.isArray(turn.items) ? turn.items : [];
+        if (!items.some(item => record(item)?.type === "userMessage")) continue;
+        if (--remaining === 0) { before = string(turn.id, "Codex turn identity", 1024); break; }
+      }
+      if (before !== null || page.nextCursor == null) break;
+      cursor = string(page.nextCursor, "Codex turn cursor", 1024);
+      if (seen.has(cursor)) throw new ControlError("INVALID_PROTOCOL", "Codex repeated a turn cursor");
+      seen.add(cursor);
+    }
+    if (before === null) throw new ControlError("NATIVE_ROLLBACK_UNAVAILABLE", "Codex 的这个会话里没有这么多轮可以退回。");
+    try { await this.rpc.request("thread/revert", { threadId: id, beforeTurnId: before }, this.setupMs(), "reject"); }
+    catch (error) {
+      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null) throw new ControlError("NATIVE_ROLLBACK_UNAVAILABLE", "Codex 没有退回这个会话：" + line(error.remoteMessage ?? "", 300));
+      throw error;
+    }
+    // The thread's token totals start over from what it kept.
+    this.threadTotal = null;
+  }
   async checkAttachments(attachments: readonly ContentRef[]): Promise<void> {
     this.assertInitialized();
     if (!attachments.some(item => item.kind !== "file")) return;
@@ -549,15 +609,31 @@ export class CodexControl implements HarnessControl {
       timer: this.options.runTimeoutMs === undefined ? undefined : setTimeout(() => this.rpc.abort(new ControlError("RUN_TIMEOUT", "Codex turn exceeded its deadline")), this.options.runTimeoutMs),
       started, signalStarted, rejectStarted, primary: null, turns: new Set(), running: new Set(), primaryDone: false, outcome: null, settling: false, settled: false,
       streamed: new Set(), parts: new Map(), items: new Map(), reads: new Set(), agents: new Map(), usage: new TurnUsage(this.threadTotal), agentUsage: new Map(), context: undefined,
-      inputRecorded: false, clientId, packetId, requests: [], stopping: false, stop: null, begun: false, wake: null, steers: new Map() };
+      inputRecorded: false, clientId, packetId, requests: [], stopping: false, stop: null, begun: false, wake: null, steers: new Map(), spoke: false, review: threadOperation(prompt, attachments.length > 0) === "review", found: null };
     this.active = run;
     // Said once: the drift check's line, a reviewer Codex did not take, turns Codex ran by itself while no Turn of the Hub's was running.
     for (const note of this.notes.splice(0)) this.safeEmit(run, { type: "diagnostic", message: note });
     if (this.idleTurns > 0) { this.safeEmit(run, { type: "diagnostic", message: "上一轮结束后 Codex 自己又跑了 " + this.idleTurns + " 轮（例如目标自动续跑），那些内容没有记进对话。" }); this.idleTurns = 0; }
+    this.limitsFor(run);
     const input = [{ type: "text", text: text + mentions, text_elements: [] }, ...(skill ? [{ type: "skill", name: skill.name, path: skill.path }] : []),
       ...attachments.flatMap(file => file.kind === "image" ? [{ type: "localImage", path: file.path }] : file.kind === "audio" ? [{ type: "localAudio", path: file.path }] : [])];
     const operation = threadOperation(prompt, attachments.length > 0);
-    if (operation === "export") void this.exportThread(run, id);
+    // A Turn Codex begins at Hub's request (turn/start, review/start) is the Run's own once it is named; a refusal is one before anything was recorded.
+    const begun = (value: unknown, what: string) => {
+      try {
+        const turnId = string(object(object(value, what + " result").turn, "Codex turn").id, "Codex turn identity");
+        this.namePrimary(run, turnId); return true;
+      } catch (error) { if (error instanceof ConsumerFailure) this.rpc.abort(errorFrom(error.original)); else this.failRun(run, errorFrom(error)); return false; }
+    };
+    const refused = (error: unknown) => {
+      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && run.primary === null && this.rpc.failure === null) { this.settle(run); run.resolve({ status: "failed", reason: "request_rejected", ...NOT_RECORDED }); }
+      else this.rpc.abort(errorFrom(error));
+    };
+    if (operation === "review") {
+      if (!this.has("review")) { this.settle(run); run.resolve({ status: "failed", reason: "request_rejected", error: { code: "NATIVE_COMMAND_REJECTED", message: "这个 Codex 没有 review/start" }, ...NOT_RECORDED }); }
+      // Inline on the thread: what Codex found is the review's result (exitedReviewMode), said as the reply.
+      else void this.rpc.request("review/start", { threadId: id, target: reviewTarget(codexReviewArgs(prompt)), delivery: "inline" }).then(value => { if (begun(value, "review/start")) run.signalStarted(); }, refused);
+    } else if (operation === "export") void this.exportThread(run, id);
     else if (operation === "compact") {
       void this.rpc.request("thread/compact/start", { threadId: id }).then(value => { if (Object.keys(object(value, "thread/compact/start result")).length) this.rpc.abort(new ControlError("INVALID_PROTOCOL", "compaction receipt must be empty")); }, (error: unknown) => {
         if (error instanceof ControlError && error.code === "REMOTE_ERROR" && run.primary === null && this.rpc.failure === null) { this.settle(run); run.resolve({ status: "failed", reason: "request_rejected", ...NOT_RECORDED }); }
@@ -693,6 +769,8 @@ export class CodexControl implements HarnessControl {
       // turn/start named another turn than the first one Codex reported: that one began by itself, this one is the Run's own.
       if (run.settled) return;
       run.primaryDone = false;
+      // A review's: the turn Codex announced beside it never completes.
+      if (run.review) run.running.delete(run.primary);
     } else if (this.turnIds.has(turnId) && !run.turns.has(turnId)) throw new ControlError("DUPLICATE_TURN", "Codex reused a turn identity");
     run.primary = turnId; run.turns.add(turnId); this.turnIds.add(turnId); run.signalStarted();
   }
@@ -704,7 +782,34 @@ export class CodexControl implements HarnessControl {
     const id = typeof thread.id === "string" ? thread.id : null;
     if (id !== null && this.opening && this.conversation === null) { this.conversation = nativeConversationId(id); this.host.own(id); }
   }
+  /**
+   * The account's rate limits for a Run (`limits`): read once per connection (`account/rateLimits/read`) when the Run begins, then as Codex updates
+   * them (`account/rateLimits/updated`, sparse, merged); an update between Runs is said in the next one. A Codex that refuses the read says nothing.
+   */
+  private limitsFor(run: Run): void {
+    if (this.limitsDue && this.limitBuckets.size) this.emitLimits(run);
+    if (this.limitsRead || !this.has("rateLimits")) return;
+    this.limitsRead = true;
+    void this.rpc.request("account/rateLimits/read", { excludeResetCreditDetails: true }, this.options.requestTimeoutMs, "reject").then(value => {
+      const read = record(value);
+      if (read === null) return;
+      this.limitBuckets = mergeLimits(this.limitBuckets, read);
+      const live = this.live();
+      if (live !== null) this.emitLimits(live); else this.limitsDue = true;
+    }, () => {});
+  }
+  private emitLimits(run: Run): void {
+    this.limitsDue = false;
+    const { limits, plan } = limitsOf(this.limitBuckets);
+    if (limits.length) this.safeEmit(run, { type: "limits", limits, ...(plan === undefined ? {} : { plan }) });
+  }
   private globalNotification(method: string, params: Row): void {
+    if (method === "account/rateLimits/updated") {
+      this.limitBuckets = mergeLimits(this.limitBuckets, params);
+      const live = this.live();
+      if (live !== null) this.emitLimits(live); else this.limitsDue = true;
+      return;
+    }
     const run = this.live();
     if (run === null) { this.host.count(); return; }
     if (this.notice(run, method, params)) return;
@@ -729,13 +834,16 @@ export class CodexControl implements HarnessControl {
   }
   /** A notification about the opened thread. Nothing it says ends the connection: what belongs to no Run is counted. */
   private ownNotification(method: string, params: Row): void {
-    if (this.live() === null) this.host.count();
+    // Between Runs only what the thread does counts as its background activity, not what Codex says of itself (its MCP servers starting, settings).
+    if (this.live() === null && !PASSIVE.has(method)) this.host.count();
     switch (method) {
       case "turn/started": {
         const turnId = optional(record(params.turn)?.id);
         if (turnId === undefined) return;
         const run = this.live();
         if (run === null) { if (!this.turnIds.has(turnId)) { this.idleTurns++; this.turnIds.add(turnId); } return; }
+        // A review's own turn is the one review/start named; the one Codex announces beside it is not the Run's (it never completes).
+        if (run.review && run.primary !== null && turnId !== run.primary) { this.turnIds.add(turnId); return; }
         const owner = this.runOf(turnId, true);
         if (owner !== null) owner.running.add(turnId);
         return;
@@ -744,7 +852,7 @@ export class CodexControl implements HarnessControl {
       case "item/agentMessage/delta": {
         const run = this.runOf(params.turnId, true), itemId = optional(params.itemId);
         if (run === null || itemId === undefined || typeof params.delta !== "string") return;
-        run.streamed.add(itemId);
+        run.streamed.add(itemId); run.spoke = true;
         this.emit(run, { type: "text", text: params.delta, item: itemId }); return;
       }
       case "item/reasoning/summaryTextDelta": case "item/reasoning/textDelta": {
@@ -814,7 +922,10 @@ export class CodexControl implements HarnessControl {
       case "failed": result = { status: "failed", reason: "failed", error: turnFailure(record(turn.error) ?? {}), ...recorded }; break;
       default: this.failRun(run, new ControlError("INVALID_PROTOCOL", "turn/completed contains a nonterminal status")); return;
     }
-    if (turnId === run.primary) run.primaryDone = true;
+    if (turnId === run.primary) {
+      run.primaryDone = true;
+      if (run.found !== null && !run.spoke) { run.spoke = true; this.emit(run, { type: "text", text: run.found, item: "review:" + turnId.slice(0, 200) }); }
+    }
     else this.emit(run, { type: "activity", id: "turn:" + turnId.slice(0, 200), kind: "task", title: "Codex 接着做（自动续跑）", status: turn.status === "completed" ? "completed" : turn.status === "interrupted" ? "cancelled" : "failed" });
     run.outcome = result;
     if (!run.primaryDone || run.running.size > 0 || run.settling) return;
@@ -830,6 +941,7 @@ export class CodexControl implements HarnessControl {
     if (type === "agentMessage") {
       if (started) return;
       const said = typeof item.text === "string" ? item.text : "", questions = asyncQuestions(item, said);
+      if (said) run.spoke = true;
       if (!run.streamed.has(itemId) && said) this.emit(run, { type: "text", text: said, item: itemId });
       if (questions) this.emit(run, { type: "text", text: questions, item: itemId });
       return;
@@ -864,7 +976,15 @@ export class CodexControl implements HarnessControl {
       return;
     }
     if (type === "contextCompaction") { this.emit(run, { type: "activity", id: itemId, kind: "compaction", title: "上下文压缩", status: started ? "running" : "completed" }); return; }
-    if (type === "enteredReviewMode" || type === "exitedReviewMode") { this.emit(run, { type: "activity", id: "review", kind: "review", title: typeof item.review === "string" ? line(item.review, 1024) || "代码审查" : "代码审查", status: type === "enteredReviewMode" ? "running" : "completed" }); return; }
+    if (type === "enteredReviewMode" || type === "exitedReviewMode") {
+      // The review in progress, then what it found: the result (exitedReviewMode's `review`) is the reply, unless Codex said one already.
+      const entered = type === "enteredReviewMode", found = typeof item.review === "string" ? item.review.trim() : "";
+      if (!entered && started && !found) return;
+      this.emit(run, { type: "activity", id: "review:" + String(params.turnId ?? itemId).slice(0, 200), kind: "review", title: entered ? "代码审查：" + (line(found, 200) || "未提交的改动") : "代码审查完成",
+        status: entered ? "running" : "completed", ...(!entered && found ? { detail: found } : {}) });
+      if (!entered && found) run.found = found;
+      return;
+    }
     const tool = itemTool(item);
     if (tool === null) { this.emit(run, { type: "tool", id: itemId, title: type, status: status(item.status, started) }); return; }
     const prior = run.items.get(itemId);

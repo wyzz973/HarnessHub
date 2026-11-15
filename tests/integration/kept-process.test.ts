@@ -93,7 +93,7 @@ test("a conversation that keeps its process reuses it for the next Turn, and tur
 
   app.setRetention(session.id, false, "release"); await app.wait(session.id);
   state = oldShape(app, session.id);
-  assert.equal(state.retained, undefined); assert.equal(state.retainNative, undefined); assert.equal(factory.prepared[0]!.closed, true);
+  assert.equal(state.retained, undefined); assert.equal(state.retainNative, false); assert.equal(factory.prepared[0]!.closed, true);
   const [closed] = closes(session.id);
   assert.equal(closed?.reason, "disabled"); assert.equal(closed?.cleanup?.closed, true);
   app.send(session.id, "third", "third"); await app.wait(session.id);

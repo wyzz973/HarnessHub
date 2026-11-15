@@ -157,23 +157,26 @@ export function claudeNativeClassify(text: string, catalog: NativeModelCatalog |
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** The Codex driver's own thread operations, listed in its catalog. */
-export const CODEX_THREAD_COMMANDS = [{ name: "compact", description: "压缩当前会话上下文（原生 thread/compact/start）", contextEffect: "compact" }, { name: "export", description: "导出原生会话记录（Codex rollout JSONL）", contextEffect: "none" }] as const;
+export const CODEX_THREAD_COMMANDS = [{ name: "compact", description: "压缩当前会话上下文（原生 thread/compact/start）", contextEffect: "compact" }, { name: "export", description: "导出原生会话记录（Codex rollout JSONL）", contextEffect: "none" },
+  { name: "review", description: "审查改动：/review 看未提交的改动，/review base <分支>、/review commit <sha>，或在后面写要求（原生 review/start）", contextEffect: "keep" }] as const;
 /** The inputs the Codex driver turns into thread operations or skill inputs (startText); every other input is text to Codex. */
-const CODEX_EXPORT_INPUT = /^\/export\s*$/u, CODEX_COMPACT_INPUT = /^\/compact\s*$/u;
+const CODEX_EXPORT_INPUT = /^\/export\s*$/u, CODEX_COMPACT_INPUT = /^\/compact\s*$/u, CODEX_REVIEW_INPUT = /^\/review(?:\s+([\s\S]*))?$/u;
 export const CODEX_SKILL_INPUT = /^\/skill:([A-Za-z0-9][A-Za-z0-9._:-]{0,255})(?:\s+([\s\S]*))?$/u;
 /** The driver's own thread operation an input asks for, read once for classify() and startText(): with attachments, none. */
-export function codexThreadOperation(text: string, attached: boolean): "export" | "compact" | null {
-  return attached ? null : CODEX_EXPORT_INPUT.test(text) ? "export" : CODEX_COMPACT_INPUT.test(text) ? "compact" : null;
+export function codexThreadOperation(text: string, attached: boolean): "export" | "compact" | "review" | null {
+  return attached ? null : CODEX_EXPORT_INPUT.test(text) ? "export" : CODEX_COMPACT_INPUT.test(text) ? "compact" : CODEX_REVIEW_INPUT.test(text) ? "review" : null;
 }
+/** What `/review` was given after its name: nothing, `base <branch>`, `commit <sha>`, or instructions. */
+export function codexReviewArgs(text: string): string { return CODEX_REVIEW_INPUT.exec(text)?.[1]?.trim() ?? ""; }
 /**
- * Codex's reading: the app-server has no slash commands. Exactly `/export` and `/compact`, without attachments, are the
- * driver's thread operations, exactly `/clear`, `/new` and `/reset` alone are the Hub's clear (hubClearReading), and
+ * Codex's reading: the app-server has no slash commands. Exactly `/export` and `/compact`, and `/review` with what follows it, without
+ * attachments, are the driver's thread operations, exactly `/clear`, `/new` and `/reset` alone are the Hub's clear (hubClearReading), and
  * `/skill:<name> …` is an input with that skill when the catalog lists it (only the catalog settles the name), which submits
  * its text as a prompt (acceptsRelay). Anything else, leading whitespace included, is text.
  */
 export function codexReading(text: string, commands: CommandLookup | null, attachments: readonly ContentKind[]): CommandClass {
   const operation = codexThreadOperation(text, attachments.length > 0);
-  if (operation !== null) { const own = CODEX_THREAD_COMMANDS.find(command => command.name === operation)!; return { kind: "command", name: own.name, args: "", effect: own.contextEffect }; }
+  if (operation !== null) { const own = CODEX_THREAD_COMMANDS.find(command => command.name === operation)!; return { kind: "command", name: own.name, args: operation === "review" ? codexReviewArgs(text) : "", effect: own.contextEffect }; }
   const cleared = hubClearReading(text, attachments);
   if (cleared !== null) return cleared;
   const invoked = CODEX_SKILL_INPUT.exec(text);

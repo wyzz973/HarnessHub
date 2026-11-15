@@ -176,11 +176,14 @@ export function assertConversationTransition(before: Conversation, after: Conver
       // A branch's native fork advances without a Run: pending → dispatched → ready with the new reference, or archived unchanged.
       const forked = old !== undefined && frozen && next.throughRunId === null && (old.status === "fork-pending" && next.status === "forking" && next.checkpoint === old.checkpoint
         || old.status === "forking" && next.status === "ready" || (old.status === "fork-pending" || old.status === "forking") && next.status === "archived" && next.checkpoint === old.checkpoint);
-      if (!reset && !forked && (!writer || writer.selection.provider !== undefined || writer.selection.harnessId !== next.harnessId || writer.selection.controlId !== next.controlId || next.throughRunId !== null && next.throughRunId !== old?.throughRunId && next.throughRunId !== writer.id))
+      // A branch from an earlier place keeps a native session that can take the Turns it no longer has off itself: its position moves back, and what it owes
+      // taking off is said (`rewind`); nothing else of it changes.
+      const rewound = branched && old !== undefined && frozen && next.status === old.status && next.checkpoint === old.checkpoint && old.rewind === undefined && next.rewind !== undefined;
+      if (!reset && !forked && !rewound && (!writer || writer.selection.provider !== undefined || writer.selection.harnessId !== next.harnessId || writer.selection.controlId !== next.controlId || next.throughRunId !== null && next.throughRunId !== old?.throughRunId && next.throughRunId !== writer.id))
         throw transition("native state changed without its original Run owner");
       // A Run archives its own binding only when its end reports the Driver replaced the cleared native session; it may then add
       // the new binding of the same Harness control (the Hub's clear, F04).
-      if (!reset && !forked && old !== undefined && next.status === "archived" && (!(nativeCleared || reseated) || !frozen)) throw transition("a native binding is archived only by a native reset, a failed branch, a confirmed native clear or the Hub's own successor to a full one");
+      if (!reset && !forked && !rewound && old !== undefined && next.status === "archived" && (!(nativeCleared || reseated) || !frozen)) throw transition("a native binding is archived only by a native reset, a failed branch, a confirmed native clear or the Hub's own successor to a full one");
       relayStep(old?.relay, next.relay);
     }
   }

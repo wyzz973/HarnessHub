@@ -107,6 +107,19 @@ export interface FlavorCapabilities {
    * to its queue on any refusal of the steer (STEER_UNSUPPORTED, STEER_NO_ACTIVE_TURN, STEER_REFUSED).
    */
   readonly steer?: "native" | "none";
+  /**
+   * `session`: the Hub may start this Harness's process and open its native session before the Turn that needs it, sending nothing (a new
+   * conversation while its first message is typed, a conversation whose process was let go), and keeps it between Turns by default (ADR-030:
+   * idle release, a new process when the selection changes; the user may turn it off). The process also opens the next session itself after
+   * the Hub's clear. Worth it where a session's start is slow (Codex starts a thread's MCP servers, about 5 s, before its first model request).
+   * `none` (the default): a process is started for a Turn, and kept only where the user asked.
+   */
+  readonly prewarm?: "session" | "none";
+  /**
+   * `native`: the Driver takes the last Turns off its own session (HarnessControl.rollback), so an input edited and sent again, or a reply
+   * tried again, goes on in the same native session. `none` (the default): the Hub opens a new native session with the conversation up to there.
+   */
+  readonly rollback?: "native" | "none";
 }
 export interface HarnessFlavor {
   readonly harnessId: string;

@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { parseProviderTarget } from "../../../contracts/provider.js";
 import { HUB_DELEGATION_INSTRUCTIONS, HUB_PROGRESS_INSTRUCTIONS, HUB_TOOL_SEARCH_INSTRUCTIONS, hubCommandCall, hubCommandInstructions, hubRecordInstructions } from "../../../contracts/table.js";
 import { cutTitle } from "../../../contracts/web.js";
-import { listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeModelCatalog, type NativeUsage } from "../../../contracts/control.js";
+import { listedCommand, type TurnText, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent, type ControlRun, type HarnessControl, type NativeConversationId, type NativeLimit, type NativeModelCatalog, type NativeUsage,
+  type ProtocolObservation } from "../../../contracts/control.js";
 import { type ContentKind, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import { CONVERSATION_FORMAT, type Conversation, type ConversationCommit, type ConversationMutation, type ConversationRun, type ConversationStore, type HeldItem, type SessionListCursor } from "../../../contracts/conversation.js";
 import {
@@ -130,8 +131,12 @@ interface TurnRelay {
 interface KeptProcess {
   readonly binding: PreparedSessionBinding;
   readonly selection: HarnessSelection;
-  readonly conversation: NativeConversationId;
-  readonly runId: PublicRun["id"];
+  /** The native session open in it; null after the Hub's clear, when the next Turn opens one on the same connection (FlavorCapabilities.prewarm). */
+  readonly conversation: NativeConversationId | null;
+  /** The Run it was kept after; null for one the Hub opened ahead of a Turn (warm). */
+  readonly runId: PublicRun["id"] | null;
+  /** What its handshake said, for the first Turn on a process opened ahead (its run.protocol). */
+  readonly observation?: ProtocolObservation;
   readonly since: number;
   /** Updates the process had sent outside its Turns when it was handed over; later ones are its background activity. */
   readonly baseline: number;
@@ -140,6 +145,19 @@ interface KeptProcess {
   /** The recorded identity of its process group, read once when it was first kept; absent when it could not be read. */
   readonly identity?: KeptProcessIdentity;
 }
+/** A process opened ahead of a conversation that `create` with this key will make (SessionRuntime.warmNew). */
+interface WarmNew {
+  readonly id: SessionId;
+  readonly fingerprint: string;
+  readonly selection: HarnessSelection;
+  readonly done: Promise<KeptProcess | null>;
+  process: KeptProcess | null;
+  /** Taken by the create, or given up. */
+  over: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+/** The account limits of one Harness control, as the last Turn on it reported them. */
+export interface AccountLimits { readonly harnessId: string; readonly controlId: string; readonly limits: readonly NativeLimit[]; readonly plan?: string; readonly at: number }
 /** Why a kept process was closed; each close is recorded for its conversation. */
 type KeptRelease = "idle" | "disabled" | "ended_by_user" | "selection_changed" | "conversation_closed" | "conversation_deleted" | "native_reset" | "native_reseated" | "branched" | "exited" | "gateway_shutdown" | "harness_upgrade";
 /**
@@ -152,18 +170,22 @@ type KeptRelease = "idle" | "disabled" | "ended_by_user" | "selection_changed" |
  * two are handed the conversation as any handoff is — save that a session opened with the conversation that overflowed in its first Turn is followed by one handed less
  * (`shrink`, 2026-11-14: the packet's cap times that factor; the estimate a packet is sized by may be off by half again), until one that went alone overflows too.
  */
-type Reseat = { readonly reason: "full"; readonly used: number; readonly size: number } | { readonly reason: "overflow"; readonly shrink: number } | { readonly reason: "lost" };
+type Reseat = { readonly reason: "full"; readonly used: number; readonly size: number } | { readonly reason: "overflow"; readonly shrink: number } | { readonly reason: "lost" } | { readonly reason: "rewind" };
 /** The codes a Turn fails with when the conversation is over the model's window (Codex's own report of it; the ACP Harnesses' as json-rpc-process.ts reads it). */
 const OVERFLOW_CODES: ReadonlySet<string> = new Set(["CONTEXT_WINDOW_EXCEEDED", "NATIVE_CONTEXT_EXCEEDED"]);
 /** What the Harness is told when its Turn runs in a native session the Hub opened in the place of another; the packet before it and the state after it say the rest. */
 function reseatedNote(reason: Reseat["reason"], carried: boolean): string {
-  return "（HarnessHub：" + (reason === "lost" ? "你原来的原生会话找不回来了" : "你原来的原生会话上下文满了") + "，这是 HarnessHub 给你换的新会话。"
+  return "（HarnessHub：" + (reason === "lost" ? "你原来的原生会话找不回来了" : reason === "rewind" ? "用户改了前面一轮的消息重发，你原来的原生会话退不回那里" : "你原来的原生会话上下文满了") + "，这是 HarnessHub 给你换的新会话。"
     + (carried ? "上面是这段对话到现在的内容，里面多数是你自己做的；接着做，不要从头再来。" : "之前的对话这一轮没能带过来；接着做之前先弄清现在做到哪了，不要从头再来。") + "）";
 }
 /** What goes before the state when it is said again in the middle of a Turn, after the Harness compacted its own session. */
 const COMPACTED_NOTE = "（HarnessHub：你的上下文刚被压缩过。下面是 HarnessHub 记着的这件任务现在的状态，照着它接着做手上这一轮。）";
 /** A kept process without a Turn for this long is closed (ADR-030). */
 export const KEPT_IDLE_MS = 30 * 60 * 1000;
+/** A process opened ahead of a new conversation that was not made in this long is closed. */
+export const WARM_IDLE_MS = 10 * 60 * 1000;
+/** The Driver's own words of these failures are what the user is told (they hold no native text). */
+const SAID_AS_IS: ReadonlySet<string> = new Set(["NATIVE_SESSION_BUSY"]);
 function sameSelection(left: HarnessSelection, right: HarnessSelection): boolean {
   return left.harnessId === right.harnessId && left.controlId === right.controlId && JSON.stringify(left.provider ?? null) === JSON.stringify(right.provider ?? null)
     && (left.nativeModel ?? null) === (right.nativeModel ?? null) && JSON.stringify(Object.entries(left.nativeOptions ?? {}).sort()) === JSON.stringify(Object.entries(right.nativeOptions ?? {}).sort());
@@ -201,6 +223,7 @@ function requested(value: SelectionRequest): SelectionRequest {
 function fault(error: unknown): { readonly code: string; readonly message: string } {
   if (error instanceof SessionError) return { code: error.code.slice(0, 128), message: error.message.slice(0, 512) };
   const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.slice(0, 128) : "CONTROL_FAILED";
+  if (SAID_AS_IS.has(code) && error instanceof Error) return { code, message: error.message.slice(0, 512) };
   return { code, message: "Harness operation failed; inspect private control diagnostics" };
 }
 /** How much of a Turn's stderr is kept for its diagnostics, and for how many Turns. */
@@ -358,6 +381,12 @@ export class SessionRuntime {
   private readonly kept = new Map<SessionId, KeptProcess>();
   /** Kept processes being closed; every Turn or switch waits for them first, so none meets a lease about to be released. */
   private readonly releasing = new Map<SessionId, Promise<void>>();
+  /** Processes being opened ahead of a conversation's next Turn (warm); its worker waits for them before it takes what it keeps. */
+  private readonly warming = new Map<SessionId, Promise<void>>();
+  /** Processes opened ahead of a conversation not made yet, by the key its create will carry (warmNew); taken by that create, closed when unused. */
+  private readonly aheadNew = new Map<CommandId, WarmNew>();
+  /** Each Harness control's account limits as its Driver last reported them (the `limits` event), with when. */
+  private readonly accountLimits = new Map<string, AccountLimits>();
   /** Background processes that left a closed or taken-over program's group and still ran; said once in their conversations. */
   private readonly outside = new Map<SessionId, { readonly count: number; readonly at: number }>();
   /** Processes a previous owner kept and this owner found at start, with what became of them; shown in their conversations. */
@@ -506,7 +535,10 @@ export class SessionRuntime {
     // Validation has an await boundary; another create may have committed the same command in the meantime.
     const concurrent = this.store.findByCreateKey(command);
     if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return this.load(concurrent.id); }
-    const id = sessionId("session-" + this.options.id());
+    // A process opened ahead for this create (warmNew) gave the conversation its identity: its native session was opened for it.
+    const warmed = this.aheadNew.get(command), adopt = warmed !== undefined && !warmed.over && warmed.fingerprint === fingerprint && sameSelection(warmed.selection, validated) && worktree === undefined ? warmed : null;
+    if (warmed !== undefined) { this.aheadNew.delete(command); if (adopt === null) this.dropWarm(warmed); }
+    const id = adopt?.id ?? sessionId("session-" + this.options.id());
     const state: Conversation = { id, version: 0, lastSeq: 0, format: CONVERSATION_FORMAT, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
       runs: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
@@ -515,6 +547,7 @@ export class SessionRuntime {
       const committed = this.store.create(state, [event("session.created", { selection: validated, continuity: "public_context_rehydrate", ...(worktree === undefined ? {} : { worktree: { path: worktree.path, branch: worktree.branch } }) })]);
       this.managedSessions.add(committed.conversation.id);
       this.publish(committed);
+      if (adopt !== null) this.adoptWarm(id, adopt);
       return this.load(id);
     }
     catch (error) { if (storeUntrusted(error)) this.fail(error, id); throw error; }
@@ -627,11 +660,16 @@ export class SessionRuntime {
         timing: { acceptedAt }, ...(relayRequest === undefined ? {} : { relayRequest }), ordinal: at, userSeq: current.lastSeq + 1, isCommand: false, items: [userItemOf({ id: nextId, userMessageId: userId }, text, acceptedAt)] };
       const accepted = event("message.accepted", { runId: nextId, messageId: userId, role: "user", text, ...(attachments.length ? { attachments } : {}), ...(choices === undefined ? {} : { relay: choices }), ...(relayRequest === undefined ? {} : { relayRequest }) });
       if (branchAt === undefined) return { next: { ...current, runs: [...current.runs, run], commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] }, events: [accepted] };
-      const branched = this.branchedFrom(current);
+      const branched = this.branchedFrom(current, at), rewound = (branched.nativeBindings ?? []).flatMap(binding => binding.rewind === undefined || binding.status === "archived" ? [] : [{ harnessId: binding.harnessId, controlId: binding.controlId, turns: binding.rewind.turns }]);
+      const kept = (branched.nativeBindings ?? []).filter(binding => binding.status !== "archived" && binding.rewind === undefined && (current.nativeBindings ?? []).some(old => old.harnessId === binding.harnessId && old.controlId === binding.controlId && old.status !== "archived")).map(binding => ({ harnessId: binding.harnessId, controlId: binding.controlId }));
       return { next: { ...branched, runs: [...current.runs.slice(0, at), run], commands: [...current.commands, { id: command, kind: "send", fingerprint, resultId: nextId }] },
-        events: [accepted, event("conversation.branched", { fromRunId: branchFrom, ordinal: at, runId: nextId })], branch: { at } };
+        events: [accepted, event("conversation.branched", { fromRunId: branchFrom, ordinal: at, runId: nextId, ...(rewound.length ? { rewound } : {}), ...(kept.length ? { kept } : {}) })], branch: { at } };
     });
-    if (branchAt !== undefined && this.kept.has(id)) void this.requestRelease(id, "native_reset");
+    // The process the conversation keeps goes on serving it when its native session stays (it holds none of the Turns left, or takes them off itself).
+    if (branchAt !== undefined && this.kept.has(id)) {
+      const held = this.kept.get(id)!.selection, still = this.load(id).nativeBindings?.some(binding => binding.harnessId === held.harnessId && binding.controlId === held.controlId && binding.status !== "archived");
+      if (!still) void this.requestRelease(id, "native_reset");
+    }
     this.acceptedRelay.set(nextId, choices ?? {});
     // Inputs cancelled before they run never read theirs: the oldest go first, so this stays bounded.
     if (this.acceptedRelay.size > 4096) this.acceptedRelay.delete(this.acceptedRelay.keys().next().value!);
@@ -916,10 +954,43 @@ export class SessionRuntime {
     if (state.activeRunId !== null || state.pendingSwitchId !== null || state.runs.some(run => !terminal(run.status)) || this.workers.has(state.id))
       throw new SessionError("BRANCH_BUSY", "回合进行中不能切换分支或在旧位置重发：等这一轮结束或先停止它");
   }
-  /** The conversation as a branch leaves it: every native session it held given up (they hold Turns the path no longer has), and a relay recovery failure cleared with them. */
-  private branchedFrom(current: Conversation): Conversation {
+  /**
+   * The conversation as a branch leaves it, and a relay recovery failure cleared with it. Taking another branch (no `at`) gives every native session up: they hold
+   * Turns the path no longer has. A branch from the place `at` (2026-11-15) keeps a native session that holds none of the Turns from there on, and one whose
+   * Harness can take them off itself (rewindOf) is kept with what it owes taking off (`rewind`); every other is given up, and its next Turn opens a new one
+   * handed the path.
+   */
+  private branchedFrom(current: Conversation, at?: number): Conversation {
     const { relayRecoveryFailed: _cleared, ...rest } = current;
-    return { ...rest, nativeBindings: current.nativeBindings?.map(binding => binding.status === "archived" ? binding : { ...binding, status: "archived" as const }) ?? [] };
+    return { ...rest, nativeBindings: current.nativeBindings?.map(binding => {
+      if (binding.status === "archived") return binding;
+      const way = at === undefined || current.relayRecoveryFailed !== undefined ? { kind: "archive" as const } : this.rewindOf(current, at, binding);
+      if (way.kind === "keep") return binding;
+      if (way.kind === "archive") return { ...binding, status: "archived" as const };
+      return { ...binding, throughRunId: way.through, rewind: { turns: way.turns, fromRunId: current.runs[at!]!.id } };
+    }) ?? [] };
+  }
+  /**
+   * What a branch from the place `at` does to one native session: `keep` it when none of the Turns from there on went into it; `rewind` it by the Turns that did
+   * when its Harness takes Turns off itself (FlavorCapabilities.rollback `native`) and each of them is known to be one native Turn — a dispatched input of the user's
+   * (no native command), settled, with no packet (what a packet carried would go with it: the binding's mark could not say what it holds then) — and some
+   * Turn before them stays in it; `archive` it otherwise.
+   */
+  private rewindOf(state: Conversation, at: number, binding: NativeSessionBinding): { readonly kind: "keep" } | { readonly kind: "archive" } | { readonly kind: "rewind"; readonly turns: number; readonly through: RunId } {
+    if (binding.status !== "ready" || binding.relay === undefined || binding.rewind !== undefined) return { kind: "archive" };
+    if (binding.opensNew === true) return { kind: "keep" };
+    const epoch = binding.relay.epoch, on = (run: ConversationRun): boolean => {
+      const where = run.relay?.executedOn ?? run.executedOn ?? null;
+      return where !== null && where.harnessId === binding.harnessId && where.controlId === binding.controlId && where.nativeEpoch === epoch && run.timing?.dispatchedAt !== undefined;
+    };
+    const removed = state.runs.slice(at).filter(on);
+    if (removed.length === 0) return { kind: "keep" };
+    if (this.options.flavor?.(binding.harnessId)?.capabilities?.rollback !== "native" || binding.relay.pending !== null) return { kind: "archive" };
+    const known = (run: ConversationRun): boolean => !run.isCommand && (run.relay?.packetId ?? null) === null && run.backend !== null
+      && (run.status === "completed" || run.status === "cancelled" || run.status === "failed" && run.timing?.firstOutputAt !== undefined);
+    const through = [...state.runs.slice(0, at)].reverse().find(on);
+    if (through === undefined || through.backend === null || !removed.every(known)) return { kind: "archive" };
+    return { kind: "rewind", turns: removed.length, through: through.id };
   }
   /** The installation's handoff log and preference of a Store that keeps them (FileConversationStore); none otherwise. */
   private relayLog(): Partial<RelayLogPort> | null {
@@ -1133,8 +1204,9 @@ export class SessionRuntime {
     try {
       const committed = this.store.create(state, [event("session.created", { selection: state.selection, continuity: nativeFork ? "native_fork" : "public_context_rehydrate", origin: { sessionId: sourceId, throughRunId: through.id, messages: history.length, nativeFork } })], parts.rows);
       this.managedSessions.add(id); this.publish(committed);
-      // The source's kept process holds the native session the branch forks; it is closed first (ADR-030).
-      if (this.kept.has(sourceId)) void this.requestRelease(sourceId, "branched");
+      // The source's kept process holds the native session the branch forks; it is closed first (ADR-030), unless its Harness branches from what it
+      // stored and opens the copy on another connection (FlavorCapabilities.prewarm: Codex's thread/fork reads the thread's record).
+      if (this.kept.has(sourceId) && !(nativeFork && this.resident(native.harnessId))) void this.requestRelease(sourceId, "branched");
       if (nativeFork) this.schedule(id);
       return this.load(id);
     } catch (error) { if (storeUntrusted(error)) this.fail(error, id); throw error; }
@@ -1453,8 +1525,8 @@ export class SessionRuntime {
   }
 
   /**
-   * Opts this conversation in or out of keeping its native process between Turns (ADR-030). Off by default; turning it off
-   * closes a kept process before the next Turn. Idempotent by command key.
+   * Opts this conversation in or out of keeping its native process between Turns (ADR-030). The default is its Harness's (on where it declares
+   * `prewarm: "session"`, retains); turning it off closes a kept process before the next Turn. Idempotent by command key.
    */
   setRetention(id: SessionId, enabled: boolean, key: string): Conversation {
     this.admit(); const state = this.load(id), command = commandId(key), fingerprint = this.fingerprint({ kind: "retention", enabled });
@@ -1462,7 +1534,7 @@ export class SessionRuntime {
     if (state.status === "closed") throw new SessionError("SESSION_CLOSED", "a closed Session keeps no native process");
     const committed = this.commit(id, current => {
       const { retainNative, ...rest } = current;
-      return { next: { ...rest, ...(enabled ? { retainNative: true as const } : {}), commands: [...current.commands, { id: command, kind: "retention", fingerprint, resultId: id }] },
+      return { next: { ...rest, retainNative: enabled, commands: [...current.commands, { id: command, kind: "retention", fingerprint, resultId: id }] },
         events: [event("session.retention_changed", { enabled })] };
     });
     if (!enabled && this.kept.has(id)) void this.requestRelease(id, "disabled");
@@ -1647,6 +1719,126 @@ export class SessionRuntime {
     if (this.kept.has(id) || this.releasing.has(id)) await this.requestRelease(id, "ended_by_user");
     return this.load(id);
   }
+  /** Whether the Hub keeps a process of this Harness between Turns by default (FlavorCapabilities.prewarm `session`), and may open one ahead. */
+  private resident(harnessId: string): boolean { return this.options.flavor?.(harnessId)?.capabilities?.prewarm === "session"; }
+  /** Whether this conversation keeps its native process between Turns: as the user chose, else as its Harness declares (2026-11-15). */
+  retains(id: SessionId): boolean { try { return this.retainsState(this.load(id)); } catch { return false; } }
+  private retainsState(state: Conversation): boolean { return state.retainNative ?? (state.selection.provider === undefined && this.resident(state.selection.harnessId)); }
+  /** Each Harness control's account limits (rate-limit windows, reset times, plan) as the latest Turn on it reported them; none before one did. */
+  limits(): readonly AccountLimits[] { return [...this.accountLimits.values()]; }
+  /** Why this conversation's next Turn cannot have its process opened ahead now; null when it can. */
+  private coldReason(state: Conversation): string | null {
+    if (state.status !== "open" || state.deletedAt !== undefined || this.closingSessions.has(state.id)) return "closed";
+    if (state.selection.provider !== undefined) return "provider";
+    if (!this.resident(state.selection.harnessId)) return "unsupported";
+    if (!this.retainsState(state)) return "retention_off";
+    if (state.activeRunId !== null || state.pendingSwitchId !== null || state.runs.some(run => !terminal(run.status)) || this.workers.has(state.id) || this.releasing.has(state.id)) return "busy";
+    const live = state.nativeBindings?.find(binding => binding.harnessId === state.selection.harnessId && binding.controlId === state.selection.controlId && binding.status !== "archived");
+    if (live !== undefined && live.status !== "ready") return "native_unconfirmed";
+    return null;
+  }
+  /**
+   * Opens the process of this conversation's next Turn ahead of it (FlavorCapabilities.prewarm `session`, 2026-11-15): its native session, resumed or new,
+   * is open when the user sends, so the Turn does not wait for the Harness to start it (Codex starts a thread's MCP servers first: 4–5 s). Nothing is
+   * sent and nothing is written to the conversation: the process is its kept one (ADR-030, idle release; a Turn with another selection closes it). The
+   * answer comes at once; a Turn sent meanwhile waits for the opening and takes it. A failure leaves nothing: the Turn starts the program as it would have.
+   */
+  warm(id: SessionId): { readonly warming: boolean; readonly reason?: string } {
+    this.admit();
+    const state = this.load(id);
+    if (this.kept.has(id) || this.warming.has(id)) return { warming: true };
+    const reason = this.coldReason(state);
+    if (reason !== null) return { warming: false, reason };
+    const opening = this.openAhead(id, state.selection, state.configuration, state).then(process => {
+      if (process === null) return;
+      if (!this.accepting || this.kept.has(id) || this.closingSessions.has(id)) { void process.binding.close().catch(() => {}); clearTimeout(process.timer); return; }
+      this.kept.set(id, process);
+    }, () => {}).finally(() => { this.warming.delete(id); });
+    this.warming.set(id, opening);
+    return { warming: true };
+  }
+  /**
+   * The same ahead of a conversation not made yet (the new-conversation page while its first message is typed): `create` with this key, this
+   * configuration and selection takes the process, and the conversation gets the identity it was opened for. Unused, it is closed after WARM_IDLE_MS,
+   * or when a create with this key asks for something else. A key whose conversation exists warms that conversation.
+   */
+  async warmNew(configuration: SessionConfiguration, selection: SelectionRequest, key: string): Promise<{ readonly warming: boolean; readonly reason?: string }> {
+    this.admit();
+    const config = parseConfiguration(configuration), request = requested(selection), command = commandId(key);
+    const made = this.store.findByCreateKey(command);
+    if (made) return this.warm(made.id);
+    if (this.aheadNew.has(command)) return { warming: true };
+    if (request.provider != null) return { warming: false, reason: "provider" };
+    if (!this.resident(request.harnessId)) return { warming: false, reason: "unsupported" };
+    const validated = await this.factory.validate(request, config);
+    this.admit();
+    if (this.aheadNew.has(command) || this.store.findByCreateKey(command)) return { warming: true };
+    const id = sessionId("session-" + this.options.id()), fingerprint = this.fingerprint({ kind: "create", configuration: config, selection: request });
+    const entry: WarmNew = { id, fingerprint, selection: validated, done: this.openAhead(id, validated, config, null), process: null, over: false, timer: null };
+    this.aheadNew.set(command, entry);
+    void entry.done.then(process => {
+      if (process === null) { if (this.aheadNew.get(command) === entry) this.aheadNew.delete(command); return; }
+      entry.process = process;
+      // Not taken yet: it waits for its create, which comes within WARM_IDLE_MS or not at all.
+      if (!entry.over) { clearTimeout(process.timer); entry.timer = setTimeout(() => { if (this.aheadNew.get(command) === entry) this.aheadNew.delete(command); this.dropWarm(entry); }, WARM_IDLE_MS); entry.timer.unref?.(); }
+    });
+    return { warming: true };
+  }
+  /** A create took a process opened ahead for it: it is the new conversation's kept process, now or once it is open. */
+  private adoptWarm(id: SessionId, entry: WarmNew): void {
+    entry.over = true;
+    if (entry.timer !== null) clearTimeout(entry.timer);
+    const take = (process: KeptProcess | null): void => {
+      if (process === null) return;
+      if (!this.accepting || this.kept.has(id) || this.closingSessions.has(id)) { clearTimeout(process.timer); void process.binding.close().catch(() => {}); return; }
+      clearTimeout(process.timer);
+      const idleMs = this.options.keptIdleMs ?? KEPT_IDLE_MS, timer = setTimeout(() => { void this.requestRelease(id, "idle"); }, idleMs); timer.unref?.();
+      this.kept.set(id, { ...process, timer });
+    };
+    if (entry.process !== null) { take(entry.process); return; }
+    const opening = entry.done.then(take, () => {}).finally(() => { this.warming.delete(id); });
+    this.warming.set(id, opening);
+  }
+  /** A process opened ahead that nothing will take: closed, nothing recorded (no conversation holds it). */
+  private dropWarm(entry: WarmNew): Promise<void> {
+    entry.over = true;
+    if (entry.timer !== null) clearTimeout(entry.timer);
+    return entry.done.then(async process => { if (process !== null) { clearTimeout(process.timer); await process.binding.close().catch(() => null); } }, () => {});
+  }
+  /**
+   * Starts the program of `selection` for conversation `id` (made or about to be), initializes it and opens the native session its next Turn would:
+   * the conversation's ready binding resumed, or a new one, with the Hub's instructions and the levels, as execute() would. Null when anything fails;
+   * the program is then closed and nothing is recorded.
+   */
+  private async openAhead(id: SessionId, selection: HarnessSelection, configuration: SessionConfiguration, state: Conversation | null): Promise<KeptProcess | null> {
+    let binding: PreparedSessionBinding | null = null;
+    try {
+      binding = await this.factory.prepare(selection, configuration, id, "warm-" + this.options.id());
+      const control = binding.control, observation = await control.initialize();
+      const live = state?.nativeBindings?.find(row => row.harnessId === selection.harnessId && row.controlId === selection.controlId && row.status !== "archived");
+      if (live !== undefined && live.status !== "ready") throw new SessionError("NATIVE_STATE_UNCONFIRMED", "the native session's state is not confirmed");
+      const carried = state === null ? null : carriedNativeConfiguration(state, selection, state.epoch);
+      const nativeOptions = nativeOnly(carried?.options === undefined ? selection.nativeOptions : { ...selection.nativeOptions, ...carried.options });
+      control.setSessionInstructions?.(this.sessionInstructions(binding, id), { progress: binding.hubTools === true && this.progressAsked(binding) });
+      const from = live === undefined || live.opensNew === true ? undefined : live.checkpoint;
+      const native = await control.open(binding.workspace, carried?.model ?? selection.nativeModel, nativeOptions, from);
+      // What the conversation became meanwhile decides whether the opening still fits it: the same selection, the same native session to resume.
+      if (state !== null) {
+        const now = this.load(id), still = now.nativeBindings?.find(row => row.harnessId === selection.harnessId && row.controlId === selection.controlId && row.status !== "archived");
+        if (!sameSelection(now.selection, selection) || (still === undefined || still.opensNew === true ? undefined : still.checkpoint) !== from || now.status !== "open") throw new SessionError("WARM_STALE", "the conversation changed while its process was opened");
+      }
+      const at = this.options.now().getTime(), idleMs = this.options.keptIdleMs ?? KEPT_IDLE_MS, opened = binding;
+      const timer = setTimeout(() => { if (this.kept.get(id)?.binding === opened) void this.requestRelease(id, "idle"); }, idleMs); timer.unref?.();
+      let identity: KeptProcessIdentity | undefined;
+      const group = control.processGroup?.() ?? null;
+      const startedAt = group === null || this.options.processes === undefined ? null : await this.options.processes.identify(group).catch(() => null);
+      if (group !== null && startedAt !== null) identity = { group, startedAt };
+      return { binding, selection, conversation: native, runId: null, observation, since: at, baseline: control.unattributedUpdates ?? 0, lastUsed: at, timer, ...(identity === undefined ? {} : { identity }) };
+    } catch {
+      if (binding !== null) await binding.close().catch(() => null);
+      return null;
+    }
+  }
   /** This conversation's kept process as the chat shows it; null when it keeps none. */
   keptProcess(id: SessionId): { readonly harnessId: string; readonly controlId: string; readonly since: number; readonly lastUsedAt: number; readonly idleEndsAt: number; readonly backgroundUpdates: number } | null {
     const kept = this.kept.get(id);
@@ -1800,7 +1992,7 @@ export class SessionRuntime {
   private keepable(id: SessionId, execution: ActiveExecution, backend: BackendResult | null, problem: unknown, confirmed: boolean): { readonly keep: boolean; readonly skipped?: "limit" } {
     try {
       const state = this.load(id), run = state.runs.find(row => row.id === execution.runId);
-      if (state.retainNative !== true || run === undefined || run.cancelRequested || run.selection.provider !== undefined || !confirmed || problem !== null || backend?.status !== "completed"
+      if (!this.retainsState(state) || run === undefined || run.cancelRequested || run.selection.provider !== undefined || !confirmed || problem !== null || backend?.status !== "completed"
         || execution.stop !== null || execution.earlyClose !== null || !this.accepting || this.fatal !== null || this.closingSessions.has(id) || this.releasing.has(id)
         || execution.binding?.control.healthy?.() !== true) return { keep: false };
       return this.options.keptLimit !== undefined && this.kept.size >= this.options.keptLimit ? { keep: false, skipped: "limit" } : { keep: true };
@@ -1867,6 +2059,10 @@ export class SessionRuntime {
     for (const execution of [...this.actives.values()]) this.stop(execution);
     this.stopSwitch();
     while (this.workers.size) await Promise.allSettled([...this.workers.values()]);
+    // Processes opened ahead end with their owner too: those no conversation took yet are closed, the others are kept ones by now.
+    await Promise.allSettled([...this.warming.values()]);
+    const unused = [...this.aheadNew.values()]; this.aheadNew.clear();
+    await Promise.allSettled(unused.map(entry => this.dropWarm(entry)));
     // Kept processes end with their owner; each close is recorded for its conversation (ADR-030).
     try { await this.settleReleases(); for (const id of [...this.kept.keys()]) await this.release(id, "gateway_shutdown"); }
     catch (error) { problem ??= error; this.fail(error); }
@@ -2188,8 +2384,10 @@ export class SessionRuntime {
   private async serve(id: SessionId): Promise<void> {
     for (;;) {
       this.work.delete(id);
-      // Kept processes being closed go first, so a Turn or switch never meets a lease that is about to be released.
+      // Kept processes being closed go first, so a Turn or switch never meets a lease that is about to be released; a process being opened ahead
+      // for this conversation is waited for, so its next Turn takes it instead of starting another.
       await this.settleReleases();
+      await this.warming.get(id);
       if (this.fatal) { this.work.clear(); return; }
       let state = this.load(id);
       if ((state.status !== "open" && !(state.status === "blocked" && this.recoverySwitch(state))) || this.closingSessions.has(id) || !this.accepting) return;
@@ -2380,6 +2578,13 @@ export class SessionRuntime {
         && ((value.type === "text" || value.type === "thinking") && value.text !== "" || value.type === "tool")) this.inputRecorded(execution, undefined, "agent_output");
     if (value.type === "text" || value.type === "thinking") { this.streamChunk(execution, value); return; }
     if (value.type === "input_recorded") { this.inputRecorded(execution, value.packetId, "recorded_event"); return; }
+    // The account's, not the conversation's: kept for the page (limits()), never written into the Turn.
+    if (value.type === "limits") {
+      const run = runIn(this.load(execution.sessionId), execution.runId);
+      if (run !== undefined && run.selection.provider === undefined) this.accountLimits.set(run.selection.harnessId + "\n" + run.selection.controlId, { harnessId: run.selection.harnessId, controlId: run.selection.controlId,
+        limits: value.limits, ...(value.plan === undefined ? {} : { plan: value.plan }), at: this.options.now().getTime() });
+      return;
+    }
     this.flushStream(execution);
     const state = this.owned(execution), run = runIn(state, execution.runId)!;
     if (run.status !== "running") throw new SessionError("STALE_EVENT", "output arrived outside its active Run");
@@ -2675,6 +2880,7 @@ export class SessionRuntime {
         const successor: NativeSessionBinding = { harnessId: h, controlId: c, checkpoint: old.checkpoint, throughRunId: null, status: "ready", ...(old.observed === undefined ? {} : { observed: old.observed }), relay, opensNew: true };
         const title = why.reason === "full" ? "上下文用到 " + Math.min(100, Math.round(100 * why.used / why.size)) + "%，换到新的原生会话接着做"
           : why.reason === "overflow" ? (why.shrink < 1 ? "上一轮带着之前的对话还是超出了上下文窗口，换到新的原生会话、少带一些接着做" : "上一轮超出了上下文窗口，换到新的原生会话接着做")
+          : why.reason === "rewind" ? "原生会话退不回改动的那一轮，换到新的原生会话接着做"
           : "原来的原生会话找不回来了，换到新的原生会话接着做";
         this.placed(execution, { kind: "notice", severity: "info", title, code: "NATIVE_RESEATED", at: this.options.now().getTime() },
           [event("native.binding_reseated", { runId: target, harnessId: h, controlId: c, reason: why.reason, ...(why.reason === "full" ? { used: why.used, size: why.size } : {}),
@@ -2699,9 +2905,12 @@ export class SessionRuntime {
       if (reusing !== null) {
         const kept = reusing, now = this.options.now().getTime();
         execution.binding = kept.binding; native = kept.conversation; execution.diagnosticMark = kept.binding.control.diagnosticMark?.() ?? null;
+        // One opened ahead with a new native session holds nothing yet, as one this Turn would have opened.
+        if (kept.runId === null && native !== null && (previousNative === undefined || previousNative.opensNew === true)) openedNew = true;
         this.commit(id, current => {
           const { retained, ...rest } = current;
-          return { next: updatedRun(rest, target, { reused: true }), events: [event("native.process_reused", { runId: target, previousRunId: kept.runId, idleMs: Math.max(0, now - kept.lastUsed), backgroundUpdates: this.background(kept) })] };
+          return { next: updatedRun(rest, target, { reused: true }), events: [event("native.process_reused", { runId: target, previousRunId: kept.runId, idleMs: Math.max(0, now - kept.lastUsed), backgroundUpdates: this.background(kept),
+            ...(kept.runId === null ? { opened: "ahead" } : {}) }), ...(kept.observation === undefined ? [] : [event("run.protocol", { runId: target, observation: kept.observation })])] };
         });
         this.continue(execution);
       } else await this.startProgram(execution, run, current, id, target);
@@ -2724,21 +2933,23 @@ export class SessionRuntime {
       // Whether this Turn's Harness can call the Hub's tools: its process has them, and where they are a command of the conversation the level lets it run one
       // (a Harness in its read-only mode refuses every command, the Hub's with them: nothing is then promised to be read back, and nothing is held back for it).
       const toolsUsable = (): boolean => execution.binding?.hubTools === true && !(execution.binding.hubCommand !== undefined && selectedPermission(run.selection.nativeOptions) === "plan");
+      // A requested value the native session changed itself is applied as it is now instead of being reverted (ADR-028). The Hub's own keys (the permission
+      // level, contracts/flavor.ts) are the Hub's: the Driver is given its native values only.
+      const open = (on: HarnessControl, from: string | undefined) => {
+        const carried = carriedNativeConfiguration(current, run.selection, run.epoch);
+        const nativeOptions = nativeOnly(carried?.options === undefined ? run.selection.nativeOptions : { ...run.selection.nativeOptions, ...carried.options });
+        on.setSessionInstructions?.(this.sessionInstructions(execution.binding, id), { progress: execution.binding!.hubTools === true && this.progressAsked(execution.binding!) });
+        return on.open(execution.binding!.workspace, carried?.model ?? run.selection.nativeModel, nativeOptions, from);
+      };
       if (native === null) {
+        // A kept process whose session the Hub cleared was initialized already, and said so when it was first used.
         const observation = await control.initialize(); this.continue(execution);
-        this.commit(id, current => ({ next: current, events: [event("run.protocol", { runId: target, observation })] }));
-        // A requested value the native session changed itself is applied as it is now instead of being reverted (ADR-028).
+        if (reusing === null) this.commit(id, current => ({ next: current, events: [event("run.protocol", { runId: target, observation })] }));
         const carriedConfiguration = carriedNativeConfiguration(current, run.selection, run.epoch);
         if (carriedConfiguration !== null) this.commit(id, current => ({ next: current, events: [event("native.config_carried", { runId: target, ...carriedConfiguration })] }));
-        // The Hub's own keys (the permission level, contracts/flavor.ts) are the Hub's: the Driver is given its native values only.
-        const nativeOptions = nativeOnly(carriedConfiguration?.options === undefined ? run.selection.nativeOptions : { ...run.selection.nativeOptions, ...carriedConfiguration.options });
         // A binding whose native session the Driver gave up on a clear (opensNew, R4) opens a new one: its checkpoint names the
         // abandoned session, never resumed.
         const resumeFrom = previousNative?.opensNew === true ? undefined : previousNative?.checkpoint;
-        const open = (on: HarnessControl, from: string | undefined) => {
-          on.setSessionInstructions?.(this.sessionInstructions(execution.binding, id), { progress: execution.binding!.hubTools === true && this.progressAsked(execution.binding!) });
-          return on.open(execution.binding!.workspace, carriedConfiguration?.model ?? run.selection.nativeModel, nativeOptions, from);
-        };
         try { native = await open(control, resumeFrom); }
         catch (error) {
           // C5 (ADR-055 §7.5; G068 fix batch 2, I-1b): a native session that holds nothing the relay counts on (one opened
@@ -2761,6 +2972,30 @@ export class SessionRuntime {
         }
         openedNew = resumeFrom === undefined || replacedEmpty !== null || reseated === "lost";
         this.continue(execution);
+      }
+      // A branch from an earlier place left the native session holding Turns the path no longer has (NativeSessionBinding.rewind): its Harness takes them
+      // off before this Turn goes on in it. Where it cannot, or cannot say what it did, the session is given up for a new one handed the path (Reseat `rewind`).
+      const rewind = previousNative?.rewind;
+      if (rewind !== undefined && previousNative !== undefined && native !== null && reseated === null) {
+        const h0 = previousNative.harnessId, c0 = previousNative.controlId;
+        let rolled = false;
+        try {
+          if (control.rollback === undefined) throw new SessionError("NATIVE_ROLLBACK_UNAVAILABLE", "this Harness interface cannot take Turns off its session");
+          await control.rollback(native, rewind.turns); rolled = true;
+        } catch (error) { if (error instanceof SessionError && error.code !== "NATIVE_ROLLBACK_UNAVAILABLE") throw error; this.commit(id, latest => ({ next: latest, events: [event("native.rollback_failed", { runId: target, harnessId: h0, controlId: c0, turns: rewind.turns, error: fault(error) })] })); }
+        this.continue(execution);
+        if (rolled) {
+          current = this.commit(id, latest => ({ next: { ...latest, nativeBindings: latest.nativeBindings?.map(row => {
+              if (row.harnessId !== h0 || row.controlId !== c0 || row.status === "archived") return row;
+              const { rewind: _done, ...rest } = row; return rest;
+            }) ?? [] }, events: [event("native.rolled_back", { runId: target, harnessId: h0, controlId: c0, turns: rewind.turns, fromRunId: rewind.fromRunId })] })).conversation;
+          previousNative = current.nativeBindings?.find(row => row.harnessId === h0 && row.controlId === c0 && row.status !== "archived");
+        } else {
+          ({ control } = await this.restartProgram(execution, run, current, id, target, new SessionError("NATIVE_ROLLBACK_UNAVAILABLE", "the native session could not be rolled back")));
+          reseat(previousNative, { reason: "rewind" });
+          native = await open(control, undefined); openedNew = true;
+          this.continue(execution);
+        }
       }
       opened = native;
       // The Session as the binding's preparation committed it: what the relay reads below (the binding's relay state, the facts).
@@ -3072,7 +3307,8 @@ export class SessionRuntime {
       }
       // A finished Turn of a conversation that keeps its process hands the process over instead of closing it (ADR-030); not
       // one whose Driver gave up the native session on a clear (its conversation changed, ADR-055 §7.5).
-      const keep = execution.binding === null || opened === null || nativeCleared !== undefined ? { keep: false }
+      // A Harness that opens the next session on the same connection (FlavorCapabilities.prewarm) keeps its process across the Hub's clear too.
+      const keep = execution.binding === null || opened === null || nativeCleared !== undefined && !this.resident(pinned.harnessId) ? { keep: false }
         : this.keepable(id, execution, backend, problem, checkpointStored && nativeConfirmed);
       if (execution.binding && !keep.keep) {
         // A close that throws leaves the cleanup unconfirmed (the Turn is unknown); the Turn keeps the failure it ended with (M-8).
@@ -3098,7 +3334,7 @@ export class SessionRuntime {
       // Registered before the hand-over is committed, so the view published with that commit already shows the kept process.
       if (keep.keep && execution.binding !== null && opened !== null) {
         const binding = execution.binding, timer = setTimeout(() => { void this.requestRelease(id, "idle"); }, idleMs); timer.unref?.();
-        this.kept.set(id, { binding, selection: pinned, conversation: opened, runId: target, since: reusing?.since ?? endedAt, baseline: binding.control.unattributedUpdates ?? 0, lastUsed: endedAt, timer,
+        this.kept.set(id, { binding, selection: pinned, conversation: nativeCleared !== undefined ? null : opened, runId: target, since: reusing?.since ?? endedAt, baseline: binding.control.unattributedUpdates ?? 0, lastUsed: endedAt, timer,
           ...(identity === undefined ? {} : { identity }) });
       }
       try {
@@ -3312,27 +3548,42 @@ export class SessionRuntime {
   /**
    * Performs a branch's pending native fork with its own connection. The binding is marked `forking` before the request;
    * a clean refusal archives it (the branch continues from public history), a result that cannot be confirmed leaves it
-   * `forking`, which blocks native use until the user explicitly rebuilds the native session.
+   * `forking`, which blocks native use until the user explicitly rebuilds the native session. A Driver that opens the copy as its own
+   * conversation (HarnessControl.openFork, 2026-11-15) does it on the connection the branch's Turns then run on: the process is the
+   * branch's kept one, with the copy open, so neither the fork nor the first Turn starts another.
    */
   private async forkNative(id: SessionId): Promise<void> {
     const state = this.load(id), pending = state.nativeBindings?.find(binding => binding.status === "fork-pending");
     if (!pending) return;
     const owns = (binding: NativeSessionBinding) => binding.harnessId === pending.harnessId && binding.controlId === pending.controlId && binding.status !== "archived";
     let binding: PreparedSessionBinding | null = null, problem: ReturnType<typeof fault> | null = null, forked: string | null = null, dispatched = false, cleanup: CleanupEvidence | null = null;
+    let live: { readonly native: NativeConversationId; readonly observation: ProtocolObservation } | null = null;
     try {
       binding = await this.factory.prepare(state.selection, state.configuration, id, "fork-" + this.options.id());
-      await binding.control.initialize();
-      if (!binding.control.fork) throw new SessionError("NATIVE_FORK_UNAVAILABLE", "this Harness interface cannot branch its native session");
+      const observation = await binding.control.initialize();
+      const here = binding.control.openFork !== undefined && this.retainsState(state) && this.resident(state.selection.harnessId);
+      if (!here && !binding.control.fork) throw new SessionError("NATIVE_FORK_UNAVAILABLE", "this Harness interface cannot branch its native session");
       this.commit(id, current => ({ next: { ...current, nativeBindings: current.nativeBindings!.map(item => owns(item) ? { ...item, status: "forking" as const } : item) },
-        events: [event("native.fork_dispatched", { harnessId: pending.harnessId, controlId: pending.controlId })] }));
+        events: [event("native.fork_dispatched", { harnessId: pending.harnessId, controlId: pending.controlId, ...(here ? { connection: "kept" } : {}) })] }));
       dispatched = true;
-      const reference = await binding.control.fork(pending.checkpoint, binding.workspace);
+      let reference: string;
+      if (here) {
+        const control = binding.control;
+        control.setSessionInstructions?.(this.sessionInstructions(binding, id), { progress: binding.hubTools === true && this.progressAsked(binding) });
+        const native = await control.openFork!(binding.workspace, state.selection.nativeModel, nativeOnly(state.selection.nativeOptions), pending.checkpoint);
+        live = { native, observation }; reference = native;
+      } else reference = await binding.control.fork!(pending.checkpoint, binding.workspace);
       if (typeof reference !== "string" || !reference || Buffer.byteLength(reference) > 8192 || /[\0\r\n]/u.test(reference) || reference === pending.checkpoint) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "the Harness returned an invalid branch reference");
       forked = reference;
-    } catch (error) { problem = fault(error); }
-    finally { if (binding) { try { cleanup = await binding.close(); } catch (error) { problem ??= fault(error); } } }
+    } catch (error) { problem = fault(error); live = null; }
+    finally { if (binding && (live === null || !this.accepting)) { try { cleanup = await binding.close(); } catch (error) { problem ??= fault(error); } live = null; } }
     const refused = problem !== null && ["NATIVE_FORK_UNAVAILABLE", "UNSUPPORTED_CONTROL", "HARNESS_UNAVAILABLE", "CONTROL_UNAVAILABLE", "NATIVE_AUTH_REQUIRED"].includes(problem.code);
-    const confirmed = forked !== null && cleanup?.closed === true && cleanup.protocolFailure === null;
+    // A copy open on the process the branch keeps is confirmed by its Driver's answer; one made on a connection that then closed, by that close.
+    const confirmed = forked !== null && (live !== null || cleanup?.closed === true && cleanup.protocolFailure === null);
+    if (live !== null && binding !== null) {
+      const at = this.options.now().getTime(), idleMs = this.options.keptIdleMs ?? KEPT_IDLE_MS, process = binding, timer = setTimeout(() => { void this.requestRelease(id, "idle"); }, idleMs); timer.unref?.();
+      this.kept.set(id, { binding: process, selection: state.selection, conversation: live.native, runId: null, observation: live.observation, since: at, baseline: process.control.unattributedUpdates ?? 0, lastUsed: at, timer });
+    }
     this.commit(id, current => {
       if (confirmed) return { next: { ...current, nativeBindings: current.nativeBindings!.map(item => owns(item) ? { ...item, checkpoint: forked!, status: "ready" as const } : item) },
         events: [event("native.forked", { harnessId: pending.harnessId, controlId: pending.controlId, cleanup })] };

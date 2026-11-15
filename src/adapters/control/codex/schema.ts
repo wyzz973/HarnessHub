@@ -11,7 +11,7 @@ import type { ControlLaunch } from "../../../contracts/control.js";
  * never turned off.
  */
 export type CodexFeature = "core" | "steer" | "collaborationMode" | "summary" | "serviceTierForTurn" | "approvalsReviewer" | "autoReview" | "sessionStartSource"
-  | "unsubscribe" | "unarchive" | "turnsList";
+  | "unsubscribe" | "unarchive" | "turnsList" | "revert" | "fork" | "review" | "rateLimits";
 interface Relied { readonly requests?: readonly string[]; readonly notifications?: readonly string[]; readonly fields?: readonly string[]; readonly values?: readonly string[] }
 /** `fields` are `<Type>.<field>` of the v2 schema's definitions; `values` are `<Type>:<value>`, a value one of the type's enums lists. */
 const RELIED: Readonly<Record<CodexFeature, Relied>> = {
@@ -29,6 +29,10 @@ const RELIED: Readonly<Record<CodexFeature, Relied>> = {
   unsubscribe: { requests: ["thread/unsubscribe"] },
   unarchive: { requests: ["thread/unarchive"] },
   turnsList: { requests: ["thread/turns/list"] },
+  revert: { requests: ["thread/revert", "thread/turns/list"], fields: ["ThreadRevertParams.beforeTurnId"] },
+  fork: { requests: ["thread/fork"], fields: ["ThreadForkParams.developerInstructions", "ThreadForkParams.config"] },
+  review: { requests: ["review/start"], fields: ["ReviewStartParams.target"] },
+  rateLimits: { requests: ["account/rateLimits/read"], notifications: ["account/rateLimits/updated"] },
 };
 export interface CodexSchemaCheck {
   /** Features whose methods or fields this Codex lacks. */

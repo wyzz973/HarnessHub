@@ -403,8 +403,17 @@ export interface HarnessControl {
    */
   fork?(checkpoint: string, cwd: string): Promise<string>;
   /**
-   * Takes the last `turns` turns, their answers included, out of the open conversation's native history, so that the next prompt goes on from there
-   * (OpenCode's revert, Codex's thread rollback). Called between Turns; rejects while a turn runs, and when the native side refused or could not be told.
+   * Opens a native copy of the session behind `source` as this connection's conversation, with what open() would give it (model,
+   * options, levels, the Hub's entry), and returns the copy's identity; the source is left as it was. One connection both branches
+   * and runs the copy (Codex `thread/fork`), so no other process is started for either. Rejects as open() does, and with
+   * NATIVE_FORK_UNAVAILABLE when the native side refuses to branch.
+   */
+  openFork?(cwd: string, model: string | undefined, options: NativeOptions | undefined, source: string): Promise<NativeConversationId>;
+  /**
+   * Takes the last `turns` Turns (each with its reply and all it did) off the open conversation's native history, so that the next
+   * Turn goes on from before them (an input edited and sent again, a reply tried again). Files are not touched. Rejects with
+   * NATIVE_ROLLBACK_UNAVAILABLE, changing nothing, when the native side cannot take them off (fewer Turns than that, a history it
+   * cannot cut); any other rejection leaves the history unknown.
    */
   rollback?(id: NativeConversationId, turns: number): Promise<void>;
   /**
@@ -466,8 +475,6 @@ export interface HarnessControl {
    * may have reached it. Never starts a turn of its own: words that find no turn running are `not_taken`, and stay the Hub's.
    */
   steer?(id: NativeConversationId, text: string): Promise<SteerOutcome>;
-  /** Takes the last `turns` turns out of the native history of `id`, idle only; absent when the Harness cannot. */
-  rollback?(id: NativeConversationId, turns: number): Promise<void>;
   /** Enables interactive requests for a public Run. Standalone probes keep their explicit deny default. */
   enablePermissions?(): void;
   /** Selects an actual pending option; receipt does not assert backend acknowledgement. */

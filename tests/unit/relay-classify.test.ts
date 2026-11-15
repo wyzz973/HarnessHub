@@ -107,13 +107,13 @@ test("G069-C03 Claude Code: a command only with the slash as the first character
 test("G069-C03 Codex: exactly /export, /compact, the Hub's clear alone and a listed /skill: (which takes relay content); no lstrip, every other slash input is text", () => {
   const classify = codexRelayCapabilities.commands.classify, catalog = entries(["compact", "compact"], ["export", "none"], ["skill:review", "keep"]);
   check(classify, [
-    { rule: "the thread operations, exactly", read: [["/compact", null, [], ["command", "compact", "compact", ""]], ["/export  ", null, [], ["command", "export", "none", ""]]],
+    { rule: "the thread operations, exactly", read: [["/compact", null, [], ["command", "compact", "compact", ""]], ["/export  ", null, [], ["command", "export", "none", ""]], ["/review base main", null, [], ["command", "review", "keep", "base main"]]],
       not: [" /compact", null, [], ["content"]] },
     { rule: "no full-width lstrip either", read: [["/compact", catalog, [], ["command", "compact", "compact", ""]]], not: ["　/compact", catalog, [], ["content"]] },
     { rule: "with attachments the operations are text", read: [["/compact", null, ["file"], ["content"]], ["/export", null, ["image"], ["content"]]], not: ["/compact", null, [], ["command", "compact", "compact", ""]] },
     { rule: "a listed skill submits its text", read: [["/skill:review the diff", catalog, [], ["command", "skill:review", "keep", "the diff", "relay"]], ["/skill:review it", catalog, ["image"], ["command", "skill:review", "keep", "it", "relay"]]],
       not: ["/skill:other", catalog, [], ["content"]] },
-    { rule: "an unlisted slash word is text", read: [["/review", catalog, [], ["content"]], ["/compact now", catalog, [], ["content"]]], not: ["/skill:review", null, [], ["possible_command", "skill:review"]] },
+    { rule: "an unlisted slash word is text", read: [["/status", catalog, [], ["content"]], ["/compact now", catalog, [], ["content"]]], not: ["/skill:review", null, [], ["possible_command", "skill:review"]] },
     // Codex's app-server has no clear: the Hub's is exactly /clear, /new or /reset, nothing before, after or with it.
     { rule: "the Hub's clear, exactly", read: [["/clear", null, [], ["command", "clear", "clear", ""]], ["/new", catalog, [], ["command", "new", "clear", ""]], ["/reset  ", null, [], ["command", "reset", "clear", ""]],
       ["/clear\n", null, [], ["command", "clear", "clear", ""]]], not: ["/clear now", null, [], ["content"]] },

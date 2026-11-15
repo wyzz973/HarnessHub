@@ -215,6 +215,13 @@ export interface NativeSessionBinding {
    * native position, a different fact. Frozen once the binding is archived.
    */
   readonly relay?: BindingRelayState;
+  /**
+   * 2026-11-15: a branch from an earlier place (the input of `fromRunId` edited and sent again, or its reply tried again) left this native session
+   * holding the last `turns` Turns the path no longer has; `throughRunId` is already where it will be without them. Its Harness takes them off
+   * (HarnessControl.rollback) before the session's next Turn goes on in it, which then clears this; where it cannot, that Turn gives the session up
+   * for a new one handed the path (`native.binding_reseated`, reason `rewind`). The Turns themselves stay in the record, on the branch left.
+   */
+  readonly rewind?: { readonly turns: number; readonly fromRunId: RunId };
 }
 /** A native session's model and option values as one side saw them; option keys are the Harness's own option ids. */
 export interface NativeConfiguration { readonly model: string | null; readonly options: NativeOptions }
@@ -361,8 +368,11 @@ export interface SessionSnapshot {
    * Turn carried as history, and those told since). What the user says there after that goes with this conversation's next Turn.
    */
   readonly parentWordsTold?: number;
-  /** v11: the user chose to keep this conversation's native process between Turns for background work (ADR-030). */
-  readonly retainNative?: true;
+  /**
+   * v11: whether the user chose to keep this conversation's native process between Turns (ADR-030). Absent: its Harness's default, which keeps it where
+   * the Harness declares `prewarm: "session"` (2026-11-15) and not otherwise; `false` (since then): the user turned it off.
+   */
+  readonly retainNative?: boolean;
   /** v11: the native process this conversation holds now; cleared when it is closed. */
   readonly retained?: RetainedProcess;
   /**

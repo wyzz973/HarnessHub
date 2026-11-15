@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import type { NativeToolDetail, NativeUsage } from "../../../contracts/control.js";
+import type { NativeLimit, NativeToolDetail, NativeUsage } from "../../../contracts/control.js";
 import { diffPath } from "../../../infrastructure/control/unified-diff.js";
 
 /** Codex items and events as the Hub's: pure functions over the app-server's own shapes (0.169.0). */
@@ -271,4 +271,55 @@ export function turnTokens(parts: readonly Tokens[]): NonNullable<NativeUsage["t
   const sum = (key: keyof Tokens) => parts.reduce((total, part) => total + part[key], 0);
   const input = sum("inputTokens"), output = sum("outputTokens");
   return { input, output, cachedInput: Math.min(input, sum("cachedInputTokens")), cacheWrite: Math.min(input, sum("cacheWriteInputTokens")), reasoning: Math.min(output, sum("reasoningOutputTokens")), total: sum("totalTokens") };
+}
+
+// ---- account -------------------------------------------------------------------------------------------------------------
+
+/** One rate-limit bucket as Codex reports it (`RateLimitSnapshot`, keyed by its `limitId`); later sparse updates merge into it. */
+export type LimitBucket = Row;
+/**
+ * The buckets of `account/rateLimits/read` (`rateLimitsByLimitId`, else the single `rateLimits`) merged over the ones known, or of a sparse
+ * `account/rateLimits/updated` (its one `rateLimits`): a field the update leaves null keeps what was known (the schema's words).
+ */
+export function mergeLimits(known: ReadonlyMap<string, LimitBucket>, read: Row): Map<string, LimitBucket> {
+  const next = new Map(known), byId = record(read.rateLimitsByLimitId);
+  const buckets = byId !== null ? Object.entries(byId).flatMap(([id, value]) => { const row = record(value); return row === null ? [] : [[id, row] as const]; })
+    : record(read.rateLimits) !== null ? [[String(record(read.rateLimits)!.limitId ?? "codex"), record(read.rateLimits)!] as const] : [];
+  for (const [id, bucket] of buckets) {
+    const was = next.get(id) ?? {}, merged: Row = { ...was };
+    for (const [key, value] of Object.entries(bucket)) if (value !== null && value !== undefined) merged[key] = value;
+    next.set(id, merged);
+  }
+  return next;
+}
+/** The account's windows of every bucket as the Hub's NativeLimit: `<bucket>:primary` and `<bucket>:secondary`, used percent, length, reset time; and its plan. */
+export function limitsOf(buckets: ReadonlyMap<string, LimitBucket>): { readonly limits: NativeLimit[]; readonly plan?: string } {
+  const limits: NativeLimit[] = [];
+  let plan: string | undefined;
+  for (const [id, bucket] of buckets) {
+    if (typeof bucket.planType === "string" && bucket.planType !== "unknown") plan ??= bucket.planType;
+    const reached = typeof bucket.rateLimitReachedType === "string" || bucket.spendControlReached === true;
+    const name = text(bucket.limitName);
+    for (const slot of ["primary", "secondary"] as const) {
+      const window = record(bucket[slot]);
+      if (window === null || typeof window.usedPercent !== "number" || !Number.isFinite(window.usedPercent)) continue;
+      const used = Math.max(0, Math.min(100, window.usedPercent)), minutes = typeof window.windowDurationMins === "number" && window.windowDurationMins > 0 ? window.windowDurationMins : undefined;
+      const resets = typeof window.resetsAt === "number" && window.resetsAt > 0 ? window.resetsAt * 1000 : undefined;
+      limits.push({ id: (buckets.size > 1 ? id + ":" : "") + slot, ...(name ? { label: line(name, 120) } : {}), usedPercent: used, ...(minutes === undefined ? {} : { windowMinutes: minutes }),
+        ...(resets === undefined ? {} : { resetsAt: resets }), status: used >= 100 || reached && used >= 95 ? "exceeded" : used >= 80 ? "warning" : "ok" });
+    }
+  }
+  return { limits, ...(plan ? { plan } : {}) };
+}
+
+// ---- review --------------------------------------------------------------------------------------------------------------
+
+/** What `/review …` asks Codex to review (`ReviewTarget`): nothing more, the working tree; `base <branch>`, the branch against it; `commit <sha>`, one commit; else the words as instructions. */
+export function reviewTarget(args: string): Row {
+  const words = args.trim();
+  if (!words) return { type: "uncommittedChanges" };
+  const base = /^base\s+(\S+)$/u.exec(words), commit = /^commit\s+([0-9a-fA-F]{4,64})$/u.exec(words);
+  if (base) return { type: "baseBranch", branch: base[1] };
+  if (commit) return { type: "commit", sha: commit[1] };
+  return { type: "custom", instructions: words };
 }

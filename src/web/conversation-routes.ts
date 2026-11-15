@@ -38,7 +38,7 @@ const ITEMS_PAGE = 100;
 export interface HeadLive {
   readonly permissions?: SessionView["permissions"];
   readonly queue?: SessionView["queue"];
-  readonly retention?: { readonly process?: KeptProcessView | null; readonly lost?: NonNullable<SessionView["retention"]>["lost"]; readonly outside?: NonNullable<SessionView["retention"]>["outside"];
+  readonly retention?: { readonly enabled?: boolean; readonly process?: KeptProcessView | null; readonly lost?: NonNullable<SessionView["retention"]>["lost"]; readonly outside?: NonNullable<SessionView["retention"]>["outside"];
     readonly upgraded?: NonNullable<SessionView["retention"]>["upgraded"] };
 }
 /** What the Runs of a conversation say as a whole (`ConversationFacts.runSummary`). */
@@ -284,7 +284,7 @@ export class ConversationRoutes {
     const kept = live.retention;
     return { id, version: row.version, lastSeq: row.lastSeq, epoch: row.epoch, status: row.status, workspace: json.configuration.workspace, selection: json.selection, activeRunId: row.activeRunId,
       pendingSwitchId: row.pendingSwitchId, permissions: live.permissions ?? [], nativeStates, ...(origin === null ? {} : { origin }), ...(json.delegation === undefined ? {} : { parent: { sessionId: json.delegation.parentId, afterRunId: json.delegation.afterRunId, ...(json.delegation.by === undefined ? {} : { by: json.delegation.by }) } }), ...(json.delegationsTold === undefined ? {} : { delegationsTold: json.delegationsTold }), ...(live.queue === undefined ? {} : { queue: live.queue }),
-      retention: { enabled: json.retainNative === true, process: kept?.process ?? null, ...(kept?.lost === undefined ? {} : { lost: kept.lost }), ...(kept?.outside === undefined ? {} : { outside: kept.outside }),
+      retention: { enabled: kept?.enabled ?? json.retainNative === true, process: kept?.process ?? null, ...(kept?.lost === undefined ? {} : { lost: kept.lost }), ...(kept?.outside === undefined ? {} : { outside: kept.outside }),
         ...(kept?.upgraded === undefined ? {} : { upgraded: kept.upgraded }) },
       title: row.title, runCount: row.runCount, ...listMarks(json), updatedAt: row.updatedAt, ...this.activeSinceOf(row),
       ...(last === null ? {} : { lastSwitch: last }), facts: this.factsOf(id, row.version), ...this.progressOf(id) };

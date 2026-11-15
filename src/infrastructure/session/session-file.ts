@@ -45,7 +45,7 @@ export interface SessionHeader {
 export interface HeadState {
   readonly status: SessionSnapshot["status"]; readonly epoch: number; readonly activeRunId: RunId | null; readonly pendingSwitchId: SwitchId | null;
   readonly configuration: SessionConfiguration; readonly selection: HarnessSelection;
-  readonly retainNative?: true; readonly retained?: RetainedProcess; readonly relayRecoveryFailed?: number; readonly origin?: StoredOrigin;
+  readonly retainNative?: boolean; readonly retained?: RetainedProcess; readonly relayRecoveryFailed?: number; readonly origin?: StoredOrigin;
   readonly delegation?: Conversation["delegation"]; readonly delegationsTold?: Conversation["delegationsTold"]; readonly taskBoard?: Conversation["taskBoard"]; readonly taskBoardTold?: number; readonly taskEditsTold?: Conversation["taskEditsTold"]; readonly parentWordsTold?: number;
   /**
    * What the user named and marked (2026-11-14): the name, the archive mark, the pin, the moment a reminder puts it aside until, when it was deleted; and the name its

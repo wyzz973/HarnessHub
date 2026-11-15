@@ -65,6 +65,7 @@ const lines = createInterface({ input: process.stdin });
 // FIXTURE_DEAF_MS: a program that takes in no input for this long at first (a busy one, reading late).
 if (Number(process.env.FIXTURE_DEAF_MS ?? 0) > 0) { lines.pause(); setTimeout(() => lines.resume(), Number(process.env.FIXTURE_DEAF_MS)); }
 let promptId = null, turn = 0, initialized = false, pendingPermission = false;
+const revertTurns = [];
 let policySaid = [], policyPrompt = "", policyAsk = () => {};
 // The workspace of the session Hermes opened last (session/new names it), where STEP_APPROVAL waits for its go-ahead.
 let sessionCwd = null;
@@ -395,6 +396,15 @@ lines.on("line", line => {
     if (message.params.cursor === "older") { answer(message.id, { data: [turnOf(1, [{ type: "text", text: "question 1" }])], nextCursor: null }); return; }
     answer(message.id, { data: [turnOf(3, [{ type: "text", text: "question 3" }]), turnOf(2, [{ type: "text", text: "question 2" }, { type: "localImage", path: "/tmp/shot.png" }])], nextCursor: "older" }); return;
   }
+  // FIXTURE_REVERT=1: the turns this process ran, newest first, each begun by a user message; thread/revert cuts them before one (Codex 0.169.0's shapes).
+  if (process.env.FIXTURE_REVERT === "1" && message.method === "thread/turns/list") {
+    answer(message.id, { data: [...revertTurns].reverse().map(id => ({ id, status: "completed", items: [{ type: "userMessage", id: "u-" + id, content: [{ type: "text", text: id }] }] })), nextCursor: null }); return;
+  }
+  if (process.env.FIXTURE_REVERT === "1" && message.method === "thread/revert") {
+    const at = revertTurns.indexOf(message.params.beforeTurnId);
+    if (at < 0) { emit({ id: message.id, error: { code: -32600, message: "no such turn" } }); return; }
+    revertTurns.splice(at); answer(message.id, { thread: { id: THREAD, turns: [] } }); return;
+  }
   // Outside the "threads" scenario the turn listing is refused, as a server without it refuses; unanswered it would time out.
   if (message.method === "thread/turns/list") { emit({ id: message.id, error: { code: -32601, message: "Method not found" } }); return; }
   if (message.method === "thread/start" || message.method === "thread/resume") {
@@ -458,6 +468,7 @@ lines.on("line", line => {
     if (scenario === "quota-rejected" || scenario === "auth-rejected") { emit({ id: message.id, error: { code: -32001, message: (scenario === "quota-rejected" ? "You've hit your weekly limit" : "Authentication required") + " private-synthetic-key" } }); return; }
     if (scenario === "prompt-rejected") { emit({ id: message.id, error: { code: -32001, message: "private rejected request synthetic-key" } }); return; }
     promptId = message.id; turn += 1;
+    if (message.method === "turn/start") revertTurns.push("turn-" + turn);
     if (scenario === "exit-zero") { process.exit(0); }
     // claude-agent-acp re-reads its sign-in when each prompt starts and pushes any change mid-turn (FIXTURE_AUTH_TURN_KIND).
     if (scenario === "claude-auth" && process.env.FIXTURE_AUTH_TURN_KIND) notification("_auth/status_update", claudeAuthStatus(process.env.FIXTURE_AUTH_TURN_KIND));

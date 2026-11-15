@@ -286,7 +286,7 @@ export type StoredOrigin =
 export interface HeadJson {
   readonly configuration: SessionConfiguration;
   readonly selection: HarnessSelection;
-  readonly retainNative?: true;
+  readonly retainNative?: boolean;
   readonly retained?: RetainedProcess;
   readonly relayRecoveryFailed?: number;
   readonly origin?: StoredOrigin;
