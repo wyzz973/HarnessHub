@@ -8,6 +8,6 @@ export const builtinRecipes: readonly HarnessRecipe[] = [
   { id: "gemini", name: "Gemini CLI", binary: "gemini", protocol: "acp-v1", args: ["--acp"] },
   { id: "qwen", name: "Qwen Code", binary: "qwen", protocol: "acp-v1", args: ["--acp"] },
   { id: "pi", name: "Pi", binary: "pi", protocol: "pi-rpc", args: ["--mode", "rpc"] },
-  { id: "openclaw", name: "OpenClaw", binary: "openclaw", protocol: "acp-v1", args: ["acp"] },
+  { id: "openclaw", name: "OpenClaw", binary: "openclaw", protocol: "openclaw-gateway", args: [] },
   { id: "cursor", name: "Cursor CLI", binary: "cursor-agent", protocol: "acp-v1", args: ["acp"] },
 ];

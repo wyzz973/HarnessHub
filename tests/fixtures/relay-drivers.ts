@@ -6,14 +6,12 @@ import type { ControlEvent, ControlLaunch, ControlOptions, HarnessControl, TurnT
 import { relayPacketId, type RelayPacketId } from "../../src/contracts/relay.js";
 import { AcpControl, dshRelayCapabilities } from "../../src/adapters/control/acp.js";
 import { CodexControl } from "../../src/adapters/control/codex.js";
-import { OpenClawControl } from "../../src/adapters/control/openclaw.js";
+// The Drivers that speak ACP or Codex's app-server on the relay peer (tests/fixtures/relay-control-peer.mjs) as real child processes, each
+// in a private temporary root. Claude Code, OpenCode, Hermes and OpenClaw speak their own protocols, tested on their replays
+// (tests/protocol/claude-replay.test.ts, opencode-server.test.ts, hermes-gateway.test.ts, openclaw-gateway.test.ts). Nothing here runs a
+// Harness or reads a user's configuration.
 
-// The ACP and Codex Drivers on the relay peer (tests/fixtures/relay-control-peer.mjs) as real child processes, each in a private
-// temporary root; OpenClaw's Gateway calls are answered from the peer's own state file, as the Gateway reads what the bridge
-// stored. Nothing here runs a Harness or reads a user's configuration.
-
-/** The Drivers that run on this ACP (and app-server) peer; Claude Code, OpenCode and Hermes speak their own protocols, tested on their replays (tests/protocol/claude-replay.test.ts, opencode-server.test.ts, hermes-gateway.test.ts). */
-export type Harness = "codex" | "dsh" | "openclaw";
+export type Harness = "codex" | "dsh";
 const PEER = resolve("tests/fixtures/relay-control-peer.mjs");
 export const ID_A = relayPacketId("relay-0123456789abcdefghjk"), ID_B = relayPacketId("relay-mnpqrstvwxyz01234567"), ID_C = relayPacketId("relay-7777777777aaaaaaaaaa");
 
@@ -50,30 +48,12 @@ export async function peerRoot(t: TestContext, env: Readonly<Record<string, stri
 export function options(peer: Peer, overrides: Partial<ControlOptions> = {}): ControlOptions {
   return { cwd: peer.workspace, env: peer.env, requestTimeoutMs: 3000, runTimeoutMs: 8000, maxFrameBytes: 4 << 20, maxDiagnosticBytes: 1 << 14, closeGraceMs: 150, ...overrides };
 }
-/** OpenClaw's Gateway as the driver's original CLI reads it: the bridge's stored rows of the one session. */
-export function gatewayOf(peer: Peer, overrides: Partial<Record<string, (params: Readonly<Record<string, unknown>>) => Promise<unknown>>> = {}) {
-  return async (method: string, params: Readonly<Record<string, unknown>>): Promise<unknown> => {
-    const override = overrides[method];
-    if (override !== undefined) return override(params);
-    const native = await peer.native(), owned = Object.values(native.sessions)[0];
-    if (method === "agents.list") return { defaultId: "main", agents: [{ id: "main" }] };
-    if (method === "models.list") return { models: [] };
-    if (method === "sessions.list") return { sessions: [] };
-    if (method === "chat.history") return { messages: [] };
-    if (method === "sessions.get") {
-      const entries = owned?.entries ?? [], limit = typeof params.limit === "number" ? params.limit : 200;
-      return { messages: entries.slice(-limit).map(entry => ({ role: entry.role, content: entry.role === "user" ? entry.text : [{ type: "text", text: entry.text }], ...(entry.usage === undefined ? {} : { usage: entry.usage }), __openclaw: { seq: entry.seq } })) };
-    }
-    throw new Error("unexpected OpenClaw method " + method);
-  };
-}
 /** A Driver of `harness` on the relay peer; closed after the test. */
-export function driver(t: TestContext, harness: Harness, peer: Peer, gateway = gatewayOf(peer), overrides: Partial<ControlOptions> = {}): HarnessControl {
+export function driver(t: TestContext, harness: Harness, peer: Peer, overrides: Partial<ControlOptions> = {}): HarnessControl {
   const env = { ...peer.env, ...(harness === "codex" ? { RELAY_PROTOCOL: "codex" } : {}) };
-  const launch: ControlLaunch = { protocol: harness === "codex" ? "codex-app-server" : "acp-v1", executable: process.execPath, args: [PEER, ...(harness === "openclaw" ? ["acp"] : [])], env };
+  const launch: ControlLaunch = { protocol: harness === "codex" ? "codex-app-server" : "acp-v1", executable: process.execPath, args: [PEER], env };
   const settings = options(peer, overrides);
-  const control = harness === "codex" ? new CodexControl(launch, settings)
-    : harness === "openclaw" ? new OpenClawControl(launch, settings, gateway) : new AcpControl(launch, settings, dshRelayCapabilities);
+  const control = harness === "codex" ? new CodexControl(launch, settings) : new AcpControl(launch, settings, dshRelayCapabilities);
   t.after(() => control.close().then(() => undefined, () => undefined));
   return control;
 }

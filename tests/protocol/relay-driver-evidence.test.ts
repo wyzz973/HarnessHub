@@ -10,8 +10,8 @@ import { driver, ID_A, ID_B, peerRoot, prompts, relayTurn, run, type Harness, ty
 // side is the relay peer, a real child process; nothing here runs a Harness.
 
 const WORDS = "修好 summary.ts 的测试";
-async function opened(t: Parameters<typeof driver>[0], harness: Harness, peer: Peer, checkpoint?: string, overrides: Parameters<typeof driver>[4] = {}) {
-  const control = driver(t, harness, peer, undefined, overrides);
+async function opened(t: Parameters<typeof driver>[0], harness: Harness, peer: Peer, checkpoint?: string, overrides: Parameters<typeof driver>[3] = {}) {
+  const control = driver(t, harness, peer, overrides);
   await control.initialize();
   return { control, id: await control.open(peer.workspace, undefined, undefined, checkpoint) };
 }
@@ -86,7 +86,7 @@ test("Codex names the thread before its first turn (thread/name/set), one line; 
 
 test("no Driver reads its native history back: none has a check, a position, a vendor reading or a reader of replayed user entries, and no declaration has a cell for one", async t => {
   const peer = await peerRoot(t);
-  for (const harness of ["codex", "dsh", "openclaw"] as const) {
+  for (const harness of ["codex", "dsh"] as const) {
     const control = driver(t, harness, peer) as unknown as Record<string, unknown>;
     for (const member of ["verifyDelivered", "deliveryPosition", "relayVendor", "userTextOf"]) assert.equal(control[member], undefined, harness + " " + member);
     assert.deepEqual(Object.keys((control.relayCapabilities as { delivery: object }).delivery).sort(), ["live", "successProvesRecorded"], harness);

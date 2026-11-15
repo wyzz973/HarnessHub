@@ -135,40 +135,6 @@ test("G067-C03 Codex: turn/start refused before any turn is not recorded, a turn
   assert.equal(exported.result.input, "not_recorded"); assert.equal(await exporting.received("turn/start"), 0);
 });
 
-test("G067-C03 OpenClaw: an unapplied model sent nothing, a user row in the turn's transcript is recorded even when the turn failed, an unreadable transcript is unknown", async t => {
-  const f = await peers(t), config = join(f.root, "openclaw.json");
-  await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
-  const earlier = { role: "assistant", content: [{ type: "text", text: "earlier" }], stopReason: "stop", __openclaw: { seq: 5 } };
-  const turnRows = [earlier, { role: "user", content: [{ type: "text", text: "do the work" }], __openclaw: { seq: 6 } },
-    { role: "assistant", content: [{ type: "text", text: "" }], stopReason: "error", errorMessage: "You've hit your weekly limit", __openclaw: { seq: 7 } }];
-  const gateway = (after: "rows" | "unreadable", patched?: string) => {
-    let reads = 0;
-    return async (method: string): Promise<unknown> => {
-      if (method === "sessions.get") { if (reads++ === 0) return { messages: [earlier] }; if (after === "unreadable") throw new Error("gateway unavailable"); return { messages: turnRows }; }
-      if (method === "models.list") return { models: [{ provider: "vision", id: "large", name: "Vision" }] };
-      if (method === "sessions.patch") return { resolved: { modelProvider: patched ?? "vision", model: "large" } };
-      if (method === "sessions.list") return { sessions: [] };
-      if (method === "chat.history") return { messages: [] };
-      throw new Error("no such Gateway method in this fixture: " + method);
-    };
-  };
-  const openclaw = (env: Readonly<Record<string, string>>, request: (method: string) => Promise<unknown>) => {
-    const peer = f.launch("acp-v1", { HOME: f.root, OPENCLAW_CONFIG_PATH: config, ...env });
-    return { driver: new OpenClawControl(peer.launch, { ...options, env: { HOME: f.root, OPENCLAW_CONFIG_PATH: config } }, request), received: peer.received };
-  };
-  const mismatch = openclaw({ RELAY_PROMPT: "answer" }, gateway("rows", "other"));
-  const notApplied = await turn(mismatch.driver, "do the work", "vision/large");
-  assert.equal(notApplied.result.reason, "model_not_applied"); assert.equal(notApplied.result.input, "not_recorded");
-  assert.equal(await mismatch.received("session/prompt"), 0);
-  // The bridge reports end_turn, the transcript the error; its user row says the Gateway committed the prompt.
-  const failed = await turn(openclaw({ RELAY_PROMPT: "silent" }, gateway("rows")).driver, "do the work");
-  assert.equal(failed.result.status, "failed"); assert.equal(failed.result.error?.code, "NATIVE_QUOTA_EXCEEDED"); assert.equal(failed.result.input, "recorded");
-  const unreadable = openclaw({ RELAY_PROMPT: "silent" }, gateway("unreadable"));
-  const unknown = await turn(unreadable.driver, "do the work");
-  assert.deepEqual(unknown.result, { status: "completed", reason: "end_turn" });
-  assert.equal(await unreadable.received("session/prompt"), 1);
-});
-
 test("G067 R0d each driver's own handling of an input follows its reading: leading whitespace and attachments decide the Hub's /export and Codex's thread operations alike", async t => {
   const f = await peers(t), file = await attachment(f.root, "notes.txt");
   // Codex: `/compact` with an attachment is an ordinary turn, as classify says.
@@ -237,8 +203,8 @@ test("G067 R0d each driver reads an input as its native side parses it: whitespa
   assert.deepEqual(read(hermes, "/clear", null, ["image"]), ["content"]); assert.deepEqual(read(hermes, "/clear", null, ["file", "image"]), ["content"]);
   assert.deepEqual(read(hermes, "/clear", null, ["file"]), ["command", "clear", "clear", ""]); assert.deepEqual(read(hermes, "/clear", null, ["audio"]), ["command", "clear", "clear", ""]);
   assert.deepEqual(read(hermes, "﻿/clear"), ["content"]); assert.deepEqual(read(hermes, "/"), ["content"]);
-  // OpenClaw: the bridge's listed commands, with `/reset soft` keeping the transcript (a compaction) and `/reset` clearing it.
-  const openclaw = new OpenClawControl(launch, options, async () => { throw new Error("no Gateway"); }), bridge = listed(["new", "clear"], ["reset", "clear"], ["think", "none"]);
+  // OpenClaw: its listed commands, with `/reset soft` keeping the transcript (a compaction) and `/reset` clearing it.
+  const openclaw = new OpenClawControl({ ...launch, protocol: "openclaw-gateway" }, options, async () => { throw new Error("no Gateway"); }), bridge = listed(["new", "clear"], ["reset", "clear"], ["think", "none"]);
   assert.deepEqual(read(openclaw, "/reset soft", bridge), ["command", "reset", "compact", "soft"]); assert.deepEqual(read(openclaw, "/reset", bridge), ["command", "reset", "clear", ""]);
   assert.deepEqual(read(openclaw, "/new", bridge), ["command", "new", "clear", ""]); assert.deepEqual(read(openclaw, "/think high", bridge), ["command", "think", "none", "high"]);
   assert.deepEqual(read(openclaw, "/nope", bridge), ["content"]); assert.deepEqual(read(openclaw, "/nope"), ["possible_command", "nope"]);

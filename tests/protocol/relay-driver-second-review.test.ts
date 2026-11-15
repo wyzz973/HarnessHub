@@ -8,7 +8,7 @@ import type { RelayCapabilities } from "../../src/contracts/relay.js";
 import { AcpControl, dshRelayCapabilities } from "../../src/adapters/control/acp.js";
 import { sharedClassify } from "../../src/adapters/control/relay-classify.js";
 import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
-import { driver, gatewayOf, ID_A, options, peerRoot, prompts, relayTurn, run, type Harness, type Peer } from "../fixtures/relay-drivers.js";
+import { driver, ID_A, options, peerRoot, prompts, relayTurn, run, type Harness, type Peer } from "../fixtures/relay-drivers.js";
 
 // G069 phase two, the corrections after the second independent review of d20bfc1 (its "fix now" list): one test per item,
 // against the native behaviour the relay peer (tests/fixtures/relay-control-peer.mjs, a real child process) or the OpenClaw
@@ -17,8 +17,8 @@ import { driver, gatewayOf, ID_A, options, peerRoot, prompts, relayTurn, run, ty
 // again, the generic driver's own refusal. Nothing here runs a Harness.
 
 const WORDS = "修好 summary.ts 的测试";
-async function opened(t: Parameters<typeof driver>[0], harness: Harness, peer: Peer, checkpoint?: string, gateway = gatewayOf(peer)) {
-  const control = driver(t, harness, peer, gateway);
+async function opened(t: Parameters<typeof driver>[0], harness: Harness, peer: Peer, checkpoint?: string) {
+  const control = driver(t, harness, peer);
   await control.initialize();
   return { control, id: await control.open(peer.workspace, undefined, undefined, checkpoint) };
 }
@@ -38,23 +38,6 @@ async function attachment(peer: Peer, name: string, kind: ContentKind): Promise<
 // ---------------------------------------------------------------------------------------------------------------------
 // Minor 4: a refused relay Turn has no side effect before its refusal (review mutations M27, M29, M1b)
 // ---------------------------------------------------------------------------------------------------------------------
-
-test("G069-R2 OpenClaw refuses a relay Turn read as a command before anything of it runs: no model patch (a model was selected, so one is due) and no transcript read", { timeout: 60000 }, async t => {
-  const peer = await peerRoot(t, { RELAY_OPENCLAW: "1", RELAY_COMMANDS: JSON.stringify([{ name: "new", description: "new" }, { name: "reset", description: "reset" }]) });
-  const calls: string[] = [];
-  const answers = gatewayOf(peer, { "models.list": async () => ({ models: [{ provider: "vision", id: "large", name: "Vision" }] }),
-    "sessions.patch": async () => ({ resolved: { modelProvider: "vision", model: "large" } }) });
-  const control = driver(t, "openclaw", peer, async (method, params) => { calls.push(method); return answers(method, params); });
-  await control.initialize();
-  const id = await control.open(peer.workspace, "vision/large"); await control.models!();
-  calls.length = 0;
-  for (const words of ["/new", "/reset", "/new 重新开始"]) refused(await run(control, id, relayTurn(ID_A, words, false)), "openclaw " + words);
-  assert.deepEqual(calls, [], "no Gateway call at all");
-  assert.deepEqual(await prompts(peer), []);
-  // The invalid sample: an ordinary Turn applies the selected model first.
-  assert.equal((await run(control, id, relayTurn(ID_A, WORDS))).result.status, "completed");
-  assert.deepEqual(calls.filter(method => method === "sessions.patch").length, 1, "the patch was due");
-});
 
 test("G069-R2 the generic driver refuses on its own (sendPrompt's reading): a declaration that reads commands refuses a relay Turn read as one with no Driver of its own before it, and carries the packet with content", { timeout: 30000 }, async t => {
   const peer = await peerRoot(t, { RELAY_COMMANDS: JSON.stringify([{ name: "compact", description: "compact" }]) });

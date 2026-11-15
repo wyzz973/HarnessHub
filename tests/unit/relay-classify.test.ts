@@ -208,7 +208,7 @@ test("G069-C03 one source: each Driver's HarnessControl.classify equals its rela
     ["codex", new CodexControl(codexLaunch, options), codexRelayCapabilities.commands.classify],
     ["opencode", new OpenCodeServerControl({ ...acp, protocol: "opencode-server" }, options), openCodeServerRelayCapabilities.commands.classify],
     ["hermes", new HermesGatewayControl(hermesLaunch, options), hermesRelayCapabilities.commands.classify],
-    ["openclaw", new OpenClawControl(acp, options, async () => { throw new Error("no Gateway"); }), openClawRelayCapabilities.commands.classify],
+    ["openclaw", new OpenClawControl({ ...acp, protocol: "openclaw-gateway" }, options, async () => { throw new Error("no Gateway"); }), openClawRelayCapabilities.commands.classify],
   ];
   const listing = (...commands: readonly [string, ContextEffect][]): NativeModelCatalog => ({ models: [], defaultModel: null, authentication: "ready", canSelect: false, commands: commands.map(([name, contextEffect]) => ({ name, description: name, contextEffect })) });
   // Catalogs whose commands declare their effects, as every Driver's models() hands them on, and none at all.
@@ -245,7 +245,7 @@ test("G069-C03 one source: each Driver's HarnessControl.classify equals its rela
 test("G069-C03 a command named after an Object member (constructor, toString, valueOf, hasOwnProperty, __proto__) gets a declared effect, never a function or an object", async () => {
   const members = ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"];
   const undeclared: NativeModelCatalog = { models: [], defaultModel: null, authentication: "ready", canSelect: false, commands: [...members, "status"].map(name => ({ name, description: name })) };
-  const claude = new ClaudeSdkControl({ ...acp, protocol: "claude-agent-sdk" }, options), openclaw = new OpenClawControl(acp, options, async () => { throw new Error("no Gateway"); });
+  const claude = new ClaudeSdkControl({ ...acp, protocol: "claude-agent-sdk" }, options), openclaw = new OpenClawControl({ ...acp, protocol: "openclaw-gateway" }, options, async () => { throw new Error("no Gateway"); });
   try {
     for (const name of members) {
       // Claude Code: a listed command without a declared effect enters the context like a message (keep).

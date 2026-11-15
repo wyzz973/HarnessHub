@@ -7,7 +7,6 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import type { ControlEvent, ControlLaunch, ControlOptions } from "../../src/contracts/control.js";
 import { AcpControl } from "../../src/adapters/control/acp.js";
-import { OpenClawControl } from "../../src/adapters/control/factory.js";
 import { CursorControl } from "../../src/adapters/control/cursor.js";
 import { classifyRemoteFailure, ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { bindNativeDependencies } from "../../src/adapters/control/native-dependencies.js";
@@ -230,7 +229,7 @@ test("ACP model discovery still rejects duplicate model identities", async () =>
   try { await driver.initialize(); await assert.rejects(driver.open(process.cwd()), /identity mismatch/); }
   finally { assert.equal((await driver.close()).closed, true); }
 });
-test("ACP accepts owned initialization metadata before session/new returns, as installed OpenClaw does", async () => {
+test("ACP accepts owned initialization metadata before session/new returns, as an ACP bridge may", async () => {
   const driver = control("opening-metadata");
   try { const id = await ready(driver), run = await driver.startText(id, "hello", () => {}); assert.equal((await run.result).status, "completed"); }
   finally { assert.equal((await driver.close()).protocolFailure, null); }
@@ -239,19 +238,6 @@ for (const scenario of ["opening-wrong-identity", "opening-flood", "opening-text
   const driver = control(scenario);
   try { await driver.initialize(); await assert.rejects(driver.open(process.cwd())); }
   finally { assert.equal((await driver.close()).closed, true); }
-});
-test("OpenClaw uses the configured default agent and a canonical normal chat namespace without exposing native credentials", async () => {
-  const root = await mkdtemp(join(tmpdir(), "native-openclaw-")), trace = join(root, "trace"), config = join(root, "openclaw.json");
-  const { writeFile } = await import("node:fs/promises");
-  await writeFile(config, '{agents:{list:[{id:"first"},{id:"chosen",default:true}],defaults:{model:{primary:"configured/model"}}},models:{secret:"synthetic-private-secret"}}');
-  const env = { HOME: root, OPENCLAW_CONFIG_PATH: config, FIXTURE_TRACE: trace };
-  const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "opening-metadata"], env }, { ...options, env }, async () => ({ models: [{provider:"configured",id:"model",name:"Configured"}] }));
-  try {
-    const id = await ready(driver); assert.equal((await (await driver.startText(id, "test", () => {})).result).status, "completed");
-    const models = await driver.models(); assert.equal(models.defaultModel, "configured/model"); assert.equal(models.canSelect, true);
-    const wire = await readFile(trace, "utf8"), sent = wire.trim().split("\n").map(row => JSON.parse(row)).find(row => row.method === "session/new");
-    assert.match(sent.params._meta.sessionKey, /^agent:chosen:harnesshub:[0-9a-f-]{36}$/u); assert.equal(wire.includes("synthetic-private-secret"), false);
-  } finally { await driver.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("ACP restores native state in another original process without duplicating replayed output", async () => {
@@ -391,31 +377,6 @@ test("ACP sends attachments as native content blocks within the agent's declared
     await plain.checkAttachments([pdf]);
   } finally { await plain.close(); }
 });
-test("OpenClaw refuses images its Gateway would drop or its running model cannot see", async t => {
-  const root = await mkdtemp(join(tmpdir(), "openclaw-attachments-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const methods: string[] = [];
-  const catalog = async (method: string) => { methods.push(method); return { models: [{ provider: "vision", id: "large", name: "Vision", input: ["text", "image"] }, { provider: "deepseek", id: "deepseek-chat", name: "DeepSeek Chat", input: ["text"] }] }; };
-  const image = { ...attachment(root, "big.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), bytes: 5_000_001 };
-  const unsupported = (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_UNSUPPORTED";
-  // [configured model, model selected at open, check]. A selection decides from open() on, before the first prompt applies it.
-  for (const [model, selected, check] of [["vision/large", undefined, async (driver: OpenClawControl) => {
-    await assert.rejects(driver.checkAttachments([image]), (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_LIMIT" && error.message.includes("big.png"));
-    await driver.checkAttachments([{ ...image, bytes: 5_000_000 }]);
-  }], ["deepseek/deepseek-chat", undefined, async (driver: OpenClawControl) => {
-    assert.deepEqual((await driver.models()).models.find(row => row.id === "deepseek/deepseek-chat")?.inputs, { image: false, audio: false, file: true });
-    await assert.rejects(driver.checkAttachments([{ ...image, bytes: 10 }]), unsupported);
-  }], ["vision/large", "deepseek/deepseek-chat", async (driver: OpenClawControl) => {
-    await assert.rejects(driver.checkAttachments([{ ...image, bytes: 10 }]), unsupported, "the selected text-only model decides, not the configured vision model");
-  }], ["deepseek/deepseek-chat", "vision/large", async (driver: OpenClawControl) => {
-    await driver.checkAttachments([{ ...image, bytes: 10 }]);
-  }]] as const) {
-    const config = join(root, "openclaw.json"); await writeFile(config, `{agents:{list:[{id:"main",default:true}],defaults:{model:{primary:"${model}"}}}}`);
-    const env = { HOME: root, OPENCLAW_CONFIG_PATH: config };
-    const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "attachments"], env }, { ...options, env }, catalog);
-    try { await driver.initialize(); await driver.open(process.cwd(), selected); await check(driver); } finally { await driver.close(); }
-  }
-  assert.deepEqual([...new Set(methods)], ["models.list"], "gating reads the catalog and writes nothing");
-});
 test("ACP catalog reads wait briefly for the agent's command announcement instead of racing it", async () => {
   const late = control("late-commands");
   try { await ready(late); const started = Date.now(); assert.deepEqual((await late.models()).commands, [{ name: "late", description: "arrives after session creation" }]); assert.ok(Date.now() - started < 1400, "the announcement ends the wait"); }
@@ -469,73 +430,6 @@ test("an approval or a question the agent withdraws ($/cancel_request) closes as
   }
 });
 
-test("OpenClaw reconciles each turn from its own transcript: tools, reasoning, usage and the real stop reason", async t => {
-  const root = await mkdtemp(join(tmpdir(), "openclaw-transcript-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const config = join(root, "openclaw.json"); await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
-  const env = { HOME: root, OPENCLAW_CONFIG_PATH: config };
-  const earlier = { role: "assistant", content: [{ type: "text", text: "earlier turn" }], usage: { input: 999, output: 999 }, stopReason: "stop", __openclaw: { seq: 5 } };
-  const turn = (stop: string, extra: Record<string, unknown> = {}) => [earlier,
-    { role: "user", content: [{ type: "text", text: "run it" }], __openclaw: { seq: 6 } },
-    { role: "assistant", content: [{ type: "thinking", thinking: "plan the command" }, { type: "toolCall", id: "call-1", name: "exec", arguments: { command: "echo HH" } }], usage: { input: 100, output: 20, cacheRead: 10, cacheWrite: 0, totalTokens: 130, cost: { total: 0.002 } }, stopReason: "toolUse", __openclaw: { seq: 7 } },
-    { role: "toolResult", toolCallId: "call-1", toolName: "exec", content: [{ type: "text", text: "HH" }], isError: false, __openclaw: { seq: 8 } },
-    { role: "assistant", content: [{ type: "text", text: "done" }], usage: { input: 150, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 155, cost: { total: 0.001 } }, stopReason: stop, ...extra, __openclaw: { seq: 9 } }];
-  for (const [stop, extra, expected] of [["stop", {}, { status: "completed", reason: "end_turn", input: "recorded" }],
-    ["error", { errorMessage: "You've hit your weekly limit" }, { status: "failed", reason: "native_error", error: { code: "NATIVE_QUOTA_EXCEEDED", message: "这个 Harness 的账号额度或余额不足。可等待额度恢复或充值，也可以选择其他 Harness 继续。" }, input: "recorded" }]] as const) {
-    let reads = 0;
-    const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "basic"], env }, { ...options, env },
-      async method => method === "sessions.get" ? { messages: reads++ === 0 ? [earlier] : turn(stop, extra) } : { models: [] });
-    try {
-      const id = await ready(driver), events: ControlEvent[] = [];
-      assert.deepEqual(await (await driver.startText(id, "run it", event => events.push(event))).result, expected);
-      const tool = events.find(event => event.type === "tool");
-      assert.deepEqual(tool, { type: "tool", id: "call-1", title: "exec: echo HH", status: "completed", detail: { kind: "execute", name: "exec", input: "{\n  \"command\": \"echo HH\"\n}", output: "HH" } });
-      assert.deepEqual(events.filter(event => event.type === "thinking").map(event => event.type === "thinking" ? event.text : ""), ["plan the command\n"]);
-      // The context the Turn ends on is its last request's total.
-      assert.deepEqual(events.find(event => event.type === "usage"), { type: "usage", usage: { turn: { input: 250, output: 25, cachedInput: 10, cacheWrite: 0, total: 285 }, context: { used: 155 }, cost: { amount: 0.003, currency: "USD", scope: "turn" },
-        // G069 phase two (ADR-055 VF2-09): each of this turn's assistant rows is one model request.
-        requests: [{ input: 100, cachedInput: 10, cacheWrite: 0 }, { input: 150, cachedInput: 0, cacheWrite: 0 }] } }, "only this turn's calls are counted");
-    } finally { await driver.close(); }
-  }
-});
-
-test("OpenClaw reads its settings back after each turn as slash commands leave them, and gates images on a restored session's own model", async t => {
-  const root = await mkdtemp(join(tmpdir(), "openclaw-settings-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const config = join(root, "openclaw.json"); await writeFile(config, '{agents:{list:[{id:"main",default:true}],defaults:{model:{primary:"deepseek/deepseek-chat"}}}}');
-  const env = { HOME: root, OPENCLAW_CONFIG_PATH: config }, launch = { protocol: "acp-v1" as const, executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "openclaw-settings"], env };
-  // What the Gateway holds after `/think high`, `/verbose full` and the like; fast mode is only in chat.history.
-  let row: Record<string, unknown> | null = { modelProvider: "vision", model: "large", thinkingLevel: "high", verboseLevel: "full", reasoningLevel: "stream", responseUsage: "tokens" };
-  const calls: string[] = [];
-  const request = async (method: string, params: Readonly<Record<string, unknown>>) => {
-    calls.push(method);
-    if (method === "sessions.get") return { messages: [] };
-    if (method === "sessions.list") return { sessions: [{ key: "agent:main:harnesshub:00000000-0000-0000-0000-000000000000", modelProvider: "other", model: "x", thinkingLevel: "off" }, ...(row === null ? [] : [{ ...row, key: params.search }])] };
-    if (method === "chat.history") return { messages: [], fastMode: true };
-    if (method === "models.list") return { models: [{ provider: "vision", id: "large", name: "Vision", input: ["text", "image"] }, { provider: "deepseek", id: "deepseek-chat", name: "DeepSeek Chat", input: ["text"] }] };
-    throw new Error("unexpected OpenClaw method " + method);
-  };
-  const first = new OpenClawControl(launch, { ...options, env }, request);
-  let checkpoint: string | null;
-  try {
-    const id = await ready(first);
-    await assert.rejects(first.nativeConfig(), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_CONFIG_UNAVAILABLE", "nothing is reported before a turn");
-    assert.equal((await (await first.startText(id, "/think high", () => {})).result).status, "completed");
-    // The bridge's modes only repeat its thinking levels, so thought_level alone reports them (G032-NC26).
-    assert.deepEqual(await first.nativeConfig(), { model: "vision/large", options: { thought_level: "high", fast_mode: "on", verbose_level: "full", reasoning_level: "stream", response_usage: "tokens", elevated_level: "off" } });
-    assert.ok(calls.includes("sessions.list") && calls.includes("chat.history"));
-    checkpoint = await first.checkpoint(); assert.ok(checkpoint);
-  } finally { await first.close(); }
-  const image = attachment(root, "photo.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-  // The restored session runs the model its row holds (vision), not the configured text-only model.
-  const restored = new OpenClawControl(launch, { ...options, env }, request);
-  try { await restored.initialize(); await restored.open(process.cwd(), undefined, undefined, checkpoint); await restored.checkAttachments([image]); }
-  finally { await restored.close(); }
-  // Without a row the configured model decides, and it cannot see images.
-  row = null;
-  const unlisted = new OpenClawControl(launch, { ...options, env }, request);
-  try { await unlisted.initialize(); await unlisted.open(process.cwd(), undefined, undefined, checkpoint); await assert.rejects(unlisted.checkAttachments([image]), (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_UNSUPPORTED"); }
-  finally { await unlisted.close(); }
-});
-
 test("ACP reports the configuration the agent announced and records a mode it applied without an echo", async () => {
   const driver = new AcpControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "openclaw-settings"], env: {} }, options);
   try {
@@ -564,14 +458,6 @@ test("ACP lists the agent's own sessions of this workspace and reads one by repl
   const plain = new AcpControl(launch("basic"), options);
   try { await plain.initialize(); await assert.rejects(plain.nativeSessions(process.cwd()), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_LIST_UNAVAILABLE"); }
   finally { await plain.close(); }
-  const root = await mkdtemp(join(tmpdir(), "openclaw-sessions-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const config = join(root, "openclaw.json"); await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
-  const openclaw = new OpenClawControl({ ...launch("session-list"), env: { HOME: root, OPENCLAW_CONFIG_PATH: config } }, { ...options, env: { HOME: root, OPENCLAW_CONFIG_PATH: config } }, async () => ({}));
-  try {
-    await openclaw.initialize();
-    await assert.rejects(openclaw.nativeSessions(), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_LIST_UNAVAILABLE");
-    await assert.rejects(openclaw.importSession(), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_LIST_UNAVAILABLE");
-  } finally { await openclaw.close(); }
 });
 
 test("ACP forms are asked field by field: a choice, a typed answer for its Other box, skip and cancel, and unsupported fields declined", async () => {
@@ -601,28 +487,6 @@ test("ACP forms are asked field by field: a choice, a typed answer for its Other
   assert.deepEqual((await ask("elicitation", [], false)).reply, { action: "decline" }, "without an interactive chat nobody can answer, so the form is declined");
 });
 
-test("OpenClaw lists its workspace skills and plugin tool groups from the Gateway's own read-only reports", async t => {
-  const root = await mkdtemp(join(tmpdir(), "openclaw-extensions-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const config = join(root, "openclaw.json"); await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
-  const env = { HOME: root, OPENCLAW_CONFIG_PATH: config }, calls: string[] = [];
-  const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "basic"], env }, { ...options, env }, async (method, params) => {
-    calls.push(method + " " + JSON.stringify(params));
-    if (method === "skills.status") return { workspaceDir: "/w", skills: [
-      { name: "weather", description: "Look up the weather", source: "openclaw-bundled", eligible: true, disabled: false, blockedByAllowlist: false },
-      { name: "deploy", description: "Ship it", source: "openclaw-workspace", eligible: false, disabled: false },
-      { name: "blocked", description: "", source: "agents-skills-personal", eligible: true, blockedByAllowlist: true }] };
-    if (method === "tools.catalog") return { groups: [{ id: "fs", label: "Files", source: "core", tools: [{}, {}] }, { id: "plugin:feishu", label: "feishu", source: "plugin", pluginId: "feishu", tools: [{}, {}, {}] }] };
-    throw new Error("unexpected " + method);
-  });
-  try {
-    await driver.initialize();
-    assert.deepEqual(await driver.extensions(), { mcpServers: [], skills: [
-      { name: "weather", description: "Look up the weather", scope: "openclaw-bundled", enabled: true },
-      { name: "deploy", description: "Ship it", scope: "openclaw-workspace", enabled: false },
-      { name: "blocked", description: "", scope: "agents-skills-personal", enabled: false }], plugins: [{ name: "feishu", enabled: true, source: "3 个工具" }] });
-    assert.deepEqual(calls, ["skills.status {}", "tools.catalog {\"includePlugins\":true}"], "only read-only reports are requested");
-  } finally { await driver.close(); }
-});
 
 test("a request's wait is the program's own deadline, never negative; a program with none leaves the request without one", async () => {
   const { requestExpiry } = await import("../../src/contracts/control.js");
@@ -699,159 +563,3 @@ test("G032-NC23 for any other ACP agent, _auth/status_update stays an unsupporte
     assert.equal((await driver.models()).authentication, "unknown");
   } finally { await driver.close(); }
 });
-/**
- * An OpenClaw driver on the bridge fixture (`openclaw-settings`: it restores sessions and answers prompts) whose Gateway
- * a recorder answers. The configured model is deepseek/deepseek-chat; the catalog also lists vision/large and other/model.
- * sessions.list holds `row` under the searched key (none when absent; "unreadable" fails the read), and sessions.patch
- * resolves the model `resolves` returns. Every call is recorded and also marked in the fixture's trace, which so orders
- * the Gateway calls against the messages the bridge received.
- */
-async function openclawGateway(root: string, name: string, gateway: { readonly row?: Readonly<Record<string, unknown>> | "unreadable"; readonly resolves?: (model: string) => string } = {}) {
-  const config = join(root, name + ".json"), trace = join(root, name + ".trace");
-  await writeFile(config, '{agents:{list:[{id:"main",default:true}],defaults:{model:{primary:"deepseek/deepseek-chat"}}}}');
-  const calls: { readonly method: string; readonly params: Readonly<Record<string, unknown>> }[] = [];
-  const request = async (method: string, params: Readonly<Record<string, unknown>>): Promise<unknown> => {
-    calls.push({ method, params }); appendFileSync(trace, JSON.stringify({ gateway: method }) + "\n");
-    if (method === "models.list") return { models: [{ provider: "deepseek", id: "deepseek-chat", name: "DeepSeek Chat", input: ["text"] }, { provider: "vision", id: "large", name: "Vision", input: ["text", "image"] }, { provider: "other", id: "model", name: "Other" }] };
-    if (method === "sessions.patch") { const [provider, ...model] = (gateway.resolves ?? (value => value))(String(params.model)).split("/"); return { ok: true, key: params.key, resolved: { modelProvider: provider, model: model.join("/") } }; }
-    if (method === "sessions.list") { if (gateway.row === "unreadable") throw new ControlError("NATIVE_REQUEST_FAILED", "original native CLI request failed"); return { sessions: gateway.row === undefined ? [] : [{ ...gateway.row, key: params.search }] }; }
-    if (method === "sessions.get") return { messages: [] };
-    if (method === "chat.history") return { messages: [], fastMode: false };
-    throw new Error("unexpected OpenClaw method " + method);
-  };
-  const env = { HOME: root, OPENCLAW_CONFIG_PATH: config, FIXTURE_TRACE: trace };
-  const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "openclaw-settings"], env }, { ...options, env }, request);
-  /** The trace, read once the driver is closed (the bridge has then logged every message it received). */
-  const received = async () => (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { readonly method?: string; readonly gateway?: string; readonly params?: { readonly _meta?: { readonly sessionKey?: string } } });
-  /** Model patches and prompts, in the order the trace holds them. */
-  const order = async () => (await received()).flatMap(row => row.gateway === "sessions.patch" ? ["patch"] : row.method === "session/prompt" ? ["prompt"] : []);
-  return { driver, calls, patches: () => calls.filter(call => call.method === "sessions.patch").map(call => call.params), received, order };
-}
-const turnEnded = { status: "completed", reason: "end_turn", input: "recorded" } as const;
-test("G032-NC25 (a) OpenClaw writes nothing to its Gateway to run the configured model: neither opening with it nor the first prompt patches the session (T-OC-03)", async t => {
-  const root = await mkdtemp(join(tmpdir(), "openclaw-nc25-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const { driver, patches, order } = await openclawGateway(root, "configured");
-  try {
-    await driver.initialize(); const id = await driver.open(process.cwd(), "deepseek/deepseek-chat");
-    assert.deepEqual(patches(), [], "opening with the configured model");
-    assert.deepEqual(await (await driver.startText(id, "hello", () => {})).result, turnEnded);
-    assert.deepEqual(patches(), [], "the first prompt of a session that already runs it");
-  } finally { await driver.close(); }
-  assert.deepEqual(await order(), ["prompt"]);
-});
-test("G032-NC25 (b) another model is patched on the Hub's own key after open() and before the bridge receives the first prompt, then not again (T-OC-03)", async t => {
-  const root = await mkdtemp(join(tmpdir(), "openclaw-nc25-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const { driver, patches, received, order } = await openclawGateway(root, "other");
-  try {
-    await driver.initialize(); const id = await driver.open(process.cwd(), "other/model");
-    assert.deepEqual(patches(), [], "open() only checks the model against the catalog");
-    for (const prompt of ["first", "second"]) assert.deepEqual(await (await driver.startText(id, prompt, () => {})).result, turnEnded, prompt);
-  } finally { await driver.close(); }
-  const key = (await received()).find(row => row.method === "session/new")?.params?._meta?.sessionKey;
-  assert.match(String(key), /^agent:main:harnesshub:[0-9a-f-]{36}$/u);
-  assert.deepEqual(patches(), [{ key, model: "other/model" }], "one patch, on the session's own key");
-  assert.deepEqual(await order(), ["patch", "prompt", "prompt"], "the bridge received the first prompt only after the patch");
-});
-test("G032-NC25 (c) a Gateway that resolves another model fails the Turn with MODEL_MISMATCH before its prompt is sent (T-OC-03)", async t => {
-  const root = await mkdtemp(join(tmpdir(), "openclaw-nc25-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const { driver, patches, order } = await openclawGateway(root, "mismatch", { resolves: () => "deepseek/deepseek-chat" });
-  try {
-    await driver.initialize(); const id = await driver.open(process.cwd(), "vision/large"), events: ControlEvent[] = [];
-    const run = await driver.startText(id, "hello", event => events.push(event));
-    assert.deepEqual(await run.result, { status: "failed", reason: "model_not_applied", error: { code: "MODEL_MISMATCH", message: "OpenClaw 没有确认所选模型，这条消息没有发出。" }, input: "not_recorded" });
-    assert.deepEqual(events, []);
-    await assert.rejects(run.requestStop(), (error: unknown) => error instanceof ControlError && error.code === "INVALID_STATE", "there is no prompt to stop");
-    assert.deepEqual(patches().map(params => params.model), ["vision/large"]);
-  } finally { await driver.close(); }
-  assert.deepEqual(await order(), ["patch"], "the bridge never received the prompt");
-});
-test("G032-NC25 (d) a restored session is patched before its first prompt only when the selection differs from its Gateway row's model, or the row cannot be read (T-OC-03)", async t => {
-  const root = await mkdtemp(join(tmpdir(), "openclaw-nc25-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const key = "agent:main:harnesshub:00000000-0000-0000-0000-00000000000d", checkpoint = JSON.stringify({ conversation: "session-fixture", key });
-  // The restored row runs vision/large, so the configured deepseek/deepseek-chat is a change for it.
-  for (const [name, row, model, patched] of [["same", { modelProvider: "vision", model: "large" }, "vision/large", false],
-    ["configured", { modelProvider: "vision", model: "large" }, "deepseek/deepseek-chat", true], ["unreadable", "unreadable", "deepseek/deepseek-chat", true]] as const) {
-    const { driver, patches, order } = await openclawGateway(root, name, { row });
-    try {
-      await driver.initialize(); const id = await driver.open(process.cwd(), model, undefined, checkpoint);
-      assert.deepEqual(patches(), [], name + ": restoring writes nothing");
-      assert.deepEqual(await (await driver.startText(id, "again", () => {})).result, turnEnded, name);
-    } finally { await driver.close(); }
-    assert.deepEqual(patches(), patched ? [{ key, model }] : [], name);
-    assert.deepEqual(await order(), patched ? ["patch", "prompt"] : ["prompt"], name);
-  }
-});
-test("G032-NC25 (e) a catalog read with a selected model opens, reads and closes without writing to the Gateway; an unlisted model is still refused (T-OC-03)", async t => {
-  const root = await mkdtemp(join(tmpdir(), "openclaw-nc25-")); t.after(() => rm(root, { recursive: true, force: true }));
-  for (const [name, model] of [["probe", "other/model"], ["unlisted", "missing/model"]] as const) {
-    const { driver, calls } = await openclawGateway(root, name);
-    try {
-      await driver.initialize();
-      // discoverModels: open with the selection, read the catalog, close; an unlisted selection is its selectionError.
-      if (model === "missing/model") await assert.rejects(driver.open(process.cwd(), model), (error: unknown) => error instanceof ControlError && error.code === "MODEL_UNAVAILABLE");
-      else await driver.open(process.cwd(), model);
-      assert.equal((await driver.models()).defaultModel, "deepseek/deepseek-chat", name + ": the configured default, not the selection");
-    } finally { await driver.close(); }
-    assert.deepEqual(calls.map(call => call.method), ["models.list"], name + ": only the catalog was read");
-  }
-});
-test("G032-NC26 OpenClaw offers its modes once, as thought_level, when they only repeat its thinking levels; modes with other values stay in its catalog and settings report (T-OC-08)", async t => {
-  const root = await mkdtemp(join(tmpdir(), "openclaw-nc26-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const config = join(root, "openclaw.json"), trace = join(root, "trace"); await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
-  // What the Gateway holds after `/think high`; its row has no field for a mode.
-  const request = async (method: string, params: Readonly<Record<string, unknown>>): Promise<unknown> => {
-    if (method === "sessions.list") return { sessions: [{ key: params.search, thinkingLevel: "high" }] };
-    if (method === "chat.history") return { messages: [], fastMode: false };
-    if (method === "sessions.get") return { messages: [] };
-    if (method === "models.list") return { models: [] };
-    throw new Error("unexpected OpenClaw method " + method);
-  };
-  const launch = (env: Readonly<Record<string, string>>) => new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "openclaw-settings"], env }, { ...options, env }, request);
-  const settings = ["thought_level", "fast_mode", "verbose_level", "reasoning_level", "response_usage", "elevated_level"];
-  for (const [modes, mode] of [[undefined, undefined], ["distinct", "plan"]] as const) {
-    const driver = launch({ HOME: root, OPENCLAW_CONFIG_PATH: config, ...(modes === undefined ? {} : { FIXTURE_OPENCLAW_MODES: modes }) });
-    try {
-      const id = await ready(driver), offered = (await driver.models()).options ?? [];
-      assert.deepEqual(offered.map(option => option.id), mode === undefined ? settings : [...settings, "__mode"], modes ?? "repeated");
-      if (mode !== undefined) assert.deepEqual(offered.find(option => option.id === "__mode")?.values.map(row => row.value), ["off", "minimal", "low", "medium", "high", "plan"]);
-      assert.equal((await (await driver.startText(id, "/think high", () => {})).result).status, "completed");
-      // A mode with other values has no Gateway field: the bridge's own current mode is reported for it.
-      assert.deepEqual(await driver.nativeConfig(), { model: null, options: { thought_level: "high", fast_mode: "off", verbose_level: "off", reasoning_level: "off", response_usage: "off", elevated_level: "off", ...(mode === undefined ? {} : { __mode: mode }) } }, modes ?? "repeated");
-    } finally { await driver.close(); }
-  }
-  // A selection that still carries the repeated mode is applied as before, since the bridge keeps offering it.
-  const kept = launch({ HOME: root, OPENCLAW_CONFIG_PATH: config, FIXTURE_TRACE: trace });
-  try { await kept.initialize(); await kept.open(process.cwd(), undefined, { __mode: "high" }); } finally { await kept.close(); }
-  const sent = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { readonly method?: string; readonly params?: { readonly modeId?: string } });
-  assert.deepEqual(sent.filter(row => row.method === "session/set_mode").map(row => row.params?.modeId), ["high"]);
-});
-test("G032-NC27 OpenClaw reads the transcript back as far as the Turn goes: a window that starts after the Turn's first entry is asked for again, larger, and only a transcript past the largest window leaves entries unreconciled (T-OC-08, ADR-027)", async t => {
-  const root = await mkdtemp(join(tmpdir(), "openclaw-nc27-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const config = join(root, "openclaw.json"); await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
-  const env = { HOME: root, OPENCLAW_CONFIG_PATH: config }, before = 5;
-  const earlier = { role: "assistant", content: [{ type: "text", text: "earlier turn" }], __openclaw: { seq: before } };
-  // The latest `limit` entries of a transcript of `total` entries after seq `before`; the last two are a tool call and its result.
-  const transcript = (total: number) => Array.from({ length: total }, (_, index) => ({ __openclaw: { seq: before + 1 + index },
-    ...(index === total - 2 ? { role: "assistant", content: [{ type: "toolCall", id: "call-late", name: "exec", arguments: { command: "echo late" } }] }
-      : index === total - 1 ? { role: "toolResult", toolCallId: "call-late", toolName: "exec", content: [{ type: "text", text: "late" }], isError: false }
-      : { role: "assistant", content: [{ type: "text", text: "step " + index }] }) }));
-  // [entries this Turn wrote, the limits it was asked for in turn after the first read of the position before the Turn]: 150 fit the first window; 900 need two more asks; 250 need one.
-  for (const [total, asked] of [[150, [200]], [250, [200, 800]], [900, [200, 800, 3200]], [199, [200]]] as const) {
-    const limits: number[] = [];
-    const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "basic"], env }, { ...options, env },
-      async (method, params) => {
-        if (method !== "sessions.get") return { models: [] };
-        const limit = (params as { readonly limit?: number }).limit ?? 0;
-        if (limit === 1) return { messages: [earlier] };
-        limits.push(limit); const all = transcript(total); return { messages: all.slice(-limit) };
-      });
-    try {
-      const id = await ready(driver), events: ControlEvent[] = [];
-      assert.deepEqual(await (await driver.startText(id, "go", event => events.push(event))).result, turnEnded);
-      assert.deepEqual(limits, asked, `${total} entries`);
-      assert.deepEqual(events.flatMap(event => event.type === "diagnostic" ? [event.message] : []), [], "every entry of the Turn was read");
-      assert.deepEqual(events.flatMap(event => event.type === "tool" ? [event.id + " " + event.status] : []), ["call-late completed"], "the entries are reconciled");
-    } finally { await driver.close(); }
-  }
-});
-

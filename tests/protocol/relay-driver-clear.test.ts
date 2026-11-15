@@ -5,21 +5,21 @@ import test from "node:test";
 import { contentId, type ControlAttachment } from "../../src/contracts/content.js";
 import type { BackendResult, ControlEvent, HarnessControl } from "../../src/contracts/control.js";
 import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
-import { driver, gatewayOf, ID_A, peerRoot, prompts, relayTurn, run, type Harness, type Peer } from "../fixtures/relay-drivers.js";
+import { driver, ID_A, peerRoot, prompts, relayTurn, run, type Harness, type Peer } from "../fixtures/relay-drivers.js";
 
 // The Hub's clear (the decision log of 2026-11-11: clearing a conversation is the Hub's, on every Harness). The words that clear
 // are each Driver's own reading of a clear command; where the native side has none (Codex, OpenCode, DeepSeek Harness) they are
 // `/clear`, `/new` and `/reset` alone. The Driver sends nothing of it: it gives the native session up, reports the history
 // cleared with no checkpoint (`replaced.checkpoint: null`), and the next Turn opens a new native session. The native side is the
-// relay peer, a real child process whose trace holds every line it received; OpenClaw's Gateway is a function that records its
-// calls. Nothing here runs a Harness.
+// relay peer, a real child process whose trace holds every line it received (OpenClaw's clear is in openclaw-gateway.test.ts).
+// Nothing here runs a Harness.
 
 const CLEARED: BackendResult = { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true } };
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const methods = async (peer: Peer): Promise<readonly string[]> => (await peer.sent()).flatMap(line => typeof line.method === "string" ? [line.method] : []);
 const notices = (events: readonly ControlEvent[]) => events.flatMap(event => event.type === "diagnostic" ? [event.message] : []);
-async function begin(t: Parameters<typeof driver>[0], harness: Harness, peer: Peer, gateway?: Parameters<typeof driver>[3]) {
-  const control = driver(t, harness, peer, gateway);
+async function begin(t: Parameters<typeof driver>[0], harness: Harness, peer: Peer) {
+  const control = driver(t, harness, peer);
   await control.initialize();
   return { control, first: await control.open(peer.workspace) };
 }
@@ -87,54 +87,6 @@ test("DeepSeek Harness: /clear, /new and /reset alone are not sent; the old sess
   assert.deepEqual(sent.filter(line => line.method === "session/close").map(line => line.params?.sessionId), sessions.slice(0, 3));
 });
 
-test("OpenClaw: /new, /reset and /clear are not sent to the bridge and nothing is asked of the Gateway — no clear, no describe, no read, no model patch; the key and the model choice are let go, and the next Turn opens a new session under a new key", { timeout: 60000 }, async t => {
-  const peer = await peerRoot(t, { RELAY_OPENCLAW: "1", RELAY_CLOSE: "1" }), calls: string[] = [];
-  const answers = gatewayOf(peer, { "models.list": async () => ({ models: [{ provider: "vision", id: "large", name: "Vision" }] }), "sessions.patch": async () => ({ resolved: { modelProvider: "vision", model: "large" } }) });
-  const control = driver(t, "openclaw", peer, async (method, params) => { calls.push(method); return answers(method, params); });
-  await control.initialize();
-  let current = await control.open(peer.workspace, "vision/large");
-  const sessions = [current];
-  await run(control, current, "先说一句");
-  assert.equal(calls.filter(method => method === "sessions.patch").length, 1, "the chosen model was applied to the first session");
-  for (const words of ["/new", "/reset", "/clear"]) {
-    calls.length = 0;
-    const { result, events } = await run(control, current, words);
-    assert.deepEqual(result, CLEARED, words);
-    assert.deepEqual(calls, [], words + ": the Gateway was not called at all");
-    assert.ok(notices(events).some(message => message.includes("OpenClaw")), words + ": the Turn says the Hub ran it");
-    await givenUp(control, current, words);
-    current = await control.open(peer.workspace, "vision/large"); sessions.push(current);
-    calls.length = 0;
-    assert.equal((await run(control, current, "继续")).result.status, "completed");
-    assert.equal(calls.filter(method => method === "sessions.patch").length, 1, words + ": the choice is applied to the new session again");
-  }
-  const sent = await peer.sent();
-  assert.deepEqual(await prompts(peer), [["先说一句"], ["继续"], ["继续"], ["继续"]], "no prompt was sent for a clear");
-  assert.equal(sent.filter(line => line.method === "session/close").length, 0, "the bridge was not asked to close anything");
-  const keys = sent.filter(line => line.method === "session/new").map(line => (line.params as { _meta: { sessionKey: string } })._meta.sessionKey);
-  assert.equal(keys.length, 4); assert.equal(new Set(keys).size, 4, "a new Gateway key for each session");
-  for (const key of keys) assert.match(key, /^agent:main:harnesshub:[a-f0-9-]+$/u);
-  assert.equal(new Set(sessions).size, 4);
-});
-
-test("OpenClaw: a clear on a restored session lets go of its key too: the next open starts a new session, not the restored one", { timeout: 60000 }, async t => {
-  const peer = await peerRoot(t, { RELAY_OPENCLAW: "1" });
-  const one = await begin(t, "openclaw", peer);
-  await run(one.control, one.first, "先说一句");
-  const checkpoint = (await one.control.checkpoint!())!; await one.control.close();
-  const two = driver(t, "openclaw", peer); await two.initialize();
-  const restored = await two.open(peer.workspace, undefined, undefined, checkpoint);
-  assert.deepEqual((await run(two, restored, "/new")).result, CLEARED);
-  const fresh = await two.open(peer.workspace);
-  const sent = (await peer.sent()).filter(line => line.method === "session/new" || line.method === "session/load");
-  const keyOf = (line: (typeof sent)[number]) => (line.params as { _meta?: { sessionKey?: string; requireExistingSession?: boolean } })._meta;
-  assert.deepEqual(sent.map(line => line.method), ["session/new", "session/load", "session/new"]);
-  assert.equal(keyOf(sent[1]!)?.requireExistingSession, true, "the restore asked for the existing session");
-  assert.notEqual(keyOf(sent[2]!)?.sessionKey, keyOf(sent[1]!)?.sessionKey, "the new session has a key of its own");
-  assert.equal(keyOf(sent[2]!)?.requireExistingSession, undefined);
-  assert.notEqual(fresh, restored);
-});
-
 test("on Codex and DeepSeek Harness, which have no clear of their own, the Hub's clear is exactly its words: arguments, a leading space (Codex, dsh) or an attachment make the input words, sent as typed", { timeout: 120000 }, async t => {
   const wordsFor = async (harness: "codex" | "dsh", typed: string, attachments: readonly ControlAttachment[] = [], settings: Record<string, string> = {}) => {
     const peer = await peerRoot(t, settings), { control, first } = await begin(t, harness, peer);
@@ -156,40 +108,9 @@ test("on Codex and DeepSeek Harness, which have no clear of their own, the Hub's
   }
 });
 
-// The independent review of 2026-11-11 (persistent format and lost content): on OpenClaw `/clear cache 目录怎么清` and `/new 帮我写个函数` were
-// read as the clear, so what the user typed went to no one and the native session was given up; the same for `/new` with an image, a
-// file or audio. The Hub's clear is one of its words alone, without an attachment, on every Driver.
-test("OpenClaw: /new, /reset and /clear are the Hub's clear only alone and without an attachment; with an argument or an attachment the words are sent as typed — /new and /reset are OpenClaw's own commands, /clear is text — and nothing is given up", { timeout: 180000 }, async t => {
-  const cases: readonly (readonly [string, readonly ControlAttachment["kind"][]])[] = [
-    ["/clear cache 目录怎么清", []], ["/clear\n目录怎么清", []], ["/new 帮我写个函数", []], ["/new gpt-5", []], ["/reset 重新来", []], ["/reset soft", []],
-    ["/new", ["image"]], ["/new", ["file"]], ["/new", ["audio"]], ["/reset", ["image"]], ["/reset", ["file"]], ["/reset", ["audio"]], ["/clear", ["image"]], ["/clear", ["file"]], ["/clear", ["audio"]],
-  ];
-  for (const [typed, kinds] of cases) {
-    const label = JSON.stringify(typed) + (kinds.length ? " + " + kinds.join(",") : ""), peer = await peerRoot(t, { RELAY_OPENCLAW: "1" }), attachments = await Promise.all(kinds.map(kind => attachment(peer, kind)));
-    const calls: string[] = [], answers = gatewayOf(peer), control = driver(t, "openclaw", peer, async (method, params) => { calls.push(method); return answers(method, params); });
-    await control.initialize();
-    const first = await control.open(peer.workspace), reference = await control.checkpoint!(), opened = (await peer.sent()).filter(line => line.method === "session/new").length;
-    const { result, events } = await run(control, first, typed, attachments);
-    assert.deepEqual([result.status, result.native], ["completed", undefined], label + ": a Turn like any other, nothing cleared");
-    assert.equal(await control.checkpoint!(), reference, label + ": the native session is still this connection's");
-    assert.deepEqual((await prompts(peer)).map(blocks => blocks[0]), [typed], label + ": the words went to the bridge as typed");
-    if (kinds.length) assert.equal((await peer.sent()).filter(line => line.method === "session/prompt").flatMap(line => (line.params?.prompt as { type: string }[]).map(block => block.type)).length, 1 + kinds.length, label + ": and the attachments with them");
-    assert.equal(notices(events).some(message => message.includes("代为执行")), false, label + ": the Turn does not say the Hub ran a clear");
-    assert.equal((await peer.sent()).filter(line => line.method === "session/new").length, opened, label + ": no new session was opened");
-    assert.equal(calls.some(method => method === "sessions.patch"), false, label);
-  }
-  // The invalid samples: the same words alone, without an attachment, are the Hub's clear and go to no one.
-  for (const typed of ["/clear", "/new", "/reset", "/new \n"]) {
-    const peer = await peerRoot(t, { RELAY_OPENCLAW: "1" }), { control, first } = await begin(t, "openclaw", peer);
-    const { result } = await run(control, first, typed);
-    assert.deepEqual(result, CLEARED, JSON.stringify(typed));
-    assert.deepEqual(await prompts(peer), [], JSON.stringify(typed) + ": nothing was sent");
-  }
-});
-
 test("a relay Turn whose words are the Hub's clear is refused whole on every Driver: failed, not recorded, nothing sent, nothing given up", { timeout: 120000 }, async t => {
-  for (const harness of ["codex", "dsh", "openclaw"] as const) {
-    const peer = await peerRoot(t, { RELAY_CLOSE: "1", ...(harness === "dsh" ? { RELAY_JOIN: "" } : {}), ...(harness === "openclaw" ? { RELAY_OPENCLAW: "1" } : {}) });
+  for (const harness of ["codex", "dsh"] as const) {
+    const peer = await peerRoot(t, { RELAY_CLOSE: "1", ...(harness === "dsh" ? { RELAY_JOIN: "" } : {}) });
     const { control, first } = await begin(t, harness, peer), calls = (await peer.sent()).length;
     for (const words of ["/clear", "/new", "/reset"]) {
       const { result, events } = await run(control, first, relayTurn(ID_A, words, false));

@@ -4,7 +4,7 @@ import test from "node:test";
 import { relayCapabilities } from "../../src/adapters/control/factory.js";
 import type { HarnessSelection, PreparedSessionBinding, SelectionRequest, SessionBindingFactory, SessionConfiguration } from "../../src/contracts/session.js";
 import { decisionOf, relayOf, turn, to, world } from "../fixtures/relay-fakes.js";
-import { driver, gatewayOf, peerRoot, prompts, type Harness, type Peer } from "../fixtures/relay-drivers.js";
+import { driver, peerRoot, prompts, type Harness, type Peer } from "../fixtures/relay-drivers.js";
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 import { oldShape } from "../fixtures/old-shape.js";
 
@@ -21,7 +21,7 @@ class Drivers implements SessionBindingFactory {
   relayCapabilities(selection: HarnessSelection) { return relayCapabilities(selection.harnessId, selection.harnessId === "codex" ? "codex-app-server" : "acp-v1"); }
   async validate(request: SelectionRequest): Promise<HarnessSelection> { return { harnessId: request.harnessId, controlId: request.harnessId + "-acp" }; }
   async prepare(selected: HarnessSelection, configuration: SessionConfiguration): Promise<PreparedSessionBinding> {
-    const peer = this.peers.get(selected.harnessId)!, control = driver(this.t, selected.harnessId as Harness, peer, gatewayOf(peer));
+    const peer = this.peers.get(selected.harnessId)!, control = driver(this.t, selected.harnessId as Harness, peer);
     return { control, workspace: configuration.workspace, assertOwned: () => {}, close: () => control.close() };
   }
 }
@@ -31,9 +31,9 @@ async function received(harness: string, peer: Peer): Promise<readonly string[]>
   return (await prompts(peer)).map(blocks => blocks.join(harness === "dsh" ? "" : "\n"));
 }
 const sessionsOpened = async (harness: string, peer: Peer): Promise<number> => (await peer.sent()).filter(line => line.method === (harness === "codex" ? "thread/start" : "session/new")).length;
-const settings = (harness: string): Record<string, string> => ({ RELAY_CLOSE: "1", ...(harness === "dsh" ? { RELAY_JOIN: "" } : {}), ...(harness === "openclaw" ? { RELAY_OPENCLAW: "1" } : {}) });
+const settings = (harness: string): Record<string, string> => ({ RELAY_CLOSE: "1", ...(harness === "dsh" ? { RELAY_JOIN: "" } : {}) });
 
-for (const target of ["codex", "dsh", "openclaw"] as const) {
+for (const target of ["codex", "dsh"] as const) {
   test(`${target}: a clear is a command Turn that carries nothing, and opens a new native session in a new epoch; the earlier part is offered once and attached on request`, { timeout: 120_000 }, async t => {
     const source = target === "codex" ? "opencode" : "codex";
     const peers = new Map<string, Peer>([[source, await peerRoot(t, settings(source))], [target, await peerRoot(t, settings(target))]]);

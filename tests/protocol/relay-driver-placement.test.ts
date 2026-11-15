@@ -7,7 +7,7 @@ import { contentId, type ControlAttachment } from "../../src/contracts/content.j
 import { claudeRelayCapabilities } from "../../src/adapters/control/claude/control.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import { exceedsInput, placedSize, titledPacket } from "../../src/adapters/control/relay-turn.js";
-import { driver, gatewayOf, ID_A, packet, peerRoot, prompts, relayTurn, run, type Harness } from "../fixtures/relay-drivers.js";
+import { driver, ID_A, packet, peerRoot, prompts, relayTurn, run, type Harness } from "../fixtures/relay-drivers.js";
 
 // G069 phase two, placement (ADR-055 §5.5, §7.4, §8.1): each Driver sends a relay Turn as its declaration places it, and the
 // packet's title line arrives unchanged in the user entry the native side records; a command's words go alone; a packet over
@@ -30,7 +30,6 @@ test("G069-C01 the ACP and Codex Drivers place a relay Turn by their declaration
   const cases: readonly (readonly [Harness, Record<string, string>, readonly string[]])[] = [
     // dsh concatenates its text blocks without a separator (dsh-acp 0.2.1-rc.5 admitAcpPrompt): the packet keeps its blank line.
     ["dsh", { RELAY_JOIN: "" }, [body + "\n\n", WORDS]],
-    ["openclaw", { RELAY_OPENCLAW: "1" }, [body + "\n\n" + WORDS]],
     ["codex", {}, [body + "\n\n" + WORDS]],
   ];
   for (const [harness, settings, parts] of cases) {
@@ -49,7 +48,6 @@ test("G069-C01 the ACP and Codex Drivers place a relay Turn by their declaration
     assert.equal(titledPacket(entry), ID_A, harness + ": the native side's user entry carries the title line");
     assert.ok(entry.includes(WORDS), harness + ": and the words");
     if (harness === "dsh") assert.equal(entry, body + "\n\n" + WORDS, "dsh's concatenation keeps the blank line");
-    if (harness === "openclaw") assert.match(entry, /^\[Working directory: [^\n]+\]\n\n/u);
     // A plain input is sent as it was before phase two: one text, exactly as typed.
     await run(control, id, "plain words");
     if (harness === "codex") assert.deepEqual(((await peer.sent()).filter(line => line.method === "turn/start")[1]!.params as { input: { text: string }[]; clientUserMessageId?: string }).input.map(item => item.text), ["plain words"]);
@@ -105,7 +103,7 @@ test("G069-C01 Codex's skill input carries the skill item, then the packet witho
   assert.equal(second.input[0]!.text, relayTurn(ID_A, "x", false).relay.body + "\n\n再看");
 });
 
-test("G069-C01 a placement over the declared input bound is never sent: Codex in code points, OpenClaw in UTF-8 bytes with the bridge's working-directory prefix", { timeout: 60000 }, async t => {
+test("G069-C01 a placement over the declared input bound is never sent: Codex in code points", { timeout: 60000 }, async t => {
   // The size is the declaration's unit: code points, not UTF-16 units; bytes in UTF-8.
   assert.equal(placedSize(["a😀", "中"], "chars"), 3);
   assert.equal(placedSize(["a😀", "中"], "bytes"), 8);
@@ -121,15 +119,9 @@ test("G069-C01 a placement over the declared input bound is never sent: Codex in
   assert.deepEqual(over.result, { status: "failed", reason: "input_too_large", input: "not_recorded", error: { code: "RELAY_INPUT_LIMIT", message: over.result.error!.message } });
   assert.equal((await peer.sent()).filter(line => line.method === "turn/start").length, 0, "nothing was sent");
   assert.equal((await run(control, id, fitting(0))).result.status, "completed", "exactly at the bound it goes");
-  const claw = await peerRoot(t, { RELAY_OPENCLAW: "1" }), bridge = driver(t, "openclaw", claw); await bridge.initialize(); const session = await bridge.open(claw.workspace);
-  const prefix = Buffer.byteLength("[Working directory: " + claw.workspace + "]\n\n"), head = packet(ID_A), room = 2_097_152 - Buffer.byteLength(head) - 2 - Buffer.byteLength(words);
-  const sized = (filler: number) => ({ user: words, relay: { packetId: ID_A, body: head + "x".repeat(filler), firstLine: false } });
-  assert.equal((await run(bridge, session, sized(room - prefix + 1))).result.error?.code, "RELAY_INPUT_LIMIT", "the prefix counts");
-  assert.equal((await prompts(claw)).length, 0);
-  assert.equal((await run(bridge, session, sized(room - prefix))).result.status, "completed");
 });
 
-test("G069-C09 Codex reports each model request's own counts, all of them (64 were kept until 2026-11-12); a Turn without reports has none; OpenClaw's transcript rows give them unless a CLI harness wrote the turn", { timeout: 60000 }, async t => {
+test("G069-C09 Codex reports each model request's own counts, all of them (64 were kept until 2026-11-12); a Turn without reports has none", { timeout: 60000 }, async t => {
   const usage = (events: readonly ControlEvent[]) => events.flatMap(event => event.type === "usage" ? [event.usage] : []) as NativeUsage[];
   const many = await peerRoot(t, { RELAY_REQUESTS: "70" }), control = driver(t, "codex", many); await control.initialize(); const id = await control.open(many.workspace);
   const reported = usage((await run(control, id, "继续")).events);
@@ -140,17 +132,4 @@ test("G069-C09 Codex reports each model request's own counts, all of them (64 we
   assert.deepEqual([last[0], last.at(-1)], [{ input: 100, cachedInput: 50, cacheWrite: 1 }, { input: 7000, cachedInput: 3500, cacheWrite: 70 }], "oldest first");
   const none = await peerRoot(t, { RELAY_REQUESTS: "0" }), quiet = driver(t, "codex", none); await quiet.initialize(); const thread = await quiet.open(none.workspace);
   assert.deepEqual(usage((await run(quiet, thread, "继续")).events), [], "not reported: no requests field anywhere");
-  // OpenClaw: one assistant row per model request in the embedded runtime.
-  const rows = (harness: boolean, count: number) => async () => ({ messages: [{ role: "user", content: "[Working directory: ~]\n\n继续", __openclaw: { seq: 1 } },
-    ...Array.from({ length: count }, (_, index) => ({ role: "assistant", content: [{ type: "text", text: "ok" }], usage: { input: 10 + index, output: 1, cacheRead: 5, cacheWrite: 2, totalTokens: 13 }, ...(harness ? { contextUsage: {} } : {}), __openclaw: { seq: 2 + index } }))] });
-  for (const [harness, count, expected] of [[false, 2, [{ input: 10, cachedInput: 5, cacheWrite: 2 }, { input: 11, cachedInput: 5, cacheWrite: 2 }]], [true, 2, undefined], [false, 70, 70]] as const) {
-    const claw = await peerRoot(t, { RELAY_OPENCLAW: "1" });
-    let reads = 0;
-    const bridge = driver(t, "openclaw", claw, gatewayOf(claw, { "sessions.get": async params => (reads++, params.limit === 1 ? { messages: [] } : rows(harness, count)()) }));
-    await bridge.initialize(); const session = await bridge.open(claw.workspace);
-    const requests = usage((await run(bridge, session, "继续")).events).at(-1)?.requests;
-    if (typeof expected === "number") { assert.equal(requests?.length, expected); assert.equal(requests?.at(-1)?.input, 10 + count - 1); }
-    else assert.deepEqual(requests, expected, String(harness));
-    assert.ok(reads >= 2);
-  }
 });

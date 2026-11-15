@@ -207,7 +207,7 @@ export function migrateLegacyManifest(manifest: DiscoveryManifest, base: readonl
     if (override.adapter !== undefined && !usesAdapter && !retiredAdapter) throw new DiscoveryInputError("unused adapter override: " + recipeId);
     const candidates = target.controls.filter((entry) => custom !== undefined ? entry.id === recipeId + "-legacy" :
       recipeId === "codex" ? entry.protocol === "codex-app-server" : recipeId === "pi" ? entry.protocol === "pi-rpc" : recipeId === "hermes" ? entry.protocol === "hermes-gateway"
-        : recipeId === "opencode" ? entry.protocol === "opencode-server" : recipeId === "claude" ? entry.protocol === "claude-agent-sdk" : entry.protocol === "acp-v1");
+        : recipeId === "opencode" ? entry.protocol === "opencode-server" : recipeId === "claude" ? entry.protocol === "claude-agent-sdk" : recipeId === "openclaw" ? entry.protocol === "openclaw-gateway" : entry.protocol === "acp-v1");
     const chosen = candidates.find((entry) => entry.executableNames.some((name) => target.binaryNames.includes(name))) ?? candidates[0];
     if (chosen === undefined) throw new DiscoveryInputError("legacy Harness has no matching control: " + recipeId);
     const executable = usesAdapter ? override.adapter : override.binary;

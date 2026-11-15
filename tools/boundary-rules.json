@@ -118,7 +118,7 @@
       "kind": "imports",
       "appliesTo": ["src/**"],
       "packages": {
-        "allow": ["semver", "yaml", "jsonc-parser", "tar", "smol-toml", "json5", "yauzl", "unbzip2-stream", "node-pty", "ws", "@anthropic-ai/claude-agent-sdk"],
+        "allow": ["semver", "yaml", "jsonc-parser", "tar", "smol-toml", "json5", "yauzl", "unbzip2-stream", "node-pty", "ws", "@anthropic-ai/claude-agent-sdk", "@openclaw/gateway-client", "@openclaw/gateway-protocol"],
         "inPaths": ["src/infrastructure/**", "src/adapters/**"]
       },
       "exceptions": []

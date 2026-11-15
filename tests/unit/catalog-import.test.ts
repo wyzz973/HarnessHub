@@ -78,7 +78,7 @@ test("builtin catalog explicitly combines native and ACP controls while retainin
   assert.equal(definitions.flatMap((definition) => definition.controls).length, 49);
   assert.deepEqual(definitions.find((definition) => definition.id === "codex")?.controls.map((control) => control.protocol), ["codex-app-server", "acp-v1"]);
   assert.deepEqual(definitions.find((definition) => definition.id === "pi")?.controls.map((control) => control.protocol), ["pi-rpc", "acp-v1"]);
-  assert.deepEqual(definitions.find((definition) => definition.id === "openclaw")?.controls[0]?.args, ["acp"]);
+  assert.deepEqual(definitions.find((definition) => definition.id === "openclaw")?.controls.map((control) => [control.protocol, ...control.args]), [["openclaw-gateway"]]);
   // Hermes and DeepSeek Harness are reviewed native entries absent from the ACP registry snapshot.
   assert.deepEqual(definitions.find((definition) => definition.id === "hermes")?.controls.map((control) => [control.protocol, ...control.args]), [["hermes-gateway"]]);
   assert.deepEqual(definitions.find((definition) => definition.id === "dsh")?.controls.map((control) => [control.protocol, ...control.args]), [["acp-v1", "--profile", "acp"]]);

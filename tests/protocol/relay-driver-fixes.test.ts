@@ -7,7 +7,6 @@ import { contentId, type ControlAttachment } from "../../src/contracts/content.j
 import type { RelayCapabilities } from "../../src/contracts/relay.js";
 import { AcpControl, dshRelayCapabilities } from "../../src/adapters/control/acp.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
-import { openClawRelayCapabilities } from "../../src/adapters/control/openclaw.js";
 import { titledPacket } from "../../src/adapters/control/relay-turn.js";
 import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { driver, ID_A, options, packet, peerRoot, prompts, relayTurn, run, type Harness, type Peer } from "../fixtures/relay-drivers.js";
@@ -21,8 +20,8 @@ import { driver, ID_A, options, packet, peerRoot, prompts, relayTurn, run, type 
 
 const WORDS = "修好 summary.ts 的测试";
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-async function opened(t: Parameters<typeof driver>[0], harness: Harness, peer: Peer, checkpoint?: string, overrides: Parameters<typeof driver>[4] = {}) {
-  const control = driver(t, harness, peer, undefined, overrides);
+async function opened(t: Parameters<typeof driver>[0], harness: Harness, peer: Peer, checkpoint?: string, overrides: Parameters<typeof driver>[3] = {}) {
+  const control = driver(t, harness, peer, overrides);
   await control.initialize();
   return { control, id: await control.open(peer.workspace, undefined, undefined, checkpoint) };
 }
@@ -44,14 +43,12 @@ const fileIn = async (peer: Peer, name = "notes.txt"): Promise<ControlAttachment
 
 test("G069-F1 a relay Turn whose words the native side reads as a command is refused whole: failed, not_recorded, RELAY_PREPARE_FAILED (classification_changed), nothing sent and nothing said; dsh has no commands and carries it", { timeout: 90000 }, async t => {
   const cases: readonly (readonly [Harness, string, Record<string, string>])[] = [
-    ["openclaw", "/new", { RELAY_OPENCLAW: "1", RELAY_COMMANDS: JSON.stringify([{ name: "new", description: "new" }]) }], ["openclaw", "/clear", { RELAY_OPENCLAW: "1" }],
     ["codex", "/compact", {}], ["codex", "/export", {}],
     // The Hub's clear is a command on the Drivers whose native side has none too: a Turn with a packet is refused whole.
     ["codex", "/clear", {}], ["dsh", "/reset", {}],
   ];
   for (const [harness, words, settings] of cases) {
     const peer = await peerRoot(t, settings), { control, id } = await opened(t, harness, peer);
-    if (harness === "openclaw") await control.models!();
     const before = await control.checkpoint!();
     const { result, events } = await run(control, id, relayTurn(ID_A, words, false));
     const label = harness + " " + JSON.stringify(words);
@@ -67,15 +64,6 @@ test("G069-F1 a relay Turn whose words the native side reads as a command is ref
   const dsh = await peerRoot(t, { RELAY_JOIN: "" }), plain = await opened(t, "dsh", dsh);
   assert.equal((await run(plain.control, plain.id, relayTurn(ID_A, "/review now", false))).result.status, "completed");
   assert.equal((await prompts(dsh))[0]!.length, 2, "dsh: the packet and the words");
-});
-
-test("G069-F1 a possible command (no catalog yet) is refused the same", { timeout: 60000 }, async t => {
-  for (const [harness, words] of [["openclaw", "/think high"]] as const) {
-    const peer = await peerRoot(t, { RELAY_NO_COMMANDS: "1" }), { control, id } = await opened(t, harness, peer);
-    const { result, events } = await run(control, id, relayTurn(ID_A, words, false));
-    refused(result, harness);
-    assert.deepEqual([events, await prompts(peer)], [[], []], harness);
-  }
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -96,9 +84,9 @@ test("G069-F10 a title line that names no packet does not hide the packet's own 
 // ---------------------------------------------------------------------------------------------------------------------
 
 test("G069-F11 every Driver places attachments after the user's words, as its declaration now says (pointersAfterUser true for all six, still to be probed)", { timeout: 60000 }, async t => {
-  const declared: Readonly<Record<Harness, RelayCapabilities>> = { codex: codexRelayCapabilities, dsh: dshRelayCapabilities, openclaw: openClawRelayCapabilities };
+  const declared: Readonly<Record<Harness, RelayCapabilities>> = { codex: codexRelayCapabilities, dsh: dshRelayCapabilities };
   for (const harness of Object.keys(declared) as Harness[]) {
-    const peer = await peerRoot(t, harness === "openclaw" ? { RELAY_OPENCLAW: "1" } : {}), attachment = await fileIn(peer), { control, id } = await opened(t, harness, peer);
+    const peer = await peerRoot(t), attachment = await fileIn(peer), { control, id } = await opened(t, harness, peer);
     assert.equal((await run(control, id, relayTurn(ID_A, WORDS), [attachment])).result.status, "completed", harness);
     const sent = await peer.sent();
     if (harness === "codex") {
@@ -110,13 +98,8 @@ test("G069-F11 every Driver places attachments after the user's words, as its de
       continue;
     }
     const blocks = (sent.find(line => line.method === "session/prompt")!.params as { prompt: { type: string; text?: string }[] }).prompt;
-    if (harness === "openclaw") {
-      assert.deepEqual(blocks.map(block => block.type), ["text", "resource_link"], harness + ": the attachment's block after the one text");
-      assert.ok(blocks[0]!.text!.endsWith("\n\n" + WORDS), harness);
-    } else {
-      assert.deepEqual(blocks.map(block => block.type), ["text", "text", "resource_link"], harness + ": the attachment's block after the words");
-      assert.equal(blocks[1]!.text, WORDS, harness);
-    }
+    assert.deepEqual(blocks.map(block => block.type), ["text", "text", "resource_link"], harness + ": the attachment's block after the words");
+    assert.equal(blocks[1]!.text, WORDS, harness);
   }
 });
 

@@ -49,8 +49,8 @@ const nativeDefinitions: readonly HarnessDefinition[] = [
   },
   {
     id: "openclaw", name: "OpenClaw", aliases: [], binaryNames: ["openclaw"], configHints: [".openclaw"],
-    controls: [{ id: "openclaw-native", protocol: "acp-v1", executableNames: ["openclaw"], args: ["acp"], env: {}, package: null, distribution: null, requiredExecutables: [],
-      source: { repository: "openclaw/acpx", revision: "b3cd84337952e0d2cadd094f564612e89d71daa5", upstreamId: "openclaw", url: "https://github.com/openclaw/acpx/blob/b3cd84337952e0d2cadd094f564612e89d71daa5/src/agent-registry.ts" } }],
+    controls: [{ id: "openclaw-native", protocol: "openclaw-gateway", executableNames: ["openclaw"], args: [], env: {}, package: null, distribution: null, requiredExecutables: [],
+      source: { repository: "openclaw/openclaw", revision: "v2026.11.3", upstreamId: "openclaw", url: "https://docs.openclaw.ai/gateway/external-apps" } }],
   },
   {
     id: "hermes", name: "Hermes Agent", aliases: [], binaryNames: ["hermes"], configHints: [".hermes"],

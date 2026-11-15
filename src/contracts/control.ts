@@ -417,9 +417,10 @@ export interface HarnessControl {
   openFork?(cwd: string, model: string | undefined, options: NativeOptions | undefined, source: string): Promise<NativeConversationId>;
   /**
    * Takes the last `turns` Turns (each with its reply and all it did) off the open conversation's native history, so that the next
-   * Turn goes on from before them (an input edited and sent again, a reply tried again). Files are not touched. Rejects with
+   * Turn goes on from before them (an input edited and sent again, a reply tried again). Files are not touched; where the Harness keeps a
+   * branch nothing is deleted (Claude Code resumes at an earlier entry, Codex rolls the thread back). Called between Turns. Rejects with
    * NATIVE_ROLLBACK_UNAVAILABLE, changing nothing, when the native side cannot take them off (fewer Turns than that, a history it
-   * cannot cut); any other rejection leaves the history unknown.
+   * cannot cut); any other rejection leaves the history unknown. Absent: the interface cannot roll back.
    */
   rollback?(id: NativeConversationId, turns: number): Promise<void>;
   /**
@@ -481,13 +482,6 @@ export interface HarnessControl {
    * may have reached it. Never starts a turn of its own: words that find no turn running are `not_taken`, and stay the Hub's.
    */
   steer?(id: NativeConversationId, text: string): Promise<SteerOutcome>;
-  /**
-   * Takes the last `turns` Turns (each with its answers) off the native history of `id`, so that the next Turn goes on from before them. Nothing
-   * is deleted where the Harness keeps a branch (Claude Code resumes at an earlier entry; Codex rolls the thread back). Rejects while a Turn runs
-   * (INVALID_STATE), with NATIVE_ROLLBACK_UNAVAILABLE when the native side cannot (fewer Turns, or none would be left), changing nothing then.
-   * Absent: the interface cannot roll back.
-   */
-  rollback?(id: NativeConversationId, turns: number): Promise<void>;
   /**
    * Applies another model, native options and levels to the open conversation for the Turns from now on, on the process that runs it (the
    * Claude Agent SDK's setModel, flag settings and permission mode), without opening it anew. Rejects while a Turn runs (INVALID_STATE), and with
