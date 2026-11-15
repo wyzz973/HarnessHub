@@ -952,8 +952,9 @@ export class LocalHarnessManagement {
   /**
    * Verifies a stored private installation and says whether it can still run. An npm package installed with HarnessHub's
    * own Node.js at the time cannot once that Node.js changed (the user upgraded it, or its version is gone): the record
-   * stays as history and no longer resolves, and startup does not fail on it (ADR-043). Every other mismatch is a tampered
-   * or corrupt record and fails.
+   * stays as history and no longer resolves, and startup does not fail on it (ADR-043). The same when this build has no recipe
+   * for it any more, or runs it with other arguments: the control moved on (OpenClaw's `acp` became its Gateway, 2026-11-15),
+   * and what the earlier recipe installed is history, not a fault. Every other mismatch is a tampered or corrupt record and fails.
    */
   private verifyStoredRecord(record: InstallationRecord): boolean {
     if (record.slot !== join(this.storage.root, "slots", record.id)) throw new ManagementError("INVALID_DATA", "managed installation slot namespace changed");
@@ -963,7 +964,7 @@ export class LocalHarnessManagement {
     managementInteger(marker.ownerGeneration, 1); const job = this.readJob(marker.jobId);
     if (job.status !== "completed" || job.installationId !== record.id || job.harnessId !== record.harnessId || job.controlId !== record.controlId || job.resolvedVersion !== record.version)
       throw new ManagementError("INVALID_DATA", "managed slot has no completed publication evidence");
-    const recipe = this.recipe(record.harnessId, record.controlId); if (!recipe) throw new ManagementError("INVALID_DATA", "managed installation recipe disappeared");
+    const recipe = this.recipe(record.harnessId, record.controlId); if (!recipe) return false;
     const launchPath = join(record.slot, ".launch.json"); managementIdentity(launchPath);
     const launchBytes = boundedManagementFile(launchPath, 65536);
     if (createHash("sha256").update(launchBytes).digest("hex") !== record.launchSha256 ||
@@ -973,8 +974,8 @@ export class LocalHarnessManagement {
       const entry = realpathSync(installedNpmEntry(record.slot, recipe.packageName, record.version, recipe.binName));
       if (!insideManagement(record.slot, entry) || record.command.args[0] !== entry || !lstatSync(entry).isFile())
         throw new ManagementError("INVALID_DATA", "managed package entry changed");
-      if (JSON.stringify(record.command.args.slice(1)) !== JSON.stringify(recipe.args) || Object.keys(record.command.env).some(key => key !== "PATH"))
-        throw new ManagementError("INVALID_DATA", "managed npm arguments or environment no longer match its recipe");
+      if (Object.keys(record.command.env).some(key => key !== "PATH")) throw new ManagementError("INVALID_DATA", "managed npm environment changed");
+      if (JSON.stringify(record.command.args.slice(1)) !== JSON.stringify(recipe.args)) return false;
       // Its runtime is a private Node.js in the slot, or HarnessHub's own Node.js when it was installed.
       if (insideManagement(record.slot, record.command.executable)) {
         if (!/^runtime\/node-v24\.[0-9]+\.[0-9]+-[a-z0-9-]+\/bin\/node$/u.test(relativeSlot(record.slot, realpathSync(record.command.executable))))
