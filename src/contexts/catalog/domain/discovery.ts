@@ -3,10 +3,10 @@ export const MAX_MANIFEST_BYTES = 64 * 1024;
 
 /**
  * How a Driver speaks to its Harness: ACP over stdio, Codex's app-server, Pi's RPC, the Claude Agent SDK, OpenCode's own server (HTTP and
- * events), or the gateway OpenClaw or Hermes runs for its own apps.
+ * events), the gateway OpenClaw or Hermes runs for its own apps, or the Web host DeepSeek Harness runs for its browser UI (`dsh --profile web`).
  */
-export type ControlProtocol = "acp-v1" | "codex-app-server" | "pi-rpc" | "claude-agent-sdk" | "opencode-server" | "openclaw-gateway" | "hermes-gateway";
-export const CONTROL_PROTOCOLS: readonly ControlProtocol[] = ["acp-v1", "codex-app-server", "pi-rpc", "claude-agent-sdk", "opencode-server", "openclaw-gateway", "hermes-gateway"];
+export type ControlProtocol = "acp-v1" | "codex-app-server" | "pi-rpc" | "claude-agent-sdk" | "opencode-server" | "openclaw-gateway" | "hermes-gateway" | "dsh-web";
+export const CONTROL_PROTOCOLS: readonly ControlProtocol[] = ["acp-v1", "codex-app-server", "pi-rpc", "claude-agent-sdk", "opencode-server", "openclaw-gateway", "hermes-gateway", "dsh-web"];
 export function isControlProtocol(value: unknown): value is ControlProtocol { return typeof value === "string" && (CONTROL_PROTOCOLS as readonly string[]).includes(value); }
 
 /** A data-only control recipe. Its presence does not prove protocol support. */

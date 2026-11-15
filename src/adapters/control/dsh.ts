@@ -22,13 +22,13 @@ interface LogEntry {
   readonly result: { readonly id: string; readonly failed: boolean; readonly meta: unknown } | null;
 }
 /** dsh's ACP reports a turn that ended in these as `end_turn` (an error one too up to 0.2.1; from 0.2.2 it refuses the prompt instead); its log says how it really ended. */
-const DSH_FAILURES: Readonly<Record<string, { readonly code: string; readonly message: string }>> = {
+export const DSH_FAILURES: Readonly<Record<string, { readonly code: string; readonly message: string }>> = {
   error: { code: "MODEL_REQUEST_FAILED", message: "dsh 这一轮出错结束了，原因记在 dsh 的会话日志里。" },
   blocked: { code: "NATIVE_TURN_BLOCKED", message: "dsh 拦下了这一轮，没有做完。" },
   aborted: { code: "NATIVE_TURN_ABORTED", message: "dsh 中止了这一轮，没有做完。" },
 };
 /** The codes of dsh's model failures (dsh-llm, dsh-llm-deepseek `failure.code`) the Hub has words for; its own message is private text and never quoted. */
-const DSH_ERROR_CODES: Readonly<Record<string, { readonly code: string; readonly message: string }>> = {
+export const DSH_ERROR_CODES: Readonly<Record<string, { readonly code: string; readonly message: string }>> = {
   TRANSPORT: { code: "NATIVE_CONNECTION_FAILED", message: "dsh 连不上它的模型服务，这一轮没有做完。请检查网络或它本机的模型配置。" },
   RATE_LIMIT: { code: "NATIVE_RATE_LIMITED", message: "dsh 的模型服务限流了，这一轮没有做完。请稍后再试，或换一个模型。" },
   AUTH: { code: "NATIVE_AUTH_REQUIRED", message: "dsh 的登录或密钥不可用，这一轮没有做完。请在本机的 dsh 里重新登录。" },
@@ -36,13 +36,16 @@ const DSH_ERROR_CODES: Readonly<Record<string, { readonly code: string; readonly
   CONTEXT_WINDOW_EXCEEDED: { code: "NATIVE_CONTEXT_EXCEEDED", message: "对话超出了模型的上下文长度，dsh 这一轮没有做完。可以开始新对话，或换上下文更长的模型。" },
   UNKNOWN_MODEL: { code: "NATIVE_MODEL_UNAVAILABLE", message: "所选模型在 dsh 的模型服务中不可用，请换一个模型。" },
   MODEL_UNSUPPORTED: { code: "NATIVE_MODEL_UNAVAILABLE", message: "所选模型在 dsh 的模型服务中不可用，请换一个模型。" },
+  SERVER: { code: "MODEL_REQUEST_FAILED", message: "dsh 的模型服务出错了，重试后仍没有做完这一轮。请稍后再试。" },
+  TIMEOUT: { code: "MODEL_REQUEST_FAILED", message: "dsh 的模型服务没有及时回应，重试后仍没有做完这一轮。请稍后再试。" },
+  EMPTY_RESPONSE: { code: "MODEL_REQUEST_FAILED", message: "dsh 的模型服务返回了空回答，重试后仍没有做完这一轮。请稍后再试。" },
 };
-function failureOf(ended: string, code: string | null): { readonly code: string; readonly message: string } {
+export function failureOf(ended: string, code: string | null): { readonly code: string; readonly message: string } {
   if (ended === "error" && code !== null) return DSH_ERROR_CODES[code] ?? { code: "MODEL_REQUEST_FAILED", message: "dsh 这一轮出错结束了（" + code + "），详情记在 dsh 的会话日志里。" };
   return DSH_FAILURES[ended]!;
 }
 /** dsh's tools by name (dsh-tool-*, the acp profile's roster): their ACP updates all say `kind: "other"`. */
-const DSH_TOOL_KINDS: Readonly<Record<string, string>> = {
+export const DSH_TOOL_KINDS: Readonly<Record<string, string>> = {
   bash: "execute", pwsh: "execute", job_kill: "execute", job_output: "execute", job_list: "execute", terminal_open: "execute", terminal_send: "execute", terminal_read: "execute",
   terminal_signal: "execute", terminal_close: "execute", terminal_list: "execute",
   read: "read", read_image: "read", write: "edit", edit: "edit", apply_patch: "edit", str_replace_editor: "edit", glob: "search", grep: "search",
@@ -50,7 +53,7 @@ const DSH_TOOL_KINDS: Readonly<Record<string, string>> = {
   subagent: "subagent", subagent_fork: "subagent", send_message: "subagent", interrupt_agent: "subagent", list_agents: "subagent",
 };
 /** A file change a call of the Turn made, as its result's `meta` says (dsh-tool-fs: `diffs` of `{path, oldText, newText}`; a created file has none, its content is the call's). */
-function changeOf(call: NonNullable<LogEntry["call"]>, meta: unknown): string | null {
+export function changeOf(call: { readonly arguments: unknown }, meta: unknown): string | null {
   const record = meta !== null && typeof meta === "object" ? meta as Record<string, unknown> : {};
   const diffs = Array.isArray(record.diffs) ? record.diffs.flatMap(item => {
     const row = item !== null && typeof item === "object" ? item as Record<string, unknown> : {};

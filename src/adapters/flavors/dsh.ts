@@ -21,7 +21,8 @@ const ALL = (answer: LevelPolicy["edit"]): LevelPolicy => ({ read: "allow", edit
 const PRESET = (mode: "read-only" | "workspace-write" | "danger-full-access") => ({ env: { DSH_PERMISSION_MODE: mode } });
 const KEEPS = "会话建立后改档位只改 Hub 的答复，它的沙箱仍按建立时的档位：从更严的档位改到这一档，越权写入由 Hub 允许；从自动执行、完全放行改严，它不再来问的写入 Hub 拦不住";
 
-export const dshFlavor: HarnessFlavor = {
+/** dsh on its ACP driver (`dsh --profile acp`), the fallback of its Web host driver (adapters/control/dsh-web): what is said above holds there. */
+export const dshAcpFlavor: HarnessFlavor = {
   harnessId: "dsh",
   permission: {
     // The read-only sandbox refuses every write; the Hub refuses every way out of it and tells the model it is read only (no plan mode over ACP).
@@ -51,3 +52,26 @@ export const dshFlavor: HarnessFlavor = {
   // and it lists the server's tools again on notifications/tools/list_changed (a Turn that needed hub_turns searched, was listed it, and called it).
   capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", toolLoad: "search", resume: "native", fork: "none", attachments: "native", usage: "turn", record: "files", steer: "none" },
 };
+
+/**
+ * dsh on its Web host (`dsh --profile web`, adapters/control/dsh-web), the driver it runs on unless that host cannot be used: the same presets, set at
+ * start the same way, and on a resumed session set again live (`/permission <preset>` through `commands/execute`, the preset changes at once), so a
+ * level chosen later holds on the session it is chosen for and the levels need no note. Words in the middle of a turn go into the turn's next model
+ * step (`session/prompt` in `steer` mode); a branch is dsh's own fork of the session at its latest completed turn (`session/fork`); its question tool
+ * (`ask_user_question`, in the Web host's standard preset) asks the user. The Hub's tools come per process (one conversation) through the overlay the
+ * driver starts it with: the same tool server and instructions as over ACP (`sessionMcp` `acp` reads as "the driver hands them to its sessions").
+ * Its catalog carries this declaration and the ACP fallback's carries dshAcpFlavor, so the page draws the one that runs.
+ */
+export const dshFlavor: HarnessFlavor = {
+  ...dshAcpFlavor,
+  permission: {
+    plan: { session: PRESET("read-only"), policy: ALL("deny"), note: "只读沙箱拦下所有写文件；不写文件的命令（包括联网的）照样能跑。" },
+    ask: { session: PRESET("read-only"), policy: ALL("ask"), note: "它要写文件时（只读沙箱拦下后申请越权）才来问；不写文件的命令（包括联网的）不问。" },
+    auto_edit: { session: PRESET("read-only"), policy: { ...ALL("ask"), edit: "allow" }, note: "编辑工具写文件由 Hub 自动允许，命令要写文件时交给你；不写文件的命令不问。" },
+    auto: { session: PRESET("workspace-write"), policy: ALL("allow"), note: "工作区内改文件、跑命令都不问；要越出沙箱写文件时它会申请，由 Hub 自动允许。" },
+    full: { session: PRESET("danger-full-access"), policy: ALL("allow") },
+  },
+  capabilities: { ...dshAcpFlavor.capabilities, questions: "native", fork: "native", steer: "native" },
+};
+/** The declaration the Web host driver's catalog carries. */
+export const dshWebFlavor: HarnessFlavor = dshFlavor;

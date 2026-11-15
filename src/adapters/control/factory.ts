@@ -1,7 +1,8 @@
 import type { ControlLaunch, ControlOptions, HarnessControl, NativeModelCatalog } from "../../contracts/control.js";
 import type { RelayCapabilities } from "../../contracts/relay.js";
-import { AcpControl, dshRelayCapabilities } from "./acp.js";
-import { DshControl } from "./dsh.js";
+import { AcpControl } from "./acp.js";
+import { DshWebControl, dshWebRelayCapabilities } from "./dsh-web/control.js";
+import { DshDriver } from "./dsh-web/select.js";
 import { CodexControl, codexRelayCapabilities } from "./codex.js";
 import { bindNativeDependencies } from "./native-dependencies.js";
 import { PiControl } from "./pi.js";
@@ -48,7 +49,7 @@ export function levelEnvironment(harnessId: string, launch: ControlLaunch, optio
 }
 
 /** The control protocols a Driver here speaks: what discovery offers and a binding starts (the others are named in the catalog, not driven yet). */
-export const DRIVEN_PROTOCOLS: ReadonlySet<ControlLaunch["protocol"]> = new Set(["acp-v1", "codex-app-server", "pi-rpc", "claude-agent-sdk", "opencode-server", "hermes-gateway", "openclaw-gateway"]);
+export const DRIVEN_PROTOCOLS: ReadonlySet<ControlLaunch["protocol"]> = new Set(["acp-v1", "codex-app-server", "pi-rpc", "claude-agent-sdk", "opencode-server", "hermes-gateway", "openclaw-gateway", "dsh-web"]);
 export function hasDriver(protocol: string): protocol is ControlLaunch["protocol"] { return (DRIVEN_PROTOCOLS as ReadonlySet<string>).has(protocol); }
 
 /**
@@ -66,8 +67,11 @@ export async function createNativeControl(harnessId: string, launch: ControlLaun
   if (launch.protocol === "opencode-server") return new OpenCodeServerControl(launch, options);
   if (launch.protocol === "hermes-gateway") return new HermesGatewayControl(launch, options);
   if (launch.protocol === "openclaw-gateway") return new OpenClawControl(launch, options);
+  // DeepSeek Harness: its Web host driver, which goes on with its ACP driver when the installed dsh cannot be driven so (dsh-web/select.ts); a
+  // launch that names the Web host itself has no fallback.
+  if (harnessId === "dsh") return launch.protocol === "dsh-web" ? new DshWebControl(launch, options) : new DshDriver(launch, options);
   if (launch.protocol !== "acp-v1") throw new ControlError("UNSUPPORTED_CONTROL", "no Driver speaks " + launch.protocol + " yet");
-  return harnessId === "cursor" ? new CursorControl(launch, options) : harnessId === "dsh" ? new DshControl(launch, options) : new AcpControl(launch, options);
+  return harnessId === "cursor" ? new CursorControl(launch, options) : new AcpControl(launch, options);
 }
 
 /**
@@ -83,6 +87,5 @@ export function relayCapabilities(harnessId: string, protocol: ControlLaunch["pr
   if (protocol === "opencode-server") return openCodeServerRelayCapabilities;
   if (protocol === "hermes-gateway") return hermesRelayCapabilities;
   if (protocol === "openclaw-gateway") return openClawRelayCapabilities;
-  if (protocol !== "acp-v1") return null;
-  return harnessId === "dsh" ? dshRelayCapabilities : null;
+  return harnessId === "dsh" && (protocol === "acp-v1" || protocol === "dsh-web") ? dshWebRelayCapabilities : null;
 }

@@ -9,6 +9,8 @@ import { CONTEXT_EFFECTS, type RelayCapabilities } from "../../src/contracts/rel
 import type { HarnessSelection, PreparedSessionBinding, SelectionRequest, SessionBindingFactory, SessionConfiguration, SessionEvent } from "../../src/contracts/session.js";
 import { AcpControl, dshRelayCapabilities } from "../../src/adapters/control/acp.js";
 import { ClaudeSdkControl, claudeRelayCapabilities } from "../../src/adapters/control/claude/control.js";
+import { dshWebRelayCapabilities } from "../../src/adapters/control/dsh-web/control.js";
+import { DshDriver } from "../../src/adapters/control/dsh-web/select.js";
 import { CodexControl, codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import { relayCapabilities } from "../../src/adapters/control/factory.js";
 import { HermesGatewayControl, hermesRelayCapabilities } from "../../src/adapters/control/hermes/control.js";
@@ -65,10 +67,12 @@ const TABLE: Readonly<Record<Harness, Cells>> = {
       ["/clear now", null, ["possible_command", "clear"]], ["/clear now", listed(["review", "keep"]), ["content"]]],
   },
   dsh: {
-    plain: { delivery: { live: "agent_output", successProvesRecorded: false }, execution: "process", placement: { parts: "multiple", maxInput: null }, title: "none" },
-    // No commands but the Hub's clear: every other input is content, whatever a catalog lists.
+    // On either of its drivers (2026-11-15): its Web host renames a session; its ACP refuses the title, which never fails the Turn.
+    plain: { delivery: { live: "agent_output", successProvesRecorded: false }, execution: "process", placement: { parts: "multiple", maxInput: null }, title: "set" },
+    // The Hub's clear, and the commands its catalog lists: the Web host's `/compact`; its ACP lists none, so there every other input is content.
     classify: [["/clear", null, ["command", "clear", "clear", ""]], ["/reset ", null, ["command", "reset", "clear", ""]], ["/new", listed(["compact", "compact"]), ["command", "new", "clear", ""]],
-      ["/clear now", null, ["content"]], ["/compact", listed(["compact", "compact"]), ["content"]], ["　/clear", null, ["content"]]],
+      ["/clear now", listed(["compact", "compact"]), ["content"]], ["/compact", listed(["compact", "compact"]), ["command", "compact", "compact", ""]], ["/compact", [], ["content"]],
+      ["/compact", null, ["possible_command", "compact"]], ["　/clear", null, ["content"]]],
   },
   hermes: {
     // On its gateway (2026-11-15): the committed user row is the live evidence, one text, a title by `session.mutate rename`.
@@ -91,7 +95,7 @@ const TABLE: Readonly<Record<Harness, Cells>> = {
   },
 };
 const DECLARED: Readonly<Record<Harness, RelayCapabilities>> = { claude: claudeRelayCapabilities, codex: codexRelayCapabilities, opencode: openCodeServerRelayCapabilities,
-  dsh: dshRelayCapabilities, hermes: hermesRelayCapabilities, openclaw: openClawRelayCapabilities };
+  dsh: dshWebRelayCapabilities, hermes: hermesRelayCapabilities, openclaw: openClawRelayCapabilities };
 const KEYS = ["commands", "delivery", "execution", "placement", "title"];
 
 function plain(declared: RelayCapabilities): Plain {
@@ -128,7 +132,7 @@ test("G069-D02 the declarations are frozen module constants; each Driver's conne
     ["opencode", "opencode-server", new OpenCodeServerControl({ ...acp, protocol: "opencode-server" }, options), openCodeServerRelayCapabilities],
     ["hermes", "hermes-gateway", new HermesGatewayControl(hermes, options), hermesRelayCapabilities],
     ["openclaw", "openclaw-gateway", new OpenClawControl({ ...acp, protocol: "openclaw-gateway" }, options, async () => { throw new Error("no Gateway"); }), openClawRelayCapabilities],
-    ["dsh", "acp-v1", new AcpControl(acp, options, dshRelayCapabilities), dshRelayCapabilities],
+    ["dsh", "acp-v1", new DshDriver(acp, options), dshWebRelayCapabilities],
     // The generic driver for any other Harness declares nothing; neither do Pi and Cursor.
     ["gemini", "acp-v1", new AcpControl(acp, options), null],
   ];

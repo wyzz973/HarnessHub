@@ -1044,8 +1044,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
         packageRoots: options.configuration.packageRoots, searchDirs: searchDirs(), pathOnly: options.configuration.pathOnly });
       const selected = select({ harnessId: modelsRoute[1], ...(controlId === null ? {} : { controlId }), ...(url.searchParams.get("nativeModel") === null ? {} : {nativeModel:url.searchParams.get("nativeModel")}) });
-      // The Harness's adapter declaration goes with its catalog: the page draws the permission and thinking levels from it (contracts/flavor.ts).
-      try { json(response, 200, { ...await nativeModels.read(selected, configuration, refresh === "1"), flavor: flavorOf(selected.harnessId) }); }
+      // The Harness's adapter declaration goes with its catalog: the page draws the permission and thinking levels from it (contracts/flavor.ts). A Driver
+      // whose connection chose between two ways of driving its Harness (dsh's Web host, or its ACP) sends the declaration of the one it runs on.
+      try { const catalog = await nativeModels.read(selected, configuration, refresh === "1"); json(response, 200, { ...catalog, flavor: catalog.flavor ?? flavorOf(selected.harnessId) }); }
       catch (error) {
         const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "MODEL_DISCOVERY_FAILED";
         if (code === "GATEWAY_AUTH_REQUIRED" || code === "HARNESS_AUTH_REQUIRED" || code === "NATIVE_AUTH_REQUIRED") { json(response, 200, { models: [], defaultModel: null, authentication: "missing", canSelect: false, flavor: flavorOf(selected.harnessId) }); return; }
