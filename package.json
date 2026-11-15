@@ -25,6 +25,8 @@
     "check:tools": "python3 -I -B -m unittest discover -s tools -p 'test_*.py'",
     "web:build": "tsc -p web/tsconfig.json && vite build --config web/vite.config.ts",
     "web": "node dist/src/cli/web.js",
+    "desktop": "pnpm build && pnpm web:build && electron dist/desktop/main.js",
+    "desktop:start": "electron dist/desktop/main.js",
     "check": "pnpm build && pnpm web:build && pnpm check:boundaries && pnpm check:wording && pnpm check:tools",
     "test:real:provider": "pnpm build && node --test dist/tests/real/provider-switch.real.js",
     "test:web": "pnpm build && pnpm web:build && node --test dist/tests/browser/web.browser.js dist/tests/browser/relay.browser.js dist/tests/browser/relay-e2e.browser.js dist/tests/browser/composer.browser.js dist/tests/browser/protocol.browser.js dist/tests/browser/window.browser.js",
@@ -63,6 +65,7 @@
     "@types/ws": "8.18.2",
     "@types/yauzl": "3.4.0",
     "@vitejs/plugin-react": "6.1.2",
+    "electron": "45.3.2",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
     "vite": "8.3.4"
@@ -106,6 +109,9 @@
       "@anthropic-ai/claude-agent-sdk-linux-x64-musl",
       "@anthropic-ai/claude-agent-sdk-win32-arm64",
       "@anthropic-ai/claude-agent-sdk-win32-x64"
+    ],
+    "onlyBuiltDependencies": [
+      "electron"
     ]
   }
 }

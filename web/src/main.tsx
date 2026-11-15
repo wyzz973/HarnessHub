@@ -5,6 +5,8 @@ import "@fontsource-variable/geist-mono";
 import "./styles.css";
 import { App } from "./App.js";
 import { applyTheme, readPreferences } from "./lib/prefs.js";
+import { followWindow } from "./lib/desktop.js";
+import { followMenu } from "./lib/keys.js";
 import { trackInputModality } from "./ui/motion.js";
 import { ToastProvider } from "./ui/overlay.js";
 
@@ -30,6 +32,9 @@ if (!root) throw new Error("HarnessHub root element missing");
 // The chosen theme applies before the first paint, and the browser's theme color with it; without a choice both follow
 // the system.
 applyTheme(readPreferences().theme);
+// In the desktop app the root element says so, with the window's state, and the menu bar's commands reach the page.
+followWindow(document.documentElement);
+followMenu();
 followThemeColor(document.documentElement);
 // Actions started from the keyboard finish without animation (ADR-054 §3); this lives as long as the document.
 trackInputModality();

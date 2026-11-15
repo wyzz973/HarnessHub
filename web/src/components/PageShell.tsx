@@ -24,15 +24,15 @@ export function PageShell({ title, titleId, description, actions, belowHeader, c
 }) {
   const narrow = useMedia("(max-width: 759px)");
   const [scrolled, setScrolled] = useState(false);
-  const bar = narrow || sidebarHidden || onBack !== undefined;
-  return <section ref={ref} className={cn("management-page flex h-full min-h-0 min-w-0 flex-1 flex-col bg-app", className)} aria-labelledby={titleId}>
-    {bar ? <div className={cn("flex h-[52px] flex-none items-center gap-1 border-b-[0.5px] px-3 transition-[border-color] duration-120", scrolled ? "border-line" : "border-transparent")}>
+  return <section ref={ref} className={cn("management-page flex h-full min-h-0 min-w-0 flex-1 flex-col", className)} aria-labelledby={titleId}>
+    {/* The page's strip of the window: it holds the way back and the way to the sidebar when there is one, and moves the window. */}
+    <div className={cn("titlebar drag flex h-[52px] flex-none items-center gap-1 border-b-[0.5px] px-3 transition-[border-color] duration-120", scrolled ? "border-line" : "border-transparent")}>
       {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
         : sidebarHidden ? <Tip label={"展开侧栏 " + keyText("sidebar")}><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts={ariaKeys("sidebar")} onClick={onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
       {onBack ? <Tip label={backLabel}><button type="button" className="icon-btn" aria-label={backLabel} onClick={onBack}><ArrowLeft size={16}/></button></Tip> : null}
-    </div> : null}
+    </div>
     <div className={cn("management-body scroll-area min-h-0 flex-1", bodyClassName)} onScroll={event => setScrolled(event.currentTarget.scrollTop > 0)}>
-      <div className={cn("mx-auto flex w-full flex-col gap-7 px-4 pb-16 sm:px-10", bar ? "pt-1" : "pt-11", wide ? "max-w-[1040px]" : "max-w-[760px]")}>
+      <div className={cn("mx-auto flex w-full flex-col gap-7 px-4 pt-1 pb-16 sm:px-10", wide ? "max-w-[1040px]" : "max-w-[760px]")}>
         <div className="flex flex-col">
           <header className="flex flex-wrap items-end gap-x-4 gap-y-3">
             <div className="flex min-w-[min(240px,100%)] flex-1 flex-col gap-1.5">

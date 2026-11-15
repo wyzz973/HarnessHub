@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { desktop } from "./desktop.js";
 import type { HarnessView } from "../../../src/contracts/web.js";
 
 /**
@@ -75,6 +76,8 @@ function writePreferences(value: Preferences): void { try { localStorage.setItem
 export function applyTheme(theme: Preferences["theme"]): void {
   const root = document.documentElement;
   if (theme === "system") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", theme);
+  // The window's own material and menus are light or dark with the page.
+  desktop?.setTheme(theme);
 }
 /** The page's preferences, kept in sync across tabs of this browser. */
 export function usePreferences(): readonly [Preferences, <K extends keyof Preferences>(key: K, value: Preferences[K]) => void] {

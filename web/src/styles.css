@@ -25,96 +25,119 @@
 @font-face { font-family: "HH Quote"; src: local("PingFangSC-Semibold"), local("PingFang SC Semibold"); unicode-range: U+2018-2019, U+201C-201D; font-weight: 600; }
 
 /*
- * Color, hairline and shadow tokens: light, then dark. Color only states something. The values follow the measured Claude desktop app
- * (docs/research/claude-desktop-ui-2026-11-12.md B7, B8): neutral greys with no tint, one blue accent, three levels of text, hairlines
- * and two soft shadows. The third text level and the text on tints are a step stronger than the app's, to read at 4.5:1.
+ * Color, material and shadow tokens: light, then dark (design language 3, 2026-11-15: the macOS desktop app). Two layers. The content layer — the
+ * conversation, a diff, a table — is opaque. The functional layer — the sidebar, toolbars, the message box, menus, dialogs — is glass: the sidebar
+ * is the window's own material (the desktop shows through it), the rest blur what scrolls under them. Glass never sits on glass. Fills are
+ * translucent, so one fill reads on either layer. Color only states something: one blue, amber for "waiting for you", red for failure.
  */
 :root {
   color-scheme: light;
-  /* Surfaces */
-  --bg-sidebar: #FAFAFA;                       /* the sidebar shell */
-  --bg-sidebar-hover: rgba(0, 0, 0, .05);      /* a row hovered on the sidebar */
-  --bg-selected: rgba(0, 0, 0, .08);           /* the selected row, anywhere */
-  --bg-app: #FFFFFF;                           /* the main area and the page */
-  --bg-surface: #FFFFFF;                       /* cards, panels, dialogs */
-  --bg-pop: #FFFFFF;                           /* floating layers: menus, pickers, tooltips */
-  --bg-subtle: #F4F4F4;                        /* fills: secondary buttons, chips, your message */
-  --bg-hover: #EBEBEB;                         /* a filled control hovered */
-  --bg-active: #E2E2E2;                        /* a filled control pressed or chosen */
-  --bg-inset: #F8F8F8;                         /* code, commands and other recessed text */
+  /* Content layer */
+  --bg-app: #FFFFFF;                           /* the conversation and every page */
+  --bg-surface: #FFFFFF;                       /* cards and panels on the content layer */
   --bg-well: #FFFFFF;                          /* the tile behind a Harness's mark */
+  --bg-window: #E8E8EC;                        /* behind the sidebar where the window has no material of its own (a browser) */
+  --bg-sidebar: transparent;                   /* the sidebar is the window's material */
+  /* Fills: translucent, on either layer */
+  --bg-sidebar-hover: rgba(0, 0, 0, .05);
+  --bg-selected: rgba(0, 0, 0, .09);
+  --bg-subtle: rgba(0, 0, 0, .045);            /* secondary buttons, chips, your message */
+  --bg-hover: rgba(0, 0, 0, .075);
+  --bg-active: rgba(0, 0, 0, .11);
+  --bg-inset: rgba(0, 0, 0, .035);             /* code, commands and other recessed text */
+  --bg-cover: #F4F4F5;                         /* a fill that must hide what scrolls under it */
+  /* Glass: the fill over the blur, the blur, and the light on its rim */
+  --glass: rgba(246, 246, 248, .72);
+  --glass-thick: rgba(252, 252, 253, .82);
+  --glass-blur: blur(30px) saturate(1.8);
+  --glass-rim: inset 0 0 0 .5px rgba(255, 255, 255, .5), inset 0 .5px 0 rgba(255, 255, 255, .85);
+  --bg-pop: var(--glass);
   /* Hairlines (drawn 0.5 px) */
-  --border: rgba(0, 0, 0, .09);
+  --border: rgba(0, 0, 0, .08);
   --border-strong: rgba(0, 0, 0, .14);
-  /* Text: 4.5:1 or better for the third level on the page and on the sidebar */
-  --text: #1A1A1A; --text-2: #555555; --text-3: #666666; --text-placeholder: #9A9A9A;
+  /* Text: 4.5:1 or better for the third level on the content layer */
+  --text: #1D1D1F; --text-2: #48484C; --text-3: #6C6C71; --text-placeholder: #9D9DA3;
   /* Blue: send, primary buttons, selection, focus and work in progress */
-  --accent: #2374D6; --accent-hover: #1F69C4; --accent-soft: rgba(35, 116, 214, .10); --accent-text: #1757AC; --on-accent: #FFFFFF;
-  --run: #257DE0;
+  --accent: #0071E3; --accent-hover: #0067CF; --accent-soft: rgba(0, 113, 227, .11); --accent-text: #0066CC; --on-accent: #FFFFFF;
+  --run: #0A84FF;
   /* Amber means only "waiting for you"; red means only failure */
-  --amber: #7A4D02; --amber-dot: #F5A70A; --amber-soft: rgba(251, 179, 21, .14); --amber-line: rgba(251, 179, 21, .55);
-  --red: #B3282B; --red-dot: #DC3C3D; --red-soft: rgba(220, 60, 61, .08); --red-line: rgba(220, 60, 61, .32);
+  --amber: #7A4D02; --amber-dot: #F5A70A; --amber-soft: rgba(251, 179, 21, .15); --amber-line: rgba(251, 179, 21, .55);
+  --red: #B3282B; --red-dot: #E5484D; --red-soft: rgba(220, 60, 61, .09); --red-line: rgba(220, 60, 61, .32); --red-fill: #D93036;
   /* Green appears only on the added lines of a diff */
   --green: #0B7A1E; --green-dot: #10A122; --green-soft: rgba(16, 161, 34, .12);
   --add-bg: rgba(30, 158, 60, .12); --add-text: #17832F; --del-bg: rgba(205, 32, 84, .09); --del-text: #C01D4E;
-  /*
-   * Small text that sits on a tint (a soft pill, a diff's tinted line, a row tinted when hovered or chosen) takes a
-   * higher-contrast shade of its hue, darker here and lighter in the dark, so it reads at 4.5:1. Dots, rings and marks keep
-   * the colours above.
-   */
-  --amber-on-tint: #6B4302; --red-on-tint: #8F1F22; --add-on-tint: #14702A; --del-on-tint: #A31743; --text-3-on-tint: #636363;
-  /* Behind dialogs, drawers and sheets: a veil of the sidebar's color, light or dark with it */
-  --scrim: color-mix(in srgb, var(--bg-sidebar) 60%, transparent);
-  --selection: rgba(37, 125, 224, .20);
-  --scrollbar: rgba(0, 0, 0, .18);
-  --shimmer-peak: #1A1A1A;
-  /* Depth: hairlines everywhere; only the composer and floating layers cast a soft shadow */
-  --sh-hairline: 0 0 0 .5px rgba(0, 0, 0, .14);
-  --sh-card: 0 0 0 .5px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .04);
-  --sh-card-hover: 0 0 0 .5px rgba(0, 0, 0, .14), 0 2px 8px rgba(0, 0, 0, .07);
-  --sh-composer: 0 0 0 .5px rgba(0, 0, 0, .14), 0 1px 2px rgba(0, 0, 0, .05), 0 2px 8px rgba(0, 0, 0, .06);
-  --sh-focus: 0 0 0 1px rgba(37, 125, 224, .75), 0 0 0 3.5px rgba(37, 125, 224, .14), 0 2px 8px rgba(0, 0, 0, .06);
-  --sh-pop: 0 0 0 .5px rgba(0, 0, 0, .12), 0 8px 24px rgba(0, 0, 0, .12), 0 2px 6px rgba(0, 0, 0, .08);
-  --sh-well: 0 0 0 .5px rgba(0, 0, 0, .14), 0 1px 2px rgba(0, 0, 0, .06);
+  /* Small text on a tint takes a higher-contrast shade of its hue, so it reads at 4.5:1 */
+  --amber-on-tint: #6B4302; --red-on-tint: #8F1F22; --add-on-tint: #14702A; --del-on-tint: #A31743; --text-3-on-tint: #5E5E63;
+  --scrim: rgba(0, 0, 0, .16);
+  --selection: rgba(0, 113, 227, .22);
+  --scrollbar: rgba(0, 0, 0, .22);
+  --shimmer-peak: #1D1D1F;
+  /* Depth: hairlines on the content layer; glass floats on one soft shadow */
+  --sh-hairline: 0 0 0 .5px rgba(0, 0, 0, .13);
+  --sh-card: 0 0 0 .5px rgba(0, 0, 0, .10), 0 1px 2px rgba(0, 0, 0, .04);
+  --sh-card-hover: 0 0 0 .5px rgba(0, 0, 0, .13), 0 3px 10px rgba(0, 0, 0, .07);
+  --sh-pane: 0 0 0 .5px rgba(0, 0, 0, .10), 0 1px 3px rgba(0, 0, 0, .05), 0 8px 28px -8px rgba(0, 0, 0, .10);
+  --sh-composer: var(--glass-rim), 0 0 0 .5px rgba(0, 0, 0, .12), 0 2px 6px rgba(0, 0, 0, .05), 0 12px 36px -8px rgba(0, 0, 0, .16);
+  --sh-focus: 0 0 0 .5px var(--accent), 0 0 0 3.5px rgba(0, 113, 227, .26);
+  --sh-pop: var(--glass-rim), 0 0 0 .5px rgba(0, 0, 0, .14), 0 2px 6px rgba(0, 0, 0, .06), 0 16px 44px -8px rgba(0, 0, 0, .24);
+  --sh-well: 0 0 0 .5px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .06);
   --sh-kbd: inset 0 -1px 0 rgba(0, 0, 0, .08), 0 0 0 .5px rgba(0, 0, 0, .14);
-  /* Names kept from ADR-042 for code not yet moved to the names above */
-  --shadow-sm: var(--sh-hairline); --shadow-md: var(--sh-pop); --shadow-lg: var(--sh-pop);
+  --sh-thumb: 0 0 0 .5px rgba(0, 0, 0, .06), 0 1px 3px rgba(0, 0, 0, .14);
+  --thumb: #FFFFFF;                            /* the sliding part of a segmented control */
+  /* The sidebar pane: a faint wash over the window's material, and the light on its rim */
+  --pane-tint: rgba(255, 255, 255, .22); --pane-rim: rgba(255, 255, 255, .55);
 
   @variant dark {
     color-scheme: dark;
-    --bg-sidebar: #1F1F1F;
-    --bg-sidebar-hover: rgba(255, 255, 255, .07);
+    --bg-app: #1C1C1E;
+    --bg-surface: #242426;
+    --bg-well: #2E2E31;
+    --bg-window: #161618;
+    --bg-sidebar-hover: rgba(255, 255, 255, .06);
     --bg-selected: rgba(255, 255, 255, .11);
-    --bg-app: #191919;
-    --bg-surface: #212121;
-    --bg-pop: #2C2C2C;
-    --bg-subtle: #282828;
-    --bg-hover: #303030;
-    --bg-active: #393939;
-    --bg-inset: #141414;
-    --bg-well: #2A2A2A;
+    --bg-subtle: rgba(255, 255, 255, .065);
+    --bg-hover: rgba(255, 255, 255, .10);
+    --bg-active: rgba(255, 255, 255, .15);
+    --bg-inset: rgba(0, 0, 0, .24);
+    --bg-cover: #2A2A2D;
+    --glass: rgba(44, 44, 48, .68);
+    --glass-thick: rgba(40, 40, 44, .8);
+    --glass-blur: blur(30px) saturate(1.6);
+    --glass-rim: inset 0 0 0 .5px rgba(255, 255, 255, .13), inset 0 .5px 0 rgba(255, 255, 255, .16);
     --border: rgba(255, 255, 255, .09);
-    --border-strong: rgba(255, 255, 255, .15);
-    --text: #EDEDED; --text-2: #B4B4B4; --text-3: #A2A2A2; --text-placeholder: #6F6F6F;
-    --accent: #2374D6; --accent-hover: #3A8BE8; --accent-soft: rgba(106, 171, 241, .16); --accent-text: #6AABF1; --on-accent: #FFFFFF;
-    --run: #6AABF1;
-    --amber: #E8A317; --amber-dot: #F5A70A; --amber-soft: rgba(251, 179, 21, .14); --amber-line: rgba(251, 179, 21, .45);
-    --red: #F17778; --red-dot: #E5484D; --red-soft: rgba(241, 119, 120, .13); --red-line: rgba(241, 119, 120, .38);
+    --border-strong: rgba(255, 255, 255, .16);
+    --text: #F5F5F7; --text-2: #BABABF; --text-3: #98989E; --text-placeholder: #6A6A70;
+    --accent: #0071E3; --accent-hover: #1A82F0; --accent-soft: rgba(10, 132, 255, .22); --accent-text: #5EADFF; --on-accent: #FFFFFF;
+    --run: #5EADFF;
+    --amber: #E8A317; --amber-dot: #F5A70A; --amber-soft: rgba(251, 179, 21, .15); --amber-line: rgba(251, 179, 21, .45);
+    --red: #F17778; --red-dot: #E5484D; --red-soft: rgba(241, 119, 120, .14); --red-line: rgba(241, 119, 120, .38); --red-fill: #D93036;
     --green: #53C556; --green-dot: #32D74B; --green-soft: rgba(50, 215, 75, .14);
     --add-bg: rgba(50, 215, 75, .13); --add-text: #4FD364; --del-bg: rgba(255, 44, 86, .15); --del-text: #FF6482;
-    --amber-on-tint: #F5C24B; --red-on-tint: #F9A8A8; --add-on-tint: #7FE28D; --del-on-tint: #FF9DB0; --text-3-on-tint: #A8A8A8;
-    --selection: rgba(106, 171, 241, .32);
-    --scrollbar: rgba(255, 255, 255, .18);
+    --amber-on-tint: #F5C24B; --red-on-tint: #F9A8A8; --add-on-tint: #7FE28D; --del-on-tint: #FF9DB0; --text-3-on-tint: #A8A8AE;
+    --scrim: rgba(0, 0, 0, .42);
+    --selection: rgba(10, 132, 255, .38);
+    --scrollbar: rgba(255, 255, 255, .24);
     --shimmer-peak: #FFFFFF;
     --sh-hairline: 0 0 0 .5px rgba(255, 255, 255, .14);
-    --sh-card: 0 0 0 .5px rgba(255, 255, 255, .11);
-    --sh-card-hover: 0 0 0 .5px rgba(255, 255, 255, .16), 0 2px 8px rgba(0, 0, 0, .3);
-    --sh-composer: 0 0 0 .5px rgba(255, 255, 255, .14), 0 2px 8px rgba(0, 0, 0, .28);
-    --sh-focus: 0 0 0 1px rgba(106, 171, 241, .8), 0 0 0 3.5px rgba(106, 171, 241, .18), 0 2px 8px rgba(0, 0, 0, .3);
-    --sh-pop: 0 0 0 .5px rgba(255, 255, 255, .13), 0 8px 24px rgba(0, 0, 0, .34), 0 2px 6px rgba(0, 0, 0, .2);
+    --sh-card: 0 0 0 .5px rgba(255, 255, 255, .10);
+    --sh-card-hover: 0 0 0 .5px rgba(255, 255, 255, .16), 0 3px 10px rgba(0, 0, 0, .3);
+    --sh-pane: 0 0 0 .5px rgba(255, 255, 255, .10), 0 8px 28px -8px rgba(0, 0, 0, .5);
+    --sh-composer: var(--glass-rim), 0 0 0 .5px rgba(0, 0, 0, .55), 0 2px 6px rgba(0, 0, 0, .2), 0 14px 40px -8px rgba(0, 0, 0, .55);
+    --sh-focus: 0 0 0 .5px var(--accent-text), 0 0 0 3.5px rgba(10, 132, 255, .34);
+    --sh-pop: var(--glass-rim), 0 0 0 .5px rgba(0, 0, 0, .6), 0 2px 6px rgba(0, 0, 0, .25), 0 18px 48px -8px rgba(0, 0, 0, .6);
     --sh-well: 0 0 0 .5px rgba(255, 255, 255, .13);
     --sh-kbd: inset 0 -1px 0 rgba(0, 0, 0, .35), 0 0 0 .5px rgba(255, 255, 255, .15);
+    --sh-thumb: 0 0 0 .5px rgba(0, 0, 0, .3), 0 1px 3px rgba(0, 0, 0, .4);
+    --thumb: #5F5F64;
+    --pane-tint: rgba(255, 255, 255, .025); --pane-rim: rgba(255, 255, 255, .09);
   }
+}
+/* With "reduce transparency" the glass is a plain surface (the window's own material answers the setting by itself). */
+@media (prefers-reduced-transparency: reduce) {
+  :root { --glass: #F4F4F6; --glass-thick: #FBFBFC; --glass-blur: none; @variant dark { --glass: #2C2C30; --glass-thick: #28282C; } }
+}
+@media (prefers-contrast: more) {
+  :root { --border: rgba(0, 0, 0, .22); --border-strong: rgba(0, 0, 0, .4); --text-3: #55555A; @variant dark { --border: rgba(255, 255, 255, .26); --border-strong: rgba(255, 255, 255, .45); --text-3: #B4B4BA; } }
 }
 
 /* Tailwind names for the tokens above. The default palette is removed: every color in the product is one of these. */
@@ -122,6 +145,11 @@
   --color-*: initial;
   --color-white: #FFFFFF;
   --color-black: #000000;
+  --color-window: var(--bg-window);
+  --color-cover: var(--bg-cover);
+  --color-glass: var(--glass);
+  --color-glass-thick: var(--glass-thick);
+  --color-red-fill: var(--red-fill);
   --color-sidebar: var(--bg-sidebar);
   --color-sidebar-hover: var(--bg-sidebar-hover);
   --color-selected: var(--bg-selected);
@@ -173,9 +201,8 @@
   --shadow-focus: var(--sh-focus);
   --shadow-pop: var(--sh-pop);
   --shadow-well: var(--sh-well);
-  --shadow-sm: var(--sh-hairline);
-  --shadow-md: var(--sh-pop);
-  --shadow-lg: var(--sh-pop);
+  --shadow-pane: var(--sh-pane);
+  --shadow-thumb: var(--sh-thumb);
 }
 
 /*
@@ -196,8 +223,9 @@
   --text-ui-sm: 13px; --text-ui-sm--line-height: 20px;
   --text-caption: 12px; --text-caption--line-height: 16px;
   --text-code: 12px; --text-code--line-height: 18px;
-  /* Radii: keys and tags, rows and icon buttons, buttons and fields, code and small cards, cards and the plan bar, the composer and approvals */
-  --radius-tag: 4px; --radius-row: 6px; --radius-control: 6px; --radius-block: 8px; --radius-card: 10px; --radius-composer: 12px;
+  /* Radii, each concentric with what holds it: keys and tags 5, rows and controls 8, code and small cards 10, menus 13 (their items 8, 5 in),
+     cards and bubbles 14, panes 16, dialogs 18, the message box 22 */
+  --radius-tag: 5px; --radius-row: 8px; --radius-control: 8px; --radius-block: 10px; --radius-pop: 13px; --radius-card: 14px; --radius-pane: 16px; --radius-dialog: 18px; --radius-composer: 22px;
   --container-reading: 768px;
   --container-sidebar: 288px;
   /* Curves: appear, snap, expand, overshoot; standard for hover, tabs, ticks and swaps; panel for the details panel; token for streamed text */
@@ -209,10 +237,16 @@
   --ease-panel: cubic-bezier(.4, 0, .2, 1);
   --ease-token: cubic-bezier(.37, .55, .86, .88);
   --ease-in-out: ease-in-out;
+  /* Springs: snappy (a 1.5 % overshoot, 400 ms) for what pops from a control; soft (none, 520 ms) for panes and sheets; bouncy (10 %, 620 ms) for small marks */
+  --ease-spring: linear(0, 0.0402, 0.1361, 0.2589, 0.3889, 0.5138, 0.6262, 0.7227, 0.8022, 0.8655, 0.9142, 0.9503, 0.976, 0.9935, 1.0047, 1.0112, 1.0143, 1.0152, 1.0146, 1.0131, 1.0112, 1.0093, 1.0074, 1.0057, 1);
+  --ease-spring-soft: linear(0, 0.0424, 0.138, 0.2541, 0.3719, 0.4817, 0.5788, 0.6619, 0.7313, 0.7881, 0.8341, 0.8709, 0.9, 0.9229, 0.9408, 0.9547, 0.9654, 0.9737, 0.98, 0.9849, 0.9886, 0.9914, 0.9935, 0.9951, 1);
+  --ease-spring-bouncy: linear(0, 0.0699, 0.234, 0.4358, 0.6349, 0.8065, 0.9388, 1.0293, 1.0821, 1.1044, 1.1048, 1.0915, 1.0713, 1.0495, 1.0294, 1.0131, 1.0012, 0.9936, 0.9897, 0.9886, 0.9894, 0.9912, 0.9935, 0.9958, 1);
 }
 :root {
   /* Durations: the five steps of ADR-054 §3 */
   --dur-instant: 60ms; --dur-fast: 120ms; --dur-base: 200ms; --dur-slow: 300ms; --dur-slower: 450ms;
+  /* The springs' own lengths */
+  --dur-spring: 400ms; --dur-spring-soft: 520ms; --dur-spring-bouncy: 620ms;
   /* The sent message's spring (1.1 s, peaks at 1.16) */
   --spring-message: linear(0, .111, .36, .639, .879, 1.047, 1.137, 1.163, 1.145, 1.104, 1.059, 1.02, .992, .978, .973, .976, .983, .99, .997, 1.001, 1.004, 1.004, 1);
   --default-transition-duration: var(--dur-fast);
@@ -226,7 +260,7 @@
   html, body { overflow: hidden; }
   html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
   body {
-    margin: 0; background: var(--bg-app); color: var(--text); font-family: var(--font-sans); font-size: 13px; line-height: 20px;
+    margin: 0; background: var(--bg-window); color: var(--text); font-family: var(--font-sans); font-size: 13px; line-height: 20px;
     font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   }
   button, input, textarea, select { font: inherit; color: inherit; }
@@ -237,11 +271,27 @@
   ::selection { background: var(--selection); color: inherit; }
   ::placeholder { color: var(--text-placeholder); opacity: 1; }
   /* The focus ring shows at once, only for the keyboard */
-  :focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+  :focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: 1px; }
   a { color: var(--accent-text); text-underline-offset: 2px; }
   a:hover { text-decoration: underline; }
   code, kbd, pre, samp { font-family: var(--font-mono); }
   * { scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
+  /* In the desktop app the window is the system's material and scrollbars are the system's own, which show only while scrolling. */
+  :root[data-shell="desktop"] body { background: transparent; }
+  /* Scrollbars there are a thin thumb with no track, seen while the pointer is over what scrolls, whatever the system's own setting draws. */
+  :root[data-shell="desktop"] * { scrollbar-width: auto; scrollbar-color: auto; }
+  :root[data-shell="desktop"] ::-webkit-scrollbar { width: 8px; height: 8px; }
+  :root[data-shell="desktop"] ::-webkit-scrollbar-track, :root[data-shell="desktop"] ::-webkit-scrollbar-corner { background: transparent; }
+  :root[data-shell="desktop"] ::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background-color: transparent; background-clip: content-box; }
+  :root[data-shell="desktop"] :hover::-webkit-scrollbar-thumb { background-color: var(--scrollbar); }
+  :root[data-shell="desktop"] ::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--scrollbar) 160%, transparent); }
+  :root[data-shell="desktop"] { cursor: default; user-select: none; -webkit-user-select: none; }
+  :root[data-shell="desktop"] :is(input, textarea, [contenteditable="true"], .markdown, .selectable, pre, code, .diff, .user-bubble, .xterm) { user-select: text; -webkit-user-select: text; }
+  :root[data-shell="desktop"] :is(input, textarea, [contenteditable="true"], .markdown, .selectable, pre, .diff, .user-bubble) { cursor: auto; }
+  :root[data-shell="desktop"] button { cursor: default; }
+  /* The strips a window is dragged by; whatever is pressed inside them is not. */
+  .drag { -webkit-app-region: drag; }
+  :is(button, a, input, textarea, select, summary, label, [role="button"], [role="tab"], [role="menuitem"], [role="option"], [role="radio"], [role="switch"], [role="dialog"], [contenteditable="true"], .no-drag) { -webkit-app-region: no-drag; }
   [hidden] { display: none !important; }
   /* Lucide icons follow the text color; only selection and states color them */
   svg.lucide { flex: none; }
@@ -402,9 +452,9 @@
    */
   .floating-bar {
     inset-inline: 16px; width: fit-content; margin-inline: auto;
-    display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 8px 0 16px; border-radius: var(--radius-card); background: var(--bg-pop);
+    display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 8px 0 16px; border-radius: 22px; background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
     box-shadow: var(--sh-pop); color: var(--text); font-size: 12px; line-height: 18px; white-space: nowrap;
-    transition: opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out);
+    transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-spring) var(--ease-spring);
   }
   @starting-style { .floating-bar { opacity: 0; transform: translateY(16px); } }
   .floating-bar[data-state="closing"] { opacity: 0; transform: translateY(16px); transition-duration: var(--dur-base); pointer-events: none; }
@@ -412,35 +462,39 @@
   /* The approval in the message box's place is marked by the box's own amber edge; it draws no second ring when the keys are on it. */
   .approval-dock:focus, .approval-dock:focus-visible { outline: none; }
 
-  /* Buttons: blue primary, grey secondary (default), outline, ghost, danger; md 30, sm 26, lg 34. #30 hover 120 ms */
+  /* Buttons: one filled blue primary where there is one; the rest monochrome; a destructive one is tinted red. md 28, sm 24, lg 32. Hover 120 ms */
   .btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 12px; border: none; border-radius: var(--radius-control);
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 12px; border: none; border-radius: var(--radius-control);
     background: var(--bg-subtle); color: var(--text); font-size: 13px; line-height: 20px; font-weight: 500; white-space: nowrap; text-decoration: none; user-select: none;
     transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-snap);
   }
   .btn:hover:not(:disabled) { background: var(--bg-hover); text-decoration: none; }
   .btn:active:not(:disabled) { transform: scale(.97); transition-duration: var(--dur-fast), var(--dur-fast), var(--dur-fast), var(--dur-instant); }
-  .btn:disabled { opacity: .45; }
-  .btn-primary { background: var(--accent); color: var(--on-accent); }
+  :is(.btn, .icon-btn, .field, .switch):disabled, :is(.btn, .icon-btn, .switch)[data-disabled] { opacity: .4; }
+  .btn-primary { background: var(--accent); color: var(--on-accent); box-shadow: inset 0 .5px 0 rgba(255, 255, 255, .22); }
   .btn-primary:hover:not(:disabled) { background: var(--accent-hover); color: var(--on-accent); }
-  .btn-outline { background: var(--bg-surface); box-shadow: var(--sh-hairline); }
+  .btn-outline { background: transparent; box-shadow: inset 0 0 0 .5px var(--border-strong); }
   .btn-outline:hover:not(:disabled) { background: var(--bg-subtle); }
   .btn-ghost { background: transparent; color: var(--text-2); }
   .btn-ghost:hover:not(:disabled) { background: var(--bg-subtle); color: var(--text); }
-  .btn-danger { color: var(--red); }
-  .btn-danger:hover:not(:disabled) { color: var(--red); }
-  .btn-sm { height: 26px; padding: 0 9px; gap: 5px; border-radius: var(--radius-row); font-size: 12px; line-height: 18px; }
-  .btn-lg { height: 34px; padding: 0 14px; gap: 8px; border-radius: var(--radius-block); font-size: 13px; }
+  .btn-danger { background: var(--red-soft); color: var(--red); }
+  .btn-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--red-dot) 20%, transparent); color: var(--red-on-tint); }
+  .btn-sm { height: 24px; padding: 0 9px; gap: 5px; border-radius: 7px; font-size: 12px; line-height: 18px; }
+  .btn-lg { height: 32px; padding: 0 14px; gap: 8px; border-radius: 9px; font-size: 13px; }
   .icon-btn {
     display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: none; padding: 0; border: none; border-radius: var(--radius-row);
-    background: transparent; color: var(--text-2); transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+    background: transparent; color: var(--text-2); transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-snap);
   }
-  .icon-btn:hover:not(:disabled), .icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"], .icon-btn[data-popup-open] { background: var(--bg-subtle); color: var(--text); }
-  .icon-btn:disabled { opacity: .45; }
-  .icon-btn-sm { width: 24px; height: 24px; }
+  .icon-btn:hover:not(:disabled), .icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"], .icon-btn[data-popup-open] { background: var(--bg-hover); color: var(--text); }
+  .icon-btn:active:not(:disabled) { transform: scale(.94); transition-duration: var(--dur-fast), var(--dur-fast), var(--dur-instant); }
+  .icon-btn-sm { width: 24px; height: 24px; border-radius: 7px; }
   .link-btn { border: none; background: transparent; padding: 0; color: var(--accent-text); font-size: inherit; font-weight: 500; }
   .link-btn:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 2px; }
   .link-btn:disabled { color: var(--text-3); }
+  /* A group of icon buttons on a toolbar: one glass capsule holds them. */
+  .tool-group { display: inline-flex; align-items: center; gap: 2px; height: 32px; padding: 0 2px; border-radius: 999px; background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+    box-shadow: var(--glass-rim), 0 0 0 .5px var(--border-strong), 0 1px 3px rgba(0, 0, 0, .06); }
+  .tool-group > :is(.icon-btn, .btn) { border-radius: 999px; }
 
   /* Keys (radius 6) and inline shortcut hints */
   .kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--radius-tag); background: var(--bg-surface); box-shadow: var(--sh-kbd); color: var(--text); font-family: inherit; font-size: 11px; line-height: 16px; font-weight: 400; }
@@ -461,14 +515,13 @@
   .decision::after { content: ""; position: absolute; inset: 0; border-radius: inherit; transition: transform var(--dur-fast) var(--ease-snap); }
   :root:not([data-input="keyboard"]) .decision:active:not(:disabled)::after { transform: scale(calc(1 / .97)); transition-duration: var(--dur-instant); }
 
-  /* Fields (radius 10) */
+  /* Fields: a recessed fill with a hairline; the focus ring is the system's soft blue */
   .field {
-    width: 100%; height: 32px; padding: 0 10px; border: none; border-radius: var(--radius-control); background: var(--bg-surface); box-shadow: inset 0 0 0 1px var(--border-strong);
-    color: var(--text); font-size: 13px; line-height: 20px; outline: none;
+    width: 100%; height: 30px; padding: 0 10px; border: none; border-radius: var(--radius-control); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--border-strong);
+    color: var(--text); font-size: 13px; line-height: 20px; outline: none; transition: box-shadow var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
   }
-  textarea.field { height: auto; padding: 8px 10px; resize: vertical; }
-  .field:focus, .field:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
-  .field:disabled { opacity: .55; }
+  textarea.field { height: auto; padding: 7px 10px; resize: vertical; }
+  .field:focus, .field:focus-visible { outline: none; background: var(--bg-surface); box-shadow: var(--sh-focus); }
   .label { display: block; margin-bottom: 6px; font-size: 12px; line-height: 18px; font-weight: 500; color: var(--text-2); }
 
   /* Badges (pills) and status pills */
@@ -485,7 +538,7 @@
   .status-pill[data-tone="amber"] { background: var(--amber-soft); color: var(--amber-on-tint); }
   .status-pill[data-tone="red"] { background: var(--red-soft); color: var(--red-on-tint); }
 
-  /* Cards (radius 14) and rows */
+  /* Cards and rows */
   .card { border-radius: var(--radius-card); background: var(--bg-surface); box-shadow: var(--sh-card); }
   .card-interactive { transition: box-shadow 150ms var(--ease-standard); }
   .card-interactive:hover { box-shadow: var(--sh-card-hover); }
@@ -493,71 +546,80 @@
   .row { border-radius: var(--radius-row); transition: background-color var(--dur-fast) var(--ease-standard); }
   .row:hover { background: var(--bg-subtle); }
   .nav-row {
-    display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border: none; border-radius: var(--radius-row); background: transparent;
+    display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border: none; border-radius: var(--radius-row); background: transparent;
     color: var(--text); font-size: 13px; line-height: 20px; text-align: left; text-decoration: none; transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
   }
   .nav-row:hover { background: var(--bg-sidebar-hover); text-decoration: none; }
   /* A group of the conversation list: a quiet line, not another row. */
-  .group-heading { display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; margin-top: 6px; padding: 0 8px 0 9px; border: none; border-radius: var(--radius-row); background: transparent;
-    color: var(--text-3); font-size: 12px; line-height: 16px; text-align: left; transition: color var(--dur-fast) var(--ease-standard); }
+  .group-heading { display: flex; align-items: center; gap: 6px; width: 100%; height: 24px; margin-top: 10px; padding: 0 8px 0 9px; border: none; border-radius: var(--radius-row); background: transparent;
+    color: var(--text-3); font-size: 11px; line-height: 14px; font-weight: 600; text-align: left; transition: color var(--dur-fast) var(--ease-standard); }
   button.group-heading:hover { color: var(--text-2); }
   .group-heading:focus-visible { outline-offset: -2px; }
   .nav-row[aria-current="page"], .nav-row[aria-current="true"], .nav-row[data-selected="true"] { background: var(--bg-selected); font-weight: 500; }
   /* Full-width rows keep their focus ring inside, where a scrolling list cannot clip it */
   :is(.nav-row, .row):focus-visible { outline-offset: -2px; }
 
-  /* Floating surfaces. #26 popovers and menus scale .98 → 1 from the trigger with a fade: 120 ms snap, 100 ms back */
+  /*
+   * Floating surfaces are glass. Popovers and menus spring out of their trigger (from .94, 400 ms, a hair past 1) while fading in over 140 ms; they
+   * leave in 110 ms, shrinking a little, so closing never waits.
+   */
+  .glass { background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
   .surface-pop {
-    background: var(--bg-pop); border-radius: var(--radius-card); box-shadow: var(--sh-pop); color: var(--text); outline: none; transform-origin: var(--transform-origin);
-    transition: opacity var(--dur-fast) var(--ease-snap), transform var(--dur-fast) var(--ease-snap);
+    background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border-radius: var(--radius-pop); box-shadow: var(--sh-pop); color: var(--text); outline: none;
+    transform-origin: var(--transform-origin); transition: opacity 140ms var(--ease-out), transform var(--dur-spring) var(--ease-spring);
   }
-  .surface-pop[data-starting-style], .surface-pop[data-ending-style] { opacity: 0; transform: scale(.98); }
-  .surface-pop[data-ending-style] { transition-duration: 100ms; transition-timing-function: var(--ease-out); }
+  .surface-pop[data-starting-style] { opacity: 0; transform: scale(.94); }
+  .surface-pop[data-ending-style] { opacity: 0; transform: scale(.97); transition: opacity 110ms ease-in, transform 110ms ease-in; }
   .menu-item {
-    display: flex; align-items: center; gap: 9px; width: 100%; min-height: 34px; padding: 6px 8px; border: none; border-radius: 9px; background: transparent;
-    color: var(--text); font-size: 13px; line-height: 20px; text-align: left; text-decoration: none; cursor: default; outline: none; transition: background-color var(--dur-fast) var(--ease-standard);
+    display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 4px 8px; border: none; border-radius: var(--radius-row); background: transparent;
+    color: var(--text); font-size: 13px; line-height: 20px; text-align: left; text-decoration: none; cursor: default; outline: none;
   }
-  .menu-item[data-highlighted], .menu-item:hover { background: var(--bg-subtle); color: var(--text); text-decoration: none; }
-  .menu-item[data-disabled] { opacity: .45; }
+  .menu-item:hover { background: var(--bg-hover); color: var(--text); text-decoration: none; }
+  /* The item under the keys or the pointer is the system's: the accent, its words white. */
+  .menu-item[data-highlighted] { background: var(--accent); color: var(--on-accent); }
+  .menu-item[data-highlighted] :is(span, small, svg, kbd) { color: inherit; }
+  .menu-item[data-disabled] { opacity: .4; }
   .menu-item-danger { color: var(--red); }
-  /* Pointed at, its words sit on the hover tint: the higher-contrast red of small text on a tint (ruling M) */
-  .menu-item-danger[data-highlighted], .menu-item-danger:hover { color: var(--red-on-tint); }
-  .menu-sep { height: .5px; margin: 4px 6px; background: var(--border-strong); }
-  .menu-label { padding: 6px 8px 2px; font-size: 12px; line-height: 18px; font-weight: 500; color: var(--text-3); }
-  /* #28 Dialogs: the veil fades, the panel grows from .98; 200 ms. The panel's edge is its floating shadow and hairline */
+  .menu-item-danger[data-highlighted] { background: var(--red-fill); color: #FFFFFF; }
+  .menu-sep { height: .5px; margin: 5px 8px; background: var(--border-strong); }
+  .menu-label { padding: 6px 8px 2px; font-size: 11px; line-height: 14px; font-weight: 600; color: var(--text-3); }
+  /* Dialogs: the veil fades in 200 ms; the panel springs from .94 and leaves in 140 ms */
   .backdrop { position: fixed; inset: 0; background: var(--scrim); transition: opacity var(--dur-base) var(--ease-out); }
   .backdrop[data-starting-style], .backdrop[data-ending-style] { opacity: 0; }
   .dialog-pop {
     position: fixed; left: 50%; top: 50%; translate: -50% -50%; width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto;
-    background: var(--bg-surface); border-radius: var(--radius-card); box-shadow: var(--sh-pop); color: var(--text); outline: none;
-    transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+    background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border-radius: var(--radius-dialog); box-shadow: var(--sh-pop); color: var(--text); outline: none;
+    transition: opacity 160ms var(--ease-out), transform var(--dur-spring) var(--ease-spring);
   }
-  .dialog-pop[data-starting-style], .dialog-pop[data-ending-style] { opacity: 0; transform: scale(.98); }
+  .dialog-pop[data-starting-style] { opacity: 0; transform: scale(.94); }
+  .dialog-pop[data-ending-style] { opacity: 0; transform: scale(.97); transition: opacity 140ms ease-in, transform 140ms ease-in; }
   .palette-pop {
-    position: fixed; left: 50%; top: 16vh; translate: -50% 0; background: var(--bg-pop); border-radius: var(--radius-card); box-shadow: var(--sh-pop); color: var(--text); outline: none;
-    transform-origin: 50% 0; transition: opacity var(--dur-fast) var(--ease-snap), transform var(--dur-fast) var(--ease-snap);
+    position: fixed; left: 50%; top: 14vh; translate: -50% 0; background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border-radius: var(--radius-pane); box-shadow: var(--sh-pop); color: var(--text); outline: none;
+    transform-origin: 50% 0; transition: opacity 140ms var(--ease-out), transform var(--dur-spring) var(--ease-spring);
   }
-  .palette-pop[data-starting-style], .palette-pop[data-ending-style] { opacity: 0; transform: scale(.98); }
-  .palette-pop[data-ending-style] { transition-duration: 100ms; transition-timing-function: var(--ease-out); }
+  .palette-pop[data-starting-style] { opacity: 0; transform: translateY(-10px) scale(.97); }
+  .palette-pop[data-ending-style] { opacity: 0; transform: scale(.98); transition: opacity 110ms ease-in, transform 110ms ease-in; }
   .drawer-pop {
-    position: fixed; right: 0; top: 0; bottom: 0; width: min(420px, 100vw); display: flex; flex-direction: column; background: var(--bg-app); box-shadow: var(--sh-pop); outline: none;
-    transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+    position: fixed; right: 0; top: 0; bottom: 0; width: min(420px, 100vw); display: flex; flex-direction: column; background: var(--bg-surface); box-shadow: var(--sh-pop); outline: none;
+    transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-spring-soft) var(--ease-spring-soft);
   }
   .drawer-pop[data-starting-style], .drawer-pop[data-ending-style] { opacity: 0; transform: translateX(24px); }
+  .drawer-pop[data-ending-style] { transition-duration: var(--dur-base); transition-timing-function: ease-in; }
   .drawer-left-pop {
-    position: fixed; left: 0; top: 0; bottom: 0; width: min(300px, 86vw); display: flex; flex-direction: column; background: var(--bg-sidebar); box-shadow: var(--sh-pop); outline: none;
-    transition: transform var(--dur-slow) var(--ease-out);
+    position: fixed; left: 0; top: 0; bottom: 0; width: min(300px, 86vw); display: flex; flex-direction: column; background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); box-shadow: var(--sh-pop); outline: none;
+    transition: transform var(--dur-spring-soft) var(--ease-spring-soft);
   }
   .drawer-left-pop[data-starting-style], .drawer-left-pop[data-ending-style] { transform: translateX(-100%); }
-  .drawer-left-pop[data-ending-style] { transition-duration: var(--dur-base); }
+  .drawer-left-pop[data-ending-style] { transition-duration: var(--dur-base); transition-timing-function: ease-in; }
   .sheet-pop {
-    position: fixed; left: 0; right: 0; bottom: 0; max-height: 86dvh; display: flex; flex-direction: column; background: var(--bg-surface); border-radius: var(--radius-card) var(--radius-card) 0 0;
-    box-shadow: var(--sh-pop); outline: none; transition: transform var(--dur-slow) var(--ease-out);
+    position: fixed; left: 0; right: 0; bottom: 0; max-height: 86dvh; display: flex; flex-direction: column; background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border-radius: var(--radius-dialog) var(--radius-dialog) 0 0;
+    box-shadow: var(--sh-pop); outline: none; transition: transform var(--dur-spring-soft) var(--ease-spring-soft);
   }
   .sheet-pop[data-starting-style], .sheet-pop[data-ending-style] { transform: translateY(100%); }
-  .sheet-pop[data-ending-style] { transition-duration: var(--dur-base); }
+  .sheet-pop[data-ending-style] { transition-duration: var(--dur-base); transition-timing-function: ease-in; }
   .tooltip-pop {
-    max-width: 280px; padding: 5px 8px; border-radius: var(--radius-row); background: var(--text); color: var(--bg-app); box-shadow: var(--sh-pop); font-size: 12px; line-height: 16px;
+    max-width: 280px; padding: 3px 8px; border-radius: 7px; background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); color: var(--text);
+    box-shadow: var(--glass-rim), 0 0 0 .5px var(--border-strong), 0 4px 14px -2px rgba(0, 0, 0, .18); font-size: 12px; line-height: 18px;
     transition: opacity var(--dur-fast) var(--ease-standard);
   }
   .tooltip-pop[data-starting-style], .tooltip-pop[data-ending-style] { opacity: 0; }
@@ -569,31 +631,31 @@
   .toast {
     --toast-shift: calc(var(--toast-index) * -14px + var(--toast-swipe-movement-y, 0px));
     position: absolute; left: 50%; bottom: 0; translate: -50% 0; z-index: calc(1000 - var(--toast-index)); width: max-content; max-width: calc(100vw - 32px);
-    display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 0 7px 0 14px; border-radius: var(--radius-block); background: var(--text); color: var(--bg-app);
+    display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 6px 0 14px; border-radius: 18px; background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); color: var(--text);
     box-shadow: var(--sh-pop); font-size: 12px; line-height: 18px; user-select: none; transform-origin: 50% 100%;
     transform: translateX(var(--toast-swipe-movement-x, 0px)) translateY(var(--toast-shift)) scale(calc(1 - var(--toast-index) * .04));
-    transition: transform var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out);
+    transition: transform var(--dur-spring) var(--ease-spring), opacity var(--dur-base) var(--ease-out);
   }
   .toast[data-starting-style] { opacity: 0; transform: translateY(calc(100% + 24px)); }
   .toast[data-ending-style] { opacity: 0; transform: translateY(var(--toast-shift)) scale(.85); }
   .toast[data-limited] { opacity: 0; }
   .toast[data-expanded] { transform: translateX(var(--toast-swipe-movement-x, 0px)) translateY(calc(var(--toast-offset-y) * -1 - var(--toast-index) * 8px + var(--toast-swipe-movement-y, 0px))); }
-  .toast-content { display: flex; align-items: center; gap: 10px; min-height: 38px; transition: opacity var(--dur-base) var(--ease-out); }
+  .toast-content { display: flex; align-items: center; gap: 10px; min-height: 36px; transition: opacity var(--dur-base) var(--ease-out); }
   .toast-content[data-behind]:not([data-expanded]) { opacity: 0; }
-  .toast-action { height: 24px; padding: 0 8px; border: none; border-radius: 7px; background: color-mix(in srgb, var(--bg-app) 16%, transparent); color: inherit; font-size: 12px; font-weight: 500; }
-  .toast-action:hover { background: color-mix(in srgb, var(--bg-app) 24%, transparent); }
+  .toast-action { height: 24px; padding: 0 10px; border: none; border-radius: 999px; background: var(--bg-subtle); color: var(--accent-text); font-size: 12px; font-weight: 500; }
+  .toast-action:hover { background: var(--bg-hover); }
 
   /* #25 Segmented control: the thumb slides (200 ms snap); the container's radius is the thumb's plus its 2 px inset */
   .segmented { position: relative; isolation: isolate; display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--radius-row); background: var(--bg-subtle); }
-  .segmented > button { position: relative; z-index: 1; height: 24px; padding: 0 9px; border: none; border-radius: var(--radius-tag); background: transparent; color: var(--text-2); font-size: 12px; line-height: 18px; white-space: nowrap; transition: color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard); }
+  .segmented > button { position: relative; z-index: 1; height: 24px; padding: 0 10px; border: none; border-radius: 6px; background: transparent; color: var(--text-2); font-size: 12px; line-height: 18px; white-space: nowrap; transition: color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard); }
   .segmented > button:hover:not(:disabled) { color: var(--text); }
   .segmented > button[aria-pressed="true"], .segmented > button[aria-checked="true"] { color: var(--text); font-weight: 500; }
-  .segmented:not([data-thumb]) > button[aria-pressed="true"], .segmented:not([data-thumb]) > button[aria-checked="true"] { background: var(--bg-surface); box-shadow: var(--sh-hairline); }
-  .segmented-thumb { position: absolute; z-index: 0; top: 2px; left: 0; height: calc(100% - 4px); border-radius: var(--radius-tag); background: var(--bg-surface); box-shadow: var(--sh-hairline); pointer-events: none; }
-  .segmented[data-ready] > .segmented-thumb { transition: transform var(--dur-base) var(--ease-snap), width var(--dur-base) var(--ease-snap); }
-  .segmented-md { border-radius: var(--radius-control); }
-  .segmented-md > button { height: 30px; padding: 0 12px; border-radius: var(--radius-row); font-size: 13px; line-height: 20px; }
-  .segmented-md > .segmented-thumb { border-radius: var(--radius-row); }
+  .segmented:not([data-thumb]) > button[aria-pressed="true"], .segmented:not([data-thumb]) > button[aria-checked="true"] { background: var(--thumb); box-shadow: var(--sh-thumb); }
+  .segmented-thumb { position: absolute; z-index: 0; top: 2px; left: 0; height: calc(100% - 4px); border-radius: 6px; background: var(--thumb); box-shadow: var(--sh-thumb); pointer-events: none; }
+  .segmented[data-ready] > .segmented-thumb { transition: transform var(--dur-spring) var(--ease-spring), width var(--dur-spring) var(--ease-spring); }
+  .segmented-md { border-radius: 9px; }
+  .segmented-md > button { height: 28px; padding: 0 12px; border-radius: 7px; font-size: 13px; line-height: 20px; }
+  .segmented-md > .segmented-thumb { border-radius: 7px; }
   /* #24 Tabs: the underline slides its position and width (200 ms); the text color changes in 120 ms */
   .tabs { position: relative; display: flex; align-items: stretch; }
   .tab { position: relative; display: inline-flex; flex: none; align-items: center; gap: 5px; height: 36px; padding: 0; border: none; background: transparent; color: var(--text-2); font-size: 13px; line-height: 20px; white-space: nowrap; transition: color var(--dur-fast) var(--ease-standard); }
@@ -604,13 +666,15 @@
   .tabs[data-indicator] > .tab::after { display: none; }
   .tab-count { font-weight: inherit; }
   .tabs-indicator { position: absolute; left: 0; bottom: 0; height: 2px; border-radius: 1px; background: var(--accent-text); pointer-events: none; }
-  .tabs[data-ready] > .tabs-indicator { transition: transform var(--dur-base) var(--ease-standard), width var(--dur-base) var(--ease-standard); }
+  .tabs[data-ready] > .tabs-indicator { transition: transform var(--dur-spring) var(--ease-spring), width var(--dur-spring) var(--ease-spring); }
   /* #33 Switch: the thumb slides and the track changes color, 200 ms snap */
-  .switch { position: relative; display: inline-flex; flex: none; width: 28px; height: 16px; padding: 0; border: none; border-radius: 999px; background: var(--bg-hover); transition: background-color var(--dur-base) var(--ease-snap); }
+  .switch { position: relative; display: inline-flex; flex: none; width: 34px; height: 20px; padding: 0; border: none; border-radius: 999px; background: var(--bg-active); box-shadow: inset 0 0 0 .5px var(--border); transition: background-color var(--dur-base) var(--ease-standard); }
   .switch[data-checked] { background: var(--accent); }
-  .switch[data-disabled] { opacity: .45; }
-  .switch-thumb { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #FFFFFF; box-shadow: 0 1px 2px rgba(0, 0, 0, .2); transition: transform var(--dur-base) var(--ease-snap); }
-  .switch[data-checked] .switch-thumb { transform: translateX(12px); }
+  .switch-thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 999px; background: #FFFFFF; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .06), 0 1px 3px rgba(0, 0, 0, .22); transition: transform var(--dur-spring) var(--ease-spring), width var(--dur-fast) var(--ease-standard); }
+  .switch[data-checked] .switch-thumb { transform: translateX(14px); }
+  /* Held down, the thumb stretches toward where it will go, as the system's does. */
+  .switch:active:not([data-disabled]) .switch-thumb { width: 19px; }
+  .switch[data-checked]:active:not([data-disabled]) .switch-thumb { transform: translateX(11px); }
 
   /* Agent marks (Icons board): official marks sit on a white rounded tile (dark grey in the dark), Mac app icons fill it */
   .brand-tile { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center; overflow: hidden; background: var(--bg-well); box-shadow: var(--sh-well); user-select: none; }
@@ -653,7 +717,7 @@
   .markdown .image-alt { color: var(--text-3); font-style: italic; }
   .markdown input[type="checkbox"] { margin: 0 6px 0 0; vertical-align: -1px; }
 
-  /* Code blocks (radius 12); Shiki gives every token a light and a dark color */
+  /* Code blocks; Shiki gives every token a light and a dark color */
   .code-block { position: relative; margin: 0 0 .7em; border-radius: var(--radius-block); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--border); overflow: hidden; }
   .code-block-head { display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 6px 0 12px; border-bottom: .5px solid var(--border); font-size: 12px; line-height: 18px; color: var(--text-3); }
   .code-block pre { margin: 0; padding: 10px 12px; overflow-x: auto; font-size: 12.5px; line-height: 20px; background: transparent !important; }
@@ -685,12 +749,12 @@
   .diff-number:hover > span, .diff-number:focus-visible > span { display: none; }
   .diff-number:hover > svg, .diff-number:focus-visible > svg { display: block; }
   :is(.diff-line, .diff-pair).is-chosen { box-shadow: inset 2px 0 0 var(--accent); }
-  .diff-remark { padding: 6px 10px 8px 56px; background: var(--bg-subtle); min-width: 0; position: sticky; left: 0; }
+  .diff-remark { padding: 6px 10px 8px 56px; background: var(--bg-cover); min-width: 0; position: sticky; left: 0; }
   /* The two sides of a change beside each other: each half its own lines, folded to its width. */
   .diff-split { overflow-x: hidden; }
   .diff-split .diff-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .diff-split .diff-side { min-width: 0; }
-  .diff-split .diff-side + .diff-side { box-shadow: inset .5px 0 0 var(--line-strong); }
+  .diff-split .diff-side + .diff-side { box-shadow: inset .5px 0 0 var(--border-strong); }
   .diff-split .diff-side > .c { min-width: 0; flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 8px; }
   .diff-split .diff-side.is-blank { background: var(--bg-subtle); }
   .diff-split .diff-remark { padding-left: 10px; }
@@ -701,6 +765,50 @@
   .diff-line:is(.is-add, .is-remove) > .n { color: var(--text-3-on-tint); }
   .diff-line.is-hunk { color: var(--text-3); background: var(--bg-subtle); }
   .diff-line.is-file { color: var(--text-2); font-weight: 500; }
+
+  /*
+   * The window. The sidebar is a pane of the window's own material, set 8 px in from the window's edge with corners concentric to it. Around the
+   * pane lies the content layer's color, painted by the pane's own far-spread shadow, so the pane is the one clear opening onto the material. It
+   * leaves by sliding out past the window's edge as its slot closes; in a browser the page's backdrop color shows where the material would.
+   */
+  .app-shell { --pane-inset: 8px; --pane-gap: 6px; --sidebar-width: var(--container-sidebar); }
+  .sidebar-slot { position: relative; flex: none; width: var(--sidebar-width); overflow: clip; transition: width var(--dur-spring-soft) var(--ease-spring-soft); }
+  .sidebar-slot[data-open="false"] { width: 0; }
+  .sidebar-pane {
+    position: absolute; top: var(--pane-inset); bottom: var(--pane-inset); right: var(--pane-gap); width: calc(var(--sidebar-width) - var(--pane-inset) - var(--pane-gap)); border-radius: var(--radius-pane); background: var(--pane-tint);
+    box-shadow: inset 0 0 0 .5px var(--pane-rim), 0 0 0 .5px var(--border-strong), 0 4px 18px -6px rgba(0, 0, 0, .16), 0 0 0 100vmax var(--bg-app);
+  }
+  .content-pane { position: relative; background: var(--bg-app); }
+  /* The top of the content moves the window wherever a page has put nothing to press there. */
+  .content-pane::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 52px; -webkit-app-region: drag; }
+  /* The top strip of each pane moves the window; with the sidebar away, the content's strip leaves room for the window's own buttons. */
+  .sidebar-head { height: 44px; }
+  :root[data-shell="desktop"]:not([data-fullscreen]) .sidebar-head { padding-left: 76px; }
+  .titlebar { transition: padding-left var(--dur-spring-soft) var(--ease-spring-soft); }
+  :root[data-shell="desktop"]:not([data-fullscreen]) .app-shell[data-sidebar="hidden"] .titlebar { padding-left: 88px; }
+  /*
+   * The conversation scrolls under its toolbar and under the message box: at each edge it blurs a little and fades into the content layer (the
+   * system's scroll edge effect), so neither bar paints a band of its own. The message box is thick glass; what stands with it over the
+   * conversation (a queued message, a notice) blurs what is behind it under its own tint.
+   */
+  .chat-toolbar::before {
+    content: ""; position: absolute; inset: 0 0 -18px 0; z-index: -1; pointer-events: none; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    background: linear-gradient(to bottom, var(--bg-app) 0, color-mix(in srgb, var(--bg-app) 86%, transparent) 55%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent 100%); mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
+  }
+  .chat-foot::before {
+    content: ""; position: absolute; inset: -30px 0 0 0; z-index: -1; pointer-events: none; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    background: linear-gradient(to bottom, transparent 0, color-mix(in srgb, var(--bg-app) 50%, transparent) 30px, color-mix(in srgb, var(--bg-app) 94%, transparent) 78px, var(--bg-app) 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 30px); mask-image: linear-gradient(to bottom, transparent 0, #000 30px);
+  }
+  .composer-box { background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+  .chat-foot :is(.relay-card, .queued-message, .composer-notice, .composer-change, [role="status"].rounded-block, [role="alert"].rounded-block) { -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+  .chat-notices:not(:empty) ~ .chat-scroll { padding-top: 16px; }
+
+  /* A search field that opens the palette: it looks like where one types, and is pressed. */
+  .search-field { display: flex; align-items: center; gap: 6px; width: 100%; height: 28px; padding: 0 8px; border: none; border-radius: var(--radius-row); background: var(--bg-subtle); color: var(--text-3);
+    font-size: 13px; line-height: 20px; text-align: left; transition: background-color var(--dur-fast) var(--ease-standard); }
+  .search-field:hover { background: var(--bg-hover); }
 
   /* Scroll regions that keep their own scrollbar out of the layout */
   /* A scroll region holds what is positioned inside it (the text kept for screen readers is absolute): otherwise that text is laid out

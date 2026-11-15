@@ -383,6 +383,17 @@ export function ChatPage(props: ChatProps) {
     previousScrollTop.current = element.scrollTop; previousScrollHeight.current = element.scrollHeight;
   }, []);
   const resumeFollowing = useCallback(() => { following.current = true; setFollowBottom(true); scrollToLatest(); }, [scrollToLatest]);
+  // The message box floats over the conversation: the conversation leaves its height free under its last line, and stays at its latest while the box grows.
+  const stage = useRef<HTMLDivElement>(null), foot = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const host = stage.current, element = foot.current;
+    if (host === null) return;
+    if (element === null) { host.style.removeProperty("--foot-height"); return; }
+    const measure = () => { host.style.setProperty("--foot-height", element.offsetHeight + "px"); if (following.current) scrollToLatest(); };
+    measure();
+    const observer = new ResizeObserver(measure); observer.observe(element);
+    return () => observer.disconnect();
+  });
   // The Turns before the first one held come a page at a time as the top of the list comes into view; the place the reader is looking at stays where it is while they come in above it.
   const olderCursor = session?.window.older ?? null, firstOrdinal = session?.runs[0]?.ordinal;
   const topMark = useRef<HTMLDivElement>(null), loadingOlder = useRef(false), keptPlace = useRef<{ readonly top: number; readonly height: number; readonly first: number | undefined } | null>(null);
@@ -706,49 +717,50 @@ export function ChatPage(props: ChatProps) {
   const viewedFacts = viewing === null ? null : relay?.view?.packets.find(item => item.packetId === viewing) ?? null;
   const viewedPacket: PacketTarget | null = viewing === null ? null : { packetId: viewing, number: viewedFacts?.number ?? null, facts: viewedFacts };
 
-  return <section className="chat-page flex h-full min-h-0 min-w-0 flex-1 flex-col" aria-labelledby="chat-title">
-    {/* The header of the Conversation board: 54 px on a hairline, its parts 10 px apart (closer on a phone). */}
-    <header className={cn("flex h-[54px] flex-none items-center gap-2 bg-app pr-3 pl-3 sm:gap-2.5", session ? "hairline-b sm:pl-6" : "sm:pl-4")}>
-      {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={props.onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
-        : props.sidebarHidden ? <Tip label={"展开侧栏 " + keyText("sidebar")}><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts={ariaKeys("sidebar")} onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
-      {/* Where the conversation runs, then what it is called (after the header of T3 Code): the folder quiet, the title plain, one line. */}
-      <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        {session ? <>{props.onReveal ? <Tip label={<>在访达中显示 <span className="text-fg-3">{homePath(session.workspace)}</span></>}><button type="button" className="crumb hidden max-w-[34%] min-w-0 flex-none truncate rounded-row border-none bg-transparent px-1.5 py-1 text-ui text-fg-3 transition-colors duration-120 ease-standard hover:bg-subtle hover:text-fg-2 sm:block" onClick={() => props.onReveal?.()}>{crumb}</button></Tip>
-          : <span className="hidden max-w-[34%] min-w-0 flex-none truncate px-1.5 text-ui text-fg-3 sm:block" title={session.workspace}>{crumb}</span>}
-          <span className="hidden flex-none text-ui text-fg-3 opacity-50 sm:block" aria-hidden="true">/</span></> : null}
-        {renaming !== null && session ? <TitleField value={renaming} onDone={next => { setRenaming(null); const text = next?.trim().replace(/\s+/gu, " "); if (text && text !== session.title) { setRenamed({ id: session.id, title: text }); props.onRename?.(text).catch(() => setRenamed(null)); } }}/> : null}
-        <h1 ref={heading} id="chat-title" tabIndex={-1} className={cn("m-0 min-w-0 truncate rounded-row px-1.5 py-1 text-ui font-medium outline-none", !session && "sr-only", renaming !== null && "sr-only", session && props.onRename && "cursor-text")} title={props.onRename && session ? "双击改名" : title}
-          onDoubleClick={session && props.onRename ? () => setRenaming(title) : undefined}>{title}{session && session.status !== "open" ? <span className="ml-2 text-caption font-normal text-fg-3">{session.status === "closed" ? "已结束" : "需要核实"}</span> : null}</h1>
-      </div>
-      {session ? <>
-        <HeaderState session={session} active={active} harnessName={harnessName}/>
-        {/* The Conversation board's header ends with the details button and "…": showing every step and ending the conversation
-            are items of that menu (rulings R1, R3), so they are there at every width. */}
-        <div className="flex items-center gap-0.5 sm:gap-2.5">
-          {props.terminals ? <Tip label={<>{terminal ? "收起终端" : "打开终端"}（{keyText("terminal")}）</>}><button type="button" className="icon-btn max-sm:hidden" aria-label="终端" aria-pressed={terminal} onClick={() => setTerminal(value => !value)}><SquareTerminal size={16}/></button></Tip> : null}
-          <Tip label={<>{panelOpen ? "收起详情" : "打开详情"}（{keyText("panel")}）</>}><button type="button" className="icon-btn relative" aria-label="详情栏" aria-pressed={panelOpen} aria-describedby={changes ? "details-changes" : undefined} onClick={() => setPanel(!panelOpen)}>
-            <PanelRight size={16}/>{!panelOpen && changes ? <ChangeBadge count={changes} news={changesArrived}/> : null}
-          </button></Tip>
-          {changes ? <span id="details-changes" className="sr-only">本对话改动 {changes} 处</span> : null}
-          <Menu align="end" trigger={<button type="button" className="icon-btn" aria-label="更多操作" title="更多操作"><MoreHorizontal size={16}/></button>} items={[
-            ...(props.onDelegate ? [{ label: "委派给另一个 Harness…", icon: <Split size={14}/>, disabled: session.status !== "open", onSelect: () => setDelegating(true) }] : []),
-            { label: "从最新回复分支", icon: <GitBranch size={14}/>, disabled: !canBranch || !props.onBranch || session.facts.branchable === null, onSelect: () => { const last = session.facts.branchable; if (last !== null) props.onBranch?.(last.runId); } },
-            { separator: true },
-            { label: panelOpen ? "收起详情" : "打开详情", icon: <PanelRight size={14}/>, hint: keyText("panel"), onSelect: () => setPanel(!panelOpen) },
-            ...(props.terminals ? [{ label: terminal ? "收起终端" : "打开终端", icon: <SquareTerminal size={14}/>, hint: keyText("terminal"), onSelect: () => setTerminal(value => !value) }] : []),
-            // Checked is the detailed density: every Turn's steps open. This browser keeps it, as the setting does (ruling R1).
-            { label: "显示每一步", icon: <ListTree size={14}/>, checked: detailed, onSelect: () => props.onPreference("density", detailed ? "compact" : "detailed") },
-            { separator: true },
-            { label: "导出 Markdown", icon: <FileDown size={14}/>, href: exportBase + "markdown", download: true },
-            { label: "导出 JSON", icon: <FileDown size={14}/>, href: exportBase + "json", download: true },
-            { separator: true },
-            // The one way to end the conversation (ruling R3); the confirmation below is unchanged.
-            { label: "结束对话…", icon: <X size={14}/>, description: "结束会话，保留历史", danger: true, disabled: session.status === "closed" || mutation !== null, onSelect: () => setConfirmClose(true) },
-          ]}/>
-        </div>
-      </> : null}
-    </header>
-    <div className="flex flex-col gap-2 empty:hidden">
+  return <section className="chat-page relative flex h-full min-h-0 min-w-0 flex-1 flex-col" aria-labelledby="chat-title">
+    <div ref={row} className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+       <div ref={stage} className="chat-stage relative flex min-h-0 flex-1 flex-col">
+        {/* The toolbar floats over the conversation, which fades under it; its strip moves the window. */}
+            <header className="chat-toolbar titlebar drag absolute inset-x-0 top-0 z-20 flex h-[52px] items-center gap-2 pr-3 pl-4">
+          {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={props.onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
+            : props.sidebarHidden ? <Tip label={"展开侧栏 " + keyText("sidebar")}><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts={ariaKeys("sidebar")} onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
+          {/* Where the conversation runs, then what it is called (after the header of T3 Code): the folder quiet, the title plain, one line. */}
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            {session ? <>{props.onReveal ? <Tip label={<>在访达中显示 <span className="text-fg-3">{homePath(session.workspace)}</span></>}><button type="button" className="crumb hidden max-w-[34%] min-w-0 flex-none truncate rounded-row border-none bg-transparent px-1.5 py-1 text-ui text-fg-3 transition-colors duration-120 ease-standard hover:bg-subtle hover:text-fg-2 sm:block" onClick={() => props.onReveal?.()}>{crumb}</button></Tip>
+              : <span className="hidden max-w-[34%] min-w-0 flex-none truncate px-1.5 text-ui text-fg-3 sm:block" title={session.workspace}>{crumb}</span>}
+              <span className="hidden flex-none text-ui text-fg-3 opacity-50 sm:block" aria-hidden="true">/</span></> : null}
+            {renaming !== null && session ? <TitleField value={renaming} onDone={next => { setRenaming(null); const text = next?.trim().replace(/\s+/gu, " "); if (text && text !== session.title) { setRenamed({ id: session.id, title: text }); props.onRename?.(text).catch(() => setRenamed(null)); } }}/> : null}
+            <h1 ref={heading} id="chat-title" tabIndex={-1} className={cn("no-drag m-0 min-w-0 truncate rounded-row px-1.5 py-1 text-ui font-semibold outline-none", !session && "sr-only", renaming !== null && "sr-only", session && props.onRename && "cursor-text")} title={props.onRename && session ? "双击改名" : title}
+              onDoubleClick={session && props.onRename ? () => setRenaming(title) : undefined}>{title}{session && session.status !== "open" ? <span className="ml-2 text-caption font-normal text-fg-3">{session.status === "closed" ? "已结束" : "需要核实"}</span> : null}</h1>
+          </div>
+          {session ? <>
+            <HeaderState session={session} active={active} harnessName={harnessName}/>
+            {/* The Conversation board's header ends with the details button and "…": showing every step and ending the conversation
+                are items of that menu (rulings R1, R3), so they are there at every width. */}
+            <div className="tool-group">
+              {props.terminals ? <Tip label={<>{terminal ? "收起终端" : "打开终端"}（{keyText("terminal")}）</>}><button type="button" className="icon-btn max-sm:hidden" aria-label="终端" aria-pressed={terminal} onClick={() => setTerminal(value => !value)}><SquareTerminal size={16}/></button></Tip> : null}
+              <Tip label={<>{panelOpen ? "收起详情" : "打开详情"}（{keyText("panel")}）</>}><button type="button" className="icon-btn relative" aria-label="详情栏" aria-pressed={panelOpen} aria-describedby={changes ? "details-changes" : undefined} onClick={() => setPanel(!panelOpen)}>
+                <PanelRight size={16}/>{!panelOpen && changes ? <ChangeBadge count={changes} news={changesArrived}/> : null}
+              </button></Tip>
+              {changes ? <span id="details-changes" className="sr-only">本对话改动 {changes} 处</span> : null}
+              <Menu align="end" trigger={<button type="button" className="icon-btn" aria-label="更多操作" title="更多操作"><MoreHorizontal size={16}/></button>} items={[
+                ...(props.onDelegate ? [{ label: "委派给另一个 Harness…", icon: <Split size={14}/>, disabled: session.status !== "open", onSelect: () => setDelegating(true) }] : []),
+                { label: "从最新回复分支", icon: <GitBranch size={14}/>, disabled: !canBranch || !props.onBranch || session.facts.branchable === null, onSelect: () => { const last = session.facts.branchable; if (last !== null) props.onBranch?.(last.runId); } },
+                { separator: true },
+                // Checked is the detailed density: every Turn's steps open. This browser keeps it, as the setting does (ruling R1).
+                { label: "显示每一步", icon: <ListTree size={14}/>, checked: detailed, onSelect: () => props.onPreference("density", detailed ? "compact" : "detailed") },
+                { separator: true },
+                { label: "导出 Markdown", icon: <FileDown size={14}/>, href: exportBase + "markdown", download: true },
+                { label: "导出 JSON", icon: <FileDown size={14}/>, href: exportBase + "json", download: true },
+                { separator: true },
+                // The one way to end the conversation (ruling R3); the confirmation below is unchanged.
+                { label: "结束对话…", icon: <X size={14}/>, danger: true, disabled: session.status === "closed" || mutation !== null, onSelect: () => setConfirmClose(true) },
+              ]}/>
+            </div>
+          </> : null}
+        </header>
+    <div className="chat-notices flex flex-none flex-col gap-2 pt-[52px] empty:hidden">
       {error ? <div className="chat-error px-4 pt-3 sm:px-8"><Notice tone="red" onDismiss={props.onDismissError} className="mx-auto max-w-reading">{error}</Notice></div> : null}
       {props.connectionError ? <div className="px-4 pt-3 sm:px-8"><Notice tone="amber" className="connection-notice mx-auto max-w-reading" action={props.onRetryConnection ? <button type="button" className="btn btn-sm" onClick={props.onRetryConnection}>重新连接</button> : undefined}>{props.connectionError}</Notice></div> : null}
       {session && relay?.view ? installationNotices(relay.view.installation).map(notice => <div key={notice.cause} className="px-4 pt-3 sm:px-8"><RelayInstallation notice={notice}/></div>) : null}
@@ -756,8 +768,6 @@ export function ChatPage(props: ChatProps) {
         action={<button className="btn btn-sm" type="button" disabled={mutation !== null || pending} onClick={() => { props.onDraft(selectionDraft(session.selection)); setDismissedSwitch(failedSwitch.id); }}>继续使用当前选择</button>}>
         {failedSwitch.error ? failureMessage(failedSwitch.error) : "目标连接没有通过验证。"} 当前选择仍是 {harnessName(session.selection.harnessId)}。</Notice></div> : null}
     </div>
-    <div ref={row} className="flex min-h-0 flex-1">
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         {finding && session && props.find ? <FindBar key={session.id + ":" + (findFrom?.stamp ?? 0)} access={props.find} initial={findFrom?.target} onClose={() => { setFinding(false); setFindFrom(null); }}
           scroller={() => scroll.current} textOf={id => messageOf(id)?.text} messageAt={(hit: FindHit) => {
             // The page's message an item of a held Turn draws: your words and the replies are found by the message id their item names.
@@ -765,7 +775,7 @@ export function ChatPage(props: ChatProps) {
             const item = run?.protocol?.items.find(entry => entry.seq === hit.itemSeq);
             return item !== undefined && (item.type === "user_message" || item.type === "assistant_message") && typeof item.messageId === "string" ? item.messageId : undefined;
           }}/> : null}
-        <div className={cn("chat-scroll scroll-area min-h-0 flex-1 px-4 sm:px-8", session === null ? "welcome-scroll" : "pt-[30px] pb-5")} ref={scroll} onScroll={() => {
+        <div className={cn("chat-scroll scroll-area min-h-0 flex-1 px-4 sm:px-8", session === null ? "welcome-scroll" : "pt-[72px] pb-[calc(var(--foot-height,0px)+8px)]")} ref={scroll} onScroll={() => {
           const element = scroll.current;
           if (!element || viewport.current.width !== element.clientWidth || viewport.current.height !== element.clientHeight) return;
           // Content that got shorter (a Markdown block replacing its plain-text placeholder) pulls the position up by
@@ -793,20 +803,22 @@ export function ChatPage(props: ChatProps) {
               {orphanCards.length ? orphanCards : null}
             </div>}
         </div>
-        {session !== null && !props.loading ? <footer className="relative flex-none px-4 pt-1.5 pb-4 sm:px-8 sm:pb-3.5"><div className="mx-auto flex max-w-reading flex-col gap-2">
+        {/* The message box floats over the conversation, which keeps that much room under its last line (--foot-height). */}
+        {session !== null && !props.loading ? <footer ref={foot} className="chat-foot pointer-events-none absolute inset-x-0 bottom-0 z-10 px-4 pt-1.5 pb-4 sm:px-8"><div className="pointer-events-auto relative mx-auto flex max-w-reading flex-col gap-2">
           {!followBottom ? <button type="button" className="follow-stream motion-enter press absolute -top-11 left-1/2 z-10 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border-none bg-surface pr-3 pl-3.5 text-caption font-medium text-fg-2 shadow-pop transition-[color,background-color,transform] duration-120 ease-standard hover:text-fg"
             style={motionStyle({ shift: 6 })} onClick={resumeFollowing} aria-label="回到最新回复"><span>回到最新</span><ArrowDown size={13} aria-hidden="true"/></button> : null}
           {props.queueNotice ? <Notice tone="amber" onDismiss={props.onDismissQueueNotice}>{props.queueNotice}</Notice> : null}
           {refused && props.onFreeWorkspace ? <Notice tone="amber" className="kept-conflict" title="工作区正被另一个对话占用" action={<button type="button" className="btn btn-sm" disabled={freeing || mutation !== null} onClick={() => { setFreeing(true); void props.onFreeWorkspace!(refused).finally(() => setFreeing(false)); }}>{freeing ? "正在结束…" : "结束那个对话的后台进程并重试"}</button>}>那个对话的后台进程还在：结束它再重试，或稍后再试。</Notice> : null}
           {composer}
         </div></footer> : null}
+       </div>
         {session && terminal && props.terminals ? <TerminalDrawer key={session.id} session={session.id} place={inScratch(session.workspace, props.scratchRoot) ? "临时对话" : homePath(session.workspace)} access={props.terminals} onClose={() => setTerminal(false)}
           onQuote={text => { props.onMessageDraft(value => (value.trim() ? value.replace(/\s+$/u, "") + "\n\n" : "") + "```\n" + text.replace(/\s+$/u, "") + "\n```\n"); textarea.current?.focus(); }}
           {...(props.workspaceTools?.file ? { scripts: projectScripts(props.workspaceTools.file) } : {})}/> : null}
       </div>
-      {inline && asidePresence !== "closed" ? <aside className={cn("details-aside relative flex-none overflow-hidden bg-app hairline-l ease-panel keyboard:duration-0", dragging ? "transition-none" : "transition-[width]",
-        panelOpen ? "w-(--panel-width) duration-300 starting:w-0" : "w-0 duration-200")} style={{ "--panel-width": shownWidth + "px" } as CSSProperties} aria-label="详情栏" aria-hidden={!panelOpen || undefined} inert={!panelOpen}>
-        <div className={cn("flex h-full w-(--panel-width)", !panelFromKeyboard && "motion-panel-in")}>{panel}</div>
+      {inline && asidePresence !== "closed" ? <aside className={cn("details-aside relative flex-none overflow-hidden keyboard:duration-0", dragging ? "transition-none" : "transition-[width]",
+        panelOpen ? "w-(--panel-width) duration-(--dur-spring-soft) ease-spring-soft starting:w-0" : "w-0 duration-200 ease-in")} style={{ "--panel-width": shownWidth + "px" } as CSSProperties} aria-label="详情栏" aria-hidden={!panelOpen || undefined} inert={!panelOpen}>
+        <div className={cn("flex h-full w-(--panel-width) py-2 pr-2 pl-1", !panelFromKeyboard && "motion-panel-in")}><div className="details-pane flex min-w-0 flex-1 overflow-hidden rounded-pane bg-surface shadow-pane">{panel}</div></div>
         <PanelEdge width={shownWidth} dragging={dragging} onDrag={setDragging} onWidth={resize}/>
       </aside> : null}
     </div>
