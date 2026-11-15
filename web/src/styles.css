@@ -91,6 +91,7 @@
   --thumb: #FFFFFF;                            /* the sliding part of a segmented control */
   /* The sidebar pane: a faint wash over the window's material, and the light on its rim */
   --pane-tint: rgba(255, 255, 255, .22); --pane-rim: rgba(255, 255, 255, .55);
+  --pane-wash: rgba(248, 248, 250, .5);         /* over the system's Liquid Glass, so the sidebar's words read on any desktop */
 
   @variant dark {
     color-scheme: dark;
@@ -136,6 +137,7 @@
     --sh-thumb: 0 0 0 .5px rgba(0, 0, 0, .3), 0 1px 3px rgba(0, 0, 0, .4);
     --thumb: #5F5F64;
     --pane-tint: rgba(255, 255, 255, .025); --pane-rim: rgba(255, 255, 255, .09);
+    --pane-wash: rgba(22, 22, 26, .5);
   }
 }
 /* With "reduce transparency" the glass is a plain surface (the window's own material answers the setting by itself). */
@@ -780,16 +782,19 @@
   /*
    * The window. The sidebar is a pane of the window's own material, set 8 px in from the window's edge with corners concentric to it. Around the
    * pane lies the content layer's color, painted by the pane's own far-spread shadow, so the pane is the one clear opening onto the material. It
-   * leaves by sliding out past the window's edge as its slot closes; in a browser the page's backdrop color shows where the material would.
+   * stands still and leaves by being covered as its slot closes (the glass under it need not move); in a browser the page's backdrop color shows
+   * where the material would.
    */
   .app-shell { --pane-inset: 8px; --pane-gap: 6px; --sidebar-width: var(--container-sidebar); }
   .sidebar-slot { position: relative; flex: none; width: var(--sidebar-width); overflow: clip; transition: width var(--dur-spring-soft) var(--ease-spring-soft), visibility 0s; }
   /* Away, it is not there for anyone: hidden once it has slid out. */
   .sidebar-slot[data-open="false"] { width: 0; visibility: hidden; transition: width var(--dur-spring-soft) var(--ease-spring-soft), visibility 0s linear var(--dur-spring-soft); }
   .sidebar-pane {
-    position: absolute; top: var(--pane-inset); bottom: var(--pane-inset); right: var(--pane-gap); width: calc(var(--sidebar-width) - var(--pane-inset) - var(--pane-gap)); border-radius: var(--radius-pane); background: var(--pane-tint);
+    position: absolute; top: var(--pane-inset); bottom: var(--pane-inset); left: var(--pane-inset); width: calc(var(--sidebar-width) - var(--pane-inset) - var(--pane-gap)); border-radius: var(--radius-pane); background: var(--pane-tint);
     box-shadow: var(--glass-rim), 0 0 0 .5px var(--border-strong), 0 6px 22px -6px rgba(0, 0, 0, .2), 0 0 0 100vmax var(--bg-app);
   }
+  /* Under the pane lies the system's own Liquid Glass: the page draws no rim or wash of its own over it, only the content layer around it. */
+  :root[data-material="liquid"] .sidebar-pane { background: var(--pane-wash); box-shadow: 0 0 0 100vmax var(--bg-app); }
   .content-pane { position: relative; background: var(--bg-app); }
   /* A page, or another conversation, arrives with a short fade, not a swap. The fade lets go of the page when it ends: a layer it kept would cut
      the glass inside the page off from what is behind it. */

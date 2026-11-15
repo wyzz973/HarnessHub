@@ -4,7 +4,7 @@ import { Menu as BaseMenu } from "@base-ui/react/menu";
 import { Popover as BasePopover } from "@base-ui/react/popover";
 import { Toast as BaseToast } from "@base-ui/react/toast";
 import { Check, X } from "lucide-react";
-import { useId, useMemo, useRef, useState, type ReactElement, type ReactNode, type RefObject } from "react";
+import { cloneElement, useEffect, useId, useMemo, useRef, useState, type ReactElement, type ReactNode, type Ref, type RefObject } from "react";
 import { cn } from "../lib/cn.js";
 
 type Side = "top" | "bottom" | "left" | "right";
@@ -86,6 +86,7 @@ export function Menu({ trigger, items, side = "bottom", align = "end", footer, c
   readonly open?: boolean; readonly onOpenChange?: (open: boolean) => void;
 }) {
   const id = useId();
+  if (systemMenu(items, footer)) return <SystemMenu trigger={trigger} items={items} side={side} open={open} onOpenChange={onOpenChange}/>;
   return <BaseMenu.Root {...(open === undefined ? {} : { open })} {...(onOpenChange ? { onOpenChange: (next: boolean) => onOpenChange(next) } : {})}>
     <BaseMenu.Trigger render={trigger}/>
     <BaseMenu.Portal>
@@ -118,19 +119,49 @@ export function Menu({ trigger, items, side = "bottom", align = "end", footer, c
  * In the desktop app a right-click's menu is the system's own, at the pointer, with the same entries (a link or an entry whose label is not plain words is left
  * out). False where there is no desktop app to show it: the caller opens its own menu.
  */
-export function showNativeMenu(items: readonly (MenuEntry | { readonly separator: true } | { readonly heading: string })[]): boolean {
+export function showNativeMenu(items: readonly (MenuEntry | { readonly separator: true } | { readonly heading: string })[], at?: { readonly x: number; readonly y: number }, closed?: () => void): boolean {
   if (desktop === null) return false;
   const run = new Map<string, () => void>();
   const entries = items.flatMap((item, index): DesktopMenuEntry[] => {
     if ("separator" in item && item.separator) return [{ type: "separator" }];
     if ("heading" in item) return [{ label: item.heading, enabled: false }];
     const entry = item as MenuEntry;
-    if (typeof entry.label !== "string" || entry.href !== undefined) return [];
-    if (entry.onSelect) run.set(String(index), entry.onSelect);
+    if (typeof entry.label !== "string") return [];
+    // A link of the menu (an export) is followed as its item would be.
+    const act = entry.href === undefined ? entry.onSelect : () => { const link = document.createElement("a"); link.href = entry.href!; if (entry.download) link.download = ""; link.click(); };
+    if (act) run.set(String(index), act);
     return [{ id: String(index), label: entry.label, enabled: entry.disabled !== true, ...(entry.checked === undefined ? {} : { type: "checkbox" as const, checked: entry.checked }) }];
   });
-  void desktop.menu(entries).then(chosen => { if (chosen !== null) run.get(chosen)?.(); });
+  void desktop.menu(entries, at).then(chosen => { closed?.(); if (chosen !== null) run.get(chosen)?.(); }, () => closed?.());
   return true;
+}
+/** Whether a menu's entries can all be the system's: plain words, no footer of the page's own. */
+const systemMenu = (items: readonly (MenuEntry | { readonly separator: true } | { readonly heading: string })[], footer: ReactNode): boolean =>
+  desktop !== null && footer === undefined && items.every(item => "separator" in item || "heading" in item || typeof (item as MenuEntry).label === "string");
+/**
+ * A menu in the desktop app: the system's own, opened under its trigger (above it for a menu that opens upward, by the height its entries will have).
+ */
+function SystemMenu({ trigger, items, side, open, onOpenChange }: {
+  readonly trigger: ReactElement; readonly items: readonly (MenuEntry | { readonly separator: true } | { readonly heading: string })[]; readonly side: Side;
+  readonly open?: boolean | undefined; readonly onOpenChange?: ((open: boolean) => void) | undefined;
+}) {
+  const node = useRef<HTMLElement | null>(null), showing = useRef(false);
+  const show = () => {
+    const element = node.current;
+    if (element === null || showing.current) return;
+    const box = element.getBoundingClientRect(), tall = items.reduce((sum, item) => sum + ("separator" in item ? 11 : 22), 10);
+    showing.current = true; element.setAttribute("data-popup-open", "");
+    showNativeMenu(items, { x: box.left, y: side === "top" ? Math.max(box.top - tall - 4, 0) : box.bottom + 4 }, () => { showing.current = false; element.removeAttribute("data-popup-open"); onOpenChange?.(false); });
+  };
+  // Opened by its owner (a row's right-click, a key): shown the same way.
+  useEffect(() => { if (open === true) show(); }, [open]);
+  const props = trigger.props as { readonly ref?: Ref<HTMLElement>; readonly onClick?: (event: unknown) => void };
+  return cloneElement(trigger as ReactElement<Record<string, unknown>>, {
+    "aria-haspopup": "menu",
+    ref: (element: HTMLElement | null) => { node.current = element; const theirs = props.ref; if (typeof theirs === "function") theirs(element); else if (theirs) (theirs as { current: HTMLElement | null }).current = element; },
+    // Its owner, where it has one, is told and opens it (the effect above); otherwise it opens itself.
+    onClick: (event: unknown) => { props.onClick?.(event); if (open !== undefined && onOpenChange) onOpenChange(true); else show(); },
+  });
 }
 
 /**

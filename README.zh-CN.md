@@ -149,7 +149,7 @@ pnpm build && pnpm web:build
 pnpm web --cwd /path/to/your/project --data-dir data --port 4317
 ```
 
-**桌面应用（macOS）。** `pnpm desktop:pack` 打出 `dist-desktop/HarnessHub-darwin-arm64/HarnessHub.app`：窗口是系统的毛玻璃材质，网关由应用自己带起（跑在应用自带的运行时上，不需要系统里的 Node），数据默认在 `~/Library/Application Support/HarnessHub/data`；已有的数据目录用 `--hub-data-dir <路径>` 指给它，或写进同目录的 `desktop.json`（`{"dataDir": "…"}`）。开发时用 `pnpm desktop` 直接运行（先执行一次 `node node_modules/electron/install.js` 取 Electron）。下面的浏览器入口还在，但界面按桌面应用来做。
+**桌面应用（macOS）。** `pnpm desktop:pack` 打出 `dist-desktop/HarnessHub-darwin-arm64/HarnessHub.app`：窗口是系统的毛玻璃材质，网关由应用自己带起（跑在应用自带的运行时上，不需要系统里的 Node），数据默认在 `~/Library/Application Support/HarnessHub/data`；已有的数据目录用 `--hub-data-dir <路径>` 指给它，或写进同目录的 `desktop.json`（`{"dataDir": "…"}`）。开发时用 `pnpm desktop` 直接运行（先执行一次 `node node_modules/electron/install.js` 取 Electron）。侧栏用系统的 Liquid Glass（macOS 26 起），为此要编一个很小的原生模块，需要 Xcode 命令行工具；编不出来或系统更旧时，窗口退回旧的毛玻璃材质。下面的浏览器入口还在，但界面按桌面应用来做。
 
 打开它打印的一次性链接。令牌会换成本机 cookie 并从地址栏移除；服务只监听 `127.0.0.1`，登录在你使用期间一直有效，8 小时没有活动才失效。关掉页面不会取消回复，<kbd>Ctrl</kbd>+<kbd>C</kbd> 会等进行中的工作收尾并保留历史。
 
