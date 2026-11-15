@@ -13,7 +13,7 @@ const forbidden = (error: unknown): boolean => error instanceof ControlError && 
 
 // WorkBuddy's CodeBuddy Code signs the user out when it is asked to authenticate (2026-11-15): no ACP Driver may send it, whoever asks.
 test("an ACP connection refuses to send authenticate before anything is written, and stays usable", async () => {
-  assert.ok(NEVER_SENT.has("authenticate"));
+  assert.ok(NEVER_SENT.has("authenticate") && NEVER_SENT.has("logout"));
   const directory = await mkdtemp(join(tmpdir(), "acp-never-authenticate-")), trace = join(directory, "trace");
   const driver = new AcpControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "split"], env: { FIXTURE_TRACE: trace } }, options);
   try {

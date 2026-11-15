@@ -49,7 +49,7 @@ export function builtinManagementRecipes(): readonly ManagementRecipe[] {
     if (control.distribution === null) {
       const native: Readonly<Record<string, { packageName: string; bin: string; maintenance?: Pick<ManagementRecipe, "services" | "processNames" | "pluginDirectory" | "upgradeNotes"> }>> = {
         "codex-native": { packageName: "@openai/codex", bin: "codex" }, "openclaw-native": { packageName: "openclaw", bin: "openclaw", maintenance: OPENCLAW_MAINTENANCE },
-        "pi-native": { packageName: "@earendil-works/pi-coding-agent", bin: "pi" },
+        "pi-native": { packageName: "@earendil-works/pi-coding-agent", bin: "pi" }, "codebuddy-code-npm": { packageName: "@tencent-ai/codebuddy-code", bin: "codebuddy" },
       };
       const source = native[control.id];
       if (source) result.push({ harnessId: definition.id, controlId: control.id, kind: "npm", packageName: source.packageName,

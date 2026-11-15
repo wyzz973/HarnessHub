@@ -13,6 +13,8 @@ import { CursorControl } from "./cursor.js";
 import { OpenCodeServerControl, openCodeServerRelayCapabilities } from "./opencode/control.js";
 import { ClaudeSdkControl, claudeRelayCapabilities } from "./claude/control.js";
 import { HermesGatewayControl, hermesRelayCapabilities } from "./hermes/control.js";
+import { CodeBuddyControl } from "./codebuddy/control.js";
+import { codebuddyRelayCapabilities } from "./codebuddy/reading.js";
 import { flavorOf } from "../flavors/index.js";
 import { ControlError } from "../../infrastructure/control/json-rpc-process.js";
 import { sessionEntryOf } from "../../contracts/flavor.js";
@@ -71,6 +73,7 @@ export async function createNativeControl(harnessId: string, launch: ControlLaun
   // launch that names the Web host itself has no fallback.
   if (harnessId === "dsh") return launch.protocol === "dsh-web" ? new DshWebControl(launch, options) : new DshDriver(launch, options);
   if (launch.protocol !== "acp-v1") throw new ControlError("UNSUPPORTED_CONTROL", "no Driver speaks " + launch.protocol + " yet");
+  if (harnessId === "codebuddy-code") return new CodeBuddyControl(launch, options);
   return harnessId === "cursor" ? new CursorControl(launch, options) : new AcpControl(launch, options);
 }
 
@@ -87,5 +90,6 @@ export function relayCapabilities(harnessId: string, protocol: ControlLaunch["pr
   if (protocol === "opencode-server") return openCodeServerRelayCapabilities;
   if (protocol === "hermes-gateway") return hermesRelayCapabilities;
   if (protocol === "openclaw-gateway") return openClawRelayCapabilities;
+  if (harnessId === "codebuddy-code" && protocol === "acp-v1") return codebuddyRelayCapabilities;
   return harnessId === "dsh" && (protocol === "acp-v1" || protocol === "dsh-web") ? dshWebRelayCapabilities : null;
 }

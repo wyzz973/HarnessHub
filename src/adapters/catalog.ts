@@ -5,8 +5,11 @@ import type { HarnessDefinition } from "../contexts/catalog/domain/catalog.js";
 import type { HarnessTier } from "../contracts/web.js";
 
 export type { HarnessTier };
-/** The seven Harnesses HarnessHub supports in full (ADR-048); WorkBuddy has no catalog definition yet and counts already. */
-const FOCUS: ReadonlySet<string> = new Set(["claude", "codex", "opencode", "dsh", "hermes", "openclaw", "workbuddy"]);
+/**
+ * The seven Harnesses HarnessHub supports in full (ADR-048). CodeBuddy Code took WorkBuddy's place on 2026-11-15 (the user's decision): the WorkBuddy app
+ * hands its sign-in only to its own sidecars, so its engine is driven as the npm CodeBuddy Code, a Harness of its own with its own sign-in.
+ */
+const FOCUS: ReadonlySet<string> = new Set(["claude", "codex", "opencode", "dsh", "hermes", "openclaw", "codebuddy-code"]);
 /** Frozen by ADR-046 item 6 and hidden by default by ADR-048 decision 1: adapters, tests and history stay, new work does not come. */
 const FROZEN: ReadonlySet<string> = new Set(["cursor", "gemini", "pi"]);
 /**
@@ -73,6 +76,15 @@ const nativeDefinitions: readonly HarnessDefinition[] = [
       package: { kind: "npm", name: "@deepseek-ai/dsh", version: "latest", binNames: ["dsh"] }, distribution: null, requiredExecutables: [],
       source: { repository: "deepseek-ai/deepseek-harness", revision: "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db", upstreamId: "dsh", url: "https://github.com/deepseek-ai/deepseek-harness/blob/66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db/packages/acp/acp/README.md" } }],
   },
+  {
+    // CodeBuddy Code's ACP on stdio (2.184.0). The control keeps the id of the ACP registry's entry, which it replaces: the user's own `codebuddy` from npm,
+    // not a copy fetched by npx. Started without its marketplace and plugin management (installed plugins still load) and without its self-update,
+    // so a Hub process changes nothing of the installation.
+    id: "codebuddy-code", name: "CodeBuddy Code", aliases: [], binaryNames: ["codebuddy"], configHints: [".codebuddy"],
+    controls: [{ id: "codebuddy-code-npm", protocol: "acp-v1", executableNames: ["codebuddy"], args: ["--acp", "--no-plugin-management"], env: { DISABLE_AUTOUPDATER: "1" },
+      package: { kind: "npm", name: "@tencent-ai/codebuddy-code", version: "latest", binNames: ["codebuddy"] }, distribution: null, requiredExecutables: [],
+      source: { repository: "cnb.cool/codebuddy/codebuddy-code", revision: "2.184.0", upstreamId: "codebuddy-code", url: "https://cnb.cool/codebuddy/codebuddy-code" } }],
+  },
 ];
 
 /**
@@ -96,6 +108,8 @@ const officialInstallations: Readonly<Record<string, { readonly command: string;
   pi: { command: "npm install -g @earendil-works/pi-coding-agent", docs: "https://www.npmjs.com/package/@earendil-works/pi-coding-agent", checkedAt: CHECKED, note: null },
   hermes: { command: "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
     docs: "https://github.com/NousResearch/hermes-agent/blob/4d04303818b61bf3aa09278af48356315515965b/README.md", checkedAt: "2026-10-22", note: null },
+  // The package's own README (2.184.0, read 2026-11-15).
+  "codebuddy-code": { command: "npm install -g @tencent-ai/codebuddy-code", docs: "https://cnb.cool/codebuddy/codebuddy-code", checkedAt: "2026-11-15", note: "装好后在终端运行 codebuddy，按提示登录一次；HarnessHub 不代为登录。" },
   dsh: { command: "npm install -g @deepseek-ai/dsh", docs: "https://github.com/deepseek-ai/deepseek-harness/blob/66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db/README.md", checkedAt: CHECKED, note: null },
 };
 export function officialInstallation(harnessId: string): { readonly command: string; readonly docs: string; readonly checkedAt: string; readonly note: string | null } | null {

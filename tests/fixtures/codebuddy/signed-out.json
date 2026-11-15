@@ -1,0 +1,109 @@
+{
+ "recorded": "2026-11-15",
+ "codebuddy": "2.184.0",
+ "note": "codebuddy --acp --no-plugin-management (npm, DISABLE_AUTOUPDATER=1), not signed in: initialize lists its four sign-in ways whatever the state; session/new answers -32000 {category: auth}. No authenticate, no prompt.",
+ "processes": [
+  [
+   {
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "method": "initialize",
+     "params": {
+      "protocolVersion": 1,
+      "clientCapabilities": {
+       "session": {
+        "notices": {},
+        "compaction": {}
+       },
+       "elicitation": {
+        "form": {}
+       }
+      },
+      "clientInfo": {
+       "name": "harnessgateway",
+       "title": "HarnessGateway",
+       "version": "0.0.0"
+      }
+     }
+    }
+   },
+   {
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "result": {
+      "protocolVersion": 1,
+      "agentCapabilities": {
+       "promptCapabilities": {
+        "image": true,
+        "embeddedContext": true
+       },
+       "mcpCapabilities": {
+        "http": true,
+        "sse": true
+       },
+       "loadSession": true,
+       "delegateToolsSupport": true,
+       "mainAgentSupport": false,
+       "multitaskSupport": true,
+       "toolModeSupport": false,
+       "codeModeSupport": false,
+       "metaPromptSupport": true
+      },
+      "authMethods": [
+       {
+        "id": "iOA",
+        "name": "Login with iOA",
+        "description": null
+       },
+       {
+        "id": "external",
+        "name": "Login with Google/Github",
+        "description": null
+       },
+       {
+        "id": "internal",
+        "name": "Login with WeChat",
+        "description": null
+       },
+       {
+        "id": "selfhosted",
+        "name": "Login with Enterprise Domain",
+        "description": null
+       }
+      ]
+     }
+    }
+   },
+   {
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 2,
+     "method": "session/new",
+     "params": {
+      "cwd": "/Users/test/.cache/harnesshub-acceptance/codebuddy-trial/workspace",
+      "mcpServers": []
+     }
+    }
+   },
+   {
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 2,
+     "error": {
+      "code": -32000,
+      "message": "Authentication required",
+      "data": {
+       "category": "auth"
+      }
+     }
+    }
+   }
+  ]
+ ]
+}

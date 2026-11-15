@@ -160,10 +160,10 @@ function instructionsBlock(text: string): string {
 }
 
 /**
- * ACP methods no Driver ever sends (2026-11-15, the user's decision): `authenticate` starts a sign-in, and WorkBuddy's CodeBuddy Code signs the
- * user out before it does. Refused before anything is written, whoever asks.
+ * ACP methods no Driver ever sends (2026-11-15, the user's decision): `authenticate` starts a sign-in, and CodeBuddy Code signs the user out
+ * before it does; `logout` signs the user out. Refused before anything is written, whoever asks.
  */
-export const NEVER_SENT: ReadonlySet<string> = new Set(["authenticate"]);
+export const NEVER_SENT: ReadonlySet<string> = new Set(["authenticate", "logout"]);
 function refuseNeverSent(method: string): void {
   if (NEVER_SENT.has(method)) throw new ControlError("METHOD_FORBIDDEN", "HarnessHub never sends ACP " + method + ": it would sign the user out of the Harness");
 }
@@ -517,8 +517,28 @@ export class AcpControl implements HarnessControl {
   protected get approvalDeadlineMs(): number | null { return null; }
   /** The status a tool update reports; an agent that reports failures as completed calls with failure text says so here. */
   protected toolStatus(status: string, _detail: NativeToolDetail | undefined): string { return status; }
-  /** A tool update's detail as this Driver knows its agent's tools (`title` is the call's, kept from its first update): dsh names every kind `other`. */
-  protected describeTool(_title: string, detail: NativeToolDetail | undefined): NativeToolDetail | undefined { return detail; }
+  /**
+   * A tool update's detail as this Driver knows its agent's tools (`title` is the call's, kept from its first update; `update` the update itself, for
+   * what the agent says in its own `_meta`): dsh names every kind `other`.
+   */
+  protected describeTool(_title: string, detail: NativeToolDetail | undefined, _update: Readonly<Record<string, unknown>>): NativeToolDetail | undefined { return detail; }
+  /**
+   * A session update of this connection's session in a shape the agent has and ACP has not (an agent's own kind, content that is not one block), or one
+   * this Driver drops: true when the Driver took it, and the generic handling is skipped. `report` adds an event to the Turn that runs; null between
+   * Turns. Called after the update is matched to the owned session and after a replay window dropped what it drops. The default takes nothing.
+   */
+  protected ownUpdate(_kind: string, _update: Readonly<Record<string, unknown>>, _report: ((event: ControlEvent) => void) | null): boolean { return false; }
+  /** The `_meta` a content or command prompt carries (session/prompt), or null for none: what the agent documents for its prompts. Read once per prompt. */
+  protected promptMeta(_prompt: string, _content: boolean): Readonly<Record<string, unknown>> | null { return null; }
+  /** Whether this connection is between Turns: no prompt runs, no session is being opened or forked. */
+  protected get idle(): boolean { return this.active === null && !this.opening && !this.forking; }
+  /**
+   * One request of the agent's own (an extension method), on this connection: "abort" fails the connection when the agent misses the deadline,
+   * "reject" gives up the request alone. NEVER_SENT is refused as for every request.
+   */
+  protected extRequest(method: string, params: Readonly<Record<string, unknown>>, deadline: "abort" | "reject" = "abort"): Promise<unknown> {
+    return this.rpc.request(method, params, this.options.requestTimeoutMs, deadline);
+  }
   /** The task list a call of the agent's own planning tool carries (dsh's `todo_write`), sent as the Turn's plan; null for any other call. */
   protected toolPlan(_title: string, _update: Readonly<Record<string, unknown>>): readonly NativePlanEntry[] | null { return null; }
   /**
@@ -826,7 +846,8 @@ export class AcpControl implements HarnessControl {
     const instructing = content && this.instructionsDue && this.instructions !== null;
     if (instructing) { blocks.push({ type: "text", text: instructionsBlock(this.instructions!) }); this.instructionsDue = false; }
     const recorded = (reason: string | null): { readonly input?: "recorded" } => content && (active.answered || reason !== null && this.promptRecorded(reason)) ? { input: "recorded" } : {};
-    const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks }, deadlineMs ?? this.options.runTimeoutMs ?? null, deadlineMs === null ? "abort" : "reject")
+    const meta = this.promptMeta(prompt, content);
+    const result = this.rpc.request("session/prompt", { sessionId: id, prompt: blocks, ...(meta === null ? {} : { _meta: meta }) }, deadlineMs ?? this.options.runTimeoutMs ?? null, deadlineMs === null ? "abort" : "reject")
       .then(value => {
         const response = object(value, "session/prompt result");
         const reason = string(response.stopReason, "ACP stop reason");
@@ -893,22 +914,31 @@ export class AcpControl implements HarnessControl {
    */
   async steer(id: NativeConversationId, text: string): Promise<SteerOutcome> {
     this.assertOwned(id);
-    if (!this.steeringAdvertised) throw new ControlError("NATIVE_STEER_UNAVAILABLE", "this agent does not advertise the ACP steering extension");
+    if (!this.steering) throw new ControlError("NATIVE_STEER_UNAVAILABLE", "this agent does not advertise the ACP steering extension");
     if (typeof text !== "string" || text.length === 0) throw new ControlError("INVALID_INPUT", "steering words must contain text");
     const active = this.active;
     if (active === null || active.settled || active.stopping) return "not_taken";
+    const asked = this.steerRequest(id, text);
     let response: Record<string, unknown>;
-    try {
-      response = object(await this.rpc.request(STEER_METHOD, { sessionId: id, prompt: [{ type: "text", text }], _meta: { steering: { idleBehavior: "promptRequired" } } },
-        this.options.requestTimeoutMs, "reject"), "steering result");
-    } catch (error) {
+    try { response = object(await this.rpc.request(asked.method, asked.params, this.options.requestTimeoutMs, "reject"), "steering result"); }
+    catch (error) {
       if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null && this.steerRefused(error)) return "not_taken";
       throw errorFrom(error);
     }
-    if (response.outcome === "injected") return "taken";
-    if (response.outcome === "promptRequired") return "not_taken";
-    // `startedNewTurn` is the answer of an agent that ignored the opt-in: a turn of its own, which the Hub neither started nor sees.
+    const outcome = this.steerOutcome(response);
+    if (outcome !== null) return outcome;
     throw new ControlError("INVALID_PROTOCOL", "the agent answered steering with an outcome it was not asked for");
+  }
+  /** The request that gives words to the turn in progress: the ACP steering extension, which never starts a turn of its own (`promptRequired`). */
+  protected steerRequest(id: NativeConversationId, text: string): { readonly method: string; readonly params: Readonly<Record<string, unknown>> } {
+    return { method: STEER_METHOD, params: { sessionId: id, prompt: [{ type: "text", text }], _meta: { steering: { idleBehavior: "promptRequired" } } } };
+  }
+  /**
+   * What the agent's answer to steerRequest says: taken, not taken, or null for an answer it was not asked for (the words' fate unknown). The ACP
+   * steering extension's `startedNewTurn` is the answer of an agent that ignored the opt-in: a turn of its own, which the Hub neither started nor sees.
+   */
+  protected steerOutcome(response: Readonly<Record<string, unknown>>): SteerOutcome | null {
+    return response.outcome === "injected" ? "taken" : response.outcome === "promptRequired" ? "not_taken" : null;
   }
   /**
    * Whether the agent's refusal of a steering request says it took nothing: it refuses with these before it touches the turn (claude-agent-acp
@@ -951,6 +981,8 @@ export class AcpControl implements HarnessControl {
       const params = raw === undefined ? {} : object(raw, "ACP notification params");
       // A session this connection gave up still talks: counted and dropped, never attributed or failed on.
       if (this.fromAbandoned(params)) { this.unattributed++; return; }
+      // A vendor's notice read in the same chunk as the setup's answer names a session this connection does not know yet: counted, never failed on.
+      if (params.sessionId !== undefined && this.opening && this.conversation === null) { this.unattributed++; return; }
       if (params.sessionId !== undefined) this.scope(params);
       if (method === "$/cancel_request") { this.withdraw(params.requestId); return; }
       if (!this.extensionNotification(method, params)) this.active?.event({ type: "diagnostic", message: `Unsupported ACP notification: ${method}` });
@@ -971,6 +1003,8 @@ export class AcpControl implements HarnessControl {
       if (this.collected && (kind === "user_message_chunk" || kind === "agent_message_chunk")) { this.collect(kind === "user_message_chunk" ? "user" : "assistant", update.content); return; }
       if (!metadataUpdates.has(kind)) return;
     }
+    const owner = this.active !== null && !this.active.settled ? this.active : null;
+    if (this.ownUpdate(kind, update, owner === null ? null : owner.event)) { if (owner !== null) owner.lastUpdate = Date.now(); return; }
     if (kind === "config_option_update") { this.readModels(update); return; }
     if (kind === "available_commands_update") {
       if (!Array.isArray(update.availableCommands)) throw new ControlError("INVALID_PROTOCOL", "native commands must be a list");
@@ -1021,7 +1055,7 @@ export class AcpControl implements HarnessControl {
       // first seen in a replay window. Identity is merged within this prompt; it never crosses prompts.
       const prior = active.tools.get(toolId);
       const title = update.title == null ? prior?.title ?? "工具调用" : label(update.title, prior?.title ?? "工具调用");
-      const detail = this.describeTool(title, toolDetail(update));
+      const detail = this.describeTool(title, toolDetail(update), update);
       const status = this.toolStatus(update.status == null ? (prior?.status ?? "pending") : string(update.status, "tool status", 64), detail);
       const fields = { ...prior?.fields, ...Object.fromEntries(["title", "kind", "rawInput", "locations"].flatMap(key => update[key] == null ? [] : [[key, update[key]]])) };
       active.tools.set(toolId, { title, status, fields });

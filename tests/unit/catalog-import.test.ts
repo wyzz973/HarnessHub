@@ -87,17 +87,16 @@ test("builtin catalog explicitly combines native and ACP controls while retainin
 });
 
 test("G011-NC3 the catalog's tiers: the seven focus Harnesses, the three frozen ones, and every other registry entry as catalog (ADR-048, ADR-050)", () => {
-  const focus = ["claude", "codex", "opencode", "dsh", "hermes", "openclaw", "workbuddy"], frozen = ["cursor", "gemini", "pi"];
+  const focus = ["claude", "codex", "opencode", "dsh", "hermes", "openclaw", "codebuddy-code"], frozen = ["cursor", "gemini", "pi"];
   for (const id of focus) assert.equal(harnessTier(id), "focus", id);
   for (const id of frozen) assert.equal(harnessTier(id), "frozen", id);
-  // Two registry entries, the registry's own CodeBuddy entry (WorkBuddy will be its own identity) and an unknown identity.
-  for (const id of ["autohand", "qwen", "codebuddy-code", "no-such-harness"]) assert.equal(harnessTier(id), "catalog", id);
-  // Every tiered identity but WorkBuddy, which has no definition yet, names a builtin definition, so a misspelt one fails here.
+  // Two registry entries, WorkBuddy (CodeBuddy Code took its place on 2026-11-15) and an unknown identity.
+  for (const id of ["autohand", "qwen", "workbuddy", "no-such-harness"]) assert.equal(harnessTier(id), "catalog", id);
+  // Every tiered identity names a builtin definition, so a misspelt one fails here.
   const definitions = loadBuiltinCatalog("darwin-aarch64"), ids = new Set(definitions.map(definition => definition.id));
-  for (const id of [...focus, ...frozen].filter(id => id !== "workbuddy")) assert.ok(ids.has(id), id + " is a catalog identity");
-  assert.equal(ids.has("workbuddy"), false, "WorkBuddy is focus before its definition exists");
+  for (const id of [...focus, ...frozen]) assert.ok(ids.has(id), id + " is a catalog identity");
   const tiers = definitions.map(definition => harnessTier(definition.id));
-  assert.deepEqual([tiers.filter(tier => tier === "focus").length, tiers.filter(tier => tier === "frozen").length, tiers.filter(tier => tier === "catalog").length], [6, 3, 36]);
+  assert.deepEqual([tiers.filter(tier => tier === "focus").length, tiers.filter(tier => tier === "frozen").length, tiers.filter(tier => tier === "catalog").length], [7, 3, 35]);
 });
 
 test("G011-NC1 the capability matrix records the tier the catalog gives each Harness, and exactly Cursor, Gemini CLI and Pi are frozen (ADR-048, ADR-050)", () => {

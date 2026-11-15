@@ -62,6 +62,8 @@ const products: Readonly<Record<string, OfficialChannels>> = {
     source: { url: "https://github.com/NousResearch/hermes-agent/blob/4d04303818b61bf3aa09278af48356315515965b/README.md", checkedAt: "2026-10-22" } },
   // Linked to the dsh-v0.2.2-rc.1 tag's commit on 2026-11-15 (the rc.2 tag before); that README runs the same npm package (`npx @deepseek-ai/dsh web`),
   // and the channel stays as read on 2026-10-17.
+  // CodeBuddy Code's own README (2.184.0, read 2026-11-15): npm only.
+  "codebuddy-code": { ...none, npm: ["@tencent-ai/codebuddy-code"], source: { url: "https://cnb.cool/codebuddy/codebuddy-code", checkedAt: "2026-11-15" } },
   dsh: { ...none, npm: ["@deepseek-ai/dsh"], source: { url: "https://github.com/deepseek-ai/deepseek-harness/blob/66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db/README.md", checkedAt: CHECKED } },
 };
 /**
@@ -91,6 +93,7 @@ const maintenance: Readonly<Record<string, ProductMaintenance>> = {
     // Options, alone or with a value, may stand between the program and `gateway`.
     resident: [{ command: /(?:(?:^|\/)hermes|hermes_cli\.main)(?:\s+--?[A-Za-z][\w-]*(?:=\S*|\s+(?!-)\S+)?)*\s+gateway(?:\s|$)/u, stop: "hermes gateway stop" }] },
   dsh: { services: [], data: [".dsh"], resident: [] },
+  "codebuddy-code": { services: [], data: [".codebuddy"], resident: [] },
 };
 /** The official channels of a product, or null when they are not recorded. */
 export function productChannels(harnessId: string): OfficialChannels | null { return products[harnessId] ?? null; }
@@ -165,6 +168,8 @@ const installs: Readonly<Record<string, OfficialInstallMethod>> = {
       "装好后请在终端运行 openclaw onboard --install-daemon 完成配置；装好服务之前，OpenClaw 的网关不会运行。"] },
   gemini: { kind: "npm", package: "@google/gemini-cli", bin: "gemini", command: "npm install -g @google/gemini-cli", notes: ["官方仓库写明：自 2026-06-18 起，免费用户与 Google One 用户改用 Antigravity CLI。"] },
   pi: { kind: "npm", package: "@earendil-works/pi-coding-agent", bin: "pi", command: "npm install -g @earendil-works/pi-coding-agent", notes: [] },
+  "codebuddy-code": { kind: "npm", package: "@tencent-ai/codebuddy-code", bin: "codebuddy", command: "npm install -g @tencent-ai/codebuddy-code",
+    notes: ["装好后在终端运行 codebuddy，按提示登录一次；HarnessHub 不代为登录。"] },
   dsh: { kind: "npm", package: "@deepseek-ai/dsh", bin: "dsh", command: "npm install -g @deepseek-ai/dsh", notes: ["DeepSeek Harness 会读取 ~/.dsh 下已有的配置和 acp profile（包括源码版留下的）；HarnessHub 还没有验证它们与官网版的兼容性。"] },
   // The command v0.22.4's README and installation page give (read 2026-10-22).
   hermes: { kind: "terminal", command: "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
