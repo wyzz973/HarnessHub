@@ -224,12 +224,13 @@ test("G012-OC1 Hermes's version is the one its checkout's install stamp names; w
 
 test("G012-OC1 the catalog follows Hermes's and DeepSeek Harness's channels: their packages name the channel's latest, and every link is pinned to the commit of the release read", () => {
   const catalog = loadBuiltinCatalog("darwin-aarch64"), native = (id: string) => catalog.find(item => item.id === id)!.controls.find(item => item.id === id + "-native")!;
-  const HERMES = "4d04303818b61bf3aa09278af48356315515965b", DSH = "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db";
+  // Hermes's install page was read at 4d04303 (2026-10-22); its control is the v0.23.1 gateway (3b42157), read from that release's developer guide.
+  const HERMES = "4d04303818b61bf3aa09278af48356315515965b", HERMES_GATEWAY = "3b421578588243f920886e6fe79a6faa87ea026e", DSH = "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db";
   // The catalog's parser accepts the channel's latest as a package version; the versions really verified are evidence elsewhere (ADR-053).
   assert.deepEqual(native("hermes").package, { kind: "python", name: "hermes-agent", version: "latest", binNames: ["hermes"] });
   assert.deepEqual(native("dsh").package, { kind: "npm", name: "@deepseek-ai/dsh", version: "latest", binNames: ["dsh"] });
-  // Hermes v0.22.4 (tag v0.22.4) has no acp_registry/agent.json; its ACP page stands in. DeepSeek Harness at the dsh-v0.2.2-rc.1 tag.
-  assert.deepEqual([native("hermes").source.revision, native("hermes").source.url], [HERMES, "https://github.com/NousResearch/hermes-agent/blob/" + HERMES + "/website/docs/user-guide/features/acp.md"]);
+  // Hermes's gateway at v0.23.1, by its programmatic-integration guide. DeepSeek Harness at the dsh-v0.2.2-rc.1 tag.
+  assert.deepEqual([native("hermes").source.revision, native("hermes").source.url], [HERMES_GATEWAY, "https://github.com/NousResearch/hermes-agent/blob/" + HERMES_GATEWAY + "/website/docs/developer-guide/programmatic-integration.md"]);
   assert.deepEqual([native("dsh").source.revision, native("dsh").source.url], [DSH, "https://github.com/deepseek-ai/deepseek-harness/blob/" + DSH + "/packages/acp/acp/README.md"]);
   assert.equal(productChannels("hermes")!.source.url, "https://github.com/NousResearch/hermes-agent/blob/" + HERMES + "/README.md");
   assert.equal(productChannels("dsh")!.source.url, "https://github.com/deepseek-ai/deepseek-harness/blob/" + DSH + "/README.md");

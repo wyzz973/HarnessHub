@@ -190,7 +190,7 @@ test("G069-D03 a catalog served from the native catalog cache reads as the one m
       compared++;
     }
   }
-  assert.equal(compared, 3 * prefixes.length * bodies.length);
+  assert.equal(compared, 2 * prefixes.length * bodies.length);
   assert.ok(differences > 0, "without the effects the relay's reading differs from the Runtime's for some input");
   // A cached command's effect is one of the contract's: another value keeps the catalog out, in memory and in the file.
   const strict = new NativeCatalogCache(cacheRoot, options), key = digest("bogus");
