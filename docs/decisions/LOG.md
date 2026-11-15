@@ -4,6 +4,11 @@
 
 ## 2026-11-15
 
+- **WorkBuddy 探测没通过，驱动暂停。**（用户同意的那一次探测：只做 `initialize`，`session/new` 没轮到。）Hub 单独启动的 CodeBuddy Code 读不到用户的登录：应用把凭据加密存放，解密钥匙只经 `CODEBUDDY_SIDECAR_CREDENTIAL_BOOTSTRAP_SOCKET` 交给应用自己起的侧车。它试着刷新一次令牌，被拒 401，没写任何文件。另外，这个精简版只加 `--acp` 不在标准输入输出上提供 ACP，而是在随机端口开 HTTP 版。
+  - 留下的防护：任何 ACP 连接都不会发 `authenticate`，发出前就抛错，有测试锁住。
+  - 探测的副作用：刷新了几份 `local_storage` 缓存；启动了应用的两个插件 MCP 服务（weixinpay、sheetagent），跑了它们的启动钩子。设置文件、密钥、令牌文件的哈希不变；探测建的空会话等已移到废纸篓。
+  - 下一步待用户定：接应用内部的钥匙通道（等于冒充应用自己的进程），还是改用 npm 版 CodeBuddy Code 自带登录、算另一个 Harness（ADR-048 路线 A），还是先不接。
+
 - **Hermes 换到它自己的网关协议 hermes-gateway-v1。**（Opus 5.5 xhigh 子代理在独立 worktree 写，拣入。）先 `hermes backup`，再升到 v0.23.1。驱动只附着到用户在跑的网关，从不启动或重启它；只发一张写死清单上的方法；Hub 的会话是本地编辑器会话，不绑定任何消息平台。功能：
   - 真插话（`session.steer`）。
   - 每条消息的结果按回执和已提交的用户行判断：已进历史、没进、不确定，不确定的不重发。
