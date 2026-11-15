@@ -65,7 +65,8 @@ export function requestFailure(method: string, error: unknown): ControlError {
 /**
  * The real connection (`@openclaw/gateway-client`, MIT, pinned to the installed Gateway): HarnessHub's paired device signs the challenge; the
  * shared token goes only with the first connection, before the Gateway issued the device its own token (loopback pairs silently,
- * docs/gateway/pairing.md); protocol v4 exactly.
+ * docs/gateway/pairing.md); protocol v4 exactly. The client is `gateway-client` in mode `cli`: as a `backend` on loopback the Gateway
+ * would skip pairing (shouldSkipLocalBackendSelfPairing) and never issue the device a token of its own.
  */
 export const connectGateway: GatewayConnector = async (handlers, env, timeoutMs) => {
   const target = await gatewayTarget(env), device = await DeviceStore.open(devicePath(env)), role = "operator";
@@ -73,7 +74,7 @@ export const connectGateway: GatewayConnector = async (handlers, env, timeoutMs)
   let first: { resolve(hello: GatewayHello): void; reject(error: Error): void } | null = null, up = false, closed = false;
   const opened = new Promise<GatewayHello>((resolve, reject) => { first = { resolve, reject }; });
   const client = new GatewayClient({
-    url: target.url, ...(shared ? { token: shared } : {}), clientName: "gateway-client", mode: "backend", clientDisplayName: "HarnessHub", clientVersion: CLIENT_VERSION, platform: process.platform,
+    url: target.url, ...(shared ? { token: shared } : {}), clientName: "gateway-client", mode: "cli", clientDisplayName: "HarnessHub", clientVersion: CLIENT_VERSION, platform: process.platform,
     role, scopes: SCOPES, caps: CAPS, minProtocol: PROTOCOL_VERSION, maxProtocol: PROTOCOL_VERSION, requestTimeoutMs: timeoutMs, deviceIdentity: device.identity,
     hostDeps: {
       signDevicePayload: signPayload, publicKeyRawBase64UrlFromPem: publicKeyRaw,
