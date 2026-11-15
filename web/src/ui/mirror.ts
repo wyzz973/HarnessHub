@@ -107,7 +107,9 @@ export function startMirror(root: HTMLElement, blank: string): Mirror | null {
   };
   let settling = false;
   const settleSoon = () => { if (!settling) { settling = true; requestAnimationFrame(() => { settling = false; settle(); }); } };
+  let changed = performance.now();
   const body = new MutationObserver(records => {
+    changed = performance.now();
     const parents = new Set<Node>();
     for (const record of records) if (record.type === "childList") parents.add(record.target);
     for (const parent of parents) sameChildren(parent);
@@ -134,6 +136,16 @@ export function startMirror(root: HTMLElement, blank: string): Mirror | null {
   document.addEventListener("scroll", follow, { capture: true, passive: true });
   window.addEventListener("resize", settleSoon);
 
+  // Now and then, while the page is still, the copy is counted against the page; one that has come apart is made again whole.
+  const held = () => root.querySelectorAll("*").length - root.querySelectorAll("script, noscript, template, iframe *, video *, audio *, object *, embed *").length;
+  const audit = window.setInterval(() => {
+    const twin = twins.get(root) as Element | undefined;
+    if (twin === undefined || performance.now() - changed < 1500 || document.visibilityState === "hidden") return;
+    if (twin.querySelectorAll("*").length === held()) return;
+    const again = copyOf(root);
+    if (again !== null) { twin.replaceWith(again); settle(); }
+  }, 4000);
+
   const ready = Promise.race([Promise.all(loading), new Promise(done => setTimeout(done, 2000))]).then(() => {
     // Whatever was already scrolled when the copy was made (a conversation opened at its latest reply).
     for (const element of root.querySelectorAll("*")) if (element.scrollTop !== 0 || element.scrollLeft !== 0) scrolled.add(element);
@@ -141,6 +153,6 @@ export function startMirror(root: HTMLElement, blank: string): Mirror | null {
   });
   return {
     ready, settle,
-    stop: () => { head.disconnect(); frame.disconnect(); body.disconnect(); document.removeEventListener("scroll", follow, { capture: true }); window.removeEventListener("resize", settleSoon); },
+    stop: () => { window.clearInterval(audit); head.disconnect(); frame.disconnect(); body.disconnect(); document.removeEventListener("scroll", follow, { capture: true }); window.removeEventListener("resize", settleSoon); },
   };
 }
