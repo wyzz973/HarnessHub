@@ -272,6 +272,7 @@ function permission(value: unknown): NonNullable<SessionView["permissions"]>[num
   const input = maybe(request.input, item => { const made = rec(item, "an input"); return { kind: pick(made.kind, ["text", "editor", "secret"] as const, "an input kind"), value: str(made.value, "an input value") }; });
   return { id: str(request.id, "a request id"), runId: str(request.runId, "a Run"), title: str(request.title, "a title"), decided: bool(request.decided, "decided"), requestedAt: amount(request.requestedAt, "requestedAt"),
     ...(expiresAt === undefined ? {} : { expiresAt, expiresBy: pick(request.expiresBy, ["native", "turn"] as const, "expiresBy") }), ...(kind === undefined ? {} : { kind }), ...(detail === undefined ? {} : { detail }), ...(input === undefined ? {} : { input }),
+    ...(request.note === true ? { note: true as const } : {}),
     options: many(request.options, item => { const option = rec(item, "an option"); return { id: str(option.id, "an option id"), name: str(option.name, "an option name") }; }, "options") };
 }
 function nativeState(value: unknown): NativeStateView {

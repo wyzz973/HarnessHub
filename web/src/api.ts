@@ -120,8 +120,12 @@ function decodeFlavor(value: unknown): HarnessFlavor {
     ...(row.speed === undefined ? {} : { speed: (speed => { const option = record(speed.option);
       return { option: { ...(option.ids === undefined ? {} : { ids: list(option.ids, text) }), category: text(option.category) }, standard: text(speed.standard),
         ...(speed.names === undefined ? {} : { names: Object.fromEntries(Object.entries(record(speed.names)).map(([native, name]) => [native, text(name)])) }) }; })(record(row.speed)) }),
-    // Of the capabilities the page reads one: whether the Harness takes words in the middle of a Turn (`steer`, 2026-11-14).
-    ...(row.capabilities === undefined ? {} : { capabilities: (capabilities => capabilities.steer === undefined ? {} : { steer: choice(capabilities.steer, ["native", "none"] as const) })(record(row.capabilities)) }) };
+    // Of the capabilities the page reads these: whether the Harness takes words in the middle of a Turn (`steer`, 2026-11-14), and whether it keeps its
+    // process between Turns by default (`keep`, `prewarm`, 2026-11-15: what the new conversation's 保持原生进程 shows before the user changes it).
+    ...(row.capabilities === undefined ? {} : { capabilities: (capabilities => ({
+      ...(capabilities.steer === undefined ? {} : { steer: choice(capabilities.steer, ["native", "none"] as const) }),
+      ...(capabilities.keep === undefined ? {} : { keep: choice(capabilities.keep, ["session", "none"] as const) }),
+      ...(capabilities.prewarm === undefined ? {} : { prewarm: choice(capabilities.prewarm, ["session", "none"] as const) }) }))(record(row.capabilities)) }) };
 }
 /** The answer to words given to the Turn in progress (`POST /sessions/:id/steer`). */
 function decodeSteer(value: unknown, session: string): SteerView {
