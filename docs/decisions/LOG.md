@@ -4,6 +4,13 @@
 
 ## 2026-11-15
 
+- **WorkBuddy 改接 npm 版 CodeBuddy Code。**（用户：“npm版”。）WorkBuddy 应用的登录钥匙只交给它自己的侧车，Hub 接不了。所以装了 npm 的 `@tencent-ai/codebuddy-code` 2.184.0，作为独立的 Harness“CodeBuddy Code”，在重点名单里取代 WorkBuddy，由用户在它的命令行里登录一次。（子代理在独立 worktree 写，快进合入。）
+  - Hub 起的进程是 `codebuddy --acp --no-plugin-management`，并设 `DISABLE_AUTOUPDATER=1`：已装的插件照常加载，插件市场同步和自动更新不跑。
+  - 档位用它的 `mode`，思考强度用 `thought_level`；压缩摘要显示成一条压缩进度；子 Agent 的文字不进主回复；TodoWrite 显示成计划。能力声明 `keep: session`。
+  - 插话（`session/steer`）和回退（`_codebuddy.ai/session/rollback`）已经写好，但要等登录后在真机上核实，在那之前声明为关。
+  - ACP 连接也绝不发 `logout`（和 `authenticate` 一样）。
+  - 真机：只做了 `initialize` 加 `session/new`，回的是 Authentication required，等用户登录后再跑一整轮。
+
 - **合并后整体真机冒烟，六家都过。**（试用服务，临时工作区，各家便宜的模型；同一套四步：回词、再回词、把第二轮编辑重发、问它前面回过哪几个词。）六家最后都答“苹果、橙子”，没有被退掉的“香蕉”。
   - 第二轮都复用了留着的进程（`native.process_reused`）：Codex 9.1→5.1 秒，Claude Code 13.1→2 秒，OpenCode 7→4 秒，OpenClaw 4→2 秒，Hermes 3→3 秒，dsh 6→2 秒。
   - 编辑重发：Codex、Claude Code、OpenCode、OpenClaw、Hermes 在原生会话里退轮（`native.rolled_back`）；dsh 走 Hub 带历史开新会话。
