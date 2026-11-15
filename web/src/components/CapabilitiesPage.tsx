@@ -610,7 +610,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
         <h2 ref={heading} tabIndex={-1} className="m-0 text-section outline-none">{KIND_LABEL[kind]} <span className="font-normal text-fg-3">{counts[kind]}</span></h2>
         <p className="m-0 text-ui-sm text-pretty text-fg-2">{pickable ? PICK_HINT : KIND_HINT[kind]}</p>
       </div>
-      <label className={cn("flex h-[34px] items-center gap-2 rounded-control bg-surface px-2.5 text-fg-3 shadow-[inset_0_0_0_1px_var(--border-strong)] focus-within:shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_var(--accent-soft)]", wide ? "w-[220px]" : "min-w-[160px] flex-1")}>
+      <label className={cn("flex h-7 items-center gap-2 rounded-control bg-surface px-2.5 text-fg-3 shadow-[inset_0_0_0_1px_var(--border-strong)] focus-within:shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_var(--accent-soft)]", wide ? "w-[220px]" : "min-w-[160px] flex-1")}>
         <Search size={15} aria-hidden="true" className="flex-none"/>
         <input className="h-full min-w-0 flex-1 border-0 bg-transparent p-0 text-ui-sm text-fg outline-none placeholder:text-placeholder" aria-label="搜索能力" placeholder={"搜索" + (/^[A-Za-z]/u.test(KIND_LABEL[kind]) ? " " : "") + KIND_LABEL[kind]} value={query} onChange={event => setQuery(event.target.value)}/>
       </label>
@@ -626,7 +626,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
       <ul className="m-0 flex list-none flex-col gap-0.5 p-0">{view.unreadable.map((item, index) => <li key={index}><code className="text-caption">{item.file}</code>：{item.reason}</li>)}</ul></Notice> : null}
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-ui-sm">
       <span className="relative inline-flex">
-        <select className="field h-[30px] w-auto appearance-none py-0 pr-8 pl-2.5" aria-label="只看一个 Harness" value={harness ?? ""} onChange={event => setHarness(event.target.value || null)}>
+        <select className="field h-7 w-auto appearance-none py-0 pr-8 pl-2.5" aria-label="只看一个 Harness" value={harness ?? ""} onChange={event => setHarness(event.target.value || null)}>
           <option value="">全部 Harness</option>{shown.map(item => <option key={item.harnessId} value={item.harnessId}>{item.name}</option>)}</select>
         <ChevronDown size={14} aria-hidden="true" className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-fg-3"/></span>
       <label className="flex items-center gap-2 text-fg-2"><input type="checkbox" className="size-3.5 accent-accent" checked={onlyWarnings} onChange={event => setOnlyWarnings(event.target.checked)}/>只看有提示或未生效的</label>

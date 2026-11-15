@@ -433,7 +433,7 @@ export function HarnessesPage(props: HarnessProps) {
     onUpgradeRequest={(harness, installation) => upgradeInstallation(harness, installation, true)}/> : null;
   // The frame of the pages beside the conversation (Agent board), without a way back of its own: the sidebar is it (ADR-054
   // 补充 D). While the details sit beside the cards, the body (and its scrollbar) ends where the sheet begins.
-  return <><PageShell ref={frame} title="Harness" titleId="harnesses-title" wide bodyClassName={cn("harness-management-body", room && "mr-[360px]")}
+  return <><PageShell ref={frame} title="Harness" titleId="harnesses-title" wide bodyClassName={cn("harness-management-body", room && "mr-[368px]")}
     onMenu={props.onMenu} sidebarHidden={props.sidebarHidden} onExpandSidebar={props.onExpandSidebar}
     description={mine.length ? `这台 Mac 上的 ${mine.length} 个 Harness` : "这台 Mac 上还没有找到 Harness"}
     actions={<>
@@ -486,7 +486,7 @@ export function HarnessesPage(props: HarnessProps) {
       ? <BaseDialog.Root open={selected !== null} modal={false} disablePointerDismissal onOpenChange={open => { if (!open) setSelectedId(null); }}
         onOpenChangeComplete={open => { if (!open) setRoom(false); }}>
         <BaseDialog.Portal>
-          <BaseDialog.Popup className="drawer-pop z-40 w-[360px] hairline-l [box-shadow:none]">
+          <BaseDialog.Popup className="drawer-pop side-sheet z-40 w-[360px]">
             <BaseDialog.Title className="sr-only">{detailTitle}</BaseDialog.Title>{details}
           </BaseDialog.Popup>
         </BaseDialog.Portal>

@@ -306,7 +306,7 @@ export function DetailsPanel(props: PanelProps) {
   const closeFile = (path: string) => { setOpened(current => current.filter(item => item !== path)); setViewing(current => current === path ? null : current); };
   const base = (path: string): string => path.split("/").at(-1) ?? path;
   return <div className="details-panel flex h-full min-h-0 w-full min-w-0 flex-col bg-surface">
-    <div className="flex h-[54px] flex-none items-stretch gap-2 pr-3 pl-[18px] hairline-b">
+    <div className="flex h-[54px] flex-none items-stretch gap-2 pr-3 pl-4 hairline-b">
       <div className={cn("flex h-full min-w-0 flex-1 items-stretch gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none]", viewing !== null && "[&_.tab[aria-selected=true]]:text-fg-2 [&_.tabs-indicator]:opacity-0")}>
         <Tabs className="h-full flex-none [&>.tab]:h-full" items={tabs} value={shown} onChange={value => { setViewing(null); props.onTab(value); }} label="详情分类" idPrefix="details-tab" panelId="details-tabpanel"/>
         {/* The files stand apart from the four pages: a hairline between, then each file's tab. */}
@@ -372,7 +372,7 @@ function contextEvents(runs: readonly PublicRun[]): readonly ContextEvent[] {
 
 /** One section of the overview: its name, the one figure that sums it up, and — when a page holds the whole of it — the way there from its name. */
 function Section({ title, heading, figure, onOpen, children, className, label }: { readonly title: string; readonly heading?: ReactNode; readonly figure?: ReactNode; readonly onOpen?: (() => void) | undefined; readonly children?: ReactNode; readonly className?: string; readonly label?: string }) {
-  return <section className={cn("panel-section flex min-w-0 flex-col px-[18px] pt-3 pb-3.5 hairline-b last:border-b-0", className)} aria-label={label ?? title}>
+  return <section className={cn("panel-section flex min-w-0 flex-col px-4 pt-3 pb-3.5 hairline-b last:border-b-0", className)} aria-label={label ?? title}>
     <header className="flex min-h-6 items-center gap-2">
       {heading !== undefined ? heading : onOpen ? <button type="button" className="group/title -ml-1.5 flex min-w-0 items-center gap-0.5 rounded-row border-none bg-transparent py-0.5 pr-1 pl-1.5 text-ui font-medium text-fg hover:bg-subtle" onClick={onOpen}>
         <span className="trunc">{title}</span><ChevronRight size={13} strokeWidth={2} aria-hidden="true" className="flex-none text-fg-3 transition-transform duration-120 ease-standard group-hover/title:translate-x-0.5"/></button>
@@ -548,14 +548,14 @@ function ContextSection({ window, runs, relay, name, onOpen }: { readonly window
 function ContextPage({ window, runs, relay, name }: { readonly window: WindowUse | null; readonly runs: readonly PublicRun[]; readonly relay: PanelProps["relay"]; readonly name: (id: string) => string }) {
   const events = contextEvents(runs);
   return <div className="flex flex-col">
-    {window !== null ? <section className="flex flex-col px-[18px] pt-4 pb-4 hairline-b" aria-label="上下文窗口">
+    {window !== null ? <section className="flex flex-col px-4 pt-4 pb-4 hairline-b" aria-label="上下文窗口">
       <div className="flex items-baseline gap-2"><span className="text-[22px] leading-7 font-medium tabular-nums">{percent(window) ?? tokens(window.used)}</span>
         <span className="text-caption text-fg-3">{window.size === null ? "tokens，这个 Harness 没有报窗口大小" : "的窗口已用"}</span></div>
       <WindowBar window={window} className="mt-2.5"/>
       <p className="m-0 mt-2.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-3"><BrandIcon brand={window.harnessId} name={window.harness} size={16}/>
         <span className="min-w-0 trunc">{window.harness} 在第 {window.n} 轮报的：<span className="text-fg-2 tabular-nums">{window.used.toLocaleString()}{window.size === null ? "" : " / " + window.size.toLocaleString()}</span> tokens</span></p>
     </section> : null}
-    {events.length > 0 ? <section className="flex flex-col gap-1 px-[18px] pt-3 pb-3.5 hairline-b" aria-label="上下文的变化">
+    {events.length > 0 ? <section className="flex flex-col gap-1 px-4 pt-3 pb-3.5 hairline-b" aria-label="上下文的变化">
       <span className="text-caption text-fg-3">发生过的</span>
       <ul className="m-0 flex list-none flex-col gap-1.5 p-0">{events.map((event, index) => <li key={index} className="flex min-w-0 items-baseline gap-2 text-ui-sm"><span className="w-[52px] flex-none text-caption text-fg-3 tabular-nums">第 {event.n} 轮</span><span className="min-w-0 break-words">{event.text}</span></li>)}</ul>
     </section> : null}

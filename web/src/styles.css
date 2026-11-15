@@ -617,10 +617,14 @@
   .palette-pop[data-starting-style] { opacity: 0; transform: translateY(-10px) scale(.97); }
   .palette-pop[data-ending-style] { opacity: 0; transform: scale(.98); transition: opacity 110ms ease-in, transform 110ms ease-in; }
   .drawer-pop {
-    position: fixed; right: 0; top: 0; bottom: 0; width: min(420px, 100vw); display: flex; flex-direction: column; background: var(--bg-surface); box-shadow: var(--sh-pop); outline: none;
+    position: fixed; right: 8px; top: 8px; bottom: 8px; width: min(420px, calc(100vw - 16px)); display: flex; flex-direction: column; overflow: hidden; border-radius: var(--radius-pane); background: var(--bg-surface); box-shadow: var(--sh-pop); outline: none;
     transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-spring-soft) var(--ease-spring-soft);
   }
   .drawer-pop[data-starting-style], .drawer-pop[data-ending-style] { opacity: 0; transform: translateX(24px); }
+  /* A sheet that stays beside the page (a Harness's details) lies as flat as the details of a conversation, and the page beside it makes way
+     at the sheet's own pace. Every drawer is a pane set in from the window's edge. */
+  .side-sheet { box-shadow: var(--sh-pane); }
+  .harness-management-body { transition: margin-right var(--dur-spring-soft) var(--ease-spring-soft); }
   .drawer-pop[data-ending-style] { transition-duration: var(--dur-base); transition-timing-function: ease-in; }
   .drawer-left-pop {
     position: fixed; left: 0; top: 0; bottom: 0; width: min(300px, 86vw); display: flex; flex-direction: column; background: var(--glass-thick); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); box-shadow: var(--sh-pop); outline: none;
@@ -852,6 +856,10 @@
   :root[data-glass="system"] .sidebar-pane { background: transparent; }
   .chat-notices:not(:empty) ~ .chat-scroll { padding-top: 16px; }
 
+  /* The terminal rises from the window's foot at its full height (so what is in it is laid out once), pushing the conversation up as it comes. */
+  .terminal-drawer { transition: margin-bottom 260ms var(--ease-out); }
+  @starting-style { .terminal-drawer { margin-bottom: calc(-1 * var(--drawer-height, 0px)); } }
+
   /* A search field that opens the palette: it looks like where one types, and is pressed. */
   .search-field { display: flex; align-items: center; gap: 6px; width: 100%; height: 28px; padding: 0 8px; border: none; border-radius: var(--radius-row); background: var(--bg-subtle); color: var(--text-3);
     font-size: 13px; line-height: 20px; text-align: left; transition: background-color var(--dur-fast) var(--ease-standard); }
@@ -868,7 +876,7 @@
  * Important declarations in the base layer outrank those of later layers, so this also wins over the reduced-motion fades.
  */
 @layer base {
-  :root[data-input="keyboard"] :is(.surface-pop, .tooltip-pop, .backdrop, .dialog-pop, .palette-pop, .drawer-pop, .drawer-left-pop, .sheet-pop, .tabs-indicator, .segmented-thumb, .switch, .switch-thumb, .collapsible, .motion-rotate, .floating-bar, .btn, .press, .sidebar-slot, .titlebar) {
+  :root[data-input="keyboard"] :is(.surface-pop, .tooltip-pop, .backdrop, .dialog-pop, .palette-pop, .drawer-pop, .drawer-left-pop, .sheet-pop, .tabs-indicator, .segmented-thumb, .switch, .switch-thumb, .collapsible, .motion-rotate, .floating-bar, .btn, .press, .sidebar-slot, .titlebar, .terminal-drawer, .harness-management-body) {
     transition-duration: 0s !important;
   }
   :root[data-input="keyboard"] :is(.btn, .press):active { transform: none !important; }
