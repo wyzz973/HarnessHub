@@ -36,6 +36,8 @@ export class RedactedHarnessControl implements HarnessControl {
   readonly setTitle?: (id: NativeConversationId, title: string) => Promise<void>;
   /** Present only when the inner Driver can take turns out of its native history, so the Runtime tells the capability by it. */
   readonly rollback?: (id: NativeConversationId, turns: number) => Promise<void>;
+  /** Present only when the inner Driver branches on its own connection (Codex `thread/fork`). */
+  readonly openFork?: (cwd: string, model: string | undefined, options: NativeOptions | undefined, source: string) => Promise<NativeConversationId>;
   /** The inner Driver's static relay declaration, the same object (ADR-055 §3.2). */
   readonly relayCapabilities?: RelayCapabilities;
   /** Whether the inner Driver hands the Hub's tools to its sessions itself. */
@@ -47,6 +49,7 @@ export class RedactedHarnessControl implements HarnessControl {
     if (inner.relayCapabilities !== undefined) this.relayCapabilities = inner.relayCapabilities;
     if (inner.setTitle) this.setTitle = (id, title) => this.safe(() => inner.setTitle!(id, title));
     if (inner.rollback) this.rollback = (id, turns) => this.safe(() => inner.rollback!(id, turns));
+    if (inner.openFork) this.openFork = (cwd, model, options, source) => this.safe(() => inner.openFork!(cwd, model, options, source));
     if (inner.setSessionInstructions) this.setSessionInstructions = (text, tools) => inner.setSessionInstructions!(text, tools);
   }
 
@@ -89,12 +92,16 @@ export class RedactedHarnessControl implements HarnessControl {
   }
   async startText(id: NativeConversationId, text: TurnText, onEvent: (event: ControlEvent) => void, attachments?: readonly ControlAttachment[]): Promise<ControlRun> {
     const redactor = this.stream();
+    // The text keeps its item: a new item is another message, so what the redactor holds of the last one is let out under it first.
+    let item: string | undefined;
+    const emit = (value: string) => onEvent({ type: "text", text: value, ...(item === undefined ? {} : { item }) });
     const run = await this.safe(() => this.inner.startText(id, text, value => {
-      if (value.type !== "text") onEvent(publicEvent(value, this.redact));
-      else { const safe = redactor.push(value.text); if (safe) onEvent({ type: "text", text: safe }); }
+      if (value.type !== "text") { onEvent(publicEvent(value, this.redact)); return; }
+      if (value.item !== item) { const tail = redactor.flush(); if (tail) emit(tail); item = value.item; }
+      const safe = redactor.push(value.text); if (safe) emit(safe);
     }, ...(attachments?.length ? [attachments] : [])));
     return { result: this.safe(() => run.result).then(value => {
-      const tail = redactor.flush(); if (tail) onEvent({ type: "text", text: tail });
+      const tail = redactor.flush(); if (tail) emit(tail);
       return { ...value, reason: this.redact(value.reason), ...(value.error === undefined ? {} : { error: { code: this.redact(value.error.code), message: this.redact(value.error.message) } }) };
     }),
       requestStop: () => this.safe(() => run.requestStop()) };
