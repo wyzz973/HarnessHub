@@ -7,7 +7,7 @@ import { listedCommand, nativeConversationId, requestExpiry, type BackendResult,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type SteerOutcome, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
 import { unifiedDiff } from "../../infrastructure/control/unified-diff.js";
-import { type NativeOutput, type NativeSessionImport, type NativeSessionPage, type NativeToolDetail, type NativeUsage } from "../../contracts/control.js";
+import { type NativeOutput, type NativePlanEntry, type NativeSessionImport, type NativeSessionPage, type NativeToolDetail, type NativeUsage } from "../../contracts/control.js";
 import { MAX_CONTENT_BYTES, textual, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
 import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
 import type { RelayCapabilities } from "../../contracts/relay.js";
@@ -26,7 +26,8 @@ interface ActivePrompt {
    * plan before it inserts the prompt).
    */
   answered: boolean;
-  readonly tools: Map<string, { title: string; status: string }>;
+  /** Each call of this prompt: its title, status, and the fields its updates gave so far (ACP leaves out what did not change), for a permission request that names only the call. */
+  readonly tools: Map<string, { title: string; status: string; fields: Readonly<Record<string, unknown>> }>;
   readonly compaction: Map<string, string>;
   stopping: boolean;
   /** A request to leave the Harness's own plan mode was refused in this prompt (exitsPlan): the turn's end is its plan, kept. */
@@ -500,6 +501,10 @@ export class AcpControl implements HarnessControl {
   protected get approvalDeadlineMs(): number | null { return null; }
   /** The status a tool update reports; an agent that reports failures as completed calls with failure text says so here. */
   protected toolStatus(status: string, _detail: NativeToolDetail | undefined): string { return status; }
+  /** A tool update's detail as this Driver knows its agent's tools (`title` is the call's, kept from its first update): dsh names every kind `other`. */
+  protected describeTool(_title: string, detail: NativeToolDetail | undefined): NativeToolDetail | undefined { return detail; }
+  /** The task list a call of the agent's own planning tool carries (dsh's `todo_write`), sent as the Turn's plan; null for any other call. */
+  protected toolPlan(_title: string, _update: Readonly<Record<string, unknown>>): readonly NativePlanEntry[] | null { return null; }
   /**
    * Names a request the agent refused (`method`; REMOTE_ERROR on a healthy connection) from what only its error data says
    * (ControlError.remoteDetail): the failure to report in place of the generic one, or null to keep the generic handling,
@@ -988,8 +993,10 @@ export class AcpControl implements HarnessControl {
         return;
       }
       const value = text(content.text, "ACP text chunk");
-      if (kind === "agent_message_chunk") active.event({ type: "text", text: value });
-      if (kind === "agent_thought_chunk") active.event({ type: "thinking", text: value });
+      // ACP's `messageId` (dsh-acp: the committed assistant message's id; claude-agent-acp: its grouping id): a new one starts a new segment.
+      const item = typeof update.messageId === "string" && update.messageId.length > 0 && update.messageId.length <= 512 ? { item: update.messageId } : {};
+      if (kind === "agent_message_chunk") active.event({ type: "text", text: value, ...item });
+      if (kind === "agent_thought_chunk") active.event({ type: "thinking", text: value, ...item });
       return;
     }
     if (kind === "tool_call" || kind === "tool_call_update") {
@@ -998,10 +1005,13 @@ export class AcpControl implements HarnessControl {
       // first seen in a replay window. Identity is merged within this prompt; it never crosses prompts.
       const prior = active.tools.get(toolId);
       const title = update.title == null ? prior?.title ?? "工具调用" : label(update.title, prior?.title ?? "工具调用");
-      const detail = toolDetail(update);
+      const detail = this.describeTool(title, toolDetail(update));
       const status = this.toolStatus(update.status == null ? (prior?.status ?? "pending") : string(update.status, "tool status", 64), detail);
-      active.tools.set(toolId, { title, status });
+      const fields = { ...prior?.fields, ...Object.fromEntries(["title", "kind", "rawInput", "locations"].flatMap(key => update[key] == null ? [] : [[key, update[key]]])) };
+      active.tools.set(toolId, { title, status, fields });
       active.event({ type: "tool", id: toolId, title, status, ...(detail ? { detail } : {}) });
+      const plan = this.toolPlan(title, update);
+      if (plan !== null) active.event({ type: "plan", entries: plan });
       return;
     }
     if (kind === "notice") {
@@ -1103,8 +1113,10 @@ export class AcpControl implements HarnessControl {
     const active = this.active;
     // No public Run owns an autonomous follow-up, so nobody can approve it: cancel instead of tearing down the connection.
     if (!active || active.settled) { this.unattributed++; return { outcome: { outcome: "cancelled" } }; }
-    const tool = object(params.toolCall, "permission tool call");
-    const callId = string(tool.toolCallId, "permission tool identity");
+    const given = object(params.toolCall, "permission tool call");
+    const callId = string(given.toolCallId, "permission tool identity");
+    // ACP's request carries a tool call update: what it leaves out is what the call already said (dsh sends the id alone).
+    const tool: Record<string, unknown> = { ...active.tools.get(callId)?.fields, ...Object.fromEntries(Object.entries(given).filter(([, value]) => value != null)) };
     if (!Array.isArray(params.options) || params.options.length === 0 || params.options.length > 32)
       throw new ControlError("INVALID_PROTOCOL", "permission options are invalid");
     const options = params.options.map(raw => {

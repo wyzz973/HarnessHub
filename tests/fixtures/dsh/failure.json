@@ -1,0 +1,293 @@
+{
+ "recorded": "2026-11-15",
+ "dsh": "0.2.2-rc.1",
+ "note": "The model's API is unreachable (DEEPSEEK_BASE_URL on a closed local port): dsh retries, ends the turn with error, and refuses the prompt (-32603).",
+ "session": "a3fe5c71-41cf-4180-886d-07801ec141ce",
+ "processes": [
+  [
+   {
+    "t": 2,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "method": "initialize",
+     "params": {
+      "protocolVersion": 1,
+      "clientCapabilities": {
+       "session": {
+        "notices": {},
+        "compaction": {}
+       },
+       "elicitation": {
+        "form": {}
+       }
+      },
+      "clientInfo": {
+       "name": "harnessgateway",
+       "title": "HarnessGateway",
+       "version": "0.0.0"
+      }
+     }
+    }
+   },
+   {
+    "t": 958,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "result": {
+      "protocolVersion": 1,
+      "agentInfo": {
+       "name": "deepseek-harness-acp",
+       "version": "0.0.1"
+      },
+      "agentCapabilities": {
+       "mcpCapabilities": {
+        "http": true
+       },
+       "promptCapabilities": {
+        "image": false,
+        "audio": false,
+        "embeddedContext": false
+       },
+       "sessionCapabilities": {
+        "close": {},
+        "list": {},
+        "resume": {}
+       }
+      },
+      "authMethods": []
+     }
+    }
+   },
+   {
+    "t": 959,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 2,
+     "method": "session/new",
+     "params": {
+      "cwd": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace",
+      "mcpServers": []
+     }
+    }
+   },
+   {
+    "t": 1048,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 2,
+     "result": {
+      "sessionId": "a3fe5c71-41cf-4180-886d-07801ec141ce",
+      "configOptions": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+        "options": [
+         {
+          "group": "deepseek-official",
+          "name": "DeepSeek",
+          "options": [
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+            "name": "deepseek-v4-flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-flash\"]",
+            "name": "DeepSeek-V4.1-Flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-pro\"]",
+            "name": "DeepSeek-V4-Pro",
+            "description": "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost."
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "id": "reasoning_effort",
+        "name": "Reasoning effort",
+        "category": "thought_level",
+        "type": "select",
+        "currentValue": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "Off",
+          "description": "Use for simple tasks that do not need reasoning."
+         },
+         {
+          "value": "low",
+          "name": "Low",
+          "description": "Prefer for routine or latency-sensitive tasks."
+         },
+         {
+          "value": "high",
+          "name": "High",
+          "description": "The default balance for most tasks."
+         },
+         {
+          "value": "max",
+          "name": "Max",
+          "description": "Reserve for the hardest quality-first tasks."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 1049,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 3,
+     "method": "session/set_config_option",
+     "params": {
+      "sessionId": "a3fe5c71-41cf-4180-886d-07801ec141ce",
+      "configId": "reasoning_effort",
+      "value": "off"
+     }
+    }
+   },
+   {
+    "t": 1053,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 3,
+     "result": {
+      "configOptions": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+        "options": [
+         {
+          "group": "deepseek-official",
+          "name": "DeepSeek",
+          "options": [
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+            "name": "deepseek-v4-flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-flash\"]",
+            "name": "DeepSeek-V4.1-Flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-pro\"]",
+            "name": "DeepSeek-V4-Pro",
+            "description": "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost."
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "id": "reasoning_effort",
+        "name": "Reasoning effort",
+        "category": "thought_level",
+        "type": "select",
+        "currentValue": "off",
+        "options": [
+         {
+          "value": "off",
+          "name": "Off",
+          "description": "Use for simple tasks that do not need reasoning."
+         },
+         {
+          "value": "low",
+          "name": "Low",
+          "description": "Prefer for routine or latency-sensitive tasks."
+         },
+         {
+          "value": "high",
+          "name": "High",
+          "description": "The default balance for most tasks."
+         },
+         {
+          "value": "max",
+          "name": "Max",
+          "description": "Reserve for the hardest quality-first tasks."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 1055,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 4,
+     "method": "session/prompt",
+     "params": {
+      "sessionId": "a3fe5c71-41cf-4180-886d-07801ec141ce",
+      "prompt": [
+       {
+        "type": "text",
+        "text": "Reply with exactly the word: mango"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 17103,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 4,
+     "error": {
+      "code": -32603,
+      "message": "Internal error: turn failed: DeepSeek Messages transport failed"
+     }
+    },
+    "log": 3
+   }
+  ]
+ ],
+ "log": [
+  {
+   "type": "session",
+   "version": 4,
+   "id": "a3fe5c71-41cf-4180-886d-07801ec141ce",
+   "cwd": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace"
+  },
+  {
+   "type": "turn/start",
+   "seq": 5,
+   "data": {
+    "turn": 1
+   }
+  },
+  {
+   "type": "turn/end",
+   "seq": 32,
+   "data": {
+    "turn": 1,
+    "reason": {
+     "kind": "error",
+     "error": {
+      "message": "DeepSeek Messages transport failed",
+      "code": "TRANSPORT"
+     }
+    }
+   }
+  }
+ ]
+}

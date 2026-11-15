@@ -1,7 +1,7 @@
 import type { HarnessFlavor, LevelPolicy } from "../../contracts/flavor.js";
 
 /**
- * DeepSeek Harness (dsh 0.2.1-rc.5, `dsh --profile acp`). Its permission is a preset of a sandbox mode and an approval policy
+ * DeepSeek Harness (dsh 0.2.2-rc.1, as 0.2.1-rc.5, `dsh --profile acp`). Its permission is a preset of a sandbox mode and an approval policy
  * (dsh-permission-presets): read-only (read-only sandbox, ask), workspace-write (the default, ask) and danger-full-access (no sandbox,
  * never); the sandbox is macOS's Seatbelt and confines file writes only (reads, network and processes are free). The preset of a process
  * is `DSH_PERMISSION_MODE` (dsh-base/cordis.patch.yml rows sandbox and approval), per process and nothing written. Its ACP has no modes and
@@ -43,8 +43,10 @@ export const dshFlavor: HarnessFlavor = {
   // session, on new and resume; dsh-mcp-client registerServerContext puts each server's instructions into the system prompt (section
   // `mcp:<name>`). No other per-session system prompt entry (dsh-system-prompt and dsh-agent-instructions read files and the profile).
   // The record is read as files with its own file tools (2026-11-13; verified on the installed program: it read the directory and answered from it).
-  // No words in the middle of a turn: dsh-acp (installed 2026-11-14) refuses a second prompt while one runs ("a prompt is already in flight for
-  // this session", lib/index.js prompt) and its initialize advertises no steering method.
+  // No words in the middle of a turn: dsh-acp (0.2.2-rc.1, 2026-11-15) refuses a second prompt while one runs ("a prompt is already in flight for
+  // this session", lib/index.js prompt) and its initialize advertises no steering method; the page keeps them for after the Turn. No fork either
+  // (sessionCapabilities close, list, resume): a branch starts a new session with the Hub's history. Its own `todo_write` reaches the Turn as its plan
+  // (DshControl.toolPlan), but it has no question tool over ACP, so the Hub's task list and wrap-up stay (planTool `hub`, the rule of 2026-11-14).
   // Tools load through hub_tool_search: dsh-mcp-client sends every tool definition with every request (the five tools cost 2.2k input tokens on 2026-11-15),
   // and it lists the server's tools again on notifications/tools/list_changed (a Turn that needed hub_turns searched, was listed it, and called it).
   capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", toolLoad: "search", resume: "native", fork: "none", attachments: "native", usage: "turn", record: "files", steer: "none" },

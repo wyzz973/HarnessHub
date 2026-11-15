@@ -1,0 +1,585 @@
+{
+ "recorded": "2026-11-15",
+ "dsh": "0.2.2-rc.1",
+ "note": "One Turn, then a new process resumes the session and asks about it (deepseek-v4-flash, reasoning_effort low).",
+ "session": "fbbe59de-b7da-41ff-b525-a7bef68ad2e8",
+ "processes": [
+  [
+   {
+    "t": 2,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "method": "initialize",
+     "params": {
+      "protocolVersion": 1,
+      "clientCapabilities": {
+       "session": {
+        "notices": {},
+        "compaction": {}
+       },
+       "elicitation": {
+        "form": {}
+       }
+      },
+      "clientInfo": {
+       "name": "harnessgateway",
+       "title": "HarnessGateway",
+       "version": "0.0.0"
+      }
+     }
+    }
+   },
+   {
+    "t": 656,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "result": {
+      "protocolVersion": 1,
+      "agentInfo": {
+       "name": "deepseek-harness-acp",
+       "version": "0.0.1"
+      },
+      "agentCapabilities": {
+       "mcpCapabilities": {
+        "http": true
+       },
+       "promptCapabilities": {
+        "image": false,
+        "audio": false,
+        "embeddedContext": false
+       },
+       "sessionCapabilities": {
+        "close": {},
+        "list": {},
+        "resume": {}
+       }
+      },
+      "authMethods": []
+     }
+    }
+   },
+   {
+    "t": 657,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 2,
+     "method": "session/new",
+     "params": {
+      "cwd": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace",
+      "mcpServers": []
+     }
+    }
+   },
+   {
+    "t": 880,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 2,
+     "result": {
+      "sessionId": "fbbe59de-b7da-41ff-b525-a7bef68ad2e8",
+      "configOptions": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+        "options": [
+         {
+          "group": "deepseek-official",
+          "name": "DeepSeek",
+          "options": [
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+            "name": "deepseek-v4-flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-flash\"]",
+            "name": "DeepSeek-V4.1-Flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-pro\"]",
+            "name": "DeepSeek-V4-Pro",
+            "description": "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost."
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "id": "reasoning_effort",
+        "name": "Reasoning effort",
+        "category": "thought_level",
+        "type": "select",
+        "currentValue": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "Off",
+          "description": "Use for simple tasks that do not need reasoning."
+         },
+         {
+          "value": "low",
+          "name": "Low",
+          "description": "Prefer for routine or latency-sensitive tasks."
+         },
+         {
+          "value": "high",
+          "name": "High",
+          "description": "The default balance for most tasks."
+         },
+         {
+          "value": "max",
+          "name": "Max",
+          "description": "Reserve for the hardest quality-first tasks."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 880,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 3,
+     "method": "session/set_config_option",
+     "params": {
+      "sessionId": "fbbe59de-b7da-41ff-b525-a7bef68ad2e8",
+      "configId": "reasoning_effort",
+      "value": "low"
+     }
+    }
+   },
+   {
+    "t": 882,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 3,
+     "result": {
+      "configOptions": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+        "options": [
+         {
+          "group": "deepseek-official",
+          "name": "DeepSeek",
+          "options": [
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+            "name": "deepseek-v4-flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-flash\"]",
+            "name": "DeepSeek-V4.1-Flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-pro\"]",
+            "name": "DeepSeek-V4-Pro",
+            "description": "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost."
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "id": "reasoning_effort",
+        "name": "Reasoning effort",
+        "category": "thought_level",
+        "type": "select",
+        "currentValue": "low",
+        "options": [
+         {
+          "value": "off",
+          "name": "Off",
+          "description": "Use for simple tasks that do not need reasoning."
+         },
+         {
+          "value": "low",
+          "name": "Low",
+          "description": "Prefer for routine or latency-sensitive tasks."
+         },
+         {
+          "value": "high",
+          "name": "High",
+          "description": "The default balance for most tasks."
+         },
+         {
+          "value": "max",
+          "name": "Max",
+          "description": "Reserve for the hardest quality-first tasks."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 884,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 4,
+     "method": "session/prompt",
+     "params": {
+      "sessionId": "fbbe59de-b7da-41ff-b525-a7bef68ad2e8",
+      "prompt": [
+       {
+        "type": "text",
+        "text": "Reply with exactly the word: pineapple"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 1958,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "fbbe59de-b7da-41ff-b525-a7bef68ad2e8",
+      "update": {
+       "sessionUpdate": "agent_message_chunk",
+       "messageId": "524d9b39-0986-4bbc-9149-69b4f6beac65",
+       "content": {
+        "type": "text",
+        "text": "pineapple"
+       }
+      }
+     }
+    }
+   },
+   {
+    "t": 1958,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "fbbe59de-b7da-41ff-b525-a7bef68ad2e8",
+      "update": {
+       "sessionUpdate": "usage_update",
+       "used": 11009,
+       "size": 1000000
+      }
+     }
+    }
+   },
+   {
+    "t": 1959,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 4,
+     "result": {
+      "stopReason": "end_turn"
+     }
+    },
+    "log": 4
+   }
+  ],
+  [
+   {
+    "t": 2,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "method": "initialize",
+     "params": {
+      "protocolVersion": 1,
+      "clientCapabilities": {
+       "session": {
+        "notices": {},
+        "compaction": {}
+       },
+       "elicitation": {
+        "form": {}
+       }
+      },
+      "clientInfo": {
+       "name": "harnessgateway",
+       "title": "HarnessGateway",
+       "version": "0.0.0"
+      }
+     }
+    }
+   },
+   {
+    "t": 652,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "result": {
+      "protocolVersion": 1,
+      "agentInfo": {
+       "name": "deepseek-harness-acp",
+       "version": "0.0.1"
+      },
+      "agentCapabilities": {
+       "mcpCapabilities": {
+        "http": true
+       },
+       "promptCapabilities": {
+        "image": false,
+        "audio": false,
+        "embeddedContext": false
+       },
+       "sessionCapabilities": {
+        "close": {},
+        "list": {},
+        "resume": {}
+       }
+      },
+      "authMethods": []
+     }
+    }
+   },
+   {
+    "t": 652,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 2,
+     "method": "session/resume",
+     "params": {
+      "cwd": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace",
+      "mcpServers": [],
+      "sessionId": "fbbe59de-b7da-41ff-b525-a7bef68ad2e8"
+     }
+    }
+   },
+   {
+    "t": 882,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 2,
+     "result": {
+      "configOptions": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+        "options": [
+         {
+          "group": "deepseek-official",
+          "name": "DeepSeek",
+          "options": [
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+            "name": "deepseek-v4-flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-flash\"]",
+            "name": "DeepSeek-V4.1-Flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-pro\"]",
+            "name": "DeepSeek-V4-Pro",
+            "description": "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost."
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "id": "reasoning_effort",
+        "name": "Reasoning effort",
+        "category": "thought_level",
+        "type": "select",
+        "currentValue": "low",
+        "options": [
+         {
+          "value": "off",
+          "name": "Off",
+          "description": "Use for simple tasks that do not need reasoning."
+         },
+         {
+          "value": "low",
+          "name": "Low",
+          "description": "Prefer for routine or latency-sensitive tasks."
+         },
+         {
+          "value": "high",
+          "name": "High",
+          "description": "The default balance for most tasks."
+         },
+         {
+          "value": "max",
+          "name": "Max",
+          "description": "Reserve for the hardest quality-first tasks."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 883,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 3,
+     "method": "session/prompt",
+     "params": {
+      "sessionId": "fbbe59de-b7da-41ff-b525-a7bef68ad2e8",
+      "prompt": [
+       {
+        "type": "text",
+        "text": "Which fruit word did you reply with in your previous message? Answer with that one word."
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 1673,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "fbbe59de-b7da-41ff-b525-a7bef68ad2e8",
+      "update": {
+       "sessionUpdate": "agent_message_chunk",
+       "messageId": "6c2e7c63-067f-4ebd-8203-5eecbbe1c150",
+       "content": {
+        "type": "text",
+        "text": "pineapple"
+       }
+      }
+     }
+    }
+   },
+   {
+    "t": 1674,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "fbbe59de-b7da-41ff-b525-a7bef68ad2e8",
+      "update": {
+       "sessionUpdate": "usage_update",
+       "used": 11034,
+       "size": 1000000
+      }
+     }
+    }
+   },
+   {
+    "t": 1674,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 3,
+     "result": {
+      "stopReason": "end_turn"
+     }
+    },
+    "log": 7
+   }
+  ]
+ ],
+ "log": [
+  {
+   "type": "session",
+   "version": 4,
+   "id": "fbbe59de-b7da-41ff-b525-a7bef68ad2e8",
+   "cwd": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace"
+  },
+  {
+   "type": "turn/start",
+   "seq": 5,
+   "data": {
+    "turn": 1
+   }
+  },
+  {
+   "type": "assistant/message",
+   "seq": 16,
+   "data": {
+    "turn": 1,
+    "step": 1,
+    "message": {
+     "id": "524d9b39-0986-4bbc-9149-69b4f6beac65",
+     "role": "assistant"
+    },
+    "usage": {
+     "inputTokens": 11006,
+     "outputTokens": 3,
+     "cacheReadTokens": 0,
+     "cacheWriteTokens": 0,
+     "totalTokens": 11009
+    }
+   }
+  },
+  {
+   "type": "turn/end",
+   "seq": 18,
+   "data": {
+    "turn": 1,
+    "reason": {
+     "kind": "completed"
+    }
+   }
+  },
+  {
+   "type": "turn/start",
+   "seq": 21,
+   "data": {
+    "turn": 2
+   }
+  },
+  {
+   "type": "assistant/message",
+   "seq": 27,
+   "data": {
+    "turn": 2,
+    "step": 1,
+    "message": {
+     "id": "6c2e7c63-067f-4ebd-8203-5eecbbe1c150",
+     "role": "assistant"
+    },
+    "usage": {
+     "inputTokens": 151,
+     "outputTokens": 3,
+     "cacheReadTokens": 10880,
+     "cacheWriteTokens": 0,
+     "totalTokens": 11034
+    }
+   }
+  },
+  {
+   "type": "turn/end",
+   "seq": 29,
+   "data": {
+    "turn": 2,
+    "reason": {
+     "kind": "completed"
+    }
+   }
+  }
+ ]
+}

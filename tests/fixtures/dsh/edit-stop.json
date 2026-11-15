@@ -1,0 +1,735 @@
+{
+ "recorded": "2026-11-15",
+ "dsh": "0.2.2-rc.1",
+ "note": "Hub level auto: the write and edit tools change a file (the diffs are in the log only), then a long shell command is stopped.",
+ "session": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+ "processes": [
+  [
+   {
+    "t": 2,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "method": "initialize",
+     "params": {
+      "protocolVersion": 1,
+      "clientCapabilities": {
+       "session": {
+        "notices": {},
+        "compaction": {}
+       },
+       "elicitation": {
+        "form": {}
+       }
+      },
+      "clientInfo": {
+       "name": "harnessgateway",
+       "title": "HarnessGateway",
+       "version": "0.0.0"
+      }
+     }
+    }
+   },
+   {
+    "t": 635,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "result": {
+      "protocolVersion": 1,
+      "agentInfo": {
+       "name": "deepseek-harness-acp",
+       "version": "0.0.1"
+      },
+      "agentCapabilities": {
+       "mcpCapabilities": {
+        "http": true
+       },
+       "promptCapabilities": {
+        "image": false,
+        "audio": false,
+        "embeddedContext": false
+       },
+       "sessionCapabilities": {
+        "close": {},
+        "list": {},
+        "resume": {}
+       }
+      },
+      "authMethods": []
+     }
+    }
+   },
+   {
+    "t": 636,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 2,
+     "method": "session/new",
+     "params": {
+      "cwd": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace",
+      "mcpServers": []
+     }
+    }
+   },
+   {
+    "t": 809,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 2,
+     "result": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "configOptions": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+        "options": [
+         {
+          "group": "deepseek-official",
+          "name": "DeepSeek",
+          "options": [
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+            "name": "deepseek-v4-flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-flash\"]",
+            "name": "DeepSeek-V4.1-Flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-pro\"]",
+            "name": "DeepSeek-V4-Pro",
+            "description": "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost."
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "id": "reasoning_effort",
+        "name": "Reasoning effort",
+        "category": "thought_level",
+        "type": "select",
+        "currentValue": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "Off",
+          "description": "Use for simple tasks that do not need reasoning."
+         },
+         {
+          "value": "low",
+          "name": "Low",
+          "description": "Prefer for routine or latency-sensitive tasks."
+         },
+         {
+          "value": "high",
+          "name": "High",
+          "description": "The default balance for most tasks."
+         },
+         {
+          "value": "max",
+          "name": "Max",
+          "description": "Reserve for the hardest quality-first tasks."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 809,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 3,
+     "method": "session/set_config_option",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "configId": "reasoning_effort",
+      "value": "off"
+     }
+    }
+   },
+   {
+    "t": 811,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 3,
+     "result": {
+      "configOptions": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+        "options": [
+         {
+          "group": "deepseek-official",
+          "name": "DeepSeek",
+          "options": [
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+            "name": "deepseek-v4-flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-flash\"]",
+            "name": "DeepSeek-V4.1-Flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-pro\"]",
+            "name": "DeepSeek-V4-Pro",
+            "description": "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost."
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "id": "reasoning_effort",
+        "name": "Reasoning effort",
+        "category": "thought_level",
+        "type": "select",
+        "currentValue": "off",
+        "options": [
+         {
+          "value": "off",
+          "name": "Off",
+          "description": "Use for simple tasks that do not need reasoning."
+         },
+         {
+          "value": "low",
+          "name": "Low",
+          "description": "Prefer for routine or latency-sensitive tasks."
+         },
+         {
+          "value": "high",
+          "name": "High",
+          "description": "The default balance for most tasks."
+         },
+         {
+          "value": "max",
+          "name": "Max",
+          "description": "Reserve for the hardest quality-first tasks."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 811,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 4,
+     "method": "session/prompt",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "prompt": [
+       {
+        "type": "text",
+        "text": "Use your file editing tool (not the shell) to create the file notes.md containing the single line: first. Then change that line to: second. Reply done."
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 1789,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "update": {
+       "sessionUpdate": "usage_update",
+       "used": 11084,
+       "size": 1000000
+      }
+     }
+    }
+   },
+   {
+    "t": 1790,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "update": {
+       "sessionUpdate": "tool_call",
+       "toolCallId": "call_00_YXiV2xwC8ueS1FELn37q4556",
+       "title": "write",
+       "kind": "other",
+       "status": "in_progress",
+       "rawInput": {
+        "file_path": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace/notes.md",
+        "content": "first\n"
+       }
+      }
+     }
+    }
+   },
+   {
+    "t": 1800,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "update": {
+       "sessionUpdate": "tool_call_update",
+       "toolCallId": "call_00_YXiV2xwC8ueS1FELn37q4556",
+       "status": "completed",
+       "content": [
+        {
+         "type": "content",
+         "content": {
+          "type": "text",
+          "text": "<path>/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace/notes.md</path>\n<type>file</type>\n<content>\nCreated file\n</content>"
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   {
+    "t": 2559,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "update": {
+       "sessionUpdate": "usage_update",
+       "used": 11233,
+       "size": 1000000
+      }
+     }
+    }
+   },
+   {
+    "t": 2560,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "update": {
+       "sessionUpdate": "tool_call",
+       "toolCallId": "call_00_P9QeumPixCj6M742wQGW6715",
+       "title": "edit",
+       "kind": "other",
+       "status": "in_progress",
+       "rawInput": {
+        "file_path": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace/notes.md",
+        "old_string": "first",
+        "new_string": "second"
+       }
+      }
+     }
+    }
+   },
+   {
+    "t": 2573,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "update": {
+       "sessionUpdate": "tool_call_update",
+       "toolCallId": "call_00_P9QeumPixCj6M742wQGW6715",
+       "status": "completed",
+       "content": [
+        {
+         "type": "content",
+         "content": {
+          "type": "text",
+          "text": "The file /Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace/notes.md has been updated successfully."
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   {
+    "t": 3460,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "update": {
+       "sessionUpdate": "agent_message_chunk",
+       "messageId": "8f777d49-fba7-4da6-9276-d243630716a2",
+       "content": {
+        "type": "text",
+        "text": "done"
+       }
+      }
+     }
+    }
+   },
+   {
+    "t": 3461,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "update": {
+       "sessionUpdate": "usage_update",
+       "used": 11275,
+       "size": 1000000
+      }
+     }
+    }
+   },
+   {
+    "t": 3461,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 4,
+     "result": {
+      "stopReason": "end_turn"
+     }
+    },
+    "log": 10
+   },
+   {
+    "t": 3569,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 5,
+     "method": "session/prompt",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "prompt": [
+       {
+        "type": "text",
+        "text": "Run the shell command: sleep 30 && echo late . Then reply done."
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 4633,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "update": {
+       "sessionUpdate": "usage_update",
+       "used": 11377,
+       "size": 1000000
+      }
+     }
+    }
+   },
+   {
+    "t": 4634,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "update": {
+       "sessionUpdate": "tool_call",
+       "toolCallId": "call_00_I1PdYzWS6BOOJpHvD5gX1862",
+       "title": "bash",
+       "kind": "other",
+       "status": "in_progress",
+       "rawInput": {
+        "command": "sleep 30 && echo late",
+        "description": "Sleep 30 seconds then echo late",
+        "timeoutMs": 60000
+       }
+      }
+     }
+    }
+   },
+   {
+    "t": 4776,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/cancel",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e"
+     }
+    }
+   },
+   {
+    "t": 4783,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+      "update": {
+       "sessionUpdate": "tool_call_update",
+       "toolCallId": "call_00_I1PdYzWS6BOOJpHvD5gX1862",
+       "status": "failed",
+       "content": [
+        {
+         "type": "content",
+         "content": {
+          "type": "text",
+          "text": "Error: tool call aborted"
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   {
+    "t": 4784,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 5,
+     "result": {
+      "stopReason": "cancelled"
+     }
+    },
+    "log": 15
+   }
+  ]
+ ],
+ "log": [
+  {
+   "type": "session",
+   "version": 4,
+   "id": "66e0a858-8bfd-4861-92cf-003ae9162f9e",
+   "cwd": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace"
+  },
+  {
+   "type": "turn/start",
+   "seq": 5,
+   "data": {
+    "turn": 1
+   }
+  },
+  {
+   "type": "assistant/message",
+   "seq": 16,
+   "data": {
+    "turn": 1,
+    "step": 1,
+    "message": {
+     "id": "697906ef-793f-42e6-964e-f2f5f15caf30",
+     "role": "assistant"
+    },
+    "usage": {
+     "inputTokens": 255,
+     "outputTokens": 77,
+     "cacheReadTokens": 10752,
+     "cacheWriteTokens": 0,
+     "totalTokens": 11084
+    }
+   }
+  },
+  {
+   "type": "tool/call",
+   "seq": 17,
+   "data": {
+    "turn": 1,
+    "step": 1,
+    "callId": "call_00_YXiV2xwC8ueS1FELn37q4556",
+    "name": "write",
+    "arguments": "{\"file_path\": \"/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace/notes.md\", \"content\": \"first\\n\"}"
+   }
+  },
+  {
+   "type": "tool/result",
+   "seq": 18,
+   "data": {
+    "turn": 1,
+    "step": 1,
+    "message": {
+     "toolCallId": "call_00_YXiV2xwC8ueS1FELn37q4556",
+     "isError": false
+    },
+    "meta": {
+     "operation": "create",
+     "path": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace/notes.md",
+     "diffs": []
+    }
+   }
+  },
+  {
+   "type": "assistant/message",
+   "seq": 22,
+   "data": {
+    "turn": 1,
+    "step": 2,
+    "message": {
+     "id": "88504d45-b247-4bf0-b405-5fc8e5f07bbc",
+     "role": "assistant"
+    },
+    "usage": {
+     "inputTokens": 134,
+     "outputTokens": 94,
+     "cacheReadTokens": 11005,
+     "cacheWriteTokens": 0,
+     "totalTokens": 11233
+    }
+   }
+  },
+  {
+   "type": "tool/call",
+   "seq": 23,
+   "data": {
+    "turn": 1,
+    "step": 2,
+    "callId": "call_00_P9QeumPixCj6M742wQGW6715",
+    "name": "edit",
+    "arguments": "{\"file_path\": \"/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace/notes.md\", \"old_string\": \"first\", \"new_string\": \"second\"}"
+   }
+  },
+  {
+   "type": "tool/result",
+   "seq": 24,
+   "data": {
+    "turn": 1,
+    "step": 2,
+    "message": {
+     "toolCallId": "call_00_P9QeumPixCj6M742wQGW6715",
+     "isError": false
+    },
+    "meta": {
+     "path": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace/notes.md",
+     "diffs": [
+      {
+       "path": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace/notes.md",
+       "oldText": "first",
+       "newText": "second"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "assistant/message",
+   "seq": 28,
+   "data": {
+    "turn": 1,
+    "step": 3,
+    "message": {
+     "id": "8f777d49-fba7-4da6-9276-d243630716a2",
+     "role": "assistant"
+    },
+    "usage": {
+     "inputTokens": 138,
+     "outputTokens": 1,
+     "cacheReadTokens": 11136,
+     "cacheWriteTokens": 0,
+     "totalTokens": 11275
+    }
+   }
+  },
+  {
+   "type": "turn/end",
+   "seq": 30,
+   "data": {
+    "turn": 1,
+    "reason": {
+     "kind": "completed"
+    }
+   }
+  },
+  {
+   "type": "turn/start",
+   "seq": 32,
+   "data": {
+    "turn": 2
+   }
+  },
+  {
+   "type": "assistant/message",
+   "seq": 37,
+   "data": {
+    "turn": 2,
+    "step": 1,
+    "message": {
+     "id": "0c6d307e-2d4d-42bc-8967-d2f4dc5d679e",
+     "role": "assistant"
+    },
+    "usage": {
+     "inputTokens": 159,
+     "outputTokens": 82,
+     "cacheReadTokens": 11136,
+     "cacheWriteTokens": 0,
+     "totalTokens": 11377
+    }
+   }
+  },
+  {
+   "type": "tool/call",
+   "seq": 38,
+   "data": {
+    "turn": 2,
+    "step": 1,
+    "callId": "call_00_I1PdYzWS6BOOJpHvD5gX1862",
+    "name": "bash",
+    "arguments": "{\"command\": \"sleep 30 && echo late\", \"description\": \"Sleep 30 seconds then echo late\", \"timeoutMs\": 60000}"
+   }
+  },
+  {
+   "type": "tool/result",
+   "seq": 41,
+   "data": {
+    "turn": 2,
+    "step": 1,
+    "message": {
+     "toolCallId": "call_00_I1PdYzWS6BOOJpHvD5gX1862",
+     "isError": true
+    }
+   }
+  },
+  {
+   "type": "turn/end",
+   "seq": 43,
+   "data": {
+    "turn": 2,
+    "reason": {
+     "kind": "aborted",
+     "reason": {
+      "kind": "user"
+     }
+    }
+   }
+  }
+ ]
+}

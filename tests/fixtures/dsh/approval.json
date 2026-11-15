@@ -1,0 +1,601 @@
+{
+ "recorded": "2026-11-15",
+ "dsh": "0.2.2-rc.1",
+ "note": "Hub level ask (read-only sandbox): a shell write is refused by the sandbox, retried with a wider one, and dsh asks; the request names only the call.",
+ "session": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+ "processes": [
+  [
+   {
+    "t": 2,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "method": "initialize",
+     "params": {
+      "protocolVersion": 1,
+      "clientCapabilities": {
+       "session": {
+        "notices": {},
+        "compaction": {}
+       },
+       "elicitation": {
+        "form": {}
+       }
+      },
+      "clientInfo": {
+       "name": "harnessgateway",
+       "title": "HarnessGateway",
+       "version": "0.0.0"
+      }
+     }
+    }
+   },
+   {
+    "t": 646,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "result": {
+      "protocolVersion": 1,
+      "agentInfo": {
+       "name": "deepseek-harness-acp",
+       "version": "0.0.1"
+      },
+      "agentCapabilities": {
+       "mcpCapabilities": {
+        "http": true
+       },
+       "promptCapabilities": {
+        "image": false,
+        "audio": false,
+        "embeddedContext": false
+       },
+       "sessionCapabilities": {
+        "close": {},
+        "list": {},
+        "resume": {}
+       }
+      },
+      "authMethods": []
+     }
+    }
+   },
+   {
+    "t": 647,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 2,
+     "method": "session/new",
+     "params": {
+      "cwd": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace",
+      "mcpServers": []
+     }
+    }
+   },
+   {
+    "t": 915,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 2,
+     "result": {
+      "sessionId": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+      "configOptions": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+        "options": [
+         {
+          "group": "deepseek-official",
+          "name": "DeepSeek",
+          "options": [
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+            "name": "deepseek-v4-flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-flash\"]",
+            "name": "DeepSeek-V4.1-Flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-pro\"]",
+            "name": "DeepSeek-V4-Pro",
+            "description": "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost."
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "id": "reasoning_effort",
+        "name": "Reasoning effort",
+        "category": "thought_level",
+        "type": "select",
+        "currentValue": "high",
+        "options": [
+         {
+          "value": "off",
+          "name": "Off",
+          "description": "Use for simple tasks that do not need reasoning."
+         },
+         {
+          "value": "low",
+          "name": "Low",
+          "description": "Prefer for routine or latency-sensitive tasks."
+         },
+         {
+          "value": "high",
+          "name": "High",
+          "description": "The default balance for most tasks."
+         },
+         {
+          "value": "max",
+          "name": "Max",
+          "description": "Reserve for the hardest quality-first tasks."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 916,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 3,
+     "method": "session/set_config_option",
+     "params": {
+      "sessionId": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+      "configId": "reasoning_effort",
+      "value": "off"
+     }
+    }
+   },
+   {
+    "t": 918,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 3,
+     "result": {
+      "configOptions": [
+       {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+        "options": [
+         {
+          "group": "deepseek-official",
+          "name": "DeepSeek",
+          "options": [
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-flash\"]",
+            "name": "deepseek-v4-flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-flash\"]",
+            "name": "DeepSeek-V4.1-Flash"
+           },
+           {
+            "value": "[\"deepseek-official\",\"deepseek-v4-pro\"]",
+            "name": "DeepSeek-V4-Pro",
+            "description": "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost."
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "id": "reasoning_effort",
+        "name": "Reasoning effort",
+        "category": "thought_level",
+        "type": "select",
+        "currentValue": "off",
+        "options": [
+         {
+          "value": "off",
+          "name": "Off",
+          "description": "Use for simple tasks that do not need reasoning."
+         },
+         {
+          "value": "low",
+          "name": "Low",
+          "description": "Prefer for routine or latency-sensitive tasks."
+         },
+         {
+          "value": "high",
+          "name": "High",
+          "description": "The default balance for most tasks."
+         },
+         {
+          "value": "max",
+          "name": "Max",
+          "description": "Reserve for the hardest quality-first tasks."
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 920,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 4,
+     "method": "session/prompt",
+     "params": {
+      "sessionId": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+      "prompt": [
+       {
+        "type": "text",
+        "text": "Use your shell tool to run exactly this command: echo approved > approval.txt . Then reply done."
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 2181,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+      "update": {
+       "sessionUpdate": "usage_update",
+       "used": 11046,
+       "size": 1000000
+      }
+     }
+    }
+   },
+   {
+    "t": 2181,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+      "update": {
+       "sessionUpdate": "tool_call",
+       "toolCallId": "call_00_7QJfOixJGBXy7qUvuDqN3301",
+       "title": "bash",
+       "kind": "other",
+       "status": "in_progress",
+       "rawInput": {
+        "command": "echo approved > approval.txt",
+        "description": "Write approved to approval.txt"
+       }
+      }
+     }
+    }
+   },
+   {
+    "t": 2200,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+      "update": {
+       "sessionUpdate": "tool_call_update",
+       "toolCallId": "call_00_7QJfOixJGBXy7qUvuDqN3301",
+       "status": "completed",
+       "content": [
+        {
+         "type": "content",
+         "content": {
+          "type": "text",
+          "text": "[stderr]\nbash: approval.txt: Operation not permitted\n[sandbox: file access denied under read-only mode]\n[sandbox: escalation available — retry this exact command once with sandbox_permissions (the narrowest wider mode that suffices) + justification; the approval prompt asks the user]\n[exit code: 1]"
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   {
+    "t": 3329,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+      "update": {
+       "sessionUpdate": "usage_update",
+       "used": 11253,
+       "size": 1000000
+      }
+     }
+    }
+   },
+   {
+    "t": 3329,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+      "update": {
+       "sessionUpdate": "tool_call",
+       "toolCallId": "call_00_IoHZv3tTgPjyr35zWcdC9122",
+       "title": "bash",
+       "kind": "other",
+       "status": "in_progress",
+       "rawInput": {
+        "command": "echo approved > approval.txt",
+        "description": "Write approved to approval.txt with escalation",
+        "sandbox_permissions": "workspace-write",
+        "justification": "The read-only sandbox blocked writing approval.txt; workspace-write is the narrowest mode that allows creating this file in the workspace."
+       }
+      }
+     }
+    }
+   },
+   {
+    "t": 3335,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 0,
+     "method": "session/request_permission",
+     "params": {
+      "sessionId": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+      "toolCall": {
+       "toolCallId": "call_00_IoHZv3tTgPjyr35zWcdC9122"
+      },
+      "options": [
+       {
+        "optionId": "allow-once",
+        "name": "Allow once",
+        "kind": "allow_once"
+       },
+       {
+        "optionId": "reject-once",
+        "name": "Reject",
+        "kind": "reject_once"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "t": 3342,
+    "dir": "in",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 0,
+     "result": {
+      "outcome": {
+       "outcome": "selected",
+       "optionId": "allow-once"
+      }
+     }
+    }
+   },
+   {
+    "t": 3356,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+      "update": {
+       "sessionUpdate": "tool_call_update",
+       "toolCallId": "call_00_IoHZv3tTgPjyr35zWcdC9122",
+       "status": "completed",
+       "content": [
+        {
+         "type": "content",
+         "content": {
+          "type": "text",
+          "text": "(no output)"
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   {
+    "t": 4511,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+      "update": {
+       "sessionUpdate": "agent_message_chunk",
+       "messageId": "f8726660-4ba5-40dd-8194-8e537921b926",
+       "content": {
+        "type": "text",
+        "text": "done"
+       }
+      }
+     }
+    }
+   },
+   {
+    "t": 4512,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "method": "session/update",
+     "params": {
+      "sessionId": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+      "update": {
+       "sessionUpdate": "usage_update",
+       "used": 11268,
+       "size": 1000000
+      }
+     }
+    }
+   },
+   {
+    "t": 4512,
+    "dir": "out",
+    "msg": {
+     "jsonrpc": "2.0",
+     "id": 4,
+     "result": {
+      "stopReason": "end_turn"
+     }
+    },
+    "log": 10
+   }
+  ]
+ ],
+ "log": [
+  {
+   "type": "session",
+   "version": 4,
+   "id": "3ee7ffd5-35f1-403a-b53d-e2a459d83a5c",
+   "cwd": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace"
+  },
+  {
+   "type": "turn/start",
+   "seq": 5,
+   "data": {
+    "turn": 1
+   }
+  },
+  {
+   "type": "assistant/message",
+   "seq": 16,
+   "data": {
+    "turn": 1,
+    "step": 1,
+    "message": {
+     "id": "19b21645-430c-40b9-9aef-ebc2b93ce57f",
+     "role": "assistant"
+    },
+    "usage": {
+     "inputTokens": 234,
+     "outputTokens": 60,
+     "cacheReadTokens": 10752,
+     "cacheWriteTokens": 0,
+     "totalTokens": 11046
+    }
+   }
+  },
+  {
+   "type": "tool/call",
+   "seq": 17,
+   "data": {
+    "turn": 1,
+    "step": 1,
+    "callId": "call_00_7QJfOixJGBXy7qUvuDqN3301",
+    "name": "bash",
+    "arguments": "{\"command\": \"echo approved > approval.txt\", \"description\": \"Write approved to approval.txt\"}"
+   }
+  },
+  {
+   "type": "tool/result",
+   "seq": 20,
+   "data": {
+    "turn": 1,
+    "step": 1,
+    "message": {
+     "toolCallId": "call_00_7QJfOixJGBXy7qUvuDqN3301",
+     "isError": false
+    },
+    "meta": {
+     "cwd": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace"
+    }
+   }
+  },
+  {
+   "type": "assistant/message",
+   "seq": 24,
+   "data": {
+    "turn": 1,
+    "step": 2,
+    "message": {
+     "id": "6517d29b-30ab-49e9-ab6d-3e141a90de3b",
+     "role": "assistant"
+    },
+    "usage": {
+     "inputTokens": 247,
+     "outputTokens": 126,
+     "cacheReadTokens": 10880,
+     "cacheWriteTokens": 0,
+     "totalTokens": 11253
+    }
+   }
+  },
+  {
+   "type": "tool/call",
+   "seq": 25,
+   "data": {
+    "turn": 1,
+    "step": 2,
+    "callId": "call_00_IoHZv3tTgPjyr35zWcdC9122",
+    "name": "bash",
+    "arguments": "{\"command\": \"echo approved > approval.txt\", \"description\": \"Write approved to approval.txt with escalation\", \"sandbox_permissions\": \"workspace-write\", \"justification\": \"The read-only sandbox blocked writing approval.txt; workspace-write is the narrowest mode that allows creating this file in the workspace.\"}"
+   }
+  },
+  {
+   "type": "tool/result",
+   "seq": 30,
+   "data": {
+    "turn": 1,
+    "step": 2,
+    "message": {
+     "toolCallId": "call_00_IoHZv3tTgPjyr35zWcdC9122",
+     "isError": false
+    },
+    "meta": {
+     "cwd": "/Users/test/.cache/harnesshub-acceptance/dsh-trial/workspace"
+    }
+   }
+  },
+  {
+   "type": "assistant/message",
+   "seq": 34,
+   "data": {
+    "turn": 1,
+    "step": 3,
+    "message": {
+     "id": "f8726660-4ba5-40dd-8194-8e537921b926",
+     "role": "assistant"
+    },
+    "usage": {
+     "inputTokens": 259,
+     "outputTokens": 1,
+     "cacheReadTokens": 11008,
+     "cacheWriteTokens": 0,
+     "totalTokens": 11268
+    }
+   }
+  },
+  {
+   "type": "turn/end",
+   "seq": 36,
+   "data": {
+    "turn": 1,
+    "reason": {
+     "kind": "completed"
+    }
+   }
+  }
+ ]
+}

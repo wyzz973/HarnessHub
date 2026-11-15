@@ -60,9 +60,9 @@ const products: Readonly<Record<string, OfficialChannels>> = {
         + "想保留退路，请先运行 hermes backup 做完整备份。HarnessHub 不代为运行，请在终端运行。" } }],
     // Read again on 2026-10-22 at v0.22.4 (4d04303): README.md and installation.md for the install, updating.md for the update and uninstall.
     source: { url: "https://github.com/NousResearch/hermes-agent/blob/4d04303818b61bf3aa09278af48356315515965b/README.md", checkedAt: "2026-10-22" } },
-  // Linked to the dsh-v0.2.1-rc.2 tag's commit on 2026-10-22; that README runs the same npm package (`npx @deepseek-ai/dsh web`),
+  // Linked to the dsh-v0.2.2-rc.1 tag's commit on 2026-11-15 (the rc.2 tag before); that README runs the same npm package (`npx @deepseek-ai/dsh web`),
   // and the channel stays as read on 2026-10-17.
-  dsh: { ...none, npm: ["@deepseek-ai/dsh"], source: { url: "https://github.com/deepseek-ai/deepseek-harness/blob/687f282e8625c6b8d11ff58211a90524be2e4317/README.md", checkedAt: CHECKED } },
+  dsh: { ...none, npm: ["@deepseek-ai/dsh"], source: { url: "https://github.com/deepseek-ai/deepseek-harness/blob/66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db/README.md", checkedAt: CHECKED } },
 };
 /**
  * Services each product's installation registers and where it keeps its data (ADR-044). OpenClaw's uninstall page stops
