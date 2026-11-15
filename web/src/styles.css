@@ -36,7 +36,7 @@
   --bg-app: #FFFFFF;                           /* the conversation and every page */
   --bg-surface: #FFFFFF;                       /* cards and panels on the content layer */
   --bg-well: #FFFFFF;                          /* the tile behind a Harness's mark */
-  --bg-window: #E8E8EC;                        /* behind the sidebar where the window has no material of its own (a browser) */
+  --bg-window: #F5F5F7;                        /* behind the sidebar where the window has no material of its own (a browser) */
   --bg-sidebar: transparent;                   /* the sidebar is the window's material */
   /* Fills: translucent, on either layer */
   --bg-sidebar-hover: rgba(0, 0, 0, .05);
@@ -46,17 +46,22 @@
   --bg-active: rgba(0, 0, 0, .11);
   --bg-inset: rgba(0, 0, 0, .035);             /* code, commands and other recessed text */
   --bg-cover: #F4F4F5;                         /* a fill that must hide what scrolls under it */
-  /* Glass: the fill over the blur, the blur, and the light on its rim */
-  --glass: rgba(246, 246, 248, .72);
-  --glass-thick: rgba(252, 252, 253, .82);
-  --glass-blur: blur(30px) saturate(1.8);
-  --glass-rim: inset 0 0 0 .5px rgba(255, 255, 255, .5), inset 0 .5px 0 rgba(255, 255, 255, .85);
+  /*
+   * Liquid Glass: a clear fill over a light blur that keeps the color of what is behind it, a rim that catches the light from the upper left and
+   * gives a little of it back at the lower right, and a faint glow inside. Its edge also bends what is behind it (--lens, ui/liquid.ts). Regular
+   * for menus and pickers, thick where words are written or read at length, clear for small capsules.
+   */
+  --glass: rgba(255, 255, 255, .64);
+  --glass-thick: rgba(255, 255, 255, .74);
+  --glass-clear: rgba(255, 255, 255, .34);
+  --glass-blur: blur(18px) saturate(1.9) brightness(1.05);
+  --glass-rim: inset 0 0 0 .5px rgba(255, 255, 255, .45), inset 1.5px 1.5px .5px -1px rgba(255, 255, 255, .95), inset -1.5px -1.5px .5px -1px rgba(255, 255, 255, .7), inset 0 0 18px rgba(255, 255, 255, .16);
   --bg-pop: var(--glass);
   /* Hairlines (drawn 0.5 px) */
   --border: rgba(0, 0, 0, .08);
   --border-strong: rgba(0, 0, 0, .14);
   /* Text: 4.5:1 or better for the third level on the content layer */
-  --text: #1D1D1F; --text-2: #48484C; --text-3: #6C6C71; --text-placeholder: #9D9DA3;
+  --text: #1D1D1F; --text-2: #48484C; --text-3: #66666B; --text-placeholder: #9D9DA3;
   /* Blue: send, primary buttons, selection, focus and work in progress */
   --accent: #0071E3; --accent-hover: #0067CF; --accent-soft: rgba(0, 113, 227, .11); --accent-text: #0066CC; --on-accent: #FFFFFF;
   --run: #0A84FF;
@@ -100,10 +105,11 @@
     --bg-active: rgba(255, 255, 255, .15);
     --bg-inset: rgba(0, 0, 0, .24);
     --bg-cover: #2A2A2D;
-    --glass: rgba(44, 44, 48, .68);
-    --glass-thick: rgba(40, 40, 44, .8);
-    --glass-blur: blur(30px) saturate(1.6);
-    --glass-rim: inset 0 0 0 .5px rgba(255, 255, 255, .13), inset 0 .5px 0 rgba(255, 255, 255, .16);
+    --glass: rgba(42, 42, 46, .6);
+    --glass-thick: rgba(38, 38, 42, .7);
+    --glass-clear: rgba(70, 70, 76, .34);
+    --glass-blur: blur(18px) saturate(1.7) brightness(.94);
+    --glass-rim: inset 0 0 0 .5px rgba(255, 255, 255, .10), inset 1.5px 1.5px .5px -1px rgba(255, 255, 255, .36), inset -1.5px -1.5px .5px -1px rgba(255, 255, 255, .17), inset 0 0 18px rgba(255, 255, 255, .045);
     --border: rgba(255, 255, 255, .09);
     --border-strong: rgba(255, 255, 255, .16);
     --text: #F5F5F7; --text-2: #BABABF; --text-3: #98989E; --text-placeholder: #6A6A70;
@@ -134,7 +140,7 @@
 }
 /* With "reduce transparency" the glass is a plain surface (the window's own material answers the setting by itself). */
 @media (prefers-reduced-transparency: reduce) {
-  :root { --glass: #F4F4F6; --glass-thick: #FBFBFC; --glass-blur: none; @variant dark { --glass: #2C2C30; --glass-thick: #28282C; } }
+  :root { --glass: #F4F4F6; --glass-thick: #FBFBFC; --glass-clear: #F0F0F2; --glass-blur: opacity(1); @variant dark { --glass: #2C2C30; --glass-thick: #28282C; --glass-clear: #343438; } }
 }
 @media (prefers-contrast: more) {
   :root { --border: rgba(0, 0, 0, .22); --border-strong: rgba(0, 0, 0, .4); --text-3: #55555A; @variant dark { --border: rgba(255, 255, 255, .26); --border-strong: rgba(255, 255, 255, .45); --text-3: #B4B4BA; } }
@@ -149,6 +155,7 @@
   --color-cover: var(--bg-cover);
   --color-glass: var(--glass);
   --color-glass-thick: var(--glass-thick);
+  --color-glass-clear: var(--glass-clear);
   --color-red-fill: var(--red-fill);
   --color-sidebar: var(--bg-sidebar);
   --color-sidebar-hover: var(--bg-sidebar-hover);
@@ -311,6 +318,7 @@
  * of 150 ms or less, or nothing; loops stop. Classes take an optional --motion-delay.
  * ------------------------------------------------------------------------------------------------------------------- */
 /* A motion class's inputs belong to the element that sets them: a delayed parent never delays its children. */
+@property --lens { syntax: "*"; inherits: false; }
 @property --motion-delay { syntax: "*"; inherits: false; }
 @property --motion-duration { syntax: "*"; inherits: false; }
 @property --motion-shift { syntax: "*"; inherits: false; }
@@ -452,7 +460,7 @@
    */
   .floating-bar {
     inset-inline: 16px; width: fit-content; margin-inline: auto;
-    display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 8px 0 16px; border-radius: 22px; background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+    display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 8px 0 16px; border-radius: 22px; background: var(--glass-thick); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur);
     box-shadow: var(--sh-pop); color: var(--text); font-size: 12px; line-height: 18px; white-space: nowrap;
     transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-spring) var(--ease-spring);
   }
@@ -492,8 +500,8 @@
   .link-btn:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 2px; }
   .link-btn:disabled { color: var(--text-3); }
   /* A group of icon buttons on a toolbar: one glass capsule holds them. */
-  .tool-group { display: inline-flex; align-items: center; gap: 2px; height: 32px; padding: 0 2px; border-radius: 999px; background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
-    box-shadow: var(--glass-rim), 0 0 0 .5px var(--border-strong), 0 1px 3px rgba(0, 0, 0, .06); }
+  .tool-group { display: inline-flex; align-items: center; gap: 2px; height: 32px; padding: 0 2px; border-radius: 999px; background: var(--glass-clear); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur);
+    box-shadow: var(--glass-rim), 0 0 0 .5px var(--border), 0 2px 8px -2px rgba(0, 0, 0, .14); }
   .tool-group > :is(.icon-btn, .btn) { border-radius: 999px; }
 
   /* Keys (radius 6) and inline shortcut hints */
@@ -556,6 +564,8 @@
   button.group-heading:hover { color: var(--text-2); }
   .group-heading:focus-visible { outline-offset: -2px; }
   .nav-row[aria-current="page"], .nav-row[aria-current="true"], .nav-row[data-selected="true"] { background: var(--bg-selected); font-weight: 500; }
+  /* Third-level words on a chosen row sit on its tint: they take the tint's higher-contrast shade, to read at 4.5:1. */
+  :is([aria-current]:not([aria-current="false"]), [data-selected="true"], [aria-selected="true"], .is-picked) .text-fg-3 { color: var(--text-3-on-tint) !important; }
   /* Full-width rows keep their focus ring inside, where a scrolling list cannot clip it */
   :is(.nav-row, .row):focus-visible { outline-offset: -2px; }
 
@@ -563,9 +573,9 @@
    * Floating surfaces are glass. Popovers and menus spring out of their trigger (from .94, 400 ms, a hair past 1) while fading in over 140 ms; they
    * leave in 110 ms, shrinking a little, so closing never waits.
    */
-  .glass { background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+  .glass { background: var(--glass); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); }
   .surface-pop {
-    background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border-radius: var(--radius-pop); box-shadow: var(--sh-pop); color: var(--text); outline: none;
+    background: var(--glass); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); border-radius: var(--radius-pop); box-shadow: var(--sh-pop); color: var(--text); outline: none;
     transform-origin: var(--transform-origin); transition: opacity 140ms var(--ease-out), transform var(--dur-spring) var(--ease-spring);
   }
   .surface-pop[data-starting-style] { opacity: 0; transform: scale(.94); }
@@ -588,13 +598,13 @@
   .backdrop[data-starting-style], .backdrop[data-ending-style] { opacity: 0; }
   .dialog-pop {
     position: fixed; left: 50%; top: 50%; translate: -50% -50%; width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto;
-    background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border-radius: var(--radius-dialog); box-shadow: var(--sh-pop); color: var(--text); outline: none;
+    background: var(--glass-thick); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); border-radius: var(--radius-dialog); box-shadow: var(--sh-pop); color: var(--text); outline: none;
     transition: opacity 160ms var(--ease-out), transform var(--dur-spring) var(--ease-spring);
   }
   .dialog-pop[data-starting-style] { opacity: 0; transform: scale(.94); }
   .dialog-pop[data-ending-style] { opacity: 0; transform: scale(.97); transition: opacity 140ms ease-in, transform 140ms ease-in; }
   .palette-pop {
-    position: fixed; left: 50%; top: 14vh; translate: -50% 0; background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border-radius: var(--radius-pane); box-shadow: var(--sh-pop); color: var(--text); outline: none;
+    position: fixed; left: 50%; top: 14vh; translate: -50% 0; background: var(--glass); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); border-radius: var(--radius-pane); box-shadow: var(--sh-pop); color: var(--text); outline: none;
     transform-origin: 50% 0; transition: opacity 140ms var(--ease-out), transform var(--dur-spring) var(--ease-spring);
   }
   .palette-pop[data-starting-style] { opacity: 0; transform: translateY(-10px) scale(.97); }
@@ -606,19 +616,19 @@
   .drawer-pop[data-starting-style], .drawer-pop[data-ending-style] { opacity: 0; transform: translateX(24px); }
   .drawer-pop[data-ending-style] { transition-duration: var(--dur-base); transition-timing-function: ease-in; }
   .drawer-left-pop {
-    position: fixed; left: 0; top: 0; bottom: 0; width: min(300px, 86vw); display: flex; flex-direction: column; background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); box-shadow: var(--sh-pop); outline: none;
+    position: fixed; left: 0; top: 0; bottom: 0; width: min(300px, 86vw); display: flex; flex-direction: column; background: var(--glass-thick); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); box-shadow: var(--sh-pop); outline: none;
     transition: transform var(--dur-spring-soft) var(--ease-spring-soft);
   }
   .drawer-left-pop[data-starting-style], .drawer-left-pop[data-ending-style] { transform: translateX(-100%); }
   .drawer-left-pop[data-ending-style] { transition-duration: var(--dur-base); transition-timing-function: ease-in; }
   .sheet-pop {
-    position: fixed; left: 0; right: 0; bottom: 0; max-height: 86dvh; display: flex; flex-direction: column; background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border-radius: var(--radius-dialog) var(--radius-dialog) 0 0;
+    position: fixed; left: 0; right: 0; bottom: 0; max-height: 86dvh; display: flex; flex-direction: column; background: var(--glass-thick); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); border-radius: var(--radius-dialog) var(--radius-dialog) 0 0;
     box-shadow: var(--sh-pop); outline: none; transition: transform var(--dur-spring-soft) var(--ease-spring-soft);
   }
   .sheet-pop[data-starting-style], .sheet-pop[data-ending-style] { transform: translateY(100%); }
   .sheet-pop[data-ending-style] { transition-duration: var(--dur-base); transition-timing-function: ease-in; }
   .tooltip-pop {
-    max-width: 280px; padding: 3px 8px; border-radius: 7px; background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); color: var(--text);
+    max-width: 280px; padding: 3px 8px; border-radius: 7px; background: var(--glass-thick); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); color: var(--text);
     box-shadow: var(--glass-rim), 0 0 0 .5px var(--border-strong), 0 4px 14px -2px rgba(0, 0, 0, .18); font-size: 12px; line-height: 18px;
     transition: opacity var(--dur-fast) var(--ease-standard);
   }
@@ -631,7 +641,7 @@
   .toast {
     --toast-shift: calc(var(--toast-index) * -14px + var(--toast-swipe-movement-y, 0px));
     position: absolute; left: 50%; bottom: 0; translate: -50% 0; z-index: calc(1000 - var(--toast-index)); width: max-content; max-width: calc(100vw - 32px);
-    display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 6px 0 14px; border-radius: 18px; background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); color: var(--text);
+    display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 6px 0 14px; border-radius: 18px; background: var(--glass-thick); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); color: var(--text);
     box-shadow: var(--sh-pop); font-size: 12px; line-height: 18px; user-select: none; transform-origin: 50% 100%;
     transform: translateX(var(--toast-swipe-movement-x, 0px)) translateY(var(--toast-shift)) scale(calc(1 - var(--toast-index) * .04));
     transition: transform var(--dur-spring) var(--ease-spring), opacity var(--dur-base) var(--ease-out);
@@ -763,7 +773,8 @@
   .diff-line.is-remove { background: var(--del-bg); }
   .diff-line.is-remove > .s { color: var(--del-on-tint); }
   .diff-line:is(.is-add, .is-remove) > .n { color: var(--text-3-on-tint); }
-  .diff-line.is-hunk { color: var(--text-3); background: var(--bg-subtle); }
+  .diff-line.is-hunk, .diff-line.is-hunk > :is(.n, .s) { color: var(--text-3-on-tint); }
+  .diff-line.is-hunk { background: var(--bg-subtle); }
   .diff-line.is-file { color: var(--text-2); font-weight: 500; }
 
   /*
@@ -772,15 +783,17 @@
    * leaves by sliding out past the window's edge as its slot closes; in a browser the page's backdrop color shows where the material would.
    */
   .app-shell { --pane-inset: 8px; --pane-gap: 6px; --sidebar-width: var(--container-sidebar); }
-  .sidebar-slot { position: relative; flex: none; width: var(--sidebar-width); overflow: clip; transition: width var(--dur-spring-soft) var(--ease-spring-soft); }
-  .sidebar-slot[data-open="false"] { width: 0; }
+  .sidebar-slot { position: relative; flex: none; width: var(--sidebar-width); overflow: clip; transition: width var(--dur-spring-soft) var(--ease-spring-soft), visibility 0s; }
+  /* Away, it is not there for anyone: hidden once it has slid out. */
+  .sidebar-slot[data-open="false"] { width: 0; visibility: hidden; transition: width var(--dur-spring-soft) var(--ease-spring-soft), visibility 0s linear var(--dur-spring-soft); }
   .sidebar-pane {
     position: absolute; top: var(--pane-inset); bottom: var(--pane-inset); right: var(--pane-gap); width: calc(var(--sidebar-width) - var(--pane-inset) - var(--pane-gap)); border-radius: var(--radius-pane); background: var(--pane-tint);
-    box-shadow: inset 0 0 0 .5px var(--pane-rim), 0 0 0 .5px var(--border-strong), 0 4px 18px -6px rgba(0, 0, 0, .16), 0 0 0 100vmax var(--bg-app);
+    box-shadow: var(--glass-rim), 0 0 0 .5px var(--border-strong), 0 6px 22px -6px rgba(0, 0, 0, .2), 0 0 0 100vmax var(--bg-app);
   }
   .content-pane { position: relative; background: var(--bg-app); }
-  /* A page, or another conversation, arrives with a short fade, not a swap. */
-  .content-pane > * { animation: hh-fade-in 180ms var(--ease-out) both; }
+  /* A page, or another conversation, arrives with a short fade, not a swap. The fade lets go of the page when it ends: a layer it kept would cut
+     the glass inside the page off from what is behind it. */
+  .content-pane > * { animation: hh-fade-in 180ms var(--ease-out) backwards; }
   /* The top of the content moves the window wherever a page has put nothing to press there. */
   .content-pane::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 52px; -webkit-app-region: drag; }
   /* The top strip of each pane moves the window; with the sidebar away, the content's strip leaves room for the window's own buttons. */
@@ -799,12 +812,13 @@
     -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent 100%); mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
   }
   .chat-foot::before {
-    content: ""; position: absolute; inset: -30px 0 0 0; z-index: -1; pointer-events: none; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
-    background: linear-gradient(to bottom, transparent 0, color-mix(in srgb, var(--bg-app) 50%, transparent) 30px, color-mix(in srgb, var(--bg-app) 94%, transparent) 78px, var(--bg-app) 100%);
+    content: ""; position: absolute; inset: -30px 0 0 0; z-index: -1; pointer-events: none; -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+    background: linear-gradient(to bottom, transparent 0, color-mix(in srgb, var(--bg-app) 22%, transparent) 30px, color-mix(in srgb, var(--bg-app) 40%, transparent) calc(100% - 64px), color-mix(in srgb, var(--bg-app) 97%, transparent) calc(100% - 34px), var(--bg-app) 100%);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 30px); mask-image: linear-gradient(to bottom, transparent 0, #000 30px);
   }
-  .composer-box { background: var(--glass-thick); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
-  .chat-foot :is(.relay-card, .queued-message, .composer-notice, .composer-change, [role="status"].rounded-block, [role="alert"].rounded-block) { -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+  .follow-stream { background: var(--glass); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); box-shadow: var(--sh-pop); }
+  .composer-box { background: var(--glass-thick); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); }
+  .chat-foot :is(.relay-card, .queued-message, .composer-notice, .composer-change, [role="status"].rounded-block, [role="alert"].rounded-block) { -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); }
   .chat-notices:not(:empty) ~ .chat-scroll { padding-top: 16px; }
 
   /* A search field that opens the palette: it looks like where one types, and is pressed. */
@@ -823,7 +837,7 @@
  * Important declarations in the base layer outrank those of later layers, so this also wins over the reduced-motion fades.
  */
 @layer base {
-  :root[data-input="keyboard"] :is(.surface-pop, .tooltip-pop, .backdrop, .dialog-pop, .palette-pop, .drawer-pop, .drawer-left-pop, .sheet-pop, .tabs-indicator, .segmented-thumb, .switch, .switch-thumb, .collapsible, .motion-rotate, .floating-bar, .btn, .press) {
+  :root[data-input="keyboard"] :is(.surface-pop, .tooltip-pop, .backdrop, .dialog-pop, .palette-pop, .drawer-pop, .drawer-left-pop, .sheet-pop, .tabs-indicator, .segmented-thumb, .switch, .switch-thumb, .collapsible, .motion-rotate, .floating-bar, .btn, .press, .sidebar-slot, .titlebar) {
     transition-duration: 0s !important;
   }
   :root[data-input="keyboard"] :is(.btn, .press):active { transform: none !important; }

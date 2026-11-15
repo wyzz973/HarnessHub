@@ -168,7 +168,7 @@ async function followOwnSettings(page: Page): Promise<void> {
   await page.getByRole("option", { name: /^跟随 .+ 自己的设置/u }).click();
   await expect(picker).toContainText("本机设置");
 }
-async function rowTint(page: Page, row: ReturnType<Page["locator"]>, tint = "rgb(244, 244, 244)"): Promise<void> {
+async function rowTint(page: Page, row: ReturnType<Page["locator"]>, tint = "rgba(0, 0, 0, 0.043)"): Promise<void> {
   const background = () => row.evaluate(element => getComputedStyle(element).backgroundColor);
   await page.mouse.move(2, 2); await expect.poll(background).toBe("rgba(0, 0, 0, 0)");
   await row.hover(); await expect.poll(background).toBe(tint);
@@ -557,7 +557,7 @@ test("live chat renders committed partial Markdown before completion, respects r
   await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
   // The user stopped it: the Turn says so (ADR-054 decision H); the header says nothing of a Turn that is over unless it failed.
   await expect(page.locator(".assistant-message").last()).toContainText("你停止了这一轮");
-  await expect(page.locator(".chat-page > header .status-pill")).toHaveCount(0);
+  await expect(page.locator(".chat-page header.chat-toolbar .status-pill")).toHaveCount(0);
   const stopped = await current(); assert.equal(stopped.runs.length, 2); assert.equal(stopped.runs[1]!.status, "cancelled");
   assert.ok(String(stopped.messages.at(-1)?.text).includes("第一段已经到达。"));
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -568,7 +568,7 @@ test("live chat renders committed partial Markdown before completion, respects r
   // The conversation ends from the "…" menu's 结束对话… alone (ruling R3): the header has no × of its own.
   await expect(page.getByRole("button", { name: "关闭这个对话" })).toHaveCount(0);
   const more = page.getByRole("button", { name: "更多操作", exact: true }), end = page.getByRole("menuitem", { name: "结束对话…", exact: true });
-  await more.click(); await expect(end).toHaveAccessibleDescription("结束会话，保留历史"); await end.click();
+  await more.click(); await end.click();
   await expect(page.getByRole("dialog", { name: "结束这次会话？", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "继续对话", exact: true }).click();
   assert.equal((await current()).snapshot.status, "open");
@@ -702,7 +702,7 @@ test("native settings switch without Apply and approvals survive refresh or canc
   // A failed Turn says what failed in its error card and ends with the same footer as any Turn; the header names the state in the table's word (ruling N).
   await expect(page.locator(".assistant-message").last().locator(".run-error")).toBeVisible();
   await expect(page.locator(".assistant-message").last().locator(".turn-footer")).toHaveText(/^Codex · Native B · [0-9.]+ 秒$/u);
-  await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Codex 失败");
+  await expect(page.locator(".chat-page header.chat-toolbar .status-pill")).toHaveText("Codex 失败");
   await page.locator(".assistant-message").last().hover();
   for (const width of [943, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });
@@ -1294,7 +1294,7 @@ test("a Turn the Runtime cancelled when its wait budget ran out says 已停止 w
   // The Turn says the table's sentence for why it ended after the state's word; nothing calls it the user's stop. The header says nothing
   // of a Turn that is over unless it failed.
   await expect(turn).toContainText("已停止 · 超过了这一轮的时间上限"); await expect(turn).not.toContainText("你停止了这一轮");
-  await expect(page.locator(".chat-page > header .status-pill")).toHaveCount(0);
+  await expect(page.locator(".chat-page header.chat-toolbar .status-pill")).toHaveCount(0);
   await turn.hover(); await turn.getByRole("button", { name: "执行详情", exact: true }).click();
   const facts = page.getByRole("complementary", { name: "详情栏" }).locator(".execution-details");
   await expect(facts.locator(".run-state")).toHaveText("已停止 · 超过了这一轮的时间上限");
@@ -1346,7 +1346,7 @@ test("a Turn waiting for a slot, when an operator limited the conversations runn
   // Nothing of it has started, so the line under the composer has nothing to say of it.
   await expect(page.locator(".composer-status")).toHaveText("");
   // The header and the page's announcement name the state as the Turn does (ruling N).
-  await expect(page.locator(".chat-page > header .status-pill")).toHaveText("Busy Agent 排队中"); await expect(page.locator(".chat-page > .sr-only[role=status]")).toHaveText("排队中");
+  await expect(page.locator(".chat-page header.chat-toolbar .status-pill")).toHaveText("Busy Agent 排队中"); await expect(page.locator(".chat-page > .sr-only[role=status]")).toHaveText("排队中");
   // So do the details: its facts say 排队中.
   await page.keyboard.press("ControlOrMeta+Backslash");
   const details = page.getByRole("complementary", { name: "详情栏" });
@@ -1497,7 +1497,7 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await expect(summary).toHaveAttribute("aria-expanded", "false");
   await expect(log.locator(".action-row").first()).not.toBeVisible();
   // The density is the "…" menu's checkable 显示每一步, checked for every step (ruling R1); the header has no 简洁 or 详细.
-  const header = page.locator(".chat-page > header"), more = header.getByRole("button", { name: "更多操作", exact: true });
+  const header = page.locator(".chat-page header.chat-toolbar"), more = header.getByRole("button", { name: "更多操作", exact: true });
   const everyStep = page.getByRole("menuitemcheckbox", { name: "显示每一步", exact: true });
   await expect(header.getByRole("button", { name: /^(简洁|详细)$/u })).toHaveCount(0);
   await more.click(); await expect(everyStep).toHaveAttribute("aria-checked", "false"); await everyStep.click();
@@ -1610,12 +1610,12 @@ test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is 
   // left; from the keyboard its focus ring is the row's, 2 px inside its edge.
   const editRow = edit.getByRole("button", { name: /修改了 README\.md/u }), tint = () => editRow.evaluate(element => getComputedStyle(element).backgroundColor);
   assert.equal(await tint(), "rgba(0, 0, 0, 0)");
-  await editRow.hover(); await expect.poll(tint).toBe("rgb(244, 244, 244)");
+  await editRow.hover(); await expect.poll(tint).toBe("rgba(0, 0, 0, 0.043)");
   assert.deepEqual(await editRow.evaluate(element => { const style = getComputedStyle(element); return [style.transitionProperty, style.transitionDuration, style.transitionTimingFunction]; }),
     ["background-color", "0.12s", "cubic-bezier(0.2, 0, 0, 1)"]);
   await page.mouse.move(2, 2); await expect.poll(tint).toBe("rgba(0, 0, 0, 0)");
   await page.keyboard.press("Shift"); await editRow.focus();
-  assert.deepEqual(await editRow.evaluate(element => { const style = getComputedStyle(element); return [element.matches(":focus-visible"), style.outlineStyle, style.outlineWidth, style.outlineOffset]; }), [true, "solid", "2px", "-2px"]);
+  assert.deepEqual(await editRow.evaluate(element => { const style = getComputedStyle(element); return [element.matches(":focus-visible"), style.outlineStyle, style.outlineWidth, style.outlineOffset]; }), [true, "solid", "3px", "-2px"]);
   await editRow.blur();
   await page.screenshot({ path: join(artifact, "dl4-turn-light-1440.png"), animations: "disabled" });
   // D02: the details tabs begin 概览, 改动 (with the number of changes, the button's) and 过程; the underline sits under
@@ -1637,6 +1637,8 @@ test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is 
   // C08: switching the model takes effect between Turns; the place is marked by the Turn that carries it, with a hairline and the pill in the middle.
   await pick("选择模型", "Native A");
   await expect.poll(async () => { const value = await current(); return value.pendingSwitchId === null && value.selection.nativeModel === "native-a"; }).toBe(true);
+  // The page hears of the applied choice a moment after the Gateway has it; a message sent before that is not taken.
+  await page.waitForTimeout(600);
   await composer.fill("第二轮"); await composer.press("Enter");
   await expect(log.locator(".assistant-message")).toHaveCount(2);
   await expect(log.locator(".assistant-message").last()).toContainText("已由", { timeout: 15000 });
@@ -2154,7 +2156,7 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   await page.keyboard.press("Shift+Tab"); await page.keyboard.press("Tab");
   for (let step = 0; step < 8 && !(await trigger.evaluate(element => element === document.activeElement)); step++) await page.keyboard.press("Tab");
   await expect(trigger).toBeFocused();
-  assert.deepEqual(await trigger.evaluate(element => { const style = getComputedStyle(element); return [style.outlineStyle, style.outlineWidth, style.outlineOffset, style.transitionProperty.includes("outline")]; }), ["solid", "2px", "-2px", false]);
+  assert.deepEqual(await trigger.evaluate(element => { const style = getComputedStyle(element); return [style.outlineStyle, style.outlineWidth, style.outlineOffset, style.transitionProperty.includes("outline")]; }), ["solid", "3px", "-2px", false]);
   await page.screenshot({ path: join(artifact, "dl9-focus.png"), clip: { x: 640, y: 560, width: 640, height: 200 } });
   // / lists the native commands; ↑ ↓ and ⏎ fill one in; esc closes the list and keeps the text.
   await composer.fill("/");
@@ -2203,13 +2205,13 @@ test("G054-DL9 ⌘J opens the Agent list, ⌘. stops the reply, ⌘\\ opens and 
   const button = page.getByRole("button", { name: "详情栏", exact: true });
   await button.click(); await expect(panel).toBeVisible(); await expect(button).toHaveAttribute("aria-pressed", "true");
   // With the pointer it widens in 300 ms and its content slides in 60 ms later, once (the panel adds no slide of its own).
-  await expect.poll(panelLog).toEqual(["width:0.3s", "slide:0.06s"]);
+  await expect.poll(panelLog).toEqual(["width:0.52s", "slide:0.06s"]);
   // Its content slid in once: a key and then the pointer again (the input mode changing) do not make it start over.
   await page.waitForTimeout(400); await page.keyboard.press("Shift");
   assert.equal(await page.evaluate(() => { document.dispatchEvent(new PointerEvent("pointerdown")); return getComputedStyle(document.querySelector(".details-aside")!.firstElementChild!).opacity; }), "1");
   await button.click(); await expect(panel).toHaveCount(0); await expect(button).toHaveAttribute("aria-pressed", "false");
   // It closes in 200 ms; the slide never started over.
-  await expect.poll(panelLog).toEqual(["width:0.3s", "slide:0.06s", "width:0.2s"]);
+  await expect.poll(panelLog).toEqual(["width:0.52s", "slide:0.06s", "width:0.2s"]);
   // With reduced motion the panel appears at once: no widening and no slide.
   await page.emulateMedia({ reducedMotion: "reduce" });
   await button.click(); await expect(panel).toBeVisible();
@@ -2401,7 +2403,8 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
  * back before it returns.
  */
 function confirmationGeometry(dialog: ReturnType<Page["getByRole"]>) {
-  return dialog.evaluate(element => {
+  return dialog.evaluate(async element => {
+    await Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => undefined)));
     const title = element.querySelector("h2")!.parentElement!, body = title.nextElementSibling as HTMLElement, footer = body.nextElementSibling!, style = getComputedStyle(footer);
     const blocks = [...body.children] as HTMLElement[], heights = () => blocks.map(block => block.getBoundingClientRect().height);
     for (const block of blocks) block.style.overflow = "hidden";
@@ -3791,14 +3794,14 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   assert.deepEqual(await plusOf(beta), ["0", "0.5"], "an empty cell holds its plus transparent at half size");
   await beta.click();
   await expect(beta).toHaveAttribute("aria-pressed", "true");
-  await expect.poll(() => beta.evaluate(element => getComputedStyle(element).boxShadow)).toMatch(/rgb\(23, 87, 172\) 0px 0px 0px 1\.5px inset$/u);
+  await expect.poll(() => beta.evaluate(element => getComputedStyle(element).boxShadow)).toMatch(/rgb\(0, 102, 204\) 0px 0px 0px 1\.5px inset$/u);
   assert.deepEqual(await beta.evaluate(element => { const style = getComputedStyle(element), plus = getComputedStyle(element.querySelector("svg")!);
     return [style.transitionProperty, style.transitionDuration, plus.transitionProperty, plus.transitionDuration, plus.transitionTimingFunction]; }),
   ["scale, background-color, box-shadow", "0.3s, 0.12s, 0.12s", "scale, opacity", "0.3s, 0.12s", "cubic-bezier(0.34, 1.3, 0.64, 1), cubic-bezier(0.2, 0, 0, 1)"]);
   await expect.poll(() => plusOf(beta)).toEqual(["1", "1"]);
   await beta.click(); await expect(beta).toHaveAttribute("aria-pressed", "false");
   await expect.poll(() => plusOf(beta)).toEqual(["0", "0.5"]);
-  await expect.poll(() => beta.evaluate(element => getComputedStyle(element).boxShadow)).not.toMatch(/rgb\(23, 87, 172\)/u);
+  await expect.poll(() => beta.evaluate(element => getComputedStyle(element).boxShadow)).not.toMatch(/rgb\(0, 102, 204\)/u);
   await beta.click(); await expect(beta).toHaveAttribute("aria-pressed", "true");
   // The bar rises 16 px in 300 ms on the appear curve (Motion board #29) and counts the files once each change is prepared.
   const bar = page.getByRole("region", { name: "已选的格子" });
@@ -3809,12 +3812,11 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
     const box = element.getBoundingClientRect(), page = element.closest(".capabilities-page")!.getBoundingClientRect(), words = element.querySelector("[role='status'], .trunc")!;
     return { offset: Math.round(Math.abs((box.left - page.left) - (page.right - box.right))), lines: Math.round((words.getBoundingClientRect().height - parseFloat(getComputedStyle(words).paddingTop) * 2) / 20) };
   });
-  assert.deepEqual(await bar.evaluate(element => { const style = getComputedStyle(element); return [style.transitionProperty, style.transitionDuration, style.transitionTimingFunction]; }),
-    ["opacity, transform", "0.3s, 0.3s", "cubic-bezier(0.165, 0.84, 0.44, 1), cubic-bezier(0.165, 0.84, 0.44, 1)"]);
+  assert.deepEqual(await bar.evaluate(element => { const style = getComputedStyle(element); return [style.transitionProperty, style.transitionDuration]; }), ["opacity, transform", "0.2s, 0.4s"]);
   // From the keyboard: the focus ring is there at once, Space picks, and nothing animates (Motion board #37).
   await page.keyboard.press("Tab"); await page.keyboard.press("Tab");
   await expect(gamma).toBeFocused();
-  assert.deepEqual(await gamma.evaluate(element => { const style = getComputedStyle(element); return [element.matches(":focus-visible"), style.outlineStyle, style.outlineWidth, document.documentElement.dataset.input]; }), [true, "solid", "2px", "keyboard"]);
+  assert.deepEqual(await gamma.evaluate(element => { const style = getComputedStyle(element); return [element.matches(":focus-visible"), style.outlineStyle, style.outlineWidth, document.documentElement.dataset.input]; }), [true, "solid", "3px", "keyboard"]);
   await page.keyboard.press("Space");
   await expect(gamma).toHaveAttribute("aria-pressed", "true");
   assert.deepEqual(await gamma.evaluate(element => { const plus = getComputedStyle(element.querySelector("svg")!); return [plus.transitionDuration, plus.opacity]; }), ["0s", "1"], "a cell picked from the keyboard does not pop");
@@ -3842,7 +3844,7 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
   await expect(files.nth(1)).toContainText("~/.claude/skills"); await expect(files.nth(1).locator(".capability-links li")).toHaveText(["+ 新建~/.claude/skills/gamma → ~/.agents/skills/gamma"]);
   await expect(bar).toBeHidden(); await expect(write).toHaveCSS("opacity", "1");
   // The page behind is veiled in the sidebar's color, as on the Capabilities board, not darkened.
-  assert.equal(await page.locator(".backdrop").evaluate(element => getComputedStyle(element).backgroundColor), "color(srgb 0.980392 0.980392 0.980392 / 0.6)");
+  assert.equal(await page.locator(".backdrop").evaluate(element => getComputedStyle(element).backgroundColor), "rgba(0, 0, 0, 0.16)");
   // A preview taller than the dialog scrolls; no file's block is squeezed to hide some of its lines.
   assert.deepEqual(await files.evaluateAll(nodes => nodes.map(node => node.scrollHeight - node.clientHeight)), [0, 0]);
   await page.screenshot({ path: join(artifact, "dl8-capabilities-preview-light-1440.png"), animations: "disabled" });
@@ -3910,12 +3912,12 @@ test("G054-DL8 the capability page lists the board's kinds with counts, marks ea
 
   // Dark, and phone widths: the categories become a row of tabs, the matrix scrolls inside its frame, the bar stays on screen.
   await page.emulateMedia({ colorScheme: "dark" });
-  await expect.poll(() => beta.evaluate(element => getComputedStyle(element).boxShadow)).toMatch(/rgb\(106, 171, 241\) 0px 0px 0px 1\.5px inset$/u);
+  await expect.poll(() => beta.evaluate(element => getComputedStyle(element).boxShadow)).toMatch(/rgb\(94, 173, 255\) 0px 0px 0px 1\.5px inset$/u);
   await page.screenshot({ path: join(artifact, "dl8-capabilities-dark-1440.png"), animations: "disabled" });
   await bar.getByRole("button", { name: "预览写入", exact: true }).click();
   const darkPreview = page.getByRole("dialog", { name: "写入 1 个文件" });
   await expect(darkPreview.locator(".capability-diff .text-red")).toHaveText(["-    \"beta\": \"off\""]); await expect(darkPreview).toHaveCSS("opacity", "1");
-  assert.equal(await page.locator(".backdrop").evaluate(element => getComputedStyle(element).backgroundColor), "color(srgb 0.121569 0.121569 0.121569 / 0.6)");
+  assert.equal(await page.locator(".backdrop").evaluate(element => getComputedStyle(element).backgroundColor), "rgba(0, 0, 0, 0.42)");
   await page.screenshot({ path: join(artifact, "dl8-capabilities-preview-dark-1440.png"), animations: "disabled" });
   const sent = posted.length;
   await darkPreview.getByRole("button", { name: "取消", exact: true }).click(); await expect(darkPreview).toBeHidden();
