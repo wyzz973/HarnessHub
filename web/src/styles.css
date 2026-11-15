@@ -650,7 +650,7 @@
   :is(.surface-pop, .tooltip-pop)[data-instant] { transition: none; }
 
   /* #27 Toasts: slide up from the bottom in 200 ms, leave shrinking to .85 with a fade; each older one sits 14 px higher and 4 % smaller */
-  .toast-viewport { position: fixed; left: 50%; bottom: 24px; translate: -50% 0; z-index: 80; width: max-content; max-width: calc(100vw - 32px); outline: none; }
+  .toast-viewport { position: fixed; left: 50%; bottom: calc(max(var(--chat-foot, 0px) - 4px, 16px) + 8px); translate: -50% 0; z-index: 80; width: max-content; max-width: calc(100vw - 32px); outline: none; }
   .toast {
     --toast-shift: calc(var(--toast-index) * -14px + var(--toast-swipe-movement-y, 0px));
     position: absolute; left: 50%; bottom: 0; translate: -50% 0; z-index: calc(1000 - var(--toast-index)); width: max-content; max-width: calc(100vw - 32px);
