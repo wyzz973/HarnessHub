@@ -2,7 +2,8 @@ import electron = require("electron");
 
 const { contextBridge, ipcRenderer } = electron;
 
-interface WindowState { readonly focused: boolean; readonly fullscreen: boolean }
+interface WindowState { readonly focused: boolean; readonly fullscreen: boolean; readonly material: "liquid" | "vibrancy" }
+interface GlassPane { readonly id: string; readonly left: number; readonly top: number; readonly width: number; readonly bottom: number; readonly radius: number }
 interface MenuEntry { readonly id?: string; readonly label?: string; readonly type?: "separator" | "checkbox"; readonly checked?: boolean; readonly enabled?: boolean; readonly danger?: boolean; readonly keys?: string; readonly items?: readonly MenuEntry[] }
 
 function listen<T>(channel: string, listener: (value: T) => void): () => void {
@@ -23,4 +24,6 @@ contextBridge.exposeInMainWorld("hubDesktop", {
   setActivity: (activity: { readonly running: number; readonly waiting: number }): void => ipcRenderer.send("hub:activity", activity),
   setTheme: (theme: "system" | "light" | "dark"): void => ipcRenderer.send("hub:theme", theme),
   pickFolder: (start?: string): Promise<string | null> => ipcRenderer.invoke("hub:pick-folder", start),
+  /** Where the page leaves an opening onto the window's glass. */
+  setGlass: (panes: readonly GlassPane[]): void => ipcRenderer.send("hub:glass", panes),
 });

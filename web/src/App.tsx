@@ -51,7 +51,7 @@ import { cn } from "./lib/cn.js";
 import { inScratch, projectOf, shortTitle } from "./lib/format.js";
 import { setBadge } from "./lib/badge.js";
 import { actionOf, keyText, useKeys } from "./lib/keys.js";
-import { desktop, onCommand } from "./lib/desktop.js";
+import { desktop, followPane, onCommand } from "./lib/desktop.js";
 import { markSeen, markUnseen, unseenNow } from "./lib/seen.js";
 import { summaryLine } from "../../src/contracts/web.js";
 import { backgroundOutcome, enableNotifications, markNotificationAsked, notificationsOfferable, notifyTurnEnded } from "./lib/notify.js";
@@ -1576,6 +1576,9 @@ export function App() {
   const currentHarness = session?.selection.harnessId ?? "";
   const hidden = useMemo(() => hiddenHarnesses(state?.harnesses ?? [], preferences.showFrozen, [draft.harnessId, currentHarness]), [state?.harnesses, preferences.showFrozen, draft.harnessId, currentHarness]);
   const attentionItems = attention?.items ?? NO_ITEMS;
+  // The window lays its glass under the sidebar's pane.
+  const pane = useRef<HTMLDivElement>(null);
+  useEffect(() => followPane(pane.current), [state === null, narrow]);
   // The Dock icon counts what waits for you; quitting asks first while a Turn runs; the View menu ticks what is shown.
   const runningCount = state?.sessions.filter(row => row.activeRunId !== null).length ?? 0, waitingCount = liveItems(attentionItems, Date.now()).length;
   useEffect(() => { desktop?.setActivity({ running: runningCount, waiting: waitingCount }); }, [runningCount, waitingCount]);
@@ -1648,7 +1651,7 @@ export function App() {
     <WaitingTitle items={attentionItems}/>
     <a className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[80] focus:rounded-control focus:bg-surface focus:px-3 focus:py-2 focus:text-ui-sm focus:shadow-pop" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a>
     {narrow ? <Layer open={sidebarOpen} onOpenChange={setSidebarOpen} onClosed={layerClosed} title="主导航" className="drawer-left-pop">{sidebar}</Layer>
-      : <div className="sidebar-slot" data-open={preferences.sidebar} inert={!preferences.sidebar}><div className="sidebar-pane">{sidebar}</div></div>}
+      : <div className="sidebar-slot" data-open={preferences.sidebar} inert={!preferences.sidebar}><div className="sidebar-pane" ref={pane}>{sidebar}</div></div>}
     <main id="main-content" className="content-pane flex min-w-0 flex-1 flex-col outline-none" tabIndex={-1}>
       {base === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} onToolDetail={content => api.toolDetail(content)} {...(sessionId === null ? {} : { onDiagnostics: (run: string, includeContent: boolean) => api.runDiagnostics(sessionId, run, includeContent) })} onNativeBranch={()=>{ if(!session||!startOperation("native-branch"))return; void api.branchNative(session.id,session.epoch,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         retainNew={keepNew ?? (!draft.providerId && (nativeCatalog?.flavor?.capabilities?.keep === "session" || nativeCatalog?.flavor?.capabilities?.prewarm === "session"))} limits={limits}

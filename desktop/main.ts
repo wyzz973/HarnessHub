@@ -1,6 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, screen, shell, type MenuItemConstructorOptions } from "electron";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -51,6 +52,12 @@ function shellEnvironment(): Promise<Record<string, string>> {
   });
 }
 
+/** The system's Liquid Glass behind the page (desktop/native/glass.mm); absent where the module was not built, and the window then takes the older material. */
+interface Glass { prepare(handle: Buffer): boolean; pane(handle: Buffer, id: string, left: number, top: number, width: number, bottom: number, radius: number): void }
+let glass: Glass | null = null;
+try { glass = createRequire(import.meta.url)("./native/glass.node") as Glass; } catch { glass = null; }
+let material: "liquid" | "vibrancy" = "vibrancy";
+
 const logFile = join(userData, "logs", "gateway.log");
 function log(line: string): void { try { appendFileSync(logFile, new Date().toISOString() + " " + line + "\n", { mode: 0o600 }); } catch { /* the log is a convenience */ } }
 
@@ -90,16 +97,19 @@ function savedBounds(): { width: number; height: number; x?: number; y?: number 
 }
 
 const BLANK = "data:text/html;charset=utf-8," + encodeURIComponent("<!doctype html><meta charset=\"utf-8\"><style>html,body{margin:0;height:100%;background:transparent}</style>");
-function sendState(): void { if (win !== null && !win.isDestroyed()) win.webContents.send("hub:state", { focused: win.isFocused(), fullscreen: win.isFullScreen() }); }
+function sendState(): void { if (win !== null && !win.isDestroyed()) win.webContents.send("hub:state", { focused: win.isFocused(), fullscreen: win.isFullScreen(), material }); }
 function command(id: string): void { if (win === null) return; if (!win.isVisible()) win.show(); win.webContents.send("hub:command", id); }
 
 function createWindow(): BrowserWindow {
   const made = new BrowserWindow({
     ...savedBounds(), minWidth: 760, minHeight: 480, show: false, title: "HarnessHub",
-    titleBarStyle: "hiddenInset", trafficLightPosition: { x: 21, y: 23 },
-    vibrancy: "sidebar", visualEffectState: "followWindow", backgroundColor: "#00000000",
+    titleBarStyle: "hiddenInset", trafficLightPosition: { x: 21, y: 23 }, backgroundColor: "#00000000",
     webPreferences: { preload: join(here, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
   });
+  // Liquid Glass where the system has it: the window itself lets the desktop through and panes of glass lie under the page's openings. Elsewhere
+  // the whole window is the older sidebar material.
+  material = glass !== null && glass.prepare(made.getNativeWindowHandle()) ? "liquid" : "vibrancy";
+  if (material === "vibrancy") made.setVibrancy("sidebar");
   made.once("ready-to-show", () => made.show());
   let saving: NodeJS.Timeout | null = null;
   const remember = () => { if (saving !== null) clearTimeout(saving); saving = setTimeout(() => { if (!made.isDestroyed() && !made.isFullScreen() && !made.isMinimized()) try { writeFileSync(boundsFile, JSON.stringify(made.getBounds())); } catch { /* next time */ } }, 400); };
@@ -192,7 +202,13 @@ function nativeMenu(entries: readonly MenuEntry[], choose: (id: string) => void,
 }
 
 function wire(): void {
-  ipcMain.handle("hub:state", () => ({ focused: win?.isFocused() ?? false, fullscreen: win?.isFullScreen() ?? false }));
+  ipcMain.handle("hub:state", () => ({ focused: win?.isFocused() ?? false, fullscreen: win?.isFullScreen() ?? false, material }));
+  // The page says where its openings are (in its own pixels); the glass lies under them.
+  ipcMain.on("hub:glass", (_event, panes: readonly { id?: unknown; left?: unknown; top?: unknown; width?: unknown; bottom?: unknown; radius?: unknown }[]) => {
+    if (win === null || glass === null || material !== "liquid" || !Array.isArray(panes)) return;
+    const zoom = win.webContents.getZoomFactor(), of = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? Math.max(value, 0) : 0) * zoom;
+    for (const pane of panes.slice(0, 8)) if (typeof pane.id === "string" && pane.id.length < 32) glass.pane(win.getNativeWindowHandle(), pane.id, of(pane.left), of(pane.top), of(pane.width), of(pane.bottom), of(pane.radius));
+  });
   ipcMain.handle("hub:menu", (_event, entries: readonly MenuEntry[], at?: { x: number; y: number }) => new Promise<string | null>(done => {
     if (win === null || !Array.isArray(entries)) { done(null); return; }
     let chosen: string | null = null;
