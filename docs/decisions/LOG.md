@@ -4,6 +4,11 @@
 
 ## 2026-11-15
 
+- **dsh 升到 0.2.2-rc.1，继续用 ACP。**（Opus 5.5 xhigh 子代理在独立 worktree 做，快进合入。）新版出错的一轮直接拒绝 prompt：驱动从会话日志读出错误码，报成失败，并说明输入已进历史。文字和推理带上 dsh 的消息 id；工具按名字补上种类，改文件的 diff 从日志补上；`todo_write` 显示成任务清单；只给了调用 id 的审批请求，用同一调用之前的信息补全。插话由 Hub 排到这一轮之后再发，分叉和回退由 Hub 带历史开新会话，标题用 `hub_wrap_up` 给的。dsh 没有提问工具，所以 `planTool` 保持 `hub`。
+  - 真机（deepseek-v4-flash）通过：一轮、审批、插话（排到下一轮）、打断、编辑重发、分叉、清空、Hub 工具、重开进程续上、失败映射。没验证：压缩（ACP 不能手动触发）、提问（没有这个工具）、一轮结束后才到的事件（没出现）。图片在发送前就被拒，这两个模型不收图。
+  - Web 宿主协议限时试探（临时 `DSH_HOME`，本地模拟的模型接口）：建会话、实时跟读、真插话、取消、分叉、改名、`/compact`、`/permission` 都能用；但接口是生成的，各接口参数名不一，没有兼容承诺。用不用待用户定。
+  - 顺带发现：dsh 默认把会话日志随官方接口请求上传给 DeepSeek（`dsh-session-log-deepseek`）；运行时分叉时没看声明的 `fork: none`，会白起一个 dsh 进程（待修）。
+
 - **Hub 的工具按需加载，学 T3 Code。** 每家声明 `toolLoad`：Codex、Claude Code、OpenCode 自己就按需加载 MCP 工具（`native`，Hub 不设开关）；dsh 不会，Hub 的服务只列核心工具和 `hub_tool_search`，搜到的再用 `tools/list_changed` 补上（`search`）；Hermes、OpenClaw 照旧全列（`all`）。不要任务清单和下一步的会话不再列那两个工具；工具说明压短约四分之一。Claude Code 没设 `ENABLE_TOOL_SEARCH`：官方 API 上它默认就开，只在自定义地址上故意关着，强开反而可能出错。
   - 真机（试验工作区，最便宜的模型）：只回一个词的回合，输入 Codex 36.7k→35.6k，dsh 14.0k→13.0k，Claude Code 41.1k→41.0k，OpenCode 18.2k→18.2k；“看看 src…”这个任务 Codex 改前两次 12.1 秒/71.5k、12.9 秒/71.6k，改后 13.3 秒/73.8k、15.1 秒/71.6k，差别在波动之内（Codex 本来就按需加载）。四家都在要用的时候找到并调通了工具（dsh 走 `hub_tool_search`）。页面上 `hub_tool_search` 不进时间线，没在页面上看过。
 
