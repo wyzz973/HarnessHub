@@ -24,6 +24,7 @@ Time-box one spike on the Web host RPC for streaming, steer, fork, titles and co
 
 **WorkBuddy.** The desktop app itself has **no supported way to be driven by another program**. Its deep links only open UI. Its local IPC broker and daemon are internal and ticket-authenticated. Its engine is a bundled copy of **CodeBuddy Code 2.165.0** (`@tencent-ai/codebuddy-code`), and that CLI's ACP, HTTP (`--serve`), stream-json and Agent SDK surfaces *are* officially documented by Tencent. Running the app's bundled copy from outside the app is possible but undocumented. WorkBuddy itself drives the CLI through ACP: over HTTP/SSE per conversation (`cbc --serve`). The CLI's ACP agent is very rich, with standard modes and config options plus `_codebuddy.ai/*` extensions: steer, queue, rollback, checkpoints, set_model.
 **Recommendation:** follow ADR-048 route B, but over **ACP stdio** (`--acp`) on the app-bundled CLI. It needs `CODEBUDDY_FORCE_LITE_WB_BUNDLE=1` and `CODEBUDDY_CONFIG_DIR=~/.workbuddy`. **Never call ACP `authenticate`**: it logs the user out first. Use one process per conversation, as WorkBuddy does. Before writing code, get the user's consent for one controlled probe (initialize plus `session/new`, no prompt). It must confirm that a standalone launch sees the user's WorkBuddy login.
+**Probe, 2026-11-15 (§2.9):** it does not. The login's key reaches only the app's own sidecars, and `--acp` alone does not serve ACP on stdio in this build. No driver was written.
 
 ---
 
@@ -334,6 +335,17 @@ A bare CLI launch therefore does **not** reproduce the app's persona, connectors
    - Get the user's consent for one controlled probe: `initialize` + `session/new`, no prompt, under `~/.workbuddy`. It confirms the login is visible, the PATH Node works and `cwd` handling.
    - Get the telemetry decision that ADR-048 left open.
 3. Do not use the npm CodeBuddy Code as "WorkBuddy". Do not use `--serve` either: ACP over HTTP adds a password and port with no gain for a single Hub client.
+
+### 2.9 Controlled probe (2026-11-15, with the user's consent): stopped, the login is not readable
+
+WorkBuddy 5.9.3, bundled CLI 2.165.0. Ran once, about one second: `node 26.13.0 WB_CLI/bin/codebuddy --acp --no-plugin-management`, env `CODEBUDDY_FORCE_LITE_WB_BUNDLE=1`, `CODEBUDDY_CONFIG_DIR` and `WORKBUDDY_CONFIG_DIR` = `~/.workbuddy`, `DISABLE_AUTOUPDATER=1`, telemetry as the app's default, cwd a temporary folder. The client sent `initialize` only; `session/new` never got its turn. No `authenticate`, no prompt. By the user's rule the work stopped here: no sign-in, no second run, no driver.
+
+- **Login (the stop):** the stored login's credential fields are encrypted at rest (`keyblob`); the key reaches only the app's own sidecars, through `CODEBUDDY_SIDECAR_CREDENTIAL_BOOTSTRAP_SOCKET`. Standalone, the CLI's log says `[AtRestEncryption] unavailable … category=missing-key`, `hasSession=true hasAccessToken=false`, and its one token refresh was answered 401 (`sessionPreserved=true`, nothing written). A process the Hub starts cannot use the user's WorkBuddy login.
+- **ACP:** in the lite-wb build `--acp` alone does not serve ACP on stdio. `DefaultModeStrategy` runs non-interactive, starts ACP over streamable-http on a kernel-assigned loopback port, posts an empty print request (`Cannot get AcpAgent, aborting render`) and exits 0; `initialize` is never answered. Read statically: stdio ACP starts only on the serve path (`--serve --acp`). Not run.
+- **Node 26.13:** `fetch config failed TypeError: Right-hand side of 'instanceof' is not callable` (axios `setProxy`), not fatal. Node 22 not tried.
+- **`--no-plugin-management`** keeps installed plugins: `PluginManager.doInit` still loads them; marketplace installs, reconciliation and listeners are skipped. No updater runs on this path: lite-wb loads its update service only for the HTTP `checkUpdate` route.
+- **What one second touched:** it started the app's plugin MCP servers (weixinpay, sheetagent) and two SessionStart hooks (the docx plugins' `setup.sh`); wrote an empty `projects/<cwd>/<id>.jsonl`, `user-state.json` and a workspace log (all three moved to the Trash); refreshed four `local_storage` caches (environment, endpoint, A/B snapshot, one 150 KB string) and `plugins/.last_inuse_sweep`; appended to the weixinpay plugin's logs. `settings.json`, `keyblob` and `security/` are unchanged.
+- **Ways forward, the user's call:** talk to the app's bootstrap socket (internal; it hands out the credential key, so the Hub would act as the app's own sidecar), or use the npm CodeBuddy Code with its own login (another Harness, ADR-048 route A).
 
 ---
 
