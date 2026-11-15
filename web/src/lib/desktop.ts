@@ -1,9 +1,11 @@
 /** The desktop app around the page (desktop/preload.cts); null in a browser. */
 export interface DesktopMenuEntry { readonly id?: string; readonly label?: string; readonly type?: "separator" | "checkbox"; readonly checked?: boolean; readonly enabled?: boolean; readonly keys?: string; readonly items?: readonly DesktopMenuEntry[] }
-export interface WindowState { readonly focused: boolean; readonly fullscreen: boolean; readonly material?: "liquid" | "vibrancy" }
-export interface GlassPane { readonly id: string; readonly left: number; readonly top: number; readonly width: number; readonly bottom: number; readonly radius: number }
+export interface WindowState { readonly focused: boolean; readonly fullscreen: boolean; readonly material?: "liquid" | "vibrancy"; readonly layered?: boolean }
+/** A sheet of the system's glass under the page, in the page's pixels. `anchor` is the edges it holds to while the window is resized. */
+export interface GlassPane { readonly id: string; readonly left: number; readonly top: number; readonly width: number; readonly height: number; readonly radius: number; readonly clear?: boolean; readonly alpha?: number; readonly anchor?: number }
 interface Bridge {
   readonly platform: string;
+  readonly initial?: WindowState;
   state(): Promise<WindowState>;
   onState(listener: (state: WindowState) => void): () => void;
   onCommand(listener: (command: string) => void): () => void;
@@ -34,23 +36,6 @@ export function followWindow(html: HTMLElement): void {
     if (state.material !== undefined && html.dataset.material !== state.material) { html.dataset.material = state.material; window.dispatchEvent(new Event("hub:material")); }
   };
   desktop.onState(apply);
+  if (desktop.initial !== undefined) apply(desktop.initial);
   void desktop.state().then(apply, () => undefined);
-}
-
-/**
- * The sidebar's pane is an opening onto the window: with the system's Liquid Glass the window is told where the opening is, and lays a pane of glass
- * under it. The pane stands still (the sidebar leaves by being covered), so this is said when it is laid out and when the window's size or zoom changes.
- */
-export function followPane(element: HTMLElement | null): () => void {
-  if (desktop === null || desktop.setGlass === undefined || element === null) return () => undefined;
-  const tell = () => {
-    if (document.documentElement.dataset.material !== "liquid") return;
-    const box = element.getBoundingClientRect();
-    if (box.width === 0) return;
-    desktop!.setGlass!([{ id: "sidebar", left: box.left, top: box.top, width: box.width, bottom: window.innerHeight - box.bottom, radius: parseFloat(getComputedStyle(element).borderTopLeftRadius) || 0 }]);
-  };
-  const sizes = new ResizeObserver(tell); sizes.observe(element);
-  window.addEventListener("resize", tell); window.addEventListener("hub:material", tell);
-  tell();
-  return () => { sizes.disconnect(); window.removeEventListener("resize", tell); window.removeEventListener("hub:material", tell); };
 }

@@ -5,7 +5,7 @@
  * in the element's backdrop-filter. Only Chromium takes an SVG filter there (the desktop app is one); elsewhere, and with "reduce transparency",
  * nothing is added and the glass is the plain blur.
  */
-const SURFACES = ".composer-box, .tool-group, .surface-pop, .dialog-pop, .palette-pop, .toast, .floating-bar, .follow-stream";
+const SURFACES = ".composer-box, .tool-group, .surface-pop, .dialog-pop, .palette-pop, .toast, .floating-bar, .follow-stream, .find-bar";
 const SVG = "http://www.w3.org/2000/svg";
 
 /** The map: red carries the shift across, blue the shift down; mid grey shifts nothing. The bezel is where the grey core fades into the two ramps. */

@@ -9,6 +9,7 @@ import { followWindow } from "./lib/desktop.js";
 import { followMenu } from "./lib/keys.js";
 import { trackInputModality } from "./ui/motion.js";
 import { ToastProvider } from "./ui/overlay.js";
+import { startSystemGlass } from "./ui/glass.js";
 import { startLiquidGlass } from "./ui/liquid.js";
 
 /**
@@ -43,3 +44,5 @@ trackInputModality();
 startLiquidGlass();
 // Interface icons are Lucide at a 1.75 stroke (ADR-054 §4); an icon may still pass its own strokeWidth.
 createRoot(root).render(<StrictMode><LucideProvider strokeWidth={1.75}><ToastProvider><App /></ToastProvider></LucideProvider></StrictMode>);
+// In the desktop app on macOS 26 the glass is the system's own, laid under the page.
+startSystemGlass();

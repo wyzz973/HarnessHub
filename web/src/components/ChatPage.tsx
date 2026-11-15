@@ -722,6 +722,7 @@ export function ChatPage(props: ChatProps) {
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
        <div ref={stage} className="chat-stage relative flex min-h-0 flex-1 flex-col">
         {/* The toolbar floats over the conversation, which fades under it; its strip moves the window. */}
+            <div className="scroll-edge scroll-edge-top" data-under-glass="" aria-hidden="true"/>
             <header className="chat-toolbar titlebar drag absolute inset-x-0 top-0 z-20 flex h-[52px] items-center gap-2 pr-3 pl-4">
           {narrow ? <button type="button" className="icon-btn navigation-toggle" onClick={props.onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
             : props.sidebarHidden ? <Tip label={"展开侧栏 " + keyText("sidebar")}><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts={ariaKeys("sidebar")} onClick={props.onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
@@ -775,7 +776,7 @@ export function ChatPage(props: ChatProps) {
             const item = run?.protocol?.items.find(entry => entry.seq === hit.itemSeq);
             return item !== undefined && (item.type === "user_message" || item.type === "assistant_message") && typeof item.messageId === "string" ? item.messageId : undefined;
           }}/> : null}
-        <div className={cn("chat-scroll scroll-area min-h-0 flex-1 px-4 sm:px-8", session === null ? "welcome-scroll" : "pt-[72px] pb-[calc(var(--foot-height,0px)+8px)]")} ref={scroll} onScroll={() => {
+        <div className={cn("chat-scroll scroll-area min-h-0 flex-1 px-4 sm:px-8", session === null ? "welcome-scroll" : "pt-[72px] pb-[calc(var(--foot-height,0px)+8px)]")} data-under-glass="" ref={scroll} onScroll={() => {
           const element = scroll.current;
           if (!element || viewport.current.width !== element.clientWidth || viewport.current.height !== element.clientHeight) return;
           // Content that got shorter (a Markdown block replacing its plain-text placeholder) pulls the position up by
@@ -804,6 +805,7 @@ export function ChatPage(props: ChatProps) {
             </div>}
         </div>
         {/* The message box floats over the conversation, which keeps that much room under its last line (--foot-height). */}
+        {session !== null && !props.loading ? <div className="scroll-edge scroll-edge-bottom" data-under-glass="" aria-hidden="true"/> : null}
         {session !== null && !props.loading ? <footer ref={foot} className="chat-foot pointer-events-none absolute inset-x-0 bottom-0 z-10 px-4 pt-1.5 pb-4 sm:px-8"><div className="pointer-events-auto relative mx-auto flex max-w-reading flex-col gap-2">
           {!followBottom ? <button type="button" className="follow-stream motion-enter press absolute -top-11 left-1/2 z-10 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border-none pr-3 pl-3.5 text-caption font-medium text-fg-2 transition-[color,transform] duration-120 ease-standard hover:text-fg"
             style={motionStyle({ shift: 6 })} onClick={resumeFollowing} aria-label="回到最新回复"><span>回到最新</span><ArrowDown size={13} aria-hidden="true"/></button> : null}
