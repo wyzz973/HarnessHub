@@ -176,6 +176,8 @@ test("another conversation in the same workspace runs beside a kept process: the
   const holder = await app.create(shared, { harnessId: "alpha" }, "create-holder");
   app.setRetention(holder.id, true, "keep"); app.send(holder.id, "turn", "holder-turn"); await app.wait(holder.id);
   const other = await app.create(shared, { harnessId: "alpha" }, "create-other");
+  // Every conversation keeps its process by default (2026-11-15); this one is told not to, so that one kept process stands beside one that is not.
+  app.setRetention(other.id, false, "not-kept");
   app.send(other.id, "beside it", "other-first"); await app.wait(other.id);
   const ran = oldShape(app, other.id).runs[0]!;
   assert.equal(ran.status, "completed"); assert.equal(ran.error, null); assert.equal(oldShape(app, other.id).status, "open");

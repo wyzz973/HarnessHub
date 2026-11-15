@@ -189,7 +189,8 @@ export function userTurns(messages: unknown): readonly { readonly rowId: number;
   return messages.flatMap(value => {
     const row = record(value);
     if (row === null || row.role !== "user" || typeof row.row_id !== "number" || !Number.isSafeInteger(row.row_id) || row.row_id <= 0 || row.archived === true) return [];
-    if (row.display_kind !== undefined && row.display_kind !== null && row.display_kind !== "" && row.display_kind !== "steer") return [];
+    // Words steered into a turn (`display_kind: "steer"`) are part of that turn, not one of their own, and no other kind of row begins one.
+    if (row.display_kind !== undefined && row.display_kind !== null && row.display_kind !== "") return [];
     const said = contentText(row.content);
     if (COMPACTION.test(said) && !said.slice(said.indexOf(SUMMARY_END) + SUMMARY_END.length).replace(/^[^\n]*\n/u, "").trim()) return [];
     return [{ rowId: row.row_id, text: said }];

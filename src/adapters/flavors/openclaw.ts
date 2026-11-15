@@ -29,5 +29,5 @@ export const openclawFlavor: HarnessFlavor = {
   // and the instructions that name it go after the first prompt of a new session. Its own task list is `progress_card` (the `plan` stream) and it
   // asks its own questions (`ask_user`), so the Hub asks for neither. Words in the middle of a turn go in as chat.send `queueMode: "steer"`.
   // Its own tools load on demand (tool_describe, dispatch_action); the Hub's reach it as a command, so how MCP tools load does not apply (toolLoad).
-  capabilities: { sessionMcp: "cli", systemPrompt: "first-prompt", planTool: "native", questions: "native", resume: "native", fork: "native", attachments: "native", usage: "turn", steer: "native" },
+  capabilities: { sessionMcp: "cli", systemPrompt: "first-prompt", planTool: "native", questions: "native", resume: "native", fork: "native", rollback: "native", attachments: "native", usage: "turn", steer: "native" },
 };

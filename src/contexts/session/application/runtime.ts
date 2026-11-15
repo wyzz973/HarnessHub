@@ -442,7 +442,8 @@ export class SessionRuntime {
     const fingerprint = recorded !== undefined && recorded.fingerprint === bare ? bare : secret ? bare : full, prior=replayCommand(state,command,"permission",fingerprint);
     if (prior) return {replayed:true};
     if (!pending || pending.execution.sessionId !== id || !pending.request.options.some(value => value.id === option)) throw new SessionError("PERMISSION_UNAVAILABLE", "native permission or option is no longer pending");
-    if(input!==undefined&&(!pending.request.input||input.includes("\0")))throw new SessionError("INVALID_INPUT","invalid native input response");
+    // Words go with a question's answer, or with a refusal of an approval that takes them (`note`); nowhere else.
+    if (input !== undefined && ((pending.request.input === undefined && pending.request.note !== true) || input.includes("\0"))) throw new SessionError("INVALID_INPUT", "invalid native input response");
     if (pending.option !== null) { if (pending.option === option && pending.command === key) return { replayed: true }; throw new SessionError("PERMISSION_CONFLICT", "native permission has already been decided"); }
     this.continue(pending.execution);
     const control = pending.execution.binding?.control;
@@ -1192,7 +1193,9 @@ export class SessionRuntime {
     // The native session is exactly at `through` only when no later Turn was dispatched to it, `through` ran in its current
     // native epoch, and the binding is synced with nothing owed up to `through` (ADR-055 §7.5): its native position follows
     // dispatch, so these say that the native session holds the conversation through `through` and nothing else.
-    const nativeFork = native !== undefined && native.throughRunId === through.id && !loaded.runs.slice(last + 1).some(run =>
+    // A Harness that declares it cannot branch (FlavorCapabilities.fork `none`, dsh) is not asked to: the branch starts from the public history and no
+    // process of it is started for a fork that would only be refused.
+    const nativeFork = native !== undefined && this.options.flavor?.(native.harnessId)?.capabilities?.fork !== "none" && native.throughRunId === through.id && !loaded.runs.slice(last + 1).some(run =>
       run.selection.provider === undefined && run.selection.harnessId === native.harnessId && run.selection.controlId === native.controlId && dispatched(run)) && this.exactAt(loaded, native, through);
     const id = sessionId("session-" + this.options.id());
     const parts = originToRows(id, { kind: "fork", sessionId: sourceId, throughRunId: through.id, history }, last);
@@ -1721,9 +1724,13 @@ export class SessionRuntime {
   }
   /** Whether the Hub keeps a process of this Harness between Turns by default (FlavorCapabilities.prewarm `session`), and may open one ahead. */
   private resident(harnessId: string): boolean { return this.options.flavor?.(harnessId)?.capabilities?.prewarm === "session"; }
-  /** Whether this conversation keeps its native process between Turns: as the user chose, else as its Harness declares (2026-11-15). */
+  /**
+   * Whether this conversation keeps its native process between Turns: as the user chose, else kept for every Harness that runs on its own login
+   * (2026-11-15: Claude Code's process stays between Turns, the user's decision, and every other Harness alike, T3 Code's way), released when idle
+   * (KEPT_IDLE_MS). Opening one ahead and keeping it across the Hub's clear stay with the Harnesses that declare `prewarm: "session"`.
+   */
   retains(id: SessionId): boolean { try { return this.retainsState(this.load(id)); } catch { return false; } }
-  private retainsState(state: Conversation): boolean { return state.retainNative ?? (state.selection.provider === undefined && this.resident(state.selection.harnessId)); }
+  private retainsState(state: Conversation): boolean { return state.retainNative ?? state.selection.provider === undefined; }
   /** Each Harness control's account limits (rate-limit windows, reset times, plan) as the latest Turn on it reported them; none before one did. */
   limits(): readonly AccountLimits[] { return [...this.accountLimits.values()]; }
   /** Why this conversation's next Turn cannot have its process opened ahead now; null when it can. */
@@ -2598,7 +2605,7 @@ export class SessionRuntime {
       const native = value.expiresBy === "native" && wait !== undefined && Number.isSafeInteger(wait) && wait >= 0 ? wait : null;
       const expires = native !== null && (hubLeft === null || native <= Math.round(hubLeft)) ? { expiresAt: requestedAt + native, expiresBy: "native" as const }
         : hubLeft !== null ? { expiresAt: requestedAt + Math.round(hubLeft), expiresBy: "turn" as const } : {};
-      const id = "permission-" + this.options.id(), request: PermissionRequest = { id, runId: run.id, title: value.title, options: value.options, ...(value.detail===undefined?{}:{detail:value.detail}),...(value.input===undefined?{}:{input:value.input}), decided: false, requestedAt, ...expires, ...(value.kind === "question" ? { kind: "question" as const } : {}) };
+      const id = "permission-" + this.options.id(), request: PermissionRequest = { id, runId: run.id, title: value.title, options: value.options, ...(value.detail===undefined?{}:{detail:value.detail}),...(value.input===undefined?{}:{input:value.input}), decided: false, requestedAt, ...expires, ...(value.kind === "question" ? { kind: "question" as const } : {}), ...(value.note === true && value.kind !== "question" ? { note: true as const } : {}) };
       this.permissions.set(id, { request, nativeId: value.id, execution, option: null, command: null, harnessId: run.selection.harnessId });
       // The request is an item that waits, written with the event that tells it.
       // What the request is about, as the Hub's policy tells it (read, edit, execute, …), kept with it as evidence of what was asked.

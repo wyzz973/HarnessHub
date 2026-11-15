@@ -41,6 +41,6 @@ export const opencodeFlavor: HarnessFlavor = {
   // instructions the session's own entry (`instructions/entries/harnesshub`); nothing is written. Tools load on demand natively (OpenCode 2's `execute`,
   // Code Mode). OpenCode 2.3.0 has no task list of its own unless the user turns on its experimental `todowrite` (`experimental.todo`): the Hub's stays.
   // Words in the middle of a turn are a steer of the same turn (`prompt {delivery: "steer"}`, taken at its next step).
-  capabilities: { sessionMcp: "runtime-mcp", systemPrompt: "session-instructions", planTool: "hub", toolLoad: "native", questions: "native", resume: "native", fork: "native", attachments: "native",
+  capabilities: { sessionMcp: "runtime-mcp", systemPrompt: "session-instructions", planTool: "hub", toolLoad: "native", questions: "native", resume: "native", fork: "native", rollback: "native", attachments: "native",
     usage: "turn", record: "files", steer: "native" },
 };

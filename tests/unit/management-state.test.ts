@@ -76,7 +76,8 @@ test("builtin management recipes cover reviewed native package identities and mu
   assert.equal(recipes.find(recipe => recipe.controlId === "pi-native")?.packageName, "@earendil-works/pi-coding-agent");
   assert.deepEqual(recipes.find(recipe => recipe.harnessId === "pi" && recipe.controlId !== "pi-native")?.dependencies, [{ packageName: "@earendil-works/pi-coding-agent", binName: "pi" }]);
   for (const [harness, bin] of [["codebuddy-code", "codebuddy"], ["dimcode", "dimcode"], ["nova", "nova"], ["minion-code", "minion-code"]]) assert.equal(recipes.find(recipe => recipe.harnessId === harness)?.binName, bin);
-  assert.equal(recipes.filter(recipe => recipe.kind === "binary").length, 19);
+  // OpenCode's own server control keeps the registry binary's id (opencode-binary) and takes its place, so that binary is no recipe of its own (2026-11-15).
+  assert.equal(recipes.filter(recipe => recipe.kind === "binary").length, 18);
 });
 test("G011-UN6 an uninstall request names one installation and the check the user confirmed, and nothing an install or upgrade takes", () => {
   // An upgrade of one installation names it the same way (ADR-044, step 4); it takes no services to stop.
