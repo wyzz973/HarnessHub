@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { contentId, type ContentKind, type ControlAttachment } from "../../src/contracts/content.js";
 import type { BackendResult, ContextEffect, ControlEvent, ControlLaunch, ControlOptions, HarnessControl, NativeModelCatalog } from "../../src/contracts/control.js";
-import { ClaudeControl } from "../../src/adapters/control/claude.js";
+import { ClaudeSdkControl } from "../../src/adapters/control/claude/control.js";
 import { CodexControl } from "../../src/adapters/control/codex.js";
 import { HermesGatewayControl } from "../../src/adapters/control/hermes/control.js";
 import { OpenClawControl } from "../../src/adapters/control/openclaw.js";
@@ -116,37 +116,6 @@ async function attachment(root: string, name: string, kind: "file" | "image" = "
 }
 /** The diagnostics a Turn reported. */
 
-test("G067-C03 Claude Code: its own refusal is not recorded, a prompt it stopped after writing it is recorded, a lost outcome is unknown and sent once", async t => {
-  const f = await peers(t);
-  // /remote-control is refused by the driver itself where Claude Code reads it as a command, the slash as the first character: nothing is sent.
-  const refused = f.launch("acp-v1", { RELAY_PROMPT: "answer" });
-  const remote = await turn(new ClaudeControl(refused.launch, options), "/remote-control");
-  assert.equal(remote.result.input, "not_recorded"); assert.equal(remote.result.error?.code, "NATIVE_COMMAND_UNAVAILABLE");
-  assert.equal(await refused.received("session/prompt"), 0);
-  // Behind a space it is words (the CLI strips nothing, G074-F1): sent as typed, and its answer proves it recorded.
-  const spaced = f.launch("acp-v1", { RELAY_PROMPT: "answer" });
-  const words = await turn(new ClaudeControl(spaced.launch, options), "  /remote-control");
-  assert.deepEqual([words.result.status, words.result.input], ["completed", "recorded"]); assert.deepEqual(await spaced.prompts(), ["  /remote-control"]);
-  // The Hub's own /export reads Claude Code's record and sends nothing either.
-  const exporting = f.launch("acp-v1", { RELAY_PROMPT: "answer", CLAUDE_CONFIG_DIR: join(f.root, "no-claude-config") });
-  const exported = await turn(new ClaudeControl(exporting.launch, options), "/export", undefined, true);
-  assert.equal(exported.result.input, "not_recorded"); assert.equal(await exporting.received("session/prompt"), 0);
-  // max_tokens and max_turn_requests come only once Claude Code wrote the prompt to its transcript: a failure after insertion.
-  for (const reason of ["max_tokens", "max_turn_requests"]) {
-    const stopped = f.launch("acp-v1", { RELAY_PROMPT: "stop:" + reason });
-    const { result } = await turn(new ClaudeControl(stopped.launch, options), "do the work");
-    assert.deepEqual(result, { status: "failed", reason, input: "recorded" }, reason);
-  }
-  // A refusal the adapter does not explain may come before or after insertion: unknown, and the driver does not send it again.
-  const lost = f.launch("acp-v1", { RELAY_PROMPT: "error:-32603:query stream ended" });
-  const unknown = await turn(new ClaudeControl(lost.launch, options), "do the work");
-  assert.equal(unknown.result.status, "failed"); assert.equal(unknown.result.input, undefined);
-  assert.equal(await lost.received("session/prompt"), 1);
-  // A command's reply proves nothing about history: `/compact` that Claude Code answered stays unknown.
-  const compact = f.launch("acp-v1", { RELAY_PROMPT: "answer", RELAY_COMMANDS: JSON.stringify([{ name: "compact", description: "compact" }]) });
-  assert.equal((await turn(new ClaudeControl(compact.launch, options), "/compact")).result.input, undefined);
-});
-
 test("G067-C03 Codex: turn/start refused before any turn is not recorded, a turn that recorded its input is recorded even when it fails, one without that item is unknown", async t => {
   const f = await peers(t);
   const rejected = f.launch("codex-app-server", { RELAY_TURN: "reject" });
@@ -200,48 +169,8 @@ test("G067-C03 OpenClaw: an unapplied model sent nothing, a user row in the turn
   assert.equal(await unreadable.received("session/prompt"), 1);
 });
 
-test("G067-C03 Claude Code refusals by their wire shape (claude-agent-acp 0.99.1): a model failure's errorKind is recorded, a refusal before enqueueing is not, the adapter's own kinds stay unknown", async t => {
-  const f = await peers(t);
-  // errorKindData(lastAssistantError): the model call failed after the prompt was written to the transcript.
-  for (const errorKind of ["rate_limit", "overloaded", "max_output_tokens"]) {
-    const { result } = await turn(new ClaudeControl(refusing(f, { code: -32603, message: "Internal error: API Error: request failed", data: { errorKind } }).launch, options), "do the work");
-    assert.equal(result.status, "failed", errorKind); assert.equal(result.input, "recorded", errorKind);
-  }
-  // R8 C4: the session's query stream had ended (SESSION_ENDED_MESSAGE, no data) or the session is unknown (sessionNotFound).
-  for (const error of [{ code: -32603, message: "Internal error: The Claude Agent session has ended. Please start a new session." }, { code: -32002, message: "Resource not found", data: { sessionId: "relay-session" } }]) {
-    const peer = refusing(f, error), { result } = await turn(new ClaudeControl(peer.launch, options), "do the work");
-    assert.equal(result.input, "not_recorded", error.message); assert.equal(await peer.received("session/prompt"), 1, "sent once, never again by the driver");
-  }
-  // The adapter's own failures can come before Claude Code read the prompt, and the C4 words with data are not the C4 refusal.
-  for (const error of [{ code: -32603, message: "Internal error", data: { errorKind: "transport_lost" } }, { code: -32603, message: "Internal error", data: { errorKind: "worker_shutdown" } },
-    { code: -32603, message: "Internal error: The Claude Agent session has ended. Please start a new session.", data: { errorKind: "no_result" } }, { code: -32603, message: "Internal error: API Error", data: { errorKind: "something_new" } },
-    // A sign-in failure arrives as a bare auth_required, never with its errorKind, and the adapter's guard sends the same before a turn.
-    { code: -32603, message: "Internal error: API Error", data: { errorKind: "authentication_failed" } }])
-    assert.equal((await turn(new ClaudeControl(refusing(f, error).launch, options), "do the work")).result.input, undefined, JSON.stringify(error));
-  const signedOut = await turn(new ClaudeControl(refusing(f, { code: -32000, message: "Authentication required" }).launch, options), "do the work");
-  assert.equal(signedOut.result.input, undefined); assert.equal(signedOut.result.error?.code, "NATIVE_AUTH_REQUIRED");
-  // A command prompt is never reported recorded, whatever its failure says.
-  const compact = refusing(f, { code: -32603, message: "Internal error", data: { errorKind: "rate_limit" } }, { RELAY_COMMANDS: JSON.stringify([{ name: "compact", description: "compact" }]) });
-  assert.equal((await turn(new ClaudeControl(compact.launch, options), "/compact")).result.input, undefined);
-});
-
 test("G067 R0d each driver's own handling of an input follows its reading: leading whitespace and attachments decide the Hub's /export and Codex's thread operations alike", async t => {
   const f = await peers(t), file = await attachment(f.root, "notes.txt");
-  // Claude Code reads `/export` as /export, so the Hub's export runs and nothing is sent; behind a space it is words and goes to
-  // Claude Code (the CLI strips nothing, G074-F1); with an attachment it goes to Claude Code too, which reads it as content (the
-  // CLI looks for a command only in the last block, the attachment's).
-  const claudeExport = f.launch("acp-v1", { RELAY_PROMPT: "answer", CLAUDE_CONFIG_DIR: join(f.root, "no-claude-config") });
-  assert.equal((await turn(new ClaudeControl(claudeExport.launch, options), "/export", undefined, true)).result.input, "not_recorded"); assert.equal(await claudeExport.received("session/prompt"), 0);
-  const claudeSpaced = f.launch("acp-v1", { RELAY_PROMPT: "answer", CLAUDE_CONFIG_DIR: join(f.root, "no-claude-config") });
-  const spacedExport = await turn(new ClaudeControl(claudeSpaced.launch, options), "  /export", undefined, true);
-  assert.deepEqual([spacedExport.result.status, spacedExport.result.input], ["completed", "recorded"]); assert.deepEqual(await claudeSpaced.prompts(), ["  /export"]);
-  const claudeAttached = f.launch("acp-v1", { RELAY_PROMPT: "answer" }), claude = new ClaudeControl(claudeAttached.launch, options);
-  try {
-    await claude.initialize(); const id = await claude.open(process.cwd()), catalog = await claude.models();
-    assert.deepEqual(claude.classify("/export", catalog, ["file"]), { kind: "content" }, "with an attachment it is not the Hub's export, nor any command");
-    const sent = await (await claude.startText(id, "/export", () => {}, [file])).result;
-    assert.deepEqual([sent.status, sent.input], ["completed", "recorded"], "content: its answer proves it recorded"); assert.equal(await claudeAttached.received("session/prompt"), 1);
-  } finally { await claude.close(); }
   // Codex: `/compact` with an attachment is an ordinary turn, as classify says.
   const codexCompact = f.launch("codex-app-server", { RELAY_TURN: "user-completed" });
   assert.deepEqual(new CodexControl(codexCompact.launch, options).classify("/compact", null, ["file"]), { kind: "content" });
@@ -256,7 +185,7 @@ test("G067 R0d each driver reads an input as its native side parses it: whitespa
   const read = (driver: HarnessControl, text: string, catalog: NativeModelCatalog | null = null, attachments: readonly ContentKind[] = []) => { const value = driver.classify!(text, catalog, attachments); return value.kind === "command" ? [value.kind, value.name, value.effect, value.args] : value.kind === "possible_command" ? [value.kind, value.name] : [value.kind]; };
   // Claude Code: a command only with the slash as the first character (nothing is stripped, G074-F1), a name the catalog lists is a
   // command and one it does not is words, except the hidden ones (it runs /clear unlisted, G074-F3), a path is content.
-  const claude = new ClaudeControl(launch, options);
+  const claude = new ClaudeSdkControl({ ...launch, protocol: "claude-agent-sdk" }, options);
   assert.deepEqual(read(claude, "/clear"), ["command", "clear", "clear", ""]);
   assert.deepEqual(read(claude, "  /clear"), ["content"]); assert.deepEqual(read(claude, "　/clear"), ["content"]); assert.deepEqual(read(claude, "\n/clear"), ["content"]);
   assert.deepEqual(read(claude, "/remote-control now"), ["command", "remote-control", "none", "now"]);
@@ -270,7 +199,7 @@ test("G067 R0d each driver reads an input as its native side parses it: whitespa
   assert.deepEqual(read(codex, "/compact"), ["command", "compact", "compact", ""]); assert.deepEqual(read(codex, " /compact"), ["content"]);
   assert.deepEqual(read(codex, "/skill:review the diff"), ["possible_command", "skill:review"]);
   assert.deepEqual(read(codex, "/skill:review the diff", listed(["skill:review", "keep"])), ["command", "skill:review", "keep", "the diff"]);
-  assert.deepEqual(read(codex, "/skill:other", listed(["skill:review", "keep"])), ["content"]); assert.deepEqual(read(codex, "/review"), ["content"]);
+  assert.deepEqual(read(codex, "/skill:other", listed(["skill:review", "keep"])), ["content"]); assert.deepEqual(read(codex, "/review"), ["command", "review", "keep", ""], "/review is Codex's own (review/start)");
   // The Hub's clear: `/clear`, `/new` and `/reset` alone; with arguments, a leading space or an attachment they are text.
   assert.deepEqual(read(codex, "/clear"), ["command", "clear", "clear", ""]); assert.deepEqual(read(codex, "/new "), ["command", "new", "clear", ""]);
   assert.deepEqual(read(codex, "/clear now"), ["content"]); assert.deepEqual(read(codex, " /clear"), ["content"]); assert.deepEqual(read(codex, "/clear", null, ["file"]), ["content"]);

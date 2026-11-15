@@ -6,7 +6,6 @@ import type { BackendResult, ControlLaunch } from "../../src/contracts/control.j
 import { contentId, type ControlAttachment } from "../../src/contracts/content.js";
 import type { RelayCapabilities } from "../../src/contracts/relay.js";
 import { AcpControl, dshRelayCapabilities } from "../../src/adapters/control/acp.js";
-import { claudeRelayCapabilities } from "../../src/adapters/control/claude.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import { openClawRelayCapabilities } from "../../src/adapters/control/openclaw.js";
 import { titledPacket } from "../../src/adapters/control/relay-turn.js";
@@ -34,8 +33,6 @@ function refused(result: BackendResult, label: string): void {
     { status: "failed", reason: "classification_changed", input: "not_recorded", error: { code: "RELAY_PREPARE_FAILED" } }, label);
   assert.ok((result.error?.message.length ?? 0) > 0, label + ": says why");
 }
-/** The peer announces `/compact`, as claude-agent-acp lists it. */
-const COMPACT_LISTED = { RELAY_COMMANDS: JSON.stringify([{ name: "compact", description: "compact the conversation" }]) };
 const fileIn = async (peer: Peer, name = "notes.txt"): Promise<ControlAttachment> => {
   const path = join(peer.root, name); await writeFile(path, "notes");
   return { id: contentId("content-g069fix" + name.replace(/[^a-z]/gu, "")), name, mediaType: "text/plain", kind: "file", bytes: 5, sha256: "0".repeat(64), path };
@@ -47,8 +44,6 @@ const fileIn = async (peer: Peer, name = "notes.txt"): Promise<ControlAttachment
 
 test("G069-F1 a relay Turn whose words the native side reads as a command is refused whole: failed, not_recorded, RELAY_PREPARE_FAILED (classification_changed), nothing sent and nothing said; dsh has no commands and carries it", { timeout: 90000 }, async t => {
   const cases: readonly (readonly [Harness, string, Record<string, string>])[] = [
-    // Claude Code's catalog lists /compact, as the real adapter's does: a word outside the catalog is words for it (G074-F3).
-    ["claude", "/compact keep the tests", COMPACT_LISTED], ["claude", "/clear", {}], ["claude", "/remote-control", {}],
     ["openclaw", "/new", { RELAY_OPENCLAW: "1", RELAY_COMMANDS: JSON.stringify([{ name: "new", description: "new" }]) }], ["openclaw", "/clear", { RELAY_OPENCLAW: "1" }],
     ["codex", "/compact", {}], ["codex", "/export", {}],
     // The Hub's clear is a command on the Drivers whose native side has none too: a Turn with a packet is refused whole.
@@ -74,80 +69,8 @@ test("G069-F1 a relay Turn whose words the native side reads as a command is ref
   assert.equal((await prompts(dsh))[0]!.length, 2, "dsh: the packet and the words");
 });
 
-// G074-F1: a Turn whose words have whitespace before a slash word was refused whole as a command (and, as `/clear`, would have been
-// run as the clear), although Claude Code takes it as words (probe record 2026-11-10): it carries the packet like any other words.
-test("G074-F1 a relay Turn whose words have whitespace before a slash word is words for Claude Code and carries the packet, nothing cleared; with the slash first the same words are refused whole", { timeout: 60000 }, async t => {
-  for (const words of [" /clear", "　/compact keep the tests", "\n/remote-control", "\t/reset"]) {
-    const peer = await peerRoot(t), { control, id } = await opened(t, "claude", peer), label = JSON.stringify(words);
-    const { result } = await run(control, id, relayTurn(ID_A, words, false));
-    assert.deepEqual([result.status, result.input, result.native], ["completed", "recorded", undefined], label);
-    const [parts] = await prompts(peer);
-    assert.equal(parts!.length, 2, label + ": the packet and the words, two blocks");
-    assert.equal(titledPacket(parts![0]!), ID_A, label + ": the packet goes first");
-    assert.equal(parts![1], words, label + ": the words as typed, last");
-    assert.equal(await control.checkpoint!(), id, label + ": nothing was cleared");
-  }
-  // The invalid samples: with the slash first the same words are the native side's command, and the Turn is refused whole.
-  for (const words of ["/clear", "/compact keep the tests", "/remote-control", "/reset"]) {
-    const peer = await peerRoot(t, COMPACT_LISTED), { control, id } = await opened(t, "claude", peer);
-    refused((await run(control, id, relayTurn(ID_A, words, false))).result, "slash first " + JSON.stringify(words));
-    assert.deepEqual(await prompts(peer), [], "nothing sent");
-  }
-});
-
-// G074-F3 (probe record 2026-11-10, F3): "/zzprobe-unlisted hello" was sent to the model as text by Claude Code, so the declaration's
-// unlistedSlash is "text" and a word outside the catalog is words: a Turn with it carries a packet, and its answer proves it recorded.
-test("G074-F3 Claude Code: a slash word its catalog does not list is words — recorded by the answer, and a relay Turn carries the packet with it; a listed command, a hidden one and (no catalog yet) a possible command still stop it", { timeout: 60000 }, async t => {
-  const peer = await peerRoot(t, { RELAY_COMMANDS: JSON.stringify([{ name: "compact", description: "compact" }, { name: "review", description: "review" }]) });
-  const { control, id } = await opened(t, "claude", peer);
-  await control.models!();
-  const plain = await run(control, id, "/zzprobe-unlisted hello");
-  assert.deepEqual([plain.result.status, plain.result.input], ["completed", "recorded"], "words: its answer proves the input recorded");
-  for (const words of ["/zzprobe-unlisted hello", "/my-skill"]) {
-    const { result } = await run(control, id, relayTurn(ID_A, words, false));
-    assert.deepEqual([result.status, result.input, result.native], ["completed", "recorded", undefined], words);
-    const [parts] = (await prompts(peer)).slice(-1);
-    assert.deepEqual([parts!.length, titledPacket(parts![0]!), parts![1]], [2, ID_A, words], words + ": the packet first, the words as typed last");
-  }
-  // The invalid samples: what the catalog lists, and what the CLI runs although it lists none, is the native side's command.
-  const before = (await prompts(peer)).length;
-  for (const words of ["/review now", "/compact keep the tests", "/clear", "/remote-control"]) refused((await run(control, id, relayTurn(ID_A, words, false))).result, words);
-  assert.equal((await prompts(peer)).length, before, "nothing was sent for them");
-  // Before any catalog is announced a slash word may be one the catalog lists: it waits (B9), as for the other Drivers.
-  const quiet = await peerRoot(t, { RELAY_NO_COMMANDS: "1" }), waiting = await opened(t, "claude", quiet);
-  refused((await run(waiting.control, waiting.id, relayTurn(ID_A, "/zzprobe-unlisted hello", false))).result, "no catalog yet");
-  assert.deepEqual(await prompts(quiet), []);
-});
-
-// Before the agent has announced a catalog a slash word may be one the catalog lists, and a command's answer proves nothing about the
-// history: it is not taken for content yet, as the relay's reading (possible_command) has it. Once the catalog is known, a word outside
-// it is words, and its answer proves it recorded.
-test("G074-F3 Claude Code: before the agent announced any command a slash word's answer proves nothing (it may be a listed command); once the catalog is known, a word outside it is recorded by its answer", { timeout: 60000 }, async t => {
-  const quiet = await peerRoot(t, { RELAY_NO_COMMANDS: "1" }), { control, id } = await opened(t, "claude", quiet);
-  const unsettled = await run(control, id, "/zzprobe-unlisted hello");
-  assert.deepEqual([unsettled.result.status, unsettled.result.input], ["completed", undefined], "no catalog yet: its answer proves nothing");
-  assert.equal((await run(control, id, "没有斜杠的话")).result.input, "recorded", "words without a slash are recorded by the answer");
-  await control.models!();
-  const settled = await run(control, id, "/zzprobe-unlisted hello");
-  assert.deepEqual([settled.result.status, settled.result.input], ["completed", "recorded"], "the catalog is known and lists no such word: words");
-});
-
-// The Hub offers its own /export when the agent lists none (models()); a relay Turn with those words must still be refused whole, not
-// run as the export with the packet dropped — the Driver's own check reads the catalog it offers, not only the agent's.
-test("G074-F3 a relay Turn whose words are the Hub's own /export (offered when Claude Code lists none) is refused whole, the export not run", { timeout: 60000 }, async t => {
-  const peer = await peerRoot(t), { control, id } = await opened(t, "claude", peer);
-  const catalog = await control.models!();
-  assert.ok(catalog.commands?.some(command => command.name === "export"), "the Hub offers its own /export");
-  const { result, events } = await run(control, id, relayTurn(ID_A, "/export", false));
-  refused(result, "claude /export");
-  assert.deepEqual([events, await prompts(peer)], [[], []], "no export output, nothing sent");
-  // The invalid sample: the same words alone are the Hub's export, which sends nothing to Claude either.
-  const alone = await run(control, id, "/export");
-  assert.equal(alone.result.input, "not_recorded"); assert.deepEqual(await prompts(peer), []);
-});
-
 test("G069-F1 a possible command (no catalog yet) is refused the same", { timeout: 60000 }, async t => {
-  for (const [harness, words] of [["claude", "/review"], ["openclaw", "/think high"]] as const) {
+  for (const [harness, words] of [["openclaw", "/think high"]] as const) {
     const peer = await peerRoot(t, { RELAY_NO_COMMANDS: "1" }), { control, id } = await opened(t, harness, peer);
     const { result, events } = await run(control, id, relayTurn(ID_A, words, false));
     refused(result, harness);
@@ -158,70 +81,6 @@ test("G069-F1 a possible command (no catalog yet) is refused the same", { timeou
 // ---------------------------------------------------------------------------------------------------------------------
 // F2, F6 (review B1, I2): the Hub's clear opens no session ahead (the other Drivers: relay-driver-clear.test.ts)
 // ---------------------------------------------------------------------------------------------------------------------
-
-test("G069-F2 Claude Code's /clear opens no session ahead: replaced.checkpoint is null, the old session is abandoned and closed, its late updates are counted and dropped; the next connection starts a new session", { timeout: 60000 }, async t => {
-  const peer = await peerRoot(t, { RELAY_CLOSE: "1", RELAY_LATE_MS: "250", RELAY_UNPROMPTED_LOAD: "1" });
-  // Why no session is opened ahead: a session never prompted cannot be resumed by another process (claude-agent-acp 0.99.1).
-  const ahead = await opened(t, "claude", peer), unprompted = ahead.id; await ahead.control.close();
-  const other = driver(t, "claude", peer); await other.initialize();
-  await assert.rejects(other.open(peer.workspace, undefined, undefined, unprompted), "a session never prompted cannot be loaded in a new process");
-  const { control, id } = await opened(t, "claude", peer);
-  await run(control, id, "先说一句");
-  const cleared = await run(control, id, "/clear");
-  assert.deepEqual(cleared.result, { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true } });
-  assert.equal(await control.checkpoint!(), null, "no session to resume: the next Turn opens one");
-  const sent = (await peer.sent()).filter(line => line.method === "session/new" || line.method === "session/close");
-  assert.deepEqual(sent.map(line => [line.method, line.params?.sessionId ?? null]), [["session/new", null], ["session/new", null], ["session/close", id]], "no session/new for the clear; the old session closed");
-  assert.deepEqual(await prompts(peer), [["先说一句"]], "nothing reached Claude for the clear");
-  await assert.rejects(control.startText(id, "旧会话", () => {}), (error: unknown) => error instanceof ControlError && error.code === "IDENTITY_MISMATCH");
-  const counted = control.unattributedUpdates ?? 0;
-  await sleep(500);
-  assert.equal(control.healthy!(), true, "the old session's late message and permission request did not fail the connection");
-  assert.ok((control.unattributedUpdates ?? 0) >= counted + 2, "both were counted");
-  const next = driver(t, "claude", peer); await next.initialize();
-  const fresh = await next.open(peer.workspace);
-  assert.notEqual(fresh, id);
-  assert.equal((await run(next, fresh, "继续")).result.status, "completed");
-});
-
-test("G069-F6 a clear the adapter does not acknowledge still clears: session/close refused or never answered leaves the connection usable, its configuration as it was, and open() on it starts a new session", { timeout: 60000 }, async t => {
-  for (const fault of ["refuse", "hang"]) {
-    const peer = await peerRoot(t, { RELAY_CLOSE: fault }), { control, id } = await opened(t, "claude", peer);
-    await run(control, id, "先说一句");
-    const configuration = await control.nativeConfig!();
-    const started = Date.now(), { result } = await run(control, id, "/clear");
-    assert.deepEqual(result.native, { cleared: true }, fault);
-    assert.equal(result.status, "completed", fault);
-    assert.ok(Date.now() - started < 2600, fault + ": within about two seconds");
-    assert.equal(control.healthy!(), true, fault);
-    assert.deepEqual(await control.nativeConfig!(), configuration, fault + ": the catalog's values were not replaced");
-    assert.equal((await methods(peer)).filter(method => method === "session/new").length, 1, fault + ": no session opened for the clear");
-    const reopened = await control.open(peer.workspace);
-    assert.notEqual(reopened, id, fault);
-    assert.equal((await run(control, reopened, "继续")).result.status, "completed", fault);
-  }
-});
-
-// ---------------------------------------------------------------------------------------------------------------------
-// F9 (review I6): Claude with attachments
-// ---------------------------------------------------------------------------------------------------------------------
-
-test("G069-F9 Claude Code reads any input with attachments as content (the CLI looks for a command only in the last block): /clear with a file is sent, its answer proves it recorded, and a relay Turn carries the packet", { timeout: 60000 }, async t => {
-  const peer = await peerRoot(t), attachment = await fileIn(peer), { control, id } = await opened(t, "claude", peer);
-  const catalog = await control.models!();
-  for (const words of ["/clear", "  /export", "/compact now", "/remote-control"]) {
-    assert.deepEqual(control.classify!(words, catalog, ["file"]), { kind: "content" }, words);
-    assert.deepEqual(claudeRelayCapabilities.commands.classify(words, null, ["image"]), { kind: "content" }, words);
-  }
-  assert.deepEqual(control.classify!("/clear", catalog, []), { kind: "command", name: "clear", args: "", effect: "clear" }, "without one it is the clear");
-  const plain = await run(control, id, "/clear", [attachment]);
-  assert.deepEqual([plain.result.status, plain.result.input, plain.result.native], ["completed", "recorded", undefined]);
-  assert.equal(await control.checkpoint!(), id, "no clear ran");
-  const relayed = await run(control, id, relayTurn(ID_A, "/clear", false), [attachment]);
-  assert.equal(relayed.result.input, "recorded");
-  assert.equal(titledPacket((await prompts(peer)).at(-1)![0]!), ID_A, "the packet went first");
-  assert.equal((await run(control, id, "/remote-control", [attachment])).result.status, "completed", "sent as content, not refused");
-});
 
 // ---------------------------------------------------------------------------------------------------------------------
 // F10 (approval B1): the packet's title line
@@ -237,7 +96,7 @@ test("G069-F10 a title line that names no packet does not hide the packet's own 
 // ---------------------------------------------------------------------------------------------------------------------
 
 test("G069-F11 every Driver places attachments after the user's words, as its declaration now says (pointersAfterUser true for all six, still to be probed)", { timeout: 60000 }, async t => {
-  const declared: Readonly<Record<Harness, RelayCapabilities>> = { claude: claudeRelayCapabilities, codex: codexRelayCapabilities, dsh: dshRelayCapabilities, openclaw: openClawRelayCapabilities };
+  const declared: Readonly<Record<Harness, RelayCapabilities>> = { codex: codexRelayCapabilities, dsh: dshRelayCapabilities, openclaw: openClawRelayCapabilities };
   for (const harness of Object.keys(declared) as Harness[]) {
     const peer = await peerRoot(t, harness === "openclaw" ? { RELAY_OPENCLAW: "1" } : {}), attachment = await fileIn(peer), { control, id } = await opened(t, harness, peer);
     assert.equal((await run(control, id, relayTurn(ID_A, WORDS), [attachment])).result.status, "completed", harness);

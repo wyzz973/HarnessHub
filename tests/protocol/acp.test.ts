@@ -9,7 +9,6 @@ import type { ControlEvent, ControlLaunch, ControlOptions } from "../../src/cont
 import { AcpControl } from "../../src/adapters/control/acp.js";
 import { OpenClawControl } from "../../src/adapters/control/factory.js";
 import { CursorControl } from "../../src/adapters/control/cursor.js";
-import { ClaudeControl } from "../../src/adapters/control/claude.js";
 import { classifyRemoteFailure, ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { bindNativeDependencies } from "../../src/adapters/control/native-dependencies.js";
 import { contentId } from "../../src/contracts/content.js";
@@ -602,92 +601,6 @@ test("ACP forms are asked field by field: a choice, a typed answer for its Other
   assert.deepEqual((await ask("elicitation", [], false)).reply, { action: "decline" }, "without an interactive chat nobody can answer, so the form is declined");
 });
 
-test("Claude /export copies the session's own Claude Code transcript as an output, and fails clearly without one", async t => {
-  const root = await mkdtemp(join(tmpdir(), "claude-export-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const launch = (env: Record<string, string>) => ({ protocol: "acp-v1" as const, executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "basic"], env });
-  const transcript = '{"type":"user","message":"hello"}\n{"type":"assistant","message":"hi"}\n';
-  await mkdir(join(root, "projects", "-other-project"), { recursive: true }); await mkdir(join(root, "projects", "-w-project"), { recursive: true });
-  await writeFile(join(root, "projects", "-w-project", "session-fixture.jsonl"), transcript);
-  const driver = new ClaudeControl(launch({ CLAUDE_CONFIG_DIR: root }), options);
-  try {
-    const id = await ready(driver);
-    assert.ok((await driver.models()).commands?.some(command => command.name === "export"), "the Hub offers /export when the agent has none");
-    const events: ControlEvent[] = [], result = await (await driver.startText(id, "/export", event => events.push(event))).result;
-    assert.deepEqual(result, { status: "completed", reason: "exported", input: "not_recorded" });
-    const output = events.find(event => event.type === "output");
-    assert.ok(output?.type === "output" && output.output.kind === "content" && output.output.name === "claude-session-fixture.jsonl" && Buffer.from(output.output.data).toString() === transcript);
-  } finally { await driver.close(); }
-  const missing = new ClaudeControl(launch({ CLAUDE_CONFIG_DIR: join(root, "empty") }), options);
-  try {
-    const id = await ready(missing); await missing.models();
-    const result = await (await missing.startText(id, "/export", () => {})).result;
-    assert.equal(result.status, "failed"); assert.equal(result.error?.code, "NATIVE_EXPORT_UNAVAILABLE");
-  } finally { await missing.close(); }
-});
-test("Claude's session requests turn its prompt suggestions off, and its /remote-control is neither listed nor sent (ADR-053)", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "claude-session-meta-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const launch = { protocol: "acp-v1" as const, executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "claude"], env: { FIXTURE_TRACE: trace } };
-  const sent = async () => (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: { _meta?: unknown; prompt?: unknown } });
-  const created = new ClaudeControl(launch, options);
-  let checkpoint: string | null = null;
-  try {
-    assert.equal((await created.initialize()).agentVersion, "0.94.0");
-    const id = await created.open(process.cwd());
-    assert.deepEqual((await created.models()).commands?.map(command => command.name), ["compact", "export"], "the adapter's remote-control is not listed");
-    const events: ControlEvent[] = [];
-    for (const prompt of ["/remote-control", "/remote-control my-laptop", "/remote-control off"]) {
-      const run = await created.startText(id, prompt, event => events.push(event)), result = await run.result;
-      assert.equal(result.status, "failed", prompt); assert.equal(result.error?.code, "NATIVE_COMMAND_UNAVAILABLE", prompt);
-      assert.match(result.error?.message ?? "", /回合结束时关闭 Claude 的适配器进程，Remote Control 会随之断开/u, prompt);
-      await assert.rejects(run.requestStop(), (error: unknown) => error instanceof ControlError && error.code === "INVALID_STATE", prompt);
-    }
-    assert.deepEqual(events, [], "nothing ran");
-    // A prompt that only begins with the same letters is an ordinary prompt.
-    assert.equal((await (await created.startText(id, "/remote-controlled cars", () => {})).result).status, "completed");
-    checkpoint = await created.checkpoint();
-  } finally { await created.close(); }
-  assert.ok(checkpoint);
-  const resumed = new ClaudeControl(launch, options);
-  try { await resumed.initialize(); await resumed.open(process.cwd(), undefined, undefined, checkpoint); } finally { await resumed.close(); }
-  const reader = new ClaudeControl(launch, options);
-  try { await reader.initialize(); assert.equal((await reader.importSession("session-fixture", process.cwd())).title, "Claude work"); } finally { await reader.close(); }
-  const forker = new ClaudeControl(launch, options);
-  try { await forker.initialize(); assert.equal(await forker.fork("session-fixture", process.cwd()), "session-forked"); } finally { await forker.close(); }
-  const requests = await sent();
-  for (const method of ["session/new", "session/resume", "session/load", "session/fork"])
-    assert.deepEqual(requests.filter(row => row.method === method).map(row => row.params?._meta), [{ claudeCode: { options: { promptSuggestions: false } } }], method);
-  assert.deepEqual(requests.filter(row => row.method === "session/prompt").map(row => row.params?.prompt), [[{ type: "text", text: "/remote-controlled cars" }]], "only the ordinary prompt reached Claude");
-  // A driver of another agent sends no _meta and keeps the agent's commands as announced.
-  const plain = control("claude", { FIXTURE_TRACE: trace });
-  try { await ready(plain); assert.deepEqual((await plain.models()).commands?.map(command => command.name), ["compact", "remote-control"]); } finally { await plain.close(); }
-  assert.equal((await sent()).filter(row => row.method === "session/new").at(-1)?.params?._meta, undefined);
-});
-
-test("Claude's session requests add the Hub's instructions to Claude Code's own system prompt when given, and nothing once cleared", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "claude-session-instructions-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const launch = { protocol: "acp-v1" as const, executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "claude"], env: { FIXTURE_TRACE: trace } };
-  const sent = async () => (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: { _meta?: unknown; prompt?: unknown } });
-  // The factory tells the Driver its declaration's entries; built directly here, it is told the same.
-  const declared = { ...options, entry: sessionEntryOf(claudeFlavor) };
-  const told = new ClaudeControl(launch, declared);
-  let checkpoint: string | null = null;
-  try {
-    await told.initialize(); told.setSessionInstructions(HUB_PROGRESS_INSTRUCTIONS);
-    const id = await told.open(process.cwd());
-    assert.equal((await (await told.startText(id, "hello", () => {})).result).status, "completed");
-    checkpoint = await told.checkpoint();
-  } finally { await told.close(); }
-  assert.ok(checkpoint);
-  const resumed = new ClaudeControl(launch, declared);
-  try { await resumed.initialize(); resumed.setSessionInstructions(HUB_PROGRESS_INSTRUCTIONS); await resumed.open(process.cwd(), undefined, undefined, checkpoint); } finally { await resumed.close(); }
-  const cleared = new ClaudeControl(launch, declared);
-  try { await cleared.initialize(); cleared.setSessionInstructions(HUB_PROGRESS_INSTRUCTIONS); cleared.setSessionInstructions(null); await cleared.open(process.cwd()); } finally { await cleared.close(); }
-  const requests = await sent(), own = { claudeCode: { options: { promptSuggestions: false } } };
-  assert.deepEqual(requests.filter(row => row.method === "session/new" || row.method === "session/resume" || row.method === "session/load").map(row => [row.method, row.params?._meta]),
-    [["session/new", { ...own, systemPrompt: { append: HUB_PROGRESS_INSTRUCTIONS } }], [requests.find(row => row.method === "session/resume" || row.method === "session/load")?.method, { ...own, systemPrompt: { append: HUB_PROGRESS_INSTRUCTIONS } }], ["session/new", own]]);
-  assert.deepEqual(requests.filter(row => row.method === "session/prompt").map(row => row.params?.prompt), [[{ type: "text", text: "hello" }]], "the user's words are sent as they are");
-});
-
 test("OpenClaw lists its workspace skills and plugin tool groups from the Gateway's own read-only reports", async t => {
   const root = await mkdtemp(join(tmpdir(), "openclaw-extensions-")); t.after(() => rm(root, { recursive: true, force: true }));
   const config = join(root, "openclaw.json"); await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
@@ -773,39 +686,6 @@ test("G032-NC23 a sign-in state that a driver reads from its agent's own notific
     assert.equal((await running.models()).authentication, "missing");
     await assert.rejects(running.open(process.cwd()), authRequired);
   } finally { await running.close(); }
-});
-test("G032-NC23 Claude's own sign-in report sets its readiness: a named identity is ready, any other report is unknown, no session is refused, and the label is never kept (ADR-033)", async () => {
-  const claude = (env: Record<string, string>) => new ClaudeControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "claude-auth"], env }, options);
-  // The label, detail and account in a report name the user: none of them may reach the catalog or a Run.
-  const leaks = (value: unknown) => JSON.stringify(value).includes("private-");
-  for (const kind of ["account", "api_key", "external", "gateway"]) {
-    const driver = claude({ FIXTURE_AUTH_KIND: kind });
-    try {
-      await driver.initialize(); await driver.open(process.cwd()); const catalog = await driver.models();
-      assert.equal(catalog.authentication, "ready", kind); assert.equal(leaks(catalog), false, kind);
-    } finally { await driver.close(); }
-  }
-  // claude-agent-acp 0.89.1 also reports "none" for a CLI signed in with a token, so "none" refuses nothing, even when it
-  // arrives with the initialize response.
-  const none = claude({ FIXTURE_AUTH_AT: "initialize" });
-  try { await none.initialize(); await none.open(process.cwd()); assert.equal((await none.models()).authentication, "unknown"); }
-  finally { await none.close(); }
-  // A push during a Turn records no diagnostic and leaves the Turn alone. "none", a missing kind, an unknown kind and a
-  // malformed report all make the readiness unknown again. Mutation check: if the hook returns false, each of these Turns
-  // records "Unsupported ACP notification: _auth/status_update".
-  for (const kind of ["none", "omitted", "future_kind", "malformed"]) {
-    const driver = claude({ FIXTURE_AUTH_KIND: "account", FIXTURE_AUTH_TURN_KIND: kind });
-    try {
-      await driver.initialize(); const id = await driver.open(process.cwd());
-      assert.equal((await driver.models()).authentication, "ready", kind);
-      const events: ControlEvent[] = [];
-      assert.deepEqual(await (await driver.startText(id, "hello", event => events.push(event))).result, { status: "completed", reason: "end_turn", input: "recorded" }, kind);
-      assert.deepEqual(texts(events), ["你好 fixture"], kind);
-      assert.deepEqual(events.filter(event => event.type === "diagnostic"), [], kind);
-      const catalog = await driver.models();
-      assert.equal(catalog.authentication, "unknown", kind); assert.equal(leaks([catalog, events]), false, kind);
-    } finally { await driver.close(); }
-  }
 });
 test("G032-NC23 for any other ACP agent, _auth/status_update stays an unsupported notification: one diagnostic on the Run that names only the method, with the readiness untouched (ADR-033)", async () => {
   const driver = control("claude-auth", { FIXTURE_AUTH_KIND: "account", FIXTURE_AUTH_TURN_KIND: "none" });

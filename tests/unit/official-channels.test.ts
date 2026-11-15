@@ -50,16 +50,17 @@ test("G012-OC1 a found program counts as installed only in a channel its product
 });
 
 test("G012-OC1 an adapter is official through the package its registry entry publishes", () => {
-  const catalog = loadBuiltinCatalog("darwin-aarch64"), claude = catalog.find(item => item.id === "claude")!, cursor = catalog.find(item => item.id === "cursor")!;
-  const adapter = adapterChannels("claude", claude.controls.find(control => control.id === "claude-acp-npm")!)!;
-  assert.deepEqual(adapter.npm, ["@agentclientprotocol/claude-agent-acp"]);
-  assert.equal(classifyProgram(at("/opt/homebrew/bin/claude-agent-acp", "/opt/homebrew/lib/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"), adapter, HOME, UV, () => false)?.kind, "npm");
+  const catalog = loadBuiltinCatalog("darwin-aarch64"), claude = catalog.find(item => item.id === "claude")!, cursor = catalog.find(item => item.id === "cursor")!, codex = catalog.find(item => item.id === "codex")!;
+  const adapter = adapterChannels("codex", codex.controls.find(control => control.id === "codex-acp-npm")!)!;
+  assert.deepEqual(adapter.npm, ["@agentclientprotocol/codex-acp"]);
+  assert.equal(classifyProgram(at("/opt/homebrew/bin/codex-acp", "/opt/homebrew/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js"), adapter, HOME, UV, () => false)?.kind, "npm");
   // A registry archive is official in the directory HarnessHub installs archives into; a control with no package has none.
   assert.deepEqual(adapterChannels("cursor", cursor.controls.find(control => control.distribution?.kind === "binary")!)?.scripts, [{ root: ".local/share/harnesses/cursor", launchers: [], program: null, formerPrograms: [], removal: null, upgrade: null }],
     "HarnessHub's own archive layout is not one it uninstalls or upgrades");
   assert.equal(adapterChannels("pi", catalog.find(item => item.id === "pi")!.controls.find(control => control.id === "pi-native")!), null);
-  // Each control either runs the product (its first command) or is an adapter: Claude Code's ACP entry, Codex's app-server.
-  assert.equal(claude.binaryNames[0], "claude"); assert.ok(claude.controls.find(control => control.id === "claude-acp-npm")!.executableNames.every(name => name !== "claude"));
+  // Each control either runs the product (its first command) or is an adapter. Claude Code's control (the Agent SDK's, under the ACP entry's id) runs `claude` itself, and the adapter's is gone.
+  assert.equal(claude.binaryNames[0], "claude"); assert.deepEqual(claude.controls.map(control => [control.id, control.protocol, control.executableNames]), [["claude-acp-npm", "claude-agent-sdk", ["claude"]]]);
+  assert.equal(adapterChannels("claude", claude.controls[0]!), null);
   assert.ok(catalog.find(item => item.id === "codex")!.controls.find(control => control.id === "codex-native")!.executableNames.includes("codex"));
   // Every product HarnessHub runs today has its channels recorded with where they were read.
   for (const id of ["claude", "codex", "opencode", "openclaw", "gemini", "cursor", "pi", "hermes", "dsh"]) {

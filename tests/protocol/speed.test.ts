@@ -5,7 +5,6 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import type { ControlOptions, NativeOption } from "../../src/contracts/control.js";
 import { CodexControl } from "../../src/adapters/control/codex.js";
-import { ClaudeControl } from "../../src/adapters/control/claude.js";
 import { codexFlavor } from "../../src/adapters/flavors/codex.js";
 import { claudeFlavor } from "../../src/adapters/flavors/claude.js";
 import { flavorOf } from "../../src/adapters/flavors/index.js";
@@ -102,30 +101,4 @@ test("Codex: the catalog lists a model's service tiers as its speed, and the thr
   const unknown = codex({});
   try { await unknown.initialize(); await assert.rejects(unknown.open(process.cwd(), undefined, { service_tier: "ultrafast" }), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_OPTION_UNAVAILABLE"); }
   finally { await unknown.close(); }
-});
-
-test("Claude Code: the speed is claude-agent-acp's `fast` session option, set only on a model that has it and only where it differs from what the session runs", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-claude-speed-")); t.after(() => rm(directory, { recursive: true, force: true }));
-  const claude = (env: Record<string, string>, speed?: string) => new ClaudeControl({ protocol: "acp-v1", executable: process.execPath, args: [peer, "acp-v1", "claude-fast"], env },
-    { ...options, flavor: claudeFlavor, ...(speed === undefined ? {} : { speed }) });
-  const fastSet = async (trace: string) => (await sent(trace, "session/set_config_option")).filter(params => params.configId === "fast").map(params => params.value);
-  const cases: readonly { readonly name: string; readonly env: Record<string, string>; readonly speed: string; readonly model?: string; readonly checkpoint?: string; readonly expected: readonly unknown[]; readonly runs?: string }[] = [
-    { name: "fast on a model that has it", env: {}, speed: "fast", expected: ["on"], runs: "on" },
-    { name: "standard where the session runs standard", env: {}, speed: "standard", expected: [], runs: "off" },
-    { name: "standard where the user's settings run fast", env: { FIXTURE_FAST: "on" }, speed: "standard", expected: ["off"], runs: "off" },
-    { name: "fast on a model without fast mode", env: {}, speed: "fast", model: "haiku", expected: [] },
-    { name: "fast on a restored session", env: {}, speed: "fast", checkpoint: "session-fixture", expected: ["on"], runs: "on" },
-  ];
-  for (const item of cases) {
-    const trace = join(directory, item.name.replace(/\W+/gu, "-")), driver = claude({ ...item.env, FIXTURE_TRACE: trace }, item.speed);
-    try {
-      await driver.initialize();
-      await driver.open(process.cwd(), item.model, undefined, item.checkpoint);
-      assert.deepEqual(await fastSet(trace), item.expected, item.name);
-      const catalog = await driver.models();
-      assert.equal(catalog.options?.find(option => option.id === "fast")?.currentValue, item.runs, item.name);
-      // What the catalog offers for the model the session runs: the speed only where the model has fast mode.
-      assert.deepEqual(nativeLevels(claudeFlavor, catalog.options ?? []).speed.map(entry => entry.level), item.model === "haiku" ? [] : ["standard", "fast"], item.name);
-    } finally { await driver.close(); }
-  }
 });

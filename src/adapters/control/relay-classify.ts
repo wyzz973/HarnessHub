@@ -82,7 +82,7 @@ export function hubClearReading(text: string, attachments: readonly ContentKind[
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Claude Code (claude-agent-acp)
+// Claude Code (its CLI's own reading, as the Agent SDK driver sends it)
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** The Hub's own `/export` of a Claude Code transcript, offered when the agent lists no `export` of its own. */

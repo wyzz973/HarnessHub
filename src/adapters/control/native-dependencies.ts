@@ -4,9 +4,12 @@ import { isAbsolute, join } from "node:path";
 import type { ControlLaunch } from "../../contracts/control.js";
 import { ControlError } from "../../infrastructure/control/json-rpc-process.js";
 
-/** Bind vendor SDK adapters to the user's existing native CLI rather than an SDK-bundled replacement. */
+/**
+ * Bind vendor SDK adapters to the user's existing native CLI rather than an SDK-bundled replacement: an ACP adapter in front of Claude Code is
+ * told the user's `claude`. The Claude Agent SDK driver runs the `claude` discovery found itself (its launch's executable), so it needs nothing here.
+ */
 export async function bindNativeDependencies(harness: string, launch: ControlLaunch): Promise<ControlLaunch> {
-  if (!harness.startsWith("claude")) return launch;
+  if (!harness.startsWith("claude") || launch.protocol !== "acp-v1") return launch;
   const explicit = launch.env.CLAUDE_CODE_EXECUTABLE;
   const candidates = explicit ? [explicit] : [...(launch.env.PATH ?? "").split(":"), join(launch.env.HOME ?? "", ".local", "bin")].filter(isAbsolute).map(root => join(root, "claude"));
   for (const candidate of candidates) {

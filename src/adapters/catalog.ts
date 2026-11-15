@@ -18,7 +18,18 @@ export function harnessTier(id: string): HarnessTier {
   return FOCUS.has(id) ? "focus" : FROZEN.has(id) ? "frozen" : "catalog";
 }
 
+/**
+ * Claude Code's control: the user's own `claude`, driven by the Claude Agent SDK (2026-11-15; no adapter in between). It keeps the id of the
+ * ACP adapter's control it replaces, so that conversations bound to it go on (their native sessions are the same Claude Code sessions); the
+ * adapter's control is gone from the catalog.
+ */
+export const CLAUDE_CONTROL_ID = "claude-acp-npm";
 const nativeDefinitions: readonly HarnessDefinition[] = [
+  {
+    id: "claude", name: "Claude Code", aliases: [], binaryNames: ["claude"], configHints: [".claude"],
+    controls: [{ id: CLAUDE_CONTROL_ID, protocol: "claude-agent-sdk", executableNames: ["claude"], args: [], env: {}, package: null, distribution: null, requiredExecutables: [],
+      source: { repository: "anthropics/claude-agent-sdk-typescript", revision: "v0.3.325", upstreamId: "claude", url: "https://code.claude.com/docs/en/agent-sdk/typescript" } }],
+  },
   {
     id: "codex", name: "Codex", aliases: [], binaryNames: ["codex"], configHints: [".codex"],
     controls: [{ id: "codex-native", protocol: "codex-app-server", executableNames: ["codex"], args: ["app-server", "--listen", "stdio://"], env: {}, package: null, distribution: null, requiredExecutables: [],
@@ -99,12 +110,13 @@ export function loadBuiltinCatalog(platform: string): readonly HarnessDefinition
     if (index === -1) { definitions.push(native); continue; }
     const upstream = definitions[index];
     if (upstream === undefined) throw new Error("catalog merge index is invalid");
+    // The programs only a replaced control ran (Claude Code's ACP adapter) are not the product's any more: an installation of one is nobody's.
+    const retired = new Set(upstream.controls.filter(control => native.controls.some(own => own.id === control.id)).flatMap(control => control.executableNames).filter(name => !native.binaryNames.includes(name)));
     definitions[index] = {
       id: upstream.id, name: native.name, aliases: [...new Set([...upstream.aliases, ...native.aliases])],
-      binaryNames: [...new Set([...upstream.binaryNames, ...native.binaryNames])],
-      configHints: [...new Set([...upstream.configHints, ...native.configHints])],
-      // A native control replaces the registry's control of the same id.
-      controls: [...native.controls, ...upstream.controls.filter(control => !native.controls.some(own => own.id === control.id))],
+      binaryNames: [...new Set([...upstream.binaryNames.filter(name => !retired.has(name)), ...native.binaryNames])],
+      // A native control replaces the registry's control of the same id (Claude Code's SDK control takes the ACP adapter's place).
+      configHints: [...new Set([...upstream.configHints, ...native.configHints])], controls: [...native.controls, ...upstream.controls.filter(control => !native.controls.some(own => own.id === control.id))],
     };
   }
   validateDefinitions(definitions);

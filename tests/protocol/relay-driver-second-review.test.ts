@@ -6,7 +6,6 @@ import type { BackendResult, ControlEvent, ControlLaunch } from "../../src/contr
 import { contentId, type ContentKind, type ControlAttachment } from "../../src/contracts/content.js";
 import type { RelayCapabilities } from "../../src/contracts/relay.js";
 import { AcpControl, dshRelayCapabilities } from "../../src/adapters/control/acp.js";
-import { claudeRelayCapabilities } from "../../src/adapters/control/claude.js";
 import { sharedClassify } from "../../src/adapters/control/relay-classify.js";
 import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { driver, gatewayOf, ID_A, options, peerRoot, prompts, relayTurn, run, type Harness, type Peer } from "../fixtures/relay-drivers.js";
@@ -14,7 +13,7 @@ import { driver, gatewayOf, ID_A, options, peerRoot, prompts, relayTurn, run, ty
 // G069 phase two, the corrections after the second independent review of d20bfc1 (its "fix now" list): one test per item,
 // against the native behaviour the relay peer (tests/fixtures/relay-control-peer.mjs, a real child process) or the OpenClaw
 // Gateway stand-in plays. What stays of them after the decision log of 2026-11-11 took the reading of the native history out of
-// the Drivers: Claude Code's reading with audio, a relay Turn refused before any side effect, a gave-up session handed out
+// the Drivers: a relay Turn refused before any side effect, a gave-up session handed out
 // again, the generic driver's own refusal. Nothing here runs a Harness.
 
 const WORDS = "修好 summary.ts 的测试";
@@ -35,31 +34,6 @@ async function attachment(peer: Peer, name: string, kind: ContentKind): Promise<
   await writeFile(path, data);
   return { id: contentId("content-g069r2" + name.replace(/[^a-z]/gu, "")), name, mediaType: kind === "image" ? "image/png" : kind === "audio" ? "audio/wav" : "text/plain", kind, bytes: data.length, sha256: "0".repeat(64), path };
 }
-
-// ---------------------------------------------------------------------------------------------------------------------
-// Minor 2: Claude Code's reading with audio
-// ---------------------------------------------------------------------------------------------------------------------
-
-test("G069-R2 Claude Code reads an input with audio alone as it reads one without attachments: claude-agent-acp drops audio blocks, so `/clear` with audio is the clear; an image or a file makes any input content", { timeout: 60000 }, async t => {
-  const peer = await peerRoot(t), { control, id } = await opened(t, "claude", peer);
-  const catalog = await control.models!();
-  const voice = await attachment(peer, "voice.wav", "audio");
-  assert.deepEqual(control.classify!("/clear", catalog, ["audio"]), { kind: "command", name: "clear", args: "", effect: "clear" });
-  assert.deepEqual(claudeRelayCapabilities.commands.classify("/compact now", null, ["audio", "audio"]), { kind: "possible_command", name: "compact" });
-  // Behind a space it is words with or without audio: the CLI strips nothing (G074-F1).
-  assert.deepEqual(claudeRelayCapabilities.commands.classify("  /compact now", null, ["audio", "audio"]), { kind: "content" });
-  for (const kinds of [["audio", "image"], ["file", "audio"], ["image"], ["file"]] as const) assert.deepEqual(control.classify!("/clear", catalog, kinds), { kind: "content" }, kinds.join("+"));
-  refused(await run(control, id, relayTurn(ID_A, "/clear", false), [voice]), "a relay Turn whose words are the clear, with audio");
-  assert.deepEqual(await prompts(peer), [], "nothing sent for it");
-  const cleared = await run(control, id, "/clear", [voice]);
-  assert.deepEqual(cleared.result, { status: "completed", reason: "cleared", input: "not_recorded", native: { cleared: true } }, "the driver runs the clear Claude Code would run");
-  assert.deepEqual(await prompts(peer), [], "nothing reached Claude");
-  // An image beside the audio: the CLI's last block is the image's, so the input is content and goes as it is.
-  const other = await peerRoot(t), next = await opened(t, "claude", other), picture = await attachment(other, "shot.png", "image"), sound = await attachment(other, "voice.wav", "audio");
-  const sent = await run(next.control, next.id, "/clear", [sound, picture]);
-  assert.deepEqual([sent.result.status, sent.result.input, sent.result.native], ["completed", "recorded", undefined]);
-  assert.deepEqual(await prompts(other), [["/clear"]]);
-});
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Minor 4: a refused relay Turn has no side effect before its refusal (review mutations M27, M29, M1b)
@@ -97,10 +71,3 @@ test("G069-R2 the generic driver refuses on its own (sendPrompt's reading): a de
 // ---------------------------------------------------------------------------------------------------------------------
 // The Hub's clear gives a session up for good
 // ---------------------------------------------------------------------------------------------------------------------
-
-test("G069-R2 an agent that answers a new session with one this connection gave up is refused (IDENTITY_MISMATCH): Claude Code after its clear", { timeout: 30000 }, async t => {
-  const peer = await peerRoot(t, { RELAY_SAME_SESSION: "1" }), { control, id } = await opened(t, "claude", peer);
-  await run(control, id, "先说一句");
-  assert.equal((await run(control, id, "/clear")).result.native?.cleared, true);
-  await assert.rejects(control.open(peer.workspace), (error: unknown) => error instanceof ControlError && error.code === "IDENTITY_MISMATCH");
-});

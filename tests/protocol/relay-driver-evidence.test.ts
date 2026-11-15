@@ -70,7 +70,7 @@ test("Codex names the thread before its first turn (thread/name/set), one line; 
   await control.setTitle!(id, " \n ");
   await run(control, id, "开始");
   const methods = (await peer.sent()).map(line => line.method).filter(method => method !== undefined && !["initialize", "initialized", "config/read"].includes(method));
-  assert.deepEqual(methods, ["thread/start", "thread/name/set", "turn/start"], "named before the first turn, the empty title not sent");
+  assert.deepEqual(methods.filter(method => method !== "account/rateLimits/read"), ["thread/start", "thread/name/set", "turn/start"], "named before the first turn, the empty title not sent (the account's limits are read on the way)");
   assert.equal((await peer.native()).threads["thread-relay"]!.name, "修好 测试");
   const refusing = await peerRoot(t, { RELAY_NAME_FAULT: "refuse" }), refused = await opened(t, "codex", refusing);
   await assert.rejects(refused.control.setTitle!(refused.id, "x"), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_TITLE_UNAVAILABLE");
@@ -86,7 +86,7 @@ test("Codex names the thread before its first turn (thread/name/set), one line; 
 
 test("no Driver reads its native history back: none has a check, a position, a vendor reading or a reader of replayed user entries, and no declaration has a cell for one", async t => {
   const peer = await peerRoot(t);
-  for (const harness of ["claude", "codex", "dsh", "openclaw"] as const) {
+  for (const harness of ["codex", "dsh", "openclaw"] as const) {
     const control = driver(t, harness, peer) as unknown as Record<string, unknown>;
     for (const member of ["verifyDelivered", "deliveryPosition", "relayVendor", "userTextOf"]) assert.equal(control[member], undefined, harness + " " + member);
     assert.deepEqual(Object.keys((control.relayCapabilities as { delivery: object }).delivery).sort(), ["live", "successProvesRecorded"], harness);

@@ -280,11 +280,9 @@ test("G060-NC15 the evidence header names the commit, policy and each Harness's 
     // dsh: an npm installation whose package records the version; management reads it without running dsh.
     assert.deepEqual(pathless("dsh"), [{ channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "dsh", version: "0.2.0-rc.2", role: "product", active: true }]);
     assert.deepEqual(facts("dsh"), ["system", [{ id: "dsh-native", protocol: "acp-v1", entry: "path" }], "0.2.0-rc.2", "0.2.0-rc.2", "management"]);
-    // Claude Code: the product and the adapter in front of it; the product's version only a probe would read, so it is the installation's record.
-    assert.deepEqual(pathless("claude")?.sort((left, right) => left.role.localeCompare(right.role)), [
-      { channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "claude-agent-acp", version: "0.89.1", role: "adapter", active: true },
-      { channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "claude", version: "2.1.306", role: "product", active: true }]);
-    assert.deepEqual(facts("claude"), ["system", [{ id: "claude-acp-npm", protocol: "acp-v1", entry: "path" }], "0.89.1", "2.1.306", "installation"]);
+    // Claude Code: the product, driven by the Agent SDK (the ACP adapter installed beside it is nobody's any more); its version is the installation's record.
+    assert.deepEqual(pathless("claude"), [{ channel: "npm", label: "npm 全局（nvm v26.11.1）", command: "claude", version: "2.1.306", role: "product", active: true }]);
+    assert.deepEqual(facts("claude"), ["system", [{ id: "claude-acp-npm", protocol: "claude-agent-sdk", entry: "path" }], null, "2.1.306", "installation"]);
     // Hermes through the discovery manifest only: no installation describes it, and the entry says it is a custom one.
     assert.deepEqual(pathless("hermes"), []);
     assert.deepEqual(facts("hermes"), ["system", [{ id: "hermes-native", protocol: "hermes-gateway", entry: "custom-entry" }], null, null, null]);

@@ -10,9 +10,10 @@ export { OpenClawControl } from "./openclaw.js";
 import { OpenClawControl, openClawRelayCapabilities } from "./openclaw.js";
 import { CursorControl } from "./cursor.js";
 import { OpenCodeServerControl, openCodeServerRelayCapabilities } from "./opencode/control.js";
-import { ClaudeControl, claudeRelayCapabilities } from "./claude.js";
+import { ClaudeSdkControl, claudeRelayCapabilities } from "./claude/control.js";
 import { HermesGatewayControl, hermesRelayCapabilities } from "./hermes/control.js";
 import { flavorOf } from "../flavors/index.js";
+import { ControlError } from "../../infrastructure/control/json-rpc-process.js";
 import { sessionEntryOf } from "../../contracts/flavor.js";
 
 /** A JSON object, or null for anything else. */
@@ -46,6 +47,10 @@ export function levelEnvironment(harnessId: string, launch: ControlLaunch, optio
   return { ...launch, env };
 }
 
+/** The control protocols a Driver here speaks: what discovery offers and a binding starts (the others are named in the catalog, not driven yet). */
+export const DRIVEN_PROTOCOLS: ReadonlySet<ControlLaunch["protocol"]> = new Set(["acp-v1", "codex-app-server", "pi-rpc", "claude-agent-sdk", "opencode-server", "hermes-gateway"]);
+export function hasDriver(protocol: string): protocol is ControlLaunch["protocol"] { return (DRIVEN_PROTOCOLS as ReadonlySet<string>).has(protocol); }
+
 /**
  * Vendor extensions remain in the adapter layer; Gateway owns only the common control contract. The Driver is told how its Harness takes
  * the Hub's tools and session instructions (ControlOptions.entry) from the adapter declaration, never from the Harness's name.
@@ -57,10 +62,12 @@ export async function createNativeControl(harnessId: string, launch: ControlLaun
   options = { ...options, entry: options.entry ?? sessionEntryOf(flavorOf(harnessId)) };
   if (launch.protocol === "pi-rpc") return new PiControl(launch, options);
   if (launch.protocol === "codex-app-server") return new CodexControl(launch, options);
-  if (launch.protocol === "hermes-gateway") return new HermesGatewayControl(launch, options);
+  if (launch.protocol === "claude-agent-sdk") return new ClaudeSdkControl(launch, options);
   if (launch.protocol === "opencode-server") return new OpenCodeServerControl(launch, options);
+  if (launch.protocol === "hermes-gateway") return new HermesGatewayControl(launch, options);
+  if (launch.protocol !== "acp-v1") throw new ControlError("UNSUPPORTED_CONTROL", "no Driver speaks " + launch.protocol + " yet");
   return harnessId === "openclaw" ? new OpenClawControl(launch, options) : harnessId === "cursor" ? new CursorControl(launch, options)
-    : harnessId === "claude" ? new ClaudeControl(launch, options) : harnessId === "dsh" ? new DshControl(launch, options) : new AcpControl(launch, options);
+    : harnessId === "dsh" ? new DshControl(launch, options) : new AcpControl(launch, options);
 }
 
 /**
@@ -72,12 +79,9 @@ export async function createNativeControl(harnessId: string, launch: ControlLaun
 export function relayCapabilities(harnessId: string, protocol: ControlLaunch["protocol"]): RelayCapabilities | null {
   if (protocol === "pi-rpc") return null;
   if (protocol === "codex-app-server") return codexRelayCapabilities;
-  if (protocol === "hermes-gateway") return hermesRelayCapabilities;
+  if (protocol === "claude-agent-sdk") return claudeRelayCapabilities;
   if (protocol === "opencode-server") return openCodeServerRelayCapabilities;
-  return harnessId === "openclaw" ? openClawRelayCapabilities : harnessId === "claude" ? claudeRelayCapabilities : harnessId === "dsh" ? dshRelayCapabilities : null;
-}
-
-/** The protocols a Driver here speaks (createNativeControl); a control of any other protocol is listed but cannot be started. Synchronous and pure. */
-export function hasDriver(protocol: ControlLaunch["protocol"]): boolean {
-  return protocol === "acp-v1" || protocol === "codex-app-server" || protocol === "pi-rpc" || protocol === "opencode-server" || protocol === "hermes-gateway";
+  if (protocol === "hermes-gateway") return hermesRelayCapabilities;
+  if (protocol !== "acp-v1") return null;
+  return harnessId === "openclaw" ? openClawRelayCapabilities : harnessId === "dsh" ? dshRelayCapabilities : null;
 }

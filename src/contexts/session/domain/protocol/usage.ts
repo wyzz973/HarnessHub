@@ -18,8 +18,8 @@ const MEANING: ReadonlyMap<string, Meaning> = new Map(Object.entries({
   // Codex (codex.ts:924-938): the thread's token totals minus the Turn's baseline. Its `inputTokens` contain `cachedInputTokens` (a
   // request's cached part is never larger than it: fixture n=9 `requests`) and `total` is input + output (356,323 + 1,935 = 358,258).
   codex: { cache: "inside", reasoning: "inside" },
-  // Claude Code through claude-agent-acp (acp.ts:741-745 maps ACP's `usage`): `inputTokens` leaves out what was read from and written to
-  // the cache, which are reported beside it, and `total` is all four (fixture n=4: 4 + 1,248 + 46,940 + 46,383 = 94,575).
+  // Claude Code through the Agent SDK (claude/mapping.ts turnUsage, the SDK's per-model totals): the input leaves out what was read from and written
+  // to the cache, which are reported beside it, and `total` is all four (2026-11-15, Haiku 5.5: 1,161 + 19 + 28,079 + 0 = 29,259). claude-agent-acp counted so too.
   claude: { cache: "beside", reasoning: "inside" },
   // OpenCode through its ACP agent (the same mapping): the cache is beside the input (fixture n=3: 34,816 cached against 20,774 input),
   // and `total` adds `reasoning` to `output` (20,774 + 684 + 34,816 + 368 = 56,642), so reasoning is beside the output. One Turn only

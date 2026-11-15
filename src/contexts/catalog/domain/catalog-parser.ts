@@ -201,11 +201,14 @@ export function migrateLegacyManifest(manifest: DiscoveryManifest, base: readonl
     const target = allDefinitions.find((item) => item.id === recipeId || item.aliases.includes(recipeId));
     if (target === undefined) throw new DiscoveryInputError("unknown Harness override: " + recipeId);
     const custom = checked.recipes.find((item) => item.id === recipeId);
-    const usesAdapter = custom?.adapterBinary !== undefined || (custom === undefined && recipeId === "claude");
-    if (override.adapter !== undefined && !usesAdapter) throw new DiscoveryInputError("unused adapter override: " + recipeId);
+    // Claude Code had an ACP adapter in front of it; its control is now the Agent SDK's on `claude` itself, so the adapter a v1 override names is
+    // not run any more and its `binary` is the control's executable.
+    const usesAdapter = custom?.adapterBinary !== undefined, retiredAdapter = custom === undefined && recipeId === "claude";
+    if (override.adapter !== undefined && !usesAdapter && !retiredAdapter) throw new DiscoveryInputError("unused adapter override: " + recipeId);
     const candidates = target.controls.filter((entry) => custom !== undefined ? entry.id === recipeId + "-legacy" :
-      recipeId === "codex" ? entry.protocol === "codex-app-server" : recipeId === "pi" ? entry.protocol === "pi-rpc" : recipeId === "hermes" ? entry.protocol === "hermes-gateway" : recipeId === "opencode" ? entry.protocol === "opencode-server" : entry.protocol === "acp-v1");
-    const chosen = candidates.find((entry) => recipeId === "claude" ? entry.executableNames.includes("claude-agent-acp") : entry.executableNames.some((name) => target.binaryNames.includes(name))) ?? candidates[0];
+      recipeId === "codex" ? entry.protocol === "codex-app-server" : recipeId === "pi" ? entry.protocol === "pi-rpc" : recipeId === "hermes" ? entry.protocol === "hermes-gateway"
+        : recipeId === "opencode" ? entry.protocol === "opencode-server" : recipeId === "claude" ? entry.protocol === "claude-agent-sdk" : entry.protocol === "acp-v1");
+    const chosen = candidates.find((entry) => entry.executableNames.some((name) => target.binaryNames.includes(name))) ?? candidates[0];
     if (chosen === undefined) throw new DiscoveryInputError("legacy Harness has no matching control: " + recipeId);
     const executable = usesAdapter ? override.adapter : override.binary;
     if (executable !== undefined) overrides.set(chosen.id, { executable });

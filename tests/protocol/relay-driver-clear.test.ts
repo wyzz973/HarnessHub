@@ -38,26 +38,6 @@ const attachment = async (peer: Peer, kind: ControlAttachment["kind"]): Promise<
   return { id: contentId("content-clear" + kind), name, mediaType: kind === "file" ? "text/plain" : kind === "image" ? "image/png" : "audio/wav", kind, bytes: 5, sha256: "0".repeat(64), path };
 };
 
-test("Claude Code: /clear, /reset and /new are not sent; the old session is closed and given up, none is opened ahead, and the next Turn opens a new one", { timeout: 60000 }, async t => {
-  const peer = await peerRoot(t, { RELAY_CLOSE: "1" }), { control, first } = await begin(t, "claude", peer);
-  let current = first;
-  const sessions = [first];
-  await run(control, current, "先说一句");
-  for (const words of ["/clear", "/reset", "/new"]) {
-    const { result, events } = await run(control, current, words);
-    assert.deepEqual(result, CLEARED, words);
-    assert.ok(notices(events).some(message => message.includes(words) && message.includes("Claude Code")), words + ": the Turn says the Hub ran it");
-    await givenUp(control, current, words);
-    const old = current; current = await control.open(peer.workspace); sessions.push(current);
-    assert.notEqual(current, old, words + ": a new session");
-    assert.equal((await run(control, current, "继续")).result.status, "completed", words + ": the new session takes the next prompt");
-  }
-  const sent = await peer.sent();
-  assert.deepEqual(await prompts(peer), [["先说一句"], ["继续"], ["继续"], ["继续"]], "no prompt was sent for a clear");
-  assert.deepEqual(sent.filter(line => line.method === "session/close").map(line => line.params?.sessionId), sessions.slice(0, 3), "each old session closed");
-  assert.equal(sent.filter(line => line.method === "session/new").length, 4, "one session per open, none for a clear");
-});
-
 test("Codex: /clear, /new and /reset alone are not sent; the thread is given up (not archived, not deleted), what it still says is dropped, and the next Turn starts a new thread", { timeout: 60000 }, async t => {
   const peer = await peerRoot(t, { RELAY_LATE_MS: "100" }), { control, first } = await begin(t, "codex", peer);
   assert.equal(String(first), "thread-relay");
@@ -81,7 +61,7 @@ test("Codex: /clear, /new and /reset alone are not sent; the thread is given up 
   assert.deepEqual(starts.map(line => ((line.params as { input: { text: string }[] }).input[0]!.text)), ["先说一句", "继续", "继续", "继续"], "no turn was started for a clear");
   assert.deepEqual(starts.map(line => (line.params as { threadId: string }).threadId), threads, "each turn on its own thread");
   // The configuration is read (never written) for each thread; a given-up thread is unsubscribed once its successor is open.
-  assert.deepEqual([...new Set(sent.flatMap(line => typeof line.method === "string" ? [line.method] : []))].sort(), ["config/read", "initialize", "initialized", "thread/start", "thread/unsubscribe", "turn/start"], "nothing else reached Codex: no archive, no delete, no clear");
+  assert.deepEqual([...new Set(sent.flatMap(line => typeof line.method === "string" ? [line.method] : []))].sort(), ["account/rateLimits/read", "config/read", "initialize", "initialized", "thread/start", "thread/unsubscribe", "turn/start"], "nothing else reached Codex: no archive, no delete, no clear");
   assert.deepEqual(sent.filter(line => line.method === "thread/start").map(line => (line.params as { sessionStartSource?: string }).sessionStartSource), [undefined, "clear", "clear", "clear"], "a thread after a clear says so to the user's hooks");
   assert.deepEqual(sent.filter(line => line.method === "thread/unsubscribe").map(line => (line.params as { threadId: string }).threadId), threads.slice(0, 3), "each given-up thread is unloaded");
   assert.equal((await peer.native()).threads["thread-relay"]!.turns.length, 1, "the given-up thread stays as it was in the user's Codex");
@@ -208,7 +188,7 @@ test("OpenClaw: /new, /reset and /clear are the Hub's clear only alone and witho
 });
 
 test("a relay Turn whose words are the Hub's clear is refused whole on every Driver: failed, not recorded, nothing sent, nothing given up", { timeout: 120000 }, async t => {
-  for (const harness of ["claude", "codex", "dsh", "openclaw"] as const) {
+  for (const harness of ["codex", "dsh", "openclaw"] as const) {
     const peer = await peerRoot(t, { RELAY_CLOSE: "1", ...(harness === "dsh" ? { RELAY_JOIN: "" } : {}), ...(harness === "openclaw" ? { RELAY_OPENCLAW: "1" } : {}) });
     const { control, first } = await begin(t, harness, peer), calls = (await peer.sent()).length;
     for (const words of ["/clear", "/new", "/reset"]) {

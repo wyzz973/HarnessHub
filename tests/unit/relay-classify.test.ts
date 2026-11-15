@@ -3,7 +3,7 @@ import test from "node:test";
 import type { ContentKind } from "../../src/contracts/content.js";
 import { listedCommand, type CommandClass, type ContextEffect, type ControlLaunch, type ControlOptions, type HarnessControl, type NativeModelCatalog } from "../../src/contracts/control.js";
 import { AcpControl, dshRelayCapabilities } from "../../src/adapters/control/acp.js";
-import { ClaudeControl, claudeRelayCapabilities } from "../../src/adapters/control/claude.js";
+import { ClaudeSdkControl, claudeRelayCapabilities } from "../../src/adapters/control/claude/control.js";
 import { CodexControl, codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import { HermesGatewayControl, hermesRelayCapabilities } from "../../src/adapters/control/hermes/control.js";
 import { OpenClawControl, openClawRelayCapabilities } from "../../src/adapters/control/openclaw.js";
@@ -195,7 +195,7 @@ test("G069-C03 a relay catalog's effect may depend on the arguments, and a liste
 test("G069-C03 one source: each Driver's HarnessControl.classify equals its relay declaration's reading over the same commands, acceptsRelay aside", async () => {
   // Whether the Hub offers its own `/export` (models() decides that per connection) no longer changes any reading: with
   // attachments every input is content for Claude Code, without them its catalog's entry is read either way.
-  const offering = new ClaudeControl(acp, options), own = new ClaudeControl(acp, options);
+  const offering = new ClaudeSdkControl({ ...acp, protocol: "claude-agent-sdk" }, options), own = new ClaudeSdkControl({ ...acp, protocol: "claude-agent-sdk" }, options);
   (offering as unknown as { hubExport: boolean }).hubExport = true;
   const exported: NativeModelCatalog = { models: [], defaultModel: null, authentication: "ready", canSelect: false, commands: [{ name: "export", description: "export", contextEffect: "none" }] };
   for (const control of [offering, own]) {
@@ -245,7 +245,7 @@ test("G069-C03 one source: each Driver's HarnessControl.classify equals its rela
 test("G069-C03 a command named after an Object member (constructor, toString, valueOf, hasOwnProperty, __proto__) gets a declared effect, never a function or an object", async () => {
   const members = ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"];
   const undeclared: NativeModelCatalog = { models: [], defaultModel: null, authentication: "ready", canSelect: false, commands: [...members, "status"].map(name => ({ name, description: name })) };
-  const claude = new ClaudeControl(acp, options), openclaw = new OpenClawControl(acp, options, async () => { throw new Error("no Gateway"); });
+  const claude = new ClaudeSdkControl({ ...acp, protocol: "claude-agent-sdk" }, options), openclaw = new OpenClawControl(acp, options, async () => { throw new Error("no Gateway"); });
   try {
     for (const name of members) {
       // Claude Code: a listed command without a declared effect enters the context like a message (keep).

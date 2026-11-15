@@ -8,7 +8,7 @@ import type { CommandClass, ControlLaunch, ControlOptions, HarnessControl } from
 import { CONTEXT_EFFECTS, type RelayCapabilities } from "../../src/contracts/relay.js";
 import type { HarnessSelection, PreparedSessionBinding, SelectionRequest, SessionBindingFactory, SessionConfiguration, SessionEvent } from "../../src/contracts/session.js";
 import { AcpControl, dshRelayCapabilities } from "../../src/adapters/control/acp.js";
-import { ClaudeControl, claudeRelayCapabilities } from "../../src/adapters/control/claude.js";
+import { ClaudeSdkControl, claudeRelayCapabilities } from "../../src/adapters/control/claude/control.js";
 import { CodexControl, codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import { relayCapabilities } from "../../src/adapters/control/factory.js";
 import { HermesGatewayControl, hermesRelayCapabilities } from "../../src/adapters/control/hermes/control.js";
@@ -43,8 +43,8 @@ const TABLE: Readonly<Record<Harness, Cells>> = {
   claude: {
     // A slash word outside the catalog is text (§8.1 writes "executed"; the 2026-11-10 probe, relay-conformance.md F3, called the model
     // with an unlisted word, G074-F3): only the four the CLI does run unlisted are commands, as the readings below show.
-    // title: §8.1 writes "set" (`_session/rename`); claude-agent-acp 0.99.1 routes it only for a JetBrains AIR client (G069 phase two).
-    plain: { delivery: { live: "none", successProvesRecorded: true }, execution: "process", placement: { parts: "multiple", maxInput: null }, title: "none" },
+    // The Agent SDK driver (2026-11-15): Claude Code reports the model request it starts for the prompt (live evidence), and names a session (title "set").
+    plain: { delivery: { live: "recorded_event", successProvesRecorded: true }, execution: "process", placement: { parts: "multiple", maxInput: null }, title: "set" },
     // G074-F1: the slash as the first character; the CLI strips nothing, so a space or U+3000 before it makes the input words.
     classify: [["/clear", null, ["command", "clear", "clear", ""]], ["  /clear", null, ["content"]], ["　/clear", null, ["content"]], ["/reset", null, ["command", "reset", "clear", ""]], ["/remote-control", null, ["command", "remote-control", "none", ""]],
       ["/Users/me/notes.md", null, ["content"]], ["/my-skill", listed(["compact", "compact"]), ["content"]], ["/my-skill", null, ["possible_command", "my-skill"]], ["/compact", listed(["compact", "compact"]), ["command", "compact", "compact", ""]],
@@ -123,7 +123,7 @@ test("G069-D02 the declarations are frozen module constants; each Driver's conne
   const acp: ControlLaunch = { protocol: "acp-v1", executable: "/nonexistent/g069-acp", args: [], env: {} }, codex: ControlLaunch = { protocol: "codex-app-server", executable: "/nonexistent/g069-codex", args: [], env: {} };
   const hermes: ControlLaunch = { protocol: "hermes-gateway", executable: "/nonexistent/g069-hermes", args: [], env: {} };
   const controls: readonly [string, ControlLaunch["protocol"], HarnessControl, RelayCapabilities | null][] = [
-    ["claude", "acp-v1", new ClaudeControl(acp, options), claudeRelayCapabilities],
+    ["claude", "claude-agent-sdk", new ClaudeSdkControl({ ...acp, protocol: "claude-agent-sdk" }, options), claudeRelayCapabilities],
     ["codex", "codex-app-server", new CodexControl(codex, options), codexRelayCapabilities],
     ["opencode", "opencode-server", new OpenCodeServerControl({ ...acp, protocol: "opencode-server" }, options), openCodeServerRelayCapabilities],
     ["hermes", "hermes-gateway", new HermesGatewayControl(hermes, options), hermesRelayCapabilities],
@@ -138,7 +138,7 @@ test("G069-D02 the declarations are frozen module constants; each Driver's conne
       assert.equal(control.relayCapabilities ?? null, expected, harness + ": the connection carries the same object");
     }
   } finally { for (const [, , control] of controls) await control.close(); }
-  for (const [harness, protocol] of [["pi", "pi-rpc"], ["cursor", "acp-v1"], ["workbuddy", "acp-v1"], ["claude", "pi-rpc"]] as const) assert.equal(relayCapabilities(harness, protocol), null, harness);
+  for (const [harness, protocol] of [["pi", "pi-rpc"], ["cursor", "acp-v1"], ["workbuddy", "acp-v1"], ["claude", "pi-rpc"], ["claude", "acp-v1"]] as const) assert.equal(relayCapabilities(harness, protocol), null, harness);
   // An app-server is always the Codex driver, whatever the harness; an ACP control of Codex is the generic driver.
   assert.equal(relayCapabilities("codex", "acp-v1"), null);
   assert.equal(relayCapabilities("other", "codex-app-server"), codexRelayCapabilities);
@@ -153,7 +153,8 @@ function onPeer(t: TestContext, root: string, harnessId: "claude" | "openclaw" |
   const options: ControlOptions = { cwd: root, env, requestTimeoutMs: 3000, runTimeoutMs: 6000, maxFrameBytes: 1 << 20, maxDiagnosticBytes: 1 << 14, closeGraceMs: 150 };
   const gateway = async (method: string): Promise<unknown> => method === "agents.list" ? { defaultId: "main", agents: [{ id: "main" }] } : method === "models.list" ? { models: [] }
     : method === "sessions.list" ? { sessions: [] } : method === "sessions.get" || method === "chat.history" ? { messages: [] } : Promise.reject(new Error("unexpected OpenClaw method " + method));
-  const control = harnessId === "claude" ? new ClaudeControl(launch, options)
+  // Claude Code's driver speaks the Agent SDK: its catalog comes from the recorded wire (tests/fixtures/claude), which lists compact and review.
+  const control = harnessId === "claude" ? new ClaudeSdkControl({ protocol: "claude-agent-sdk", executable: resolve("tests/fixtures/claude/replay-claude.mjs"), args: [], env: { PATH: process.env.PATH ?? "", REPLAY_FILE: resolve("tests/fixtures/claude/approval-turn.ndjson") } }, options)
     : harnessId === "openclaw" ? new OpenClawControl(launch, options, gateway) : new AcpControl(launch, options, harnessId === "dsh" ? dshRelayCapabilities : undefined);
   t.after(() => control.close().then(() => undefined));
   return { control, trace };

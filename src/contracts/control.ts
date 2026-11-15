@@ -168,7 +168,13 @@ export type ControlEvent =
       /** The id the program gave the call this approval is about (the `id` of its `tool` event), when it names it: ACP's `toolCall.toolCallId`, Codex's `itemId`. */
       readonly forCall?: string;
       /** The kind the program gave that call in the request itself (ACP's `toolCall.kind`), when it gave one: what the Hub's policy tells the request by. */
-      readonly toolKind?: string }
+      readonly toolKind?: string;
+      /**
+       * A refusal of this approval can carry the user's words (decidePermission's `input` with a refusing option), which the program reads and goes
+       * on with instead of stopping (the Claude Agent SDK's deny `message`). Absent: a refusal says nothing more. Unlike `input`, it does not make
+       * the request a question: the Hub's policy still answers it by the level.
+       */
+      readonly note?: true }
   | { readonly type: "permission"; readonly id: string; readonly decision: "denied" | "cancelled" }
   | { readonly type: "diagnostic"; readonly message: string }
   /**
@@ -464,8 +470,8 @@ export interface HarnessControl {
    */
   startText(id: NativeConversationId, text: TurnText, onEvent: (event: ControlEvent) => void, attachments?: readonly ControlAttachment[]): Promise<ControlRun>;
   /**
-   * Whether this connection's native side takes the user's words in the middle of a turn (steer): claude-agent-acp's `_session/steering`
-   * when its initialize advertises it, Codex's `turn/steer`. Read after initialize; absent is false. Never emulated by stopping the turn and
+   * Whether this connection's native side takes the user's words in the middle of a turn (steer): a user message of priority `next` for the Claude
+   * Agent SDK, ACP's `_session/steering` when its initialize advertises it, Codex's `turn/steer`. Read after initialize; absent is false. Never emulated by stopping the turn and
    * sending again: a turn whose outcome is unknown is not run twice.
    */
   readonly steering?: boolean;
@@ -475,6 +481,19 @@ export interface HarnessControl {
    * may have reached it. Never starts a turn of its own: words that find no turn running are `not_taken`, and stay the Hub's.
    */
   steer?(id: NativeConversationId, text: string): Promise<SteerOutcome>;
+  /**
+   * Takes the last `turns` Turns (each with its answers) off the native history of `id`, so that the next Turn goes on from before them. Nothing
+   * is deleted where the Harness keeps a branch (Claude Code resumes at an earlier entry; Codex rolls the thread back). Rejects while a Turn runs
+   * (INVALID_STATE), with NATIVE_ROLLBACK_UNAVAILABLE when the native side cannot (fewer Turns, or none would be left), changing nothing then.
+   * Absent: the interface cannot roll back.
+   */
+  rollback?(id: NativeConversationId, turns: number): Promise<void>;
+  /**
+   * Applies another model, native options and levels to the open conversation for the Turns from now on, on the process that runs it (the
+   * Claude Agent SDK's setModel, flag settings and permission mode), without opening it anew. Rejects while a Turn runs (INVALID_STATE), and with
+   * NATIVE_OPTION_UNAVAILABLE, changing nothing, when the native side does not offer them. Absent: a change needs a new connection.
+   */
+  reconfigure?(id: NativeConversationId, model: string | undefined, options: NativeOptions | undefined, levels?: { readonly permission?: PermissionLevel; readonly effort?: EffortLevel; readonly speed?: string }): Promise<void>;
   /** Enables interactive requests for a public Run. Standalone probes keep their explicit deny default. */
   enablePermissions?(): void;
   /** Selects an actual pending option; receipt does not assert backend acknowledgement. */

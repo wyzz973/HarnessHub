@@ -4,7 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { type ControlEvent, type NativeUsage } from "../../src/contracts/control.js";
 import { contentId, type ControlAttachment } from "../../src/contracts/content.js";
-import { claudeRelayCapabilities } from "../../src/adapters/control/claude.js";
+import { claudeRelayCapabilities } from "../../src/adapters/control/claude/control.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import { exceedsInput, placedSize, titledPacket } from "../../src/adapters/control/relay-turn.js";
 import { driver, gatewayOf, ID_A, packet, peerRoot, prompts, relayTurn, run, type Harness } from "../fixtures/relay-drivers.js";
@@ -21,11 +21,6 @@ const file = (path: string): ControlAttachment => ({ id: contentId("content-g069
 async function stored(harness: Harness, peer: Awaited<ReturnType<typeof peerRoot>>): Promise<string> {
   const native = await peer.native();
   if (harness === "codex") { const item = native.threads["thread-relay"]!.turns[0]!.items as { type: string; content?: { text: string }[] }[]; return item.find(row => row.type === "userMessage")!.content!.map(part => part.text).join("\n"); }
-  if (harness === "claude") {
-    const projects = join(peer.env.CLAUDE_CONFIG_DIR!, "projects"), [project] = await readdir(projects), [name] = await readdir(join(projects, project!));
-    const line = JSON.parse((await readFile(join(projects, project!, name!), "utf8")).split("\n")[0]!) as { message: { content: { text: string }[] } };
-    return line.message.content.map(part => part.text).join("");
-  }
   return String(Object.values(native.sessions)[0]!.entries.find(entry => entry.role === "user")!.text);
 }
 
@@ -33,7 +28,6 @@ test("G069-C01 the ACP and Codex Drivers place a relay Turn by their declaration
   const body = relayTurn(ID_A, WORDS).relay.body;
   // [harness, peer settings, the text parts sent, how the native side joins them]
   const cases: readonly (readonly [Harness, Record<string, string>, readonly string[]])[] = [
-    ["claude", { RELAY_TRANSCRIPT: "" }, [body + "\n\n", WORDS]],
     // dsh concatenates its text blocks without a separator (dsh-acp 0.2.1-rc.5 admitAcpPrompt): the packet keeps its blank line.
     ["dsh", { RELAY_JOIN: "" }, [body + "\n\n", WORDS]],
     ["openclaw", { RELAY_OPENCLAW: "1" }, [body + "\n\n" + WORDS]],
@@ -41,7 +35,6 @@ test("G069-C01 the ACP and Codex Drivers place a relay Turn by their declaration
   ];
   for (const [harness, settings, parts] of cases) {
     const peer = await peerRoot(t, settings);
-    if (harness === "claude") (peer.env as Record<string, string>).RELAY_TRANSCRIPT = peer.env.CLAUDE_CONFIG_DIR!;
     const control = driver(t, harness, peer);
     await control.initialize(); const id = await control.open(peer.workspace);
     const { result, events } = await run(control, id, relayTurn(ID_A, WORDS));
@@ -82,12 +75,6 @@ test("G069-C01 a relay Turn read as a command is refused whole (G069-F1, relay-d
     const { result, events } = await run(control, id, relayTurn(ID_A, words, false));
     return { peer, result, events };
   };
-  // Claude Code's catalog lists /compact, as the real adapter's does: a word outside the catalog is words for it (G074-F3).
-  const compactListed = { RELAY_COMMANDS: JSON.stringify([{ name: "compact", description: "compact the conversation" }]) };
-  for (const [harness, words, settings] of [["claude", "/compact keep the tests", compactListed]] as const) {
-    const { peer, result, events } = await relayed(harness, words, settings);
-    assert.deepEqual([result.error?.code, result.input, await prompts(peer), events], ["RELAY_PREPARE_FAILED", "not_recorded", [], []], harness + ": refused, nothing sent");
-  }
   // The invalid sample: dsh has no commands but the Hub's clear, so any other slash input is text and carries the packet.
   const dsh = await relayed("dsh", "/review now");
   assert.equal((await prompts(dsh.peer))[0]!.length, 2);

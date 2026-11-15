@@ -62,9 +62,11 @@ export interface AsksFor { readonly read: boolean; readonly edit: boolean; reado
  *   same tools, called as `<command> turns`, `<command> delegate …` (hub-tools.ts); they are there only where the Harness may run a command;
  * - `runtime-mcp`: the Harness's own server adds the Hub's server for the session's directory at runtime (OpenCode's `experimental.mcp.add`), with the
  *   process's table address and token in its environment; nothing is written into the Harness's configuration;
+ * - `sdk`: the Claude Agent SDK's `mcpServers` of the session's query (a stdio server; its table address and token are inherited from the
+ *   Harness's environment, never written into its arguments);
  * - `none`: the Harness has no such entry (its declaration says why), so the tools are not there.
  */
-export type HubToolsEntry = "acp" | "thread-config" | "runtime-mcp" | "cli" | "none";
+export type HubToolsEntry = "acp" | "thread-config" | "runtime-mcp" | "cli" | "sdk" | "none";
 /**
  * Where the Hub's session instructions (how to use the task list and the wrap-up) go, after anything of the user's own:
  * - `acp-meta`: the session request's `_meta.systemPrompt.append` (claude-agent-acp keeps its own preset and adds this);
@@ -73,9 +75,10 @@ export type HubToolsEntry = "acp" | "thread-config" | "runtime-mcp" | "cli" | "n
  * - `first-prompt`: a text block after the first content prompt of a native session the connection opened new (the Harness has neither
  *   a system prompt entry nor a use for MCP instructions); the Hub's own record of the user's words stays as typed;
  * - `session-instructions`: the native session's own instruction entries (OpenCode's `instructions/entries/<key>`), written before its next prompt;
+ * - `sdk-append`: the Claude Agent SDK's `systemPrompt` preset (`claude_code`) with this appended, Claude Code's own prompt kept;
  * - `none`: nowhere (without the tools they would name nothing).
  */
-export type InstructionsEntry = "acp-meta" | "developer-instructions" | "mcp-instructions" | "session-instructions" | "first-prompt" | "none";
+export type InstructionsEntry = "acp-meta" | "developer-instructions" | "mcp-instructions" | "session-instructions" | "first-prompt" | "sdk-append" | "none";
 /** The two entries a Driver reads (ControlOptions.entry), from the declaration's capabilities. */
 export interface SessionEntry { readonly tools: HubToolsEntry; readonly instructions: InstructionsEntry }
 /** The capabilities the adapter will declare later; the fields are fixed now so that each adapter fills them in its own time. */

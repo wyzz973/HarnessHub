@@ -118,7 +118,7 @@
       "kind": "imports",
       "appliesTo": ["src/**"],
       "packages": {
-        "allow": ["semver", "yaml", "jsonc-parser", "tar", "smol-toml", "json5", "yauzl", "unbzip2-stream", "node-pty", "ws"],
+        "allow": ["semver", "yaml", "jsonc-parser", "tar", "smol-toml", "json5", "yauzl", "unbzip2-stream", "node-pty", "ws", "@anthropic-ai/claude-agent-sdk"],
         "inPaths": ["src/infrastructure/**", "src/adapters/**"]
       },
       "exceptions": []

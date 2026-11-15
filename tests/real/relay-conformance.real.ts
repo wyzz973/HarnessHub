@@ -1267,7 +1267,7 @@ if (probeTargets.length > 0) test("RelayConformance Driver probes: the declared 
         const fixtures = await import("../fixtures/relay-drivers.js"), peer = await fixtures.peerRoot(t);
         const withTranscript = { ...peer, env: { ...peer.env, RELAY_TRANSCRIPT: peer.env.CLAUDE_CONFIG_DIR!, ...(harnessId === "hermes" ? { RELAY_HERMES: "1" } : {}), ...(harnessId === "openclaw" ? { RELAY_OPENCLAW: "1" } : {}) } };
         workspace = peer.workspace; claudeConfig = peer.env.CLAUDE_CONFIG_DIR!; codexHome = peer.env.CODEX_HOME!; rigRoot = peer.root;
-        connectIn = async () => { const control = fixtures.driver(t, harnessId as "claude", withTranscript); return { control, close: () => control.close() }; };
+        connectIn = async () => { const control = fixtures.driver(t, harnessId as "codex", withTranscript); return { control, close: () => control.close() }; };
       }
       const rig = new Rig(harnessId, workspace, requested, options, connectIn, claudeConfig, codexHome, rigRoot, wire, PROMPT_CAP);
       rigs.push(rig);

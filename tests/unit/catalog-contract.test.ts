@@ -126,7 +126,8 @@ test("v1 builtin overrides bind to actual controls and optional wrappers keep in
   assert.equal(migrated.definitions.length, 0);
   assert.equal(migrated.overrides.get("codex-native")?.executable, "/native/codex");
   assert.equal(migrated.overrides.get("pi-native")?.executable, "/native/pi");
-  assert.equal(migrated.overrides.get("claude-acp-npm")?.executable, "/adapter/claude");
+  // Claude Code's control is the Agent SDK's on `claude` itself (under the ACP entry's id): its binary is the control's, the retired adapter is not run.
+  assert.equal(migrated.overrides.get("claude-acp-npm")?.executable, "/native/claude");
   assert.equal(migrated.installationOverrides.get("claude"), "/native/claude");
 });
 

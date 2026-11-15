@@ -33,9 +33,9 @@ async function received(harness: string, peer: Peer): Promise<readonly string[]>
 const sessionsOpened = async (harness: string, peer: Peer): Promise<number> => (await peer.sent()).filter(line => line.method === (harness === "codex" ? "thread/start" : "session/new")).length;
 const settings = (harness: string): Record<string, string> => ({ RELAY_CLOSE: "1", ...(harness === "dsh" ? { RELAY_JOIN: "" } : {}), ...(harness === "openclaw" ? { RELAY_OPENCLAW: "1" } : {}) });
 
-for (const target of ["claude", "codex", "dsh", "openclaw"] as const) {
+for (const target of ["codex", "dsh", "openclaw"] as const) {
   test(`${target}: a clear is a command Turn that carries nothing, and opens a new native session in a new epoch; the earlier part is offered once and attached on request`, { timeout: 120_000 }, async t => {
-    const source = target === "claude" ? "codex" : "claude";
+    const source = target === "codex" ? "opencode" : "codex";
     const peers = new Map<string, Peer>([[source, await peerRoot(t, settings(source))], [target, await peerRoot(t, settings(target))]]);
     const w = world(t, "relay-clear-"), app = w.runtime(new Drivers(t, peers)), peer = peers.get(target)!;
     const id = (await app.create(w.configuration, { harnessId: source }, "create")).id;
