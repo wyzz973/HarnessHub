@@ -779,6 +779,8 @@
     box-shadow: inset 0 0 0 .5px var(--pane-rim), 0 0 0 .5px var(--border-strong), 0 4px 18px -6px rgba(0, 0, 0, .16), 0 0 0 100vmax var(--bg-app);
   }
   .content-pane { position: relative; background: var(--bg-app); }
+  /* A page, or another conversation, arrives with a short fade, not a swap. */
+  .content-pane > * { animation: hh-fade-in 180ms var(--ease-out) both; }
   /* The top of the content moves the window wherever a page has put nothing to press there. */
   .content-pane::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 52px; -webkit-app-region: drag; }
   /* The top strip of each pane moves the window; with the sidebar away, the content's strip leaves room for the window's own buttons. */
