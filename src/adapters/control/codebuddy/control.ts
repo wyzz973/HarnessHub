@@ -10,7 +10,11 @@ import { codebuddyRelayCapabilities } from "./reading.js";
 const META = { parent: "codebuddy.ai/parentToolCallId", tool: "codebuddy.ai/toolName", compact: "codebuddy.ai/isCompactInternal", request: "codebuddy.ai/conversationRequestId" } as const;
 /** Its extension methods (the ACP SDK hands it every method it does not know, by its full name). */
 const ROLLBACK = "_codebuddy.ai/session/rollback", STEER = "session/steer";
-const SUMMARY_END = /<\/summary>\s*<\/conversation_history_summary>\s*$/u;
+/** A whole summary as it ends: the last wrapper's words (its start may come once alone, then again with the summary). */
+const SUMMARY = /^[\s\S]*<conversation_history_summary>\s*<summary>([\s\S]*?)<\/summary>\s*<\/conversation_history_summary>\s*$/u;
+const COMPACT_COMMAND = /^\/compact(?:\s|$)/u;
+/** A compaction streaming now: `command` when the Turn is a `/compact` (its every reply chunk is the summary), else only marked chunks are. */
+interface Compaction { readonly id: string; readonly command: boolean; text: string }
 
 /** A conversation request id as CodeBuddy Code takes one from its client (`assertClientConversationRequestId`): a lowercase UUIDv7 as 32 hex digits. */
 export function conversationRequestId(now = Date.now(), random: Uint8Array = randomBytes(10)): string {
@@ -26,7 +30,8 @@ function blocksText(content: unknown): string {
 /**
  * CodeBuddy Code (`@tencent-ai/codebuddy-code`, `codebuddy --acp`) on ACP stdio. Its own sign-in stays its own: the driver never authenticates (that
  * signs the user out first) and a session it cannot open for want of one says so. What it adds to ACP:
- * - its compaction streams its summary as reply text marked `codebuddy.ai/isCompactInternal`, sometimes as a list of blocks: one compaction activity;
+ * - a compaction streams its summary as reply text: marked `codebuddy.ai/isCompactInternal` when it compacts itself, unmarked for a `/compact` (seen on
+ *   2.184.0), each time wrapped in `<conversation_history_summary><summary>`: one compaction activity, its thinking dropped;
  * - a sub-agent's words stream into the root session with `codebuddy.ai/parentToolCallId`: dropped (its calls stay, under their parent);
  * - its catalog pushes arrive as `model_update`, a turn's end as `session_end`;
  * - words in the middle of a turn are `session/steer`, a rollback is `_codebuddy.ai/session/rollback` to before a turn's request: each only where the
@@ -37,26 +42,36 @@ export class CodeBuddyControl extends AcpControl {
   private turns: string[] = [];
   /** The request id the prompt now sent carries; null when it carries none. */
   private inFlight: string | null = null;
-  /** The compaction whose summary streams now, by its message id. */
-  private compacting: string | null = null;
+  private compacting: Compaction | null = null;
+  /** The prompt now sent is a `/compact`: its Turn's first update begins the compaction. */
+  private compactDue = false;
+  private compactions = 0;
 
   constructor(launch: ControlLaunch, private readonly settings: ControlOptions) { super(launch, settings, codebuddyRelayCapabilities); }
   protected override get product(): string { return "CodeBuddy Code"; }
   private declared(capability: keyof FlavorCapabilities): boolean { return this.settings.flavor?.capabilities?.[capability] === "native"; }
 
   override async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
-    this.turns = []; this.compacting = null;
+    this.turns = []; this.compacting = null; this.compactDue = false;
     return super.open(cwd, model, options, checkpoint);
   }
   override async startText(id: NativeConversationId, turn: TurnText, onEvent: (event: ControlEvent) => void, attachments: readonly ControlAttachment[] = []): Promise<ControlRun> {
-    this.inFlight = null;
+    this.inFlight = null; this.compactDue = false;
     const run = await super.startText(id, turn, onEvent, attachments), request = this.inFlight;
-    if (request === null) return run;
     const counted = (result: BackendResult): boolean => result.status === "completed" || result.status === "cancelled" || result.input === "recorded";
-    void run.result.then(result => { if (counted(result)) this.turns.push(request); }, () => undefined).finally(() => { if (this.inFlight === request) this.inFlight = null; });
-    return run;
+    if (request !== null) void run.result.then(result => { if (counted(result)) this.turns.push(request); }, () => undefined).finally(() => { if (this.inFlight === request) this.inFlight = null; });
+    // A `/compact` that completed with no whole summary leaves its words as the reply; the compaction stays open, and the Turn's end tells it as unknown
+    // (cancelled when it was stopped).
+    const ended = (completed: boolean): void => {
+      const open = this.compacting; this.compactDue = false;
+      if (open?.command !== true) return;
+      this.compacting = null;
+      if (completed && open.text) onEvent({ type: "text", text: open.text });
+    };
+    return { ...run, result: run.result.then(result => { ended(result.status === "completed"); return result; }, (error: unknown) => { ended(false); throw error; }) };
   }
-  protected override promptMeta(_prompt: string, content: boolean): Readonly<Record<string, unknown>> | null {
+  protected override promptMeta(prompt: string, content: boolean): Readonly<Record<string, unknown>> | null {
+    this.compactDue = !content && COMPACT_COMMAND.test(prompt.trim());
     if (!content || !(this.declared("rollback") || this.declared("steer"))) return null;
     this.inFlight = conversationRequestId();
     return { [META.request]: this.inFlight };
@@ -70,17 +85,29 @@ export class CodeBuddyControl extends AcpControl {
   /** Its own notices (`_codebuddy.ai/command` workspace_info, checkpoints, artifacts…) are for its own clients: taken, nothing to show. */
   protected override extensionNotification(method: string): boolean { return method.startsWith("_codebuddy.ai/"); }
   protected override ownUpdate(kind: string, update: Readonly<Record<string, unknown>>, report: ((event: ControlEvent) => void) | null): boolean {
+    if (this.compactDue && report !== null) {
+      this.compactDue = false;
+      this.compacting = { id: `compaction-${++this.compactions}`, command: true, text: "" };
+      report({ type: "activity", id: this.compacting.id, kind: "compaction", title: "上下文压缩", status: "running" });
+    }
     if (kind === "session_end") return true;
     if (kind === "model_update") { if (typeof update.currentModelId === "string") this.adoptModel(update.currentModelId); return true; }
     if (kind !== "agent_message_chunk" && kind !== "agent_thought_chunk") return false;
     const meta = record(update._meta), text = blocksText(update.content), item = typeof update.messageId === "string" && update.messageId.length <= 512 ? update.messageId : undefined;
-    if (meta?.[META.compact] === true) {
-      const done = SUMMARY_END.test(text), id = this.compacting ?? item ?? "compaction";
-      if (this.compacting === null && !done) { this.compacting = id; report?.({ type: "activity", id, kind: "compaction", title: "上下文压缩", status: "running" }); }
-      if (done) {
-        const summary = text.replace(/^[\s\S]*?<summary>/u, "").replace(SUMMARY_END, "").trim();
+    const marked = meta?.[META.compact] === true;
+    if (this.compacting === null && marked) {
+      this.compacting = { id: item ?? `compaction-${++this.compactions}`, command: false, text: "" };
+      report?.({ type: "activity", id: this.compacting.id, kind: "compaction", title: "上下文压缩", status: "running" });
+    }
+    const compaction = this.compacting;
+    if (compaction !== null && (compaction.command || marked)) {
+      if (kind === "agent_thought_chunk") return true;
+      compaction.text += text;
+      const whole = /<\/conversation_history_summary>\s*$/u.test(compaction.text.slice(-64)) ? SUMMARY.exec(compaction.text) : null;
+      if (whole) {
         this.compacting = null;
-        report?.({ type: "activity", id, kind: "compaction", title: "上下文压缩", status: "completed", ...(summary ? { detail: summary.slice(0, 4096) } : {}) });
+        const summary = whole[1]!.trim();
+        report?.({ type: "activity", id: compaction.id, kind: "compaction", title: "上下文压缩", status: "completed", ...(summary ? { detail: summary } : {}) });
       }
       return true;
     }

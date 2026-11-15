@@ -4,6 +4,16 @@
 
 ## 2026-11-15
 
+- **CodeBuddy Code 登录后的真机结果：插话和回退打开，手动压缩改正。**（用户在终端里登录了一次；模型都用默认的 `hy4free`。）
+  - 直连驱动：原生回退 1 轮后问“上一次回的词”，答对；插话 `steered: true`，在同一轮的下一步生效（像 Codex：先数完 1 到 30，再回 kiwi）；换进程用 `session/load` 续上，答对。所以声明改为 `steer: native`、`rollback: native`。
+  - Hub 四步冒烟两次都答“苹果、橙子”。回退关着时，编辑重发由 Hub 开新会话；打开后走原生回退（`native.rolled_back`），进程不换。
+  - 手动 `/compact` 的摘要不带 `isCompactInternal`，被当成普通回复流了出来。结束标签还会被拆到两段里。现在改成：发的是 `/compact` 就把整轮当压缩，思考不外露，攒齐整段摘要再报完成（详情里放全文，不截断）；整轮完成了摘要却没收尾，就把文字当回复交出，压缩记为不明（被停掉时不交）。
+  - Hub 层插话加压缩：插话 `taken`，那一轮回 kiwi；从接口批准审批后接着跑完；`/compact` 89 秒，只留一条“上下文已压缩”，记录里存了 14945 字的摘要；压缩后再问，答对。
+  - 它很慢：只有一轮的会话也压了 308 秒，先想了 5976 段，再写出 16733 字的摘要。
+  - CodeBuddy 读到 EOF 不退出。Hub 关进程时，等宽限期过后发 SIGTERM，它才退出（退出码 0）。Hub 若被强杀，它的进程会一直留着。
+  - 没选档位时，CodeBuddy 用它自己的默认模式：Hub 让它读 `STATE.md`（在工作目录外），它会要用户批。页面默认“自动”，不受影响；“每步询问”档会碰到，别家可能也一样，另做。
+  - 没做：提问和 toolLoad 的声明；页面没有逐屏看。
+
 - **WorkBuddy 改接 npm 版 CodeBuddy Code。**（用户：“npm版”。）WorkBuddy 应用的登录钥匙只交给它自己的侧车，Hub 接不了。所以装了 npm 的 `@tencent-ai/codebuddy-code` 2.184.0，作为独立的 Harness“CodeBuddy Code”，在重点名单里取代 WorkBuddy，由用户在它的命令行里登录一次。（子代理在独立 worktree 写，快进合入。）
   - Hub 起的进程是 `codebuddy --acp --no-plugin-management`，并设 `DISABLE_AUTOUPDATER=1`：已装的插件照常加载，插件市场同步和自动更新不跑。
   - 档位用它的 `mode`，思考强度用 `thought_level`；压缩摘要显示成一条压缩进度；子 Agent 的文字不进主回复；TodoWrite 显示成计划。能力声明 `keep: session`。

@@ -17,8 +17,9 @@ export const codebuddyCodeFlavor: HarnessFlavor = {
   nativePlan: true,
   // The Hub's tools are the session's ACP `mcpServers` (new and load); its system prompt has no entry from a client and MCP instructions reach only its
   // channels, so the session instructions follow the first prompt. Its TodoWrite reaches the Turn as ACP `plan`: planTool native. Resume by session/load;
-  // no session/fork over ACP. Read statically from 2.184.0 only: the user was not signed in on 2026-11-15, so steer (`session/steer`) and rollback
-  // (`_codebuddy.ai/session/rollback`) stay off until a real Turn shows them, and toolLoad and questions are not declared yet.
+  // no session/fork over ACP. Seen signed in on 2.184.0 (2026-11-15): `session/steer` takes words at the running turn's next step, and
+  // `_codebuddy.ai/session/rollback` takes the last Turns off (a process that did not run them cannot, and the Hub hands a new session the path).
+  // toolLoad and questions are not declared yet.
   capabilities: { keep: "session", sessionMcp: "acp", systemPrompt: "first-prompt", planTool: "native", resume: "native", fork: "none", attachments: "native", record: "files",
-    steer: "none", rollback: "none" },
+    steer: "native", rollback: "native" },
 };

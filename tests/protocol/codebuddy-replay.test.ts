@@ -32,7 +32,7 @@ test("CodeBuddy Code replay, signed out: initialize lists its sign-in ways, the 
     const observed = await control.initialize();
     assert.equal(observed.protocol, "acp-v1");
     assert.deepEqual(observed.authenticationMethods, ["iOA", "external", "internal", "selfhosted"]);
-    assert.equal(control.steering, false, "steer stays off until a real Turn shows it");
+    assert.equal(control.steering, true, "steer is declared: a signed-in Turn showed it (2026-11-15)");
     await assert.rejects(control.open(WORKSPACE), (error: unknown) => (error as { code?: string }).code === "NATIVE_AUTH_REQUIRED" && /codebuddy/u.test((error as Error).message));
   } finally { await control.close(); }
 });
