@@ -18,7 +18,7 @@ function publicEvent(event: ControlEvent, redact: (text: string) => string): Con
     case "tool": return { ...event, id: redact(event.id), title: redact(event.title), status: redact(event.status), ...(event.detail === undefined ? {} : { detail: sanitize(event.detail, redact) as NativeToolDetail }) };
     case "permission": return { ...event, id: redact(event.id) };
     case "plan": return { type: "plan", entries: event.entries.map(entry => ({ ...entry, content: redact(entry.content) })), ...(event.explanation === undefined ? {} : { explanation: redact(event.explanation) }) };
-    case "usage": case "input_recorded": return event;
+    case "usage": case "input_recorded": case "limits": return event;
     case "notice": return { ...event, title: redact(event.title), ...(event.detail === undefined ? {} : { detail: redact(event.detail) }) };
     case "activity": return { ...event, id: redact(event.id), title: redact(event.title), ...(event.detail === undefined ? {} : { detail: redact(event.detail) }) };
     case "output": {

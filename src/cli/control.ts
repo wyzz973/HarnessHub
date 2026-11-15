@@ -22,6 +22,7 @@ function describe(event: ControlEvent): string {
     case "permission": return event.decision;
     case "plan": return event.entries.map(entry => (entry.status === "completed" ? "[x] " : entry.status === "in_progress" ? "[~] " : "[ ] ") + entry.content).join(" | ");
     case "usage": return JSON.stringify(event.usage);
+    case "limits": return event.limits.map(limit => limit.id + (limit.usedPercent === undefined ? "" : " " + limit.usedPercent + "%")).join(" | ");
     case "notice": return event.severity + ": " + event.title;
     case "activity": return event.kind + " " + event.title + " · " + event.status;
     case "output": return event.output.kind === "link" ? event.output.uri : event.output.name + " (" + event.output.mediaType + ", " + event.output.data.byteLength + " bytes)";

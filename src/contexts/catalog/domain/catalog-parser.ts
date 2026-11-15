@@ -1,4 +1,4 @@
-import { DiscoveryInputError, parseDiscoveryManifest, type DiscoveryManifest } from "./discovery.js";
+import { DiscoveryInputError, isControlProtocol, parseDiscoveryManifest, type DiscoveryManifest } from "./discovery.js";
 import { MAX_CONTROLS, MAX_DEFINITIONS, type CatalogManifest, type CatalogSource, type ControlRecipe, type DistributionMetadata, type HarnessDefinition, type PackageIdentity } from "./catalog.js";
 
 function object(value: unknown, field: string): Record<string, unknown> {
@@ -107,7 +107,7 @@ function distribution(value: unknown): DistributionMetadata | null {
 function control(value: unknown): ControlRecipe {
   const item = object(value, "control");
   keys(item, ["id", "protocol", "executableNames", "args", "env", "package", "distribution", "requiredExecutables", "source"], "control");
-  if (item.protocol !== "acp-v1" && item.protocol !== "codex-app-server" && item.protocol !== "pi-rpc") throw new DiscoveryInputError("unsupported control protocol");
+  if (!isControlProtocol(item.protocol)) throw new DiscoveryInputError("unsupported control protocol");
   const recipe: ControlRecipe = {
     id: id(item.id, "control.id"), protocol: item.protocol,
     executableNames: list(item.executableNames, "control.executableNames", 16, executable),

@@ -777,7 +777,7 @@ export function place(turn: ActiveTurn, input: PlaceInput, env: PlaceEnv = {}): 
           case "output": placeOutput(s, w, event.output, input.stored, at); break;
           case "permission_requested": placeRequest(s, w, event, at); break;
           case "permission": withdraw(s, w, event, at); break;
-          case "usage": case "diagnostic": case "input_recorded": break;
+          case "usage": case "diagnostic": case "input_recorded": case "limits": break;
         }
         break;
       }

@@ -22,7 +22,7 @@ export function nativeConversationId(value: unknown): NativeConversationId {
   return value as NativeConversationId;
 }
 export interface ControlLaunch extends ResolvedCommand {
-  readonly protocol: "acp-v1" | "codex-app-server" | "pi-rpc";
+  readonly protocol: ControlProtocol;
 }
 export interface ControlOptions {
   readonly cwd: string;
@@ -124,6 +124,21 @@ export interface NativeUsage {
    */
   readonly requests?: readonly { readonly input: number; readonly cachedInput?: number; readonly cacheWrite?: number }[];
 }
+/**
+ * One rate-limit window of the account the Harness runs on, as the Harness reports it (Codex `account/rateLimits/updated`, the Claude
+ * Agent SDK's rate-limit events): how much of it is used and when it resets. It is the account's, not the Turn's.
+ */
+export interface NativeLimit {
+  /** The Harness's own name for the window (`primary`, `secondary`, `five_hour`, `seven_day`, …). */
+  readonly id: string;
+  readonly label?: string;
+  /** 0–100. */
+  readonly usedPercent?: number;
+  readonly windowMinutes?: number;
+  /** Milliseconds since the epoch. */
+  readonly resetsAt?: number;
+  readonly status?: "ok" | "warning" | "exceeded";
+}
 /** Non-text native output. Bytes are handed to the content owner; links are never fetched. */
 export type NativeOutput =
   | { readonly kind: "content"; readonly name: string; readonly mediaType: string; readonly data: Uint8Array }
@@ -135,6 +150,8 @@ export type ControlEvent =
   | { readonly type: "tool"; readonly id: string; readonly title: string; readonly status: string; readonly detail?: NativeToolDetail }
   | { readonly type: "plan"; readonly entries: readonly NativePlanEntry[]; readonly explanation?: string }
   | { readonly type: "usage"; readonly usage: NativeUsage }
+  /** The account's rate limits as they stand now (all the windows the Harness reports); `plan` is the account's plan, when it says. */
+  | { readonly type: "limits"; readonly limits: readonly NativeLimit[]; readonly plan?: string }
   | { readonly type: "notice"; readonly severity: "info" | "warning" | "error"; readonly title: string; readonly detail?: string }
   | { readonly type: "activity"; readonly id: string; readonly kind: "subagent" | "task" | "compaction" | "retry" | "review"; readonly title: string; readonly status: "running" | "completed" | "failed" | "cancelled"; readonly detail?: string }
   | { readonly type: "output"; readonly output: NativeOutput }
