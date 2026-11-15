@@ -5,12 +5,13 @@ import "@fontsource-variable/geist-mono";
 import "./styles.css";
 import { App } from "./App.js";
 import { applyTheme, readPreferences } from "./lib/prefs.js";
-import { followWindow } from "./lib/desktop.js";
+import { desktop, followWindow } from "./lib/desktop.js";
 import { followMenu } from "./lib/keys.js";
 import { trackInputModality } from "./ui/motion.js";
 import { ToastProvider } from "./ui/overlay.js";
 import { startSystemGlass } from "./ui/glass.js";
 import { startLiquidGlass } from "./ui/liquid.js";
+import { startTitleTips } from "./ui/tips.js";
 
 /**
  * Keeps the browser's theme color (the window or tab bar around the page) on the theme the page shows. index.html gives
@@ -46,3 +47,5 @@ startLiquidGlass();
 createRoot(root).render(<StrictMode><LucideProvider strokeWidth={1.75}><ToastProvider><App /></ToastProvider></LucideProvider></StrictMode>);
 // In the desktop app on macOS 26 the glass is the system's own, laid under the page.
 startSystemGlass();
+// And a title is shown as one of the page's own tips.
+if (desktop !== null) startTitleTips();

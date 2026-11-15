@@ -142,6 +142,9 @@
     --wash: rgba(30, 30, 34, .3); --wash-thick: rgba(30, 30, 34, .5);
   }
 }
+/* A window that is not the key one gives up its accent, as the system's controls do: fills go grey, words that are links keep their color. */
+:root[data-window="inactive"] { --accent: #8E8E93; --accent-hover: #8E8E93; --accent-soft: rgba(142, 142, 147, .16); @variant dark { --accent: #636366; --accent-hover: #636366; } }
+
 /* With "reduce transparency" the glass is a plain surface (the window's own material answers the setting by itself). */
 @media (prefers-reduced-transparency: reduce) {
   :root { --glass: #F4F4F6; --glass-thick: #FBFBFC; --glass-clear: #F0F0F2; --glass-blur: opacity(1); @variant dark { --glass: #2C2C30; --glass-thick: #28282C; --glass-clear: #343438; } }
@@ -637,6 +640,8 @@
     transition: opacity var(--dur-fast) var(--ease-standard);
   }
   .tooltip-pop[data-starting-style], .tooltip-pop[data-ending-style] { opacity: 0; }
+  /* A title shown as a tip (ui/tips.ts): placed by its script, never in the pointer's way. */
+  .title-tip { position: fixed; z-index: 70; pointer-events: none; white-space: pre-line; overflow-wrap: anywhere; animation: hh-fade-in var(--dur-fast) var(--ease-standard) backwards; }
   /* Base UI marks popups opened or closed from the keyboard (or by Escape) as instant (#37) */
   :is(.surface-pop, .tooltip-pop)[data-instant] { transition: none; }
 
@@ -826,6 +831,8 @@
     background: linear-gradient(to bottom, transparent 0, color-mix(in srgb, var(--bg-app) 22%, transparent) 30px, color-mix(in srgb, var(--bg-app) 40%, transparent) calc(100% - 64px), color-mix(in srgb, var(--bg-app) 97%, transparent) calc(100% - 34px), var(--bg-app) 100%);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 30px); mask-image: linear-gradient(to bottom, transparent 0, #000 30px);
   }
+  /* The find bar comes down from under the toolbar. */
+  .find-bar { --motion-shift: -6px; animation: hh-enter var(--dur-base) var(--ease-out) backwards; }
   .follow-stream, .find-bar { background: var(--glass); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); box-shadow: var(--sh-pop); }
   .composer-box { background: var(--glass-thick); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); }
   .chat-foot :is(.relay-card, .queued-message, .composer-notice, .composer-change, [role="status"].rounded-block, [role="alert"].rounded-block) { -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); }

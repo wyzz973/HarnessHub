@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { TurnStatus } from "../../../src/contracts/protocol.js";
 import type { ReadTurn } from "../../../src/contracts/protocol-read.js";
 import type { PublicRun } from "../../../src/contracts/session.js";
-import { chooseNotifications, notificationsChosen, notificationsSupported } from "../attention.js";
+import { chooseNotifications, lookingAway, notificationsChosen, notificationsSupported } from "../attention.js";
 import { spentText } from "./format.js";
 import { ownWork, statusText } from "./protocol/runs.js";
 import { summarizeGroup } from "./protocol/work.js";
@@ -98,7 +98,7 @@ export function notifyTurnEnded(run: PublicRun, open: () => void): void {
   const turn = run.protocol;
   if (turn === undefined) return;
   const said = outcome(turn);
-  if (said === null || !notificationsSupported() || !notificationsChosen() || Notification.permission !== "granted" || document.visibilityState !== "hidden") return;
+  if (said === null || !notificationsSupported() || !notificationsChosen() || Notification.permission !== "granted" || !lookingAway()) return;
   const body = [summarizeGroup(ownWork(turn)).text, turn.durationMs === undefined ? "" : "用时 " + spentText(turn.durationMs)].filter(Boolean).join(" · ");
   try {
     const notice = new Notification(`${turn.executor.harness} ${said}`, { body, tag: "turn:" + run.id, silent: turn.status !== "unknown" });

@@ -16,7 +16,7 @@ import { conversationOf, type ConversationView } from "./lib/conversation.js";
 import { fillDeferred, fillItem, fillText, incomplete, prependOlder, replaceWithSnapshot, type Incomplete, type WindowState } from "./lib/protocol/window.js";
 import type { ClientSessionView } from "./lib/protocol/wire.js";
 import type { TurnReads } from "./components/ProtocolTurn.js";
-import { attentionKind, liveItems, notifyWaiting } from "./attention.js";
+import { attentionKind, liveItems, lookingAway, notifyWaiting } from "./attention.js";
 import { ApiError, errorMessage, GatewayApi, requestKey, type AccountLimitsView } from "./api.js";
 import type { Place } from "./components/Welcome.js";
 import type { DelegationResult } from "./components/Delegation.js";
@@ -208,7 +208,20 @@ function pageRoute(): Page {
   const value = new URLSearchParams(window.location.hash.slice(1)).get("page");
   return value === "harnesses" || value === "capabilities" || value === "settings" || value === "providers" ? value : "chat";
 }
-function writePageRoute(page: Exclude<Page, "chat">): void { window.history.replaceState(null, "", window.location.pathname + "#" + new URLSearchParams({ page }).toString()); }
+/**
+ * Where the user has been, so they can go back and forward (the address only names where they are). A place is a page ("page:settings"), a
+ * conversation ("session:<id>") or the home ("home"); going to one already under the mark moves nothing, which is how going back does not
+ * count as a new step.
+ */
+const trail: string[] = [];
+let trailAt = -1;
+function visited(place: string): void {
+  if (trail[trailAt] === place) return;
+  trail.length = trailAt + 1; trail.push(place);
+  if (trail.length > 100) trail.shift();
+  trailAt = trail.length - 1;
+}
+function writePageRoute(page: Exclude<Page, "chat">): void { visited("page:" + page); window.history.replaceState(null, "", window.location.pathname + "#" + new URLSearchParams({ page }).toString()); }
 function sessionRoute(): { id: string | null; error: string | null } {
   const value = new URLSearchParams(window.location.hash.slice(1)).get("session");
   if (value === null) return { id: null, error: null };
@@ -216,8 +229,10 @@ function sessionRoute(): { id: string | null; error: string | null } {
   catch { return { id: null, error: "链接中的会话编号无效。请从最近对话中重新打开，或明确新建一个对话。" }; }
 }
 function writeSessionRoute(id: string | null): void {
+  visited(id ? "session:" + id : "home");
   window.history.replaceState(null, "", window.location.pathname + (id ? "#" + new URLSearchParams({ session: id }).toString() : ""));
 }
+{ const page = pageRoute(), session = sessionRoute().id; visited(page !== "chat" ? "page:" + page : session ? "session:" + session : "home"); }
 const SHORTCUT_TARGETS = "input, textarea, select, [contenteditable=true]";
 const NO_ITEMS: readonly AttentionItem[] = [];
 /**
@@ -788,7 +803,7 @@ export function App() {
       pendingMessage.current = saved?.messageIntent ?? null; pendingSwitchWrite.current = saved?.selectionIntent ?? null;
       writeSessionRoute(id); setSessionId(id); setHeld(null); setSessionLoading(true); setSessionError(null);
       setMessageDraft(saved?.message ?? ""); setAttachments(draftAttachments(saved?.attachments)); if (saved) setDraft(saved.selection); setChatKey(value => value + 1);
-    }
+    } else writeSessionRoute(id);   // back from a page to the conversation that was open: the address says so again
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
   openFromNotice.current = selectSession;
@@ -1099,6 +1114,17 @@ export function App() {
   // The desktop menu's commands that are not one of the shortcuts above.
   useEffect(() => onCommand(command => {
     if (command === "settings") navigate("settings");
+    else if (command === "back" || command === "forward") {
+      // The nearest place that way that is still there (a conversation may have been deleted since).
+      const step = command === "back" ? -1 : 1;
+      for (let at = trailAt + step; at >= 0 && at < trail.length; at += step) {
+        const place = trail[at]!, id = place.startsWith("session:") ? place.slice(8) : null;
+        if (id !== null && !state?.sessions.some(item => item.id === id)) continue;
+        trailAt = at;
+        if (id !== null) selectSession(id); else if (place === "home") newChat(); else navigate(place.slice(5) as Page);
+        break;
+      }
+    }
     else if (command === "open-folder") void desktop?.pickFolder(workspace).then(path => { if (path !== null) { newChat(); choosePlace({ scratch: false, workspace: path }); } });
   }));
   const startOperation = (label: string): boolean => { if (operation.current) return false; operation.current = true; setMutation(label); setError(null); return true; };
@@ -1473,17 +1499,17 @@ export function App() {
   // The open conversation's latest Turn, once it ends after the page went out of sight, is announced (ADR-054 X04): done,
   // failed or cancelled by the Runtime silently (ruling K), an unknown result with the sound; one the user stopped is not.
   // Each Turn once. Without notifications chosen, the first such Turn leads to one offer when the page is back.
-  const hiddenSince = useRef<number | null>(document.visibilityState === "hidden" ? Date.now() : null), announced = useRef(new Set<string>()), offerNotifications = useRef<TurnStatus | null>(null);
+  const hiddenSince = useRef<number | null>(lookingAway() ? Date.now() : null), announced = useRef(new Set<string>()), offerNotifications = useRef<TurnStatus | null>(null);
   watchTurn.current = (view: ConversationView) => {
     const run: PublicRun | undefined = view.runs.at(-1), turn = run?.protocol, ended = turn === undefined ? undefined : endedAt(turn), since = hiddenSince.current;
-    if (!run || turn === undefined || since === null || document.visibilityState !== "hidden" || !over(turn) || userStopped(run) || ended === undefined || ended < since || announced.current.has(run.id)) return;
+    if (!run || turn === undefined || since === null || !lookingAway() || !over(turn) || userStopped(run) || ended === undefined || ended < since || announced.current.has(run.id)) return;
     announced.current.add(run.id);
     notifyTurnEnded(run, () => openFromNotice.current(view.id));
     if (notificationsOfferable()) offerNotifications.current = turn.status;
   };
   useEffect(() => {
     const back = () => {
-      if (document.visibilityState === "hidden") { hiddenSince.current ??= Date.now(); return; }
+      if (lookingAway()) { hiddenSince.current ??= Date.now(); return; }
       hiddenSince.current = null;
       const outcome = offerNotifications.current;
       if (outcome === null) return;
@@ -1491,8 +1517,8 @@ export function App() {
       // The offer says how that Turn ended, so a failed one is never called done.
       const id = toast.show({ title: backgroundOutcome(outcome), description: "要在做完或需要你时用系统通知告诉你吗？", action: { label: "开启通知", onClick: () => { toast.close(id); void enableNotifications(); } }, timeout: 8000 });
     };
-    document.addEventListener("visibilitychange", back); window.addEventListener("focus", back);
-    return () => { document.removeEventListener("visibilitychange", back); window.removeEventListener("focus", back); };
+    document.addEventListener("visibilitychange", back); window.addEventListener("focus", back); window.addEventListener("hub:window", back);
+    return () => { document.removeEventListener("visibilitychange", back); window.removeEventListener("focus", back); window.removeEventListener("hub:window", back); };
   }, [toast]);
   // The outcome of each shown conversation's latest Turn, for the sidebar's red dot. It counts only while the summary still
   // has the sequence it was seen at: once the conversation moved on out of sight, a later Turn may have ended otherwise,

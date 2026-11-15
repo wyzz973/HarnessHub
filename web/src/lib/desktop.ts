@@ -32,7 +32,9 @@ export function followWindow(html: HTMLElement): void {
   if (desktop === null) return;
   html.dataset.shell = "desktop";
   const apply = (state: WindowState) => {
+    const before = html.dataset.window;
     html.dataset.window = state.focused ? "key" : "inactive"; html.toggleAttribute("data-fullscreen", state.fullscreen);
+    if (before !== html.dataset.window) window.dispatchEvent(new Event("hub:window"));
     if (state.material !== undefined && html.dataset.material !== state.material) { html.dataset.material = state.material; window.dispatchEvent(new Event("hub:material")); }
   };
   desktop.onState(apply);

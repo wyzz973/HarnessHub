@@ -72,8 +72,10 @@ export function chooseNotifications(on: boolean): void { try { if (on) localStor
  * browser allows them (ADR-035). It names the Harness and the wait only: nothing of the conversation. Clicking it brings
  * the page forward and opens the conversation. Anything unsupported or refused stays silent.
  */
+/** Whether the user is looking somewhere else: the page hidden, or — in the desktop app, whose window stays shown behind others — the window not the key one. */
+export const lookingAway = (): boolean => document.visibilityState === "hidden" || document.documentElement.dataset.window === "inactive";
 export function notifyWaiting(item: AttentionItem, harnessName: string, now: number, open: (sessionId: string) => void): void {
-  if (!notificationsSupported() || !notificationsChosen() || Notification.permission !== "granted" || document.visibilityState !== "hidden") return;
+  if (!notificationsSupported() || !notificationsChosen() || Notification.permission !== "granted" || !lookingAway()) return;
   const left = remaining(item, now);
   try {
     const notice = new Notification(`${harnessName} 等你处理`, { body: attentionKind(item) + (left.source === null ? "" : `（${left.source}，${left.text}）`), tag: item.permissionId });

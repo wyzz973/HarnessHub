@@ -249,6 +249,7 @@ function buildMenu(): void {
       ...(app.isPackaged ? [] : [{ type: "separator" as const }, { label: "重新载入", role: "reload" as const }, { label: "开发者工具", role: "toggleDevTools" as const }]),
     ] },
     { label: "对话", submenu: [
+      { label: "后退", accelerator: "Cmd+[", click: () => command("back") }, { label: "前进", accelerator: "Cmd+]", click: () => command("forward") }, { type: "separator" },
       { label: "换 Harness", ...shown("picker") }, { label: "选模型", ...shown("model") }, { label: "选思考强度", ...shown("effort") }, { label: "选权限", ...shown("permission") }, { type: "separator" },
       { label: "停止回复", ...shown("stop") }, { type: "separator" },
       { label: "上一个对话", ...shown("previous") }, { label: "下一个对话", ...shown("next") }, { label: "下一件等你处理", ...shown("nextWaiting") },
