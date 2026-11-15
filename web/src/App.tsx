@@ -51,6 +51,7 @@ import { cn } from "./lib/cn.js";
 import { inScratch, projectOf, shortTitle } from "./lib/format.js";
 import { setBadge } from "./lib/badge.js";
 import { actionOf, keyText, useKeys } from "./lib/keys.js";
+import { desktop, onCommand } from "./lib/desktop.js";
 import { markSeen, markUnseen, unseenNow } from "./lib/seen.js";
 import { summaryLine } from "../../src/contracts/web.js";
 import { backgroundOutcome, enableNotifications, markNotificationAsked, notificationsOfferable, notifyTurnEnded } from "./lib/notify.js";
@@ -1094,6 +1095,11 @@ export function App() {
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
   });
+  // The desktop menu's commands that are not one of the shortcuts above.
+  useEffect(() => onCommand(command => {
+    if (command === "settings") navigate("settings");
+    else if (command === "open-folder") void desktop?.pickFolder(workspace).then(path => { if (path !== null) { newChat(); choosePlace({ scratch: false, workspace: path }); } });
+  }));
   const startOperation = (label: string): boolean => { if (operation.current) return false; operation.current = true; setMutation(label); setError(null); return true; };
   const endOperation = () => { operation.current = false; if (mounted.current) setMutation(null); };
   /**
@@ -1569,6 +1575,10 @@ export function App() {
   const currentHarness = session?.selection.harnessId ?? "";
   const hidden = useMemo(() => hiddenHarnesses(state?.harnesses ?? [], preferences.showFrozen, [draft.harnessId, currentHarness]), [state?.harnesses, preferences.showFrozen, draft.harnessId, currentHarness]);
   const attentionItems = attention?.items ?? NO_ITEMS;
+  // The Dock icon counts what waits for you; quitting asks first while a Turn runs; the View menu ticks what is shown.
+  const runningCount = state?.sessions.filter(row => row.activeRunId !== null).length ?? 0, waitingCount = liveItems(attentionItems, Date.now()).length;
+  useEffect(() => { desktop?.setActivity({ running: runningCount, waiting: waitingCount }); }, [runningCount, waitingCount]);
+  useEffect(() => { desktop?.setChecks({ sidebar: preferences.sidebar, panel: preferences.panel }); }, [preferences.sidebar, preferences.panel]);
   /** Opens the inbox: a sheet on a narrow screen, otherwise beside its sidebar row, showing the sidebar if it was hidden. */
   const openInbox = () => {
     if (narrow) { openLayer(() => setInboxOpen(true)); return; }
@@ -1604,9 +1614,9 @@ export function App() {
   })();
   if (!state) return <div className="flex h-dvh flex-col items-center justify-center gap-4 bg-app px-6 text-center">
     <LogoMark size={40}/><h1 className="m-0 text-section">HarnessHub</h1>
-    {bootError ? <div className="flex max-w-md flex-col items-center gap-3"><Notice tone="red">{bootError}</Notice><p className="m-0 text-ui-sm text-fg-2">请使用本机网关启动时提供的入口链接。验证完成后，页面会自动隐藏链接中的令牌。</p>
+    {bootError ? <div className="flex max-w-md flex-col items-center gap-3"><Notice tone="red">{bootError}</Notice>{desktop === null ? <p className="m-0 text-ui-sm text-fg-2">请使用本机网关启动时提供的入口链接。</p> : null}
       <button type="button" className="btn" onClick={() => setBootAttempt(value => value + 1)}><RefreshCw size={14} aria-hidden="true"/>重新连接</button></div>
-      : <div className="flex items-center gap-2 text-ui-sm text-fg-2" role="status"><Spinner label=""/>正在连接你的工作空间</div>}
+      : <div className="flex items-center" role="status"><Spinner label="正在连接"/></div>}
   </div>;
   const chooseAndClose = (id: string) => { setSidebarOpen(false); selectSession(id); };
   // The palette searches what was said in every conversation (after T3 Code's search of threads): a message found opens its conversation with find on the words, there.
@@ -1633,12 +1643,12 @@ export function App() {
     failed={failed} connected={connectionError === null && managementConnectionError === null && !attentionDown} inbox={inbox} inboxOpen={inboxOpen && !narrow} onInboxOpenChange={setInboxOpen}
     more={state.sessionsNext != null} onMore={() => void loadMoreSessions()} actions={sessionActions} onCollapse={() => showSidebar(false)} {...(narrow ? { onClose: () => setSidebarOpen(false), onInbox: openInbox } : {})} onPage={next => { setSidebarOpen(false); if (next === "capabilities") setCapabilityHarness(null); navigate(next); }} onNew={newChat} onSession={chooseAndClose} onPalette={() => openLayer(() => setPalette(true))}/>;
   const shell = { onMenu: () => setSidebarOpen(value => !value), sidebarHidden: !preferences.sidebar, onExpandSidebar: () => showSidebar(true), onChat: () => navigate("chat") };
-  return <TipProvider delay={500}><div className="app-shell relative flex h-dvh overflow-hidden bg-app text-fg" data-page={shown}>
+  return <TipProvider delay={500}><div className="app-shell relative flex h-dvh overflow-hidden text-fg" data-page={shown} data-sidebar={!narrow && preferences.sidebar ? "shown" : "hidden"}>
     <WaitingTitle items={attentionItems}/>
     <a className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[80] focus:rounded-control focus:bg-surface focus:px-3 focus:py-2 focus:text-ui-sm focus:shadow-pop" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a>
     {narrow ? <Layer open={sidebarOpen} onOpenChange={setSidebarOpen} onClosed={layerClosed} title="主导航" className="drawer-left-pop">{sidebar}</Layer>
-      : preferences.sidebar ? <div className="w-sidebar flex-none hairline-r">{sidebar}</div> : null}
-    <main id="main-content" className={cn("flex min-w-0 flex-1 flex-col outline-none")} tabIndex={-1}>
+      : <div className="sidebar-slot" data-open={preferences.sidebar} inert={!preferences.sidebar}><div className="sidebar-pane">{sidebar}</div></div>}
+    <main id="main-content" className="content-pane flex min-w-0 flex-1 flex-col outline-none" tabIndex={-1}>
       {base === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} onToolDetail={content => api.toolDetail(content)} {...(sessionId === null ? {} : { onDiagnostics: (run: string, includeContent: boolean) => api.runDiagnostics(sessionId, run, includeContent) })} onNativeBranch={()=>{ if(!session||!startOperation("native-branch"))return; void api.branchNative(session.id,session.epoch,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         retainNew={keepNew ?? (!draft.providerId && (nativeCatalog?.flavor?.capabilities?.keep === "session" || nativeCatalog?.flavor?.capabilities?.prewarm === "session"))} limits={limits}
         onRetention={enabled=>{ if(!session){ setKeepNew(enabled); return; } if(!startOperation("retention"))return; void api.setRetention(session.id,enabled,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
@@ -1652,7 +1662,7 @@ export function App() {
         onRetryConnection={() => setStreamAttempt(value => value + 1)} onLoadOlder={readOlder} reads={turnReads} {...(sessionId === null ? {} : { onLoadChanges: (before: string | undefined, signal: AbortSignal) => api.changes(sessionId, before, undefined, signal),
           onRename: (title: string) => changeSession(sessionId, { title }).catch((failure: unknown) => { toast.show({ title: "没有改成", description: errorMessage(failure) }); throw failure; }),
           onReveal: (path?: string) => { api.reveal(sessionId, path).catch((failure: unknown) => toast.show({ title: "无法在访达中显示", description: errorMessage(failure) })); },
-          onLoadWorkspace: (signal: AbortSignal) => api.workspace(sessionId, signal), workspaceTools, find, findRequest, git, terminals, restore })} onDraft={changeSelection} place={{ scratch, workspace, ...(ownWorktree ? { worktree: true } : {}) }} onPlace={choosePlace} recentFolders={recentFolders} onChooseFolder={start => api.chooseFolder(start)} scratchRoot={state.scratchRoot} delegations={delegations} onLoadDelegation={loadDelegation} onDelegate={delegate} taskBoard={taskBoard} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
+          onLoadWorkspace: (signal: AbortSignal) => api.workspace(sessionId, signal), workspaceTools, find, findRequest, git, terminals, restore })} onDraft={changeSelection} place={{ scratch, workspace, ...(ownWorktree ? { worktree: true } : {}) }} onPlace={choosePlace} recentFolders={recentFolders} onChooseFolder={start => desktop !== null ? desktop.pickFolder(start) : api.chooseFolder(start)} scratchRoot={state.scratchRoot} delegations={delegations} onLoadDelegation={loadDelegation} onDelegate={delegate} taskBoard={taskBoard} onSend={send} attachments={attachments} onAttach={attachFiles} onRemoveAttachment={removeAttachment} onBranch={branch} onBranchSend={branchSend} onSelectBranch={selectBranch} onOpenSession={openFromPage}
         sessionTitle={id => state.sessions.find(item => item.id === id)?.title ?? null} attention={attention?.items ?? null} onCancelQueued={cancelQueued}
         onLoadExtensions={signal => api.nativeExtensions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, signal)} onLoadNativeSessions={(cursor, signal, probes) => api.nativeSessions(draft.harnessId, draft.controlId, session?.workspace ?? workspace, cursor, signal, probes)}
         onImportNative={importNative} focusOnOpen={sessionId !== null && openedFromPage === sessionId} onOpenFocused={() => setOpenedFromPage(null)} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }}

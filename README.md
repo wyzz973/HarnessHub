@@ -147,6 +147,8 @@ pnpm build && pnpm web:build
 pnpm web --cwd /path/to/your/project --data-dir data --port 4317
 ```
 
+**Desktop app (macOS).** `pnpm desktop:pack` builds `dist-desktop/HarnessHub-darwin-arm64/HarnessHub.app`: a window of the system's glass material that starts the Gateway itself, on the app's own runtime (no Node needed on the system), with its data in `~/Library/Application Support/HarnessHub/data` by default; point it at an existing data directory with `--hub-data-dir <path>`, or with `desktop.json` beside it (`{"dataDir": "…"}`). While developing, `pnpm desktop` runs it directly (run `node node_modules/electron/install.js` once to fetch Electron). The browser entry below still works, but the interface is now made for the desktop app.
+
 Open the one-time link it prints. The token is exchanged for a local cookie and removed from the address bar; the service listens on `127.0.0.1` only, and the sign-in lasts while you use it, ending after eight hours without activity. Closing the page does not cancel a reply, and <kbd>Ctrl</kbd>+<kbd>C</kbd> waits for running work to wind down and keeps the history.
 
 The service owns its `--data-dir` while it runs. Each conversation is one append-only JSONL file under `data/sessions/`, and the records of each task are under `data/context/`. A conversation without a folder works in `~/HarnessHub/chats`, and one that asks for its own worktree gets it under `~/HarnessHub/worktrees`. `pnpm web --help` lists every flag.

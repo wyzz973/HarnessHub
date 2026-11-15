@@ -473,7 +473,7 @@ export function Composer(props: ComposerProps) {
   // Beside the Harnesses, in the same layer: the chosen one's models and — where its model has them — its thinking levels. A choice there leaves the layer open.
   const column = "flex min-h-0 min-w-0 flex-1 flex-col";
   const heading = "flex h-[45px] flex-none items-center px-3.5 text-caption text-fg-3 hairline-b";
-  const choice = (checked: boolean) => cn("picker-option flex w-full items-center gap-2 rounded-row border-none bg-transparent px-2.5 py-[7px] text-left text-ui-sm outline-offset-[-2px] transition-[color,background-color] duration-120 ease-standard hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-55", checked && "font-medium");
+  const choice = (checked: boolean) => cn("picker-option flex w-full items-center gap-2 rounded-row border-none bg-transparent px-2.5 py-[7px] text-left text-ui-sm outline-offset-[-2px] transition-[color,background-color] duration-120 ease-standard hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-40", checked && "font-medium");
   const tick = (checked: boolean) => <Check size={15} strokeWidth={2.2} className={cn("flex-none text-accent-text", !checked && "invisible")} aria-hidden="true"/>;
   // Models marked as favourites lead the column under 收藏 (after T3 Code's starred models), each Harness's its own; kept in this browser.
   const favourite = (model: string): string => draft.harnessId + "\u0000" + model;
@@ -599,9 +599,9 @@ export function Composer(props: ComposerProps) {
         </div>
         <div className="px-3.5 py-2 text-caption text-fg-3 hairline-t">Enter 选择 · Esc 保留 @ 作为文字</div>
       </div> : null}
-      <div ref={box} className={cn("composer-box relative rounded-composer bg-surface transition-[box-shadow] duration-200 ease-standard",
+      <div ref={box} className={cn("composer-box relative rounded-composer transition-[box-shadow] duration-200 ease-standard",
         docked ? "shadow-[0_0_0_1px_var(--amber-line),0_0_0_4px_var(--amber-soft),var(--sh-composer)]"
-          : dragging ? "shadow-focus" : "shadow-composer has-[.composer:focus-within]:shadow-focus")} onFocus={event => { focusedHere.current = event.target; }}>
+          : dragging ? "shadow-[var(--sh-focus),var(--sh-composer)]" : "shadow-composer")} onFocus={event => { focusedHere.current = event.target; }}>
         <form className={cn("composer flex flex-col rounded-composer pt-4 pr-2.5 pb-2.5 pl-5 ease-standard", session ? "gap-2.5" : "gap-3",
           docked ? "invisible pointer-events-none absolute inset-x-0 bottom-0 -translate-y-1 opacity-0 transition-[opacity,translate,visibility] duration-100"
             : closingAtOnce ? "visible translate-y-0 opacity-100" : "visible translate-y-0 opacity-100 transition-[opacity,translate] delay-100 duration-100", dragging && "is-dropping")}
@@ -615,7 +615,7 @@ export function Composer(props: ComposerProps) {
           <textarea id="message-input" ref={inputRef} rows={session ? 1 : 2} value={props.messageDraft} disabled={readonly} placeholder={placeholder}
             aria-describedby={noteShown || blocked && !readonly || stripNotice ? "composer-notice composer-keyboard-hint" : "composer-keyboard-hint"} aria-autocomplete={commands.length ? "list" : undefined}
             aria-controls={slashOpen || mentionOpen ? listId : undefined} aria-activedescendant={slashOpen && slashMatches.length ? `${listId}-${slashIndex}` : mentionOpen ? `${listId}-file` : undefined}
-            className={cn("w-full resize-none border-none bg-transparent p-0 text-[15px] leading-6 text-fg outline-none placeholder:text-placeholder disabled:opacity-60", session ? "min-h-6" : "min-h-12")}
+            className={cn("w-full resize-none border-none bg-transparent p-0 text-[15px] leading-6 text-fg outline-none placeholder:text-placeholder disabled:opacity-40", session ? "min-h-6" : "min-h-12")}
             onChange={event => {
               handedOver.current = false;
               const value = event.target.value, caret = event.target.selectionStart;
@@ -655,7 +655,7 @@ export function Composer(props: ComposerProps) {
           <input ref={picker} type="file" multiple hidden tabIndex={-1} aria-hidden="true" onChange={event => { attach(event.target.files); event.target.value = ""; }}/>
           <div className="flex flex-wrap items-center gap-x-1 gap-y-2">
             <div className="-ml-2 flex flex-none items-center gap-0.5" role="group" aria-label="附件与权限">
-              <Menu side={popSide} align="start" {...listOpen("add")} trigger={<button ref={plusButton} type="button" className="press mr-0.5 flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-45"
+              <Menu side={popSide} align="start" {...listOpen("add")} trigger={<button ref={plusButton} type="button" className="press mr-0.5 flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-40"
                 aria-label="添加文件或上下文" disabled={readonly}><Plus size={16} strokeWidth={1.9}/></button>} items={[
                 { label: "添加文件或图片…", icon: <Paperclip size={15}/>, hint: "@", disabled: !canAttach, onSelect: () => picker.current?.click() },
                 ...(commands.length ? [{ label: "原生命令", icon: <SquareSlash size={15}/>, hint: "/", disabled: disabled, onSelect: () => { setSlashClosedAt(null); (props.onReplaceDraft ?? props.onMessageDraft)("/"); setTimeout(() => inputRef.current?.focus(), 0); } }] : []),
@@ -700,7 +700,7 @@ export function Composer(props: ComposerProps) {
                 aria-label="本轮结束后发送" onClick={() => props.onQueue?.()}><ListPlus size={16}/></button></Tip> : null}
               <Tip label={active ? "停止当前回复（" + keyText("stop") + "）" : "发送（" + sendWord + "）"}><button type={active ? "button" : "submit"} aria-label={active ? "停止当前回复" : "发送消息"}
                 className={cn("press ml-0.5 flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none disabled:cursor-default",
-                  active ? "bg-fg text-app disabled:opacity-45" : "bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-35")}
+                  active ? "bg-fg text-app disabled:opacity-40" : "bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-40")}
                 style={{ transition: "background-color 200ms var(--ease-standard), opacity 200ms var(--ease-standard), transform 120ms var(--ease-snap)" }}
                 disabled={active ? active.cancelRequested || props.mutation !== null : disableSend} onClick={active ? props.onCancel : undefined}>
                 {/* One glyph throughout, so the arrow turns into the square and back (#16, #17); sending and stopping only dim the key. */}

@@ -104,7 +104,7 @@ function GitFile({ file, scope, access, workspace, whitespace, wrap, split, open
   const shown = workspacePath(file.path, workspace), current = read !== null && read.key.slice(0, read.key.lastIndexOf("#")) === what ? read : null;
   return <li className="flex min-w-0 flex-col" data-path={file.path}>
     {/* The file's row stays at the top of the panel while its diff scrolls under it. */}
-    <button type="button" className="row sticky top-0 z-[2] flex h-8 w-full min-w-0 items-center gap-2 border-none bg-app pr-2 text-left text-ui-sm text-fg hover:bg-subtle" style={{ paddingLeft: 8 + depth * 14 }} aria-expanded={open} aria-controls={panel} onClick={onToggle} title={file.oldPath ? file.oldPath + " → " + file.path : file.path}>
+    <button type="button" className="row sticky top-0 z-[2] flex h-8 w-full min-w-0 items-center gap-2 border-none bg-surface pr-2 text-left text-ui-sm text-fg hover:bg-subtle" style={{ paddingLeft: 8 + depth * 14 }} aria-expanded={open} aria-controls={panel} onClick={onToggle} title={file.oldPath ? file.oldPath + " → " + file.path : file.path}>
       <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
       <FileMark created={file.status === "added" || file.status === "untracked"} removed={file.status === "deleted"}/>{label === undefined ? <FilePath path={file.path} workspace={workspace}/> : <span className="min-w-0 flex-1 trunc">{label}</span>}
       {file.status === "untracked" ? <span className="flex-none text-caption text-fg-3">未跟踪</span> : file.status === "renamed" ? <span className="flex-none text-caption text-fg-3">改名</span> : null}

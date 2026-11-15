@@ -15,7 +15,7 @@ import { markSeen, startSeen, unseen, useSeen } from "../lib/seen.js";
 import { useNotificationChoice } from "../lib/notify.js";
 import { useNow } from "../lib/prefs.js";
 import { Collapsible } from "../ui/motion.js";
-import { Dialog, Menu, Popover } from "../ui/overlay.js";
+import { Dialog, Menu, Popover, showNativeMenu } from "../ui/overlay.js";
 import { Badge, LogoMark, Spinner, StatusDot, Tip } from "../ui/primitives.js";
 import { lastingOption } from "./Approval.js";
 import { BrandIcon } from "./BrandIcon.js";
@@ -328,23 +328,20 @@ export function Sidebar(props: SidebarProps) {
   const count = waiting.length, firstWaiting = useRef<HTMLButtonElement>(null);
   const icon = (glyph: ReactNode) => <span className="flex w-4 flex-none justify-center text-fg-2" aria-hidden="true">{glyph}</span>;
   const nav = (target: Page, label: string, glyph: ReactNode, extra?: ReactNode) => <button type="button" disabled={interactionBusy} aria-current={page === target ? "page" : undefined} onClick={() => props.onPage(target)}
-    className="nav-row w-full flex-none disabled:opacity-60">{icon(glyph)}<span className="min-w-0 flex-1 trunc">{label}</span>{extra}</button>;
+    className="nav-row w-full flex-none disabled:opacity-40">{icon(glyph)}<span className="min-w-0 flex-1 trunc">{label}</span>{extra}</button>;
   const inboxRow = <button type="button" className="nav-row w-full flex-none data-[popup-open]:bg-selected" aria-label={count ? `等你处理（${count} 项）` : "等你处理"} {...(props.onInbox ? { onClick: props.onInbox } : {})}>
     {icon(<InboxIcon size={16}/>)}<span className="min-w-0 flex-1 trunc">等你处理</span>{count ? <Badge tone="amber" count className="attention-count">{count}</Badge> : null}</button>;
   const port = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
   // Connected, or not: the page retries on its own most of the time, but not after its login is gone, so it claims no more.
   const service = (props.connected ? "本机服务已连接 · " : "与本机服务的连接中断 · ") + window.location.hostname + ":" + port;
-  return <aside className="sidebar flex h-full w-full flex-col gap-0.5 bg-sidebar p-3" aria-label="主导航">
-    <div className="flex h-10 flex-none items-center gap-2 pr-0.5 pl-1.5">
-      <button type="button" className="flex min-w-0 flex-1 items-center gap-[9px] self-stretch rounded-row border-none bg-transparent p-0 text-left text-fg disabled:opacity-60" aria-label="HarnessHub 首页" onClick={props.onNew} disabled={interactionBusy}>
-        <LogoMark/><span className="trunc text-[15px] leading-5 font-semibold tracking-[-0.01em]">HarnessHub</span></button>
-      {props.onClose ? <button type="button" className="icon-btn h-7 w-7 text-fg-3 hover:bg-selected" aria-label="关闭导航" onClick={props.onClose}><X size={16}/></button>
-        : <Tip label={"收起侧栏 " + keyText("sidebar")}><button type="button" className="icon-btn h-7 w-7 text-fg-3 hover:bg-selected" aria-label="收起侧栏" aria-keyshortcuts={ariaKeys("sidebar")} onClick={props.onCollapse}><PanelLeft size={16}/></button></Tip>}
+  return <aside className="sidebar flex h-full w-full flex-col gap-0.5 px-2 pb-2" aria-label="主导航">
+    <div className="sidebar-head drag flex flex-none items-center justify-end gap-0.5 pr-0.5">
+      {props.onClose ? <button type="button" className="icon-btn" aria-label="关闭导航" onClick={props.onClose}><X size={16}/></button>
+        : <Tip label={"收起侧栏 " + keyText("sidebar")}><button type="button" className="icon-btn" aria-label="收起侧栏" aria-keyshortcuts={ariaKeys("sidebar")} onClick={props.onCollapse}><PanelLeft size={16}/></button></Tip>}
+      <Tip label={"新对话 " + keyText("new")}><button type="button" className="new-chat-button icon-btn" aria-label="新对话" onClick={props.onNew} disabled={interactionBusy} aria-keyshortcuts={ariaKeys("new")}><SquarePen size={16} aria-hidden="true"/></button></Tip>
     </div>
-    <Tip label={"新对话 " + keyText("new")}><button type="button" className="new-chat-button btn btn-outline btn-lg mt-2 mb-2.5 w-full flex-none" onClick={props.onNew} disabled={interactionBusy} aria-keyshortcuts={ariaKeys("new")}>
-      <SquarePen size={15} aria-hidden="true"/>新对话</button></Tip>
-    <button type="button" className="nav-row w-full flex-none" onClick={props.onPalette} aria-label="搜索与命令" aria-keyshortcuts={ariaKeys("palette")}>
-      {icon(<Search size={16}/>)}<span className="flex-1">搜索</span><span className="text-caption text-fg-3" aria-hidden="true">{keyText("palette")}</span></button>
+    <button type="button" className="search-field mb-1.5 flex-none" onClick={props.onPalette} aria-label="搜索与命令" aria-keyshortcuts={ariaKeys("palette")}>
+      <Search size={14} aria-hidden="true"/><span className="flex-1">搜索</span><span className="text-caption" aria-hidden="true">{keyText("palette")}</span></button>
     {props.onInbox ? inboxRow : <Popover label="等你处理" open={props.inboxOpen} onOpenChange={props.onInboxOpenChange} side="right" align="start" sideOffset={20} initialFocus={firstWaiting}
       className="inbox-pop flex w-[440px] max-w-[calc(100vw-24px)] flex-col" trigger={inboxRow}><InboxList {...props.inbox} focusRef={firstWaiting}/></Popover>}
     {nav("harnesses", "Harness", <Bot size={16}/>, props.activeJobs ? <Spinner size={13} tone="run" label={`${props.activeJobs} 个安装任务进行中`}/>
@@ -362,7 +359,7 @@ export function Sidebar(props: SidebarProps) {
       {/* `relative`: the labels for assistive technology in the rows are placed out of the flow, and are held (and clipped) by the list they scroll in. Placed by the
           page itself they made the whole page scrollable once a row stood below the window. */}
       <PickContext.Provider value={picking}>
-      <nav className="relative -mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-2" aria-label="对话列表">
+      <nav className="relative -mr-2 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain pb-2 [scrollbar-gutter:stable]" aria-label="对话列表">
         {pinned.length > 0 ? <PinDragContext.Provider value={pinned.length > 1 ? dragPin : null}><Plain title="置顶" icon={<Pin size={11} strokeWidth={2.2} aria-hidden="true"/>} rows={pinned} {...rowProps} where={folder}/></PinDragContext.Provider> : null}
         {sessions.length === 0 ? null : grouping === "project"
           ? groups.map((project, index) => <ProjectGroup key={project.key} project={project} open={isOpen(project, index)} onToggle={open => choose(project.key, open)}
@@ -391,9 +388,9 @@ export function Sidebar(props: SidebarProps) {
       </div> : null}
     </div>
     <div className="flex-none pt-1">
-      <button type="button" className="nav-row w-full disabled:opacity-60" disabled={interactionBusy} aria-current={page === "settings" ? "page" : undefined} aria-label="设置" onClick={() => props.onPage("settings")}>
+      <button type="button" className="nav-row w-full disabled:opacity-40" disabled={interactionBusy} aria-current={page === "settings" ? "page" : undefined} aria-label="设置" onClick={() => props.onPage("settings")}>
         {icon(<Settings size={16}/>)}<span className="flex-1">设置</span>
-        <span className="service-status flex items-center gap-1.5 text-[11px] leading-4 text-fg-3" title={service} aria-hidden="true"><StatusDot tone={props.connected ? "run" : "fail"} live={false} size={6}/></span></button>
+        {props.connected ? null : <span className="service-status flex items-center" title={service} aria-hidden="true"><StatusDot tone="fail" live={false} size={6}/></span>}</button>
       <span className="sr-only" role="status">{props.connected ? "" : "与本机服务的连接中断"}</span>
     </div>
   </aside>;
@@ -572,7 +569,7 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
   const when = state === "run" && session.activeSince !== undefined ? clock(now - session.activeSince) : urgent ? (wait === null ? attentionKind(urgent) : wait < 100 ? wait + " 秒" : Math.ceil(wait / 60) + " 分")
     : away === "later" && session.snoozedUntil !== undefined ? untilShort(session.snoozedUntil, now) : session.updatedAt ? agoShort(session.updatedAt, now) : "";
   const quiet = !current && (away !== undefined || state === "idle" && !unread || state === "closed");
-  const look = cn("session-item nav-row relative w-full gap-2 pr-2.5 disabled:opacity-60", row.child ? "pl-[26px]" : "pl-2", urgent && "has-attention", picked && "is-picked bg-selected");
+  const look = cn("session-item nav-row relative w-full gap-2 pr-2.5 disabled:opacity-40", row.child ? "pl-[26px]" : "pl-2", urgent && "has-attention", picked && "is-picked bg-selected");
   const inside = <>
     {row.child ? <span className="pointer-events-none absolute top-0 left-[15px] h-[15px] w-2 rounded-bl-[5px] border-b border-l border-line-strong" aria-hidden="true"/> : null}
     <span className="relative flex size-4 flex-none items-center justify-center">
@@ -590,15 +587,8 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
       actions && (menu ? "opacity-0" : "group-hover/session:opacity-0 group-has-[:focus-visible]/session:opacity-0"))} title={left?.hint} aria-hidden="true">{when}</span> : null}
     <span id={metaId} className="sr-only">{meta}</span>
   </>;
-  return <div className="session-row group/session relative" {...dragging} onContextMenu={actions && editing === null ? event => { event.preventDefault(); setMenu(true); } : undefined}>
-    {editing !== null ? <div className={cn(look, "bg-sidebar-hover")}>{inside}</div>
-      : <button type="button" disabled={disabled} onClick={event => { if (picking?.pick(session.id, event) === true) return; onOpen(); }} aria-current={current ? "page" : undefined} aria-label={title}
-        aria-describedby={metaId} title={left?.hint ?? session.line} {...(picking !== null && picking.picked.size > 0 ? { "aria-pressed": picked } : {})} className={look}>{inside}</button>}
-    {actions && editing === null ? <span className={cn("session-actions absolute top-1/2 right-2 flex -translate-y-1/2 items-center transition-opacity duration-120 ease-standard", menu ? "opacity-100" : "opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100")}>
-      {away === "later" ? <Tip label="现在就看"><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={"现在就看：" + title} onClick={() => actions.snooze(session.id, null)}><AlarmClockOff size={14} aria-hidden="true"/></button></Tip>
-        : <Tip label={away === "archived" ? "取消归档" : "归档"}><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={(away === "archived" ? "取消归档：" : "归档：") + title} onClick={() => actions.archive(session.id, away !== "archived")}>
-          {away === "archived" ? <ArchiveRestore size={14} aria-hidden="true"/> : <Archive size={14} aria-hidden="true"/>}</button></Tip>}
-      <Menu align="start" open={menu} onOpenChange={setMenu} trigger={<button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={"更多操作：" + title}><MoreHorizontal size={14} aria-hidden="true"/></button>} items={[
+  // What can be done with the conversation: the row's "…" menu, and in the desktop app the system's own menu on a right-click.
+  const rowMenu = actions ? [
         ...(away === undefined ? [{ label: session.pinned === true ? "取消置顶" : "置顶", icon: session.pinned === true ? <PinOff size={14}/> : <Pin size={14}/>, onSelect: () => actions.pin(session.id, session.pinned !== true) }] : []),
         { label: "重命名", icon: <PencilLine size={14}/>, onSelect: () => setEditing(title) },
         ...(away === undefined && !unread && !current ? [{ label: "标为未读", icon: <CircleDot size={14}/>, onSelect: () => actions.markUnread(session.id) }] : []),
@@ -611,7 +601,16 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
         { separator: true as const },
         ...(away !== "later" ? [{ label: away === "archived" ? "取消归档" : "归档", icon: away === "archived" ? <ArchiveRestore size={14}/> : <Archive size={14}/>, onSelect: () => actions.archive(session.id, away !== "archived") }] : []),
         { label: "删除", icon: <Trash2 size={14}/>, danger: true, disabled: state === "run" || state === "wait", onSelect: () => actions.remove(session.id) },
-      ]}/>
+  ] : [];
+  return <div className="session-row group/session relative" {...dragging} onContextMenu={actions && editing === null ? event => { event.preventDefault(); if (!showNativeMenu(rowMenu)) setMenu(true); } : undefined}>
+    {editing !== null ? <div className={cn(look, "bg-sidebar-hover")}>{inside}</div>
+      : <button type="button" disabled={disabled} onClick={event => { if (picking?.pick(session.id, event) === true) return; onOpen(); }} aria-current={current ? "page" : undefined} aria-label={title}
+        aria-describedby={metaId} title={left?.hint ?? session.line} {...(picking !== null && picking.picked.size > 0 ? { "aria-pressed": picked } : {})} className={look}>{inside}</button>}
+    {actions && editing === null ? <span className={cn("session-actions absolute top-1/2 right-2 flex -translate-y-1/2 items-center transition-opacity duration-120 ease-standard", menu ? "opacity-100" : "opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100")}>
+      {away === "later" ? <Tip label="现在就看"><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={"现在就看：" + title} onClick={() => actions.snooze(session.id, null)}><AlarmClockOff size={14} aria-hidden="true"/></button></Tip>
+        : <Tip label={away === "archived" ? "取消归档" : "归档"}><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={(away === "archived" ? "取消归档：" : "归档：") + title} onClick={() => actions.archive(session.id, away !== "archived")}>
+          {away === "archived" ? <ArchiveRestore size={14} aria-hidden="true"/> : <Archive size={14} aria-hidden="true"/>}</button></Tip>}
+      <Menu align="start" open={menu} onOpenChange={setMenu} trigger={<button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={"更多操作：" + title}><MoreHorizontal size={14} aria-hidden="true"/></button>} items={rowMenu}/>
     </span> : null}
     {landing !== null ? <span className={cn("pointer-events-none absolute inset-x-2 z-[1] h-0.5 rounded-full bg-accent", landing === "before" ? "-top-px" : "-bottom-px")} aria-hidden="true"/> : null}
     {actions && custom ? <SnoozeDialog title={title} onClose={() => setCustom(false)} onChoose={until => { setCustom(false); actions.snooze(session.id, until); }}/> : null}

@@ -4,6 +4,7 @@ data/
 artifacts/
 node_modules/
 dist/
+dist-desktop/
 coverage/
 .env
 .env.*

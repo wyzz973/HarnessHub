@@ -31,7 +31,7 @@ export function useEntrance(fresh: boolean): boolean {
  */
 export function LiveIcon({ tone, className }: { readonly tone: LiveStatus["tone"]; readonly className?: string | undefined }) {
   return <span className={cn("flex size-[15px] flex-none items-center justify-center", className)}>
-    {tone === "run" ? <Spinner size={15} tone="run" label=""/> : tone === "wait" ? <StatusDot tone="idle"/> : <CircleDashed size={15} className="text-fg-3" aria-hidden="true"/>}
+    {tone === "run" ? <Spinner size={15} tone="run" label=""/> : tone === "wait" ? <StatusDot tone="wait" live={false}/> : <CircleDashed size={15} className="text-fg-3" aria-hidden="true"/>}
   </span>;
 }
 export function ActionButton({ label, onClick, children, pressed }: { readonly label: string; readonly onClick: () => void; readonly children: ReactNode; readonly pressed?: boolean }) {

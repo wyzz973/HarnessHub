@@ -305,7 +305,7 @@ export function DetailsPanel(props: PanelProps) {
   const openFile = props.tools?.file === undefined ? undefined : (path: string) => { const place = workspacePath(path, session.workspace); setOpened(current => current.includes(place) ? current : [...current, place]); setViewing(place); };
   const closeFile = (path: string) => { setOpened(current => current.filter(item => item !== path)); setViewing(current => current === path ? null : current); };
   const base = (path: string): string => path.split("/").at(-1) ?? path;
-  return <div className="details-panel flex h-full min-h-0 w-full min-w-0 flex-col bg-app">
+  return <div className="details-panel flex h-full min-h-0 w-full min-w-0 flex-col bg-surface">
     <div className="flex h-[54px] flex-none items-stretch gap-2 pr-3 pl-[18px] hairline-b">
       <div className={cn("flex h-full min-w-0 flex-1 items-stretch gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none]", viewing !== null && "[&_.tab[aria-selected=true]]:text-fg-2 [&_.tabs-indicator]:opacity-0")}>
         <Tabs className="h-full flex-none [&>.tab]:h-full" items={tabs} value={shown} onChange={value => { setViewing(null); props.onTab(value); }} label="详情分类" idPrefix="details-tab" panelId="details-tabpanel"/>
@@ -591,7 +591,7 @@ function FileDiff({ file, workspace, open, wrap, split, onToggle, name, onReveal
   useEffect(() => { if (!copied) return; const timer = setTimeout(() => setCopied(false), 1600); return () => clearTimeout(timer); }, [copied]);
   // The file's row stays at the top of the panel while its diff scrolls under it (after T3 Code's sticky headers).
   return <li ref={row} className="group/file relative flex min-w-0 flex-col" data-path={file.path}>
-    <div className="sticky top-0 z-[2] bg-app">
+    <div className="sticky top-0 z-[2] bg-surface">
     <button type="button" className="row flex h-8 w-full min-w-0 items-center gap-2 border-none bg-app pr-2 text-left text-ui-sm text-fg hover:bg-subtle" style={{ paddingLeft: 8 + depth * 14 }} aria-expanded={open} aria-controls={panel} onClick={onToggle} title={file.path}>
       <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
       <FileMark created={file.created}/>{label === undefined ? <FilePath path={file.path} workspace={workspace}/> : <span className="min-w-0 flex-1 trunc">{label}</span>}

@@ -1,4 +1,5 @@
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
+import { desktop, type DesktopMenuEntry } from "../lib/desktop.js";
 import { Menu as BaseMenu } from "@base-ui/react/menu";
 import { Popover as BasePopover } from "@base-ui/react/popover";
 import { Toast as BaseToast } from "@base-ui/react/toast";
@@ -111,6 +112,25 @@ export function Menu({ trigger, items, side = "bottom", align = "end", footer, c
       </BaseMenu.Positioner>
     </BaseMenu.Portal>
   </BaseMenu.Root>;
+}
+
+/**
+ * In the desktop app a right-click's menu is the system's own, at the pointer, with the same entries (a link or an entry whose label is not plain words is left
+ * out). False where there is no desktop app to show it: the caller opens its own menu.
+ */
+export function showNativeMenu(items: readonly (MenuEntry | { readonly separator: true } | { readonly heading: string })[]): boolean {
+  if (desktop === null) return false;
+  const run = new Map<string, () => void>();
+  const entries = items.flatMap((item, index): DesktopMenuEntry[] => {
+    if ("separator" in item && item.separator) return [{ type: "separator" }];
+    if ("heading" in item) return [{ label: item.heading, enabled: false }];
+    const entry = item as MenuEntry;
+    if (typeof entry.label !== "string" || entry.href !== undefined) return [];
+    if (entry.onSelect) run.set(String(index), entry.onSelect);
+    return [{ id: String(index), label: entry.label, enabled: entry.disabled !== true, ...(entry.checked === undefined ? {} : { type: "checkbox" as const, checked: entry.checked }) }];
+  });
+  void desktop.menu(entries).then(chosen => { if (chosen !== null) run.get(chosen)?.(); });
+  return true;
 }
 
 /**

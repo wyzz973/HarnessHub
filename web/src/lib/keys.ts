@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { COMMAND_EVENT, desktop } from "./desktop.js";
 
 /*
  * The application's shortcuts that the user may give other keys (2026-11-14, after the keybindings of T3 Code): each is one chord of ⌘ (Ctrl elsewhere) with a key, and
@@ -16,7 +17,8 @@ export const KEY_ACTIONS: readonly { readonly id: KeyAction; readonly label: str
   { id: "terminal", label: "终端", group: "对话" }, { id: "find", label: "查找", group: "对话" },
 ];
 export const DEFAULT_KEYS: Readonly<Record<KeyAction, Chord>> = {
-  new: { code: "KeyO", alt: false, shift: true }, palette: { code: "KeyK", alt: false, shift: false }, shortcuts: { code: "Slash", alt: false, shift: false },
+  // ⌘N in the desktop app; a browser keeps ⌘N for its own windows, so there it is ⇧⌘O.
+  new: desktop !== null ? { code: "KeyN", alt: false, shift: false } : { code: "KeyO", alt: false, shift: true }, palette: { code: "KeyK", alt: false, shift: false }, shortcuts: { code: "Slash", alt: false, shift: false },
   nextWaiting: { code: "ArrowDown", alt: true, shift: false }, previous: { code: "BracketLeft", alt: true, shift: false }, next: { code: "BracketRight", alt: true, shift: false },
   sidebar: { code: "KeyB", alt: false, shift: false }, panel: { code: "Backslash", alt: false, shift: false }, picker: { code: "KeyJ", alt: false, shift: false },
   // After T3 Code's ⇧⌘M, ⇧⌘E and ⇧⌘A, with ⌥ in place of ⇧: in a browser ⇧⌘M and ⇧⌘A are the browser's own (its profiles, its search of tabs).
@@ -40,6 +42,7 @@ function write(next: Keys): void {
   const chosen = Object.fromEntries(KEY_ACTIONS.flatMap(({ id }) => sameChord(next[id], DEFAULT_KEYS[id]) ? [] : [[id, next[id]]]));
   try { if (Object.keys(chosen).length === 0) localStorage.removeItem(KEY); else localStorage.setItem(KEY, JSON.stringify(chosen)); } catch { /* lasts for this page only */ }
   for (const listener of listeners) listener();
+  tellMenu();
 }
 export const sameChord = (left: Chord, right: Chord): boolean => left.code === right.code && left.alt === right.alt && left.shift === right.shift;
 /** The place on the keyboard of the key a character is typed with on a US layout, for an event that names the key it gives but not its place. */
@@ -92,3 +95,25 @@ export function resetKey(action: KeyAction): void {
 }
 /** The keys chosen now, kept current for a component. */
 export function useKeys(): Keys { return useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, read, read); }
+
+const MENU_KEYS: Readonly<Record<string, string>> = { Slash: "/", Backslash: "\\", Period: ".", Comma: ",", Semicolon: ";", Quote: "'", BracketLeft: "[", BracketRight: "]", Minus: "-", Equal: "=", Backquote: "`",
+  ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", Enter: "Return", Space: "Space", Backspace: "Backspace", Delete: "Delete", Tab: "Tab", Escape: "Esc" };
+/** The desktop menu shows each shortcut with the keys chosen now. */
+function tellMenu(): void {
+  if (desktop === null) return;
+  const keys = read();
+  desktop.setKeys(Object.fromEntries(KEY_ACTIONS.map(({ id }) => {
+    const chord = keys[id], key = MENU_KEYS[chord.code] ?? (/^Key[A-Z]$/u.test(chord.code) ? chord.code.slice(3) : /^Digit\d$/u.test(chord.code) ? chord.code.slice(5) : chord.code);
+    return [id, [...(chord.alt ? ["Alt"] : []), ...(chord.shift ? ["Shift"] : []), "Cmd", key].join("+")];
+  })));
+}
+/** A command chosen in the desktop menu: a shortcut's is done as its key press would be, by whoever answers that key; another is told to the page. */
+export function followMenu(): void {
+  if (desktop === null) return;
+  tellMenu();
+  desktop.onCommand(command => {
+    const chord = KEY_ACTIONS.some(({ id }) => id === command) ? read()[command as KeyAction] : null;
+    if (chord === null) window.dispatchEvent(new CustomEvent(COMMAND_EVENT, { detail: command }));
+    else document.body.dispatchEvent(new KeyboardEvent("keydown", { code: chord.code, metaKey: true, altKey: chord.alt, shiftKey: chord.shift, bubbles: true, cancelable: true }));
+  });
+}
