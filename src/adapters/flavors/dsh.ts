@@ -50,7 +50,7 @@ export const dshAcpFlavor: HarnessFlavor = {
   // (DshControl.toolPlan), but it has no question tool over ACP, so the Hub's task list and wrap-up stay (planTool `hub`, the rule of 2026-11-14).
   // Tools load through hub_tool_search: dsh-mcp-client sends every tool definition with every request (the five tools cost 2.2k input tokens on 2026-11-15),
   // and it lists the server's tools again on notifications/tools/list_changed (a Turn that needed hub_turns searched, was listed it, and called it).
-  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", toolLoad: "search", resume: "native", fork: "none", attachments: "native", usage: "turn", record: "files", steer: "none" },
+  capabilities: { keep: "session", sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", toolLoad: "search", resume: "native", fork: "none", attachments: "native", usage: "turn", record: "files", steer: "none" },
 };
 
 /**

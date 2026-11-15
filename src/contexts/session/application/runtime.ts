@@ -1725,12 +1725,14 @@ export class SessionRuntime {
   /** Whether the Hub keeps a process of this Harness between Turns by default (FlavorCapabilities.prewarm `session`), and may open one ahead. */
   private resident(harnessId: string): boolean { return this.options.flavor?.(harnessId)?.capabilities?.prewarm === "session"; }
   /**
-   * Whether this conversation keeps its native process between Turns: as the user chose, else kept for every Harness that runs on its own login
-   * (2026-11-15: Claude Code's process stays between Turns, the user's decision, and every other Harness alike, T3 Code's way), released when idle
-   * (KEPT_IDLE_MS). Opening one ahead and keeping it across the Hub's clear stay with the Harnesses that declare `prewarm: "session"`.
+   * Whether this conversation keeps its native process between Turns: as the user chose, else as its Harness declares (FlavorCapabilities.keep or
+   * `prewarm` `session`, 2026-11-15), released when idle (KEPT_IDLE_MS). Opening one ahead and keeping it across the Hub's clear stay with `prewarm`.
    */
   retains(id: SessionId): boolean { try { return this.retainsState(this.load(id)); } catch { return false; } }
-  private retainsState(state: Conversation): boolean { return state.retainNative ?? state.selection.provider === undefined; }
+  private retainsState(state: Conversation): boolean {
+    const declared = this.options.flavor?.(state.selection.harnessId)?.capabilities;
+    return state.retainNative ?? (state.selection.provider === undefined && (declared?.keep === "session" || declared?.prewarm === "session"));
+  }
   /** Each Harness control's account limits (rate-limit windows, reset times, plan) as the latest Turn on it reported them; none before one did. */
   limits(): readonly AccountLimits[] { return [...this.accountLimits.values()]; }
   /** Why this conversation's next Turn cannot have its process opened ahead now; null when it can. */

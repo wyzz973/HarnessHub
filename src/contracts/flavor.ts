@@ -119,6 +119,13 @@ export interface FlavorCapabilities {
    */
   readonly prewarm?: "session" | "none";
   /**
+   * `session`: the Hub keeps this Harness's process between Turns by default (ADR-030: idle release, a new process when the selection changes; the
+   * user may turn it off), so the next Turn does not start the program again (2026-11-15: Claude Code's process stays between Turns, the user's
+   * decision; the other Harnesses HarnessHub supports alike, T3 Code's way). `none` (the default): kept only where the user asked. `prewarm:
+   * "session"` keeps it too, and opens it ahead.
+   */
+  readonly keep?: "session" | "none";
+  /**
    * `native`: the Driver takes the last Turns off its own session (HarnessControl.rollback), so an input edited and sent again, or a reply
    * tried again, goes on in the same native session. `none` (the default): the Hub opens a new native session with the conversation up to there.
    */

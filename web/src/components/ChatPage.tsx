@@ -124,8 +124,8 @@ export interface ChatProps {
   /** Keeps this conversation's native process between Turns (ADR-030), or stops keeping it; before a new conversation exists, records the choice for it. */
   onRetention?: (enabled: boolean) => void;
   /** A new conversation's choice to keep its native process, applied when its first message creates it. */
-  /** The new conversation's choice to keep its process; null (or absent) is the default, kept. */
-  retainNew?: boolean | null;
+  /** Whether the new conversation will keep its process between Turns: the user's choice, else its Harness's declaration. */
+  retainNew?: boolean;
   /** Each Harness control's account limits as its latest Turn reported them (GET /limits); the line under the composer shows this conversation's. */
   limits?: readonly AccountLimitsView[];
   /** Ends this conversation's kept native process. */

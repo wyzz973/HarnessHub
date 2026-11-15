@@ -135,8 +135,6 @@ test("HTTP state exposes catalog candidates without private commands or configur
 test("real HTTP and SQLite preserve A→B→A public history and idempotent accepted messages", async t => {
   const f = await fixture(t); await auth(f); const id = await create(f);
   assert.equal(await create(f), id);
-  // Every conversation keeps its process between Turns by default (2026-11-15); this one is told not to, so that each Turn's program is closed after it.
-  assert.equal((await call(f, `/api/v1/sessions/${id}/retention`, "POST", { enabled: false, commandId: "not-kept" })).status, 200);
   const first = await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "first" }); assert.equal(first.status, 202);
   await waitFor(f, id, value => value.runs[0]?.status === "completed");
   const replay = await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "first" }); assert.equal(row(replay.data).replayed, true);

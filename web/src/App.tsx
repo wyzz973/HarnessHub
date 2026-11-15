@@ -355,7 +355,7 @@ export function App() {
   const operation = useRef(false);
   const pendingMessage = useRef<PendingMessage | null>(null);
   // A new conversation's choice to keep its native process, applied when its first message creates it.
-  // The new conversation's choice to keep its process between Turns: null until the user changes it (kept by default, 2026-11-15).
+  // The new conversation's choice to keep its process between Turns: null until the user changes it (then its Harness's declaration stands).
   const [keepNew, setKeepNew] = useState<boolean | null>(null);
   const pendingSwitchWrite = useRef<PendingSelection | null>(null);
   const chatDrafts = useRef(new Map<string, ChatDraft>());
@@ -1640,7 +1640,7 @@ export function App() {
       : preferences.sidebar ? <div className="w-sidebar flex-none hairline-r">{sidebar}</div> : null}
     <main id="main-content" className={cn("flex min-w-0 flex-1 flex-col outline-none")} tabIndex={-1}>
       {base === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} onToolDetail={content => api.toolDetail(content)} {...(sessionId === null ? {} : { onDiagnostics: (run: string, includeContent: boolean) => api.runDiagnostics(sessionId, run, includeContent) })} onNativeBranch={()=>{ if(!session||!startOperation("native-branch"))return; void api.branchNative(session.id,session.epoch,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
-        retainNew={keepNew} limits={limits}
+        retainNew={keepNew ?? (!draft.providerId && (nativeCatalog?.flavor?.capabilities?.keep === "session" || nativeCatalog?.flavor?.capabilities?.prewarm === "session"))} limits={limits}
         onRetention={enabled=>{ if(!session){ setKeepNew(enabled); return; } if(!startOperation("retention"))return; void api.setRetention(session.id,enabled,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         onEndProcess={()=>{ if(!session||!startOperation("ending-process"))return; void api.endKeptProcess(session.id,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         onFreeWorkspace={async run=>{ if(!session)return;

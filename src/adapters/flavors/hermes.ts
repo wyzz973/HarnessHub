@@ -33,6 +33,6 @@ export const hermesFlavor: HarnessFlavor = {
   // user's own (HERMES_EPHEMERAL_SYSTEM_PROMPT replaces `agent.system_prompt`): first-prompt. Hermes has its own todo tool (`todo.updated`): planTool native.
   // Hermes defers MCP tools behind its own tool_search bridge (tools/tool_search.py, `tools.tool_search.enabled: auto`): toolLoad native.
   // Words in the middle of a turn: `session.steer`, which never starts a turn of its own.
-  capabilities: { sessionMcp: "acp", systemPrompt: "first-prompt", planTool: "native", resume: "native", fork: "native", rollback: "native", attachments: "native", usage: "turn", record: "files",
+  capabilities: { keep: "session", sessionMcp: "acp", systemPrompt: "first-prompt", planTool: "native", resume: "native", fork: "native", rollback: "native", attachments: "native", usage: "turn", record: "files",
     toolLoad: "native", steer: "native" },
 };
