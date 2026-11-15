@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Builds HarnessHub.app (macOS, this machine's architecture) from what `pnpm build` and `pnpm web:build` left: the Gateway, the page and the desktop
 // shell, with only the packages the built Gateway imports, inside Electron's bundle. Usage: node tools/pack-desktop.mjs [--out <dir>]
-import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { builtinModules } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { packager } from "@electron/packager";
+import { importedPackages } from "./desktop-imports.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { values } = parseArgs({ options: { out: { type: "string" } } });
@@ -19,15 +19,7 @@ rmSync(stage, { recursive: true, force: true }); mkdirSync(stage, { recursive: t
 for (const path of ["dist/src", "dist/desktop", "web/dist", "LICENSE"]) cpSync(join(root, path), join(stage, path), { recursive: true });
 
 // The packages the built Gateway and shell import by name; the page's own are already inside its bundle.
-const files = directory => readdirSync(directory).flatMap(name => { const path = join(directory, name); return statSync(path).isDirectory() ? files(path) : /\.c?js$/u.test(name) ? [path] : []; });
-const named = new Set();
-for (const file of [...files(join(stage, "dist", "src")), ...files(join(stage, "dist", "desktop"))])
-  for (const match of readFileSync(file, "utf8").matchAll(/(?:^|[;\n])\s*(?:import|export)\b[^;\n]*?\bfrom\s*["']([^"']+)["']|(?:^|[;\n])\s*import\s*["']([^"']+)["']|\b(?:import|require)\s*\(\s*["']([^"']+)["']\s*\)/gu)) {
-    const specifier = match[1] ?? match[2] ?? match[3];
-    if (!/^(@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*(\/[^\s]*)?$/u.test(specifier)) continue;
-    const name = specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : specifier.split("/")[0];
-    if (!builtinModules.includes(name) && name !== "electron") named.add(name);
-  }
+const named = importedPackages([join(stage, "dist", "src"), join(stage, "dist", "desktop")]);
 const dependencies = Object.fromEntries(Object.entries(pkg.dependencies).filter(([name]) => named.has(name)));
 const missing = [...named].filter(name => !(name in dependencies));
 if (missing.length) { console.error("pack-desktop: imported but not a dependency: " + missing.join(", ")); process.exit(1); }

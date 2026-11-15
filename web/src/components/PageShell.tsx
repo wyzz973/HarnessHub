@@ -31,7 +31,7 @@ export function PageShell({ title, titleId, description, actions, belowHeader, c
         : sidebarHidden ? <Tip label={"展开侧栏 " + keyText("sidebar")}><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts={ariaKeys("sidebar")} onClick={onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null}
       {onBack ? <Tip label={backLabel}><button type="button" className="icon-btn" aria-label={backLabel} onClick={onBack}><ArrowLeft size={16}/></button></Tip> : null}
     </div>
-    <div className={cn("management-body scroll-area min-h-0 flex-1", bodyClassName)} onScroll={event => setScrolled(event.currentTarget.scrollTop > 0)}>
+    <div className={cn("management-body scroll-area min-h-0 flex-1", bodyClassName)} data-under-glass="" onScroll={event => setScrolled(event.currentTarget.scrollTop > 0)}>
       <div className={cn("mx-auto flex w-full flex-col gap-7 px-4 pt-1 pb-16 sm:px-10", wide ? "max-w-[1040px]" : "max-w-[760px]")}>
         <div className="flex flex-col">
           <header className="flex flex-wrap items-end gap-x-4 gap-y-3">

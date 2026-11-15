@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, screen, shell, type MenuItemConstructorOptions } from "electron";
+import { app, BaseWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, screen, shell, View, WebContentsView, type MenuItemConstructorOptions, type WebContents } from "electron";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -53,10 +53,16 @@ function shellEnvironment(): Promise<Record<string, string>> {
 }
 
 /** The system's Liquid Glass behind the page (desktop/native/glass.mm); absent where the module was not built, and the window then takes the older material. */
-interface Glass { prepare(handle: Buffer): boolean; pane(handle: Buffer, id: string, left: number, top: number, width: number, bottom: number, radius: number): void }
+interface Glass {
+  prepare(handle: Buffer): boolean; behind(handle: Buffer, other: Buffer): boolean; describe(handle: Buffer): string;
+  pane(handle: Buffer, id: string, left: number, top: number, width: number, height: number, radius: number, clear: number, alpha: number, anchor: number, order: number): void;
+  backdrop(handle: Buffer, red?: number, green?: number, blue?: number, left?: number, inset?: number, width?: number, radius?: number): void;
+}
 let glass: Glass | null = null;
 try { glass = createRequire(import.meta.url)("./native/glass.node") as Glass; } catch { glass = null; }
 let material: "liquid" | "vibrancy" = "vibrancy";
+/** Whether a copy of the page lies behind the window for its glass to show: the page's floating surfaces are then the system's glass too. */
+let layered = false;
 
 const logFile = join(userData, "logs", "gateway.log");
 function log(line: string): void { try { appendFileSync(logFile, new Date().toISOString() + " " + line + "\n", { mode: 0o600 }); } catch { /* the log is a convenience */ } }
@@ -79,51 +85,115 @@ async function startGateway(): Promise<Gateway> {
   });
 }
 
-let gateway: Gateway | null = null, win: BrowserWindow | null = null, quitting = false;
+let gateway: Gateway | null = null, win: BaseWindow | null = null, page: WebContents | null = null, copy: BaseWindow | null = null, quitting = false;
 let keys: Readonly<Record<string, string>> = {}, checks: Readonly<Record<string, boolean>> = {};
 const activity = { running: 0, waiting: 0 };
 
+/** What the window was like when it was last seen: where it stood, and enough of the page's look to stand in for it while the page loads. */
 const boundsFile = join(userData, "window.json");
+interface Kept { x?: number; y?: number; width?: number; height?: number; sidebar?: boolean; theme?: "system" | "light" | "dark"; zoom?: number }
+const kept: Kept = (() => { try { const value: unknown = JSON.parse(readFileSync(boundsFile, "utf8")); return typeof value === "object" && value !== null ? value as Kept : {}; } catch { return {}; } })();
+let keeping: NodeJS.Timeout | null = null;
+function keep(change: Kept): void {
+  Object.assign(kept, change);
+  if (keeping !== null) clearTimeout(keeping);
+  keeping = setTimeout(() => { try { writeFileSync(boundsFile, JSON.stringify(kept)); } catch { /* next time */ } }, 400);
+}
 function savedBounds(): { width: number; height: number; x?: number; y?: number } {
-  try {
-    const value = JSON.parse(readFileSync(boundsFile, "utf8")) as { x?: unknown; y?: unknown; width?: unknown; height?: unknown };
-    if (typeof value.width === "number" && typeof value.height === "number" && typeof value.x === "number" && typeof value.y === "number") {
-      const area = screen.getDisplayMatching({ x: value.x, y: value.y, width: value.width, height: value.height }).workArea;
-      const width = Math.min(Math.max(value.width, 760), area.width), height = Math.min(Math.max(value.height, 480), area.height);
-      return { width, height, x: Math.min(Math.max(value.x, area.x), area.x + area.width - width), y: Math.min(Math.max(value.y, area.y), area.y + area.height - height) };
-    }
-  } catch { /* the default size */ }
+  if (typeof kept.width === "number" && typeof kept.height === "number" && typeof kept.x === "number" && typeof kept.y === "number") {
+    const area = screen.getDisplayMatching({ x: kept.x, y: kept.y, width: kept.width, height: kept.height }).workArea;
+    const width = Math.min(Math.max(kept.width, 760), area.width), height = Math.min(Math.max(kept.height, 480), area.height);
+    return { width, height, x: Math.min(Math.max(kept.x, area.x), area.x + area.width - width), y: Math.min(Math.max(kept.y, area.y), area.y + area.height - height) };
+  }
   return { width: 1320, height: 860 };
 }
 
-const BLANK = "data:text/html;charset=utf-8," + encodeURIComponent("<!doctype html><meta charset=\"utf-8\"><style>html,body{margin:0;height:100%;background:transparent}</style>");
-function sendState(): void { if (win !== null && !win.isDestroyed()) win.webContents.send("hub:state", { focused: win.isFocused(), fullscreen: win.isFullScreen(), material }); }
-function command(id: string): void { if (win === null) return; if (!win.isVisible()) win.show(); win.webContents.send("hub:command", id); }
+// Before the Gateway answers the window shows no page of its own: only its strip that moves the window. Under it stand the window's glass and
+// the content layer's color (standIn below).
+const BLANK = "data:text/html;charset=utf-8," + encodeURIComponent("<!doctype html><meta charset=\"utf-8\"><style>html,body{margin:0;height:100%;background:transparent}body{-webkit-app-region:drag}</style>");
+/** The page's look while there is no page: the sidebar's pane of glass where it last was, and the content layer's color around it. */
+let standing = false, laid = new Set<string>();
+function standIn(): void {
+  if (win === null || win.isDestroyed() || glass === null || material !== "liquid" || standing) return;
+  const handle = win.getNativeWindowHandle(), zoom = typeof kept.zoom === "number" && kept.zoom > 0 ? kept.zoom : 1, shown = kept.sidebar !== false;
+  const color = nativeTheme.shouldUseDarkColors ? [28 / 255, 28 / 255, 30 / 255] as const : [1, 1, 1] as const;
+  glass.backdrop(handle, color[0], color[1], color[2], 8 * zoom, 8 * zoom, shown ? 274 * zoom : 0, 16 * zoom);
+  if (shown && !laid.has("sidebar")) { glass.pane(handle, "sidebar", 8 * zoom, 8 * zoom, 274 * zoom, Math.max(win.getContentBounds().height - 16 * zoom, 0), 16 * zoom, 0, 1, 4 | 16, 0); laid.add("sidebar"); }
+  standing = true;
+}
+function standDown(): void {
+  if (!standing) return;
+  standing = false;
+  // The page has painted by the time it says where its glass lies; a moment more, and the stand-in fades from under it.
+  setTimeout(() => { if (!standing && win !== null && !win.isDestroyed() && glass !== null) glass.backdrop(win.getNativeWindowHandle()); }, 120);
+}
+const windowState = () => ({ focused: win?.isFocused() ?? false, fullscreen: win?.isFullScreen() ?? false, material, layered });
+function sendState(): void { if (win !== null && !win.isDestroyed() && page !== null && !page.isDestroyed()) page.send("hub:state", windowState()); }
+function command(id: string): void { if (win === null || page === null) return; if (!win.isVisible()) win.show(); page.send("hub:command", id); }
 
-function createWindow(): BrowserWindow {
-  const made = new BrowserWindow({
+/*
+ * The page is the window's content. Where the system has Liquid Glass, sheets of it lie under the page, which leaves an opening wherever one of
+ * its surfaces floats; and right behind the window is fastened a second, bare window holding a copy of the page that the page itself keeps
+ * (web/src/ui/mirror.ts: a window it opens by the name "hub-mirror"). The glass shows what is behind the window, so under each opening it shows
+ * the copy of what the surface floats over — and the desktop where the copy is clear, as under the sidebar.
+ */
+function createWindow(): BaseWindow {
+  const made = new BaseWindow({
     ...savedBounds(), minWidth: 760, minHeight: 480, show: false, title: "HarnessHub",
-    titleBarStyle: "hiddenInset", trafficLightPosition: { x: 21, y: 23 }, backgroundColor: "#00000000",
-    webPreferences: { preload: join(here, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
+    // A transparent window: the page's openings are cleared afresh in every frame (in an opaque window whatever was last drawn there would stay).
+    titleBarStyle: "hiddenInset", trafficLightPosition: { x: 21, y: 23 }, backgroundColor: "#00000000", transparent: true,
   });
+  const layers = new View();
+  made.contentView = layers;
+  const top = new WebContentsView({ webPreferences: { preload: join(here, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false } });
+  top.setBackgroundColor("#00000000");
+  layers.addChildView(top);
+  const fit = () => { const { width, height } = made.getContentBounds(); top.setBounds({ x: 0, y: 0, width, height }); if (copy !== null && !copy.isDestroyed()) copy.setBounds(made.getBounds()); };
+  fit();
   // Liquid Glass where the system has it: the window itself lets the desktop through and panes of glass lie under the page's openings. Elsewhere
   // the whole window is the older sidebar material.
   material = glass !== null && glass.prepare(made.getNativeWindowHandle()) ? "liquid" : "vibrancy";
   if (material === "vibrancy") made.setVibrancy("sidebar");
-  made.once("ready-to-show", () => made.show());
-  let saving: NodeJS.Timeout | null = null;
-  const remember = () => { if (saving !== null) clearTimeout(saving); saving = setTimeout(() => { if (!made.isDestroyed() && !made.isFullScreen() && !made.isMinimized()) try { writeFileSync(boundsFile, JSON.stringify(made.getBounds())); } catch { /* next time */ } }, 400); };
-  made.on("resize", remember).on("move", remember);
-  for (const event of ["focus", "blur", "enter-full-screen", "leave-full-screen"] as const) made.on(event as "focus", sendState);
+  const remember = () => { if (!made.isDestroyed() && !made.isFullScreen() && !made.isMinimized()) keep(made.getBounds()); };
+  made.on("resize", () => { fit(); remember(); }).on("move", () => { fit(); remember(); });
+  made.on("blur", sendState);
+  // Full screen is another space: the copy is fastened behind the window again once the window has arrived there, and once it is back.
+  for (const event of ["enter-full-screen", "leave-full-screen"] as const) made.on(event as "enter-full-screen", () => {
+    if (copy !== null && !copy.isDestroyed() && glass !== null) { copy.setBounds(made.getBounds()); glass.behind(made.getNativeWindowHandle(), copy.getNativeWindowHandle()); }
+    sendState();
+  });
+  made.on("focus", () => { if (!top.webContents.isDestroyed()) top.webContents.focus(); sendState(); });
   // Closing the window leaves the app and its conversations running, as the Dock icon says; ⌘Q ends them.
   made.on("close", event => {
     if (quitting) return;
     event.preventDefault();
     if (made.isFullScreen()) { made.once("leave-full-screen", () => made.hide()); made.setFullScreen(false); } else made.hide();
   });
-  const contents = made.webContents;
+  const contents = top.webContents;
+  page = contents;
+  contents.once("did-finish-load", () => made.show());
+  // A page on its way (the first, or the same one again after the Gateway came back): the stand-in holds the window until it has painted.
+  contents.on("did-start-navigation", details => { if (details.isMainFrame && !details.isSameDocument) standIn(); });
   const own = (url: string): boolean => { try { return gateway !== null && new URL(url).origin === new URL(gateway.url).origin; } catch { return false; } };
-  contents.setWindowOpenHandler(({ url }) => { if (/^(https?|mailto):/u.test(url)) void shell.openExternal(url); return { action: "deny" }; });
+  contents.setWindowOpenHandler(({ url, frameName }) => {
+    if (frameName === "hub-mirror" && (url === "" || url === "about:blank") && material === "liquid" && glass !== null) return { action: "allow", createWindow: options => {
+      const before = copy, held = new WebContentsView({ webContents: (options as { readonly webContents: WebContents }).webContents });
+      const under = new BaseWindow({ ...made.getBounds(), show: false, frame: false, transparent: true, hasShadow: false, focusable: false, resizable: false, minimizable: false, maximizable: false,
+        fullscreenable: false, skipTaskbar: true, roundedCorners: false, backgroundColor: "#00000000" });
+      held.setBackgroundColor("#00000000");
+      under.contentView = held;
+      under.setIgnoreMouseEvents(true);
+      copy = under;
+      layered = glass!.behind(made.getNativeWindowHandle(), under.getNativeWindowHandle());
+      if (before !== null && !before.isDestroyed()) before.destroy();
+      under.once("closed", () => { if (copy === under) { copy = null; layered = false; sendState(); } });
+      if (process.env.HARNESSHUB_DEBUG_VIEWS) setTimeout(() => console.log("views\n" + glass!.describe(made.getNativeWindowHandle())), 1500);
+      sendState();
+      return held.webContents;
+    } };
+    if (/^(https?|mailto):/u.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
   contents.on("will-navigate", (event, url) => { if (!own(url)) { event.preventDefault(); if (/^(https?|mailto):/u.test(url)) void shell.openExternal(url); } });
   contents.on("context-menu", (_event, params) => {
     const items: MenuItemConstructorOptions[] = [];
@@ -142,7 +212,7 @@ function createWindow(): BrowserWindow {
     }
     if (items.length) Menu.buildFromTemplate(items).popup({ window: made });
   });
-  void made.loadURL(BLANK);
+  void contents.loadURL(BLANK);
   return made;
 }
 
@@ -202,12 +272,26 @@ function nativeMenu(entries: readonly MenuEntry[], choose: (id: string) => void,
 }
 
 function wire(): void {
-  ipcMain.handle("hub:state", () => ({ focused: win?.isFocused() ?? false, fullscreen: win?.isFullScreen() ?? false, material }));
-  // The page says where its openings are (in its own pixels); the glass lies under them.
-  ipcMain.on("hub:glass", (_event, panes: readonly { id?: unknown; left?: unknown; top?: unknown; width?: unknown; bottom?: unknown; radius?: unknown }[]) => {
-    if (win === null || glass === null || material !== "liquid" || !Array.isArray(panes)) return;
-    const zoom = win.webContents.getZoomFactor(), of = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? Math.max(value, 0) : 0) * zoom;
-    for (const pane of panes.slice(0, 8)) if (typeof pane.id === "string" && pane.id.length < 32) glass.pane(win.getNativeWindowHandle(), pane.id, of(pane.left), of(pane.top), of(pane.width), of(pane.bottom), of(pane.radius));
+  ipcMain.handle("hub:state", () => windowState());
+  ipcMain.on("hub:state-now", event => { event.returnValue = windowState(); });
+  // The page says where its openings are (in its own pixels, lowest first), every time they change; the glass lies under them, and a sheet the
+  // page no longer names is taken away.
+  ipcMain.on("hub:glass", (event, panes: readonly { id?: unknown; left?: unknown; top?: unknown; width?: unknown; height?: unknown; radius?: unknown; clear?: unknown; alpha?: unknown; anchor?: unknown }[]) => {
+    if (win === null || page === null || event.sender !== page || glass === null || material !== "liquid" || !Array.isArray(panes)) return;
+    const handle = win.getNativeWindowHandle(), zoom = page.getZoomFactor();
+    const beneath = copy !== null && !copy.isDestroyed() ? (copy.contentView as WebContentsView).webContents : null;
+    if (beneath !== null && !beneath.isDestroyed() && beneath.getZoomFactor() !== zoom) beneath.setZoomFactor(zoom);
+    const number = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback, seen = new Set<string>();
+    panes.slice(0, 64).forEach((pane, order) => {
+      if (typeof pane.id !== "string" || pane.id.length > 40 || seen.has(pane.id)) return;
+      seen.add(pane.id);
+      glass!.pane(handle, pane.id, number(pane.left) * zoom, number(pane.top) * zoom, Math.max(number(pane.width), 0) * zoom, Math.max(number(pane.height), 0) * zoom, Math.max(number(pane.radius), 0) * zoom,
+        pane.clear === true ? 1 : 0, Math.min(Math.max(number(pane.alpha, 1), 0), 1), number(pane.anchor) & 63, order);
+    });
+    for (const id of laid) if (!seen.has(id)) glass!.pane(handle, id, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    laid = seen;
+    if (zoom !== kept.zoom) keep({ zoom });
+    if (gateway !== null && event.sender.getURL().startsWith(new URL(gateway.url).origin)) standDown();
   });
   ipcMain.handle("hub:menu", (_event, entries: readonly MenuEntry[], at?: { x: number; y: number }) => new Promise<string | null>(done => {
     if (win === null || !Array.isArray(entries)) { done(null); return; }
@@ -217,12 +301,16 @@ function wire(): void {
       ...(at !== undefined && Number.isFinite(at.x) && Number.isFinite(at.y) ? { x: Math.round(at.x), y: Math.round(at.y) } : {}), callback: () => setTimeout(() => done(chosen), 80) });
   }));
   ipcMain.on("hub:keys", (_event, next: Record<string, string>) => { if (typeof next === "object" && next !== null) { keys = next; buildMenu(); } });
-  ipcMain.on("hub:checks", (_event, next: Record<string, boolean>) => { if (typeof next === "object" && next !== null) { checks = next; buildMenu(); } });
+  ipcMain.on("hub:checks", (_event, next: Record<string, boolean>) => {
+    if (typeof next !== "object" || next === null) return;
+    checks = next; buildMenu();
+    if (typeof next.sidebar === "boolean" && next.sidebar !== kept.sidebar) keep({ sidebar: next.sidebar });
+  });
   ipcMain.on("hub:activity", (_event, next: { running?: unknown; waiting?: unknown }) => {
     activity.running = Number(next?.running) || 0; activity.waiting = Number(next?.waiting) || 0;
     app.dock?.setBadge(activity.waiting > 0 ? String(activity.waiting) : "");
   });
-  ipcMain.on("hub:theme", (_event, theme: unknown) => { if (theme === "system" || theme === "light" || theme === "dark") nativeTheme.themeSource = theme; });
+  ipcMain.on("hub:theme", (_event, theme: unknown) => { if (theme === "system" || theme === "light" || theme === "dark") { nativeTheme.themeSource = theme; if (theme !== kept.theme) keep({ theme }); } });
   ipcMain.handle("hub:pick-folder", async (_event, start?: string) => {
     if (win === null) return null;
     const picked = await dialog.showOpenDialog(win, { properties: ["openDirectory", "createDirectory"], ...(typeof start === "string" && start ? { defaultPath: start } : {}) });
@@ -236,7 +324,7 @@ async function connect(): Promise<void> {
       const started = await startGateway();
       gateway = started;
       started.child.once("exit", () => { if (gateway === started) { gateway = null; if (!quitting) void connect(); } });
-      if (win !== null && !win.isDestroyed()) await win.loadURL(started.url);
+      if (page !== null && !page.isDestroyed()) await page.loadURL(started.url);
       return;
     } catch (failure) {
       if (quitting) return;
@@ -265,9 +353,11 @@ else {
   });
   void app.whenReady().then(() => {
     mkdirSync(join(userData, "logs"), { recursive: true });
-    nativeTheme.themeSource = "system";
+    // The theme chosen last time, before the page is there to say it again.
+    nativeTheme.themeSource = kept.theme === "light" || kept.theme === "dark" ? kept.theme : "system";
     wire(); buildMenu();
     win = createWindow();
+    standIn();
     void connect();
   });
 }

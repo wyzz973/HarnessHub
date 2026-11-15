@@ -92,6 +92,7 @@
   /* The sidebar pane: a faint wash over the window's material, and the light on its rim */
   --pane-tint: rgba(255, 255, 255, .22); --pane-rim: rgba(255, 255, 255, .55);
   --pane-wash: rgba(248, 248, 250, .5);         /* over the system's Liquid Glass, so the sidebar's words read on any desktop */
+  --wash: rgba(255, 255, 255, .3); --wash-thick: rgba(255, 255, 255, .54);
 
   @variant dark {
     color-scheme: dark;
@@ -138,6 +139,7 @@
     --thumb: #5F5F64;
     --pane-tint: rgba(255, 255, 255, .025); --pane-rim: rgba(255, 255, 255, .09);
     --pane-wash: rgba(22, 22, 26, .5);
+    --wash: rgba(30, 30, 34, .3); --wash-thick: rgba(30, 30, 34, .5);
   }
 }
 /* With "reduce transparency" the glass is a plain surface (the window's own material answers the setting by itself). */
@@ -795,10 +797,12 @@
   }
   /* Under the pane lies the system's own Liquid Glass: the page draws no rim or wash of its own over it, only the content layer around it. */
   :root[data-material="liquid"] .sidebar-pane { background: var(--pane-wash); box-shadow: 0 0 0 100vmax var(--bg-app); }
-  .content-pane { position: relative; background: var(--bg-app); }
+  /* The content layer's color is a sheet of its own under the content (.pane-backdrop), so that glass floating over the content can be cut out of it. */
+  .content-pane { position: relative; isolation: isolate; }
+  .pane-backdrop { position: absolute; inset: 0; z-index: -1; background: var(--bg-app); pointer-events: none; }
   /* A page, or another conversation, arrives with a short fade, not a swap. The fade lets go of the page when it ends: a layer it kept would cut
      the glass inside the page off from what is behind it. */
-  .content-pane > * { animation: hh-fade-in 180ms var(--ease-out) backwards; }
+  .content-pane > :not(.pane-backdrop) { animation: hh-fade-in 180ms var(--ease-out) backwards; }
   /* The top of the content moves the window wherever a page has put nothing to press there. */
   .content-pane::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 52px; -webkit-app-region: drag; }
   /* The top strip of each pane moves the window; with the sidebar away, the content's strip leaves room for the window's own buttons. */
@@ -811,19 +815,34 @@
    * system's scroll edge effect), so neither bar paints a band of its own. The message box is thick glass; what stands with it over the
    * conversation (a queued message, a notice) blurs what is behind it under its own tint.
    */
-  .chat-toolbar::before {
-    content: ""; position: absolute; inset: 0 0 -18px 0; z-index: -1; pointer-events: none; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  .scroll-edge { position: absolute; left: 0; right: 0; pointer-events: none; }
+  .scroll-edge-top {
+    top: 0; height: 70px; z-index: 19; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
     background: linear-gradient(to bottom, var(--bg-app) 0, color-mix(in srgb, var(--bg-app) 86%, transparent) 55%, transparent 100%);
     -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent 100%); mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
   }
-  .chat-foot::before {
-    content: ""; position: absolute; inset: -30px 0 0 0; z-index: -1; pointer-events: none; -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  .scroll-edge-bottom {
+    bottom: 0; height: calc(var(--foot-height, 0px) + 30px); z-index: 9; -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
     background: linear-gradient(to bottom, transparent 0, color-mix(in srgb, var(--bg-app) 22%, transparent) 30px, color-mix(in srgb, var(--bg-app) 40%, transparent) calc(100% - 64px), color-mix(in srgb, var(--bg-app) 97%, transparent) calc(100% - 34px), var(--bg-app) 100%);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 30px); mask-image: linear-gradient(to bottom, transparent 0, #000 30px);
   }
-  .follow-stream { background: var(--glass); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); box-shadow: var(--sh-pop); }
+  .follow-stream, .find-bar { background: var(--glass); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); box-shadow: var(--sh-pop); }
   .composer-box { background: var(--glass-thick); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); }
   .chat-foot :is(.relay-card, .queued-message, .composer-notice, .composer-change, [role="status"].rounded-block, [role="alert"].rounded-block) { -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); }
+  /*
+   * In the desktop app on macOS 26 every one of these surfaces is the system's Liquid Glass: a sheet of it lies under the page, which is cut
+   * open there (ui/glass.ts). The surface paints only a wash that steadies its words, and its shadow; the rim and the bend are the glass's own.
+   * For the moment before the glass is laid the surfaces are not shown, so that none is seen changing material.
+   */
+  :root[data-material="liquid"]:not([data-glass]) :is(.composer-box, .tool-group, .follow-stream, .find-bar, .floating-bar) { visibility: hidden; }
+  :root[data-glass="system"] { --glass-rim: 0 0 0 0 transparent; }
+  :root[data-glass="system"] :is(.composer-box, .tool-group, .follow-stream, .find-bar, .floating-bar, .surface-pop, .dialog-pop, .palette-pop, .drawer-left-pop, .sheet-pop, .tooltip-pop, .toast) {
+    background: var(--wash); -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
+  :root[data-glass="system"] :is(.dialog-pop, .palette-pop, .composer-box, .drawer-left-pop, .sheet-pop) { background: var(--wash-thick); }
+  :root[data-glass="system"] .tool-group { background: transparent; }
+  /* The sidebar's wash lies under its glass then (in the copy behind the window), where whatever floats over the sidebar sees it too. */
+  :root[data-glass="system"] .sidebar-pane { background: transparent; }
   .chat-notices:not(:empty) ~ .chat-scroll { padding-top: 16px; }
 
   /* A search field that opens the palette: it looks like where one types, and is pressed. */

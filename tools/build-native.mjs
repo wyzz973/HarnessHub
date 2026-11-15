@@ -13,5 +13,5 @@ if (!existsSync(join(include, "node_api.h"))) { console.error("build-native: nod
 const out = join(root, "dist", "desktop", "native");
 mkdirSync(out, { recursive: true });
 execFileSync("clang++", ["-std=c++17", "-fobjc-arc", "-O2", "-shared", "-undefined", "dynamic_lookup", "-mmacosx-version-min=13.0", "-DNODE_GYP_MODULE_NAME=glass",
-  "-I", include, "-framework", "AppKit", "-o", join(out, "glass.node"), join(root, "desktop", "native", "glass.mm")], { stdio: "inherit" });
+  "-I", include, "-framework", "AppKit", "-framework", "QuartzCore", "-o", join(out, "glass.node"), join(root, "desktop", "native", "glass.mm")], { stdio: "inherit" });
 console.log("build-native: dist/desktop/native/glass.node");
