@@ -4,6 +4,17 @@
 
 ## 2026-11-15
 
+- **Claude Code 换到 Claude Agent SDK。**（子代理在独立 worktree 写，拣入。）用户装的 `claude` 升到 2.1.325，SDK 钉 0.3.325（不装它自带的二进制），开局核对两者配对。用用户自己的登录，Hub 不碰凭据。控制入口沿用 `claude-acp-npm`，旧对话的检查点就是 Claude 自己的会话 id，能直接续上。审批和提问走 `canUseTool`，拒绝可以附一句话；插话是下一条优先消息；回退是在更早的条目处续上（之后检查点变成 `id#uuid`），分叉用 `forkSession`；`/compact` 报一条带 token 数的压缩；用量按模型分开，额度发 `limits` 事件。Hub 工具仍是 stdio 服务，令牌靠环境继承，不写进参数：没做进程内 MCP，因为适配层不能引用 `src/cli`，而且 SDK 的工具定义要用 zod。
+  - 真机（Haiku）通过：一轮、常驻进程上的第二轮、审批（拒绝附话后它换了做法）、提问、插话、打断、回退、分叉、清空、压缩、导出、图片、轮后事件、重开续上、不重开换模型和强度、标题、导入、计划档、额度，以及经 HTTP 的插话和 Hub 工具。没验证：会话列表的正向结果（`claude -p` 建的会话不进列表）、Task 系列工具、fast 模式、真正旧版本的 CLI、额度用尽、登录失效。
+  - `~/.claude/settings.json` 的哈希在第一次 SDK 探针结束后约 10 秒变了。驱动不写这个文件，原因没查明（可能是新版 CLI 首次启动自己迁移，也可能是同机别的 Claude 进程），没有旧内容可比。
+- **OpenCode 换到 Hub 自己起的 `opencode serve --stdio`。**（子代理，拣入。）先 `brew upgrade` 到 2.3.0。每个连接一个私有服务，只听 127.0.0.1，口令随机；开局读 `/openapi.json` 比对，缺的功能关掉。档位写成会话自己的规则集，“本次会话允许”也写成会话规则，不用会写库的 always；插话用 `delivery: "steer"`；拒绝能附一句话让它接着做，另有“拒绝并停止”；inbox 送达时发 `input_recorded`；回退是 revert 加 commit，分叉是 fork；每轮结束读一次 `session.diff`；结果不明的发送用同一个 id 重发一次（OpenCode 按 id 去重），仍不明就报“不确定”；事件流断了重连后读会话消息补齐。Hub 工具在运行时加进会话（`runtime-mcp`），不写用户的配置。计划仍用 Hub 的：2.3.0 的 todowrite 默认关着。控制 id 沿用 `opencode-binary`，ACP 时期的对话能续上。
+  - 真机（deepseek-v4.1-flash-free）通过：一轮、审批四种（允许一次、拒绝后接着做、拒绝并停止、提问）、插话、打断、重开续上、回退、分叉、清空、压缩、图片、迟到事件，试用服务上的 Hub 工具和计划档。没验证：子 Harness 嵌套、命令型输入的 `input_recorded`、todowrite、MCP 询问。用户后台还有一个 2.2.5 的 OpenCode 服务在跑（它的 Cellar 目录已被 brew 清掉），要用户自己重启。
+- **OpenClaw 换到 Gateway WebSocket，用 Hub 自己配对的设备。**（子代理，拣入。）先用 Hub 自己的升级功能升到 2026.11.3，顺带修了升级：2026.10 起非终端下 `gateway stop` 必须带 `--force`。客户端 `@openclaw/gateway-client` 和 `-protocol` 钉 2026.11.3。设备模式用 `cli`（`backend` 在本机会跳过配对、拿不到设备令牌）。建会话时一次给定文件夹、模型、思考和权限，会话标 HarnessHub、投递为 none、不和其他会话通信；网关方法写死成白名单，只写 Hub 自己的 key，`chat.send` 禁止 deliver。两个旧缺陷修好了：对话真在所选文件夹里跑；它的提问作为 question 转给用户。插话、打断、`/compact`、回退、分叉、标题、按请求的用量、条目 id、它自带的计划工具 `progress_card` 都接上了。
+  - 真机（deepseek-chat）通过：一轮（pwd 就是所选文件夹）、执行审批、提问、插话、打断、回退、分叉、清空、压缩、图片、试用服务上的 Hub 工具、重开续上、只用设备令牌连接。出站核对：投递队列为 0，新增审计事件都属于 harnesshub 会话，没有出站记录。没验证：一轮结束后才到的事件（没出现）、断线重连后补齐、插件审批、思考流。
+- **Codex 第二片：进程常驻、提前打开，编辑重发和重试在原生线程上回退。**（子代理，拣入。）量出来慢的不是起进程（0.2–0.5 秒），而是新线程要等用户配置里的 12 个 MCP 服务就绪（4–5 秒），而且常驻原来默认关着，每一轮都要再付一次。现在声明了 `prewarm: "session"` 的 Harness（目前是 Codex）对话进程默认常驻，用户可以关；新对话和已有对话都能在发消息前预先打开（`POST /api/v1/sessions/warm`、`/sessions/:id/warm`）。编辑重发和重试优先在常驻进程上用 `thread/revert` 退掉轮次；被退掉的轮次里有交接单或命令、或者退不了时，换一个新的原生会话，把到那一轮为止的对话交给它。分叉在同一个连接上用 `thread/fork`。额度按 Harness 保存，`GET /api/v1/limits` 读取。`/review` 走 `review/start`。
+  - 真机（GPT-5.6-Luna）通过：一轮、审批、插话、打断、编辑重发和重试替换（同一进程上回退 1 轮）、退掉的轮次含 `/review` 或改第一轮时走 Hub 兜底、同连接分叉、清空、额度（pro，周窗口 19%）、`/review`、会话被别的 Codex 窗口占着时的提示、导入带工具。从发出到第一个字：新对话 8.4 秒→预开后 3.6 秒，后面的轮次 7.4 秒→常驻 1.7 秒（各 3 次平均）。没验证：原生回退中途失败转兜底（只有合成测试）、导入带改动、网页上的预开时机、Gateway 崩溃时预开的进程不会被回收。
+- **合并时统一的几处。** 判断“这个协议有没有驱动”只留适配层工厂里的 `hasDriver`（几家各自在领域层加过一份，都删了）；`rollback?(id, turns)` 合成一条声明；脱敏包装保留文字的条目 id，并转发 `rollback` 和 `openFork`。OpenClaw 回放里录下的截止时间按录制距今平移，免得测试随时间失效。
+
 - **WorkBuddy 探测没通过，驱动暂停。**（用户同意的那一次探测：只做 `initialize`，`session/new` 没轮到。）Hub 单独启动的 CodeBuddy Code 读不到用户的登录：应用把凭据加密存放，解密钥匙只经 `CODEBUDDY_SIDECAR_CREDENTIAL_BOOTSTRAP_SOCKET` 交给应用自己起的侧车。它试着刷新一次令牌，被拒 401，没写任何文件。另外，这个精简版只加 `--acp` 不在标准输入输出上提供 ACP，而是在随机端口开 HTTP 版。
   - 留下的防护：任何 ACP 连接都不会发 `authenticate`，发出前就抛错，有测试锁住。
   - 探测的副作用：刷新了几份 `local_storage` 缓存；启动了应用的两个插件 MCP 服务（weixinpay、sheetagent），跑了它们的启动钩子。设置文件、密钥、令牌文件的哈希不变；探测建的空会话等已移到废纸篓。
