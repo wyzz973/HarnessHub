@@ -5,7 +5,7 @@ import { TABLE_ENV, TABLE_INSTRUCTIONS_ENV, TABLE_LOAD_ENV, TABLE_MCP_NAME, TABL
 import { listedCommand, nativeConversationId, requestExpiry, type BackendResult, type CleanupEvidence, type CommandClass, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
   type NativeOptions, type NativeOption, type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type SteerOutcome, type StopRequestReceipt } from "../../contracts/control.js";
-import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
+import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RequestDeadline, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
 import { unifiedDiff } from "../../infrastructure/control/unified-diff.js";
 import { type NativeOutput, type NativePlanEntry, type NativeSessionImport, type NativeSessionPage, type NativeToolDetail, type NativeUsage } from "../../contracts/control.js";
 import { MAX_CONTENT_BYTES, textual, type ContentKind, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
@@ -159,6 +159,22 @@ function instructionsBlock(text: string): string {
   return "<harnesshub-session-instructions>\n（以下是 HarnessHub 给这个会话的说明，不是用户的话。）\n" + text + "\n</harnesshub-session-instructions>";
 }
 
+/**
+ * ACP methods no Driver ever sends (2026-11-15, the user's decision): `authenticate` starts a sign-in, and WorkBuddy's CodeBuddy Code signs the
+ * user out before it does. Refused before anything is written, whoever asks.
+ */
+export const NEVER_SENT: ReadonlySet<string> = new Set(["authenticate"]);
+function refuseNeverSent(method: string): void {
+  if (NEVER_SENT.has(method)) throw new ControlError("METHOD_FORBIDDEN", "HarnessHub never sends ACP " + method + ": it would sign the user out of the Harness");
+}
+class AcpProcess extends JsonRpcProcess {
+  override request(method: string, params: unknown, timeoutMs?: number | null, deadline?: RequestDeadline, timeoutCode?: string): Promise<unknown> {
+    try { refuseNeverSent(method); } catch (error) { return Promise.reject(error); }
+    return super.request(method, params, timeoutMs, deadline, timeoutCode);
+  }
+  override async notify(method: string, params: unknown): Promise<void> { refuseNeverSent(method); return super.notify(method, params); }
+}
+
 /** ACP v1 anti-corruption layer. Client filesystem and terminal capabilities are not advertised. */
 export class AcpControl implements HarnessControl {
   /**
@@ -213,7 +229,7 @@ export class AcpControl implements HarnessControl {
   constructor(launch: ControlLaunch, private readonly options: ControlOptions, relayCapabilities?: RelayCapabilities) {
     if (launch.protocol !== "acp-v1") throw new ControlError("INVALID_INPUT", "ACP control requires an ACP launch");
     if (relayCapabilities !== undefined) this.relayCapabilities = relayCapabilities;
-    this.rpc = new JsonRpcProcess(launch, options, {
+    this.rpc = new AcpProcess(launch, options, {
       notification: (method, params) => this.notification(method, params),
       request: request => this.serverRequest(request),
       failure: error => { this.failure = error; },
