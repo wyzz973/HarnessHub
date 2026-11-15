@@ -16,6 +16,8 @@ const namedBins: Readonly<Record<string, string>> = { "agoragentic-acp": "agorag
  * (docs.openclaw.ai/cli/doctor/checks); an older release cannot open a newer release's database, so the previous version is
  * only returned to from `openclaw backup create` (docs.openclaw.ai/cli/backup, install/updating/rollback-and-recovery).
  */
+// Since 2026.10, `gateway stop` refuses a non-interactive shell without `--force` (docs/cli/gateway/service.md: "For non-interactive maintenance, use
+// `openclaw gateway stop --force`"); the Hub runs it without a terminal.
 const OPENCLAW_MAINTENANCE: Pick<ManagementRecipe, "services" | "processNames" | "pluginDirectory" | "upgradeNotes" | "upgradeSequence"> = {
   services: [{ label: "ai.openclaw.gateway", name: "OpenClaw Gateway", restart: true, portFlag: "--port" },
     { label: "ai.openclaw.node", name: "OpenClaw Node", restart: false, restartCommand: "openclaw node restart" }],
@@ -24,7 +26,7 @@ const OPENCLAW_MAINTENANCE: Pick<ManagementRecipe, "services" | "processNames" |
   upgradeSequence: {
     bridge: { before: "2026.7.0", version: "2026.9.5" },
     npmFlags: ["--allow-scripts=openclaw"],
-    gateway: { label: "ai.openclaw.gateway", stop: ["gateway", "stop"], start: ["gateway", "start"], status: ["gateway", "status", "--deep"] },
+    gateway: { label: "ai.openclaw.gateway", stop: ["gateway", "stop", "--force"], start: ["gateway", "start"], status: ["gateway", "status", "--deep"] },
     doctor: ["doctor", "--fix", "--yes"],
     restarts: [{ label: "ai.openclaw.node", args: ["node", "restart"] }],
     backupCommand: "openclaw backup create --output <目录> --verify",

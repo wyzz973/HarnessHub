@@ -196,7 +196,7 @@ test("G011-UN3 an uninstall says what it stops, removes and keeps, refuses what 
   // The gateway runs from it: stopped and unregistered with OpenClaw's own commands, once the user agrees.
   state.usage = { ...state.usage, services: [{ label: "ai.openclaw.gateway", pid: 4039 }], processes: [{ pid: 8100, name: "openclaw" }] };
   const check = await manager.uninstallCheck("openclaw", openclaw.ref);
-  assert.deepEqual(check.services, [{ label: "ai.openclaw.gateway", name: "OpenClaw Gateway", pid: 4039, commands: ["~/.nvm/versions/node/v26.0.0/bin/openclaw gateway stop", "~/.nvm/versions/node/v26.0.0/bin/openclaw gateway uninstall"],
+  assert.deepEqual(check.services, [{ label: "ai.openclaw.gateway", name: "OpenClaw Gateway", pid: 4039, commands: ["~/.nvm/versions/node/v26.0.0/bin/openclaw gateway stop --force", "~/.nvm/versions/node/v26.0.0/bin/openclaw gateway uninstall"],
     interrupts: productMaintenance("openclaw").services[0]!.interrupts }]);
   assert.deepEqual(check.commands, ["~/.nvm/versions/node/v26.0.0/bin/npm uninstall --global --prefix ~/.nvm/versions/node/v26.0.0 openclaw"]);
   // The pnpm installation, listed but not maintained, is the one used afterwards.
@@ -215,7 +215,7 @@ test("G011-UN3 an uninstall says what it stops, removes and keeps, refuses what 
   busy = false;
   const done = await settled(manager, (await manager.submitUninstall({ harnessId: "openclaw", action: "uninstall", commandId: "u-4", installation: openclaw.ref, expectedInstallationFingerprint: check.fingerprint, stopServices: ["ai.openclaw.gateway"] })).id);
   assert.equal(done.status, "completed", JSON.stringify(done.error));
-  assert.deepEqual(state.calls, ["stop:ai.openclaw.gateway:gateway stop,gateway uninstall", "remove"]); assert.equal(closed, 1);
+  assert.deepEqual(state.calls, ["stop:ai.openclaw.gateway:gateway stop --force,gateway uninstall", "remove"]); assert.equal(closed, 1);
   assert.deepEqual(done.native?.uninstall, { label: "npm 全局（nvm v26.0.0）", role: "product", stopServices: ["ai.openclaw.gateway"], stoppedServices: ["ai.openclaw.gateway"], removed: true });
   assert.equal(done.resolvedVersion, "2026.3.23-2"); assert.equal(done.native?.location, "~/.nvm/versions/node/v26.0.0/bin/openclaw");
   const logs = manager.logs(done.id, 0).map(entry => entry.text);

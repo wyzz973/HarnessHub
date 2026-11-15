@@ -494,7 +494,7 @@ function sequenceLaunchd(marks: { dir: string }, listening: FakeLaunchd["listeni
 const traced = async (f: { readonly trace: string }) => (await readFile(f.trace, "utf8").catch(() => "")).trim().split("\n").filter(Boolean);
 /** The commands upstream documents for an install from before July 2026, as the fixture's program and npm see them. */
 const sequenceCommands = (f: Awaited<ReturnType<typeof fixture>>, hops: readonly string[]) => [
-  "fixture-agent gateway stop",
+  "fixture-agent gateway stop --force",
   ...hops.flatMap(hop => ["npm install --global --prefix " + join(f.root, "global") + " --no-audit --no-fund --allow-scripts=openclaw --registry=https://registry.npmjs.org fixture-agent@" + hop, "fixture-agent doctor --fix --yes"]),
   "fixture-agent gateway start", "fixture-agent gateway status --deep", "fixture-agent node restart"];
 
@@ -507,7 +507,7 @@ test("G011-UP10 the hops of OpenClaw's documented sequence: an installation from
     assert.throws(() => upgradeHops(OPENCLAW_SEQUENCE, installed, target), (error: unknown) => error instanceof ManagementError && error.code === "INVALID_METADATA", String(installed) + " -> " + target);
   // The declaration is upstream's: its commands, the npm flag its install documents, and the bridge.
   assert.deepEqual(OPENCLAW_SEQUENCE.bridge, { before: "2026.7.0", version: "2026.9.5" }); assert.deepEqual(OPENCLAW_SEQUENCE.npmFlags, ["--allow-scripts=openclaw"]);
-  assert.deepEqual(OPENCLAW_SEQUENCE.gateway, { label: GATEWAY, stop: ["gateway", "stop"], start: ["gateway", "start"], status: ["gateway", "status", "--deep"] });
+  assert.deepEqual(OPENCLAW_SEQUENCE.gateway, { label: GATEWAY, stop: ["gateway", "stop", "--force"], start: ["gateway", "start"], status: ["gateway", "status", "--deep"] });
   assert.deepEqual(OPENCLAW_SEQUENCE.doctor, ["doctor", "--fix", "--yes"]); assert.deepEqual(OPENCLAW_SEQUENCE.restarts, [{ label: NODE, args: ["node", "restart"] }]);
   assert.equal(OPENCLAW_SEQUENCE.backupCommand, "openclaw backup create --output <目录> --verify"); assert.deepEqual(OPENCLAW_SEQUENCE.migrates, [".openclaw/openclaw.json"]);
 });
@@ -520,7 +520,7 @@ test("G011-UP11 OpenClaw's upgrade runs upstream's sequence in order: gateway st
   const check = await f.manager.maintenance(recipe.harnessId), entry = join(f.packageRoot, "entry.mjs");
   // The confirmation: the hops, the exact lines in order, the gateway offline throughout, the node service restarted by the product, no npm rollback.
   assert.deepEqual(check.sequence?.hops.map(hop => [hop.version, hop.bridge]), [["2026.9.5", true], ["2026.10.9", false]]);
-  assert.deepEqual(check.sequence?.commands, [entry + " gateway stop",
+  assert.deepEqual(check.sequence?.commands, [entry + " gateway stop --force",
     f.npm + " install --global --prefix " + join(f.root, "global") + " --no-audit --no-fund --allow-scripts=openclaw --registry=https://registry.npmjs.org fixture-agent@2026.9.5", entry + " doctor --fix --yes",
     f.npm + " install --global --prefix " + join(f.root, "global") + " --no-audit --no-fund --allow-scripts=openclaw --registry=https://registry.npmjs.org fixture-agent@2026.10.9", entry + " doctor --fix --yes",
     entry + " gateway start", entry + " gateway status --deep", entry + " node restart"]);
@@ -540,10 +540,10 @@ test("G011-UP11 OpenClaw's upgrade runs upstream's sequence in order: gateway st
   assert.equal(job.native?.backupConfirmed, true); assert.deepEqual(job.native?.restartServices, [GATEWAY]); assert.equal(job.native?.actualVersion, "2026.10.9");
   assert.equal(job.native?.configurationPreserved, true); assert.equal(job.native?.configurationMigrated, undefined); assert.equal(job.native?.closedConversations, 1);
   const text = logs(f, job.id);
-  for (const line of ["目标版本 2026.10.9，按产品官方文档的步骤升级，共 2 跳：2026.9.5 → 2026.10.9。", "停止 " + GATEWAY + "：" + entry + " gateway stop", "第 1 跳 2026.9.5 的 Doctor：" + entry + " doctor --fix --yes", "第 2 跳 2026.10.9 的 Doctor：" + entry + " doctor --fix --yes",
+  for (const line of ["目标版本 2026.10.9，按产品官方文档的步骤升级，共 2 跳：2026.9.5 → 2026.10.9。", "停止 " + GATEWAY + "：" + entry + " gateway stop --force", "第 1 跳 2026.9.5 的 Doctor：" + entry + " doctor --fix --yes", "第 2 跳 2026.10.9 的 Doctor：" + entry + " doctor --fix --yes",
     "启动 " + GATEWAY + "：" + entry + " gateway start", GATEWAY + " 已重新运行（进程 42001），正在端口 18789 上监听。", entry + " gateway status --deep：", "Gateway service: running (deep)", "Version: 2026.10.9",
     "重启 " + NODE + "：" + entry + " node restart", NODE + " 已重新运行（进程 42002）。", "已核实本机程序为 2026.10.9，受保护的配置文件没有改动。"]) assert.ok(text.includes(line), line + "\n" + JSON.stringify(text, null, 1));
-  const stop = text.indexOf("停止 " + GATEWAY + "：" + entry + " gateway stop"), start = text.indexOf("启动 " + GATEWAY + "：" + entry + " gateway start");
+  const stop = text.indexOf("停止 " + GATEWAY + "：" + entry + " gateway stop --force"), start = text.indexOf("启动 " + GATEWAY + "：" + entry + " gateway start");
   assert.ok(stop >= 0 && text.findIndex(line => line === "native package updated") > stop && start > text.lastIndexOf("doctor ok 2026.10.9"), "stopped before the first install, started after the last Doctor");
   assert.deepEqual(f.manager.readJob(job.id), job, "the facts read back as written");
 });

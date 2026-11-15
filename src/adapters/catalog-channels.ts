@@ -74,7 +74,7 @@ const maintenance: Readonly<Record<string, ProductMaintenance>> = {
   codex: { services: [], data: [".codex"], resident: [] },
   opencode: { services: [], data: [".config/opencode", ".local/share/opencode"], resident: [] },
   openclaw: { services: [
-    { label: "ai.openclaw.gateway", name: "OpenClaw Gateway", stop: [["gateway", "stop"], ["gateway", "uninstall"]], interrupts: "Gateway 连接的消息渠道（例如微信、飞书）会断开，重新安装并运行 openclaw onboard --install-daemon 后才恢复。" },
+    { label: "ai.openclaw.gateway", name: "OpenClaw Gateway", stop: [["gateway", "stop", "--force"], ["gateway", "uninstall"]], interrupts: "Gateway 连接的消息渠道（例如微信、飞书）会断开，重新安装并运行 openclaw onboard --install-daemon 后才恢复。" },
     { label: "ai.openclaw.node", name: "OpenClaw Node", stop: [["node", "stop"], ["node", "uninstall"]], interrupts: "这台电脑上的 OpenClaw 节点会停止，重新安装并运行 openclaw node install 后才恢复。" }],
     data: [".openclaw"],
     // OpenClaw's gateway and node host rename their process title (ADR-043's recipe names them the same way).
