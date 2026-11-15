@@ -461,6 +461,8 @@ export interface HarnessControl {
    * may have reached it. Never starts a turn of its own: words that find no turn running are `not_taken`, and stay the Hub's.
    */
   steer?(id: NativeConversationId, text: string): Promise<SteerOutcome>;
+  /** Takes the last `turns` turns out of the native history of `id`, idle only; absent when the Harness cannot. */
+  rollback?(id: NativeConversationId, turns: number): Promise<void>;
   /** Enables interactive requests for a public Run. Standalone probes keep their explicit deny default. */
   enablePermissions?(): void;
   /** Selects an actual pending option; receipt does not assert backend acknowledgement. */

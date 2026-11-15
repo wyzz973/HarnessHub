@@ -12,6 +12,7 @@ import { catalogTarget } from "../catalog/platform.js";
 import type { RelayCapabilities } from "../../contracts/relay.js";
 import { NATIVE_FRAME_BYTES } from "../control/json-rpc-process.js";
 import { chooseControl } from "../../contexts/catalog/application/select-control.js";
+import { driverImplemented } from "../../contexts/catalog/domain/discovery.js";
 import { inventory } from "../catalog/inventory-composition.js";
 import type { CleanupEvidence, ControlLaunch, HarnessControl } from "../../contracts/control.js";
 import { resolveHostBudgets, type HostBudgets } from "../../contracts/native-host.js";
@@ -137,7 +138,7 @@ async function observe(request: SelectionRequest, configuration: SessionConfigur
   const managedChoices = harness.controls.filter(control => observed.managedBindings.has(control.id));
   const preferred = request.controlId ?? (managedChoices.length === 1 ? managedChoices[0]!.id : undefined);
   const selected = chooseControl(harness.controls, preferred);
-  if (selected.protocol !== "acp-v1" && selected.protocol !== "codex-app-server" && selected.protocol !== "pi-rpc")
+  if (!driverImplemented(selected.protocol))
     throw new SessionError("UNSUPPORTED_CONTROL", "this control Driver is not implemented: " + selected.protocol);
   return { harnessId: harness.id, selected, searchPath: observed.searchPath, managed: observed.managedBindings.get(selected.id) ?? null };
 }
@@ -177,7 +178,7 @@ function builtinProtocol(harnessId: string, controlId: string): ControlLaunch["p
     try {
       for (const definition of loadBuiltinCatalog(catalogTarget()))
         for (const control of definition.controls)
-          if (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc")
+          if (driverImplemented(control.protocol))
             for (const id of [definition.id, ...definition.aliases]) table.set(id + "\0" + control.id, control.protocol);
     } catch { /* A catalog that cannot be read places no control; admission then reads no declaration (the most conservative). */ }
     builtinProtocols = table;
@@ -194,7 +195,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
   private readonly protocols = new Map<string, ControlLaunch["protocol"]>();
   private remember(observed: Observation): void {
     const protocol = observed.selected.protocol;
-    if (protocol === "acp-v1" || protocol === "codex-app-server" || protocol === "pi-rpc") {
+    if (driverImplemented(protocol)) {
       if (this.protocols.size >= 1024 && !this.protocols.has(observed.harnessId + "\0" + observed.selected.id)) this.protocols.delete(this.protocols.keys().next().value!);
       this.protocols.set(observed.harnessId + "\0" + observed.selected.id, protocol);
     }
@@ -276,7 +277,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
         Object.assign(environment, await this.providers.materialize(selection.provider, selection.harnessId, home!));
       }
       const protocol = observed.selected.protocol;
-      if (protocol !== "acp-v1" && protocol !== "codex-app-server" && protocol !== "pi-rpc") throw new SessionError("UNSUPPORTED_CONTROL", "unsupported control protocol");
+      if (!driverImplemented(protocol)) throw new SessionError("UNSUPPORTED_CONTROL", "unsupported control protocol");
       // The host class's own TMPDIR, kept between Turns (ADR-056 §4.12), under the workspace lease this Turn holds; the
       // binding's private root keeps only what is the Turn's alone (the catalog snapshot, a generated configuration home).
       if (this.tmpdirs === null) throw new SessionError("HOST_TMPDIR_FAILED", "host temporary directories are unavailable");
@@ -442,7 +443,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
         PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath,
         TMPDIR: root, PWD: configuration.workspace, OPENCODE_DISABLE_AUTOUPDATE: "true" };
       const protocol = observed.selected.protocol;
-      if (protocol !== "acp-v1" && protocol !== "codex-app-server" && protocol !== "pi-rpc") throw new SessionError("UNSUPPORTED_CONTROL", "native model discovery is unavailable");
+      if (!driverImplemented(protocol)) throw new SessionError("UNSUPPORTED_CONTROL", "native model discovery is unavailable");
       const launch: ControlLaunch = { ...observed.selected.command, protocol, env };
       // A probe keeps its own private TMPDIR: it holds no workspace lease, so it never shares a host class's directory.
       const options = { cwd: configuration.workspace, env, requestTimeoutMs: 10000, runTimeoutMs: 300000, maxFrameBytes: NATIVE_FRAME_BYTES, maxDiagnosticBytes: 64 * 1024,

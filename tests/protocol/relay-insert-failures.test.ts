@@ -7,10 +7,9 @@ import { contentId, type ContentKind, type ControlAttachment } from "../../src/c
 import type { BackendResult, ContextEffect, ControlEvent, ControlLaunch, ControlOptions, HarnessControl, NativeModelCatalog } from "../../src/contracts/control.js";
 import { ClaudeControl } from "../../src/adapters/control/claude.js";
 import { CodexControl } from "../../src/adapters/control/codex.js";
-import { HermesControl } from "../../src/adapters/control/hermes.js";
+import { HermesGatewayControl } from "../../src/adapters/control/hermes/control.js";
 import { OpenClawControl } from "../../src/adapters/control/openclaw.js";
 import { OpenCodeControl } from "../../src/adapters/control/opencode.js";
-import type { HermesGatewayPreflight } from "../../src/adapters/control/hermes-gateway.js";
 
 // G067-C03 (ADR-055 R0c): what each of the five drivers reports of a prompt reaching its native history, from the peer's own
 // protocol only. A refusal before the prompt was inserted is not recorded, a failure after insertion is recorded, and a lost
@@ -77,7 +76,6 @@ createInterface({ input: process.stdin }).on("line", line => {
 });
 `;
 const options: ControlOptions = { cwd: process.cwd(), env: {}, requestTimeoutMs: 2000, runTimeoutMs: 4000, maxFrameBytes: 65536, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 150 };
-const attached: HermesGatewayPreflight = async () => ({ kind: "attach", verdict: "A", explanation: "fixture gateway", evidence: [] });
 
 async function peers(t: test.TestContext) {
   const root = await mkdtemp(join(tmpdir(), "relay-insert-")); t.after(() => rm(root, { recursive: true, force: true }));
@@ -185,26 +183,6 @@ test("G067-C03 OpenCode: an ignored /compact reached nothing, a prompt stopped a
   assert.equal(await cancelled.received("session/prompt"), 1);
 });
 
-test("G067-C03 Hermes: a gateway that was unavailable admitted nothing, a failure after end_turn is recorded, unknown_execution is unknown and never sent again", async t => {
-  const f = await peers(t);
-  const unavailable = f.launch("acp-v1", { RELAY_PROMPT: "error:-32603:Gateway starting: warming_up" });
-  const refused = await turn(new HermesControl(unavailable.launch, options, attached), "do the work");
-  assert.equal(refused.result.error?.code, "NATIVE_GATEWAY_UNAVAILABLE"); assert.equal(refused.result.input, "not_recorded");
-  // The turn was admitted and written before the model call; the model call then failed (its log names the class).
-  const quiet = f.launch("acp-v1", { RELAY_PROMPT: "silent", RELAY_STDERR: "API call failed after 3 retries: RateLimitError" });
-  const failed = await turn(new HermesControl(quiet.launch, options, attached), "do the work");
-  assert.equal(failed.result.status, "failed"); assert.equal(failed.result.reason, "native_error"); assert.equal(failed.result.input, "recorded");
-  // The gateway lost the outcome: it may have run, Hermes says not to send it again, and nothing is concluded.
-  const lost = f.launch("acp-v1", { RELAY_PROMPT: "error:-32603:unknown_execution: admission adm-7 has no outcome; /discard adm-7" });
-  const unknown = await turn(new HermesControl(lost.launch, options, attached), "do the work");
-  assert.equal(unknown.result.status, "failed"); assert.equal(unknown.result.input, undefined);
-  assert.ok(unknown.events.some(event => event.type === "diagnostic" && event.message.includes("/discard adm-7")));
-  assert.equal(await lost.received("session/prompt"), 1);
-  // A slash input is a command as the viewer reads it (Python's lstrip, so a full-width space too): its reply proves nothing.
-  const compressed = f.launch("acp-v1", { RELAY_PROMPT: "answer" });
-  assert.equal((await turn(new HermesControl(compressed.launch, options, attached), "　/compress")).result.input, undefined);
-});
-
 test("G067-C03 OpenClaw: an unapplied model sent nothing, a user row in the turn's transcript is recorded even when the turn failed, an unreadable transcript is unknown", async t => {
   const f = await peers(t), config = join(f.root, "openclaw.json");
   await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
@@ -281,47 +259,6 @@ test("G067-C03 OpenCode refusals by their wire shape (2.2.5): a model failure af
     assert.equal(await input(error), undefined, JSON.stringify(error));
 });
 
-test("G067-C03 Hermes v0.22.5's own words: a lost turn is unknown and never sent again; a later prompt it refuses while that turn is pending, and one refused before admission, are not recorded", async t => {
-  const f = await peers(t), hermes = (details: string) => f.launch("acp-v1", { RELAY_PROMPT: "error:-32603:" + details });
-  const recovery = (state: string) => "unknown_execution: do not resend accepted input; a turn in this session was lost when the gateway restarted and its outcome is unknown (" + state + "). Send `/discard adm-7` here (or `hermes sessions discard s1` in a terminal), then continue.";
-  // `_unknown_recovery(submitted=True)`: this prompt's own turn was lost; it may have run.
-  const lost = hermes(recovery("your input is accepted and kept")), unknown = await turn(new HermesControl(lost.launch, options, attached), "do the work");
-  assert.equal(unknown.result.input, undefined); assert.equal(await lost.received("session/prompt"), 1);
-  assert.equal(diagnostics(unknown.events).length, 1); assert.match(diagnostics(unknown.events)[0]!, /不要重发/u); assert.match(diagnostics(unknown.events)[0]!, /\/discard adm-7/u);
-  // `_unknown_recovery(submitted=False)`: a later prompt refused before submit while the lost turn is pending.
-  const pending = hermes(recovery("nothing was submitted")), refused = await turn(new HermesControl(pending.launch, options, attached), "do the work");
-  assert.equal(refused.result.input, "not_recorded");
-  assert.equal(diagnostics(refused.events).length, 1); assert.match(diagnostics(refused.events)[0]!, /\/discard adm-7/u); assert.doesNotMatch(diagnostics(refused.events)[0]!, /不要重发|可能已经执行/u);
-  // R8 H4: an unknown session, and the owner's refusal of the submit by its bounded reason code, admit nothing.
-  for (const reason of ["not_found", "invalid_params", "permission_denied"])
-    assert.equal((await turn(new HermesControl(hermes(reason).launch, options, attached), "do the work")).result.input, "not_recorded", reason);
-  // A failure after admission, or a reason code inside other words, is no such refusal.
-  for (const reason of ["admitted_turn_failed", "permission_denied by the owner"])
-    assert.equal((await turn(new HermesControl(hermes(reason).launch, options, attached), "do the work")).result.input, undefined, reason);
-});
-
-test("G067 Hermes: a /compress the viewer answers with its no-change report ran and changed nothing (noop); one that removed messages, and the same words for any other input, did not", async t => {
-  const f = await peers(t), answered = async (prompt: string, reply: string) => (await turn(new HermesControl(f.launch("acp-v1", { RELAY_PROMPT: "answer", RELAY_REPLY: reply + "\n" }).launch, options, attached), prompt)).result;
-  for (const reply of ["No changes from compression.", "No changes from compression: 12 messages\nApprox request size: ~1,234 tokens (unchanged)",
-    "Compression refused (summary would grow the conversation): 12 messages preserved\nThe generated summary was larger than what it would replace; no messages were removed.",
-    "Compression aborted: 12 messages preserved\nSummary generation failed; no messages were removed."])
-    assert.deepEqual(await answered("/compress", reply), { status: "completed", reason: "end_turn", command: "noop" }, reply);
-  // The registry's alias, in any case, is the same command.
-  assert.equal((await answered(" /COMPACT", "No changes from compression.")).command, "noop");
-  assert.deepEqual(await answered("/compress", "Compressed: 12 → 4 messages\nApprox request size: ~9,000 → ~2,000 tokens"), { status: "completed", reason: "end_turn" });
-  assert.deepEqual(await answered("what does Hermes say when nothing compresses?", "No changes from compression."), { status: "completed", reason: "end_turn", input: "recorded" });
-});
-
-test("G067 Hermes: a slash word in neither its registry copy nor its catalog is prompt text, but its end proves nothing, so a newer Hermes command is never taken for recorded content", async t => {
-  const f = await peers(t), answered = async (prompt: string) => (await turn(new HermesControl(f.launch("acp-v1", { RELAY_PROMPT: "answer" }).launch, options, attached), prompt)).result;
-  const reader = new HermesControl(f.launch("acp-v1", {}).launch, options, attached);
-  const catalog: NativeModelCatalog = { models: [], defaultModel: null, authentication: "ready", canSelect: false, commands: [{ name: "reset", description: "reset" }] };
-  assert.deepEqual(reader.classify("/thanks for that", catalog), { kind: "content" }, "read as text, so it can carry what it owes"); await reader.close();
-  for (const prompt of ["/thanks for that", "/Rewind-2 now"]) assert.deepEqual(await answered(prompt), { status: "completed", reason: "end_turn" }, prompt);
-  // What no Hermes reads as a command stays proven by its answer: plain text, a path, a word unlike any command name.
-  for (const prompt of ["thanks for that", "/etc/hosts 这一行是什么意思", "/你好"]) assert.deepEqual(await answered(prompt), { status: "completed", reason: "end_turn", input: "recorded" }, prompt);
-});
-
 test("G067 R0d each driver's own handling of an input follows its reading: leading whitespace and attachments decide the Hub's /export, Codex's thread operations and OpenCode's /compact alike", async t => {
   const f = await peers(t), file = await attachment(f.root, "notes.txt");
   // Claude Code reads `/export` as /export, so the Hub's export runs and nothing is sent; behind a space it is words and goes to
@@ -344,16 +281,6 @@ test("G067 R0d each driver's own handling of an input follows its reading: leadi
   assert.deepEqual(new CodexControl(codexCompact.launch, options).classify("/compact", null, ["file"]), { kind: "content" });
   assert.equal((await turn(new CodexControl(codexCompact.launch, options), "/compact", undefined, false, [file])).result.input, "recorded");
   assert.equal(await codexCompact.received("turn/start"), 1); assert.equal(await codexCompact.received("thread/compact/start"), 0);
-  // Hermes: `  /EXPORT` is its registry's export, which the Hub runs when Hermes lists none. With an image `/clear` is prompt text;
-  // a file goes as a text pointer after a command, and Hermes still runs it (`/compress`; the Hub's own `/clear` is not sent).
-  const hermesExport = f.launch("acp-v1", { RELAY_PROMPT: "answer" });
-  const exported = await turn(new HermesControl(hermesExport.launch, options, attached), "  /EXPORT", undefined, true);
-  assert.equal(exported.result.reason, "export_failed"); assert.equal(exported.result.input, "not_recorded"); assert.equal(await hermesExport.received("session/prompt"), 0);
-  const hermesImage = f.launch("acp-v1", { RELAY_PROMPT: "answer" }), picture = await attachment(f.root, "screen.png", "image");
-  assert.equal((await turn(new HermesControl(hermesImage.launch, options, attached), "/clear", undefined, false, [picture])).result.input, "recorded", "read as content, its answer proves it recorded");
-  const hermesFile = f.launch("acp-v1", { RELAY_PROMPT: "answer" });
-  assert.deepEqual((await turn(new HermesControl(hermesFile.launch, options, attached), "/compress", undefined, false, [file])).result, { status: "completed", reason: "end_turn" }, "a command: its answer proves nothing");
-  assert.match((await hermesFile.prompts())[0]!, /^\/compress\n\n\[Attached file\] notes\.txt /u);
   // OpenCode trims an input before it looks for a command (`Iuf`): `  /compact` that answered nothing was ignored.
   const ignored = await turn(new OpenCodeControl(f.launch("acp-v1", { RELAY_PROMPT: "silent" }).launch, options), "  /compact");
   assert.equal(ignored.result.error?.code, "NATIVE_COMMAND_IGNORED");
@@ -400,7 +327,7 @@ test("G067 R0d each driver reads an input as its native side parses it: whitespa
   assert.deepEqual(read(opencode, "/compact", null, ["image", "file"]), ["command", "compact", "compact", ""]); assert.deepEqual(read(opencode, "/ compact"), ["content"]);
   // Hermes: Python's lstrip() and split() (full-width and no-break spaces, not U+FEFF); a word its registry resolves, in any
   // case and by alias, or one it announced, is a command, with effects by registry name and arguments; a path is text.
-  const hermes = new HermesControl(launch, options, attached);
+  const hermes = new HermesGatewayControl({ protocol: "hermes-gateway", executable: "/nonexistent/g067-hermes", args: [], env: {} }, options);
   assert.deepEqual(read(hermes, "　/clear"), ["command", "clear", "clear", ""]); assert.deepEqual(read(hermes, " /undo　2 "), ["command", "undo", "rewind", "2"]);
   assert.deepEqual(read(hermes, "/compress --preview"), ["command", "compress", "none", "--preview"]); assert.deepEqual(read(hermes, "/compress"), ["command", "compress", "compact", ""]);
   assert.deepEqual(read(hermes, "/compress focus on tests"), ["command", "compress", "compact", "focus on tests"]);

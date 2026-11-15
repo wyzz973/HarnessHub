@@ -65,20 +65,6 @@ test("G069-R2 Claude Code reads an input with audio alone as it reads one withou
 // Minor 4: a refused relay Turn has no side effect before its refusal (review mutations M27, M29, M1b)
 // ---------------------------------------------------------------------------------------------------------------------
 
-test("G069-R2 Hermes refuses a relay Turn read as a command before anything of it runs: no export (the Hub's /export is offered, models() read), no clear, no prompt", { timeout: 60000 }, async t => {
-  const peer = await peerRoot(t), { control, id } = await opened(t, "hermes", peer);
-  const catalog = await control.models!();
-  assert.ok(catalog.commands?.some(command => command.name === "export"), "the Hub offers its own /export");
-  for (const words of ["/export", "/clear", "/model openai:gpt-5.5", "/compress"]) {
-    refused(await run(control, id, relayTurn(ID_A, words, false)), "hermes " + words);
-    assert.equal(await control.checkpoint!(), id, words + ": nothing was sent or given up, the session is the same one");
-  }
-  assert.deepEqual(await prompts(peer), [], "no prompt");
-  // The invalid sample: the same /export without a packet is the Hub's export (which fails here: the fixture's command line has no `acp`).
-  const exported = await run(control, id, "/export");
-  assert.deepEqual([exported.result.reason, exported.result.error?.code], ["export_failed", "NATIVE_EXPORT_UNAVAILABLE"]);
-});
-
 test("G069-R2 OpenClaw refuses a relay Turn read as a command before anything of it runs: no model patch (a model was selected, so one is due) and no transcript read", { timeout: 60000 }, async t => {
   const peer = await peerRoot(t, { RELAY_OPENCLAW: "1", RELAY_COMMANDS: JSON.stringify([{ name: "new", description: "new" }, { name: "reset", description: "reset" }]) });
   const calls: string[] = [];

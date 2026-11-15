@@ -8,7 +8,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { ControlEvent, ControlLaunch, ControlRun, HarnessControl } from "../contracts/control.js";
 import { resolveHostBudgets } from "../contracts/native-host.js";
-import { DiscoveryInputError } from "../contexts/catalog/domain/discovery.js";
+import { DiscoveryInputError, driverImplemented } from "../contexts/catalog/domain/discovery.js";
 import { createNativeControl } from "../adapters/control/factory.js";
 import { NATIVE_FRAME_BYTES } from "../infrastructure/control/json-rpc-process.js";
 
@@ -111,7 +111,7 @@ export async function main(args: readonly string[]): Promise<number> {
     const harness = observed.report.harnesses.find((item) => item.id === values.harness || item.aliases.includes(values.harness!));
     if (!harness) throw new DiscoveryInputError("unknown Harness: " + values.harness);
     const selected = chooseControl(harness.controls, values.control);
-    if (selected.protocol !== "acp-v1" && selected.protocol !== "codex-app-server" && selected.protocol !== "pi-rpc")
+    if (!driverImplemented(selected.protocol))
       throw new DiscoveryInputError("this control Driver is not implemented: " + selected.protocol);
     if (selected.command === null) throw new DiscoveryInputError("selected control has no resolved command");
     ownedRoot = await mkdtemp(join(tmpdir(), "harness-control-"));

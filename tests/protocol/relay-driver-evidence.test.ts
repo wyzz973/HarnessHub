@@ -84,35 +84,9 @@ test("Codex names the thread before its first turn (thread/name/set), one line; 
   assert.equal((await run(titled.control, titled.id, "开始")).result.status, "completed");
 });
 
-test("Hermes names the session by /title, answered by the viewer without a turn or a history row; a /title that is never answered rejects within its bound and the next turn runs", { timeout: 60000 }, async t => {
-  const peer = await peerRoot(t, { RELAY_HERMES: "1" }), { control, id } = await opened(t, "hermes", peer);
-  await run(control, id, "先说一句");
-  const entries = (await peer.native()).sessions["relay-session"]!.entries.length;
-  await control.setTitle!(id, "修好\n测试");
-  await control.setTitle!(id, "   ");
-  assert.deepEqual((await prompts(peer)).at(-1), ["/title 修好 测试"], "one line; an empty title is not sent");
-  assert.equal((await peer.native()).sessions["relay-session"]!.title, "修好 测试");
-  assert.equal((await peer.native()).sessions["relay-session"]!.entries.length, entries, "no history row");
-  // An answer that is not Hermes's receipt is no title.
-  const other = await peerRoot(t), plain = await opened(t, "hermes", other);
-  await assert.rejects(plain.control.setTitle!(plain.id, "x"), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_TITLE_UNAVAILABLE");
-  const hanging = await peerRoot(t, { RELAY_HERMES: "1", RELAY_TITLE_FAULT: "hang" }), stuck = await opened(t, "hermes", hanging, undefined, { runTimeoutMs: 6000 });
-  const started = Date.now();
-  await assert.rejects(stuck.control.setTitle!(stuck.id, "修好测试"), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_TITLE_UNAVAILABLE");
-  assert.ok(Date.now() - started < 3000, "its own bound, not the Turn's");
-  assert.equal(stuck.control.healthy!(), true);
-  assert.equal((await run(stuck.control, stuck.id, "继续")).result.status, "completed");
-});
-
-test("Hermes: a replay with a frame that is no update fails the open", { timeout: 30000 }, async t => {
-  const peer = await peerRoot(t, { RELAY_LOAD_FAULT: "garbage" }), control = driver(t, "hermes", peer);
-  await control.initialize();
-  await assert.rejects(control.open(peer.workspace, undefined, undefined, "relay-session"));
-});
-
 test("no Driver reads its native history back: none has a check, a position, a vendor reading or a reader of replayed user entries, and no declaration has a cell for one", async t => {
   const peer = await peerRoot(t);
-  for (const harness of ["claude", "codex", "opencode", "dsh", "hermes", "openclaw"] as const) {
+  for (const harness of ["claude", "codex", "opencode", "dsh", "openclaw"] as const) {
     const control = driver(t, harness, peer) as unknown as Record<string, unknown>;
     for (const member of ["verifyDelivered", "deliveryPosition", "relayVendor", "userTextOf"]) assert.equal(control[member], undefined, harness + " " + member);
     assert.deepEqual(Object.keys((control.relayCapabilities as { delivery: object }).delivery).sort(), ["live", "successProvesRecorded"], harness);

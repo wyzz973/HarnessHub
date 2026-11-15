@@ -37,12 +37,12 @@ const nativeDefinitions: readonly HarnessDefinition[] = [
   {
     id: "hermes", name: "Hermes Agent", aliases: [], binaryNames: ["hermes"], configHints: [".hermes"],
     // Its official installer keeps a checkout behind ~/.local/bin/hermes; discovery reads the version its install stamp
-    // names (installation-channels.ts), not this package. The package version follows the channel's latest: the versions
-    // really verified are evidence only, in docs/verification and the matrix's installation (ADR-053). The source is
-    // v0.22.4's ACP page (acp_registry/agent.json is gone there).
-    controls: [{ id: "hermes-native", protocol: "acp-v1", executableNames: ["hermes"], args: ["acp"], env: {},
+    // names (installation-channels.ts), not this package. The control is the user's running gateway (`hermes-gateway-v1`,
+    // adapters/control/hermes/): nothing is started, the executable only places the installation. The source is v0.23.1's
+    // developer guide of programmatic integration.
+    controls: [{ id: "hermes-native", protocol: "hermes-gateway", executableNames: ["hermes"], args: [], env: {},
       package: { kind: "python", name: "hermes-agent", version: "latest", binNames: ["hermes"] }, distribution: null, requiredExecutables: [],
-      source: { repository: "NousResearch/hermes-agent", revision: "4d04303818b61bf3aa09278af48356315515965b", upstreamId: "hermes-agent", url: "https://github.com/NousResearch/hermes-agent/blob/4d04303818b61bf3aa09278af48356315515965b/website/docs/user-guide/features/acp.md" } }],
+      source: { repository: "NousResearch/hermes-agent", revision: "3b421578588243f920886e6fe79a6faa87ea026e", upstreamId: "hermes-agent", url: "https://github.com/NousResearch/hermes-agent/blob/3b421578588243f920886e6fe79a6faa87ea026e/website/docs/developer-guide/programmatic-integration.md" } }],
   },
   {
     // The ACP profile is the automation surface of `dsh`; dsh initialises it from its bundled template on first use.

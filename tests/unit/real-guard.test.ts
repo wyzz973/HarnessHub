@@ -287,7 +287,7 @@ test("G060-NC15 the evidence header names the commit, policy and each Harness's 
     assert.deepEqual(facts("claude"), ["system", [{ id: "claude-acp-npm", protocol: "acp-v1", entry: "path" }], "0.89.1", "2.1.306", "installation"]);
     // Hermes through the discovery manifest only: no installation describes it, and the entry says it is a custom one.
     assert.deepEqual(pathless("hermes"), []);
-    assert.deepEqual(facts("hermes"), ["system", [{ id: "hermes-native", protocol: "acp-v1", entry: "custom-entry" }], null, null, null]);
+    assert.deepEqual(facts("hermes"), ["system", [{ id: "hermes-native", protocol: "hermes-gateway", entry: "custom-entry" }], null, null, null]);
     // Nothing leaves a path, and no program was started for any of it.
     assert.deepEqual(homePathsIn(header, [home, root]), []); assert.ok(!JSON.stringify(header).includes(root));
     await assert.rejects(stat(started), (error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT");

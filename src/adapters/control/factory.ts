@@ -11,7 +11,7 @@ import { OpenClawControl, openClawRelayCapabilities } from "./openclaw.js";
 import { CursorControl } from "./cursor.js";
 import { OpenCodeControl, openCodeRelayCapabilities } from "./opencode.js";
 import { ClaudeControl, claudeRelayCapabilities } from "./claude.js";
-import { HermesControl, hermesRelayCapabilities } from "./hermes.js";
+import { HermesGatewayControl, hermesRelayCapabilities } from "./hermes/control.js";
 import { flavorOf } from "../flavors/index.js";
 import { sessionEntryOf } from "../../contracts/flavor.js";
 
@@ -57,9 +57,10 @@ export async function createNativeControl(harnessId: string, launch: ControlLaun
   options = { ...options, entry: options.entry ?? sessionEntryOf(flavorOf(harnessId)) };
   if (launch.protocol === "pi-rpc") return new PiControl(launch, options);
   if (launch.protocol === "codex-app-server") return new CodexControl(launch, options);
+  if (launch.protocol === "hermes-gateway") return new HermesGatewayControl(launch, options);
   return harnessId === "openclaw" ? new OpenClawControl(launch, options) : harnessId === "cursor" ? new CursorControl(launch, options)
     : harnessId === "opencode" ? new OpenCodeControl(launch, options) : harnessId === "claude" ? new ClaudeControl(launch, options)
-    : harnessId === "hermes" ? new HermesControl(launch, options) : harnessId === "dsh" ? new DshControl(launch, options) : new AcpControl(launch, options);
+    : harnessId === "dsh" ? new DshControl(launch, options) : new AcpControl(launch, options);
 }
 
 /**
@@ -71,6 +72,7 @@ export async function createNativeControl(harnessId: string, launch: ControlLaun
 export function relayCapabilities(harnessId: string, protocol: ControlLaunch["protocol"]): RelayCapabilities | null {
   if (protocol === "pi-rpc") return null;
   if (protocol === "codex-app-server") return codexRelayCapabilities;
+  if (protocol === "hermes-gateway") return hermesRelayCapabilities;
   return harnessId === "openclaw" ? openClawRelayCapabilities : harnessId === "opencode" ? openCodeRelayCapabilities : harnessId === "claude" ? claudeRelayCapabilities
-    : harnessId === "hermes" ? hermesRelayCapabilities : harnessId === "dsh" ? dshRelayCapabilities : null;
+    : harnessId === "dsh" ? dshRelayCapabilities : null;
 }

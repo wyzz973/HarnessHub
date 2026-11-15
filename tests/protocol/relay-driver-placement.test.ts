@@ -29,7 +29,7 @@ async function stored(harness: Harness, peer: Awaited<ReturnType<typeof peerRoot
   return String(Object.values(native.sessions)[0]!.entries.find(entry => entry.role === "user")!.text);
 }
 
-test("G069-C01 the six Drivers place a relay Turn by their declaration and the title line reaches the recorded user entry unchanged; a plain input goes as before", { timeout: 60000 }, async t => {
+test("G069-C01 the ACP and Codex Drivers place a relay Turn by their declaration and the title line reaches the recorded user entry unchanged; a plain input goes as before", { timeout: 60000 }, async t => {
   const body = relayTurn(ID_A, WORDS).relay.body;
   // [harness, peer settings, the text parts sent, how the native side joins them]
   const cases: readonly (readonly [Harness, Record<string, string>, readonly string[]])[] = [
@@ -37,7 +37,6 @@ test("G069-C01 the six Drivers place a relay Turn by their declaration and the t
     ["opencode", {}, [body + "\n\n", WORDS]],
     // dsh concatenates its text blocks without a separator (dsh-acp 0.2.1-rc.5 admitAcpPrompt): the packet keeps its blank line.
     ["dsh", { RELAY_JOIN: "" }, [body + "\n\n", WORDS]],
-    ["hermes", {}, [body + "\n\n", WORDS]],
     ["openclaw", { RELAY_OPENCLAW: "1" }, [body + "\n\n" + WORDS]],
     ["codex", {}, [body + "\n\n" + WORDS]],
   ];
@@ -67,14 +66,7 @@ test("G069-C01 the six Drivers place a relay Turn by their declaration and the t
   }
 });
 
-test("G069-C01 Hermes's file pointers follow the user's words (pointersAfterUser); a Driver without a declaration flattens as singleText", { timeout: 30000 }, async t => {
-  const peer = await peerRoot(t), attachment = join(peer.root, "notes.txt"); await writeFile(attachment, "notes");
-  const hermes = driver(t, "hermes", peer); await hermes.initialize(); const id = await hermes.open(peer.workspace);
-  await run(hermes, id, relayTurn(ID_A, WORDS), [file(attachment)]);
-  const [parts] = await prompts(peer);
-  assert.equal(parts!.length, 2);
-  assert.ok(parts![0]!.startsWith(WORDS + "\n〔HarnessHub 交接单 "), "the packet first");
-  assert.ok(parts![1]!.startsWith(WORDS + "\n\n[Attached file] notes.txt (text/plain, 5 bytes, read-only copy): "), "then the words, then the pointer");
+test("G069-C01 a Driver without a declaration flattens as singleText", { timeout: 30000 }, async t => {
   // The generic driver for a Harness that declares nothing (Gemini and the like): the contract's default placement.
   const other = await peerRoot(t), { AcpControl } = await import("../../src/adapters/control/acp.js"), { resolve } = await import("node:path");
   const generic = new AcpControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/relay-control-peer.mjs")], env: other.env }, { cwd: other.workspace, env: other.env, requestTimeoutMs: 3000, runTimeoutMs: 6000, maxFrameBytes: 1 << 20, maxDiagnosticBytes: 1 << 14, closeGraceMs: 150 });
@@ -84,7 +76,7 @@ test("G069-C01 Hermes's file pointers follow the user's words (pointersAfterUser
   assert.deepEqual((await prompts(other))[0], [relayTurn(ID_A, "继续").relay.body + "\n\n继续"]);
 });
 
-test("G069-C01 a relay Turn read as a command is refused whole (G069-F1, relay-driver-fixes); what the native side reads as text carries the packet: dsh's slash input, Codex's indented `/compact`; Hermes /queue and /steer carry it in their arguments", { timeout: 60000 }, async t => {
+test("G069-C01 a relay Turn read as a command is refused whole (G069-F1, relay-driver-fixes); what the native side reads as text carries the packet: dsh's slash input, Codex's indented `/compact`", { timeout: 60000 }, async t => {
   const relayed = async (harness: Harness, words: string, settings: Record<string, string> = {}) => {
     const peer = await peerRoot(t, settings), control = driver(t, harness, peer);
     await control.initialize(); const id = await control.open(peer.workspace);
@@ -93,20 +85,13 @@ test("G069-C01 a relay Turn read as a command is refused whole (G069-F1, relay-d
   };
   // Claude Code's catalog lists /compact, as the real adapter's does: a word outside the catalog is words for it (G074-F3).
   const compactListed = { RELAY_COMMANDS: JSON.stringify([{ name: "compact", description: "compact the conversation" }]) };
-  for (const [harness, words, settings] of [["claude", "/compact keep the tests", compactListed], ["hermes", "　/compress", {}], ["opencode", "/compact", {}]] as const) {
+  for (const [harness, words, settings] of [["claude", "/compact keep the tests", compactListed], ["opencode", "/compact", {}]] as const) {
     const { peer, result, events } = await relayed(harness, words, settings);
     assert.deepEqual([result.error?.code, result.input, await prompts(peer), events], ["RELAY_PREPARE_FAILED", "not_recorded", [], []], harness + ": refused, nothing sent");
   }
   // The invalid sample: dsh has no commands but the Hub's clear, so any other slash input is text and carries the packet.
   const dsh = await relayed("dsh", "/review now");
   assert.equal((await prompts(dsh.peer))[0]!.length, 2);
-  // Hermes /queue and /steer submit their arguments as a prompt (acceptsRelay): the command word, the packet, the arguments.
-  for (const word of ["queue", "q", "steer"]) {
-    const { peer } = await relayed("hermes", "/" + word + " 修好测试");
-    const [parts] = await prompts(peer), body = relayTurn(ID_A, "x", false).relay.body;
-    assert.deepEqual(parts, ["/" + word, body + "\n\n", "修好测试"], word);
-    assert.equal(titledPacket(String(Object.values((await peer.native()).sessions)[0]!.entries[0]!.text).replace(/^\/\w+\n/u, "")), ID_A);
-  }
   // Codex: a thread operation is refused; a leading space makes `/compact` text, which carries the packet.
   const codex = await peerRoot(t), control = driver(t, "codex", codex); await control.initialize(); const thread = await control.open(codex.workspace);
   const compact = await run(control, thread, relayTurn(ID_A, "/compact", false));

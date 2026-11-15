@@ -5,14 +5,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import type { ControlEvent, ControlOptions } from "../../src/contracts/control.js";
+import type { ControlEvent, ControlLaunch, ControlOptions } from "../../src/contracts/control.js";
 import { AcpControl } from "../../src/adapters/control/acp.js";
 import { OpenClawControl } from "../../src/adapters/control/factory.js";
 import { CursorControl } from "../../src/adapters/control/cursor.js";
 import { OpenCodeControl, parseOpenCodeModels } from "../../src/adapters/control/opencode.js";
 import { ClaudeControl } from "../../src/adapters/control/claude.js";
-import { HermesControl } from "../../src/adapters/control/hermes.js";
-import { gatewayRefusalMessage, type GatewayPreflight, type HermesGatewayPreflight } from "../../src/adapters/control/hermes-gateway.js";
 import { classifyRemoteFailure, ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { bindNativeDependencies } from "../../src/adapters/control/native-dependencies.js";
 import { contentId } from "../../src/contracts/content.js";
@@ -363,197 +361,9 @@ function attachment(directory: string, name: string, mediaType: string, kind: "i
   const path = join(directory, name); writeFileSync(path, data);
   return { id: contentId("content-" + name.replace(/[^a-z0-9]/giu, "")), name, mediaType, kind, bytes: data.length, sha256: "0".repeat(64), path };
 }
-function hermes(trace: string, version?: string): ConstructorParameters<typeof HermesControl>[0] {
+function hermes(trace: string, version?: string): ControlLaunch {
   return { protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "hermes"], env: { FIXTURE_TRACE: trace, ...(version === undefined ? {} : { FIXTURE_AGENT_VERSION: version }) } };
 }
-/** The gateway preflight's verdict A (ADR-051 A2): a compatible gateway runs, so the viewer is started. Every Hermes case here runs on it. */
-const attached: HermesGatewayPreflight = async () => ({ kind: "attach", verdict: "A", explanation: "fixture gateway", evidence: [] });
-test("Hermes's /export runs its own session export once and records the session's line; anything else fails with no partial record", { timeout: 60000 }, async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-export-")), trace = join(directory, "trace"), cli = join(directory, "cli"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const launch = (mode?: string): ConstructorParameters<typeof HermesControl>[0] => ({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/hermes-cli.mjs"), "acp"],
-    env: { FIXTURE_TRACE: trace, FIXTURE_CLI_TRACE: cli, ...(mode === undefined ? {} : { FIXTURE_EXPORT: mode }) } });
-  // A 9 MiB export is recorded whole (2026-11-12: the 8 MiB bound is gone; only a runaway frame guard is left).
-  for (const [mode, expected] of [[undefined, null], ["missing", "Hermes has no record of this session"], ["huge", null]] as const) {
-    const driver = new HermesControl(launch(mode), { ...options, runTimeoutMs: 10000 }, attached);
-    try {
-      await driver.initialize(); const id = await driver.open(process.cwd());
-      assert.ok((await driver.models()).commands?.some(command => command.name === "export"), "offered while Hermes lists none of its own");
-      const events: ControlEvent[] = [], result = await (await driver.startText(id, "/export", event => events.push(event))).result;
-      const outputs = events.flatMap(event => event.type === "output" ? [event.output] : []);
-      if (expected === null) {
-        assert.deepEqual([result.status, result.reason], ["completed", "exported"]);
-        const output = outputs[0]; assert.ok(output?.kind === "content"); assert.equal(output.name, "hermes-session-fixture.jsonl"); assert.equal(output.mediaType, "application/x-ndjson");
-        assert.equal((JSON.parse(Buffer.from(output.data).toString("utf8")) as { id: string }).id, "session-fixture");
-      } else {
-        assert.equal(result.status, "failed"); assert.equal(result.error?.code, "NATIVE_EXPORT_UNAVAILABLE"); assert.equal(result.error?.message, expected); assert.deepEqual(outputs, [], "nothing partial is recorded");
-      }
-      assert.equal(events.some(event => event.type === "text"), false, "nothing was sent to the model");
-    } finally { await driver.close(); }
-  }
-  // An identifier that is no plain one never reaches Hermes's command line (without it Hermes would export every session).
-  const crafted = new HermesControl(launch(), { ...options, runTimeoutMs: 10000 }, attached);
-  try {
-    await crafted.initialize(); await crafted.open(process.cwd()); await crafted.models();
-    for (const id of ["", "--source", "a b", "x;y"]) {
-      const result = await (await crafted.startText(id as Parameters<HermesControl["startText"]>[0], "/export", () => {})).result;
-      assert.equal(result.error?.message, "this Hermes session has no plain identifier", JSON.stringify(id));
-    }
-  } finally { await crafted.close(); }
-  // Each export ran one command line and only that one: never another Hermes command, never without the session.
-  const commands = (await readFile(cli, "utf8")).trim().split("\n").map(line => JSON.parse(line) as string[]).filter(args => args[0] !== "acp");
-  assert.deepEqual(commands, Array.from({ length: 3 }, () => ["sessions", "export", "-", "--session-id", "session-fixture"]));
-});
-
-test("Hermes restores by session/load, keeps history replayed after a slow load out of the reply, and refuses an unknown identity", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 }, attached);
-  try {
-    await driver.initialize(); const id = await driver.open(process.cwd(), undefined, undefined, "session-fixture"), events: ControlEvent[] = [];
-    assert.equal((await (await driver.startText(id, "hello", event => events.push(event))).result).status, "completed");
-    // The fixture answers the load after 300 ms and replays 20 and 60 ms later, while the reply itself takes 150 ms.
-    assert.deepEqual(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : ""), ["你好 fixture"]);
-    const methods = (await readFile(trace, "utf8")).trim().split("\n").map(line => (JSON.parse(line) as { method?: string }).method);
-    assert.ok(methods.includes("session/load")); assert.ok(!methods.includes("session/resume"));
-  } finally { await driver.close(); }
-  // Hermes answers an identity it does not have with a null result; that is a missing session, never a new one.
-  const missing = new HermesControl(hermes(trace), options, attached);
-  try {
-    await missing.initialize();
-    await assert.rejects(missing.open(process.cwd(), undefined, undefined, "missing-session"), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_NOT_FOUND");
-  } finally { await missing.close(); }
-});
-test("Hermes without a configured provider opens no session and reports the missing setup; other agents' methods say nothing", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  // 0.12 leaves authMethods out without provider credentials; later versions list only a terminal setup method then.
-  for (const auth of ["none", "terminal"]) {
-    const driver = new HermesControl({ ...hermes(trace), env: { FIXTURE_TRACE: trace, FIXTURE_AUTH: auth } }, options, attached);
-    try {
-      assert.deepEqual((await driver.initialize()).authenticationMethods, auth === "none" ? [] : ["hermes-setup"]);
-      for (const checkpoint of [undefined, "session-fixture"])
-        await assert.rejects(driver.open(process.cwd(), undefined, undefined, checkpoint), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_AUTH_REQUIRED");
-    } finally { await driver.close(); }
-  }
-  const sent = (await readFile(trace, "utf8")).trim().split("\n").map(line => (JSON.parse(line) as { method?: string }).method ?? "");
-  assert.equal(sent.some(method => method.startsWith("session/")), false);
-  // With its agent method Hermes has a provider, and the catalog says so.
-  const configured = new HermesControl(hermes(trace), options, attached);
-  try { await configured.initialize(); await configured.open(process.cwd()); assert.equal((await configured.models()).authentication, "ready"); }
-  finally { await configured.close(); }
-  // Any other agent that leaves the list out gets the schema's empty default and opens as before.
-  const ordinary = control("hermes", { FIXTURE_AUTH: "none" });
-  try { assert.deepEqual((await ordinary.initialize()).authenticationMethods, []); await ordinary.open(process.cwd()); assert.equal((await ordinary.models()).authentication, "unknown"); }
-  finally { await ordinary.close(); }
-  // A list that is present must still be a list.
-  const malformed = control("basic", { FIXTURE_AUTH: "invalid" });
-  try { await assert.rejects(malformed.initialize(), (error: unknown) => error instanceof ControlError && error.code === "INVALID_PROTOCOL"); } finally { await malformed.close(); }
-});
-test("Hermes reports a model its own /model command switched to, and only that command's reply is read", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 }, attached);
-  try {
-    await driver.initialize(); const id = await driver.open(process.cwd());
-    assert.equal((await driver.nativeConfig()).model, "deepseek:deepseek-v4-pro");
-    // An ordinary turn never changes the reported model, whatever its reply says.
-    assert.equal((await (await driver.startText(id, "hello", () => {})).result).status, "completed");
-    assert.equal((await driver.nativeConfig()).model, "deepseek:deepseek-v4-pro");
-    const events: ControlEvent[] = [];
-    assert.equal((await (await driver.startText(id, "/model deepseek-v4-flash", event => events.push(event))).result).status, "completed");
-    assert.ok(events.some(event => event.type === "text" && event.text.startsWith("Model switched to:")));
-    assert.equal((await driver.nativeConfig()).model, "deepseek:deepseek-v4-flash");
-  } finally { await driver.close(); }
-});
-test("Hermes keeps reply chunks that follow its prompt response, and never re-requests the model the session already runs", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 }, attached);
-  try {
-    await driver.initialize(); const id = await driver.open(process.cwd(), "deepseek:deepseek-v4-pro"), events: ControlEvent[] = [];
-    assert.equal((await (await driver.startText(id, "late tail please", event => events.push(event))).result).status, "completed");
-    assert.equal(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : "").join(""), "你好 fixture tail");
-    assert.equal(driver.unattributedUpdates, 0);
-  } finally { await driver.close(); }
-  const methods = () => readFile(trace, "utf8").then(text => text.trim().split("\n").map(line => (JSON.parse(line) as { method?: string }).method));
-  // The current model is not requested again (Hermes 0.12's set_model can reroute an unchanged model); a different one is.
-  assert.equal((await methods()).includes("session/set_model"), false);
-  const switching = new HermesControl(hermes(trace), options, attached);
-  try { await switching.initialize(); await switching.open(process.cwd(), "deepseek:deepseek-v4-flash"); assert.equal((await switching.nativeConfig()).model, "deepseek:deepseek-v4-flash"); }
-  finally { await switching.close(); }
-  assert.equal((await methods()).filter(method => method === "session/set_model").length, 1);
-});
-test("Hermes's silent model failures are reported from its own log class, and an answered turn is never recast", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000, maxDiagnosticBytes: 64 * 1024 }, attached);
-  try {
-    await driver.initialize(); const id = await driver.open(process.cwd());
-    const failed = await (await driver.startText(id, "fail quietly", () => {})).result;
-    assert.deepEqual(failed, { status: "failed", reason: "native_error", error: { code: "NATIVE_QUOTA_EXCEEDED", message: "这个 Harness 的账号额度或余额不足。可等待额度恢复或充值，也可以选择其他 Harness 继续。" }, input: "recorded" });
-    assert.ok(!JSON.stringify(failed).includes("deepseek-v4-pro"), "the log text itself is never published");
-    assert.equal((await (await driver.startText(id, "recovered failure", () => {})).result).status, "completed");
-  } finally { await driver.close(); }
-});
-test("Hermes's 60-second approval deadline applies only to the reviewed 0.12 bridge", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  // The fixture reports agent version 1.0: no deadline is announced and nothing closes the request early.
-  const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 }, attached);
-  try {
-    await driver.initialize(); driver.enablePermissions(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
-    const run = await driver.startText(id, "approve this", event => events.push(event));
-    for (let i = 0; i < 50 && !events.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
-    const requested = events.find(event => event.type === "permission_requested");
-    assert.ok(requested?.type === "permission_requested" && !(requested.detail ?? "").includes("最多等待"));
-    await driver.decidePermission(requested.id, "allow_once");
-    assert.equal((await run.result).status, "completed");
-    assert.ok(events.some(event => event.type === "text" && event.text.includes('"optionId":"allow_once"')));
-  } finally { await driver.close(); }
-  // Another agent's "always" option says nothing about Hermes's configuration.
-  const ordinary = control("hermes");
-  try {
-    await ordinary.initialize(); ordinary.enablePermissions(); const id = await ordinary.open(process.cwd()), events: ControlEvent[] = [];
-    const run = await ordinary.startText(id, "approve this", event => events.push(event));
-    for (let i = 0; i < 50 && !events.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
-    const requested = events.find(event => event.type === "permission_requested");
-    assert.ok(requested?.type === "permission_requested" && !(requested.detail ?? "").includes("command_allowlist"));
-    // Without a deadline of its own, the request has none: it waits for the user (a Turn has no deadline the driver would put on it, 2026-11-12).
-    assert.equal(requested.expiresBy, undefined); assert.equal(requested.expiresInMs, undefined);
-    assert.equal(requested.kind, undefined, "an approval of the agent's own action");
-    await ordinary.decidePermission(requested.id, "deny"); await run.result;
-  } finally { await ordinary.close(); }
-});
-test("Hermes continues a listed session with the history it replays after the load response", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const reader = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 }, attached);
-  try {
-    await reader.initialize();
-    assert.deepEqual(await reader.importSession("session-fixture", process.cwd()), { checkpoint: "session-fixture", title: "Hermes work",
-      history: [{ role: "user", text: "earlier question" }, { role: "assistant", text: "old replayed answer" }], omitted: 0, complete: true, historyRead: true });
-  } finally { await reader.close(); }
-});
-test("Hermes closes an approval at its own deadline and hands files over as text pointers", async t => {
-  // Hermes denies after its wait; the public request closes the margin earlier (2.3 s - 2 s here).
-  class QuickHermes extends HermesControl { protected override get approvalDeadlineMs(): number | null { return 2300; } }
-  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const png = attachment(directory, "shot.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
-  const notes = attachment(directory, "notes.md", "text/markdown", "file", Buffer.from("# 标题\n"));
-  const driver = new QuickHermes(hermes(trace), { ...options, runTimeoutMs: 5000 }, attached);
-  try {
-    await driver.initialize(); driver.enablePermissions(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
-    assert.equal((await (await driver.startText(id, "approve this", event => events.push(event))).result).status, "completed");
-    const requested = events.find(event => event.type === "permission_requested");
-    assert.ok(requested?.type === "permission_requested" && requested.title === "rm -rf build" && requested.detail?.includes("最多等待 2 秒") === true);
-    // The wait it announces is Hermes's own deadline less the margin, which comes before the Turn's (ADR-035).
-    assert.equal(requested.expiresBy, "native"); assert.ok(requested.expiresInMs !== undefined && requested.expiresInMs <= 300 && requested.expiresInMs >= 250, String(requested.expiresInMs));
-    // Its "always" option changes Hermes's own configuration for every session, and the request says so.
-    assert.match(requested.detail ?? "", /选“Allow always”会写入 Hermes 自己的配置（command_allowlist）/u);
-    assert.ok(events.some(event => event.type === "notice" && event.title === "审批已超时"));
-    assert.ok(events.some(event => event.type === "permission" && event.id === requested.id && event.decision === "denied"));
-    assert.ok(events.some(event => event.type === "text" && event.text.includes('"optionId":"deny"')));
-    await assert.rejects(driver.decidePermission(requested.id, "allow_once"), /unavailable/);
-    assert.deepEqual((await driver.models()).inputs, { image: true, audio: false, file: true });
-    assert.equal((await (await driver.startText(id, "read", () => {}, [png, notes])).result).status, "completed");
-    const prompt = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line)).filter(row => row.method === "session/prompt").at(-1).params.prompt;
-    assert.equal(prompt.length, 2); assert.equal(prompt[1].type, "image");
-    assert.equal(prompt[0].text, "read\n\n[Attached file] notes.md (text/markdown, 9 bytes, read-only copy): " + notes.path);
-  } finally { await driver.close(); }
-});
 test("ACP sends attachments as native content blocks within the agent's declared prompt capabilities", async t => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-acp-attachments-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
   const png = attachment(directory, "shot.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
@@ -938,7 +748,7 @@ test("a request's wait is the program's own deadline, never negative; a program 
 });
 test("an ACP prompt given a deadline of its own by whoever owns the connection fails with RUN_TIMEOUT while its approval waits; the request's expiry is the program's, never that deadline's", async t => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 600 }, attached);
+  const driver = new AcpControl(hermes(trace), { ...options, runTimeoutMs: 600 });
   try {
     await driver.initialize(); driver.enablePermissions(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
     const run = await driver.startText(id, "approve this", event => events.push(event));
@@ -946,90 +756,6 @@ test("an ACP prompt given a deadline of its own by whoever owns the connection f
     const requested = events.find(event => event.type === "permission_requested");
     assert.ok(requested?.type === "permission_requested" && requested.expiresBy !== "turn", "the driver's deadline for the Turn is not the request's");
   } finally { await driver.close(); }
-});
-
-test("Hermes's completed calls that say they failed are failed on any version, and no version adds a notice to them (ADR-053)", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const notices = (events: readonly ControlEvent[]) => events.filter(event => event.type === "notice").map(event => event.type === "notice" ? event.title : "");
-  const finalStatus = (events: readonly ControlEvent[], id: string) => events.filter(event => event.type === "tool" && event.id === id).map(event => event.type === "tool" ? event.status : "").at(-1);
-  for (const version of ["0.12.0", undefined]) {
-    const label = version ?? "1.0", driver = new HermesControl(hermes(trace, version), { ...options, runTimeoutMs: 5000 }, attached);
-    try {
-      await driver.initialize(); driver.enablePermissions(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
-      assert.equal((await (await driver.startText(id, "blocked command", event => events.push(event))).result).status, "completed", label);
-      assert.equal(finalStatus(events, "terminal-blocked"), "failed", label); assert.equal(finalStatus(events, "terminal-blocked-2"), "failed", label);
-      assert.deepEqual(notices(events), [], label);
-      // A refusal after a request the user answered is failed the same way.
-      const asked: ControlEvent[] = [];
-      const run = await driver.startText(id, "ask then blocked", event => asked.push(event));
-      for (let i = 0; i < 50 && !asked.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
-      const request = asked.find(event => event.type === "permission_requested"); assert.ok(request?.type === "permission_requested", label);
-      await driver.decidePermission(request.id, "deny"); assert.equal((await run.result).status, "completed", label);
-      assert.equal(finalStatus(asked, "terminal-blocked"), "failed", label); assert.deepEqual(notices(asked), [], label);
-    } finally { await driver.close(); }
-  }
-});
-test("Hermes says what each of its own approval options changes beyond the request, by option id", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  // The gateway viewer's five options: "Allow for session" is of kind allow_always too.
-  const driver = new HermesControl({ ...hermes(trace), env: { FIXTURE_TRACE: trace, FIXTURE_PERMISSION_OPTIONS: "five" } }, { ...options, runTimeoutMs: 5000 }, attached);
-  try {
-    await driver.initialize(); driver.enablePermissions(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
-    const run = await driver.startText(id, "approve this", event => events.push(event));
-    for (let i = 0; i < 50 && !events.some(event => event.type === "permission_requested"); i++) await new Promise(resolve => setTimeout(resolve, 20));
-    const requested = events.find(event => event.type === "permission_requested"); assert.ok(requested?.type === "permission_requested");
-    assert.deepEqual(requested.options.map(option => option.id), ["allow_once", "allow_session", "allow_always", "deny", "deny_always"]);
-    const detail = requested.detail ?? "", times = (text: string) => detail.split(text).length - 1;
-    assert.equal(times("选“Allow always”会写入 Hermes 自己的配置（command_allowlist），之后 Hermes 的所有会话（包括终端和消息网关）遇到同一类危险命令都不再询问。"), 1);
-    assert.equal(times("选“Allow for session”只在这个 HarnessHub 会话内放行，不写 Hermes 的配置。"), 1);
-    assert.equal(times("选“Deny always”等同于拒绝一次，Hermes 不保存任何东西。"), 1);
-    assert.equal(times("command_allowlist"), 1, "only the option that writes it says so");
-    assert.equal(detail.includes("最多等待"), false, "no wait is claimed for a version that does not report one");
-    await driver.decidePermission(requested.id, "allow_session");
-    assert.equal((await run.result).status, "completed");
-    assert.ok(events.some(event => event.type === "text" && event.text.includes('"optionId":"allow_session"')));
-  } finally { await driver.close(); }
-});
-test("Hermes refusals that only its error data explains are named: a session it does not have is missing, an unavailable gateway says so in Hermes's own words, and a lost outcome records its /discard instruction", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const refusing = (env: Record<string, string>) => new HermesControl({ ...hermes(trace), env: { FIXTURE_TRACE: trace, ...env } }, { ...options, runTimeoutMs: 5000 }, attached);
-  const code = (expected: string, check: (error: ControlError) => boolean = () => true) => (error: unknown) => error instanceof ControlError && error.code === expected && check(error);
-  // session/load refused with not_found, when restoring and when reading a session to continue it.
-  for (const read of [(driver: HermesControl) => driver.open(process.cwd(), undefined, undefined, "session-fixture"), (driver: HermesControl) => driver.importSession("session-fixture", process.cwd())]) {
-    const driver = refusing({ FIXTURE_LOAD_ERROR: "not_found" });
-    try { await driver.initialize(); await assert.rejects(read(driver), code("NATIVE_SESSION_NOT_FOUND")); }
-    finally { assert.equal((await driver.close()).protocolFailure?.code, "NATIVE_SESSION_NOT_FOUND"); }
-  }
-  // Another agent's driver reads nothing into the same refusal.
-  const ordinary = control("hermes", { FIXTURE_LOAD_ERROR: "not_found" });
-  try { await ordinary.initialize(); await assert.rejects(ordinary.importSession("session-fixture", process.cwd()), code("REMOTE_ERROR", error => error.remoteDetail === "not_found: session-fixture")); }
-  finally { await ordinary.close(); }
-  // A gateway that is still starting refuses the new session.
-  const starting = refusing({ FIXTURE_SESSION_ERROR: "gateway-starting" });
-  try { await starting.initialize(); await assert.rejects(starting.open(process.cwd()), code("NATIVE_GATEWAY_UNAVAILABLE", error => error.message.includes("（Gateway starting: deadline）"))); }
-  finally { await starting.close(); }
-  // A draining gateway refuses the prompt: the Turn fails with the gateway's state and reason, and the connection stays healthy.
-  for (const [cause, quoted] of [["gateway-draining", "（Gateway draining: update_paused）"], ["gateway-private", "（Gateway could not start）"]] as const) {
-    const driver = refusing({ FIXTURE_PROMPT_ERROR: cause });
-    try {
-      await driver.initialize(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
-      const result = await (await driver.startText(id, "hello", event => events.push(event))).result;
-      assert.deepEqual([result.status, result.reason, result.error?.code], ["failed", "request_rejected", "NATIVE_GATEWAY_UNAVAILABLE"], cause);
-      assert.ok(result.error?.message.includes(quoted), cause);
-      // Only the fixed words and a plain reason are quoted: never a path or a credential-like value, even with a class in it.
-      assert.equal(/private-user|private-synthetic-key|fetch failed/u.test(JSON.stringify([result, events])), false, cause);
-      assert.equal((await driver.close()).protocolFailure, null, cause);
-    } finally { await driver.close(); }
-  }
-  // A prompt whose outcome the gateway lost keeps the generic refusal (there is no unknown result yet) and records Hermes's instruction.
-  const lost = refusing({ FIXTURE_PROMPT_ERROR: "unknown-execution" });
-  try {
-    await lost.initialize(); const id = await lost.open(process.cwd()), events: ControlEvent[] = [];
-    assert.deepEqual(await (await lost.startText(id, "hello", event => events.push(event))).result, { status: "failed", reason: "request_rejected" });
-    const said = events.flatMap(event => event.type === "diagnostic" ? [event.message] : []);
-    assert.equal(said.length, 1); assert.match(said[0] ?? "", /执行结果未知：它可能已经执行，不要重发/u); assert.match(said[0] ?? "", /\/discard adm-7f3a/u);
-    assert.equal(said[0]?.includes("do not resend accepted input"), false, "Hermes's own text is not copied");
-  } finally { await lost.close(); }
 });
 
 /** The reply text a Turn streamed, chunk by chunk. */
@@ -1325,43 +1051,6 @@ test("G032-NC27 OpenClaw reads the transcript back as far as the Turn goes: a wi
       assert.deepEqual(events.flatMap(event => event.type === "tool" ? [event.id + " " + event.status] : []), ["call-late completed"], "the entries are reconciled");
     } finally { await driver.close(); }
   }
-});
-
-test("Hermes starts no viewer unless the gateway preflight judges A: B–E refuse before hermes acp exists, and a checkout without the viewer proceeds", { timeout: 30000 }, async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-preflight-")), trace = join(directory, "trace"), cli = join(directory, "cli"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const launch: ConstructorParameters<typeof HermesControl>[0] = { protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/hermes-cli.mjs"), "acp"], env: { FIXTURE_TRACE: trace, FIXTURE_CLI_TRACE: cli, HERMES_HOME: join(directory, "home") } };
-  const code = (expected: string, check: (error: ControlError) => boolean = () => true) => (error: unknown) => error instanceof ControlError && error.code === expected && check(error);
-  const asked: { env: Record<string, string>; executable: string }[] = [];
-  const judging = (judged: GatewayPreflight): HermesGatewayPreflight => async (env, executable) => { asked.push({ env: { ...env }, executable }); return judged; };
-  const refusals: Extract<GatewayPreflight, { kind: "refuse" }>[] = [
-    { kind: "refuse", verdict: "B", explanation: "网关代码与安装不同。", commands: ["hermes gateway status", "hermes gateway restart"], evidence: [] },
-    { kind: "refuse", verdict: "C", explanation: "网关正在启动。", commands: ["hermes gateway status"], evidence: [] },
-    { kind: "refuse", verdict: "D", explanation: "launchd 服务未运行。", commands: ["hermes gateway status", "hermes gateway start"], evidence: [] },
-    { kind: "refuse", verdict: "E", explanation: "没有网关。", commands: ["hermes gateway status", "hermes gateway start"], evidence: [] },
-  ];
-  for (const judged of refusals) {
-    const driver = new HermesControl(launch, { ...options, env: { HOME: directory } }, judging(judged));
-    await assert.rejects(driver.initialize(), code("NATIVE_GATEWAY_UNAVAILABLE", error => error.message === gatewayRefusalMessage(judged)));
-    // The connection has failed: open() (so the catalog read too) refuses with the same error, and this instance never retries.
-    await assert.rejects(driver.open(process.cwd()), code("NATIVE_GATEWAY_UNAVAILABLE"));
-    await assert.rejects(driver.initialize(), code("NATIVE_GATEWAY_UNAVAILABLE"));
-    assert.equal(driver.healthy(), false);
-    const evidence = await driver.close();
-    assert.deepEqual([evidence.closed, evidence.exitCode, evidence.signal, evidence.protocolFailure?.code], [true, null, null, "NATIVE_GATEWAY_UNAVAILABLE"], judged.verdict);
-    assert.ok(evidence.protocolFailure?.message.includes("预检 " + judged.verdict), judged.verdict);
-  }
-  assert.equal(existsSync(cli), false, "hermes acp was never started: the fixture CLI records every command line it is given");
-  assert.equal(existsSync(trace), false, "no ACP frame was exchanged");
-  // The preflight sees the environment the viewer would start with (the private env under the launch's) and the executable.
-  assert.equal(asked.length, 4);
-  assert.deepEqual(asked[0], { env: { HOME: directory, FIXTURE_TRACE: trace, FIXTURE_CLI_TRACE: cli, HERMES_HOME: join(directory, "home") }, executable: process.execPath });
-  // Verdict A, and a checkout whose hermes acp runs in-process, start the viewer as before.
-  for (const judged of [{ kind: "attach", verdict: "A", explanation: "", evidence: [] }, { kind: "in-process", explanation: "", evidence: [] }] as const) {
-    const driver = new HermesControl(launch, { ...options, runTimeoutMs: 10000 }, judging(judged));
-    try { await driver.initialize(); const id = await driver.open(process.cwd()); assert.equal((await (await driver.startText(id, "hello", () => {})).result).status, "completed"); }
-    finally { await driver.close(); }
-  }
-  assert.deepEqual((await readFile(cli, "utf8")).trim().split("\n").map(line => JSON.parse(line)), [["acp"], ["acp"]]);
 });
 
 test("G032-NC34 OpenCode 2: an announced compact is kept once and /compact passes through as typed; a models command without --verbose is tried once, quietly, and the agent-declared image capability stands", async t => {

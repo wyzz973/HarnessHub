@@ -11,8 +11,7 @@ import { AcpControl, dshRelayCapabilities } from "../../src/adapters/control/acp
 import { ClaudeControl, claudeRelayCapabilities } from "../../src/adapters/control/claude.js";
 import { CodexControl, codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import { relayCapabilities } from "../../src/adapters/control/factory.js";
-import { HermesControl, hermesRelayCapabilities } from "../../src/adapters/control/hermes.js";
-import type { HermesGatewayPreflight } from "../../src/adapters/control/hermes-gateway.js";
+import { HermesGatewayControl, hermesRelayCapabilities } from "../../src/adapters/control/hermes/control.js";
 import { OpenClawControl, openClawRelayCapabilities } from "../../src/adapters/control/openclaw.js";
 import { OpenCodeControl, openCodeRelayCapabilities } from "../../src/adapters/control/opencode.js";
 import { nativeReading, relayEntries, type RelayCatalog } from "../../src/adapters/control/relay-classify.js";
@@ -71,8 +70,8 @@ const TABLE: Readonly<Record<Harness, Cells>> = {
       ["/clear now", null, ["content"]], ["/compact", listed(["compact", "compact"]), ["content"]], ["　/clear", null, ["content"]]],
   },
   hermes: {
-    // title: §8.1 writes "set" (D3, `/title`); not used before a probe and its two preconditions (B10, G072).
-    plain: { delivery: { live: "none", successProvesRecorded: true }, execution: "gateway", placement: { parts: "multiple", maxInput: null }, title: "none" },
+    // On its gateway (2026-11-15): the committed user row is the live evidence, one text, a title by `session.mutate rename`.
+    plain: { delivery: { live: "recorded_event", successProvesRecorded: false }, execution: "gateway", placement: { parts: "single", maxInput: null }, title: "set" },
     classify: [["　/clear", null, ["command", "clear", "clear", ""]], ["/new", null, ["command", "new", "clear", ""]], ["/reset", null, ["command", "new", "clear", ""]],
       ["/compress", null, ["command", "compress", "compact", ""]], ["/compress --preview", null, ["command", "compress", "none", "--preview"]], ["/undo", null, ["command", "undo", "rewind", ""]],
       ["/retry", null, ["command", "retry", "rewind", ""]], ["/queue later", null, ["command", "queue", "keep", "later", "relay"]], ["/steer left", null, ["command", "steer", "keep", "left", "relay"]],
@@ -121,12 +120,12 @@ test("G069-D02 the declarations are frozen module constants; each Driver's conne
   assert.throws(() => { (openClawRelayCapabilities.delivery as { successProvesRecorded: boolean }).successProvesRecorded = true; }, TypeError);
   const options: ControlOptions = { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: 1000, maxFrameBytes: 65536, maxDiagnosticBytes: 65536, closeGraceMs: 50 };
   const acp: ControlLaunch = { protocol: "acp-v1", executable: "/nonexistent/g069-acp", args: [], env: {} }, codex: ControlLaunch = { protocol: "codex-app-server", executable: "/nonexistent/g069-codex", args: [], env: {} };
-  const attached: HermesGatewayPreflight = async () => ({ kind: "attach", verdict: "A", explanation: "fixture gateway", evidence: [] });
+  const hermes: ControlLaunch = { protocol: "hermes-gateway", executable: "/nonexistent/g069-hermes", args: [], env: {} };
   const controls: readonly [string, ControlLaunch["protocol"], HarnessControl, RelayCapabilities | null][] = [
     ["claude", "acp-v1", new ClaudeControl(acp, options), claudeRelayCapabilities],
     ["codex", "codex-app-server", new CodexControl(codex, options), codexRelayCapabilities],
     ["opencode", "acp-v1", new OpenCodeControl(acp, options), openCodeRelayCapabilities],
-    ["hermes", "acp-v1", new HermesControl(acp, options, attached), hermesRelayCapabilities],
+    ["hermes", "hermes-gateway", new HermesGatewayControl(hermes, options), hermesRelayCapabilities],
     ["openclaw", "acp-v1", new OpenClawControl(acp, options, async () => { throw new Error("no Gateway"); }), openClawRelayCapabilities],
     ["dsh", "acp-v1", new AcpControl(acp, options, dshRelayCapabilities), dshRelayCapabilities],
     // The generic driver for any other Harness declares nothing; neither do Pi and Cursor.
@@ -145,7 +144,7 @@ test("G069-D02 the declarations are frozen module constants; each Driver's conne
 });
 
 /** A control of `harnessId` on the G069 peer, which announces `commands` as agents do: names and descriptions, no effects. */
-function onPeer(t: TestContext, root: string, harnessId: "claude" | "opencode" | "hermes" | "openclaw" | "dsh" | "gemini", commands: readonly string[]): { readonly control: HarnessControl; readonly trace: string } {
+function onPeer(t: TestContext, root: string, harnessId: "claude" | "opencode" | "openclaw" | "dsh" | "gemini", commands: readonly string[]): { readonly control: HarnessControl; readonly trace: string } {
   const trace = join(root, "trace-" + harnessId + ".ndjson");
   const env = { HOME: root, CLAUDE_CONFIG_DIR: join(root, "claude"), OPENCLAW_CONFIG_PATH: join(root, "openclaw.json"), RELAY_TRACE: trace,
     RELAY_COMMANDS: JSON.stringify(commands.map(name => ({ name, description: "the " + name + " command" }))) };
@@ -154,24 +153,23 @@ function onPeer(t: TestContext, root: string, harnessId: "claude" | "opencode" |
   const gateway = async (method: string): Promise<unknown> => method === "agents.list" ? { defaultId: "main", agents: [{ id: "main" }] } : method === "models.list" ? { models: [] }
     : method === "sessions.list" ? { sessions: [] } : method === "sessions.get" || method === "chat.history" ? { messages: [] } : Promise.reject(new Error("unexpected OpenClaw method " + method));
   const control = harnessId === "claude" ? new ClaudeControl(launch, options) : harnessId === "opencode" ? new OpenCodeControl(launch, options)
-    : harnessId === "hermes" ? new HermesControl(launch, options, async () => ({ kind: "attach", verdict: "A", explanation: "fixture gateway", evidence: [] }))
     : harnessId === "openclaw" ? new OpenClawControl(launch, options, gateway) : new AcpControl(launch, options, harnessId === "dsh" ? dshRelayCapabilities : undefined);
   t.after(() => control.close().then(() => undefined));
   return { control, trace };
 }
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 
-test("G069-D03 a catalog served from the native catalog cache reads as the one models() returned: Claude, OpenClaw, Hermes and OpenCode, commands announced without effects, Object-member names included", { timeout: 60000 }, async t => {
+test("G069-D03 a catalog served from the native catalog cache reads as the one models() returned: Claude, OpenClaw and OpenCode, commands announced without effects, Object-member names included", { timeout: 60000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), "g069-cache-")); t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(join(root, "openclaw.json"), "{}");
   const { NativeCatalogCache } = await import("../../src/web/native-catalog-cache.js");
   const announced = ["review", "status", "compact", "model", "think", "reset", "new", "my-command", "constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"];
   const prefixes = ["", " ", "　"], bodies = [...announced.flatMap(name => ["/" + name, "/" + name + " now"]), "/reset soft", "/export", "/clear", "/nope", "hello"];
-  const declared: Readonly<Record<string, RelayCapabilities>> = { claude: claudeRelayCapabilities, openclaw: openClawRelayCapabilities, hermes: hermesRelayCapabilities, opencode: openCodeRelayCapabilities };
+  const declared: Readonly<Record<string, RelayCapabilities>> = { claude: claudeRelayCapabilities, openclaw: openClawRelayCapabilities, opencode: openCodeRelayCapabilities };
   const cacheRoot = join(root, "data"); await mkdir(cacheRoot, { mode: 0o700 });
   const options = { assertOwner: () => {}, report: (problem: string) => { throw new Error("cache problem: " + problem); }, revision: digest("g069-build") };
   let compared = 0, differences = 0;
-  for (const harnessId of ["claude", "openclaw", "hermes", "opencode"] as const) {
+  for (const harnessId of ["claude", "openclaw", "opencode"] as const) {
     const { control } = onPeer(t, root, harnessId, announced);
     await control.initialize(); await control.open(root);
     const native = await control.models!();
@@ -191,7 +189,7 @@ test("G069-D03 a catalog served from the native catalog cache reads as the one m
       compared++;
     }
   }
-  assert.equal(compared, 4 * prefixes.length * bodies.length);
+  assert.equal(compared, 3 * prefixes.length * bodies.length);
   assert.ok(differences > 0, "without the effects the relay's reading differs from the Runtime's for some input");
   // A cached command's effect is one of the contract's: another value keeps the catalog out, in memory and in the file.
   const strict = new NativeCatalogCache(cacheRoot, options), key = digest("bogus");

@@ -5,8 +5,7 @@ import { listedCommand, type CommandClass, type ContextEffect, type ControlLaunc
 import { AcpControl, dshRelayCapabilities } from "../../src/adapters/control/acp.js";
 import { ClaudeControl, claudeRelayCapabilities } from "../../src/adapters/control/claude.js";
 import { CodexControl, codexRelayCapabilities } from "../../src/adapters/control/codex.js";
-import { HermesControl, hermesRelayCapabilities } from "../../src/adapters/control/hermes.js";
-import type { HermesGatewayPreflight } from "../../src/adapters/control/hermes-gateway.js";
+import { HermesGatewayControl, hermesRelayCapabilities } from "../../src/adapters/control/hermes/control.js";
 import { OpenClawControl, openClawRelayCapabilities } from "../../src/adapters/control/openclaw.js";
 import { OpenCodeControl, openCodeRelayCapabilities } from "../../src/adapters/control/opencode.js";
 import { nativeReading, relayEntries, sharedClassify, type RelayCatalog, type RelayClassify } from "../../src/adapters/control/relay-classify.js";
@@ -19,7 +18,7 @@ import { nativeReading, relayEntries, sharedClassify, type RelayCatalog, type Re
 const options: ControlOptions = { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: 1000, maxFrameBytes: 65536, maxDiagnosticBytes: 65536, closeGraceMs: 50 };
 const acp: ControlLaunch = { protocol: "acp-v1", executable: "/nonexistent/g069-acp", args: [], env: {} };
 const codexLaunch: ControlLaunch = { protocol: "codex-app-server", executable: "/nonexistent/g069-codex", args: [], env: {} };
-const attached: HermesGatewayPreflight = async () => ({ kind: "attach", verdict: "A", explanation: "fixture gateway", evidence: [] });
+const hermesLaunch: ControlLaunch = { protocol: "hermes-gateway", executable: "/nonexistent/g069-hermes", args: [], env: {} };
 
 type Reading = readonly (string | boolean)[];
 /** A reading as a short row: kind, name, effect, args and, when the declaration says so, "relay". */
@@ -208,7 +207,7 @@ test("G069-C03 one source: each Driver's HarnessControl.classify equals its rela
     ["claude", offering, claudeRelayCapabilities.commands.classify],
     ["codex", new CodexControl(codexLaunch, options), codexRelayCapabilities.commands.classify],
     ["opencode", new OpenCodeControl(acp, options), openCodeRelayCapabilities.commands.classify],
-    ["hermes", new HermesControl(acp, options, attached), hermesRelayCapabilities.commands.classify],
+    ["hermes", new HermesGatewayControl(hermesLaunch, options), hermesRelayCapabilities.commands.classify],
     ["openclaw", new OpenClawControl(acp, options, async () => { throw new Error("no Gateway"); }), openClawRelayCapabilities.commands.classify],
   ];
   const listing = (...commands: readonly [string, ContextEffect][]): NativeModelCatalog => ({ models: [], defaultModel: null, authentication: "ready", canSelect: false, commands: commands.map(([name, contextEffect]) => ({ name, description: name, contextEffect })) });

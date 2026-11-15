@@ -8,7 +8,7 @@ import { driver, gatewayOf, peerRoot, prompts, type Harness, type Peer } from ".
 import { readRelayPrompt } from "../fixtures/relay-packet.js";
 import { oldShape } from "../fixtures/old-shape.js";
 
-// A clear on each of the six Drivers, through the formal Runtime and a real FileConversationStore (slim.md: "clearing is the Hub's"):
+// A clear on each of the ACP and Codex Drivers (Hermes: tests/protocol/hermes-gateway.test.ts), through the formal Runtime and a real FileConversationStore (slim.md: "clearing is the Hub's"):
 // the Drivers are the production ones, each on the relay peer as a real child process (tests/fixtures/relay-control-peer.mjs), so
 // that what reached the native side is read from the peer's own trace. The conversation goes to the Harness under test with a
 // packet, the user clears it, and the Runtime must read the clear as a command — it carries nothing, whatever it owes — and the
@@ -31,9 +31,9 @@ async function received(harness: string, peer: Peer): Promise<readonly string[]>
   return (await prompts(peer)).map(blocks => blocks.join(harness === "dsh" ? "" : "\n"));
 }
 const sessionsOpened = async (harness: string, peer: Peer): Promise<number> => (await peer.sent()).filter(line => line.method === (harness === "codex" ? "thread/start" : "session/new")).length;
-const settings = (harness: string): Record<string, string> => ({ RELAY_CLOSE: "1", ...(harness === "dsh" ? { RELAY_JOIN: "" } : {}), ...(harness === "openclaw" ? { RELAY_OPENCLAW: "1" } : {}), ...(harness === "hermes" ? { RELAY_HERMES: "1" } : {}) });
+const settings = (harness: string): Record<string, string> => ({ RELAY_CLOSE: "1", ...(harness === "dsh" ? { RELAY_JOIN: "" } : {}), ...(harness === "openclaw" ? { RELAY_OPENCLAW: "1" } : {}) });
 
-for (const target of ["claude", "codex", "opencode", "dsh", "hermes", "openclaw"] as const) {
+for (const target of ["claude", "codex", "opencode", "dsh", "openclaw"] as const) {
   test(`${target}: a clear is a command Turn that carries nothing, and opens a new native session in a new epoch; the earlier part is offered once and attached on request`, { timeout: 120_000 }, async t => {
     const source = target === "claude" ? "codex" : "claude";
     const peers = new Map<string, Peer>([[source, await peerRoot(t, settings(source))], [target, await peerRoot(t, settings(target))]]);

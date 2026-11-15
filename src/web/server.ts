@@ -15,6 +15,7 @@ import { MAX_CONTENT_BYTES } from "../contracts/content.js";
 import type { EditorsView, EventPage, GitBranchesView, GitChangesView, GitCommitView, GitLogView, GitPushView, GitScope, GitView, HarnessReadinessView, HarnessView, InstallationLogPage, InstallationUpgradeCheckView, MaintenanceView, NativeSessionListView, SteerView, TaskView, UninstallCheckView, InstallCheckView, WebState, WorkspaceFileView, WorkspaceView } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import type { InstallationPolicy } from "../contexts/catalog/domain/catalog.js";
+import { driverImplemented } from "../contexts/catalog/domain/discovery.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
 import { installationObservations, installationRef, installationViews, unofficialView } from "./harness-installations.js";
 import { homePathsIn } from "./shown-paths.js";
@@ -671,12 +672,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         const managed = management.get(item.id);
         if (!managed) throw new HttpError(503, "MANAGEMENT_UNAVAILABLE", "Harness management observation is unavailable");
         const installed = item.installation.candidates.length > 0 || item.controls.some(control => control.state === "candidate");
-        const available = item.controls.filter(control => control.state === "candidate" && (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc"));
+        const available = item.controls.filter(control => control.state === "candidate" && driverImplemented(control.protocol));
         const managedControls = available.filter(control => observed.managedBindings.has(control.id));
         const defaultControlId = managedControls.length === 1 ? managedControls[0]!.id : managedControls.length === 0 && available.length === 1 ? available[0]!.id : null;
         return { id: item.id, name: item.name, tier: harnessTier(item.id), installed, defaultControlId,
-        controls: item.controls.map(control => ({ id: control.id, protocol: control.protocol, available: control.state === "candidate" && (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc"),
-          reason: control.state === "candidate" ? (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc" ? null : "Control Driver is not implemented")
+        controls: item.controls.map(control => ({ id: control.id, protocol: control.protocol, available: control.state === "candidate" && driverImplemented(control.protocol),
+          reason: control.state === "candidate" ? (driverImplemented(control.protocol) ? null : "Control Driver is not implemented")
             : observed.customEntries.has(control.id) ? "发现清单中的自定义入口不可用（不存在或不可执行）" : control.missingDependencies.length ? "Missing: " + control.missingDependencies.join(", ") : "Control entry unavailable",
           entry: harnessEntry(control, observed.managedBindings.has(control.id)) })),
         providerProtocols: item.controls.some(control => control.state === "candidate" && ((item.id === "codex" && control.protocol === "codex-app-server") || (item.id === "gemini" && control.protocol === "acp-v1"))) ? supportedProviderProtocols(item.id) : [],
