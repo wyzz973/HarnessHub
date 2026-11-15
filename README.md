@@ -121,7 +121,7 @@ Vendor SDK types stay inside the drivers. How each harness is adapted is a decla
 
 ## Supported harnesses
 
-HarnessHub adapts to each harness's latest official release ([ADR-053](docs/decisions/0053-latest-version-baseline.md)), through the fullest interface that harness ships. The [decisions log](docs/decisions/LOG.md) says what was checked on each driver on a real install. The [adapter matrix](docs/contracts/harness-adapters.md) dates from 2026-11-13, before the drivers were replaced, and has not been rewritten yet.
+HarnessHub adapts to each harness's latest official release ([ADR-053](docs/decisions/0053-latest-version-baseline.md)), through the fullest interface that harness ships. The [adapter matrix](docs/contracts/harness-adapters.md) says, for every feature and every harness, how it is adapted (natively, by a session setting, or by the Hub) and whether that was checked on a real install with the current driver.
 
 | Harness | Driven through | The Hub's tools reach it through | Rolls back · branches natively |
 |---|---|---|---|
@@ -171,7 +171,7 @@ HarnessHub is pre-release. To keep the claims honest, the project separates *imp
 | | |
 |---|---|
 | **Tested** | `pnpm check` passes (build, web build, boundary, wording and tooling checks). The last recorded full run of the suites is from 2026-11-14 (macOS arm64): `pnpm test` passed 1,314 tests and the browser suite `pnpm test:web` passed 114. None is recorded since the drivers were replaced on 2026-11-15 |
-| **Real harnesses** | The [decisions log](docs/decisions/LOG.md) records every real run and what it did not cover. On 2026-11-15, on the new drivers, all seven harnesses went through the same four steps in the Hub: reply, reply again, edit and resend the second turn, then recall what was said. The [adapter matrix](docs/contracts/harness-adapters.md) is as of 2026-11-13 |
+| **Real harnesses** | The [decisions log](docs/decisions/LOG.md) records every real run and what it did not cover. On 2026-11-15, on the new drivers, all seven harnesses went through the same four steps in the Hub: reply, reply again, edit and resend the second turn, then recall what was said. The [adapter matrix](docs/contracts/harness-adapters.md) marks each cell as checked on the current driver, checked only before the drivers were replaced, or not checked |
 | **Working together** | The [delegation ruler](docs/verification/delegation-ruler.md) hands real tasks between Claude Code (on Haiku), DeepSeek Harness and Codex. On default settings on 2026-11-14, S1–S14 passed (S14 with Claude Code's early-compaction switch). In S15 Codex passed; Claude Code did the task but was failed for listing a folder outside the workspace. It has not been run again on the new drivers |
 | **Synthetic tests only** | Opening a pull request and pushing to a real remote; Claude Code's fast tier; starting a new native session after the context window overflows or a session is lost; a native rollback that fails halfway. The rest are listed in the [feature list](docs/product/features.md) |
 | **Not built yet** | A pool of long-lived native hosts shared between conversations ([ADR-056](docs/decisions/0056-native-hosts-and-sessions.md)); today each conversation keeps its own native process. A packaged app, for which the terminal's `node-pty` binaries would need signing and notarizing |
@@ -186,7 +186,7 @@ The documentation is in Chinese.
 | Topic | Start here |
 |---|---|
 | What it can do now | [Feature list](docs/product/features.md), with the evidence for each feature and what is not done |
-| Each harness, feature by feature | [Adapter matrix](docs/contracts/harness-adapters.md), as of 2026-11-13 |
+| Each harness, feature by feature | [Adapter matrix](docs/contracts/harness-adapters.md) |
 | Decisions and real runs | [Decisions log](docs/decisions/LOG.md), newest first · [ADR index](docs/decisions/README.md), 50 records |
 | Evidence | [Verification records](docs/verification/) · [delegation ruler](docs/verification/delegation-ruler.md) · [relay ruler](docs/verification/relay-ruler.md) |
 | Reading order | [docs/README.md](docs/README.md) |

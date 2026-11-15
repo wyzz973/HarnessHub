@@ -5,7 +5,7 @@
 1. [AGENTS.md](../AGENTS.md)：这里怎么干活。
 2. [功能清单](product/features.md)：现在能做什么、每一条的证据、还没做的。
 3. [决定记录](decisions/LOG.md)：每个决定和每次真机运行，新的在上。
-4. [适配矩阵](contracts/harness-adapters.md)：六家 Harness 每一项怎么适配、真机核对到哪。停在 2026-11-13，是换驱动之前的样子；新驱动看决定记录 2026-11-15 的条目。
+4. [适配矩阵](contracts/harness-adapters.md)：七家 Harness 每一项怎么适配、在现在的驱动上真机核对到哪。
 5. [对话文件](contracts/session-files.md)：2026-11-12 起对话的存法。
 6. 证据：[委派上下文尺子](verification/delegation-ruler.md)、[接力尺子](verification/relay-ruler.md)、[验证记录](verification/)。
 

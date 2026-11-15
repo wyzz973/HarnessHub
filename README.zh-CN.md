@@ -123,7 +123,7 @@ flowchart LR
 
 ## 支持的 Harness
 
-HarnessHub 按每家最新的正式版适配（[ADR-053](docs/decisions/0053-latest-version-baseline.md)），走它提供的最完整的接口。每个驱动在真实安装上核对过什么，写在[决定记录](docs/decisions/LOG.md)里。[适配矩阵](docs/contracts/harness-adapters.md)停在 2026-11-13，是换驱动之前的样子，还没有重写。
+HarnessHub 按每家最新的正式版适配（[ADR-053](docs/decisions/0053-latest-version-baseline.md)），走它提供的最完整的接口。[适配矩阵](docs/contracts/harness-adapters.md)逐家逐项写明怎么适配（原生、会话参数，或由 Hub 来做），以及在现在的驱动上有没有用真实安装核对过。
 
 | Harness | 接入方式 | Hub 的工具怎么到它那里 | 原生回退 · 原生分支 |
 |---|---|---|---|
@@ -173,7 +173,7 @@ HarnessHub 处于预发布阶段。为了说法如实，项目把“已实现”
 | | |
 |---|---|
 | **已测试** | `pnpm check` 通过（构建、前端构建、依赖边界、界面措辞与工具检查）。有记录的最近一次全量运行是 2026-11-14（macOS arm64）：`pnpm test` 1,314 项通过，浏览器测试 `pnpm test:web` 114 项通过。2026-11-15 换驱动之后没有记录 |
-| **真实 Harness** | [决定记录](docs/decisions/LOG.md)记下每次真机运行，以及它没覆盖的部分。2026-11-15 在新驱动上，七家都经 Hub 走了同一套四步：回一个词、再回一个词、把第二轮编辑重发、问它前面说过什么。[适配矩阵](docs/contracts/harness-adapters.md)停在 2026-11-13 |
+| **真实 Harness** | [决定记录](docs/decisions/LOG.md)记下每次真机运行，以及它没覆盖的部分。2026-11-15 在新驱动上，七家都经 Hub 走了同一套四步：回一个词、再回一个词、把第二轮编辑重发、问它前面说过什么。[适配矩阵](docs/contracts/harness-adapters.md)的每一格都标明：在现在的驱动上验过、只在换驱动之前验过，还是没验 |
 | **多家协作** | [委派上下文尺子](docs/verification/delegation-ruler.md)在 Claude Code（用 Haiku）、DeepSeek Harness 和 Codex 之间交接真实的任务。2026-11-14 按默认设置跑了一次：S1–S14 通过（S14 带上了 Claude Code 的提早压缩开关）；S15 Codex 通过，Claude Code 做完了，但因为列了工作区外的一个文件夹被判不过。换驱动之后没有重跑 |
 | **只有合成测试** | 建 PR 和推送到真实的远端；Claude Code 的快档；上下文窗口超出或会话丢失后开新的原生会话；原生回退中途失败。其余列在[功能清单](docs/product/features.md)里 |
 | **还没做** | 多段对话共用的常驻原生宿主池（[ADR-056](docs/decisions/0056-native-hosts-and-sessions.md)），现在是每段对话保留自己的原生进程；打包好的应用，这需要给终端用的 `node-pty` 签名并公证 |
@@ -186,7 +186,7 @@ HarnessHub 处于预发布阶段。为了说法如实，项目把“已实现”
 | 主题 | 从这里开始 |
 |---|---|
 | 现在能做什么 | [功能清单](docs/product/features.md)，每一条的证据和还没做的 |
-| 每一家、每一项 | [适配矩阵](docs/contracts/harness-adapters.md)，停在 2026-11-13 |
+| 每一家、每一项 | [适配矩阵](docs/contracts/harness-adapters.md) |
 | 决定与真机运行 | [决定记录](docs/decisions/LOG.md)，新的在上 · [ADR 索引](docs/decisions/README.md)，共 50 篇 |
 | 证据 | [验证记录](docs/verification/) · [委派上下文尺子](docs/verification/delegation-ruler.md) · [接力尺子](docs/verification/relay-ruler.md) |
 | 阅读顺序 | [docs/README.md](docs/README.md) |
