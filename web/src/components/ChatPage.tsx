@@ -387,12 +387,14 @@ export function ChatPage(props: ChatProps) {
   const stage = useRef<HTMLDivElement>(null), foot = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
     const host = stage.current, element = foot.current;
+    // The page's toasts rise above the message box, so the root knows its height too.
+    const page = document.documentElement;
     if (host === null) return;
-    if (element === null) { host.style.removeProperty("--foot-height"); return; }
-    const measure = () => { host.style.setProperty("--foot-height", element.offsetHeight + "px"); if (following.current) scrollToLatest(); };
+    if (element === null) { host.style.removeProperty("--foot-height"); page.style.removeProperty("--chat-foot"); return; }
+    const measure = () => { const height = element.offsetHeight + "px"; host.style.setProperty("--foot-height", height); page.style.setProperty("--chat-foot", height); if (following.current) scrollToLatest(); };
     measure();
     const observer = new ResizeObserver(measure); observer.observe(element);
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); page.style.removeProperty("--chat-foot"); };
   });
   // The Turns before the first one held come a page at a time as the top of the list comes into view; the place the reader is looking at stays where it is while they come in above it.
   const olderCursor = session?.window.older ?? null, firstOrdinal = session?.runs[0]?.ordinal;
