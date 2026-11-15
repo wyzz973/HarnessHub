@@ -239,6 +239,9 @@ class FakeGateway {
     // Writes carry the page's CSRF token, as the real Gateway requires.
     if (method !== "GET" && request.headers["x-csrf-token"] !== CSRF) return this.json(response, 403, { code: "CSRF_REJECTED", message: "CSRF token missing" });
     if (api === "/auth/session") return this.json(response, 200, { csrfToken: CSRF });
+    // The account limits and the ahead-open the page asks for (2026-11-15): none here.
+    if (api === "/limits") return this.json(response, 200, { limits: [] });
+    if (api === "/sessions/warm" || /^\/sessions\/[^/]+\/warm$/u.test(api)) return this.json(response, 202, { warming: false, reason: "unsupported" });
     if (api === "/state") return this.json(response, 200, { ...(this.advertise ? { relay: true } : {}), providerManagement: false, workspace: this.session.workspace, providers: [], harnesses: [harness("claude", "Claude Code", "claude-native"), harness("codex", "Codex", "codex-native")],
       harnessesScannedAt: new Date().toISOString(), sessions: [{ id: this.session.id, title: this.session.messages[0]?.text ?? "新对话", status: "open", workspace: this.session.workspace, selection: this.session.selection, updatedSeq: this.session.lastSeq, activeRunId: this.session.activeRunId }],
       jobs: [], readiness: [], installationPolicy: "official" });

@@ -45,6 +45,15 @@ async function start(t: test.TestContext) {
     const list = ((await (await context.request.get(origin + "/api/v1/sessions")).json()) as { sessions: { id: string }[] }).sessions;
     return await readThrough(context, origin, list[0]!.id) as unknown as Current;
   };
+  /**
+   * Has the conversation start each Harness's program for each Turn: Codex's fixture reads its `mode` when it starts, and every Harness keeps its process between Turns
+   * by default and Codex's is opened while a message is typed (2026-11-15), which would keep one that read an older mode.
+   */
+  const unkept = async (): Promise<void> => {
+    const { id } = await current(), csrf = ((await (await context.request.get(origin + "/api/v1/auth/session")).json()) as { csrfToken: string }).csrfToken;
+    const response = await context.request.post(origin + "/api/v1/sessions/" + id + "/retention", { headers: { "X-CSRF-Token": csrf, Origin: origin }, data: { enabled: false, commandId: "not-kept-" + id } });
+    assert.equal(response.status(), 200, await response.text());
+  };
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   const log = page.getByRole("log", { name: "对话历史" });
   const model = page.getByRole("button", { name: "选择模型", exact: true });
@@ -66,7 +75,7 @@ async function start(t: test.TestContext) {
     await pick("选择 Harness", name);
     await expect.poll(async () => { const value = await current(); return value.selection.harnessId === harnessId && value.pendingSwitchId === null; }, { timeout: 20_000 }).toBe(true);
   };
-  return { fixture, context, page, errors, current, composer, log, model, pick, say, switchTo, card: page.locator(".relay-card"), root: fixture.root };
+  return { fixture, context, page, errors, current, unkept, composer, log, model, pick, say, switchTo, card: page.locator(".relay-card"), root: fixture.root };
 }
 type Started = Awaited<ReturnType<typeof start>>;
 
@@ -125,6 +134,7 @@ async function backOnClaude(started: Started, late: number): Promise<void> {
   const { fixture, page, say, switchTo, composer } = started;
   await started.pick("选择 Harness", "Claude Code");
   await say(BEFORE[0]!, 0, CLAUDE_REPLY);
+  await started.unkept();
   await switchTo("Codex", "codex");
   await say(BEFORE[1]!, 1, CODEX_REPLY);
   await switchTo("Claude Code", "claude");

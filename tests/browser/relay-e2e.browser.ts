@@ -57,6 +57,15 @@ async function start(t: test.TestContext) {
     const { id } = await current();
     return await (await context.request.get(origin + "/api/v1/sessions/" + id + "/relay")).json();
   };
+  /**
+   * Has the conversation start each Harness's program for each Turn: Codex's fixture reads its `mode` when it starts, and every Harness keeps its process between
+   * Turns by default (2026-11-15), which would keep one that read an older mode.
+   */
+  const unkept = async (): Promise<void> => {
+    const { id } = await current(), csrf = ((await (await context.request.get(origin + "/api/v1/auth/session")).json()) as { csrfToken: string }).csrfToken;
+    const response = await context.request.post(origin + "/api/v1/sessions/" + id + "/retention", { headers: { "X-CSRF-Token": csrf, Origin: origin }, data: { enabled: false, commandId: "not-kept-" + id } });
+    assert.equal(response.status(), 200, await response.text());
+  };
   const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   const log = page.getByRole("log", { name: "对话历史" });
@@ -78,17 +87,18 @@ async function start(t: test.TestContext) {
   await expect.poll(async () => (await (await context.request.get(origin + "/api/v1/harnesses")).json() as { id: string; controls: { available: boolean }[] }[])
     .filter(harness => ["claude", "codex"].includes(harness.id) && harness.controls.some(control => control.available)).length, { timeout: 30_000 }).toBe(2);
   await page.reload();
-  return { fixture, context, page, errors, refused, origin, current, relay, pick, composer, log, switchTo, say, card: page.locator(".relay-card"), banner: page.locator("[data-relay=attention]"),
+  return { fixture, context, page, errors, refused, origin, current, relay, unkept, pick, composer, log, switchTo, say, card: page.locator(".relay-card"), banner: page.locator("[data-relay=attention]"),
     separator: (name: string | RegExp) => log.getByRole("separator", { name }) };
 }
 
 test("the slim relay in the browser under the defaults: handed over with a packet and evidence, brought up to date on the way back, a delivery nothing confirms sent again once and then alone with the way out in a banner, a clear that reaches no native side and opens a new one, on both Harnesses; nothing asked, no refusal, no failed Run", { timeout: 300_000 }, async t => {
-  const { fixture, page, errors, refused, current, relay, pick, composer, log, switchTo, say, card, banner, separator } = await start(t);
+  const { fixture, page, errors, refused, current, relay, unkept, pick, composer, log, switchTo, say, card, banner, separator } = await start(t);
   const root = fixture.root;
 
   // ---- 1. Claude Code answers, on a conversation of its own --------------------------------------------------------------------
   await pick("选择 Harness", "Claude Code");
   await say("先帮我想一个项目名，要短一点", 0, CLAUDE_REPLY);
+  await unkept();
   await expect(card).toHaveCount(0); await expect(page.locator(".switch-divider, [data-relay]")).toHaveCount(0);
   assert.deepEqual(await prompts(root, "claude"), ["先帮我想一个项目名，要短一点"], "a conversation that stays on one Harness hands nothing over: the words as typed");
   await shoot(page, "e2e-1-claude");
@@ -255,7 +265,8 @@ test("the slim relay in the browser under the defaults: handed over with a packe
   // The decisions the relay recorded, as the page showed them.
   assert.deepEqual(finished.runs.map(run => run.relay?.decision ? `${run.relay.decision.kind}/${run.relay.decision.by}${run.relay.decision.cause ? "/" + run.relay.decision.cause : ""}${run.relay.decision.resend ? "/" + run.relay.decision.resend : ""}` : "-"),
     ["-", "carry/need", "carry/need", "carry/need", "carry/policy/delivery_unconfirmed/auto", "alone/policy/delivery_unconfirmed", "carry/user", "-", "carry/user", "-", "-"]);
-  // What each Run's packet came to: only the ones with evidence say "recorded", and the page said the same.
+  // What each Run's packet came to: only the ones with evidence say "recorded", and the page said the same. Claude Code's protocol says it took the input
+  // (its command lifecycle, E1) since it is driven through the Agent SDK (2026-11-15); before, only the Turn's result showed it (E3).
   assert.deepEqual(finished.runs.map(run => run.relay?.delivery ? `${run.relay.delivery.state}${run.relay.delivery.evidence ? "/" + run.relay.delivery.evidence : ""}` : "-"),
-    ["-", "recorded/E1", "recorded/E3", "unknown", "unknown", "-", "recorded/E1", "-", "recorded/E3", "-", "-"]);
+    ["-", "recorded/E1", "recorded/E1", "unknown", "unknown", "-", "recorded/E1", "-", "recorded/E1", "-", "-"]);
 });

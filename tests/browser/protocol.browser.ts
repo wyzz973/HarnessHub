@@ -118,6 +118,9 @@ class FakeGateway {
     }
     const api = path.slice("/api/v1".length);
     if (api === "/auth/session") return this.json(response, 200, { csrfToken: CSRF });
+    // The account limits and the ahead-open the page asks for (2026-11-15): none here.
+    if (api === "/limits") return this.json(response, 200, { limits: [] });
+    if (api === "/sessions/warm" || /^\/sessions\/[^/]+\/warm$/u.test(api)) return this.json(response, 202, { warming: false, reason: "unsupported" });
     if (api === "/state") return this.json(response, 200, { relay: true, providerManagement: false, workspace: this.session.workspace, providers: [], harnesses: [harnessView("claude", "Claude Code"), harnessView("codex", "Codex"), harnessView("dsh", "DeepSeek Harness")],
       harnessesScannedAt: new Date().toISOString(), sessions: [{ id: this.session.id, title: String(this.session.messages[0]?.text ?? "新对话"), status: "open", workspace: this.session.workspace, selection: this.session.selection, updatedSeq: this.session.lastSeq, activeRunId: this.session.activeRunId }],
       jobs: [], readiness: [], installationPolicy: "official" });

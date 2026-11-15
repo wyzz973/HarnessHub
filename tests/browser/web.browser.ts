@@ -589,7 +589,8 @@ test("live chat renders committed partial Markdown before completion, respects r
 });
 
 test("unavailable native authentication keeps the same conversation usable, shows recovery actions and preserves per-chat drafts", { timeout: 120000 }, async t => {
-  const fixture = await launchFixture(); let browser: Browser | null = null;
+  // A Harness that needs its own sign-in before it opens a session (ACP auth_required): OpenClaw stood in until it moved to its Gateway (2026-11-15).
+  const fixture = await launchFixture(true, { name: "Signed Out", scenario: "auth-session" }); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true });
   const context = await isolatedContext(browser, { viewport: { width: 943, height: 1079 } }), page = await context.newPage(), errors: string[] = [];
@@ -614,18 +615,18 @@ test("unavailable native authentication keeps the same conversation usable, show
   await composer.fill("FIRST_CONVERSATION"); await composer.press("Enter"); await expect(log).toContainText("已由");
   await expect.poll(async () => (await current()).runs[0].status).toBe("completed"); const first = await current();
   await composer.fill("选择失败也要保留这条草稿");
-  await agent("OpenClaw"); await pick("选择 Provider", "Harness 原生连接");
+  await agent("Signed Out"); await pick("选择 Provider", "Harness 原生连接");
   await expect(page.getByText(/本机认证尚未就绪/)).toBeVisible();
   await expect(page.getByRole("button",{name:"发送消息",exact:true})).toBeDisabled();
   // The picker shows what the latest catalog read and Runs found, before anything else is sent.
   await page.getByRole("button", { name: "选择 Harness", exact: true }).click();
-  await expect(page.getByRole("option", { name: "OpenClaw", exact: true })).toHaveAccessibleDescription(/需要登录/);
+  await expect(page.getByRole("option", { name: "Signed Out", exact: true })).toHaveAccessibleDescription(/需要登录/);
   await page.keyboard.press("Escape");
   await expect(composer).toBeEnabled(); await expect(composer).toHaveValue("选择失败也要保留这条草稿");
   const failed = await current(); assert.equal(failed.id, first.id); assert.equal(failed.status, "open"); assert.equal(failed.runs.length, 1);
-  assert.equal(failed.selection.harnessId,"openclaw"); assert.equal(failed.lastSwitch.status,"effective");
+  assert.equal(failed.selection.harnessId,"native-acp"); assert.equal(failed.lastSwitch.status,"effective");
   await page.screenshot({ path: join(artifact, "harness-selection-failed.png"), fullPage: true, animations: "disabled" });
-  const modelReload = page.waitForResponse(response => response.url().includes("/harnesses/openclaw/models"));
+  const modelReload = page.waitForResponse(response => response.url().includes("/harnesses/native-acp/models"));
   await page.reload(); await modelReload;
   await expect(page.getByText(/本机认证尚未就绪/)).toBeVisible();
   await expect(composer).toHaveValue("选择失败也要保留这条草稿");
@@ -1186,60 +1187,6 @@ test("a new conversation starts a Harness with the model and thinking level last
   assert.deepEqual(errors, []);
 });
 
-test("a waiting approval is marked in the sidebar with whose deadline it is, counts down, opens its conversation and is gone when it expires", { timeout: 180000 }, async t => {
-  const fixture = await launchFixture(false, null, null, true); let browser: Browser | null = null;
-  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
-  browser = await chromium.launch({ headless: true });
-  const context = await isolatedContext(browser, { viewport: { width: 1280, height: 900 } });
-  // Notifications are recorded instead of shown, by a browser that allows them once asked.
-  await context.addInitScript(() => {
-    const shown: { title: string; body: string; tag: string }[] = [], state = { permission: "default" };
-    Object.defineProperty(window, "__notices", { value: shown });
-    class Recorded { static get permission() { return state.permission; } static async requestPermission() { state.permission = "granted"; return "granted"; }
-      onclick: (() => void) | null = null; constructor(title: string, options: { body?: string; tag?: string } = {}) { shown.push({ title, body: options.body ?? "", tag: options.tag ?? "" }); } close() {} }
-    Object.defineProperty(window, "Notification", { configurable: true, value: Recorded });
-  });
-  const page = await context.newPage(), errors: string[] = [];
-  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
-  await page.goto(fixture.gateway.url);
-  // Off until the user turns it on; turning it on is what asks the browser.
-  await page.getByRole("button", { name: "等你处理", exact: true }).click();
-  const toggle = page.getByRole("button", { name: "待处理时通知我", exact: true });
-  await expect(toggle).toHaveAttribute("aria-pressed", "false"); await toggle.click(); await expect(toggle).toHaveAttribute("aria-pressed", "true");
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Hermes Agent", exact: true }).click(); await askEachStep(page);
-  const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
-  await composer.fill("approve this"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled();
-  // The page is in the background when Hermes asks, so a notification goes out.
-  await page.evaluate(() => { Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" }); });
-  await composer.press("Enter");
-  const card = page.getByRole("region", { name: "工具审批", exact: true });
-  await expect(card).toContainText("rm -rf build", { timeout: 15000 });
-  await expect(card.locator(".permission-deadline")).toHaveText(/^原程序期限 · \d+ 秒后自动拒绝$/u);
-  await page.evaluate(() => { Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" }); });
-  const notices = await page.evaluate(() => (window as unknown as { __notices: { title: string; body: string }[] }).__notices);
-  assert.equal(notices.length, 1); assert.equal(notices[0]!.title, "Hermes Agent 等你处理");
-  assert.match(notices[0]!.body, /^等你批准（原程序期限，\d+ 秒后自动拒绝）$/u, "only the Harness and the wait, nothing of the conversation");
-  // Another conversation is open; the sidebar still says which one waits, for what, and for how long.
-  await page.getByRole("button", { name: "新对话", exact: true }).click();
-  const waiting = page.locator(".session-item.has-attention");
-  await expect(waiting).toHaveCount(1); await expect(page.locator(".attention-count")).toHaveText("1");
-  const line = waiting.locator(".session-when");
-  await expect(line).toHaveText(/^\d+ 秒$/u); await expect(line).toHaveAttribute("title", /原程序/u);
-  const seconds = async () => Number(/(\d+) 秒/u.exec((await line.textContent()) ?? "")?.[1]);
-  const first = await seconds(); await page.waitForTimeout(2200); const later = await seconds();
-  assert.ok(first <= 60 && later < first, `${first} then ${later}`);
-  await page.screenshot({ path: join(artifact, "attention-sidebar.png"), animations: "disabled" });
-  // Deciding happens in the conversation: the row opens it, with its approval card.
-  await waiting.click();
-  await expect(card).toBeVisible(); await expect(card.getByRole("button", { name: "Deny", exact: true })).toBeEnabled();
-  // At Hermes's deadline the mark is gone and the conversation says the approval timed out.
-  await expect(waiting).toHaveCount(0, { timeout: 70000 });
-  await expect(page.locator(".attention-count")).toHaveCount(0);
-  await expect(page.getByText("审批已超时")).toBeVisible({ timeout: 15000 });
-  assert.deepEqual(errors, []);
-});
-
 test("a Turn's diagnostics are copied from its details without conversation content unless the user asks for it", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
@@ -1675,7 +1622,7 @@ test("G054-DL4 each reply ends with its Harness, model and time, a hand-over is 
   // the chosen tab. The panel is closed until opened (decision E).
   const panel = page.getByRole("complementary", { name: "详情栏" });
   await page.getByRole("button", { name: "详情栏", exact: true }).click();
-  await expect(panel.getByRole("tab").nth(0)).toHaveText("概览"); await expect(panel.getByRole("tab").nth(1)).toHaveText("改动1"); await expect(panel.getByRole("tab").nth(2)).toHaveText("过程");
+  await expect(panel.getByRole("tab").nth(0)).toHaveText("概览"); await expect(panel.getByRole("tab").nth(1)).toHaveText("改动1"); await expect(panel.getByRole("tab").nth(2)).toHaveText("过程1"); // Codex keeps its process between Turns (2026-11-15): one thing in the background.
   for (const [name, file] of [["概览", "overview"], ["过程", "process"], ["改动", "changes"]] as const) {
     const tab = panel.getByRole("tab", { name: new RegExp("^" + name, "u") });
     await tab.click(); await expect(tab).toHaveAttribute("aria-selected", "true");

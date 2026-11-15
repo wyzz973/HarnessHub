@@ -15,6 +15,8 @@ import { startWebServer, type WebServer } from "../../src/web/server.js";
  */
 
 const peer = pathToFileURL(fileURLToPath(new URL("../../../tests/fixtures/relay-control-peer.mjs", import.meta.url))).href;
+/** Claude Code's CLI as the Agent SDK speaks to it (2026-11-15: Claude Code is driven through the SDK, not ACP). */
+const fakeClaude = pathToFileURL(fileURLToPath(new URL("../../../tests/fixtures/claude/fake-claude.mjs", import.meta.url))).href;
 export const CLAUDE_REPLY = "Claude Code：收到，我来处理。", CODEX_REPLY = "Codex：收到，接着做。";
 
 export interface Fixture { readonly root: string; readonly gateway: WebServer; readonly mode: (value: Readonly<Record<string, string | number>>) => Promise<void>; close(): Promise<void> }
@@ -31,11 +33,10 @@ export async function launch(): Promise<Fixture> {
   const state = join(root, "native-state.json"), modeFile = join(root, "codex-mode.json"), claudeShim = join(root, "claude-fixture.mjs"), codexShim = join(root, "codex-fixture.mjs"), codexPeer = join(root, "codex-peer.mjs");
   await writeFile(modeFile, "{}");
   const commands = JSON.stringify([{ name: "compact", description: "Clear conversation history but keep a summary" }, { name: "context", description: "Show current context usage" }]);
-  // Claude Code: the transcript is the CLI's, in the Gateway's home for its Harnesses (CLAUDE_CONFIG_DIR is not set, so ~/.claude of that home).
+  // Claude Code: its CLI as the Agent SDK drives it; the transcript is the CLI's, in the Gateway's home for its Harnesses (CLAUDE_CONFIG_DIR is not set, so ~/.claude of that home).
   await writeFile(claudeShim, "#!" + process.execPath + "\n" + [
-    `process.env.RELAY_PROTOCOL = "acp"; process.env.RELAY_STATE = ${JSON.stringify(state)}; process.env.RELAY_TRANSCRIPT = ${JSON.stringify(join(root, ".claude"))};`,
-    `process.env.RELAY_REPLY = ${JSON.stringify(CLAUDE_REPLY)}; process.env.RELAY_COMMANDS = ${JSON.stringify(commands)}; process.env.RELAY_TRACE = ${JSON.stringify(join(root, "claude-trace.jsonl"))};`,
-    `await import(${JSON.stringify(peer)});`, ""].join("\n"), { mode: 0o700 });
+    `process.env.FAKE_REPLY = ${JSON.stringify(CLAUDE_REPLY)}; process.env.FAKE_COMMANDS = ${JSON.stringify(commands)}; process.env.FAKE_TRACE = ${JSON.stringify(join(root, "claude-trace.jsonl"))};`,
+    `await import(${JSON.stringify(fakeClaude)});`, ""].join("\n"), { mode: 0o700 });
   // Codex: the same fixture, behind a proxy that holds the whole Turn back when the mode says so (the order of what it says is kept).
   await writeFile(codexPeer, `import { readFileSync } from "node:fs";\nconst mode = JSON.parse(readFileSync(${JSON.stringify(modeFile)}, "utf8"));\n`
     + `Object.assign(process.env, { RELAY_PROTOCOL: "codex", RELAY_STATE: ${JSON.stringify(state)}, RELAY_REPLY: ${JSON.stringify(CODEX_REPLY)}, RELAY_ECHO_FIELD: "clientId", RELAY_TRACE: ${JSON.stringify(join(root, "codex-trace.jsonl"))} }, Object.fromEntries(Object.entries(mode).map(([key, value]) => [key, String(value)])));\n`

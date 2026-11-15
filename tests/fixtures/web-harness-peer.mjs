@@ -12,7 +12,7 @@ const ANSWERED = new Set(["initialize", "config/read", "account/read", "model/li
 createInterface({ input: process.stdin }).on("line", line => {
   const value = JSON.parse(line);
   if (value.id !== undefined && typeof value.method === "string" && !ANSWERED.has(value.method)) { send({ id: value.id, error: { code: -32601, message: "Method not found: " + value.method } }); return; }
-  if (value.id === "browser-approval" && value.result !== undefined && active?.approval) {
+  if (typeof value.id === "string" && value.id === active?.approval && value.result !== undefined) {
     notify("item/agentMessage/delta", { threadId: native, turnId: active.id, itemId: "browser-message", delta: "原生审批已收到：" + value.result.decision });
     notify("turn/completed", { threadId: native, turn: { id: active.id, status: "completed" } }); active = null; return;
   }
@@ -27,7 +27,13 @@ createInterface({ input: process.stdin }).on("line", line => {
   // As a real app-server does, the thread reports the approval policy and sandbox it runs with (the ones asked for, else Codex's own).
   const settings = params => ({ approvalPolicy: params.approvalPolicy ?? "on-request", sandbox: { type: { "read-only": "readOnly", "workspace-write": "workspaceWrite", "danger-full-access": "dangerFullAccess" }[params.sandbox ?? "workspace-write"] } });
   if (value.method === "thread/start") { nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native }, ...settings(value.params) }); }
-  if (value.method === "thread/fork") { const id = "browser-fork-" + process.pid; notify("thread/started", { thread: { id } }); return reply(value.id, { thread: { id } }); }
+  // A fork, as Codex answers it: the copy with the settings it runs at; asked with them (a fork opened as this connection's thread, 2026-11-15), the copy is the thread
+  // its next turns go on, as after a resume.
+  if (value.method === "thread/fork") {
+    const id = "browser-fork-" + process.pid, opened = value.params.approvalPolicy !== undefined || value.params.sandbox !== undefined;
+    if (opened) { native = id; nativeModel = value.params.model ?? null; }
+    notify("thread/started", { thread: { id } }); return reply(value.id, { thread: { id }, ...settings(value.params) });
+  }
   if (value.method === "thread/resume") { native = value.params.threadId; nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native }, ...settings(value.params) }); }
   if (value.method === "turn/start") {
     const input = value.params.input[0].text;
@@ -69,8 +75,9 @@ createInterface({ input: process.stdin }).on("line", line => {
       notify("turn/completed", { threadId: native, turn: { id: active.id, status: "completed" } }); active = null; return;
     }
     if (text.startsWith("APPROVAL")) {
-      active.approval = true;
-      send({ id: "browser-approval", method: "item/commandExecution/requestApproval", params: { threadId: native, turnId: active.id, itemId: "fixture-command", command: "读取验收工作区", availableDecisions: ["accept", "decline", "cancel"] } }); return;
+      // Each request has an id of its own, as Codex's do: a process kept for the next Turn asks again under a new one.
+      active.approval = "browser-approval-" + counter;
+      send({ id: active.approval, method: "item/commandExecution/requestApproval", params: { threadId: native, turnId: active.id, itemId: "fixture-command", command: "读取验收工作区", availableDecisions: ["accept", "decline", "cancel"] } }); return;
     }
     if (text.startsWith("STREAM_BLOCK")) {
       // A reply that ends with a code block, finished when the stream-control file says so: its end dot stands on a line of its own.
