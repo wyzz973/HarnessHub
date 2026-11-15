@@ -628,6 +628,8 @@ export interface SessionRuntimeOptions {
    * as a share of the window the Harness reported (0–1). Absent or null: the Hub never does it for that reason (it still does when a native session cannot go on).
    */
   readonly reseatAt?: number | null;
+  /** The user's home directory, from which a Harness may name a path (`~/…`): what tells that a request it names that way reads the record's directory (2026-11-15). */
+  readonly home?: string;
   readonly context?: { place(id: SessionId): { readonly dir: string; readonly self: string }; ensure(id: SessionId): Promise<void>;
     /**
      * The state of the task as the conversation stands in it (src/web/task-state.ts), as its Harness reads it before the Turn `upTo` (null: as it stands now, with the Turn in progress); null when there is nothing to say.

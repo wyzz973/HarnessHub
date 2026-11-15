@@ -463,15 +463,16 @@ export class SessionRuntime {
   /**
    * Answers a permission request by the Hub's policy for the conversation's permission level when the policy decides it: the decision is the
    * item's, by "policy" and the level (the user sees what the Hub allowed or refused for them), and goes to the Harness as the user's would.
+   * With no level chosen the policy decides only what reads the record's directory alone (permission-policy.ts), and the decision names no level.
    */
   private async answerByPolicy(execution: ActiveExecution, permission: string, run: ConversationRun, value: Extract<ControlEvent, { type: "permission_requested" }>): Promise<void> {
     const pending = this.permissions.get(permission), level = selectedPermission(run.selection.nativeOptions), control = execution.binding?.control;
-    if (pending === undefined || level === undefined || !control?.decidePermission) return;
-    const decision = this.policyFor(execution, run, value, level);
+    if (pending === undefined || !control?.decidePermission) return;
+    const decision = this.policyFor(execution, run, value, level), chosen = level === undefined ? {} : { level };
     if (decision.option === null || pending.option !== null) return;
     pending.option = decision.option; pending.command = "policy"; pending.request = { ...pending.request, decided: true };
-    this.placed(execution, { kind: "decided", id: pending.nativeId, option: decision.option, by: "policy", level, at: this.options.now().getTime() },
-      [event("permission.decided", { permissionId: permission, runId: execution.runId, optionId: decision.option, by: "policy", level, kind: decision.kind, answer: decision.answer })], { always: true });
+    this.placed(execution, { kind: "decided", id: pending.nativeId, option: decision.option, by: "policy", ...chosen, at: this.options.now().getTime() },
+      [event("permission.decided", { permissionId: permission, runId: execution.runId, optionId: decision.option, by: "policy", ...chosen, kind: decision.kind, answer: decision.answer })], { always: true });
     this.leaveWait(execution);
     await control.decidePermission(pending.nativeId, decision.option); this.owned(execution);
     this.permissions.delete(permission);
@@ -481,10 +482,12 @@ export class SessionRuntime {
   private policyFor(execution: ActiveExecution, run: ConversationRun, value: Extract<ControlEvent, { type: "permission_requested" }>, level: PermissionLevel | undefined): PolicyDecision {
     const call = value.forCall === undefined || execution.turn === null ? undefined : itemsOf(execution.turn).find(item => item.itemId === "tool:" + value.forCall)?.fields;
     const named = call as { readonly title?: unknown; readonly name?: unknown; readonly hub?: unknown; readonly command?: unknown; readonly path?: unknown } | undefined;
-    return policyDecision(this.options.flavor?.(run.selection.harnessId), level, { title: value.title, options: value.options, question: value.kind === "question" || value.input !== undefined },
+    // Reading the record's directory is the Hub's own business, like its tools; a Harness may name it from the user's home (~/…).
+    const place = this.recordPlace(execution.sessionId, execution.binding), home = this.options.home;
+    return policyDecision(this.options.flavor?.(run.selection.harnessId), level,
+      { title: value.title, ...(value.detail === undefined ? {} : { detail: value.detail }), options: value.options, question: value.kind === "question" || value.input !== undefined },
       [value.toolKind, call?.native?.kind], call === undefined ? undefined : { type: call.type, ...(typeof named?.title === "string" ? { title: named.title } : {}), ...(typeof named?.name === "string" ? { name: named.name } : {}), ...(named?.hub === true ? { hub: true } : {}), ...(typeof named?.command === "string" ? { command: named.command } : {}), ...(typeof named?.path === "string" ? { path: named.path } : {}) },
-      // Reading the record's directory is the Hub's own business, like its tools.
-      this.recordPlace(execution.sessionId, execution.binding)?.dir);
+      place === null ? undefined : { dir: place.dir, ...(home === undefined ? {} : { home }) });
   }
   /** The switch target each conversation is validating, at most one per conversation. */
   private readonly switchBindings = new Map<SessionId, { readonly binding: PreparedSessionBinding; close: Promise<CleanupEvidence> | null }>();

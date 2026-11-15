@@ -4,6 +4,10 @@
 
 ## 2026-11-15
 
+- **Harness 读 Hub 的记录目录不再要用户批。** 只读、且说到的路径都在这件任务的记录目录里（读文件、搜索、只读命令），Hub 在任何档位都代为“允许一次”，没选档位也一样；改文件、别的命令、联网、调工具照旧。请求的标题、详情或对应的工具条目里还有目录外的路径、`..`、被截断的路径或变量，就仍交给用户；`~/…` 按用户主目录认。没选档位时 Hub 自己的工具仍交给用户（`hub_delegate` 会按“自动”起子对话）。
+  - 真机（每家“每步询问”和没选档位各一轮：先读 `STATE.md`，再跑一条 `sh -c`）：修改前只有 CodeBuddy Code 没选档位时把读 `STATE.md` 交给了用户；“每步询问”档四家都没碰到（CodeBuddy、Claude Code、OpenCode 来问，Hub 按读放行；Hermes 读文件本来不问）。修改后 8 轮都完成、都读到了文件，读记录的请求一个都没到用户面前，CodeBuddy 没选档位时由 Hub 代答；命令在会问的地方照常交给用户。
+  - 发现：任务目录和对话目录同名（`c-xxxxxx/c-xxxxxx/STATE.md`），Haiku 两次都拼成 `context/c-xxxxxx/STATE.md` 读不到，CodeBuddy 早先也是；这次提示里给了完整路径。Hermes 默认的 `deepseek:deepseek-v4-pro` 报额度不足，OpenRouter 的 `glm-5.2:free`、`minimax-m3:free` 已不再免费，改用 `openrouter:deepseek/deepseek-v4.1-flash`。
+
 - **CodeBuddy Code 登录后的真机结果：插话和回退打开，手动压缩改正。**（用户在终端里登录了一次；模型都用默认的 `hy4free`。）
   - 直连驱动：原生回退 1 轮后问“上一次回的词”，答对；插话 `steered: true`，在同一轮的下一步生效（像 Codex：先数完 1 到 30，再回 kiwi）；换进程用 `session/load` 续上，答对。所以声明改为 `steer: native`、`rollback: native`。
   - Hub 四步冒烟两次都答“苹果、橙子”。回退关着时，编辑重发由 Hub 开新会话；打开后走原生回退（`native.rolled_back`），进程不换。

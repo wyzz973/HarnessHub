@@ -4,7 +4,7 @@ import { LocalHarnessManagement, type ManagementOptions } from "../infrastructur
 import { LocalProviderService } from "../infrastructure/provider/service.js";
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync } from "node:fs";
-import { totalmem } from "node:os";
+import { homedir, totalmem } from "node:os";
 import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { resolveHostBudgets } from "../contracts/native-host.js";
 import type { ConversationCommit } from "../contracts/conversation.js";
@@ -181,7 +181,7 @@ export function application(root: string, publish: (commit: ConversationCommit) 
     // The record as a directory (2026-11-13): what a Harness that reads the record as files is pointed at, kept under the data root and brought up to the record before each Turn.
     const context = new ContextFiles({ root: join(root, CONTEXT_DIR), reader: store, content, name: harnessName, board: id => runtime.taskBoard(id), changes: id => runtime.recordSignals(id),
       secrets: (configuration, harnessIds) => factory.relaySecrets === undefined ? Promise.resolve([]) : factory.relaySecrets(configuration, harnessIds) });
-    const runtime: SessionRuntime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, workspace: new WorkspaceRecorder(), checkpoints: new GitCheckpoints(), flavor: flavorOf, ...(options.budgets ?? {}),
+    const runtime: SessionRuntime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish, content, harnessName, workspace: new WorkspaceRecorder(), checkpoints: new GitCheckpoints(), flavor: flavorOf, home: homedir(), ...(options.budgets ?? {}),
       context: { place: id => context.place(id), ensure: id => context.ensure(id), refresh: id => context.refresh(id), forget: (id, purging) => context.forget(id, purging),
         state: (id, upTo, record, scope, words) => context.state(id, upTo ?? undefined, record, scope, words === null ? "none" : words) },
       ...reseatSetting(process.env.HARNESSHUB_RESEAT_AT),
