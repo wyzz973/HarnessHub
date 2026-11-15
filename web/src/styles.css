@@ -854,6 +854,7 @@
   }
   :root[data-glass="system"] :is(.dialog-pop, .palette-pop, .composer-box, .drawer-left-pop, .sheet-pop) { background: var(--wash-thick); }
   :root[data-glass="system"] .tool-group { background: transparent; }
+  :root[data-glass="system"] .chat-foot :is(.relay-card, .queued-message, .composer-notice, .composer-change, [role="status"].rounded-block, [role="alert"].rounded-block) { -webkit-backdrop-filter: none; backdrop-filter: none; }
   /* The sidebar's wash lies under its glass then (in the copy behind the window), where whatever floats over the sidebar sees it too. */
   :root[data-glass="system"] .sidebar-pane { background: transparent; }
   .chat-notices:not(:empty) ~ .chat-scroll { padding-top: 16px; }

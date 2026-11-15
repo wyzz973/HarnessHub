@@ -11,7 +11,9 @@
 import { desktop, type GlassPane } from "../lib/desktop.js";
 import { startMirror, type Mirror } from "./mirror.js";
 
-export const SURFACES = ".composer-box, .tool-group, .follow-stream, .find-bar, .floating-bar, .surface-pop, .dialog-pop, .palette-pop, .drawer-left-pop, .sheet-pop, .tooltip-pop, .toast";
+export const SURFACES = ".composer-box, .tool-group, .follow-stream, .find-bar, .floating-bar, .surface-pop, .dialog-pop, .palette-pop, .drawer-left-pop, .sheet-pop, .tooltip-pop, .toast, "
+  // What stands with the message box over the conversation: a queued message, a notice, a handover card. Its own tint lies on the glass.
+  + ".chat-foot .relay-card, .chat-foot .queued-message, .chat-foot .composer-notice, .chat-foot .composer-change, .chat-foot [role='status'].rounded-block, .chat-foot [role='alert'].rounded-block";
 const OPENINGS = ".sidebar-pane";
 const UNDER = "[data-under-glass]";
 
