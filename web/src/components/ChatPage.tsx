@@ -3,13 +3,13 @@ import { ArrowDown, Check, ChevronUp, Circle, CircleDashed, FileDown, GitBranch,
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, Dispatch, ReactNode, SetStateAction } from "react";
 import type { ContentRef } from "../../../src/contracts/content.js";
-import type { NativeExtensions, NativeModelCatalog } from "../../../src/contracts/control.js";
+import type { NativeExtensions, NativeLimit, NativeModelCatalog } from "../../../src/contracts/control.js";
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import type { AttentionItem, HarnessSelection, PublicRun, SelectionRequest } from "../../../src/contracts/session.js";
 import type { HarnessReadinessView, HarnessView, NativeSessionListView, SessionSummary } from "../../../src/contracts/web.js";
 import type { ConversationView } from "../lib/conversation.js";
-import { failureMessage } from "../api.js";
+import { failureMessage, type AccountLimitsView } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { actionOf, ariaKeys, keyText, useKeys } from "../lib/keys.js";
 import { clock, folderName, homePath, inScratch, projectOf, shortTitle } from "../lib/format.js";
@@ -124,7 +124,10 @@ export interface ChatProps {
   /** Keeps this conversation's native process between Turns (ADR-030), or stops keeping it; before a new conversation exists, records the choice for it. */
   onRetention?: (enabled: boolean) => void;
   /** A new conversation's choice to keep its native process, applied when its first message creates it. */
-  retainNew?: boolean;
+  /** The new conversation's choice to keep its process; null (or absent) is the default, kept. */
+  retainNew?: boolean | null;
+  /** Each Harness control's account limits as its latest Turn reported them (GET /limits); the line under the composer shows this conversation's. */
+  limits?: readonly AccountLimitsView[];
   /** Ends this conversation's kept native process. */
   onEndProcess?: () => void;
   /** Ends the kept process of the conversation that holds this workspace, then sends the refused message again. */
@@ -571,7 +574,7 @@ export function ChatPage(props: ChatProps) {
     const value = session.nativeStates?.find(state => state.harnessId === harnessId)?.observed?.options[option.id] ?? run?.selection.nativeOptions?.[option.id] ?? option.currentValue;
     return option.values.find(row => row.value === value)?.name;
   })();
-  const approval: DockedApproval | null = docked ? { request: docked, harness: requestHarness(docked), waiting: waitingApprovals.length, policy, onDecision: option => decide(docked, option) } : null;
+  const approval: DockedApproval | null = docked ? { request: docked, harness: requestHarness(docked), waiting: waitingApprovals.length, policy, onDecision: (option, _keyboard, input) => decide(docked, option, input) } : null;
   // What a Turn shows of its requests: the result of each approval decided here or elsewhere, a mark while one waits in
   // the composer's place, and its questions in full.
   const turnRequests = (runId: string): ReactNode => {
@@ -684,7 +687,7 @@ export function ChatPage(props: ChatProps) {
       </div> : null}
       {nextStep ? <NextStep recap={nextStep} harness={harnessName(nextStep.harnessId)} blocked={answerBlocked} onAnswer={answer}/> : <PlanBar session={session} active={active} harness={harnessName}/>}
     </> : null}
-    below={session ? <StatusLine session={session} active={active}/> : null}/>;
+    below={session ? <StatusLine session={session} active={active} limits={props.limits?.find(row => row.harnessId === session.selection.harnessId && row.controlId === session.selection.controlId)}/> : null}/>;
   // What the page announces of the Turn in progress, or of one waiting in the queue (never the active Run), in the header's
   // words for the same state: the two waits as 等你批准 and 等你回答 (decision G), a Turn not started yet as 排队中 (ruling N).
   const latestRun = session?.runs.at(-1), current = active ?? (latestRun?.status === "queued" ? latestRun : null);
@@ -931,18 +934,43 @@ function NextStep({ recap, harness, blocked, onAnswer }: { readonly recap: NonNu
  * footer (statusParts) — input tokens when the Hub counted the whole Turn, the context share when the Harness gave its size, the cost under its
  * scope when something was spent. Nothing is estimated; a fact the Turn did not report is left out.
  */
-function StatusLine({ session, active }: { readonly session: ConversationView; readonly active: PublicRun | null }) {
+/** A limit's window as people say it: 5 小时, 每天, 每周; else the Harness's own name for it. */
+function limitWindow(limit: NativeLimit): string {
+  const minutes = limit.windowMinutes;
+  if (minutes === undefined || minutes <= 0) return limit.label ?? limit.id;
+  if (minutes === 10080) return "每周";
+  if (minutes === 1440) return "每天";
+  return minutes % 1440 === 0 ? `${minutes / 1440} 天` : minutes % 60 === 0 ? `${minutes / 60} 小时` : `${minutes} 分钟`;
+}
+function resetWords(at: number, now: number): string {
+  const date = new Date(at), today = new Date(now), time = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  return at - now < 86_400_000 && date.getDate() === today.getDate() ? `${time} 重置` : `${date.getMonth() + 1} 月 ${date.getDate()} 日 ${time} 重置`;
+}
+/** The account's limits as a ring of the window most used, as the context ring shows the window of the conversation; each window and its reset on hover. */
+function LimitsPart({ row }: { readonly row: AccountLimitsView }) {
+  const windows = row.limits.filter((limit): limit is NativeLimit & { readonly usedPercent: number } => limit.usedPercent !== undefined);
+  if (windows.length === 0) return null;
+  const top = windows.reduce((most, limit) => limit.usedPercent > most.usedPercent ? limit : most), share = Math.min(100, Math.round(top.usedPercent)), now = Date.now();
+  const tone = top.status === "exceeded" || share >= 100 ? "var(--red)" : top.status === "warning" || share >= 80 ? "var(--amber)" : "var(--text-3)";
+  const title = [...windows.map(limit => `${limitWindow(limit)}：已用 ${Math.round(limit.usedPercent)}%${limit.resetsAt === undefined ? "" : "，" + resetWords(limit.resetsAt, now)}`), ...(row.plan ? [`套餐：${row.plan}`] : [])].join("\n");
+  return <span className="inline-flex items-center gap-[5px]" title={title} aria-label={"账号额度：" + title.replace(/\n/gu, "；")}>
+    <svg width="13" height="13" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--bg-hover)" strokeWidth="3"/>
+      <circle cx="10" cy="10" r="7.5" fill="none" stroke={tone} strokeWidth="3" strokeDasharray={`${(share / 100 * 47.1).toFixed(1)} 47.1`} strokeLinecap="round" transform="rotate(-90 10 10)"/></svg>
+    <span className={share >= 80 ? "font-medium" : undefined} style={share >= 80 ? { color: tone } : undefined}>额度 {share}%</span></span>;
+}
+function StatusLine({ session, active, limits }: { readonly session: ConversationView; readonly active: PublicRun | null; readonly limits?: AccountLimitsView | undefined }) {
   const run = active ?? session.runs.at(-1) ?? null, turn = run?.protocol;
   // A Turn waiting in the queue has not started: as its own line says 排队中 without a timer (ruling N), this line counts no
   // time for it either, until a stop is asked for, when the Turn's line counts again (liveStatus).
   const counting = run !== null && turn !== undefined && !over(turn) && (turn.status !== "queued" || run.cancelRequested);
   const now = useNow(counting);
   if (turn === undefined) return null;
-  const parts = statusParts(turn, counting ? now : undefined);
+  const parts = statusParts(turn, counting ? now : undefined), limitShown = limits !== undefined && limits.limits.some(limit => limit.usedPercent !== undefined);
   return <p className="composer-status m-0 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 px-1 text-caption text-fg-3" aria-label="本轮状态">
     {parts.map((part, index) => <Fragment key={index}>{index ? <span aria-hidden="true">·</span> : null}{part.share === undefined ? <span>{part.text}</span>
       : <span className="inline-flex items-center gap-[5px]" title={`上下文已用 ${part.share}%（由原程序报告）`}>
         <svg width="13" height="13" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--bg-hover)" strokeWidth="3"/>
           <circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--text-3)" strokeWidth="3" strokeDasharray={`${(part.share / 100 * 47.1).toFixed(1)} 47.1`} strokeLinecap="round" transform="rotate(-90 10 10)"/></svg>{part.text}</span>}</Fragment>)}
+    {limitShown ? <>{parts.length ? <span aria-hidden="true">·</span> : null}<LimitsPart row={limits!}/></> : null}
   </p>;
 }

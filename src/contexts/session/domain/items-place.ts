@@ -621,7 +621,9 @@ function decide(s: Draft, w: Writes, id: string, option: string, input: string |
   const request = entry.request, chosen = request.options.find(candidate => candidate.id === str(option));
   if (request.kind === "approval") {
     const role = chosen === undefined ? "other" : approvalRole(chosen);
-    endRequest(s, w, position, role === "deny" ? "declined" : "completed", at, { role, by, at, ...(level === undefined ? {} : { level }) }, null);
+    // The words given with a refusal are the user's: kept with the decision, as the Harness was given them.
+    const note = role === "deny" && input !== undefined && str(input).trim() !== "" ? scrub(str(input), "note", []) : undefined;
+    endRequest(s, w, position, role === "deny" ? "declined" : "completed", at, { role, by, at, ...(level === undefined ? {} : { level }), ...(note === undefined ? {} : { note }) }, null);
     return;
   }
   const refusing = /^(?:cancel|skip|decline|reject|deny)$/iu.test(str(option));

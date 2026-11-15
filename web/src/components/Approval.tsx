@@ -100,7 +100,9 @@ const TYPING_GUARD_MS = 500;
  * since actions from the keyboard finish without animation (Motion board #37).
  */
 export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopDisabled = false, waiting = 1, policy, focus = null }: {
-  readonly request: Request; readonly harness: string; readonly busy: boolean; readonly onDecision: (option: string, keyboard: boolean) => void;
+  readonly request: Request; readonly harness: string; readonly busy: boolean;
+  /** `input`: the words the user gave with a refusal of a request that takes them (`note`): the Harness goes on with them. */
+  readonly onDecision: (option: string, keyboard: boolean, input?: string) => void;
   /** Stops the current reply; the approval then closes with it. */
   readonly onStop?: (() => void) | undefined; readonly stopDisabled?: boolean;
   /** How many approvals of this conversation wait, this one included; the oldest is shown first. */
@@ -115,7 +117,12 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
   readonly focus?: "guarded" | "plain" | null;
 }) {
   const section = useRef<HTMLElement>(null);
+  const noteField = useRef<HTMLInputElement>(null);
   const guard = useRef(0);
+  // A request that takes words with a refusal (Claude Code, OpenCode) can be refused with what to do instead: the field takes the decisions' place.
+  const [telling, setTelling] = useState(false);
+  const [words, setWords] = useState("");
+  useEffect(() => { if (telling) noteField.current?.focus({ preventScroll: true }); }, [telling]);
   const now = useNow(request.expiresAt !== undefined && !request.decided);
   const left = request.expiresAt === undefined || request.decided ? null : remaining(request, now);
   const seconds = request.expiresAt === undefined ? null : secondsLeft(request.expiresAt, now);
@@ -129,7 +136,8 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
     section.current?.focus({ preventScroll: true });
     if (focus === "guarded") guard.current = Date.now() + TYPING_GUARD_MS;
   }, [request.id]);
-  const decide = (option: Option, keyboard: boolean) => { if (!disabled) onDecision(option.id, keyboard); };
+  const decide = (option: Option, keyboard: boolean, said?: string) => { if (!disabled) onDecision(option.id, keyboard, said?.trim() ? said.trim() : undefined); };
+  const back = () => { setTelling(false); section.current?.focus({ preventScroll: true }); };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (disabled || event.metaKey || event.ctrlKey || event.altKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
     const target = event.target as HTMLElement;
@@ -177,14 +185,20 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
         : request.detail}</span> : null}
     </div>
     {/* The decisions keep to the right, the primary last, also when they wrap on a narrow screen. */}
-    <div className="flex flex-wrap items-center justify-end gap-2">
+    {telling && refuse ? <form className="flex flex-wrap items-center justify-end gap-2" onSubmit={event => { event.preventDefault(); decide(refuse, false, words); }}>
+      <input ref={noteField} className="field min-w-0 flex-1 basis-56" value={words} disabled={disabled} placeholder={`告诉 ${harness} 要怎么改`} aria-label={`拒绝，并告诉 ${harness} 要怎么改`}
+        onChange={event => setWords(event.target.value)} onKeyDown={event => { if (event.key === "Escape" && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); back(); } }}/>
+      <button type="button" className="decision btn btn-ghost press" disabled={disabled} onClick={back}>返回</button>
+      <button type="submit" className="decision btn btn-primary press px-3.5" disabled={disabled}>拒绝并发送</button>
+    </form> : <div className="flex flex-wrap items-center justify-end gap-2">
       {onStop ? <Tip label={"停止当前回复（" + keyText("stop") + "）"} side="top"><button type="button" className="btn btn-ghost -ml-1.5 mr-auto px-2.5" aria-label="停止当前回复" disabled={stopDisabled} onClick={onStop}>
         <Square size={10} fill="currentColor" aria-hidden="true"/><span>停止</span></button></Tip> : null}
+      {request.note && refuse ? <button type="button" className="decision btn btn-ghost press max-sm:grow" disabled={disabled} onClick={() => setTelling(true)}>拒绝并说明</button> : null}
       {refusals.map(option => button(option, "ghost"))}
       {lasting.map(option => button(option, "plain"))}
       {others.map(option => button(option, "plain"))}
       {primary ? button(primary, "primary") : null}
-    </div>
+    </div>}
   </section>;
 }
 

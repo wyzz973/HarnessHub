@@ -901,7 +901,8 @@ export class OpenCodeServerControl implements HarnessControl {
     const options: Choice[] = [{ id: "once", name: "允许一次" }, ...(save.length && this.rules !== undefined ? [{ id: "session", name: save.every(pattern => pattern === "*") ? "本次会话都允许" : "本次会话允许 " + line(save.join("、"), 120) }] : []),
       { id: "reject", name: "拒绝" }, { id: "stop", name: "拒绝并停止" }];
     const toolKind_ = actionKind(action, call ? toolKind(call.name, this.servers) : undefined, this.servers);
-    void this.ask(run, nativeId, nativeId, { title: view.title, ...(view.detail ? { detail: view.detail } : {}), options, ...(callKey ? { forCall: callKey } : {}), ...(toolKind_ ? { toolKind: toolKind_ } : {}), ...requestExpiry(null) }).then(async answer => {
+    // A refusal goes on with the user's words (its reject message), so the request says it takes them (`note`).
+    void this.ask(run, nativeId, nativeId, { title: view.title, ...(view.detail ? { detail: view.detail } : {}), options, ...(callKey ? { forCall: callKey } : {}), ...(toolKind_ ? { toolKind: toolKind_ } : {}), note: true, ...requestExpiry(null) }).then(async answer => {
       if (answer === WITHDRAWN) return;
       if (answer === STOPPED) { await reply("reject"); return; }
       if (answer.option === "session") {

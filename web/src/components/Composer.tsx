@@ -30,7 +30,8 @@ export interface DockedApproval {
   readonly waiting: number;
   /** The program's own approval rule, by its name, when its configuration reports one. */
   readonly policy?: string | undefined;
-  readonly onDecision: (option: string, keyboard: boolean) => void;
+  /** `input`: the user's words with a refusal, for a request that takes them (`note`). */
+  readonly onDecision: (option: string, keyboard: boolean, input?: string) => void;
 }
 interface ComposerProps extends ChatProps {
   readonly active: PublicRun | null;
@@ -720,7 +721,7 @@ export function Composer(props: ComposerProps) {
           style={docked ? motionStyle({ delay: 80, shift: 4 }) : undefined} aria-hidden={!docked || undefined} inert={!docked}>
           <ApprovalDock key={dockShown.request.id} request={dockShown.request} harness={dockShown.harness} waiting={dockShown.waiting} policy={dockShown.policy} busy={props.mutation !== null}
             focus={approval !== null && dockFocus.current.id === approval.request.id ? dockFocus.current.mode : null}
-            onDecision={(option, keyboard) => { instant.current = keyboard; dockShown.onDecision(option, keyboard); }}
+            onDecision={(option, keyboard, input) => { instant.current = keyboard; dockShown.onDecision(option, keyboard, input); }}
             {...(active ? { onStop: props.onCancel, stopDisabled: active.cancelRequested || props.mutation !== null } : {})}/>
         </div> : null}
       </div>
@@ -774,7 +775,7 @@ function AdvancedSettings(props: ComposerProps & {
       {outdated ? <button type="button" className="btn btn-sm self-start" disabled={disabled} onClick={() => props.onDraft({ ...draft, providerRevision: provider.revision, model: provider.models.includes(draft.model) ? draft.model : provider.defaultModel })}>使用最新版本 {provider.revision}</button> : <small className="text-caption text-fg-3">会话固定使用这个版本。</small>}</div>
       : <p className="m-0 px-3.5 py-3 text-ui-sm text-fg-2 hairline-b">沿用本机已安装 Harness 的模型配置和登录状态。</p>}
     {!provider && props.onRetention ? <div className={cn(row, "kept-setting")}><span className={heading}>后台任务</span>
-      <label className="flex items-center gap-2 text-ui-sm font-medium"><input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={session ? session.retention?.enabled === true : props.retainNew === true} disabled={disabled || props.mutation !== null} onChange={event => props.onRetention!(event.target.checked)}/>保持原生进程</label>
+      <label className="flex items-center gap-2 text-ui-sm font-medium"><input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={session ? session.retention?.enabled === true : props.retainNew ?? true} disabled={disabled || props.mutation !== null} onChange={event => props.onRetention!(event.target.checked)}/>保持原生进程</label>
       <small className="text-caption text-fg-2">一轮结束后原程序继续在后台运行，空闲 30 分钟后结束。</small>
       {session?.retention?.process ? <><small className="native-observed text-caption text-accent-text">原生进程保留中 · 后台活动 {session.retention.process.backgroundUpdates} 条 · {Math.max(1, Math.round((session.retention.process.idleEndsAt - Date.now()) / 60000))} 分钟后结束</small>
         <button type="button" className="btn btn-sm self-start" disabled={props.mutation !== null} onClick={props.onEndProcess}>结束后台进程</button></> : null}</div> : null}

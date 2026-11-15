@@ -20,7 +20,7 @@ import { parseContentRef, type ContentRef } from "../../src/contracts/content.js
 import { RUN_STATUS_WORDS } from "../../src/contracts/protocol-words.js";
 import type { HarnessFlavor } from "../../src/contracts/flavor.js";
 import { PERMISSION_LEVELS } from "../../src/contracts/protocol.js";
-import type { NativeUsage } from "../../src/contracts/control.js";
+import type { NativeLimit, NativeUsage } from "../../src/contracts/control.js";
 import { CAPABILITY_CHANGE_KINDS, CAPABILITY_DRIFT_STATES, CAPABILITY_KINDS, CAPABILITY_MECHANISMS, CAPABILITY_OWNERS, CAPABILITY_STATUSES, CAPABILITY_WARNINGS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityChangeCheck, type CapabilityChangeView,
   type CapabilityEdge, type CapabilityFacts, type CapabilityHistory, type CapabilityLinkChange, type CapabilityRestoreCheck, type CapabilitySkillPlan, type McpDefinitionView, type McpInventoryView, MCP_TARGET_STATES,
   type SkillSourceListing, type SkillUpdateView, INSTRUCTION_CHECK_OPTIONS, INSTRUCTION_TARGET_STATES, type InstructionCheckOption, type InstructionsView, type SubagentDefinitionView,
@@ -37,6 +37,37 @@ export class ApiError extends Error {
   constructor(readonly code: string, message: string, readonly status?: number) { super(message); this.name = "ApiError"; }
 }
 function invalid(): never { throw new ApiError("INVALID_RESPONSE", "网关返回了无法识别的数据，请重新载入。"); }
+/** One Harness control's account limits as its latest Turn reported them (GET /limits): each window's use and when it resets. */
+export interface AccountLimitsView { readonly harnessId: string; readonly controlId: string; readonly limits: readonly NativeLimit[]; readonly plan?: string; readonly at: number }
+const LIMIT_STATUSES = ["ok", "warning", "exceeded"] as const;
+/** The limits the Gateway reports; a window or a row this page cannot read is left out rather than shown wrong. */
+export function decodeLimits(value: unknown): readonly AccountLimitsView[] {
+  const rows = value !== null && typeof value === "object" ? (value as { readonly limits?: unknown }).limits : undefined;
+  if (!Array.isArray(rows)) invalid();
+  const number = (given: unknown, low: number, high: number): number | undefined => typeof given === "number" && Number.isFinite(given) && given >= low && given <= high ? given : undefined;
+  return rows.flatMap(row => {
+    if (row === null || typeof row !== "object") return [];
+    const { harnessId, controlId, limits, plan, at } = row as Record<string, unknown>;
+    if (typeof harnessId !== "string" || typeof controlId !== "string" || !Array.isArray(limits) || typeof at !== "number") return [];
+    const windows = limits.flatMap((item): NativeLimit[] => {
+      if (item === null || typeof item !== "object") return [];
+      const given = item as Record<string, unknown>;
+      if (typeof given.id !== "string" || given.id === "") return [];
+      const used = number(given.usedPercent, 0, 1000), minutes = number(given.windowMinutes, 0, 1e7), resets = number(given.resetsAt, 0, 1e14);
+      const status = LIMIT_STATUSES.find(value => value === given.status);
+      return [{ id: given.id, ...(typeof given.label === "string" && given.label ? { label: given.label } : {}), ...(used === undefined ? {} : { usedPercent: used }),
+        ...(minutes === undefined ? {} : { windowMinutes: minutes }), ...(resets === undefined ? {} : { resetsAt: resets }), ...(status === undefined ? {} : { status }) }];
+    });
+    return [{ harnessId, controlId, limits: windows, ...(typeof plan === "string" && plan ? { plan } : {}), at }];
+  });
+}
+/** What an ahead-open answered: whether the process is being opened, and why not when it is not (`unsupported`, `retention_off`, `busy`…). */
+export interface WarmView { readonly warming: boolean; readonly reason?: string }
+function decodeWarm(value: unknown): WarmView {
+  if (value === null || typeof value !== "object" || typeof (value as { readonly warming?: unknown }).warming !== "boolean") invalid();
+  const given = value as { readonly warming: boolean; readonly reason?: unknown };
+  return { warming: given.warming, ...(typeof given.reason === "string" ? { reason: given.reason } : {}) };
+}
 function record(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return invalid();
   return value as Record<string, unknown>;
@@ -1057,6 +1088,17 @@ export class GatewayApi {
       value => { const row = record(value); return { url: text(row.url), number: number(row.number) }; }, undefined, 3 * 60_000);
   }
   /** Keeps this conversation's native process between Turns, or stops keeping it (which closes a kept process). */
+  /** Each Harness's account limits (rate-limit windows, reset times, plan) as its latest Turn reported them. */
+  limits(signal?: AbortSignal): Promise<readonly AccountLimitsView[]> { return this.request("/limits", "GET", undefined, decodeLimits, signal); }
+  /**
+   * Opens the process of a conversation not made yet, while its first message is typed (a Harness that declares `prewarm`, Codex): the same workspace or
+   * scratch, selection and `key` its create will carry, so the create finds it. Nothing is sent to the Harness.
+   */
+  warmNew(workspace: string | null, selection: SelectionRequest, key: string): Promise<WarmView> {
+    return this.request("/sessions/warm", "POST", workspace === null ? { scratch: true, selection, commandId: key } : { workspace, selection, commandId: key }, decodeWarm);
+  }
+  /** Opens this conversation's next process ahead of its next message (a Harness that declares `prewarm`); nothing is sent. */
+  warmSession(id: string): Promise<WarmView> { return this.request(`/sessions/${encodeURIComponent(id)}/warm`, "POST", {}, decodeWarm); }
   setRetention(id: string, enabled: boolean, key: string): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/retention`, "POST", { enabled, commandId: key }, decodeSessionViewV14); }
   /** Ends the conversation's kept native process; resolves once its close is recorded. */
   endKeptProcess(id: string, key: string): Promise<ClientSessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/end-process`, "POST", { commandId: key }, decodeSessionViewV14); }
@@ -1228,10 +1270,12 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     LOGIN_SHELL_UNAVAILABLE: "HarnessHub 没有运行你的登录 shell：它必须是列在 /etc/shells 中的绝对路径。用 Homebrew 等方式安装、没有加入这个文件的 shell 常见这种情况。搜索目录没有变化。",
     LOGIN_SHELL_FAILED: "没有读到登录 shell 的 PATH：登录配置超过 3 秒、输出超过 64 KiB、以错误退出，或没有打印 PATH。搜索目录没有变化。",
   };
+  // A Harness's own words for a session it is busy with (Codex: open in another of its windows) say more than ours; the Hub's own are not for the page.
+  if (failure.code === "NATIVE_SESSION_BUSY") return /[\u3400-\u9fff]/u.test(failure.message) ? failure.message : "这个对话还有一轮没结束，等它结束后再试。";
   return labels[failure.code] ?? failure.message;
 }
 export function protocolLabel(protocol: ProviderProtocol | string): string {
-  const labels: Record<string, string> = { "openai-responses": "OpenAI Responses", "openai-chat-completions": "OpenAI Chat", "anthropic-messages": "Anthropic Messages", gemini: "Gemini", "acp-v1": "ACP", "codex-app-server": "Codex 原生", "pi-rpc": "Pi RPC" };
+  const labels: Record<string, string> = { "openai-responses": "OpenAI Responses", "openai-chat-completions": "OpenAI Chat", "anthropic-messages": "Anthropic Messages", gemini: "Gemini", "acp-v1": "ACP", "codex-app-server": "Codex 原生", "pi-rpc": "Pi RPC", "claude-agent-sdk": "Claude Agent SDK", "opencode-server": "OpenCode 服务", "openclaw-gateway": "OpenClaw 网关", "hermes-gateway": "Hermes 网关" };
   return labels[protocol] ?? protocol;
 }
 /** A Run's state in words, for what is read aloud and shown where nothing else says it: the one table of state words (protocol-words.ts). */

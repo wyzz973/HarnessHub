@@ -129,7 +129,7 @@ export function quietLine(item: ReadItem): string | null {
     // What the Hub's policy decided says by which level: "按「自动改文件」自动允许：修改 a.js". The Hub allowing one of its own tools (the task
     // list, the wrap-up, reading the conversation back) is no decision made for you about the Harness's work: it has no line (the record keeps it).
     case "approval": return item.decision === undefined || item.decision.role === "allow_once" || item.decision.by === "policy" && item.decision.role !== "deny" && HUB_TOOL.test(item.title) ? null : item.decision.by === "policy" && item.decision.level !== undefined
-      ? `按「${PERMISSION_WORDS[item.decision.level]}」${item.decision.role === "deny" ? "自动拒绝" : "自动允许"}：${item.title}` : `${DECIDED[item.decision.role]}${BY[item.decision.by]}：${item.title}`;
+      ? `按「${PERMISSION_WORDS[item.decision.level]}」${item.decision.role === "deny" ? "自动拒绝" : "自动允许"}：${item.title}` : `${DECIDED[item.decision.role]}${BY[item.decision.by]}：${item.title}` + (item.decision.note ? `（你说：${item.decision.note}）` : "");
     case "question": return item.answer === undefined ? null : `已回答：${item.title}（${item.answer}）`;
     case "unrecognized": return "未识别的条目" + (item.nativeType ? `（${item.nativeType}）` : "");
     default: return null;

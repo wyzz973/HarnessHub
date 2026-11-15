@@ -682,6 +682,8 @@ export interface PermissionRequest {
   readonly expiresBy?: "native" | "turn";
   /** A question the program asks rather than an approval of its own action; approval when absent. */
   readonly kind?: "question";
+  /** A refusal of this approval can carry the user's words, which the Harness goes on with instead of stopping (ControlEvent `note`). */
+  readonly note?: true;
 }
 /**
  * An approval or question still waiting for the user, in any conversation (ADR-035). Only live requests of this owner are

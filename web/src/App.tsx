@@ -17,7 +17,7 @@ import { fillDeferred, fillItem, fillText, incomplete, prependOlder, replaceWith
 import type { ClientSessionView } from "./lib/protocol/wire.js";
 import type { TurnReads } from "./components/ProtocolTurn.js";
 import { attentionKind, liveItems, notifyWaiting } from "./attention.js";
-import { ApiError, errorMessage, GatewayApi, requestKey } from "./api.js";
+import { ApiError, errorMessage, GatewayApi, requestKey, type AccountLimitsView } from "./api.js";
 import type { Place } from "./components/Welcome.js";
 import type { DelegationResult } from "./components/Delegation.js";
 import { PERMISSION_KEY } from "../../src/contracts/flavor.js";
@@ -62,7 +62,7 @@ interface PendingMessage { text: string; attachments: readonly string[]; createK
   /** What the user chose about the history for this message (its relay body, as JSON): a send with another choice is another request. */
   relay?: string;
   /** A new conversation chosen to keep its native process records that before its first message is sent (ADR-030). */
-  retain?: { readonly key: string; applied: boolean } }
+  retain?: { readonly key: string; readonly enabled: boolean; applied: boolean } }
 interface PendingSelection { sessionId: string; selection: SelectionRequest; key: string; recovery: boolean; acknowledgeUnknown: boolean }
 /** One conversation's unsent state in this tab. A held message (ADR-042) is restored into the composer, never sent, after a reload. */
 interface ChatDraft { message: string; attachments: readonly ContentRef[]; selection: SelectionDraft; epoch: number | null; messageIntent: PendingMessage | null; selectionIntent: PendingSelection | null; queued?: QueuedMessage | null }
@@ -355,7 +355,8 @@ export function App() {
   const operation = useRef(false);
   const pendingMessage = useRef<PendingMessage | null>(null);
   // A new conversation's choice to keep its native process, applied when its first message creates it.
-  const [keepNew, setKeepNew] = useState(false);
+  // The new conversation's choice to keep its process between Turns: null until the user changes it (kept by default, 2026-11-15).
+  const [keepNew, setKeepNew] = useState<boolean | null>(null);
   const pendingSwitchWrite = useRef<PendingSelection | null>(null);
   const chatDrafts = useRef(new Map<string, ChatDraft>());
   const selectionWish = useRef<{ id: string; draft: SelectionDraft } | null>(null);
@@ -720,6 +721,37 @@ export function App() {
     setPage(next); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null);
     if (next === "chat") writeSessionRoute(sessionIdRef.current); else writePageRoute(next);
   });
+  // The next Turn's process opened while its message is typed (FlavorCapabilities.prewarm, Codex: a thread's MCP servers start in the meantime): a new
+  // conversation's with the key its create will then carry, an existing one's at most once a minute. The Gateway answers no for a Harness that does not declare it.
+  const warmed = useRef<{ readonly at: number; readonly place: string; readonly key: string } | null>(null);
+  // Each Harness's account limits: read when the page connects, again when a Turn of the open conversation ends (its Harness reported them during it), and every five minutes.
+  const [limits, setLimits] = useState<readonly AccountLimitsView[]>([]);
+  const turnEnded = (session?.activeRunId ?? null) === null;
+  useEffect(() => {
+    if (!state) return;
+    let live = true;
+    const read = () => { void api.limits(AbortSignal.timeout(15_000)).then(rows => { if (live) setLimits(rows); }, () => undefined); };
+    read(); const timer = setInterval(read, 5 * 60_000);
+    return () => { live = false; clearInterval(timer); };
+  }, [state !== null, sessionId, turnEnded]);
+  const newPlace = () => JSON.stringify({ scratch, workspace: scratch ? null : workspace, selection: selectionRequest(draft) });
+  useEffect(() => {
+    if (!state || messageDraft.trim() === "" || mutation !== null || draft.providerId || !draft.harnessId || !draft.controlId) return;
+    const now = Date.now();
+    if (sessionId === null) {
+      if (ownWorktree && !scratch) return;
+      const place = newPlace();
+      if (warmed.current?.place === place) return;
+      const key = requestKey(); warmed.current = { at: now, place, key };
+      void api.warmNew(scratch ? null : workspace, selectionRequest(draft), key).catch(() => undefined);
+      return;
+    }
+    if (session?.id !== sessionId || session.status !== "open" || session.activeRunId !== null) return;
+    const place = "session:" + sessionId;
+    if (warmed.current?.place === place && now - warmed.current.at < 60_000) return;
+    warmed.current = { at: now, place, key: "" };
+    void api.warmSession(sessionId).catch(() => undefined);
+  }, [messageDraft, sessionId, draft, scratch, workspace, ownWorktree]);
   const saveChatDraft = () => {
     chatDrafts.current.set(sessionIdRef.current ?? "new", { message: messageDraft, attachments: readyAttachments(attachments), selection: draft,
       epoch: session?.epoch ?? null, messageIntent: pendingMessage.current, selectionIntent: pendingSwitchWrite.current, queued });
@@ -733,7 +765,7 @@ export function App() {
     const from = sessionIdRef.current;
     selectionWish.current = null; lastAutoSelection.current = null; switchArmed.current = null;
     saveChatDraft(); const saved = chatDrafts.current.get("new"); pendingSwitchWrite.current = saved?.selectionIntent ?? null;
-    sessionIdRef.current = null; liveWindow.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(false);
+    sessionIdRef.current = null; liveWindow.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(null);
     pendingMessage.current = saved?.messageIntent ?? null; setQueued(null); setQueueNotice(null);
     writeSessionRoute(null); setSessionId(null); setHeld(null); setSessionLoading(false); setSessionError(null); setDraft(saved !== undefined && saved.selection.harnessId !== "" ? saved.selection : startingSelection(state?.sessions ?? [], state?.harnesses ?? [], from, preferences.showFrozen)); setMessageDraft(saved?.message ?? ""); setAttachments(draftAttachments(saved?.attachments)); setChatKey(value => value + 1);
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
@@ -763,7 +795,7 @@ export function App() {
     selectionWish.current = null; lastAutoSelection.current = null; switchArmed.current = null;
     const control = harness.controls.find(row => row.id === harness.defaultControlId && row.available) ?? harness.controls.find(row => row.available); if (!control) return;
     saveChatDraft(); pendingSwitchWrite.current = null; setQueued(null); setQueueNotice(null);
-    sessionIdRef.current = null; liveWindow.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(false);
+    sessionIdRef.current = null; liveWindow.current = null; observedSelection.current = ""; pendingMessage.current = null; setKeepNew(null);
     const remembered = rememberedChoice(harness.id), entry = remembered && harness.controls.some(row => row.id === remembered.controlId && row.available) ? remembered : null;
     writeSessionRoute(null); setSessionId(null); setHeld(null); setSessionLoading(false); setSessionError(null);
     setDraft({ ...EMPTY_SELECTION, harnessId: harness.id, controlId: entry?.controlId ?? control.id, model: entry?.nativeModel ?? "", nativeOptions: entry?.nativeOptions ?? {} }); setMessageDraft(""); setAttachments([]);
@@ -1095,20 +1127,22 @@ export function App() {
       const relayChosen = relayBody(relayRequest), relayKey = relayChosen === null ? undefined : JSON.stringify(relayChosen);
       const previous = pendingMessage.current, same = previous !== null && previous.text === value && previous.attachments.join() === ids.join() && previous.relay === relayKey;
       if (previous && !previous.committed && !same) throw new ApiError("UNCONFIRMED_REQUEST", "上一条消息的接收结果还未确认。请保留原消息重试，或等待历史更新后再发送新内容。");
-      const request: PendingMessage = same ? previous : { text: value, attachments: ids, createKey: requestKey(), sessionId: sessionIdRef.current, sendKey: requestKey(), committed: false,
-        ...(relayKey === undefined ? {} : { relay: relayKey }), ...(sessionIdRef.current === null && keepNew ? { retain: { key: requestKey(), applied: false } } : {}) };
+      // A new conversation whose process was opened while this was typed is created with the key it was opened with, so the create finds it.
+      const warm = sessionIdRef.current === null && warmed.current !== null && warmed.current.place === newPlace() ? warmed.current.key : null;
+      const request: PendingMessage = same ? previous : { text: value, attachments: ids, createKey: warm ?? requestKey(), sessionId: sessionIdRef.current, sendKey: requestKey(), committed: false,
+        ...(relayKey === undefined ? {} : { relay: relayKey }), ...(sessionIdRef.current === null && keepNew !== null ? { retain: { key: requestKey(), enabled: keepNew, applied: false } } : {}) };
       pendingMessage.current = request;
       saveChatDraft();
       let id = request.sessionId;
       if (id === null) {
         const created = !scratch && ownWorktree && workspace ? await api.createSessionInWorktree(workspace, selectionRequest(draft), request.createKey)
           : await api.createSession(scratch ? null : workspace, selectionRequest(draft), request.createKey);
-        id = created.head.id; request.sessionId = id; chatDrafts.current.delete("new");
+        id = created.head.id; request.sessionId = id; chatDrafts.current.delete("new"); warmed.current = null;
         draftStore?.write(draftStorageKey(state.workspace, "new"), null);
         sessionIdRef.current = id; writeSessionRoute(id); setSessionId(id); acceptSession(created);
       }
       // Recorded before the first message, so the first Turn's process is already kept.
-      if (request.retain && !request.retain.applied) { acceptSession(await api.setRetention(id, true, request.retain.key)); request.retain.applied = true; setKeepNew(false); }
+      if (request.retain && !request.retain.applied) { acceptSession(await api.setRetention(id, request.retain.enabled, request.retain.key)); request.retain.applied = true; setKeepNew(null); }
       if (switchFirst && !request.committed) { await writeSelection(id); lastAutoSelection.current = JSON.stringify({ id, selection: selectionRequest(draft) }); }
       if (!request.committed) { await api.send(id, value, request.sendKey, request.attachments, relayRequest); request.committed = true; rememberChoice(draft, nativeCatalog); }
       pendingMessage.current = null;
@@ -1606,7 +1640,7 @@ export function App() {
       : preferences.sidebar ? <div className="w-sidebar flex-none hairline-r">{sidebar}</div> : null}
     <main id="main-content" className={cn("flex min-w-0 flex-1 flex-col outline-none")} tabIndex={-1}>
       {base === "chat" ? <ChatPage providerManagement={state.providerManagement !== false} onToolDetail={content => api.toolDetail(content)} {...(sessionId === null ? {} : { onDiagnostics: (run: string, includeContent: boolean) => api.runDiagnostics(sessionId, run, includeContent) })} onNativeBranch={()=>{ if(!session||!startOperation("native-branch"))return; void api.branchNative(session.id,session.epoch,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
-        retainNew={keepNew}
+        retainNew={keepNew} limits={limits}
         onRetention={enabled=>{ if(!session){ setKeepNew(enabled); return; } if(!startOperation("retention"))return; void api.setRetention(session.id,enabled,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         onEndProcess={()=>{ if(!session||!startOperation("ending-process"))return; void api.endKeptProcess(session.id,requestKey()).then(acceptSession).catch(failure=>setError(errorMessage(failure))).finally(endOperation); }}
         onFreeWorkspace={async run=>{ if(!session)return;
