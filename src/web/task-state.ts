@@ -188,9 +188,10 @@ export function stateText(state: TaskState, name: (harnessId: string) => string 
     lines.push("用户在这段对话里说的话（原话，新的在前）：", ...state.words.said.map(entry => "- 第 " + entry.turn + " 轮" + (entry.now === "running" ? "（就是手上这一轮）" : entry.now === "queued" ? "（排着队，还没开始）" : "") + "：" + indented(entry.text, "  ")));
     const n = state.words.earlier;
     if (n > 0) lines.push("更早的 " + n + " 轮里用户说的话没有放在这里" + (record === "inside" ? "：每轮一条在同一目录的 index.md，全文在 turns/NNN.md。"
-      : record !== undefined ? "：每轮一条在 " + record.dir + "/" + record.self + "/index.md，全文在 " + record.self + "/turns/NNN.md。" : "，用 harnesshub 的 hub_turns 列出、用 hub_read_turn 读全文。"));
+      : record !== undefined ? "：每轮一条在 " + record.dir + "/" + record.self + "/index.md，全文在同一目录的 turns/NNN.md。" : "，用 harnesshub 的 hub_turns 列出、用 hub_read_turn 读全文。"));
   }
-  const where = record === undefined ? "" : record === "inside" ? "文中的路径都相对于这件任务的记录目录（这个文件的上一级目录）。"
-    : "完整记录在 " + record.dir + " ，你这段对话是其中的 " + record.self + "/（index.md 每轮一条，turns/NNN.md 是每一轮的全文）。";
+  // Whole paths for a Harness (the task's first conversation has the task's own name, so a path from the conversation's name alone was taken for the task's).
+  const where = record === undefined ? "" : record === "inside" ? "文中的路径都相对于这件任务的记录目录，也就是这个文件所在目录的上一级。"
+    : "完整记录在 " + record.dir + " ，你这段对话的目录是 " + record.dir + "/" + record.self + "/（STATE.md 是现状，index.md 每轮一条，turns/NNN.md 是每一轮的全文）。";
   return "（HarnessHub：这件任务现在的状态，由 HarnessHub 从记录里整理，不是用户新说的话。你对之前的印象和它不一致时，以它和工作区的实际状态为准。" + where + "\n" + lines.join("\n") + "\n）";
 }

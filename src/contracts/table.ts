@@ -108,15 +108,17 @@ export function inRecord(text: string): boolean { return /\/context\/c-[0-9a-f]{
 export const TABLE_RECORD_ENV = "HARNESSHUB_RECORD";
 /**
  * What a session whose Harness reads the record as files is told (2026-11-13): where the directory is, what is in it, and to read it with its own tools. `dir` is the
- * task's directory, `self` the name of the conversation's own directory inside it.
+ * task's directory, `self` the name of the conversation's own directory inside it. Its files are named by their whole path (2026-11-15): the task's first conversation
+ * has the task's own name, so `c-…/STATE.md` read beside `…/c-…` was taken for the task's directory's own file.
  */
 export function hubRecordInstructions(dir: string, self: string): string {
+  const own = dir + "/" + self;
   return DELEGATE_WORDS + "不确定现在还算数的约束有哪些时，看记录目录里的 board.md；用户撤回一条时，把它的编号（board.md 里每条前面的）交给 hub_remember 的 forget。\n"
-    + "这件任务的完整记录在一个只读目录里：" + dir + " 。你这段对话是其中的 " + self + "/ ：" + self + "/STATE.md 是 HarnessHub 整理的现状（目标、要遵守的、做到哪、改过的文件、用户最新的话），一轮进行中也随时更新，开头有“这一轮开始以来的变化”时，那是你这一轮开始后这件任务里变了、还没告诉过你的东西；" + self + "/index.md 每一轮一条，" + self + "/turns/NNN.md 是第 N 轮的全文（用户原话、回复、每次工具调用的输入和完整输出、改动的文件）。"
-    + "task.md 列着这件任务里的每段对话（各自在做什么、改了哪些文件），每段对话一个目录；board.md 是任务板。"
+    + "这件任务的完整记录在一个只读目录里：" + dir + " 。你这段对话的目录是其中的 " + own + "/ ：" + own + "/STATE.md 是 HarnessHub 整理的现状（目标、要遵守的、做到哪、改过的文件、用户最新的话），一轮进行中也随时更新，开头有“这一轮开始以来的变化”时，那是你这一轮开始后这件任务里变了、还没告诉过你的东西；同一目录的 index.md 每一轮一条，turns/NNN.md 是第 N 轮的全文（用户原话、回复、每次工具调用的输入和完整输出、改动的文件）。"
+    + dir + "/task.md 列着这件任务里的每段对话（各自在做什么、改了哪些文件），每段对话一个以它的标签命名的目录；" + dir + "/board.md 是任务板。"
     + "需要更早的细节、别的 Harness 做过什么时，用你自己读文件、搜文件的工具到那里查（比如先 grep），不要猜，也不要改那个目录。"
     + "只在这个目录里面找：它的上级目录里是别的任务的记录，和这件事无关，不要去翻。"
-    + "你的上下文被压缩过、或者记不清这件任务的目标和要遵守的约束时，先读 " + self + "/STATE.md 和 board.md，再接着做。";
+    + "你的上下文被压缩过、或者记不清这件任务的目标和要遵守的约束时，先读 " + own + "/STATE.md 和 " + dir + "/board.md，再接着做。";
 }
 
 /** What the tool process answers when it was not started inside a Hub session. */

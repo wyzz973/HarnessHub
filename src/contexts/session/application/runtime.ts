@@ -335,15 +335,18 @@ function asCommand(note: string, command: string | undefined): string {
 }
 /** What a remembered context window is kept by: the Harness, its control and the model chosen (none: its own default). */
 function windowKey(selection: { readonly harnessId: string; readonly controlId: string; readonly nativeModel?: string }): string { return selection.harnessId + "\n" + selection.controlId + "\n" + (selection.nativeModel ?? ""); }
-/** A note of the Hub's as a Harness that reads the record as files reads it (2026-11-13): where it named the reading tools, it names the directory. */
+/**
+ * A note of the Hub's as a Harness that reads the record as files reads it (2026-11-13): where it named the reading tools, it names the directory, by whole paths with the
+ * label in its place (2026-11-15): the task's first conversation has the task's own name, so a conversation's directory named by its label alone was taken for the task's.
+ */
 function asFiles(note: string, place: { readonly dir: string; readonly self: string } | null): string {
   if (place === null) return note;
-  const at = "记录目录 " + place.dir + " ";
+  const dir = place.dir;
   return note
-    .replace("先用 harnesshub 的 hub_task 看全貌，再用 hub_turns、hub_read_turn、hub_search 带上对话标签去读。", "先看" + at + "里的 task.md，再到那段对话的目录里读 index.md 和 turns/NNN.md（目录名就是对话标签）。只在这个目录里面找，不要去它的上级目录。")
-    .replace("用 harnesshub 的 hub_task 看全貌，或用 hub_read_turn、hub_search 带上那段对话的标签去读。", "到" + at + "里那段对话的目录读（目录名就是它的标签；index.md、turns/NNN.md）。")
-    .replace("用 harnesshub 的 hub_read_turn 带上对话标签去读。", "到" + at + "里那段对话的目录读（目录名就是对话标签；index.md、turns/NNN.md）。")
-    .replace("用 harnesshub 的 hub_turns 带上这个对话标签去读。", "在" + at + "里这段对话的 index.md 里。");
+    .replace("先用 harnesshub 的 hub_task 看全貌，再用 hub_turns、hub_read_turn、hub_search 带上对话标签去读。", "先看 " + dir + "/task.md，再到 " + dir + "/<对话标签>/ 里读那段对话的 index.md 和 turns/NNN.md。只在 " + dir + " 里面找，不要去它的上级目录。")
+    .replace("用 harnesshub 的 hub_task 看全貌，或用 hub_read_turn、hub_search 带上那段对话的标签去读。", "看 " + dir + "/task.md，或到 " + dir + "/<那段对话的标签>/ 里读（index.md、turns/NNN.md）。")
+    .replace("用 harnesshub 的 hub_read_turn 带上对话标签去读。", "到 " + dir + "/<对话标签>/ 里读（index.md、turns/NNN.md）。")
+    .replace("用 harnesshub 的 hub_turns 带上这个对话标签去读。", "在 " + dir + "/<这个对话标签>/index.md 里。");
 }
 /** What the Harness of a delegated conversation reads before its task: that this is a part of a larger task, and how the rest of it is read. */
 const DELEGATED_NOTE = "（HarnessHub：下面是从另一段对话委派给你的任务，是一件更大的事的一部分。交到你手上的是任务、这件事现在的状态和用户在那段对话里说过的话；那里做过的事（回复、命令、改动的细节）没有带过来，要用就去读。那段对话正在进行的一轮、以及这件事里其他 Harness 做了什么和改了哪些文件，都能读到："
