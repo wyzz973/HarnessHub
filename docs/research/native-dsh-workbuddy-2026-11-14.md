@@ -189,6 +189,18 @@ Mapping:
    - plan = the Hub's plan tool (current `planTool: "hub"`)
 4. **Spike, time-boxed:** a read-only probe of the Web host RPC against a temporary `DSH_HOME`, for `session/create|prompt(steer)|follow|cancel|fork|rename` plus `commands/execute`. If it works and the user accepts an internal contract, add it as an optional "rich" driver and keep ACP as the fallback. Re-check the SDK when upstream adds cancel.
 
+### 1.10 Re-check on 0.2.2-rc.1 (2026-11-15, installed with the Hub's own upgrade)
+
+Still true: no steer (one prompt in flight), no fork, no `session/load`, no modes, commands or plans on the wire; `session/list|resume|close`; `model` and `reasoning_effort` (off/low/high/max); per-session MCP; `usage_update` is occupancy only; the log is `session.v4.jsonl.zstd` under the same `projectKey`. Changed or newly seen:
+- An error turn now **refuses the prompt** (-32603 `turn failed: …`); blocked and aborted still arrive as `end_turn`. `turn/end.reason.error.code` (TRANSPORT, RATE_LIMIT, AUTH, …) says why. A user stop ends the turn `aborted {kind: user}` with ACP `cancelled`.
+- Message and thought chunks carry `messageId` (the committed message's id). A permission request's `toolCall` carries only `toolCallId`.
+- The acp profile gives the model `todo_write` (whole-list `{content, status}`); it reaches ACP only as a generic tool call. No `ask_user_question`.
+- `promptCapabilities.image` is false on the installed routes (deepseek-v4-flash, -pro).
+- The log holds a `session/title` (first-prompt fallback) even though LLM titles stay off in the acp profile.
+- `dsh-session-log-deepseek` uploads the session log with official API requests by default (`session-log-deepseek/delivery-accepted` entries).
+
+Web host spike (temporary `DSH_HOME`, a local stand-in for the Messages API, nothing of `~/.dsh` touched): `GET /connect?token=…&interactions=answer` gives an API cookie; unary calls are `POST /api/<endpoint>` with `{type: "client-request", rpcId, method, payload: {args}}`; streams are `open|item|end|cancel` frames on `/api/remote.mux`. All of these worked: `session/create`; `session/follow` with live assistant chunks; `session/prompt` in `queue` and `steer` mode (steered words went into the next model step of the same turn); `session/cancel`; `session/fork`; `session/rename`; `session/list` (titles, running, token projections); `commands/execute` `/compact` and `/permission read-only` (the preset changed live). Argument names differ per endpoint (`_request` for list, `agentId` and `submittedAttachments` for commands) and are generated, so they can change with any release.
+
 ---
 
 ## Part 2 — WorkBuddy
