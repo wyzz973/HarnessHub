@@ -344,7 +344,7 @@ export function App() {
   const [nativeError, setNativeError] = useState<string | null>(null);
   const [modelAttempt, setModelAttempt] = useState(0);
   const [draftStorageError, setDraftStorageError] = useState<string | null>(null);
-  draftNotice = { failed: () => setDraftStorageError("浏览器存不下这份草稿。内容仍在输入框里，刷新或关闭页面前请先发出或复制。"), saved: () => setDraftStorageError(null) };
+  draftNotice = { failed: () => setDraftStorageError(desktop !== null ? "这份草稿存不下。内容仍在输入框里，退出前请先发出或复制。" : "浏览器存不下这份草稿。内容仍在输入框里，刷新或关闭页面前请先发出或复制。"), saved: () => setDraftStorageError(null) };
   const [editor, setEditor] = useState<ProviderView | "new" | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
   const [leaveAction, setLeaveAction] = useState<(() => void) | null>(null);
@@ -966,7 +966,7 @@ export function App() {
         });
       },
     },
-    copy: (text, what) => { navigator.clipboard.writeText(text).then(() => toast.show({ title: "已复制" + what, timeout: 2500 }), () => toast.show({ title: "没有复制成", description: "浏览器没有让页面写剪贴板" })); },
+    copy: (text, what) => { navigator.clipboard.writeText(text).then(() => toast.show({ title: "已复制" + what, timeout: 2500 }), () => toast.show({ title: "没有复制成", ...(desktop !== null ? {} : { description: "浏览器没有让页面写剪贴板" }) })); },
     grouping: preferences.grouping, onGrouping: value => setPreference("grouping", value),
     onOrder: ids => { sidebarOrder.current = ids; },
   }), [api, changeSession, toast, page, state?.sessions, preferences.grouping, trashStamp]);

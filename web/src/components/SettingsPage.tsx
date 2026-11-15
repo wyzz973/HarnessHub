@@ -6,6 +6,7 @@ import { HUB_PROGRESS_INSTRUCTIONS } from "../../../src/contracts/table.js";
 import type { LoginShellView } from "../../../src/contracts/web.js";
 import { errorMessage, GatewayApi } from "../api.js";
 import { cn } from "../lib/cn.js";
+import { desktop } from "../lib/desktop.js";
 import { useNotificationChoice } from "../lib/notify.js";
 import { DEFAULT_PREFERENCES, type Preferences } from "../lib/prefs.js";
 import type { RelayPrefsState } from "../lib/use-relay.js";
@@ -115,7 +116,7 @@ export function SettingsDialog({ open, onOpenChange, api, relay, preferences, on
     <Section title="通知" id="settings-notifications">
       <Card className={ROWS}>
         <Row title="系统通知" control={<Switch checked={notify.on} onChange={() => void notify.toggle()} disabled={!notify.supported || notify.blocked} label="系统通知"/>}>
-          {!notify.supported ? "这个浏览器不支持通知。" : notify.blocked ? "浏览器拦了通知，到网站设置里允许。" : "页面在后台时提醒你。"}</Row>
+          {desktop !== null ? (notify.blocked ? "系统没有允许通知，到“系统设置 → 通知”里打开。" : "窗口不在前台时提醒你。") : !notify.supported ? "这个浏览器不支持通知。" : notify.blocked ? "浏览器拦了通知，到网站设置里允许。" : "页面在后台时提醒你。"}</Row>
       </Card>
     </Section>
     <Section title="发现" id="settings-discovery">
