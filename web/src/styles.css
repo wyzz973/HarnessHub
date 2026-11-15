@@ -777,7 +777,9 @@
   .diff-split { overflow-x: hidden; }
   .diff-split .diff-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .diff-split .diff-side { min-width: 0; }
-  .diff-split .diff-side + .diff-side { box-shadow: inset .5px 0 0 var(--border-strong); }
+  /* The line between the two sides lies over the rows (drawn inside the second side, a changed row's tint would cover it). */
+  .diff-split .diff-pair { position: relative; }
+  .diff-split .diff-pair::after { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: .5px; background: var(--border-strong); pointer-events: none; }
   .diff-split .diff-side > .c { min-width: 0; flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 8px; }
   .diff-split .diff-side.is-blank { background: var(--bg-subtle); }
   .diff-split .diff-remark { padding-left: 10px; }
