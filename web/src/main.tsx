@@ -9,6 +9,7 @@ import { followWindow } from "./lib/desktop.js";
 import { followMenu } from "./lib/keys.js";
 import { trackInputModality } from "./ui/motion.js";
 import { ToastProvider } from "./ui/overlay.js";
+import { startLiquidGlass } from "./ui/liquid.js";
 
 /**
  * Keeps the browser's theme color (the window or tab bar around the page) on the theme the page shows. index.html gives
@@ -38,5 +39,7 @@ followMenu();
 followThemeColor(document.documentElement);
 // Actions started from the keyboard finish without animation (ADR-054 §3); this lives as long as the document.
 trackInputModality();
+// Glass surfaces bend what is behind them at their rim (Chromium only: the desktop app).
+startLiquidGlass();
 // Interface icons are Lucide at a 1.75 stroke (ADR-054 §4); an icon may still pass its own strokeWidth.
 createRoot(root).render(<StrictMode><LucideProvider strokeWidth={1.75}><ToastProvider><App /></ToastProvider></LucideProvider></StrictMode>);

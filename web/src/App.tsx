@@ -1058,7 +1058,8 @@ export function App() {
   const showSidebar = (shown: boolean) => { if (shown === preferences.sidebar) return; sidebarFocus.current = document.activeElement; setPreference("sidebar", shown); };
   useLayoutEffect(() => {
     const from = sidebarFocus.current; sidebarFocus.current = null;
-    if (from === null || from === document.body || from.isConnected) return;
+    // The sidebar stays in the page while it is away (it slides), so what had focus inside it is still there, out of reach: that counts as gone.
+    if (from === null || from === document.body || (from.isConnected && from.closest(".sidebar-slot[data-open='false']") === null)) return;
     (document.querySelector<HTMLElement>(preferences.sidebar ? "aside[aria-label='主导航'] button[aria-label='收起侧栏']" : "#main-content button[aria-label='展开侧栏']")
       ?? document.getElementById("main-content"))?.focus();
   }, [preferences.sidebar]);
