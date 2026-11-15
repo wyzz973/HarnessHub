@@ -149,6 +149,8 @@ pnpm build && pnpm web:build
 pnpm web --cwd /path/to/your/project --data-dir data --port 4317
 ```
 
+**桌面应用（macOS）。** `pnpm desktop:pack` 打出 `dist-desktop/HarnessHub-darwin-arm64/HarnessHub.app`：窗口是系统的毛玻璃材质，网关由应用自己带起（跑在应用自带的运行时上，不需要系统里的 Node），数据默认在 `~/Library/Application Support/HarnessHub/data`；已有的数据目录用 `--hub-data-dir <路径>` 指给它，或写进同目录的 `desktop.json`（`{"dataDir": "…"}`）。开发时用 `pnpm desktop` 直接运行（先执行一次 `node node_modules/electron/install.js` 取 Electron）。下面的浏览器入口还在，但界面按桌面应用来做。
+
 打开它打印的一次性链接。令牌会换成本机 cookie 并从地址栏移除；服务只监听 `127.0.0.1`，登录在你使用期间一直有效，8 小时没有活动才失效。关掉页面不会取消回复，<kbd>Ctrl</kbd>+<kbd>C</kbd> 会等进行中的工作收尾并保留历史。
 
 服务运行期间独占它的 `--data-dir`。每个对话是 `data/sessions/` 下一个只追加的 JSONL 文件，每件任务的记录在 `data/context/` 下。不选文件夹的对话在 `~/HarnessHub/chats` 里干活，要了自己工作树的对话，工作树在 `~/HarnessHub/worktrees` 下。`pnpm web --help` 列出全部参数。

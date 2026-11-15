@@ -15,7 +15,7 @@ import { markSeen, startSeen, unseen, useSeen } from "../lib/seen.js";
 import { useNotificationChoice } from "../lib/notify.js";
 import { useNow } from "../lib/prefs.js";
 import { Collapsible } from "../ui/motion.js";
-import { Dialog, Menu, Popover } from "../ui/overlay.js";
+import { Dialog, Menu, Popover, showNativeMenu } from "../ui/overlay.js";
 import { Badge, LogoMark, Spinner, StatusDot, Tip } from "../ui/primitives.js";
 import { lastingOption } from "./Approval.js";
 import { BrandIcon } from "./BrandIcon.js";
@@ -587,15 +587,8 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
       actions && (menu ? "opacity-0" : "group-hover/session:opacity-0 group-has-[:focus-visible]/session:opacity-0"))} title={left?.hint} aria-hidden="true">{when}</span> : null}
     <span id={metaId} className="sr-only">{meta}</span>
   </>;
-  return <div className="session-row group/session relative" {...dragging} onContextMenu={actions && editing === null ? event => { event.preventDefault(); setMenu(true); } : undefined}>
-    {editing !== null ? <div className={cn(look, "bg-sidebar-hover")}>{inside}</div>
-      : <button type="button" disabled={disabled} onClick={event => { if (picking?.pick(session.id, event) === true) return; onOpen(); }} aria-current={current ? "page" : undefined} aria-label={title}
-        aria-describedby={metaId} title={left?.hint ?? session.line} {...(picking !== null && picking.picked.size > 0 ? { "aria-pressed": picked } : {})} className={look}>{inside}</button>}
-    {actions && editing === null ? <span className={cn("session-actions absolute top-1/2 right-2 flex -translate-y-1/2 items-center transition-opacity duration-120 ease-standard", menu ? "opacity-100" : "opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100")}>
-      {away === "later" ? <Tip label="现在就看"><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={"现在就看：" + title} onClick={() => actions.snooze(session.id, null)}><AlarmClockOff size={14} aria-hidden="true"/></button></Tip>
-        : <Tip label={away === "archived" ? "取消归档" : "归档"}><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={(away === "archived" ? "取消归档：" : "归档：") + title} onClick={() => actions.archive(session.id, away !== "archived")}>
-          {away === "archived" ? <ArchiveRestore size={14} aria-hidden="true"/> : <Archive size={14} aria-hidden="true"/>}</button></Tip>}
-      <Menu align="start" open={menu} onOpenChange={setMenu} trigger={<button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={"更多操作：" + title}><MoreHorizontal size={14} aria-hidden="true"/></button>} items={[
+  // What can be done with the conversation: the row's "…" menu, and in the desktop app the system's own menu on a right-click.
+  const rowMenu = actions ? [
         ...(away === undefined ? [{ label: session.pinned === true ? "取消置顶" : "置顶", icon: session.pinned === true ? <PinOff size={14}/> : <Pin size={14}/>, onSelect: () => actions.pin(session.id, session.pinned !== true) }] : []),
         { label: "重命名", icon: <PencilLine size={14}/>, onSelect: () => setEditing(title) },
         ...(away === undefined && !unread && !current ? [{ label: "标为未读", icon: <CircleDot size={14}/>, onSelect: () => actions.markUnread(session.id) }] : []),
@@ -608,7 +601,16 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
         { separator: true as const },
         ...(away !== "later" ? [{ label: away === "archived" ? "取消归档" : "归档", icon: away === "archived" ? <ArchiveRestore size={14}/> : <Archive size={14}/>, onSelect: () => actions.archive(session.id, away !== "archived") }] : []),
         { label: "删除", icon: <Trash2 size={14}/>, danger: true, disabled: state === "run" || state === "wait", onSelect: () => actions.remove(session.id) },
-      ]}/>
+  ] : [];
+  return <div className="session-row group/session relative" {...dragging} onContextMenu={actions && editing === null ? event => { event.preventDefault(); if (!showNativeMenu(rowMenu)) setMenu(true); } : undefined}>
+    {editing !== null ? <div className={cn(look, "bg-sidebar-hover")}>{inside}</div>
+      : <button type="button" disabled={disabled} onClick={event => { if (picking?.pick(session.id, event) === true) return; onOpen(); }} aria-current={current ? "page" : undefined} aria-label={title}
+        aria-describedby={metaId} title={left?.hint ?? session.line} {...(picking !== null && picking.picked.size > 0 ? { "aria-pressed": picked } : {})} className={look}>{inside}</button>}
+    {actions && editing === null ? <span className={cn("session-actions absolute top-1/2 right-2 flex -translate-y-1/2 items-center transition-opacity duration-120 ease-standard", menu ? "opacity-100" : "opacity-0 group-hover/session:opacity-100 group-has-[:focus-visible]/session:opacity-100")}>
+      {away === "later" ? <Tip label="现在就看"><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={"现在就看：" + title} onClick={() => actions.snooze(session.id, null)}><AlarmClockOff size={14} aria-hidden="true"/></button></Tip>
+        : <Tip label={away === "archived" ? "取消归档" : "归档"}><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={(away === "archived" ? "取消归档：" : "归档：") + title} onClick={() => actions.archive(session.id, away !== "archived")}>
+          {away === "archived" ? <ArchiveRestore size={14} aria-hidden="true"/> : <Archive size={14} aria-hidden="true"/>}</button></Tip>}
+      <Menu align="start" open={menu} onOpenChange={setMenu} trigger={<button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:bg-selected" disabled={disabled} aria-label={"更多操作：" + title}><MoreHorizontal size={14} aria-hidden="true"/></button>} items={rowMenu}/>
     </span> : null}
     {landing !== null ? <span className={cn("pointer-events-none absolute inset-x-2 z-[1] h-0.5 rounded-full bg-accent", landing === "before" ? "-top-px" : "-bottom-px")} aria-hidden="true"/> : null}
     {actions && custom ? <SnoozeDialog title={title} onClose={() => setCustom(false)} onChoose={until => { setCustom(false); actions.snooze(session.id, until); }}/> : null}
