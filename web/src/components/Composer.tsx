@@ -122,7 +122,7 @@ export function harnessOptions(harnesses: readonly HarnessView[], readiness: rea
  * 8 px apart as the board's 7 px gaps. When the row is short of room the connection and the model give way (an ellipsis);
  * the Agent keeps its name (shortened only on a phone) and the pill and the chevron stay whole.
  */
-const SEGMENT = "h-[30px] max-w-none rounded-row px-1 outline-offset-[-2px] hover:bg-hover data-[popup-open]:bg-hover";
+const SEGMENT = "h-7 max-w-none rounded-row px-1 outline-offset-[-2px] hover:bg-hover data-[popup-open]:bg-hover";
 /** The small blue pill of a native option inside the merged picker (the thinking level, or the mode). */
 function Pill({ children }: { readonly children: ReactNode }) {
   return <span className="inline-flex h-5 items-center rounded-full bg-subtle px-[7px] text-[11px] leading-4 font-medium whitespace-nowrap text-fg-2">{children}</span>;
@@ -655,7 +655,7 @@ export function Composer(props: ComposerProps) {
           <input ref={picker} type="file" multiple hidden tabIndex={-1} aria-hidden="true" onChange={event => { attach(event.target.files); event.target.value = ""; }}/>
           <div className="flex flex-wrap items-center gap-x-1 gap-y-2">
             <div className="-ml-2 flex flex-none items-center gap-0.5" role="group" aria-label="附件与权限">
-              <Menu side={popSide} align="start" {...listOpen("add")} trigger={<button ref={plusButton} type="button" className="press mr-0.5 flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-40"
+              <Menu side={popSide} align="start" {...listOpen("add")} trigger={<button ref={plusButton} type="button" className="press mr-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-40"
                 aria-label="添加文件或上下文" disabled={readonly}><Plus size={16} strokeWidth={1.9}/></button>} items={[
                 { label: "添加文件或图片…", icon: <Paperclip size={15}/>, hint: "@", disabled: !canAttach, onSelect: () => picker.current?.click() },
                 ...(commands.length ? [{ label: "原生命令", icon: <SquareSlash size={15}/>, hint: "/", disabled: disabled, onSelect: () => { setSlashClosedAt(null); (props.onReplaceDraft ?? props.onMessageDraft)("/"); setTimeout(() => inputRef.current?.focus(), 0); } }] : []),
@@ -668,7 +668,7 @@ export function Composer(props: ComposerProps) {
                 trigger={selected => <><ShieldCheck size={15} className="flex-none" aria-hidden="true"/><span className="hidden max-w-[140px] truncate sm:inline">{level.permission === "custom" ? "自定义" : selected?.short ?? selected?.label ?? "本机设置"}</span></>}/> : null}
             </div>
             <div className="ml-auto flex max-w-full min-w-0 items-center gap-1">
-              <div ref={chip} className="agent-chip flex h-[34px] max-w-full min-w-0 items-center overflow-hidden rounded-block p-0.5 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle has-[[data-popup-open]]:bg-subtle"
+              <div ref={chip} className="agent-chip flex h-8 max-w-full min-w-0 items-center overflow-hidden rounded-block p-0.5 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle has-[[data-popup-open]]:bg-subtle"
                 role="group" aria-label="由谁来做：Harness、模型与思考强度">
                 <SearchPicker side={popSide} label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
                   open={agentPickerOpen && !docked} onOpenChange={onAgentPickerOpen} className={cn(SEGMENT, "flex-none gap-[7px] pl-1")}
@@ -694,9 +694,9 @@ export function Composer(props: ComposerProps) {
                 {mode && modeInChip ? <SearchPicker side={popSide} {...listOpen("mode")} label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
                   className={cn(SEGMENT, "flex-none")} {...afterChoice} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
               </div>
-              {canSteer ? <Tip label={"现在就告诉它（" + (steerFirst || !canQueue ? sendWord : otherWord) + "）"}><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
+              {canSteer ? <Tip label={"现在就告诉它（" + (steerFirst || !canQueue ? sendWord : otherWord) + "）"}><button type="button" className="press flex h-8 w-8 flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
                 aria-label="现在就告诉它" onClick={() => props.onSteer?.()}><CornerDownRight size={16}/></button></Tip> : null}
-              {canQueue ? <Tip label={"本轮结束后发送（" + (canSteer && steerFirst ? otherWord : sendWord) + "）"}><button type="button" className="press flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
+              {canQueue ? <Tip label={"本轮结束后发送（" + (canSteer && steerFirst ? otherWord : sendWord) + "）"}><button type="button" className="press flex h-8 w-8 flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
                 aria-label="本轮结束后发送" onClick={() => props.onQueue?.()}><ListPlus size={16}/></button></Tip> : null}
               <Tip label={active ? "停止当前回复（" + keyText("stop") + "）" : "发送（" + sendWord + "）"}><button type={active ? "button" : "submit"} aria-label={active ? "停止当前回复" : "发送消息"}
                 className={cn("press ml-0.5 flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none disabled:cursor-default",

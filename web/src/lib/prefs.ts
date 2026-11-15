@@ -74,10 +74,13 @@ export function readPreferences(): Preferences {
 function writePreferences(value: Preferences): void { try { localStorage.setItem(KEY, JSON.stringify({ ...value, version: VERSION })); } catch { /* lasts for this page only */ } }
 /** Applies the theme to the root element; "system" removes the attribute so the stylesheet follows the media query. */
 export function applyTheme(theme: Preferences["theme"]): void {
-  const root = document.documentElement;
-  if (theme === "system") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", theme);
-  // The window's own material and menus are light or dark with the page.
-  desktop?.setTheme(theme);
+  const root = document.documentElement, set = () => { if (theme === "system") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", theme); };
+  // A change of theme on a page already shown crosses over in a moment (the first one, before anything is painted, is at once).
+  const cross = (root.getAttribute("data-theme") ?? "system") !== theme && document.readyState === "complete" && typeof document.startViewTransition === "function"
+    && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (cross) document.startViewTransition(set); else set();
+  // The window's own material and menus are light or dark with the page: halfway through the crossing.
+  if (cross) setTimeout(() => desktop?.setTheme(theme), 110); else desktop?.setTheme(theme);
 }
 /** The page's preferences, kept in sync across tabs of this browser. */
 export function usePreferences(): readonly [Preferences, <K extends keyof Preferences>(key: K, value: Preferences[K]) => void] {

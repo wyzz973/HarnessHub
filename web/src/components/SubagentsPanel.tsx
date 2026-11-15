@@ -38,7 +38,7 @@ function SubagentDialog({ api, editing, onClose, onSaved }: { readonly api: Gate
     api.saveSubagent(editing.name ?? name.trim(), { description, prompt }, editing.name !== null).then(saved => { setBusy(false); onSaved(saved); }, error => { setBusy(false); setFailure(errorMessage(error)); });
   };
   return <Dialog open={editing !== null} onOpenChange={open => { if (!open && !busy) onClose(); }} title={editing?.name ? "编辑 " + editing.name : "新建子 Agent"}
-    description="只保存名字、说明和正文：子 Agent 用父会话的模型、工具和权限，HarnessHub 不写会放宽权限或拉起程序的设置。" className="subagent-dialog w-[min(640px,calc(100vw-32px))]">
+    description="只保存名字、说明和正文；模型、工具和权限跟父会话。" className="subagent-dialog w-[min(640px,calc(100vw-32px))]">
     <div className={DIALOG_BODY}>
       {failure ? <Notice tone="red">{failure}</Notice> : null}
       {editing?.name ? null : <Field label="名字（小写字母、数字和 -）"><input className="field" aria-label="子 Agent 名字" value={name} placeholder="code-checker" onChange={event => setName(event.target.value)}/></Field>}

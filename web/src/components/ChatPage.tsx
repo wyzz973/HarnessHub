@@ -829,7 +829,7 @@ export function ChatPage(props: ChatProps) {
     {session && relay ? <RelayPacketDialog api={relay.api} sessionId={session.id} packet={viewedPacket} onClose={() => setViewing(null)} name={harnessName}/> : null}
     {props.onDelegate && session ? <DelegateDialog open={delegating} onClose={() => setDelegating(false)} current={session.selection.harnessId} onDelegate={props.onDelegate}
       harnesses={harnesses.filter(harness => !props.hiddenHarnesses.has(harness.id) && harness.controls.some(control => control.available))}/> : null}
-    <Dialog open={confirmClose} onOpenChange={setConfirmClose} title="结束这次会话？" description="历史会保留。这次会话将不再接收新消息；之后可以新建对话。">
+    <Dialog open={confirmClose} onOpenChange={setConfirmClose} title="结束这次会话？" description="历史保留，之后不能再往这个对话发消息。">
       <div className="flex flex-col gap-4 px-5 pt-2 pb-5">
         {active || pending ? <p className="m-0 text-ui-sm text-fg-2">当前执行或待生效的选择会停止，已经产生的内容与文件会保留。</p> : null}
         <div className="flex justify-end gap-2"><button type="button" className="btn" onClick={() => setConfirmClose(false)} autoFocus>继续对话</button><button type="button" className="btn btn-primary" onClick={() => { setConfirmClose(false); props.onClose(); }}>结束会话</button></div>

@@ -9,6 +9,7 @@ import type { ClientSessionView } from "../lib/protocol/wire.js";
 import { errorMessage } from "../api.js";
 import { attentionKind, liveItems, mostUrgent, remaining, secondsLeft } from "../attention.js";
 import { cn } from "../lib/cn.js";
+import { desktop } from "../lib/desktop.js";
 import { ariaKeys, keyText, useKeys } from "../lib/keys.js";
 import { ago, agoShort, clock, folderName, homePath, inScratch, projectOf, untilShort } from "../lib/format.js";
 import { markSeen, startSeen, unseen, useSeen } from "../lib/seen.js";
@@ -29,7 +30,8 @@ export type Page = "chat" | "providers" | "harnesses" | "capabilities" | "settin
  */
 export function NotifyToggle({ withLabel = false }: { readonly withLabel?: boolean }) {
   const { supported, on, blocked, toggle } = useNotificationChoice();
-  const title = !supported ? "此浏览器不支持通知" : blocked ? "浏览器已阻止本页的通知，可在浏览器的网站设置中允许" : (on ? "已开启：" : "") + "页面在后台时，有事等你或正在看的对话做完时，用系统通知告诉你";
+  const title = desktop !== null ? (blocked ? "系统没有允许通知，到“系统设置 → 通知”里打开" : (on ? "已开启：" : "") + "窗口不在前台时，有事等你或正在看的对话做完，用系统通知告诉你")
+    : !supported ? "此浏览器不支持通知" : blocked ? "浏览器已阻止本页的通知，可在浏览器的网站设置中允许" : (on ? "已开启：" : "") + "页面在后台时，有事等你或正在看的对话做完时，用系统通知告诉你";
   return <button type="button" className={cn(withLabel ? "btn btn-sm" : "icon-btn icon-btn-sm", "notify-toggle", on && "text-accent-text")} aria-pressed={on} aria-label="待处理时通知我" title={title} disabled={!supported} onClick={() => void toggle()}>
     {on ? <Bell size={14} aria-hidden="true"/> : <BellOff size={14} aria-hidden="true"/>}{withLabel ? <span>{on ? "已开启通知" : "开启通知"}</span> : null}</button>;
 }

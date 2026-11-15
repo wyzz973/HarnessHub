@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { cn } from "../lib/cn.js";
+import { desktop } from "../lib/desktop.js";
 import { chordKeys, chordOf, DEFAULT_KEYS, KEY_ACTIONS, resetKey, sameChord, setKey, useKeys, type KeyAction } from "../lib/keys.js";
 import { Kbd } from "../ui/primitives.js";
 
@@ -265,7 +266,7 @@ export function ShortcutsDialog({ open, onOpenChange, onClosed }: { readonly ope
       <BaseDialog.Popup className="dialog-pop z-[61] flex w-[min(520px,calc(100vw-32px))] flex-col">
         <div className="px-5 pt-5"><BaseDialog.Title className="m-0 text-panel">快捷键</BaseDialog.Title></div>
         <ShortcutList className="px-4 pt-4"/>
-        <p className="m-0 px-5 pt-3 pb-5 text-caption text-fg-3">浏览器保留 ⌘N、⌘T、⌘W，所以不占用它们。“这个对话都允许”不绑快捷键，只能点选。</p>
+        <p className="m-0 px-5 pt-3 pb-5 text-caption text-fg-3">{desktop !== null ? null : "浏览器保留 ⌘N、⌘T、⌘W，所以不占用它们。"}“这个对话都允许”不绑快捷键，只能点选。</p>
       </BaseDialog.Popup>
     </BaseDialog.Portal>
   </BaseDialog.Root>;
