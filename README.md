@@ -35,7 +35,7 @@ HarnessHub puts all of them behind **one conversation**:
 
 - **Ask any harness, from one place.** Pick Claude Code for one message and Codex for the next. The conversation, its history and your draft stay where they are.
 - **Let them work together.** Hand a task over halfway, or delegate a part of it to another harness. HarnessHub keeps the whole task: what you said, what each harness did and the files it changed. The next harness gets what it needs and can read the rest for itself.
-- **Nothing is emulated.** HarnessHub drives the program you installed, through its own interface (ACP, Codex's app-server, OpenClaw's gateway). It uses your login and the models that harness already offers. It never creates an empty profile and never rewrites your global model settings.
+- **Nothing is emulated.** HarnessHub drives the program you installed, through the fullest interface its vendor ships: the Claude Agent SDK, Codex's app-server, OpenCode's own server, the Hermes and OpenClaw gateways, DeepSeek Harness's Web host, or ACP. It uses your login and the models that harness already offers. It never creates an empty profile and never rewrites your global model settings.
 - **Native features come through as they are.** Models, thinking levels, modes and commands are read from each harness. Approvals, questions, plans, tool calls with diffs, sub-agents and usage show up in the chat the way that harness reports them.
 - **Your harnesses, kept up to date.** HarnessHub finds what is installed through official channels, and can install, upgrade or uninstall each harness the way its vendor documents, with every command shown before it runs.
 
@@ -50,9 +50,10 @@ HarnessHub keeps everything on your machine. The page is served on `127.0.0.1` a
 ### One conversation
 - A conversation that belongs to no single harness: switch harness, model or thinking level between messages, with no "Apply" button
 - Five permission levels and five thinking levels for every harness, carried out through each one's own settings, or by the Hub where a harness has no setting for a level
-- Approvals docked at the composer: <kbd>⏎</kbd> allow, <kbd>esc</kbd> deny
-- Plans, tool calls with diffs, sub-agents and usage, as each harness reports them
-- Resume, branch, edit and resend; clearing starts a new native session
+- Approvals docked at the composer: <kbd>⏎</kbd> allow, <kbd>esc</kbd> deny, or deny with a sentence and the harness takes another way (Claude Code, OpenCode)
+- Plans, tool calls with diffs, sub-agents and usage, as each harness reports them; your account's rate limits as a ring under the composer (Codex, Claude Code)
+- A harness keeps its process between messages, so the next reply starts sooner; Codex opens while you type
+- Resume, branch, edit and resend, on the harness's own session where it can take turns back; clearing starts a new native session
 - Replies stream over SSE and survive reloads; nothing is sent twice
 
 </td>
@@ -76,7 +77,7 @@ HarnessHub keeps everything on your machine. The page is served on `127.0.0.1` a
 - A Git worktree for a conversation if you want one, and checkpoints around every turn; in that worktree, edit-and-resend can put the files back
 - Commit, push and open a pull request with your own `gh`
 - A terminal that keeps running, and your editor one click away
-- Steer a running turn (Claude Code, Codex); <kbd>⌘</kbd><kbd>K</kbd> searches every conversation
+- Steer a running turn, on every harness; <kbd>⌘</kbd><kbd>K</kbd> searches every conversation
 
 </td>
 <td width="50%" valign="top">
@@ -101,38 +102,38 @@ flowchart LR
         direction TB
         S["Conversations and tasks<br/>append-only JSONL · commit, then publish"]
         R["Runtime<br/>levels · approvals · handoff · delegation"]
-        D["Drivers<br/>ACP · Codex app-server · OpenClaw gateway"]
+        D["Drivers<br/>Claude Agent SDK · Codex app-server · OpenCode server<br/>Hermes and OpenClaw gateways · dsh Web host · ACP"]
         S --> R --> D
     end
 
-    D --> CC["Claude Code"] & CX["Codex"] & OC["OpenCode"] & DS["DeepSeek Harness"] & HE["Hermes Agent"] & CL["OpenClaw"]
+    D --> CC["Claude Code"] & CX["Codex"] & OC["OpenCode"] & DS["DeepSeek Harness"] & HE["Hermes Agent"] & CL["OpenClaw"] & CB["CodeBuddy Code"]
 
-    CC & CX & OC & DS & HE & CL -.-> M["Their own logins<br/>and models"]
+    CC & CX & OC & DS & HE & CL & CB -.-> M["Their own logins<br/>and models"]
 ```
 
-The conversation is HarnessHub's; each harness keeps its own native session underneath. Facts are written to disk before they are shown, so a reload replays exactly what happened and an unknown outcome is never re-run on its own.
+The conversation is HarnessHub's; each harness keeps its own native session underneath, and its process stays up between turns until it has been idle for thirty minutes. Facts are written to disk before they are shown, so a reload replays exactly what happened and an unknown outcome is never re-run on its own.
 
 When you switch, the next harness is given a handoff packet: the conversation so far, up to half of its context window, with whatever was left out said plainly. A harness that returns to a native session it already has receives only what it has not seen yet, and a conversation with one harness gets nothing added at all.
 
-Every harness also gets a few tools from the Hub, through the session's MCP servers (OpenClaw runs them as a command): a task list and a wrap-up that the page shows, the task board, and delegation to another harness. The whole record of the task, with every conversation on it and every turn in full, is a read-only folder the harness reads with its own file tools. A harness that compacts its context gets the task's state back with its next tool call. Only when a native session cannot go on does the Hub start a new one.
+Every harness also gets a few tools from the Hub, through the session's MCP servers (OpenClaw runs them as a command): the task board, delegation to another harness and, where the harness has no task list of its own, a task list and a wrap-up that the page shows. The whole record of the task, with every conversation on it and every turn in full, is a read-only folder the harness reads with its own file tools. A harness that compacts its context gets the task's state back with its next tool call. Only when a native session cannot go on does the Hub start a new one.
 
 Vendor SDK types stay inside the drivers. How each harness is adapted is a declaration of its own, and the rest of the code never branches on which harness it is talking to.
 
 ## Supported harnesses
 
-HarnessHub adapts to each harness's latest official release ([ADR-053](docs/decisions/0053-latest-version-baseline.md)). The [adapter matrix](docs/contracts/harness-adapters.md) says, for every feature and every harness, how it is adapted (natively, by a session setting, or by the Hub's policy) and what was checked on a real install.
+HarnessHub adapts to each harness's latest official release ([ADR-053](docs/decisions/0053-latest-version-baseline.md)), through the fullest interface that harness ships. The [decisions log](docs/decisions/LOG.md) says what was checked on each driver on a real install. The [adapter matrix](docs/contracts/harness-adapters.md) dates from 2026-11-13, before the drivers were replaced, and has not been rewritten yet.
 
-| Harness | Driven through | The Hub's tools reach it through | Steer a running turn |
+| Harness | Driven through | The Hub's tools reach it through | Rolls back · branches natively |
 |---|---|---|---|
-| **Claude Code** | ACP, via `claude-agent-acp` bound to your own `claude` | Session MCP, appended system prompt | Yes |
-| **Codex** | Codex app-server | Thread MCP config, developer instructions | Yes |
-| **OpenCode** | ACP (`opencode acp`) | Session MCP | Not offered natively |
-| **DeepSeek Harness** | ACP, through `dsh`'s own profile | Session MCP | Not offered natively |
-| **Hermes Agent** | ACP, attached to your running gateway | Session MCP | Not offered natively |
-| **OpenClaw** | ACP plus your own OpenClaw gateway | A command for the conversation, run with its own exec tool | Not offered natively |
-| **WorkBuddy** | Planned: the embedded CodeBuddy CLI on WorkBuddy's own data ([ADR-048](docs/decisions/0048-harness-scope-and-workbuddy.md)) | not yet | not yet |
+| **Claude Code** | The Claude Agent SDK, driving your own `claude` and login | The session's MCP servers, appended system prompt | ✓ · ✓ |
+| **Codex** | Codex app-server | Thread MCP config, developer instructions | ✓ · ✓ |
+| **OpenCode** | An `opencode serve --stdio` the Hub starts for itself | An MCP server added to the session at run time | ✓ · ✓ |
+| **DeepSeek Harness** | Its Web host, falling back to ACP | An MCP server in an overlay for the process the Hub starts | — · ✓ |
+| **Hermes Agent** | Its own gateway protocol, attached to your running gateway | The session's MCP servers | ✓ · ✓ |
+| **OpenClaw** | Its Gateway WebSocket, as a device the Hub pairs for itself | A command for the conversation, run with its own exec tool | ✓ · ✓ |
+| **CodeBuddy Code** | ACP (`codebuddy --acp` from npm) | Session MCP | ✓ · — |
 
-All six have the five permission levels and the five thinking levels (each mapped to the nearest one the model supports), plan mode, approvals, native `/` commands, attachments, usage, resume and branching (natively where the harness can branch, otherwise by the Hub). Cursor, Gemini CLI and Pi have drivers too, but they are frozen and hidden. The catalog describes 45 products; being listed there does not mean a harness can be driven.
+All seven have the five permission levels and the five thinking levels (each mapped to the nearest one the model supports), approvals, native `/` commands, attachments, resume, and steering of a running turn. Where a harness cannot roll back or branch, the Hub starts a new native session with the history. CodeBuddy Code stands in for WorkBuddy, whose app hands its sign-in only to its own sidecars; it is the newest of the seven, and questions are not declared for it yet. Cursor, Gemini CLI and Pi have drivers too, but they are frozen and hidden. The catalog describes 45 products; being listed there does not mean a harness can be driven.
 
 ## Quickstart
 
@@ -169,12 +170,12 @@ HarnessHub is pre-release. To keep the claims honest, the project separates *imp
 
 | | |
 |---|---|
-| **Tested** | `pnpm check` passes (build, web build, boundary, wording and tooling checks). At the last full run (2026-11-14, macOS arm64), `pnpm test` passed 1,312 tests and the browser suite `pnpm test:web` passed 114 |
-| **Real harnesses** | Each cell of the [adapter matrix](docs/contracts/harness-adapters.md) says what was checked on a real install and when; the [decisions log](docs/decisions/LOG.md) records every real run and what it did not cover |
-| **Working together** | The [delegation ruler](docs/verification/delegation-ruler.md) hands real tasks between Claude Code (on Haiku), DeepSeek Harness and Codex. On default settings on 2026-11-14, S1–S14 passed (S14 with Claude Code's early-compaction switch). In S15 Codex passed; Claude Code did the task but was failed for listing a folder outside the workspace |
-| **Synthetic tests only** | Opening a pull request and pushing to a real remote; Claude Code's fast tier; starting a new native session after the context window overflows or a session is lost. The rest are listed in the [feature list](docs/product/features.md) |
+| **Tested** | `pnpm check` passes (build, web build, boundary, wording and tooling checks). The last recorded full run of the suites is from 2026-11-14 (macOS arm64): `pnpm test` passed 1,314 tests and the browser suite `pnpm test:web` passed 114. None is recorded since the drivers were replaced on 2026-11-15 |
+| **Real harnesses** | The [decisions log](docs/decisions/LOG.md) records every real run and what it did not cover. On 2026-11-15, on the new drivers, all seven harnesses went through the same four steps in the Hub: reply, reply again, edit and resend the second turn, then recall what was said. The [adapter matrix](docs/contracts/harness-adapters.md) is as of 2026-11-13 |
+| **Working together** | The [delegation ruler](docs/verification/delegation-ruler.md) hands real tasks between Claude Code (on Haiku), DeepSeek Harness and Codex. On default settings on 2026-11-14, S1–S14 passed (S14 with Claude Code's early-compaction switch). In S15 Codex passed; Claude Code did the task but was failed for listing a folder outside the workspace. It has not been run again on the new drivers |
+| **Synthetic tests only** | Opening a pull request and pushing to a real remote; Claude Code's fast tier; starting a new native session after the context window overflows or a session is lost; a native rollback that fails halfway. The rest are listed in the [feature list](docs/product/features.md) |
 | **Not built yet** | A pool of long-lived native hosts shared between conversations ([ADR-056](docs/decisions/0056-native-hosts-and-sessions.md)); today each conversation keeps its own native process. A packaged app, for which the terminal's `node-pty` binaries would need signing and notarizing |
-| **Later** | WorkBuddy; managing model providers centrally (for now each harness uses the models it is configured with) |
+| **Later** | Managing model providers centrally (for now each harness uses the models it is configured with) |
 | **Not planned** | Windows and Linux ([ADR-044](docs/decisions/0044-macos-official-channels.md)) |
 | **About the film** | The relay, the conversation and its numbers are illustrative. The five legs follow what each harness is known for; sending the summary to a phone is OpenClaw's own messaging feature and has not been verified through HarnessHub |
 
@@ -185,7 +186,7 @@ The documentation is in Chinese.
 | Topic | Start here |
 |---|---|
 | What it can do now | [Feature list](docs/product/features.md), with the evidence for each feature and what is not done |
-| Each harness, feature by feature | [Adapter matrix](docs/contracts/harness-adapters.md) |
+| Each harness, feature by feature | [Adapter matrix](docs/contracts/harness-adapters.md), as of 2026-11-13 |
 | Decisions and real runs | [Decisions log](docs/decisions/LOG.md), newest first · [ADR index](docs/decisions/README.md), 50 records |
 | Evidence | [Verification records](docs/verification/) · [delegation ruler](docs/verification/delegation-ruler.md) · [relay ruler](docs/verification/relay-ruler.md) |
 | Reading order | [docs/README.md](docs/README.md) |

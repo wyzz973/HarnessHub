@@ -37,7 +37,7 @@ HarnessHub 把它们放进**同一个对话**：
 
 - **从一个地方问任何一家。** 这条消息交给 Claude Code，下一条交给 Codex；对话、历史和你的草稿都留在原处。
 - **让它们一起干活。** 做到一半换一家接着做，或者把其中一段交给另一家。整件任务由 HarnessHub 记着：你说过的话、每一家做了什么、改了哪些文件。下一家拿到它需要的，其余的自己去读。
-- **不做仿冒。** HarnessHub 驱动你装好的那个程序，走它自己的接口（ACP、Codex 的 app-server、OpenClaw 的网关）；用你的登录和它已经提供的模型。它从不建空的配置目录，也不改你的全局模型设置。
+- **不做仿冒。** HarnessHub 驱动你装好的那个程序，走厂商提供的最完整的接口：Claude Agent SDK、Codex 的 app-server、OpenCode 自己的服务、Hermes 和 OpenClaw 的网关、DeepSeek Harness 的 Web 宿主，或者 ACP；用你的登录和它已经提供的模型。它从不建空的配置目录，也不改你的全局模型设置。
 - **原生能力原样接出。** 模型、思考强度、模式和命令都从各家读取；审批、提问、计划、带差异的工具调用、子 Agent 和用量，按那一家报告的样子出现在对话里。
 - **替你照看这些 Harness。** HarnessHub 只认官网渠道的安装，可以按厂商写明的方式安装、升级或卸载每一家，运行任何命令之前都先列给你看。
 
@@ -52,9 +52,10 @@ HarnessHub 把它们放进**同一个对话**：
 ### 一个对话
 - 对话不属于任何一家 Harness：两条消息之间就能换 Harness、模型或思考强度，没有“应用”按钮
 - 每一家都有五档权限和五档思考强度，用它自己的设置来落实；某一档它没有对应设置时，由 Hub 来落实
-- 审批停在输入框的位置：<kbd>⏎</kbd> 允许，<kbd>esc</kbd> 拒绝
-- 计划、带差异的工具调用、子 Agent 和用量，按各家报告的样子显示
-- 恢复、分支、编辑并重发；清空就是开一个新的原生会话
+- 审批停在输入框的位置：<kbd>⏎</kbd> 允许，<kbd>esc</kbd> 拒绝；拒绝时可以附一句话，它就换个做法（Claude Code、OpenCode）
+- 计划、带差异的工具调用、子 Agent 和用量，按各家报告的样子显示；账号额度是输入框下方的一个圆环（Codex、Claude Code）
+- 两条消息之间各家的进程留着，下一条回得更快；Codex 在你打字时就打开
+- 恢复、分支、编辑并重发：能回退的在它自己的会话里退掉轮次；清空就是开一个新的原生会话
 - 回复经 SSE 流式显示，刷新不丢失，也不会重复发送
 
 </td>
@@ -78,7 +79,7 @@ HarnessHub 把它们放进**同一个对话**：
 - 需要时给对话开一个自己的 Git 工作树；每轮前后拍快照，在这个工作树里编辑并重发时，可以把文件还原
 - 用你自己的 `gh` 提交、推送、建 PR
 - 终端一直开着，一键在你的编辑器里打开
-- 一轮进行中可以插话（Claude Code、Codex）；<kbd>⌘</kbd><kbd>K</kbd> 搜所有对话
+- 一轮进行中可以插话，每一家都行；<kbd>⌘</kbd><kbd>K</kbd> 搜所有对话
 
 </td>
 <td width="50%" valign="top">
@@ -103,38 +104,38 @@ flowchart LR
         direction TB
         S["对话与任务<br/>只追加的 JSONL · 先提交再发布"]
         R["运行时<br/>档位 · 审批 · 交接 · 委派"]
-        D["驱动<br/>ACP · Codex app-server · OpenClaw 网关"]
+        D["驱动<br/>Claude Agent SDK · Codex app-server · OpenCode 服务<br/>Hermes 与 OpenClaw 网关 · dsh Web 宿主 · ACP"]
         S --> R --> D
     end
 
-    D --> CC["Claude Code"] & CX["Codex"] & OC["OpenCode"] & DS["DeepSeek Harness"] & HE["Hermes Agent"] & CL["OpenClaw"]
+    D --> CC["Claude Code"] & CX["Codex"] & OC["OpenCode"] & DS["DeepSeek Harness"] & HE["Hermes Agent"] & CL["OpenClaw"] & CB["CodeBuddy Code"]
 
-    CC & CX & OC & DS & HE & CL -.-> M["它们自己的登录<br/>与模型"]
+    CC & CX & OC & DS & HE & CL & CB -.-> M["它们自己的登录<br/>与模型"]
 ```
 
-对话属于 HarnessHub，每一家在下面保留自己的原生会话。事实先写到磁盘上再显示，所以刷新会如实重放发生过的事，结果未知的执行也不会被自动重跑。
+对话属于 HarnessHub，每一家在下面保留自己的原生会话；两轮之间它的进程留着，闲置三十分钟才释放。事实先写到磁盘上再显示，所以刷新会如实重放发生过的事，结果未知的执行也不会被自动重跑。
 
 切换时，下一家拿到一份交接单：前面的对话，最多占它上下文窗口的一半，省略了什么写得清清楚楚。回到一个它已经有的原生会话时，只补它没见过的部分；只用一家时，什么都不加。
 
-每一家还会从 Hub 拿到几个工具，走会话的 MCP 服务器（OpenClaw 用一条命令来调）：任务清单和收尾小结（页面上会显示）、任务板、委派给另一家。整件任务的记录（任务里的每段对话、每一轮的全文）是一个只读文件夹，每一家用自己读文件的工具去读。某一家压缩了上下文，下一次调工具时就拿回任务现在的状态；只有原生会话接不下去了，Hub 才开一个新的。
+每一家还会从 Hub 拿到几个工具，走会话的 MCP 服务器（OpenClaw 用一条命令来调）：任务板、委派给另一家；它自己没有任务清单的，再加上任务清单和收尾小结（页面上会显示）。整件任务的记录（任务里的每段对话、每一轮的全文）是一个只读文件夹，每一家用自己读文件的工具去读。某一家压缩了上下文，下一次调工具时就拿回任务现在的状态；只有原生会话接不下去了，Hub 才开一个新的。
 
 厂商 SDK 的类型留在驱动里。每一家怎么适配，写在它自己的一份声明里；其余代码从不按“现在是哪一家”分支。
 
 ## 支持的 Harness
 
-HarnessHub 按每家最新的正式版适配（[ADR-053](docs/decisions/0053-latest-version-baseline.md)）。[适配矩阵](docs/contracts/harness-adapters.md)逐家逐项写明怎么适配（原生、会话参数，或由 Hub 按档位处理），以及在真实安装上核对过什么。
+HarnessHub 按每家最新的正式版适配（[ADR-053](docs/decisions/0053-latest-version-baseline.md)），走它提供的最完整的接口。每个驱动在真实安装上核对过什么，写在[决定记录](docs/decisions/LOG.md)里。[适配矩阵](docs/contracts/harness-adapters.md)停在 2026-11-13，是换驱动之前的样子，还没有重写。
 
-| Harness | 接入方式 | Hub 的工具怎么到它那里 | 一轮进行中插话 |
+| Harness | 接入方式 | Hub 的工具怎么到它那里 | 原生回退 · 原生分支 |
 |---|---|---|---|
-| **Claude Code** | ACP，经 `claude-agent-acp` 绑定你自己的 `claude` | 会话级 MCP，追加系统提示 | 能 |
-| **Codex** | Codex app-server | 线程级 MCP 配置，developer instructions | 能 |
-| **OpenCode** | ACP（`opencode acp`） | 会话级 MCP | 原生没有 |
-| **DeepSeek Harness** | ACP，经 `dsh` 自己的 profile | 会话级 MCP | 原生没有 |
-| **Hermes Agent** | ACP，附着到你正在运行的网关 | 会话级 MCP | 原生没有 |
-| **OpenClaw** | ACP，加上你自己的 OpenClaw 网关 | 给这段对话的一条命令，它用自己的 exec 工具来调 | 原生没有 |
-| **WorkBuddy** | 计划中：用 WorkBuddy 内嵌的 CodeBuddy CLI，共用它自己的数据（[ADR-048](docs/decisions/0048-harness-scope-and-workbuddy.md)） | 尚未接入 | 尚未接入 |
+| **Claude Code** | Claude Agent SDK，驱动你自己的 `claude` 和登录 | 会话的 MCP 服务器，追加系统提示 | ✓ · ✓ |
+| **Codex** | Codex app-server | 线程级 MCP 配置，developer instructions | ✓ · ✓ |
+| **OpenCode** | Hub 自己起的 `opencode serve --stdio` | 运行时加进会话的 MCP 服务器 | ✓ · ✓ |
+| **DeepSeek Harness** | 它的 Web 宿主，用不了就退回 ACP | 只给 Hub 起的进程用的覆盖配置里的 MCP 服务器 | — · ✓ |
+| **Hermes Agent** | 它自己的网关协议，附着到你正在运行的网关 | 会话的 MCP 服务器 | ✓ · ✓ |
+| **OpenClaw** | 它的 Gateway WebSocket，用 Hub 自己配对的设备 | 给这段对话的一条命令，它用自己的 exec 工具来调 | ✓ · ✓ |
+| **CodeBuddy Code** | ACP（npm 版 `codebuddy --acp`） | 会话级 MCP | ✓ · — |
 
-六家都有五档权限和五档思考强度（按模型支持的就近对应）、计划模式、审批、原生 `/` 命令、附件、用量、恢复与分支（能原生分支的走原生，其余由 Hub 来做）。Cursor、Gemini CLI 和 Pi 也有驱动，但已冻结并默认隐藏。目录描述了 45 个产品，列在目录里不代表可以驱动。
+七家都有五档权限和五档思考强度（按模型支持的就近对应）、审批、原生 `/` 命令、附件、恢复，一轮进行中都能插话。不能回退或分支的，由 Hub 带上历史开一个新的原生会话。CodeBuddy Code 顶替了 WorkBuddy：WorkBuddy 应用的登录只交给它自己的侧车。它是七家里最新接的，提问还没有声明。Cursor、Gemini CLI 和 Pi 也有驱动，但已冻结并默认隐藏。目录描述了 45 个产品，列在目录里不代表可以驱动。
 
 ## 快速上手
 
@@ -171,12 +172,12 @@ HarnessHub 处于预发布阶段。为了说法如实，项目把“已实现”
 
 | | |
 |---|---|
-| **已测试** | `pnpm check` 通过（构建、前端构建、依赖边界、界面措辞与工具检查）。最近一次全量运行（2026-11-14，macOS arm64）：`pnpm test` 1,312 项通过，浏览器测试 `pnpm test:web` 114 项通过 |
-| **真实 Harness** | [适配矩阵](docs/contracts/harness-adapters.md)的每一格都写明在真实安装上核对了什么、什么时候核对的；[决定记录](docs/decisions/LOG.md)记下每次真机运行，以及它没覆盖的部分 |
-| **多家协作** | [委派上下文尺子](docs/verification/delegation-ruler.md)在 Claude Code（用 Haiku）、DeepSeek Harness 和 Codex 之间交接真实的任务。2026-11-14 按默认设置跑了一次：S1–S14 通过（S14 带上了 Claude Code 的提早压缩开关）；S15 Codex 通过，Claude Code 做完了，但因为列了工作区外的一个文件夹被判不过 |
-| **只有合成测试** | 建 PR 和推送到真实的远端；Claude Code 的快档；上下文窗口超出或会话丢失后开新的原生会话。其余列在[功能清单](docs/product/features.md)里 |
+| **已测试** | `pnpm check` 通过（构建、前端构建、依赖边界、界面措辞与工具检查）。有记录的最近一次全量运行是 2026-11-14（macOS arm64）：`pnpm test` 1,314 项通过，浏览器测试 `pnpm test:web` 114 项通过。2026-11-15 换驱动之后没有记录 |
+| **真实 Harness** | [决定记录](docs/decisions/LOG.md)记下每次真机运行，以及它没覆盖的部分。2026-11-15 在新驱动上，七家都经 Hub 走了同一套四步：回一个词、再回一个词、把第二轮编辑重发、问它前面说过什么。[适配矩阵](docs/contracts/harness-adapters.md)停在 2026-11-13 |
+| **多家协作** | [委派上下文尺子](docs/verification/delegation-ruler.md)在 Claude Code（用 Haiku）、DeepSeek Harness 和 Codex 之间交接真实的任务。2026-11-14 按默认设置跑了一次：S1–S14 通过（S14 带上了 Claude Code 的提早压缩开关）；S15 Codex 通过，Claude Code 做完了，但因为列了工作区外的一个文件夹被判不过。换驱动之后没有重跑 |
+| **只有合成测试** | 建 PR 和推送到真实的远端；Claude Code 的快档；上下文窗口超出或会话丢失后开新的原生会话；原生回退中途失败。其余列在[功能清单](docs/product/features.md)里 |
 | **还没做** | 多段对话共用的常驻原生宿主池（[ADR-056](docs/decisions/0056-native-hosts-and-sessions.md)），现在是每段对话保留自己的原生进程；打包好的应用，这需要给终端用的 `node-pty` 签名并公证 |
-| **以后** | WorkBuddy；统一管理模型 Provider（目前每一家用它已经配置好的模型） |
+| **以后** | 统一管理模型 Provider（目前每一家用它已经配置好的模型） |
 | **不再计划** | Windows 与 Linux（[ADR-044](docs/decisions/0044-macos-official-channels.md)） |
 | **关于宣传片** | 片中的接力、对话内容和数字都是示意。五棒的分工按各家公认的长处安排；把总结发到手机是 OpenClaw 自己的消息功能，还没有经 HarnessHub 实测 |
 
@@ -185,7 +186,7 @@ HarnessHub 处于预发布阶段。为了说法如实，项目把“已实现”
 | 主题 | 从这里开始 |
 |---|---|
 | 现在能做什么 | [功能清单](docs/product/features.md)，每一条的证据和还没做的 |
-| 每一家、每一项 | [适配矩阵](docs/contracts/harness-adapters.md) |
+| 每一家、每一项 | [适配矩阵](docs/contracts/harness-adapters.md)，停在 2026-11-13 |
 | 决定与真机运行 | [决定记录](docs/decisions/LOG.md)，新的在上 · [ADR 索引](docs/decisions/README.md)，共 50 篇 |
 | 证据 | [验证记录](docs/verification/) · [委派上下文尺子](docs/verification/delegation-ruler.md) · [接力尺子](docs/verification/relay-ruler.md) |
 | 阅读顺序 | [docs/README.md](docs/README.md) |
