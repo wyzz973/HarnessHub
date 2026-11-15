@@ -1,0 +1,6943 @@
+{
+"recorded": "opencode 2.3.0 serve --stdio, 2026-11-15, model opencode/deepseek-v4.1-flash-free, level ask",
+"session": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"cwd": "/Users/test/workspace",
+"exchanges": [
+{
+"kind": "http",
+"method": "GET",
+"path": "/api/info",
+"status": 200,
+"response": {
+"version": "2.3.0",
+"pid": 73880,
+"hostname": "host.local",
+"urls": [
+"http://127.0.0.1:57219"
+],
+"paths": {
+"tmp": "/tmp/opencode"
+},
+"capabilities": {
+"persistentPty": true
+}
+}
+},
+{
+"kind": "http",
+"method": "GET",
+"path": "/openapi.json",
+"status": 200,
+"response": {
+"openapi": "3.1.0",
+"info": {
+"title": "opencode HttpApi",
+"version": "0.0.1",
+"description": "Experimental HttpApi surface for selected instance routes."
+},
+"paths": {
+"/api/info": {
+"get": {
+"operationId": "server.info"
+}
+},
+"/api/agent": {
+"get": {
+"operationId": "agent.list"
+}
+},
+"/api/session": {
+"get": {
+"operationId": "session.list"
+},
+"post": {
+"operationId": "session.create",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"id": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Session.ID"
+},
+{
+"type": "null"
+}
+]
+},
+"parentID": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Session.ID"
+},
+{
+"type": "null"
+}
+],
+"description": "Set parentID to create a subagent session at the parent's location; set agent to choose its agent (otherwise it uses the default) and start it with session.prompt. After each completed round, the child sends a `<subagent>` report to the parent's inbox and wakes the parent unless it has a staged revert."
+},
+"title": {
+"anyOf": [
+{
+"type": "string"
+},
+{
+"type": "null"
+}
+]
+},
+"agent": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Agent.ID"
+},
+{
+"type": "null"
+}
+]
+},
+"model": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Model.Ref"
+},
+{
+"type": "null"
+}
+]
+},
+"location": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Location.PublicRef"
+},
+{
+"type": "null"
+}
+]
+},
+"metadata": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Session.Metadata"
+},
+{
+"type": "null"
+}
+]
+},
+"permissions": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Permission.Ruleset"
+},
+{
+"type": "null"
+}
+]
+}
+},
+"additionalProperties": false
+}
+}
+},
+"required": true
+}
+}
+},
+"/api/session/active": {
+"get": {
+"operationId": "session.active"
+}
+},
+"/api/session/{sessionID}": {
+"get": {
+"operationId": "session.get"
+},
+"delete": {
+"operationId": "session.remove"
+},
+"patch": {
+"operationId": "session.update",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"title": {
+"anyOf": [
+{
+"type": "string"
+},
+{
+"type": "null"
+}
+]
+},
+"metadata": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Session.Metadata"
+},
+{
+"type": "null"
+}
+]
+},
+"permissions": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Permission.Ruleset"
+},
+{
+"type": "null"
+}
+]
+},
+"archived": {
+"anyOf": [
+{
+"type": "boolean"
+},
+{
+"type": "null"
+}
+],
+"description": "Archive the session with true or restore it with false. Repeating the current state is a no-op."
+}
+},
+"additionalProperties": false
+}
+}
+},
+"required": true
+}
+}
+},
+"/api/session/{sessionID}/fork": {
+"post": {
+"operationId": "session.fork",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"before": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Session.Message.ID"
+},
+{
+"type": "null"
+}
+]
+}
+},
+"additionalProperties": false
+}
+}
+},
+"required": true
+}
+}
+},
+"/api/session/{sessionID}/agent": {
+"post": {
+"operationId": "session.switchAgent",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"agent": {
+"$ref": "#/components/schemas/Agent.ID"
+}
+},
+"required": [
+"agent"
+],
+"additionalProperties": false
+}
+}
+},
+"required": true
+}
+}
+},
+"/api/session/{sessionID}/model": {
+"post": {
+"operationId": "session.switchModel",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"model": {
+"$ref": "#/components/schemas/Model.Ref"
+}
+},
+"required": [
+"model"
+],
+"additionalProperties": false
+}
+}
+},
+"required": true
+}
+}
+},
+"/api/session/{sessionID}/move": {
+"post": {
+"operationId": "session.move",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"directory": {
+"$ref": "#/components/schemas/AbsolutePath"
+},
+"delivery": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Session.Inbox.Delivery"
+},
+{
+"type": "null"
+}
+]
+}
+},
+"required": [
+"directory"
+],
+"additionalProperties": false
+}
+}
+},
+"required": true
+}
+}
+},
+"/api/session/{sessionID}/prompt": {
+"post": {
+"operationId": "session.prompt",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"id": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Session.Message.ID"
+},
+{
+"type": "null"
+}
+]
+},
+"text": {
+"type": "string"
+},
+"files": {
+"type": "array",
+"items": {
+"$ref": "#/components/schemas/PromptInput.FileAttachment"
+}
+},
+"agents": {
+"type": "array",
+"items": {
+"$ref": "#/components/schemas/Prompt.AgentAttachment"
+}
+},
+"skills": {
+"type": "array",
+"items": {
+"$ref": "#/components/schemas/PromptInput.SkillAttachment"
+}
+},
+"metadata": {
+"type": "object"
+},
+"delivery": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Session.Inbox.Delivery"
+},
+{
+"type": "null"
+}
+]
+},
+"resume": {
+"anyOf": [
+{
+"type": "boolean"
+},
+{
+"type": "null"
+}
+]
+}
+},
+"required": [
+"text"
+],
+"additionalProperties": false
+}
+}
+},
+"required": true
+}
+}
+},
+"/api/session/{sessionID}/command": {
+"post": {
+"operationId": "session.command",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"name": {
+"type": "string"
+},
+"text": {
+"type": "string"
+},
+"files": {
+"type": "array",
+"items": {
+"$ref": "#/components/schemas/PromptInput.FileAttachment"
+}
+},
+"agents": {
+"type": "array",
+"items": {
+"$ref": "#/components/schemas/Prompt.AgentAttachment"
+}
+},
+"skills": {
+"type": "array",
+"items": {
+"$ref": "#/components/schemas/PromptInput.SkillAttachment"
+}
+},
+"delivery": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Session.Inbox.Delivery"
+},
+{
+"type": "null"
+}
+]
+}
+},
+"required": [
+"name",
+"text"
+],
+"additionalProperties": false
+}
+}
+},
+"required": true
+}
+}
+},
+"/api/session/{sessionID}/compact": {
+"post": {
+"operationId": "session.compact",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"id": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Session.Message.ID"
+},
+{
+"type": "null"
+}
+]
+},
+"delivery": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Session.Inbox.Delivery"
+},
+{
+"type": "null"
+}
+]
+}
+},
+"additionalProperties": false
+}
+}
+},
+"required": true
+}
+}
+},
+"/api/session/{sessionID}/revert/stage": {
+"post": {
+"operationId": "session.revert.stage",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"messageID": {
+"$ref": "#/components/schemas/Session.Message.ID"
+},
+"files": {
+"anyOf": [
+{
+"type": "boolean"
+},
+{
+"type": "null"
+}
+]
+}
+},
+"required": [
+"messageID"
+],
+"additionalProperties": false
+}
+}
+},
+"required": true
+}
+}
+},
+"/api/session/{sessionID}/revert": {
+"delete": {
+"operationId": "session.revert.clear"
+}
+},
+"/api/session/{sessionID}/revert/commit": {
+"post": {
+"operationId": "session.revert.commit"
+}
+},
+"/api/session/{sessionID}/diff": {
+"get": {
+"operationId": "session.diff"
+}
+},
+"/api/session/{sessionID}/inbox": {
+"get": {
+"operationId": "session.inbox.list"
+}
+},
+"/api/session/{sessionID}/inbox/{inboxID}": {
+"delete": {
+"operationId": "session.inbox.cancel"
+}
+},
+"/api/experimental/session/{sessionID}/instructions/entries/{key}": {
+"put": {
+"operationId": "experimental.session.instructions.entry.put",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"value": {}
+},
+"required": [
+"value"
+],
+"additionalProperties": false
+}
+}
+},
+"required": true
+}
+}
+},
+"/api/session/{sessionID}/interrupt": {
+"post": {
+"operationId": "session.interrupt"
+}
+},
+"/api/session/{sessionID}/form": {
+"get": {
+"operationId": "session.form.list"
+}
+},
+"/api/session/{sessionID}/form/{formID}": {
+"delete": {
+"operationId": "session.form.cancel"
+}
+},
+"/api/session/{sessionID}/form/{formID}/reply": {
+"post": {
+"operationId": "session.form.reply",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"$ref": "#/components/schemas/Form.Reply"
+}
+}
+},
+"required": true
+}
+}
+},
+"/api/session/{sessionID}/message": {
+"get": {
+"operationId": "session.message.list"
+}
+},
+"/api/model": {
+"get": {
+"operationId": "model.list"
+}
+},
+"/api/model/default": {
+"get": {
+"operationId": "model.default"
+}
+},
+"/api/experimental/mcp/{server}": {
+"put": {
+"operationId": "experimental.mcp.add",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"config": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Mcp.LocalConfigEncoded"
+},
+{
+"$ref": "#/components/schemas/Mcp.RemoteConfigEncoded"
+}
+]
+}
+},
+"required": [
+"config"
+],
+"additionalProperties": false
+}
+}
+},
+"required": true
+}
+},
+"delete": {
+"operationId": "experimental.mcp.remove"
+}
+},
+"/api/session/{sessionID}/permission": {
+"get": {
+"operationId": "session.permission.list"
+}
+},
+"/api/session/{sessionID}/permission/{requestID}/reply": {
+"post": {
+"operationId": "session.permission.reply",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"decision": {
+"$ref": "#/components/schemas/Permission.Reply"
+},
+"message": {
+"anyOf": [
+{
+"type": "string"
+},
+{
+"type": "null"
+}
+]
+}
+},
+"required": [
+"decision"
+],
+"additionalProperties": false
+}
+}
+},
+"required": true
+}
+}
+},
+"/api/command": {
+"get": {
+"operationId": "command.list"
+}
+},
+"/api/event": {
+"get": {
+"operationId": "event.subscribe",
+"parameters": [
+{
+"name": "types",
+"in": "query",
+"schema": {
+"anyOf": [
+{
+"type": "string",
+"enum": [
+"location.shutdown",
+"models-dev.refreshed",
+"credential.updated",
+"credential.switched",
+"integration.updated",
+"provider.updated",
+"model.updated",
+"agent.updated",
+"session.created",
+"session.agent.selected",
+"session.model.selected",
+"session.moved",
+"session.renamed",
+"session.metadata.updated",
+"session.permissions",
+"session.viewed",
+"session.archived",
+"session.unarchived",
+"session.usage.updated",
+"session.deleted",
+"session.forked",
+"session.inbox.delivered",
+"session.inbox.enqueued",
+"session.inbox.cancelled",
+"session.inbox.delivery.changed",
+"session.execution.started",
+"session.execution.succeeded",
+"session.execution.failed",
+"session.execution.interrupted",
+"session.instructions.updated",
+"session.synthetic",
+"session.skill.activated",
+"session.shell.started",
+"session.shell.ended",
+"session.step.started",
+"session.step.first-token",
+"session.step.streamed",
+"session.step.ended",
+"session.step.failed",
+"session.text.started",
+"session.text.delta",
+"session.text.ended",
+"session.reasoning.started",
+"session.reasoning.delta",
+"session.reasoning.ended",
+"session.tool.input.started",
+"session.tool.input.delta",
+"session.tool.input.ended",
+"session.tool.called",
+"session.tool.progress",
+"session.tool.success",
+"session.tool.failed",
+"session.retry.scheduled",
+"session.compaction.started",
+"session.compaction.delta",
+"session.compaction.ended",
+"session.compaction.failed",
+"session.revert.staged",
+"session.revert.cleared",
+"session.revert.committed",
+"filesystem.changed",
+"reference.updated",
+"permission.asked",
+"permission.replied",
+"plugin.updated",
+"project.updated",
+"worktree.updated",
+"worktree.resolved",
+"command.updated",
+"config.updated",
+"skill.updated",
+"pty.created",
+"pty.updated",
+"pty.exited",
+"pty.deleted",
+"persistent-pty.added",
+"persistent-pty.removed",
+"persistent-pty.updated",
+"shell.created",
+"shell.exited",
+"shell.deleted",
+"form.created",
+"form.replied",
+"form.cancelled",
+"websearch.updated",
+"artifact.updated",
+"session.status",
+"session.idle",
+"tui.prompt.append",
+"tui.command.execute",
+"tui.toast.show",
+"tui.session.select",
+"installation.updated",
+"installation.update-available",
+"vcs.branch.updated",
+"mcp.status.changed",
+"mcp.resources.changed",
+"experimental.mcp.event"
+]
+},
+{
+"type": "string",
+"pattern": "^rpc\\.[\\s\\S]*?$"
+},
+{
+"type": "array",
+"items": {
+"anyOf": [
+{
+"type": "string",
+"enum": [
+"location.shutdown",
+"models-dev.refreshed",
+"credential.updated",
+"credential.switched",
+"integration.updated",
+"provider.updated",
+"model.updated",
+"agent.updated",
+"session.created",
+"session.agent.selected",
+"session.model.selected",
+"session.moved",
+"session.renamed",
+"session.metadata.updated",
+"session.permissions",
+"session.viewed",
+"session.archived",
+"session.unarchived",
+"session.usage.updated",
+"session.deleted",
+"session.forked",
+"session.inbox.delivered",
+"session.inbox.enqueued",
+"session.inbox.cancelled",
+"session.inbox.delivery.changed",
+"session.execution.started",
+"session.execution.succeeded",
+"session.execution.failed",
+"session.execution.interrupted",
+"session.instructions.updated",
+"session.synthetic",
+"session.skill.activated",
+"session.shell.started",
+"session.shell.ended",
+"session.step.started",
+"session.step.first-token",
+"session.step.streamed",
+"session.step.ended",
+"session.step.failed",
+"session.text.started",
+"session.text.delta",
+"session.text.ended",
+"session.reasoning.started",
+"session.reasoning.delta",
+"session.reasoning.ended",
+"session.tool.input.started",
+"session.tool.input.delta",
+"session.tool.input.ended",
+"session.tool.called",
+"session.tool.progress",
+"session.tool.success",
+"session.tool.failed",
+"session.retry.scheduled",
+"session.compaction.started",
+"session.compaction.delta",
+"session.compaction.ended",
+"session.compaction.failed",
+"session.revert.staged",
+"session.revert.cleared",
+"session.revert.committed",
+"filesystem.changed",
+"reference.updated",
+"permission.asked",
+"permission.replied",
+"plugin.updated",
+"project.updated",
+"worktree.updated",
+"worktree.resolved",
+"command.updated",
+"config.updated",
+"skill.updated",
+"pty.created",
+"pty.updated",
+"pty.exited",
+"pty.deleted",
+"persistent-pty.added",
+"persistent-pty.removed",
+"persistent-pty.updated",
+"shell.created",
+"shell.exited",
+"shell.deleted",
+"form.created",
+"form.replied",
+"form.cancelled",
+"websearch.updated",
+"artifact.updated",
+"session.status",
+"session.idle",
+"tui.prompt.append",
+"tui.command.execute",
+"tui.toast.show",
+"tui.session.select",
+"installation.updated",
+"installation.update-available",
+"vcs.branch.updated",
+"mcp.status.changed",
+"mcp.resources.changed",
+"experimental.mcp.event"
+]
+},
+{
+"type": "string",
+"pattern": "^rpc\\.[\\s\\S]*?$"
+}
+]
+}
+}
+],
+"description": "Only send events of these types, plus the initial server.connected event. When omitted, all events are sent."
+},
+"required": false
+}
+]
+}
+}
+},
+"components": {
+"schemas": {
+"AbsolutePath": {
+"type": "string"
+},
+"Agent.ID": {
+"type": "string"
+},
+"Form.Answer": {
+"type": "object",
+"additionalProperties": {
+"$ref": "#/components/schemas/Form.Value"
+}
+},
+"Form.Reply": {
+"type": "object",
+"properties": {
+"answer": {
+"$ref": "#/components/schemas/Form.Answer"
+}
+},
+"required": [
+"answer"
+],
+"additionalProperties": false
+},
+"Form.Value": {
+"anyOf": [
+{
+"type": "string"
+},
+{
+"type": "number"
+},
+{
+"type": "string",
+"enum": [
+"Infinity",
+"-Infinity",
+"NaN"
+]
+},
+{
+"type": "boolean"
+},
+{
+"type": "array",
+"items": {
+"type": "string"
+}
+}
+]
+},
+"Location.PublicRef": {
+"type": "object",
+"properties": {
+"directory": {
+"$ref": "#/components/schemas/AbsolutePath"
+}
+},
+"required": [
+"directory"
+],
+"additionalProperties": false
+},
+"Mcp.LocalConfigEncoded": {
+"type": "object",
+"properties": {
+"type": {
+"type": "string",
+"enum": [
+"local"
+]
+},
+"command": {
+"type": "array",
+"items": {
+"type": "string"
+}
+},
+"cwd": {
+"type": "string"
+},
+"environment": {
+"type": "object",
+"additionalProperties": {
+"type": "string"
+}
+},
+"disabled": {
+"type": "boolean"
+},
+"codemode": {
+"type": "boolean"
+},
+"timeout": {
+"type": "object",
+"properties": {
+"startup": {
+"type": "integer",
+"maximum": 9007199254740991,
+"exclusiveMinimum": 0
+},
+"catalog": {
+"type": "integer",
+"maximum": 9007199254740991,
+"exclusiveMinimum": 0
+},
+"execution": {
+"type": "integer",
+"maximum": 9007199254740991,
+"exclusiveMinimum": 0
+}
+},
+"additionalProperties": false
+},
+"protocol": {
+"$ref": "#/components/schemas/Mcp.Protocol"
+},
+"pool": {
+"type": "boolean"
+}
+},
+"required": [
+"type",
+"command"
+],
+"additionalProperties": false
+},
+"Mcp.OAuthConfigEncoded": {
+"type": "object",
+"properties": {
+"client_id": {
+"type": "string"
+},
+"client_secret": {
+"type": "string"
+},
+"scope": {
+"type": "string"
+},
+"callback_port": {
+"type": "integer",
+"minimum": 1,
+"maximum": 65535
+},
+"redirect_uri": {
+"type": "string"
+},
+"auth_server_metadata_url": {
+"type": "string"
+}
+},
+"additionalProperties": false
+},
+"Mcp.Protocol": {
+"type": "string",
+"enum": [
+"legacy",
+"auto",
+"2026-07-28"
+],
+"description": "MCP protocol negotiation. \"legacy\" (default) opens with the initialize handshake and speaks protocol revisions up to 2025-11-25. \"auto\" probes for the 2026-07-28 revision and falls back to legacy when the server does not support it. \"2026-07-28\" requires that revision and fails otherwise."
+},
+"Mcp.RemoteConfigEncoded": {
+"type": "object",
+"properties": {
+"type": {
+"type": "string",
+"enum": [
+"remote"
+]
+},
+"url": {
+"type": "string"
+},
+"headers": {
+"type": "object",
+"additionalProperties": {
+"type": "string"
+}
+},
+"oauth": {
+"anyOf": [
+{
+"$ref": "#/components/schemas/Mcp.OAuthConfigEncoded"
+},
+{
+"type": "boolean",
+"enum": [
+false
+]
+}
+]
+},
+"disabled": {
+"type": "boolean"
+},
+"codemode": {
+"type": "boolean"
+},
+"timeout": {
+"type": "object",
+"properties": {
+"startup": {
+"type": "integer",
+"maximum": 9007199254740991,
+"exclusiveMinimum": 0
+},
+"catalog": {
+"type": "integer",
+"maximum": 9007199254740991,
+"exclusiveMinimum": 0
+},
+"execution": {
+"type": "integer",
+"maximum": 9007199254740991,
+"exclusiveMinimum": 0
+}
+},
+"additionalProperties": false
+},
+"protocol": {
+"$ref": "#/components/schemas/Mcp.Protocol"
+},
+"pool": {
+"type": "boolean"
+}
+},
+"required": [
+"type",
+"url"
+],
+"additionalProperties": false
+},
+"Model.Ref": {
+"type": "object",
+"properties": {
+"id": {
+"type": "string"
+},
+"providerID": {
+"$ref": "#/components/schemas/Provider.ID"
+},
+"variant": {
+"type": "string"
+}
+},
+"required": [
+"id",
+"providerID"
+],
+"additionalProperties": false
+},
+"Permission.Effect": {
+"type": "string",
+"enum": [
+"allow",
+"deny",
+"ask"
+]
+},
+"Permission.Reply": {
+"type": "string",
+"enum": [
+"once",
+"always",
+"reject"
+]
+},
+"Permission.Rule": {
+"type": "object",
+"properties": {
+"action": {
+"type": "string"
+},
+"resource": {
+"type": "string"
+},
+"effect": {
+"$ref": "#/components/schemas/Permission.Effect"
+}
+},
+"required": [
+"action",
+"resource",
+"effect"
+],
+"additionalProperties": false
+},
+"Permission.Ruleset": {
+"type": "array",
+"items": {
+"$ref": "#/components/schemas/Permission.Rule"
+}
+},
+"Prompt.AgentAttachment": {
+"type": "object",
+"properties": {
+"name": {
+"type": "string"
+},
+"mention": {
+"$ref": "#/components/schemas/Prompt.Mention"
+}
+},
+"required": [
+"name"
+],
+"additionalProperties": false
+},
+"Prompt.FileSource": {
+"anyOf": [
+{
+"type": "object",
+"properties": {
+"type": {
+"type": "string",
+"enum": [
+"inline"
+]
+}
+},
+"required": [
+"type"
+],
+"additionalProperties": false
+},
+{
+"type": "object",
+"properties": {
+"type": {
+"type": "string",
+"enum": [
+"uri"
+]
+},
+"uri": {
+"type": "string"
+}
+},
+"required": [
+"type",
+"uri"
+],
+"additionalProperties": false
+}
+]
+},
+"Prompt.Mention": {
+"type": "object",
+"properties": {
+"start": {
+"type": "number"
+},
+"end": {
+"type": "number"
+},
+"text": {
+"type": "string"
+}
+},
+"required": [
+"start",
+"end",
+"text"
+],
+"additionalProperties": false
+},
+"PromptInput.FileAttachment": {
+"type": "object",
+"properties": {
+"uri": {
+"type": "string"
+},
+"source": {
+"$ref": "#/components/schemas/Prompt.FileSource"
+},
+"name": {
+"type": "string"
+},
+"description": {
+"type": "string"
+},
+"mention": {
+"$ref": "#/components/schemas/Prompt.Mention"
+}
+},
+"required": [
+"uri"
+],
+"additionalProperties": false
+},
+"PromptInput.SkillAttachment": {
+"type": "object",
+"properties": {
+"id": {
+"$ref": "#/components/schemas/Skill.ID"
+},
+"mention": {
+"$ref": "#/components/schemas/Prompt.Mention"
+}
+},
+"required": [
+"id"
+],
+"additionalProperties": false
+},
+"Provider.ID": {
+"type": "string"
+},
+"Session.ID": {
+"type": "string",
+"pattern": "^ses"
+},
+"Session.Inbox.Delivery": {
+"type": "string",
+"enum": [
+"steer",
+"queue"
+]
+},
+"Session.Message.ID": {
+"type": "string",
+"pattern": "^msg_"
+},
+"Session.Metadata": {
+"type": "object"
+},
+"Skill.ID": {
+"type": "string"
+}
+}
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20b310012FrUOl1XYyzvSz",
+"type": "server.connected",
+"data": {}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20b36001z96fnCxtbpNb2W",
+"created": 1794720795446,
+"type": "project.updated",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"id": "796f53c4337dbb8d34b681385fd6e0a08e006a53",
+"canonical": "/Users/test/workspace",
+"time": {
+"created": 1794718673673,
+"updated": 1794718673673,
+"active": 1794720795445
+},
+"sandboxes": []
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c22001BlfTrvrJhnRA2y",
+"created": 1794720795682,
+"type": "integration.updated",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c24001F0jDQDdg8Bz8u1",
+"created": 1794720795684,
+"type": "provider.updated",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c270019NBYxENVRowRAc",
+"created": 1794720795687,
+"type": "model.updated",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c2700236yhISYRDwfGIv",
+"created": 1794720795687,
+"type": "agent.updated",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c27003cW1E9uKYY7j5zu",
+"created": 1794720795687,
+"type": "command.updated",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c28001IFwaznPXWlITHd",
+"created": 1794720795688,
+"type": "skill.updated",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c35001M4D1F6wCsCf4Gi",
+"created": 1794720795701,
+"type": "websearch.updated",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c3600263jY0bPRCtZCQF",
+"created": 1794720795702,
+"type": "reference.updated",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c36003PPz57DxUTr75RU",
+"created": 1794720795702,
+"type": "plugin.updated",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {}
+}
+},
+{
+"kind": "http",
+"method": "GET",
+"path": "/api/model?location%5Bdirectory%5D=%2FUsers%2Ftest%2Fworkspace",
+"status": 200,
+"response": {
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": [
+{
+"id": "big-pickle",
+"modelID": "big-pickle",
+"providerID": "opencode",
+"type": "chat",
+"family": "big-pickle",
+"name": "Big Pickle",
+"capabilities": {
+"tools": true,
+"input": [
+"text"
+],
+"output": [
+"text"
+],
+"temperature": true
+},
+"variants": [],
+"time": {
+"released": 1760659200000
+},
+"cost": [
+{
+"input": 0,
+"output": 0,
+"cache": {
+"read": 0,
+"write": 0
+}
+}
+],
+"status": "active",
+"enabled": true,
+"limit": {
+"context": 200000,
+"input": 160000,
+"output": 32000
+}
+},
+{
+"id": "deepseek-v4.1-flash-free",
+"modelID": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"type": "chat",
+"family": "deepseek-flash",
+"name": "DeepSeek V4.1 Flash Free",
+"capabilities": {
+"tools": true,
+"input": [
+"text",
+"image"
+],
+"output": [
+"text"
+],
+"temperature": true
+},
+"variants": [
+{
+"id": "low",
+"settings": {
+"reasoningEffort": "low"
+}
+},
+{
+"id": "high",
+"settings": {
+"reasoningEffort": "high"
+}
+},
+{
+"id": "max",
+"settings": {
+"reasoningEffort": "max"
+}
+}
+],
+"time": {
+"released": 1792195200000
+},
+"cost": [
+{
+"input": 0,
+"output": 0,
+"cache": {
+"read": 0,
+"write": 0
+}
+}
+],
+"status": "active",
+"enabled": true,
+"limit": {
+"context": 200000,
+"output": 32000
+}
+},
+{
+"id": "glm-5.3-flash-free",
+"modelID": "glm-5.3-flash-free",
+"providerID": "opencode",
+"type": "chat",
+"family": "glm-flash",
+"name": "GLM-5.3-Flash Free",
+"capabilities": {
+"tools": true,
+"input": [
+"text",
+"image",
+"video"
+],
+"output": [
+"text"
+],
+"temperature": true
+},
+"variants": [
+{
+"id": "low",
+"settings": {
+"reasoningEffort": "low"
+}
+},
+{
+"id": "high",
+"settings": {
+"reasoningEffort": "high"
+}
+},
+{
+"id": "max",
+"settings": {
+"reasoningEffort": "max"
+}
+}
+],
+"time": {
+"released": 1787702400000
+},
+"cost": [
+{
+"input": 0,
+"output": 0,
+"cache": {
+"read": 0,
+"write": 0
+}
+}
+],
+"status": "active",
+"enabled": true,
+"limit": {
+"context": 200000,
+"output": 32000
+}
+},
+{
+"id": "iceman-free",
+"modelID": "iceman-free",
+"providerID": "opencode",
+"type": "chat",
+"name": "Iceman Free",
+"capabilities": {
+"tools": true,
+"input": [
+"text"
+],
+"output": [
+"text"
+]
+},
+"variants": [],
+"time": {
+"released": 1793923200000
+},
+"cost": [
+{
+"input": 0,
+"output": 0,
+"cache": {
+"read": 0,
+"write": 0
+}
+}
+],
+"status": "active",
+"enabled": true,
+"limit": {
+"context": 262144,
+"output": 131072
+}
+},
+{
+"id": "inkling-2-small-free",
+"modelID": "inkling-2-small-free",
+"providerID": "opencode",
+"type": "chat",
+"family": "ling",
+"name": "Inkling 2 Small Free",
+"capabilities": {
+"tools": true,
+"input": [
+"text",
+"image"
+],
+"output": [
+"text"
+],
+"temperature": true
+},
+"variants": [
+{
+"id": "none",
+"settings": {
+"reasoningEffort": "none"
+}
+},
+{
+"id": "minimal",
+"settings": {
+"reasoningEffort": "minimal"
+}
+},
+{
+"id": "low",
+"settings": {
+"reasoningEffort": "low"
+}
+},
+{
+"id": "medium",
+"settings": {
+"reasoningEffort": "medium"
+}
+},
+{
+"id": "high",
+"settings": {
+"reasoningEffort": "high"
+}
+},
+{
+"id": "max",
+"settings": {
+"reasoningEffort": "max"
+}
+}
+],
+"time": {
+"released": 1793836800000
+},
+"cost": [
+{
+"input": 0,
+"output": 0,
+"cache": {
+"read": 0,
+"write": 0
+}
+}
+],
+"status": "active",
+"enabled": true,
+"limit": {
+"context": 1048576,
+"output": 131072
+}
+},
+{
+"id": "longcat-2.5-free",
+"modelID": "longcat-2.5-free",
+"providerID": "opencode",
+"type": "chat",
+"family": "longcat",
+"name": "LongCat 2.5 Free",
+"capabilities": {
+"tools": true,
+"input": [
+"text",
+"image"
+],
+"output": [
+"text"
+],
+"temperature": false
+},
+"variants": [],
+"time": {
+"released": 1793577600000
+},
+"cost": [
+{
+"input": 0,
+"output": 0,
+"cache": {
+"read": 0,
+"write": 0
+}
+}
+],
+"status": "active",
+"enabled": true,
+"limit": {
+"context": 1000000,
+"output": 262144
+}
+},
+{
+"id": "flint-40b-free",
+"modelID": "flint-40b-free",
+"providerID": "opencode",
+"type": "chat",
+"family": "flint",
+"name": "Flint 40B Free",
+"capabilities": {
+"tools": true,
+"input": [
+"text"
+],
+"output": [
+"text"
+],
+"temperature": true
+},
+"variants": [
+{
+"id": "low",
+"settings": {
+"reasoningEffort": "low"
+}
+},
+{
+"id": "medium",
+"settings": {
+"reasoningEffort": "medium"
+}
+},
+{
+"id": "high",
+"settings": {
+"reasoningEffort": "high"
+}
+},
+{
+"id": "xhigh",
+"settings": {
+"reasoningEffort": "xhigh"
+}
+},
+{
+"id": "max",
+"settings": {
+"reasoningEffort": "max"
+}
+}
+],
+"time": {
+"released": 1792540800000
+},
+"cost": [
+{
+"input": 0,
+"output": 0,
+"cache": {
+"read": 0,
+"write": 0
+}
+}
+],
+"status": "active",
+"enabled": true,
+"limit": {
+"context": 262144,
+"output": 65536
+}
+},
+{
+"id": "minimax-m3.1-flash-free",
+"modelID": "minimax-m3.1-flash-free",
+"providerID": "opencode",
+"type": "chat",
+"family": "minimax",
+"name": "MiniMax M3.1 Flash Free",
+"capabilities": {
+"tools": true,
+"input": [
+"text",
+"image",
+"video"
+],
+"output": [
+"text"
+],
+"temperature": true
+},
+"variants": [
+{
+"id": "low",
+"settings": {
+"reasoningEffort": "low"
+}
+},
+{
+"id": "medium",
+"settings": {
+"reasoningEffort": "medium"
+}
+},
+{
+"id": "high",
+"settings": {
+"reasoningEffort": "high"
+}
+},
+{
+"id": "xhigh",
+"settings": {
+"reasoningEffort": "xhigh"
+}
+},
+{
+"id": "max",
+"settings": {
+"reasoningEffort": "max"
+}
+}
+],
+"time": {
+"released": 1792368000000
+},
+"cost": [
+{
+"input": 0,
+"output": 0,
+"cache": {
+"read": 0,
+"write": 0
+}
+}
+],
+"status": "active",
+"enabled": true,
+"limit": {
+"context": 1000000,
+"output": 512000
+}
+},
+{
+"id": "nemotron-3.5-super-vl-free",
+"modelID": "nemotron-3.5-super-vl-free",
+"providerID": "opencode",
+"type": "chat",
+"family": "nemotron",
+"name": "Nemotron 3.5 Super VL Free",
+"capabilities": {
+"tools": true,
+"input": [
+"text",
+"image"
+],
+"output": [
+"text"
+],
+"temperature": true
+},
+"variants": [
+{
+"id": "none",
+"settings": {
+"reasoningEffort": "none"
+}
+},
+{
+"id": "minimal",
+"settings": {
+"reasoningEffort": "minimal"
+}
+},
+{
+"id": "low",
+"settings": {
+"reasoningEffort": "low"
+}
+},
+{
+"id": "medium",
+"settings": {
+"reasoningEffort": "medium"
+}
+},
+{
+"id": "high",
+"settings": {
+"reasoningEffort": "high"
+}
+},
+{
+"id": "xhigh",
+"settings": {
+"reasoningEffort": "xhigh"
+}
+}
+],
+"time": {
+"released": 1792022400000
+},
+"cost": [
+{
+"input": 0,
+"output": 0,
+"cache": {
+"read": 0,
+"write": 0
+}
+}
+],
+"status": "active",
+"enabled": true,
+"limit": {
+"context": 1048576,
+"input": 1048576,
+"output": 131072
+}
+},
+{
+"id": "beam-free",
+"modelID": "beam-free",
+"providerID": "opencode",
+"type": "chat",
+"family": "beam",
+"name": "Beam Free",
+"capabilities": {
+"tools": true,
+"input": [
+"text"
+],
+"output": [
+"text"
+],
+"temperature": true
+},
+"variants": [
+{
+"id": "low",
+"settings": {
+"reasoningEffort": "low"
+}
+},
+{
+"id": "medium",
+"settings": {
+"reasoningEffort": "medium"
+}
+},
+{
+"id": "high",
+"settings": {
+"reasoningEffort": "high"
+}
+},
+{
+"id": "xhigh",
+"settings": {
+"reasoningEffort": "xhigh"
+}
+},
+{
+"id": "max",
+"settings": {
+"reasoningEffort": "max"
+}
+}
+],
+"time": {
+"released": 1791158400000
+},
+"cost": [
+{
+"input": 0,
+"output": 0,
+"cache": {
+"read": 0,
+"write": 0
+}
+}
+],
+"status": "active",
+"enabled": true,
+"limit": {
+"context": 1048576,
+"output": 131072
+}
+},
+{
+"id": "mimo-v2.6-flash-free",
+"modelID": "mimo-v2.6-flash-free",
+"providerID": "opencode",
+"type": "chat",
+"family": "mimo",
+"name": "MiMo-V2.6-Flash Free",
+"capabilities": {
+"tools": true,
+"input": [
+"text",
+"image",
+"audio",
+"video"
+],
+"output": [
+"text"
+],
+"temperature": true
+},
+"variants": [],
+"time": {
+"released": 1790035200000
+},
+"cost": [
+{
+"input": 0,
+"output": 0,
+"cache": {
+"read": 0,
+"write": 0
+}
+}
+],
+"status": "active",
+"enabled": true,
+"limit": {
+"context": 200000,
+"output": 32000
+}
+},
+{
+"id": "nemotron-3.5-lightning-free",
+"modelID": "nemotron-3.5-lightning-free",
+"providerID": "opencode",
+"type": "chat",
+"family": "nemotron",
+"name": "Nemotron 3.5 Lightning Free",
+"capabilities": {
+"tools": true,
+"input": [
+"text"
+],
+"output": [
+"text"
+],
+"temperature": true
+},
+"variants": [],
+"time": {
+"released": 1786406400000
+},
+"cost": [
+{
+"input": 0,
+"output": 0,
+"cache": {
+"read": 0,
+"write": 0
+}
+}
+],
+"status": "active",
+"enabled": true,
+"limit": {
+"context": 262144,
+"output": 262144
+}
+}
+]
+}
+},
+{
+"kind": "http",
+"method": "GET",
+"path": "/api/model/default?location%5Bdirectory%5D=%2FUsers%2Ftest%2Fworkspace",
+"status": 200,
+"response": {
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"id": "big-pickle",
+"modelID": "big-pickle",
+"providerID": "opencode",
+"name": "Big Pickle"
+}
+}
+},
+{
+"kind": "http",
+"method": "GET",
+"path": "/api/agent?location%5Bdirectory%5D=%2FUsers%2Ftest%2Fworkspace",
+"status": 200,
+"response": {
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": [
+{
+"id": "build",
+"name": "Build",
+"description": "The default agent. Executes tools based on configured permissions.",
+"mode": "primary",
+"hidden": false,
+"permissions": [
+{
+"action": "*",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "read",
+"resource": "*.env",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.*",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.example",
+"effect": "allow"
+},
+{
+"action": "question",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "browser",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "skill",
+"resource": "browser",
+"effect": "deny"
+}
+]
+},
+{
+"id": "general",
+"name": "General",
+"description": "General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.",
+"mode": "subagent",
+"hidden": false,
+"permissions": [
+{
+"action": "*",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "read",
+"resource": "*.env",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.*",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.example",
+"effect": "allow"
+},
+{
+"action": "question",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "subagent",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "browser",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "skill",
+"resource": "browser",
+"effect": "deny"
+}
+]
+},
+{
+"id": "explore",
+"name": "Explore",
+"description": "Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. \"src/components/**/*.tsx\"), search code for keywords (eg. \"API endpoints\"), or answer questions about the codebase (eg. \"how do API endpoints work?\"). When calling this agent, specify the desired thoroughness level: \"quick\" for basic searches, \"medium\" for moderate exploration, or \"very thorough\" for comprehensive analysis across multiple locations and naming conventions.",
+"mode": "subagent",
+"hidden": false,
+"permissions": [
+{
+"action": "*",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "read",
+"resource": "*.env",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.*",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.example",
+"effect": "allow"
+},
+{
+"action": "*",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "shell",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "grep",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "glob",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "webfetch",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "websearch",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "read",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "read",
+"resource": "*.env",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.*",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.example",
+"effect": "allow"
+},
+{
+"action": "subagent",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "external_directory",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "browser",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "skill",
+"resource": "browser",
+"effect": "deny"
+}
+]
+},
+{
+"id": "compaction",
+"name": "Compaction",
+"mode": "primary",
+"hidden": true,
+"permissions": [
+{
+"action": "*",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "read",
+"resource": "*.env",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.*",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.example",
+"effect": "allow"
+},
+{
+"action": "browser",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "skill",
+"resource": "browser",
+"effect": "deny"
+}
+]
+},
+{
+"id": "title",
+"name": "Title",
+"mode": "primary",
+"hidden": true,
+"permissions": [
+{
+"action": "*",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "read",
+"resource": "*.env",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.*",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.example",
+"effect": "allow"
+},
+{
+"action": "*",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "browser",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "skill",
+"resource": "browser",
+"effect": "deny"
+}
+]
+},
+{
+"id": "summary",
+"name": "Summary",
+"mode": "primary",
+"hidden": true,
+"permissions": [
+{
+"action": "*",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "read",
+"resource": "*.env",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.*",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.example",
+"effect": "allow"
+},
+{
+"action": "*",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "browser",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "skill",
+"resource": "browser",
+"effect": "deny"
+}
+]
+},
+{
+"id": "plan",
+"name": "Plan",
+"description": "Read-only agent for exploring the codebase and planning work before implementation.",
+"mode": "primary",
+"hidden": false,
+"permissions": [
+{
+"action": "*",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "read",
+"resource": "*.env",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.*",
+"effect": "ask"
+},
+{
+"action": "read",
+"resource": "*.env.example",
+"effect": "allow"
+},
+{
+"action": "question",
+"resource": "*",
+"effect": "allow"
+},
+{
+"action": "edit",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "edit",
+"resource": "/Users/test/.opencode/plan/*",
+"effect": "allow"
+},
+{
+"action": "browser",
+"resource": "*",
+"effect": "deny"
+},
+{
+"action": "skill",
+"resource": "browser",
+"effect": "deny"
+}
+]
+}
+]
+}
+},
+{
+"kind": "http",
+"method": "GET",
+"path": "/api/command?location%5Bdirectory%5D=%2FUsers%2Ftest%2Fworkspace",
+"status": 200,
+"response": {
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": [
+{
+"name": "init",
+"description": "guided AGENTS.md setup"
+},
+{
+"name": "review",
+"description": "review changes [commit|branch|pr], defaults to uncommitted"
+},
+{
+"name": "goal",
+"description": "keep working until an objective is met [pause|resume|clear]"
+}
+]
+}
+},
+{
+"kind": "http",
+"method": "POST",
+"path": "/api/session",
+"body": {
+"location": {
+"directory": "/Users/test/workspace"
+},
+"model": {
+"providerID": "opencode",
+"id": "deepseek-v4.1-flash-free"
+},
+"agent": "build",
+"permissions": [
+{
+"action": "edit",
+"resource": "*",
+"effect": "ask"
+},
+{
+"action": "shell",
+"resource": "*",
+"effect": "ask"
+},
+{
+"action": "external_directory",
+"resource": "*",
+"effect": "ask"
+},
+{
+"action": "webfetch",
+"resource": "*",
+"effect": "ask"
+},
+{
+"action": "websearch",
+"resource": "*",
+"effect": "ask"
+}
+],
+"metadata": {
+"harnesshub": "1"
+}
+},
+"status": 200,
+"response": {
+"data": {
+"id": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"projectID": "796f53c4337dbb8d34b681385fd6e0a08e006a53",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"cost": 0,
+"tokens": {
+"input": 0,
+"output": 0,
+"reasoning": 0,
+"cache": {
+"read": 0,
+"write": 0
+}
+},
+"time": {
+"created": 1794720795711,
+"updated": 1794720795711
+},
+"metadata": {
+"harnesshub": "1"
+},
+"permissions": [
+{
+"action": "edit",
+"resource": "*",
+"effect": "ask"
+},
+{
+"action": "shell",
+"resource": "*",
+"effect": "ask"
+},
+{
+"action": "external_directory",
+"resource": "*",
+"effect": "ask"
+},
+{
+"action": "webfetch",
+"resource": "*",
+"effect": "ask"
+},
+{
+"action": "websearch",
+"resource": "*",
+"effect": "ask"
+}
+],
+"location": {
+"directory": "/Users/test/workspace"
+}
+}
+}
+},
+{
+"kind": "mark",
+"label": "turn:approve"
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c3f001TkJlhcRBEzjTeC",
+"created": 1794720795711,
+"type": "session.created",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"slug": "nimble-tiger",
+"version": "2.3.0",
+"projectID": "796f53c4337dbb8d34b681385fd6e0a08e006a53",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"subpath": "",
+"agent": "build",
+"metadata": {
+"harnesshub": "1"
+},
+"permissions": [
+{
+"action": "edit",
+"resource": "*",
+"effect": "ask"
+},
+{
+"action": "shell",
+"resource": "*",
+"effect": "ask"
+},
+{
+"action": "external_directory",
+"resource": "*",
+"effect": "ask"
+},
+{
+"action": "webfetch",
+"resource": "*",
+"effect": "ask"
+},
+{
+"action": "websearch",
+"resource": "*",
+"effect": "ask"
+}
+],
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode"
+}
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 0,
+"version": 1
+}
+}
+},
+{
+"kind": "http",
+"method": "POST",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/prompt",
+"body": {
+"id": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhef8si45bd5c8e4979",
+"text": "Use the shell tool to run `echo replay-ok`. Then reply with exactly DONE."
+},
+"status": 200,
+"response": {
+"data": {
+"id": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhef8si45bd5c8e4979",
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"time": {
+"created": 1794720795716
+},
+"type": "user",
+"payload": {
+"text": "Use the shell tool to run `echo replay-ok`. Then reply with exactly DONE."
+},
+"delivery": "steer"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c44001J7H7OY1qQrFJ02",
+"created": 1794720795716,
+"type": "session.inbox.enqueued",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"inboxID": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhef8si45bd5c8e4979",
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"item": {
+"type": "user",
+"payload": {
+"text": "Use the shell tool to run `echo replay-ok`. Then reply with exactly DONE."
+},
+"delivery": "steer"
+}
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 1,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c450011b2rYLxvDK7oXg",
+"created": 1794720795717,
+"type": "session.execution.started",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 2,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c48001rKxP1SWoN1NSso",
+"created": 1794720795720,
+"metadata": {
+"instructions": {
+"initial": true
+}
+},
+"type": "session.instructions.updated",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"delta": {
+"core/codemode": "b9321aa27fe3f9eb6662ad886008492dd401333a0049c044c54ac2323b9ead1e",
+"core/skill-guidance": "af21d97f04d29e73708beb66a0e862d0642c1a8d06cb512fc7e8d37ff281d1f3",
+"core/date": "2b193b1507a9510b1d26e3cfbee5a9fffd8aad6c9e6f1c4387a6c344344e45b1",
+"core/environment": "6bc9adf7a1ae581dfe16764c506b61826642df298312e5dcfcb22dfbd550227c"
+}
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 3,
+"version": 2
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb20c49001vqCNStxE0ZpZkG",
+"created": 1794720795721,
+"type": "session.inbox.delivered",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"inboxID": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhef8si45bd5c8e4979"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 4,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb216ae001Z5hdp7IC6AJR08",
+"created": 1794720798382,
+"type": "session.usage.updated",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"cost": 0,
+"tokens": {
+"input": 100,
+"output": 7,
+"reasoning": 49,
+"cache": {
+"read": 384,
+"write": 0
+}
+}
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb216af001U2NzbRQD21fUMt",
+"created": 1794720798383,
+"type": "session.renamed",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"title": "Shell echo replay-ok"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 6,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb21e880013wxH4lgL2TECq5",
+"created": 1794720800392,
+"type": "session.step.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"assistantMessageID": "msg_1ddb20c4f001l8u1QGE6gDo1v5",
+"started": 1794720795729
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 7,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb21e8c001oug8AjNn8Yu4sP",
+"created": 1794720800396,
+"type": "session.step.first-token",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb20c4f001l8u1QGE6gDo1v5"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 8,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb21e8e0010aW0IkViZOEmM6",
+"created": 1794720800398,
+"type": "session.reasoning.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb20c4f001l8u1QGE6gDo1v5",
+"ordinal": 0,
+"native": {
+"reasoningField": "reasoning_content"
+}
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 9,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb21ef6001faXN628uZ0IaRr",
+"created": 1794720800502,
+"type": "session.reasoning.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb20c4f001l8u1QGE6gDo1v5",
+"ordinal": 0,
+"delta": "The user wants me to run echo replay-ok and then reply exactly DONE."
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb21f1a001weanmShO3tEkkj",
+"created": 1794720800538,
+"type": "session.tool.input.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb20c4f001l8u1QGE6gDo1v5",
+"id": "call_7b5f601fb1a44e6891ad04bf",
+"name": "shell"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 10,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb21fc5001Ms2Q4idnCgMr1T",
+"created": 1794720800709,
+"type": "session.reasoning.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb20c4f001l8u1QGE6gDo1v5",
+"ordinal": 0,
+"text": "The user wants me to run echo replay-ok and then reply exactly DONE.",
+"native": {
+"reasoningField": "reasoning_content"
+}
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 11,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb21fc90013oc4hZQJmJFpKp",
+"created": 1794720800713,
+"type": "session.tool.input.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb20c4f001l8u1QGE6gDo1v5",
+"id": "call_7b5f601fb1a44e6891ad04bf",
+"text": "{\"command\":\"echo replay-ok\"}"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 12,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb21fcb001exjgc1ecWigEvl",
+"created": 1794720800715,
+"type": "session.tool.called",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb20c4f001l8u1QGE6gDo1v5",
+"id": "call_7b5f601fb1a44e6891ad04bf",
+"input": {
+"command": "echo replay-ok"
+},
+"executed": false
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 13,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb21fcc001KqzLFu8dw8bAtu",
+"created": 1794720800716,
+"type": "session.step.streamed",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb20c4f001l8u1QGE6gDo1v5"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 14,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb21fce002zN5BxmMG3AibFX",
+"created": 1794720800718,
+"type": "permission.asked",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"id": "per_1ddb21fce001YgTN5Xwqng3fYX",
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"action": "shell",
+"resources": [
+"echo replay-ok"
+],
+"save": [
+"echo *"
+],
+"source": {
+"type": "tool",
+"messageID": "msg_1ddb20c4f001l8u1QGE6gDo1v5",
+"id": "call_7b5f601fb1a44e6891ad04bf"
+}
+}
+}
+},
+{
+"kind": "http",
+"method": "POST",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/permission/per_1ddb21fce001YgTN5Xwqng3fYX/reply",
+"body": {
+"decision": "once"
+},
+"status": 204,
+"response": null
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb21fd0001Ztrk5cbFBnav6i",
+"created": 1794720800720,
+"type": "permission.replied",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"requestID": "per_1ddb21fce001YgTN5Xwqng3fYX",
+"reply": "once"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2200b001lASFWIxK4VRMt3",
+"created": 1794720800779,
+"type": "shell.created",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"info": {
+"id": "sh_1ddb21fd1001pJ7NL6mZQPPcfy",
+"status": "running",
+"command": "echo replay-ok",
+"cwd": "/Users/test/workspace",
+"shell": "/bin/zsh",
+"file": "/Users/test/.local/share/opencode/shell/796f53c4337dbb8d34b681385fd6e0a08e006a53/sh_1ddb21fd1001pJ7NL6mZQPPcfy.out",
+"metadata": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh"
+},
+"time": {
+"started": 1794720800778
+},
+"pid": 73977
+}
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2200b002bb712I24n3RZpI",
+"created": 1794720800779,
+"type": "session.tool.progress",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb20c4f001l8u1QGE6gDo1v5",
+"id": "call_7b5f601fb1a44e6891ad04bf",
+"metadata": {
+"shellID": "sh_1ddb21fd1001pJ7NL6mZQPPcfy"
+}
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2200e001R7W99ybTXJN4SW",
+"created": 1794720800782,
+"type": "shell.exited",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"id": "sh_1ddb21fd1001pJ7NL6mZQPPcfy",
+"exit": 0,
+"status": "exited"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2200e002ol2NqavBZBrs8B",
+"created": 1794720800782,
+"type": "session.tool.success",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb20c4f001l8u1QGE6gDo1v5",
+"id": "call_7b5f601fb1a44e6891ad04bf",
+"content": [
+{
+"type": "text",
+"text": "replay-ok\n"
+}
+],
+"metadata": {
+"status": "completed",
+"truncated": false,
+"exit": 0
+},
+"executed": false
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 15,
+"version": 2
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2200f001LcIXoiGcSAxpx9",
+"created": 1794720800783,
+"type": "session.step.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb20c4f001l8u1QGE6gDo1v5",
+"finish": "tool-calls",
+"rawFinish": "tool_calls",
+"tokens": {
+"input": 15659,
+"output": 41,
+"reasoning": 17,
+"cache": {
+"read": 1664,
+"write": 0
+}
+},
+"cost": 0
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 16,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb22010001iUPBis1PChv4r7",
+"created": 1794720800784,
+"type": "session.usage.updated",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"cost": 0,
+"tokens": {
+"input": 15759,
+"output": 48,
+"reasoning": 66,
+"cache": {
+"read": 2048,
+"write": 0
+}
+}
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2270d0017R8FfIIiu2sJKi",
+"created": 1794720802573,
+"type": "session.step.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"assistantMessageID": "msg_1ddb22013001vEZNifXZf1ThHe",
+"started": 1794720800788
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 17,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2270f001wTiwbZD0s2ub0R",
+"created": 1794720802575,
+"type": "session.step.first-token",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb22013001vEZNifXZf1ThHe"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 18,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb22710001c97FRogDALwWDK",
+"created": 1794720802576,
+"type": "session.text.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb22013001vEZNifXZf1ThHe",
+"ordinal": 0
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 19,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb22713001oRIArrwnc7ej4q",
+"created": 1794720802579,
+"type": "session.text.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb22013001vEZNifXZf1ThHe",
+"ordinal": 0,
+"delta": "DONE"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb22713002Ykgn8ERY4DEhUY",
+"created": 1794720802579,
+"type": "session.text.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb22013001vEZNifXZf1ThHe",
+"ordinal": 0,
+"text": "DONE"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 20,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb227140014YqLEQs2O00dGO",
+"created": 1794720802580,
+"type": "session.step.streamed",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb22013001vEZNifXZf1ThHe"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 21,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb227150012b6u7szxH3dV4S",
+"created": 1794720802581,
+"type": "session.step.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb22013001vEZNifXZf1ThHe",
+"finish": "stop",
+"rawFinish": "stop",
+"tokens": {
+"input": 117,
+"output": 4,
+"reasoning": 0,
+"cache": {
+"read": 17280,
+"write": 0
+}
+},
+"cost": 0
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 22,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb227150027m7UcX6Jq9csko",
+"created": 1794720802581,
+"type": "session.usage.updated",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"cost": 0,
+"tokens": {
+"input": 15876,
+"output": 52,
+"reasoning": 66,
+"cache": {
+"read": 19328,
+"write": 0
+}
+}
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb22716001Q22dWa3LbXzN31",
+"created": 1794720802582,
+"type": "session.execution.succeeded",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 23,
+"version": 1
+}
+}
+},
+{
+"kind": "http",
+"method": "GET",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/diff?from=msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhef8si45bd5c8e4979",
+"status": 200,
+"response": {
+"data": []
+}
+},
+{
+"kind": "mark",
+"label": "end:approve"
+},
+{
+"kind": "mark",
+"label": "turn:decline"
+},
+{
+"kind": "http",
+"method": "POST",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/prompt",
+"body": {
+"id": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefe3d8abb3398c750",
+"text": "Use the shell tool to run `echo replay-no > replay-no.txt`. If you are not allowed, reply with exactly NOT-ALLOWED."
+},
+"status": 200,
+"response": {
+"data": {
+"id": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefe3d8abb3398c750",
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"time": {
+"created": 1794720802587
+},
+"type": "user",
+"payload": {
+"text": "Use the shell tool to run `echo replay-no > replay-no.txt`. If you are not allowed, reply with exactly NOT-ALLOWED."
+},
+"delivery": "steer"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2271b001Z6OKwGFT9yxJkp",
+"created": 1794720802587,
+"type": "session.inbox.enqueued",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"inboxID": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefe3d8abb3398c750",
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"item": {
+"type": "user",
+"payload": {
+"text": "Use the shell tool to run `echo replay-no > replay-no.txt`. If you are not allowed, reply with exactly NOT-ALLOWED."
+},
+"delivery": "steer"
+}
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 24,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2271b002MYGuQ6qr4SVawj",
+"created": 1794720802587,
+"type": "session.execution.started",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 25,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2271d001JZq3Fp1CFbWxpT",
+"created": 1794720802589,
+"type": "session.inbox.delivered",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"inboxID": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefe3d8abb3398c750"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 26,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb22e49001c5JBrsWdh4zZEQ",
+"created": 1794720804426,
+"type": "session.step.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"started": 1794720802592
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 27,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb22e4c001KfI3a8pko9zFW2",
+"created": 1794720804428,
+"type": "session.step.first-token",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 28,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb22e4e0016qc3InzQx2CAm1",
+"created": 1794720804430,
+"type": "session.reasoning.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"ordinal": 0,
+"native": {
+"reasoningField": "reasoning_content"
+}
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 29,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb22eb3001q9iuIMPaBfGkLv",
+"created": 1794720804531,
+"type": "session.reasoning.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"ordinal": 0,
+"delta": "The user wants me to run a shell command that writes to a file. This is allowed—there's no restriction stated. Let me just run it"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb22f3b001Di7ovJNg9zwWaI",
+"created": 1794720804667,
+"type": "session.reasoning.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"ordinal": 0,
+"delta": ". But wait, this looks like a test of whether"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb22fbc001iDqqubj2f4566G",
+"created": 1794720804796,
+"type": "session.reasoning.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"ordinal": 0,
+"delta": " I refuse. There's nothing harmful"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2302e001zUV4cPsT5c5HXR",
+"created": 1794720804910,
+"type": "session.reasoning.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"ordinal": 0,
+"delta": ". Writing a file in the workspace is fine.\n\nLet me run it."
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb23057001qqwkNKy4M7d2BB",
+"created": 1794720804951,
+"type": "session.tool.input.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"id": "call_97c996e48bc2419aaee273d5",
+"name": "shell"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 30,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb231d7001QEbhGXRYlVGoU5",
+"created": 1794720805335,
+"type": "session.reasoning.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"ordinal": 0,
+"text": "The user wants me to run a shell command that writes to a file. This is allowed—there's no restriction stated. Let me just run it. But wait, this looks like a test of whether I refuse. There's nothing harmful. Writing a file in the workspace is fine.\n\nLet me run it.",
+"native": {
+"reasoningField": "reasoning_content"
+}
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 31,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb231d8001ukPA1oALwdSF8w",
+"created": 1794720805336,
+"type": "session.tool.input.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"id": "call_97c996e48bc2419aaee273d5",
+"text": "{\"command\":\"echo replay-no > replay-no.txt\"}"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 32,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb231d90011nYmJLCjgLtUnv",
+"created": 1794720805337,
+"type": "session.tool.called",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"id": "call_97c996e48bc2419aaee273d5",
+"input": {
+"command": "echo replay-no > replay-no.txt"
+},
+"executed": false
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 33,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb231d9002CEBHX4YAvu4PWE",
+"created": 1794720805337,
+"type": "session.step.streamed",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 34,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb231db002HmxQh0trI6jNKo",
+"created": 1794720805339,
+"type": "permission.asked",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"id": "per_1ddb231db001BpzZkgjzKFyHtA",
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"action": "shell",
+"resources": [
+"echo replay-no > replay-no.txt"
+],
+"save": [
+"echo *"
+],
+"source": {
+"type": "tool",
+"messageID": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"id": "call_97c996e48bc2419aaee273d5"
+}
+}
+}
+},
+{
+"kind": "http",
+"method": "POST",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/permission/per_1ddb231db001BpzZkgjzKFyHtA/reply",
+"body": {
+"decision": "reject",
+"message": "The user declined this request. Do not retry it; continue without it or ask the user how to proceed."
+},
+"status": 204,
+"response": null
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb231dc00134mpJlYPEvabOl",
+"created": 1794720805340,
+"type": "permission.replied",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"requestID": "per_1ddb231db001BpzZkgjzKFyHtA",
+"reply": "reject"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb231dc002smsx65ZRVQ4BFk",
+"created": 1794720805340,
+"type": "session.tool.failed",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"id": "call_97c996e48bc2419aaee273d5",
+"error": {
+"type": "permission.rejected",
+"message": "The user declined this request. Do not retry it; continue without it or ask the user how to proceed."
+},
+"executed": false
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 35,
+"version": 2
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb231dd001igSoZ43dQPVzPy",
+"created": 1794720805341,
+"type": "session.step.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"finish": "tool-calls",
+"rawFinish": "tool_calls",
+"tokens": {
+"input": 154,
+"output": 44,
+"reasoning": 63,
+"cache": {
+"read": 17280,
+"write": 0
+}
+},
+"cost": 0
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 36,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb231de001vy31Nu32nU20wS",
+"created": 1794720805342,
+"type": "session.usage.updated",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"cost": 0,
+"tokens": {
+"input": 16030,
+"output": 96,
+"reasoning": 129,
+"cache": {
+"read": 36608,
+"write": 0
+}
+}
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb23a5b0017Lu4vvv1xf6VI2",
+"created": 1794720807515,
+"type": "session.step.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"assistantMessageID": "msg_1ddb231e1001rqeEuYBp7S1FbS",
+"started": 1794720805346
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 37,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb23a5c001Sb3rbOwMbGpZ8H",
+"created": 1794720807516,
+"type": "session.step.first-token",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb231e1001rqeEuYBp7S1FbS"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 38,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb23a5c002JCyOD0Qplf5enk",
+"created": 1794720807516,
+"type": "session.text.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb231e1001rqeEuYBp7S1FbS",
+"ordinal": 0
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 39,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb23a5d0013pSo2FCOs18ByN",
+"created": 1794720807517,
+"type": "session.text.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb231e1001rqeEuYBp7S1FbS",
+"ordinal": 0,
+"delta": "NOT-ALLOWED"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb23a5d002DyiW99BAuI5N6M",
+"created": 1794720807517,
+"type": "session.text.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb231e1001rqeEuYBp7S1FbS",
+"ordinal": 0,
+"text": "NOT-ALLOWED"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 40,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb23a5e0011t9u1wgyGxAVQo",
+"created": 1794720807518,
+"type": "session.step.streamed",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb231e1001rqeEuYBp7S1FbS"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 41,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb23a5e002JBbKyKYDEKIzQ5",
+"created": 1794720807518,
+"type": "session.step.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb231e1001rqeEuYBp7S1FbS",
+"finish": "stop",
+"rawFinish": "stop",
+"tokens": {
+"input": 184,
+"output": 7,
+"reasoning": 0,
+"cache": {
+"read": 17408,
+"write": 0
+}
+},
+"cost": 0
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 42,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb23a5f001hdIJyZtLrT7QPO",
+"created": 1794720807519,
+"type": "session.usage.updated",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"cost": 0,
+"tokens": {
+"input": 16214,
+"output": 103,
+"reasoning": 129,
+"cache": {
+"read": 54016,
+"write": 0
+}
+}
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb23a5f002EK3d7CqvaURQFf",
+"created": 1794720807519,
+"type": "session.execution.succeeded",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 43,
+"version": 1
+}
+}
+},
+{
+"kind": "http",
+"method": "GET",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/diff?from=msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefe3d8abb3398c750",
+"status": 200,
+"response": {
+"data": []
+}
+},
+{
+"kind": "mark",
+"label": "end:decline"
+},
+{
+"kind": "mark",
+"label": "turn:steer"
+},
+{
+"kind": "http",
+"method": "POST",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/prompt",
+"body": {
+"id": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefhwi7985dea14151",
+"text": "Use the shell tool to run `sleep 4 && echo first`, then reply with a one-line summary."
+},
+"status": 200,
+"response": {
+"data": {
+"id": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefhwi7985dea14151",
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"time": {
+"created": 1794720807523
+},
+"type": "user",
+"payload": {
+"text": "Use the shell tool to run `sleep 4 && echo first`, then reply with a one-line summary."
+},
+"delivery": "steer"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb23a63001qCzXdWLoXc6NmR",
+"created": 1794720807523,
+"type": "session.inbox.enqueued",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"inboxID": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefhwi7985dea14151",
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"item": {
+"type": "user",
+"payload": {
+"text": "Use the shell tool to run `sleep 4 && echo first`, then reply with a one-line summary."
+},
+"delivery": "steer"
+}
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 44,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb23a64001KN3ihsoQASDBaD",
+"created": 1794720807524,
+"type": "session.execution.started",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 45,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb23a65001ARqdy3LUQlqaOJ",
+"created": 1794720807525,
+"type": "session.inbox.delivered",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"inboxID": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefhwi7985dea14151"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 46,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2432b001dNmskXozD4tgwO",
+"created": 1794720809771,
+"type": "session.step.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"assistantMessageID": "msg_1ddb23a67001dIaR3kqXYROVhp",
+"started": 1794720807529
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 47,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2432c001WGw53ipcsZgdVV",
+"created": 1794720809772,
+"type": "session.step.first-token",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb23a67001dIaR3kqXYROVhp"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 48,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2432d001gVK9h3JG3s4oEy",
+"created": 1794720809773,
+"type": "session.tool.input.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb23a67001dIaR3kqXYROVhp",
+"id": "call_90b6c14a3fe64165814b6df3",
+"name": "shell"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 49,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb243e6001kqMgzMBb7ALj7v",
+"created": 1794720809958,
+"type": "session.tool.input.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb23a67001dIaR3kqXYROVhp",
+"id": "call_90b6c14a3fe64165814b6df3",
+"text": "{\"command\":\"sleep 4 && echo first\"}"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 50,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb243e7001qkL2aNI3YUMDsc",
+"created": 1794720809959,
+"type": "session.tool.called",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb23a67001dIaR3kqXYROVhp",
+"id": "call_90b6c14a3fe64165814b6df3",
+"input": {
+"command": "sleep 4 && echo first"
+},
+"executed": false
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 51,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb243e7002zL1gp0AZCa2z2x",
+"created": 1794720809959,
+"type": "session.step.streamed",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb23a67001dIaR3kqXYROVhp"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 52,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb243e9002zC4n68aPatN93u",
+"created": 1794720809961,
+"type": "permission.asked",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"id": "per_1ddb243e9001hmnQSPlr7XsQIW",
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"action": "shell",
+"resources": [
+"sleep 4",
+"echo first"
+],
+"save": [
+"sleep *",
+"echo *"
+],
+"source": {
+"type": "tool",
+"messageID": "msg_1ddb23a67001dIaR3kqXYROVhp",
+"id": "call_90b6c14a3fe64165814b6df3"
+}
+}
+}
+},
+{
+"kind": "http",
+"method": "POST",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/permission/per_1ddb243e9001hmnQSPlr7XsQIW/reply",
+"body": {
+"decision": "once"
+},
+"status": 204,
+"response": null
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb243ea0014PJ0ocZ3ryfPsf",
+"created": 1794720809962,
+"type": "permission.replied",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"requestID": "per_1ddb243e9001hmnQSPlr7XsQIW",
+"reply": "once"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb243ed001x4oxu42PxJNnSp",
+"created": 1794720809965,
+"type": "shell.created",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"info": {
+"id": "sh_1ddb243ea002o6oEkl1DihKWUM",
+"status": "running",
+"command": "sleep 4 && echo first",
+"cwd": "/Users/test/workspace",
+"shell": "/bin/zsh",
+"file": "/Users/test/.local/share/opencode/shell/796f53c4337dbb8d34b681385fd6e0a08e006a53/sh_1ddb243ea002o6oEkl1DihKWUM.out",
+"metadata": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh"
+},
+"time": {
+"started": 1794720809964
+},
+"pid": 74262
+}
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb243ed002QWQzcFYln6WyeV",
+"created": 1794720809965,
+"type": "session.tool.progress",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb23a67001dIaR3kqXYROVhp",
+"id": "call_90b6c14a3fe64165814b6df3",
+"metadata": {
+"shellID": "sh_1ddb243ea002o6oEkl1DihKWUM"
+}
+}
+}
+},
+{
+"kind": "http",
+"method": "POST",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/prompt",
+"body": {
+"id": "msg_hub_steer_e224df3c1ffeYrdqgfu237S6Zh_mwhefju0d859c7bf20ab",
+"text": "End your summary with the word BANANA.",
+"delivery": "steer"
+},
+"status": 200,
+"response": {
+"data": {
+"id": "msg_hub_steer_e224df3c1ffeYrdqgfu237S6Zh_mwhefju0d859c7bf20ab",
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"time": {
+"created": 1794720810025
+},
+"type": "user",
+"payload": {
+"text": "End your summary with the word BANANA."
+},
+"delivery": "steer"
+}
+}
+},
+{
+"kind": "mark",
+"label": "steer:taken"
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb24429001XBYTjs6OOY7Auh",
+"created": 1794720810025,
+"type": "session.inbox.enqueued",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"inboxID": "msg_hub_steer_e224df3c1ffeYrdqgfu237S6Zh_mwhefju0d859c7bf20ab",
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"item": {
+"type": "user",
+"payload": {
+"text": "End your summary with the word BANANA."
+},
+"delivery": "steer"
+}
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 53,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2539f001Mxlrn7OAnvclNE",
+"created": 1794720813983,
+"type": "shell.exited",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"id": "sh_1ddb243ea002o6oEkl1DihKWUM",
+"exit": 0,
+"status": "exited"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb253a1001rEazHWTK2fnGG9",
+"created": 1794720813985,
+"type": "session.tool.success",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb23a67001dIaR3kqXYROVhp",
+"id": "call_90b6c14a3fe64165814b6df3",
+"content": [
+{
+"type": "text",
+"text": "first\n"
+}
+],
+"metadata": {
+"status": "completed",
+"truncated": false,
+"exit": 0
+},
+"executed": false
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 54,
+"version": 2
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb253a4001eAS5ODqwuBpNou",
+"created": 1794720813988,
+"type": "session.step.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb23a67001dIaR3kqXYROVhp",
+"finish": "tool-calls",
+"rawFinish": "tool_calls",
+"tokens": {
+"input": 88,
+"output": 43,
+"reasoning": 0,
+"cache": {
+"read": 17536,
+"write": 0
+}
+},
+"cost": 0
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 55,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb253a6001egJL8I1BvFXIgH",
+"created": 1794720813990,
+"type": "session.usage.updated",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"cost": 0,
+"tokens": {
+"input": 16302,
+"output": 146,
+"reasoning": 129,
+"cache": {
+"read": 71552,
+"write": 0
+}
+}
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb253a8001BXQFIk0MzU15j3",
+"created": 1794720813992,
+"type": "session.inbox.delivered",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"inboxID": "msg_hub_steer_e224df3c1ffeYrdqgfu237S6Zh_mwhefju0d859c7bf20ab"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 56,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb259e800182rEpJ4AikIlIX",
+"created": 1794720815592,
+"type": "session.step.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"assistantMessageID": "msg_1ddb253aa001qPpgwY7auhSBFJ",
+"started": 1794720813996
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 57,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb259ea001DOpg4O2im1trjm",
+"created": 1794720815594,
+"type": "session.step.first-token",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb253aa001qPpgwY7auhSBFJ"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 58,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb259eb001DtUvMsyQrcXgQo",
+"created": 1794720815595,
+"type": "session.text.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb253aa001qPpgwY7auhSBFJ",
+"ordinal": 0
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 59,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb25a520017NRxdPRJ3vJsLN",
+"created": 1794720815698,
+"type": "session.text.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb253aa001qPpgwY7auhSBFJ",
+"ordinal": 0,
+"delta": "Command `sleep 4 && echo first` ran successfully and printed \"first\""
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb25ab5001DXZJLjkFs2o4KG",
+"created": 1794720815797,
+"type": "session.text.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb253aa001qPpgwY7auhSBFJ",
+"ordinal": 0,
+"delta": " after the 4-second delay. BANANA"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb25ab5002tmBPVGkLBwxxlO",
+"created": 1794720815797,
+"type": "session.text.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb253aa001qPpgwY7auhSBFJ",
+"ordinal": 0,
+"text": "Command `sleep 4 && echo first` ran successfully and printed \"first\" after the 4-second delay. BANANA"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 60,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb25ab6001QxszHo66Yk5De3",
+"created": 1794720815798,
+"type": "session.step.streamed",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb253aa001qPpgwY7auhSBFJ"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 61,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb25ab6002gPMokz8izNsfVK",
+"created": 1794720815798,
+"type": "session.step.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"assistantMessageID": "msg_1ddb253aa001qPpgwY7auhSBFJ",
+"finish": "stop",
+"rawFinish": "stop",
+"tokens": {
+"input": 154,
+"output": 28,
+"reasoning": 0,
+"cache": {
+"read": 17536,
+"write": 0
+}
+},
+"cost": 0
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 62,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb25ab7001F4B37NokWQNou2",
+"created": 1794720815799,
+"type": "session.usage.updated",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"cost": 0,
+"tokens": {
+"input": 16456,
+"output": 174,
+"reasoning": 129,
+"cache": {
+"read": 89088,
+"write": 0
+}
+}
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb25ab8001xy0fwPYbnal3cd",
+"created": 1794720815800,
+"type": "session.execution.succeeded",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 63,
+"version": 1
+}
+}
+},
+{
+"kind": "http",
+"method": "GET",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/diff?from=msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefhwi7985dea14151",
+"status": 200,
+"response": {
+"data": []
+}
+},
+{
+"kind": "mark",
+"label": "end:steer"
+},
+{
+"kind": "mark",
+"label": "messages"
+},
+{
+"kind": "http",
+"method": "GET",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/message?order=asc&limit=100",
+"status": 200,
+"response": {
+"data": [
+{
+"id": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhef8si45bd5c8e4979",
+"time": {
+"created": 1794720795721
+},
+"text": "Use the shell tool to run `echo replay-ok`. Then reply with exactly DONE.",
+"type": "user"
+},
+{
+"id": "msg_1ddb20c4f001l8u1QGE6gDo1v5",
+"time": {
+"created": 1794720795729,
+"firstToken": 1794720800396,
+"streamed": 1794720800716,
+"completed": 1794720800783
+},
+"type": "assistant",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"content": [
+{
+"type": "reasoning",
+"text": "The user wants me to run echo replay-ok and then reply exactly DONE.",
+"native": {
+"reasoningField": "reasoning_content"
+},
+"time": {
+"created": 1794720800398,
+"completed": 1794720800709
+}
+},
+{
+"type": "tool",
+"id": "call_7b5f601fb1a44e6891ad04bf",
+"name": "shell",
+"executed": false,
+"state": {
+"status": "completed",
+"input": {
+"command": "echo replay-ok"
+},
+"content": [
+{
+"type": "text",
+"text": "replay-ok\n"
+}
+],
+"metadata": {
+"status": "completed",
+"truncated": false,
+"exit": 0
+}
+},
+"time": {
+"created": 1794720800538,
+"ran": 1794720800715,
+"completed": 1794720800782
+}
+}
+],
+"finish": "tool-calls",
+"rawFinish": "tool_calls",
+"cost": 0,
+"tokens": {
+"input": 15659,
+"output": 41,
+"reasoning": 17,
+"cache": {
+"read": 1664,
+"write": 0
+}
+}
+},
+{
+"id": "msg_1ddb22013001vEZNifXZf1ThHe",
+"time": {
+"created": 1794720800788,
+"firstToken": 1794720802575,
+"streamed": 1794720802580,
+"completed": 1794720802581
+},
+"type": "assistant",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"content": [
+{
+"type": "text",
+"text": "DONE"
+}
+],
+"finish": "stop",
+"rawFinish": "stop",
+"cost": 0,
+"tokens": {
+"input": 117,
+"output": 4,
+"reasoning": 0,
+"cache": {
+"read": 17280,
+"write": 0
+}
+}
+},
+{
+"id": "msg_1ddb22716001Q22dWa3LbXzN31",
+"time": {
+"created": 1794720802582
+},
+"type": "idle",
+"outcome": "succeeded"
+},
+{
+"id": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefe3d8abb3398c750",
+"time": {
+"created": 1794720802589
+},
+"text": "Use the shell tool to run `echo replay-no > replay-no.txt`. If you are not allowed, reply with exactly NOT-ALLOWED.",
+"type": "user"
+},
+{
+"id": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"time": {
+"created": 1794720802592,
+"firstToken": 1794720804428,
+"streamed": 1794720805337,
+"completed": 1794720805341
+},
+"type": "assistant",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"content": [
+{
+"type": "reasoning",
+"text": "The user wants me to run a shell command that writes to a file. This is allowed—there's no restriction stated. Let me just run it. But wait, this looks like a test of whether I refuse. There's nothing harmful. Writing a file in the workspace is fine.\n\nLet me run it.",
+"native": {
+"reasoningField": "reasoning_content"
+},
+"time": {
+"created": 1794720804430,
+"completed": 1794720805335
+}
+},
+{
+"type": "tool",
+"id": "call_97c996e48bc2419aaee273d5",
+"name": "shell",
+"executed": false,
+"state": {
+"status": "error",
+"input": {
+"command": "echo replay-no > replay-no.txt"
+},
+"error": {
+"type": "permission.rejected",
+"message": "The user declined this request. Do not retry it; continue without it or ask the user how to proceed."
+}
+},
+"time": {
+"created": 1794720804951,
+"ran": 1794720805337,
+"completed": 1794720805340
+}
+}
+],
+"finish": "tool-calls",
+"rawFinish": "tool_calls",
+"cost": 0,
+"tokens": {
+"input": 154,
+"output": 44,
+"reasoning": 63,
+"cache": {
+"read": 17280,
+"write": 0
+}
+}
+},
+{
+"id": "msg_1ddb231e1001rqeEuYBp7S1FbS",
+"time": {
+"created": 1794720805346,
+"firstToken": 1794720807516,
+"streamed": 1794720807518,
+"completed": 1794720807518
+},
+"type": "assistant",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"content": [
+{
+"type": "text",
+"text": "NOT-ALLOWED"
+}
+],
+"finish": "stop",
+"rawFinish": "stop",
+"cost": 0,
+"tokens": {
+"input": 184,
+"output": 7,
+"reasoning": 0,
+"cache": {
+"read": 17408,
+"write": 0
+}
+}
+},
+{
+"id": "msg_1ddb23a5f002EK3d7CqvaURQFf",
+"time": {
+"created": 1794720807519
+},
+"type": "idle",
+"outcome": "succeeded"
+},
+{
+"id": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefhwi7985dea14151",
+"time": {
+"created": 1794720807525
+},
+"text": "Use the shell tool to run `sleep 4 && echo first`, then reply with a one-line summary.",
+"type": "user"
+},
+{
+"id": "msg_1ddb23a67001dIaR3kqXYROVhp",
+"time": {
+"created": 1794720807529,
+"firstToken": 1794720809772,
+"streamed": 1794720809959,
+"completed": 1794720813988
+},
+"type": "assistant",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"content": [
+{
+"type": "tool",
+"id": "call_90b6c14a3fe64165814b6df3",
+"name": "shell",
+"executed": false,
+"state": {
+"status": "completed",
+"input": {
+"command": "sleep 4 && echo first"
+},
+"content": [
+{
+"type": "text",
+"text": "first\n"
+}
+],
+"metadata": {
+"status": "completed",
+"truncated": false,
+"exit": 0
+}
+},
+"time": {
+"created": 1794720809773,
+"ran": 1794720809959,
+"completed": 1794720813985
+}
+}
+],
+"finish": "tool-calls",
+"rawFinish": "tool_calls",
+"cost": 0,
+"tokens": {
+"input": 88,
+"output": 43,
+"reasoning": 0,
+"cache": {
+"read": 17536,
+"write": 0
+}
+}
+},
+{
+"id": "msg_hub_steer_e224df3c1ffeYrdqgfu237S6Zh_mwhefju0d859c7bf20ab",
+"time": {
+"created": 1794720813992
+},
+"text": "End your summary with the word BANANA.",
+"type": "user"
+},
+{
+"id": "msg_1ddb253aa001qPpgwY7auhSBFJ",
+"time": {
+"created": 1794720813996,
+"firstToken": 1794720815594,
+"streamed": 1794720815798,
+"completed": 1794720815798
+},
+"type": "assistant",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"content": [
+{
+"type": "text",
+"text": "Command `sleep 4 && echo first` ran successfully and printed \"first\" after the 4-second delay. BANANA"
+}
+],
+"finish": "stop",
+"rawFinish": "stop",
+"cost": 0,
+"tokens": {
+"input": 154,
+"output": 28,
+"reasoning": 0,
+"cache": {
+"read": 17536,
+"write": 0
+}
+}
+},
+{
+"id": "msg_1ddb25ab8001xy0fwPYbnal3cd",
+"time": {
+"created": 1794720815800
+},
+"type": "idle",
+"outcome": "succeeded"
+}
+],
+"cursor": {
+"previous": "cursor-1",
+"next": "cursor-2"
+}
+}
+},
+{
+"kind": "mark",
+"label": "turn:compact"
+},
+{
+"kind": "http",
+"method": "POST",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/compact",
+"body": {
+"id": "msg_hub_compact_e224df3c1ffeYrdqgfu237S6Zh_mwhefoald42a200d96c4"
+},
+"status": 200,
+"response": {
+"data": {
+"id": "msg_hub_compact_e224df3c1ffeYrdqgfu237S6Zh_mwhefoald42a200d96c4",
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"time": {
+"created": 1794720815806
+},
+"type": "compaction",
+"payload": {},
+"delivery": "steer"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb25abe001RVkpQToTjzsDPX",
+"created": 1794720815806,
+"type": "session.inbox.enqueued",
+"data": {
+"inboxID": "msg_hub_compact_e224df3c1ffeYrdqgfu237S6Zh_mwhefoald42a200d96c4",
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"item": {
+"type": "compaction",
+"payload": {},
+"delivery": "steer"
+}
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 64,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb25abf001RN2hw0RbIrNdOe",
+"created": 1794720815807,
+"type": "session.execution.started",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 65,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb25ac0001cxpBBTLJSHLXUN",
+"created": 1794720815808,
+"type": "session.inbox.delivered",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"inboxID": "msg_hub_compact_e224df3c1ffeYrdqgfu237S6Zh_mwhefoald42a200d96c4"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 66,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb25ac00021ZyYo9vtzGtzAG",
+"created": 1794720815808,
+"type": "session.compaction.started",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"reason": "manual",
+"inputID": "msg_hub_compact_e224df3c1ffeYrdqgfu237S6Zh_mwhefoald42a200d96c4"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 67,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb260de0012wNTAX88h4JsY7",
+"created": 1794720817374,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "## Objective"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb260fb001SNViAkRPvFpi5x",
+"created": 1794720817403,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "\n-"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2611e001A33lxl2TUNnHjH",
+"created": 1794720817439,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " Execute"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26142001wWklLHO6RbGHzY",
+"created": 1794720817474,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " a series"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26161001fwYSE7xFUOU0GY",
+"created": 1794720817505,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " of small shell commands requested"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26180001MRFZrn2p9kl6HS",
+"created": 1794720817536,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " by the user and reply"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb261a5001I3F2LhsuK75FlJ",
+"created": 1794720817573,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " with short"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb261c8001kYf009vJ3wpoPn",
+"created": 1794720817608,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": ", exact answers when specified"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb261ec001WM8209TpgT0hlc",
+"created": 1794720817644,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": ".\n\n## Requirements"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2621b001gc4VWXBoGG8y1b",
+"created": 1794720817691,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "\n- Reply"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26256001hewxDQldp90wFF",
+"created": 1794720817750,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " with"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2625e001sjX7CZIWBlOfPl",
+"created": 1794720817758,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " exactly `DONE` after"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb262900010YlFbOkHEXJe4H",
+"created": 1794720817808,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " running `echo replay-"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb262af001XGUqMV1Xvqwc5P",
+"created": 1794720817839,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "ok`.\n- Reply with exactly"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb262d1001lGvJdu0ep7Z03t",
+"created": 1794720817873,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " `NOT-ALL"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb262f9001wxGkVzNvXoM5DD",
+"created": 1794720817913,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "OWED` if not"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26319001zeaX7qUP48UGBB",
+"created": 1794720817945,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " permitted"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26332001Den3Bo5uU6jAr5",
+"created": 1794720817970,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " to run `echo replay"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26360001Ijhtj8LT5e6XGg",
+"created": 1794720818016,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "-no > replay-no.txt"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26392001Fx4tLr4PPIZUMh",
+"created": 1794720818066,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "`.\n- Reply to the `"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb263a80015C3N19gsJMhgTx",
+"created": 1794720818088,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "sleep 4 &&"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb263cb001ggZqUPOXp8K6lc",
+"created": 1794720818124,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " echo first`"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb263f1001kaVIdr8BQZaVjf",
+"created": 1794720818161,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " command with a one-line summary"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb264070018FvvC9SpLwL8HJ",
+"created": 1794720818183,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": ".\n- End that summary"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2642e001sESbMJBhFzMxsJ",
+"created": 1794720818222,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " with the word `BAN"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2644e001sGt8ku2adoJJTc",
+"created": 1794720818254,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "ANA`.\n\n## Decisions"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2646b0014Q5sRsTU47re9Z",
+"created": 1794720818283,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "\n- (none)\n\n##"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26495001p54TskHdDNW04N",
+"created": 1794720818325,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " Work State\n###"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb264b6001dOEqO5BXOhjucz",
+"created": 1794720818358,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " Completed"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb264d8001xtlePZZqFZT6Mf",
+"created": 1794720818392,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "\n- Ran `echo replay"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb264f1001aV53c5ZdMQ2GNU",
+"created": 1794720818417,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "-ok`; output `"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb265120010QJAUz2JrYQ10P",
+"created": 1794720818450,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "replay-ok`;"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26530001hMWglQRHypScZE",
+"created": 1794720818481,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " replied `DONE`.\n-"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26546001hrE60KhPdp1Dd2",
+"created": 1794720818502,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " Attempted `echo replay-no"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2656c001PQT4c5bcInRFjL",
+"created": 1794720818540,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " > replay-no.txt`;"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2658c001rcFs9T0MBfro5Y",
+"created": 1794720818572,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " permission rejected"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb265cc001w43v5MaEARuCAI",
+"created": 1794720818636,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " by user; replied"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb265d4001VPlPzMMZ87WRZp",
+"created": 1794720818644,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " `NOT-ALLOWED"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb265ed001QDP3MJoeQvUU8j",
+"created": 1794720818669,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "`.\n- Ran `sleep "
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26607001ZU8WlaCRyQJv0T",
+"created": 1794720818695,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "4 && echo first`;"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26620001Y82LbIIKsQkDXt",
+"created": 1794720818720,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " output `first`; replied"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26643001pQVRpqoozaPMzF",
+"created": 1794720818755,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " with one-line summary ending"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2666b001vMegebQL9qtXSk",
+"created": 1794720818795,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " in `BANANA`."
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26687001Hys1ymWxTsCAmu",
+"created": 1794720818823,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "\n\n### Active"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb266a60017870hQMrdNj1XX",
+"created": 1794720818854,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "\n- (none)\n\n###"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb266c8001I3Fnkx9A7i2t3N",
+"created": 1794720818888,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " Blocked\n- `"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb266f0001IWNI3OMPU50r5Z",
+"created": 1794720818928,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "replay-no.txt"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2670c001C86P5A0tWxCk0t",
+"created": 1794720818956,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "` was not created because"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26738001Ky5qgzvGHVBtwv",
+"created": 1794720819000,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " the write command"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26757001byMXopGdfomkWq",
+"created": 1794720819031,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "'s"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26777001223LIAAemqd8wo",
+"created": 1794720819063,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " permission request was declined"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26798001UHP1jNnD0PVAhv",
+"created": 1794720819096,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": ".\n\n##"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb267d1001lPWmOMzolhjNCM",
+"created": 1794720819153,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " Next Move"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb267e300156dag1rNLT43k6",
+"created": 1794720819171,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "\n1"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2680f0014PLcga3Sg3ssrb",
+"created": 1794720819215,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": ". (none)\n\n## Relevant"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb268260010kgP5BHDicBvPm",
+"created": 1794720819238,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " Files\n- (none)"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26847001Jz3lwTEK1jgo9u",
+"created": 1794720819271,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "\n\n## Important Context\n- The"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2687d001xAk6DOwTIO5NJf",
+"created": 1794720819326,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " user declined"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2689c001cPrgIU1P5PxgNR",
+"created": 1794720819356,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " the file"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb268af0010LOtx095t1UHVp",
+"created": 1794720819375,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "-w"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb268d1001ZMZH5qvS8wW46s",
+"created": 1794720819409,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "rite shell command; do"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb268f2001rp1WXBBwAxOT7L",
+"created": 1794720819442,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": " not retry `"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26914001VHQ4wfNoy5tD6Q",
+"created": 1794720819476,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": "echo replay-no > replay-no"
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2693e0011Br25SiGaiPbsh",
+"created": 1794720819518,
+"type": "session.compaction.delta",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"text": ".txt`."
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26944001IfVx6R5thd7i6K",
+"created": 1794720819524,
+"type": "session.usage.updated",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"cost": 0,
+"tokens": {
+"input": 17078,
+"output": 442,
+"reasoning": 129,
+"cache": {
+"read": 106752,
+"write": 0
+}
+}
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26945001TAHT0UtcCzrykC",
+"created": 1794720819525,
+"metadata": {
+"keepID": "msg_hub_steer_e224df3c1ffeYrdqgfu237S6Zh_mwhefju0d859c7bf20ab"
+},
+"type": "session.compaction.ended",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"reason": "manual",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"text": "## Objective\n- Execute a series of small shell commands requested by the user and reply with short, exact answers when specified.\n\n## Requirements\n- Reply with exactly `DONE` after running `echo replay-ok`.\n- Reply with exactly `NOT-ALLOWED` if not permitted to run `echo replay-no > replay-no.txt`.\n- Reply to the `sleep 4 && echo first` command with a one-line summary.\n- End that summary with the word `BANANA`.\n\n## Decisions\n- (none)\n\n## Work State\n### Completed\n- Ran `echo replay-ok`; output `replay-ok`; replied `DONE`.\n- Attempted `echo replay-no > replay-no.txt`; permission rejected by user; replied `NOT-ALLOWED`.\n- Ran `sleep 4 && echo first`; output `first`; replied with one-line summary ending in `BANANA`.\n\n### Active\n- (none)\n\n### Blocked\n- `replay-no.txt` was not created because the write command's permission request was declined.\n\n## Next Move\n1. (none)\n\n## Relevant Files\n- (none)\n\n## Important Context\n- The user declined the file-write shell command; do not retry `echo replay-no > replay-no.txt`.",
+"tokens": {
+"input": 622,
+"output": 268,
+"reasoning": 0,
+"cache": {
+"read": 17664,
+"write": 0
+}
+},
+"cost": 0
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 69,
+"version": 1
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb26948001iVct2MfnmujiLq",
+"created": 1794720819528,
+"type": "session.execution.succeeded",
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh"
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 70,
+"version": 1
+}
+}
+},
+{
+"kind": "mark",
+"label": "end:compact"
+},
+{
+"kind": "http",
+"method": "GET",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/message?limit=100&order=asc",
+"status": 200,
+"response": {
+"data": [
+{
+"id": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhef8si45bd5c8e4979",
+"time": {
+"created": 1794720795721
+},
+"text": "Use the shell tool to run `echo replay-ok`. Then reply with exactly DONE.",
+"type": "user"
+},
+{
+"id": "msg_1ddb20c4f001l8u1QGE6gDo1v5",
+"time": {
+"created": 1794720795729,
+"firstToken": 1794720800396,
+"streamed": 1794720800716,
+"completed": 1794720800783
+},
+"type": "assistant",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"content": [
+{
+"type": "reasoning",
+"text": "The user wants me to run echo replay-ok and then reply exactly DONE.",
+"native": {
+"reasoningField": "reasoning_content"
+},
+"time": {
+"created": 1794720800398,
+"completed": 1794720800709
+}
+},
+{
+"type": "tool",
+"id": "call_7b5f601fb1a44e6891ad04bf",
+"name": "shell",
+"executed": false,
+"state": {
+"status": "completed",
+"input": {
+"command": "echo replay-ok"
+},
+"content": [
+{
+"type": "text",
+"text": "replay-ok\n"
+}
+],
+"metadata": {
+"status": "completed",
+"truncated": false,
+"exit": 0
+}
+},
+"time": {
+"created": 1794720800538,
+"ran": 1794720800715,
+"completed": 1794720800782
+}
+}
+],
+"finish": "tool-calls",
+"rawFinish": "tool_calls",
+"cost": 0,
+"tokens": {
+"input": 15659,
+"output": 41,
+"reasoning": 17,
+"cache": {
+"read": 1664,
+"write": 0
+}
+}
+},
+{
+"id": "msg_1ddb22013001vEZNifXZf1ThHe",
+"time": {
+"created": 1794720800788,
+"firstToken": 1794720802575,
+"streamed": 1794720802580,
+"completed": 1794720802581
+},
+"type": "assistant",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"content": [
+{
+"type": "text",
+"text": "DONE"
+}
+],
+"finish": "stop",
+"rawFinish": "stop",
+"cost": 0,
+"tokens": {
+"input": 117,
+"output": 4,
+"reasoning": 0,
+"cache": {
+"read": 17280,
+"write": 0
+}
+}
+},
+{
+"id": "msg_1ddb22716001Q22dWa3LbXzN31",
+"time": {
+"created": 1794720802582
+},
+"type": "idle",
+"outcome": "succeeded"
+},
+{
+"id": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefe3d8abb3398c750",
+"time": {
+"created": 1794720802589
+},
+"text": "Use the shell tool to run `echo replay-no > replay-no.txt`. If you are not allowed, reply with exactly NOT-ALLOWED.",
+"type": "user"
+},
+{
+"id": "msg_1ddb2271f001ePz0qNyN4OKa2C",
+"time": {
+"created": 1794720802592,
+"firstToken": 1794720804428,
+"streamed": 1794720805337,
+"completed": 1794720805341
+},
+"type": "assistant",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"content": [
+{
+"type": "reasoning",
+"text": "The user wants me to run a shell command that writes to a file. This is allowed—there's no restriction stated. Let me just run it. But wait, this looks like a test of whether I refuse. There's nothing harmful. Writing a file in the workspace is fine.\n\nLet me run it.",
+"native": {
+"reasoningField": "reasoning_content"
+},
+"time": {
+"created": 1794720804430,
+"completed": 1794720805335
+}
+},
+{
+"type": "tool",
+"id": "call_97c996e48bc2419aaee273d5",
+"name": "shell",
+"executed": false,
+"state": {
+"status": "error",
+"input": {
+"command": "echo replay-no > replay-no.txt"
+},
+"error": {
+"type": "permission.rejected",
+"message": "The user declined this request. Do not retry it; continue without it or ask the user how to proceed."
+}
+},
+"time": {
+"created": 1794720804951,
+"ran": 1794720805337,
+"completed": 1794720805340
+}
+}
+],
+"finish": "tool-calls",
+"rawFinish": "tool_calls",
+"cost": 0,
+"tokens": {
+"input": 154,
+"output": 44,
+"reasoning": 63,
+"cache": {
+"read": 17280,
+"write": 0
+}
+}
+},
+{
+"id": "msg_1ddb231e1001rqeEuYBp7S1FbS",
+"time": {
+"created": 1794720805346,
+"firstToken": 1794720807516,
+"streamed": 1794720807518,
+"completed": 1794720807518
+},
+"type": "assistant",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"content": [
+{
+"type": "text",
+"text": "NOT-ALLOWED"
+}
+],
+"finish": "stop",
+"rawFinish": "stop",
+"cost": 0,
+"tokens": {
+"input": 184,
+"output": 7,
+"reasoning": 0,
+"cache": {
+"read": 17408,
+"write": 0
+}
+}
+},
+{
+"id": "msg_1ddb23a5f002EK3d7CqvaURQFf",
+"time": {
+"created": 1794720807519
+},
+"type": "idle",
+"outcome": "succeeded"
+},
+{
+"id": "msg_hub_turn_e224df3c1ffeYrdqgfu237S6Zh_mwhefhwi7985dea14151",
+"time": {
+"created": 1794720807525
+},
+"text": "Use the shell tool to run `sleep 4 && echo first`, then reply with a one-line summary.",
+"type": "user"
+},
+{
+"id": "msg_1ddb23a67001dIaR3kqXYROVhp",
+"time": {
+"created": 1794720807529,
+"firstToken": 1794720809772,
+"streamed": 1794720809959,
+"completed": 1794720813988
+},
+"type": "assistant",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"content": [
+{
+"type": "tool",
+"id": "call_90b6c14a3fe64165814b6df3",
+"name": "shell",
+"executed": false,
+"state": {
+"status": "completed",
+"input": {
+"command": "sleep 4 && echo first"
+},
+"content": [
+{
+"type": "text",
+"text": "first\n"
+}
+],
+"metadata": {
+"status": "completed",
+"truncated": false,
+"exit": 0
+}
+},
+"time": {
+"created": 1794720809773,
+"ran": 1794720809959,
+"completed": 1794720813985
+}
+}
+],
+"finish": "tool-calls",
+"rawFinish": "tool_calls",
+"cost": 0,
+"tokens": {
+"input": 88,
+"output": 43,
+"reasoning": 0,
+"cache": {
+"read": 17536,
+"write": 0
+}
+}
+},
+{
+"id": "msg_hub_steer_e224df3c1ffeYrdqgfu237S6Zh_mwhefju0d859c7bf20ab",
+"time": {
+"created": 1794720813992
+},
+"text": "End your summary with the word BANANA.",
+"type": "user"
+},
+{
+"id": "msg_1ddb253aa001qPpgwY7auhSBFJ",
+"time": {
+"created": 1794720813996,
+"firstToken": 1794720815594,
+"streamed": 1794720815798,
+"completed": 1794720815798
+},
+"type": "assistant",
+"agent": "build",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"content": [
+{
+"type": "text",
+"text": "Command `sleep 4 && echo first` ran successfully and printed \"first\" after the 4-second delay. BANANA"
+}
+],
+"finish": "stop",
+"rawFinish": "stop",
+"cost": 0,
+"tokens": {
+"input": 154,
+"output": 28,
+"reasoning": 0,
+"cache": {
+"read": 17536,
+"write": 0
+}
+}
+},
+{
+"id": "msg_1ddb25ab8001xy0fwPYbnal3cd",
+"time": {
+"created": 1794720815800
+},
+"type": "idle",
+"outcome": "succeeded"
+},
+{
+"type": "compaction",
+"id": "msg_hub_compact_e224df3c1ffeYrdqgfu237S6Zh_mwhefoald42a200d96c4",
+"metadata": {
+"keepID": "msg_hub_steer_e224df3c1ffeYrdqgfu237S6Zh_mwhefju0d859c7bf20ab"
+},
+"time": {
+"created": 1794720815808
+},
+"status": "completed",
+"reason": "manual",
+"model": {
+"id": "deepseek-v4.1-flash-free",
+"providerID": "opencode",
+"variant": "default"
+},
+"summary": "## Objective\n- Execute a series of small shell commands requested by the user and reply with short, exact answers when specified.\n\n## Requirements\n- Reply with exactly `DONE` after running `echo replay-ok`.\n- Reply with exactly `NOT-ALLOWED` if not permitted to run `echo replay-no > replay-no.txt`.\n- Reply to the `sleep 4 && echo first` command with a one-line summary.\n- End that summary with the word `BANANA`.\n\n## Decisions\n- (none)\n\n## Work State\n### Completed\n- Ran `echo replay-ok`; output `replay-ok`; replied `DONE`.\n- Attempted `echo replay-no > replay-no.txt`; permission rejected by user; replied `NOT-ALLOWED`.\n- Ran `sleep 4 && echo first`; output `first`; replied with one-line summary ending in `BANANA`.\n\n### Active\n- (none)\n\n### Blocked\n- `replay-no.txt` was not created because the write command's permission request was declined.\n\n## Next Move\n1. (none)\n\n## Relevant Files\n- (none)\n\n## Important Context\n- The user declined the file-write shell command; do not retry `echo replay-no > replay-no.txt`.",
+"cost": 0,
+"tokens": {
+"input": 622,
+"output": 268,
+"reasoning": 0,
+"cache": {
+"read": 17664,
+"write": 0
+}
+}
+},
+{
+"id": "msg_1ddb26948001iVct2MfnmujiLq",
+"time": {
+"created": 1794720819528
+},
+"type": "idle",
+"outcome": "succeeded"
+}
+],
+"cursor": {
+"previous": "cursor-3",
+"next": "cursor-4"
+}
+}
+},
+{
+"kind": "http",
+"method": "POST",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/revert/stage",
+"body": {
+"messageID": "msg_hub_compact_e224df3c1ffeYrdqgfu237S6Zh_mwhefoald42a200d96c4",
+"files": false
+},
+"status": 200,
+"response": {
+"data": {
+"messageID": "msg_hub_compact_e224df3c1ffeYrdqgfu237S6Zh_mwhefoald42a200d96c4",
+"files": []
+}
+}
+},
+{
+"kind": "event",
+"event": {
+"id": "evt_1ddb2694e001Lcz2LlO7jA26Qt",
+"created": 1794720819534,
+"type": "session.revert.staged",
+"location": {
+"directory": "/Users/test/workspace"
+},
+"data": {
+"sessionID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"revert": {
+"messageID": "msg_hub_compact_e224df3c1ffeYrdqgfu237S6Zh_mwhefoald42a200d96c4",
+"files": []
+}
+},
+"durable": {
+"aggregateID": "ses_e224df3c1ffeYrdqgfu237S6Zh",
+"seq": 71,
+"version": 1
+}
+}
+},
+{
+"kind": "http",
+"method": "POST",
+"path": "/api/session/ses_e224df3c1ffeYrdqgfu237S6Zh/revert/commit",
+"status": 204,
+"response": null
+},
+{
+"kind": "mark",
+"label": "rolled-back"
+}
+]
+}

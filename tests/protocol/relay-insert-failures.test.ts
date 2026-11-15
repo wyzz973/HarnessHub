@@ -9,7 +9,7 @@ import { ClaudeControl } from "../../src/adapters/control/claude.js";
 import { CodexControl } from "../../src/adapters/control/codex.js";
 import { HermesGatewayControl } from "../../src/adapters/control/hermes/control.js";
 import { OpenClawControl } from "../../src/adapters/control/openclaw.js";
-import { OpenCodeControl } from "../../src/adapters/control/opencode.js";
+import { OpenCodeServerControl } from "../../src/adapters/control/opencode/control.js";
 
 // G067-C03 (ADR-055 R0c): what each of the five drivers reports of a prompt reaching its native history, from the peer's own
 // protocol only. A refusal before the prompt was inserted is not recorded, a failure after insertion is recorded, and a lost
@@ -115,7 +115,6 @@ async function attachment(root: string, name: string, kind: "file" | "image" = "
   return { id: contentId("content-" + name.replace(/[^a-z0-9]/giu, "")), name, mediaType: kind === "image" ? "image/png" : "text/plain", kind, bytes: data.length, sha256: "0".repeat(64), path };
 }
 /** The diagnostics a Turn reported. */
-function diagnostics(events: readonly ControlEvent[]): readonly string[] { return events.flatMap(event => event.type === "diagnostic" ? [event.message] : []); }
 
 test("G067-C03 Claude Code: its own refusal is not recorded, a prompt it stopped after writing it is recorded, a lost outcome is unknown and sent once", async t => {
   const f = await peers(t);
@@ -165,22 +164,6 @@ test("G067-C03 Codex: turn/start refused before any turn is not recorded, a turn
   const exporting = f.launch("codex-app-server", {});
   const exported = await turn(new CodexControl(exporting.launch, options), "/export");
   assert.equal(exported.result.input, "not_recorded"); assert.equal(await exporting.received("turn/start"), 0);
-});
-
-test("G067-C03 OpenCode: an ignored /compact reached nothing, a prompt stopped after delivery is recorded, a cancelled one stays unknown", async t => {
-  const f = await peers(t);
-  const ignored = f.launch("acp-v1", { RELAY_PROMPT: "silent" });
-  const compact = await turn(new OpenCodeControl(ignored.launch, options), "/compact");
-  assert.equal(compact.result.error?.code, "NATIVE_COMMAND_IGNORED"); assert.equal(compact.result.input, "not_recorded");
-  for (const reason of ["max_tokens", "refusal"]) {
-    const stopped = f.launch("acp-v1", { RELAY_PROMPT: "stop:" + reason });
-    assert.deepEqual((await turn(new OpenCodeControl(stopped.launch, options), "do the work")).result, { status: "failed", reason, input: "recorded" }, reason);
-  }
-  assert.deepEqual((await turn(new OpenCodeControl(f.launch("acp-v1", { RELAY_PROMPT: "silent" }).launch, options), "do the work")).result, { status: "completed", reason: "end_turn", input: "recorded" });
-  // A cancelled input can still be delivered later (OpenCode keeps it pending): unknown, and sent once.
-  const cancelled = f.launch("acp-v1", { RELAY_PROMPT: "stop:cancelled" });
-  assert.deepEqual((await turn(new OpenCodeControl(cancelled.launch, options), "do the work")).result, { status: "cancelled", reason: "cancelled" });
-  assert.equal(await cancelled.received("session/prompt"), 1);
 });
 
 test("G067-C03 OpenClaw: an unapplied model sent nothing, a user row in the turn's transcript is recorded even when the turn failed, an unreadable transcript is unknown", async t => {
@@ -242,24 +225,7 @@ test("G067-C03 Claude Code refusals by their wire shape (claude-agent-acp 0.99.1
   assert.equal((await turn(new ClaudeControl(compact.launch, options), "/compact")).result.input, undefined);
 });
 
-test("G067-C03 OpenCode refusals by their wire shape (2.2.5): a model failure after delivery is recorded, a refusal before delivery is not, the ambiguous ones stay unknown", async t => {
-  const f = await peers(t), input = async (error: unknown) => (await turn(new OpenCodeControl(refusing(f, error).launch, options), "do the work")).result.input;
-  // R8 O3: the turn reads a step or execution error only after delivery, as ServiceFailure of service "session", or auth_required for a provider sign-in.
-  assert.equal(await input({ code: -32603, message: "Internal error: Rate limit exceeded", data: { service: "session", errorName: "provider.rate-limit" } }), "recorded");
-  assert.equal(await input({ code: -32000, message: "Authentication required: provider authentication required", data: {} }), "recorded");
-  // R8 O4 and the turn's own guards: an image without data, an attachment or skill the session refused, an unknown session, a
-  // session already running an ACP prompt, a catalog still loading.
-  for (const error of [{ code: -32602, message: "Invalid params: image content has no data or uri", data: { field: "prompt" } }, { code: -32602, message: "Invalid params: file is unreadable", data: { field: "files" } },
-    { code: -32602, message: "Invalid params: Skill not found: review", data: { field: "skills" } }, { code: -32602, message: "Invalid params: session not found: relay-session", data: { sessionId: "relay-session" } },
-    { code: -32603, message: "Internal error: Session already has an active ACP prompt: relay-session", data: { service: "session" } }, { code: -32603, message: "Internal error: models are not ready", data: { errorName: "CatalogNotReady" } }])
-    assert.equal(await input(error), "not_recorded", error.message);
-  // The server unreachable mid-request, or any other internal failure (a prompt identity conflict among them), can come either way.
-  for (const error of [{ code: -32603, message: "Internal error: OpenCode server is unavailable", data: { errorName: "ServerUnavailable" } }, { code: -32603, message: "Internal error: Internal service failure", data: { errorName: "Error" } },
-    { code: -32603, message: "Internal error: Rate limit exceeded", data: { errorName: "provider.rate-limit" } }, { code: -32602, message: "Invalid params: cursor", data: { field: "cursor" } }])
-    assert.equal(await input(error), undefined, JSON.stringify(error));
-});
-
-test("G067 R0d each driver's own handling of an input follows its reading: leading whitespace and attachments decide the Hub's /export, Codex's thread operations and OpenCode's /compact alike", async t => {
+test("G067 R0d each driver's own handling of an input follows its reading: leading whitespace and attachments decide the Hub's /export and Codex's thread operations alike", async t => {
   const f = await peers(t), file = await attachment(f.root, "notes.txt");
   // Claude Code reads `/export` as /export, so the Hub's export runs and nothing is sent; behind a space it is words and goes to
   // Claude Code (the CLI strips nothing, G074-F1); with an attachment it goes to Claude Code too, which reads it as content (the
@@ -281,9 +247,6 @@ test("G067 R0d each driver's own handling of an input follows its reading: leadi
   assert.deepEqual(new CodexControl(codexCompact.launch, options).classify("/compact", null, ["file"]), { kind: "content" });
   assert.equal((await turn(new CodexControl(codexCompact.launch, options), "/compact", undefined, false, [file])).result.input, "recorded");
   assert.equal(await codexCompact.received("turn/start"), 1); assert.equal(await codexCompact.received("thread/compact/start"), 0);
-  // OpenCode trims an input before it looks for a command (`Iuf`): `  /compact` that answered nothing was ignored.
-  const ignored = await turn(new OpenCodeControl(f.launch("acp-v1", { RELAY_PROMPT: "silent" }).launch, options), "  /compact");
-  assert.equal(ignored.result.error?.code, "NATIVE_COMMAND_IGNORED");
 });
 
 test("G067 R0d each driver reads an input as its native side parses it: whitespace, names and paths, listed and hidden commands, effects by arguments", async t => {
@@ -315,7 +278,7 @@ test("G067 R0d each driver reads an input as its native side parses it: whitespa
   assert.deepEqual(read(codex, "/compact", null, ["file"]), ["content"]); assert.deepEqual(read(codex, "/export", null, ["image"]), ["content"]);
   assert.deepEqual(read(codex, "/skill:review it", listed(["skill:review", "keep"]), ["image"]), ["command", "skill:review", "keep", "it"]);
   // OpenCode: listed commands and its own /compact; any other slash input is text for the model.
-  const opencode = new OpenCodeControl(launch, options);
+  const opencode = new OpenCodeServerControl({ ...launch, protocol: "opencode-server" }, options);
   assert.deepEqual(read(opencode, "/compact"), ["command", "compact", "compact", ""]); assert.deepEqual(read(opencode, "/review"), ["possible_command", "review"]);
   assert.deepEqual(read(opencode, "/review now", listed(["review", "keep"])), ["command", "review", "keep", "now"]); assert.deepEqual(read(opencode, "/nope", listed(["review", "keep"])), ["content"]);
   // Its ACP has no clear: the Hub's `/clear`, `/new` and `/reset` alone, trimmed like its commands, without an attachment.

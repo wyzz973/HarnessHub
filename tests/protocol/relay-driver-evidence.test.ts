@@ -86,7 +86,7 @@ test("Codex names the thread before its first turn (thread/name/set), one line; 
 
 test("no Driver reads its native history back: none has a check, a position, a vendor reading or a reader of replayed user entries, and no declaration has a cell for one", async t => {
   const peer = await peerRoot(t);
-  for (const harness of ["claude", "codex", "opencode", "dsh", "openclaw"] as const) {
+  for (const harness of ["claude", "codex", "dsh", "openclaw"] as const) {
     const control = driver(t, harness, peer) as unknown as Record<string, unknown>;
     for (const member of ["verifyDelivered", "deliveryPosition", "relayVendor", "userTextOf"]) assert.equal(control[member], undefined, harness + " " + member);
     assert.deepEqual(Object.keys((control.relayCapabilities as { delivery: object }).delivery).sort(), ["live", "successProvesRecorded"], harness);

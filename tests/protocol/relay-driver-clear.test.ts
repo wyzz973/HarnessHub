@@ -89,25 +89,6 @@ test("Codex: /clear, /new and /reset alone are not sent; the thread is given up 
   assert.equal((await run(control, current, "再继续")).result.status, "completed", "and the current thread goes on");
 });
 
-test("OpenCode: /clear, /new and /reset alone, trimmed as its commands are, are not sent; the old session is closed and given up, and the next Turn opens a new one", { timeout: 60000 }, async t => {
-  const peer = await peerRoot(t, { RELAY_CLOSE: "1" }), { control, first } = await begin(t, "opencode", peer);
-  let current = first;
-  const sessions = [first];
-  await run(control, current, "先说一句");
-  for (const words of ["/clear", "  /new  ", "\t　/reset\n"]) {
-    const { result, events } = await run(control, current, words);
-    assert.deepEqual(result, CLEARED, JSON.stringify(words));
-    assert.ok(notices(events).some(message => message.includes("OpenCode")), JSON.stringify(words) + ": the Turn says the Hub ran it");
-    await givenUp(control, current, JSON.stringify(words));
-    current = await control.open(peer.workspace); sessions.push(current);
-    assert.equal((await run(control, current, "继续")).result.status, "completed");
-  }
-  const sent = await peer.sent();
-  assert.deepEqual(await prompts(peer), [["先说一句"], ["继续"], ["继续"], ["继续"]], "no prompt was sent for a clear");
-  assert.deepEqual(sent.filter(line => line.method === "session/close").map(line => line.params?.sessionId), sessions.slice(0, 3));
-  assert.equal(new Set(sessions).size, 4, "four sessions");
-});
-
 test("DeepSeek Harness: /clear, /new and /reset alone are not sent; the old session is closed and given up, and the next Turn opens a new one", { timeout: 60000 }, async t => {
   const peer = await peerRoot(t, { RELAY_CLOSE: "1", RELAY_JOIN: "" }), { control, first } = await begin(t, "dsh", peer);
   let current = first;
@@ -174,21 +155,21 @@ test("OpenClaw: a clear on a restored session lets go of its key too: the next o
   assert.notEqual(fresh, restored);
 });
 
-test("on Codex, OpenCode and DeepSeek Harness, which have no clear of their own, the Hub's clear is exactly its words: arguments, a leading space (Codex, dsh) or an attachment make the input words, sent as typed", { timeout: 120000 }, async t => {
-  const wordsFor = async (harness: "codex" | "opencode" | "dsh", typed: string, attachments: readonly ControlAttachment[] = [], settings: Record<string, string> = {}) => {
+test("on Codex and DeepSeek Harness, which have no clear of their own, the Hub's clear is exactly its words: arguments, a leading space (Codex, dsh) or an attachment make the input words, sent as typed", { timeout: 120000 }, async t => {
+  const wordsFor = async (harness: "codex" | "dsh", typed: string, attachments: readonly ControlAttachment[] = [], settings: Record<string, string> = {}) => {
     const peer = await peerRoot(t, settings), { control, first } = await begin(t, harness, peer);
     const { result } = await run(control, first, typed, attachments);
     const sentText = harness === "codex" ? (await peer.sent()).filter(line => line.method === "turn/start").map(line => (line.params as { input: { text: string }[] }).input[0]!.text) : (await prompts(peer)).map(blocks => blocks[0]!);
     return { result, sentText, kept: await control.checkpoint!() === first };
   };
   for (const [harness, typed] of [["codex", "/clear now"], ["codex", " /clear"], ["codex", "　/new"], ["codex", "/cleared"], ["codex", "clear"], ["codex", "/reset\nand then continue"],
-    ["opencode", "/clear now"], ["opencode", "/reset the plan"], ["opencode", "/ clear"], ["dsh", "/clear now"], ["dsh", " /clear"], ["dsh", "　/new"], ["dsh", "/newer"]] as const) {
+    ["dsh", "/clear now"], ["dsh", " /clear"], ["dsh", "　/new"], ["dsh", "/newer"]] as const) {
     const sent = await wordsFor(harness, typed, [], harness === "dsh" ? { RELAY_JOIN: "" } : {});
     assert.deepEqual([sent.result.status, sent.result.native, sent.kept], ["completed", undefined, true], harness + " " + JSON.stringify(typed) + ": words, nothing cleared");
     assert.deepEqual(sent.sentText, [typed], harness + " " + JSON.stringify(typed) + ": sent as typed");
   }
   // With an attachment the same words are the user's message: the clear would drop the attachment, so it is not one.
-  for (const harness of ["codex", "opencode", "dsh"] as const) {
+  for (const harness of ["codex", "dsh"] as const) {
     const peer = await peerRoot(t, harness === "dsh" ? { RELAY_JOIN: "" } : {}), attachment = await file(peer), { control, first } = await begin(t, harness, peer);
     const { result } = await run(control, first, "/clear", [attachment]);
     assert.deepEqual([result.status, result.native, await control.checkpoint!() === first], ["completed", undefined, true], harness + ": not a clear with an attachment");
@@ -227,7 +208,7 @@ test("OpenClaw: /new, /reset and /clear are the Hub's clear only alone and witho
 });
 
 test("a relay Turn whose words are the Hub's clear is refused whole on every Driver: failed, not recorded, nothing sent, nothing given up", { timeout: 120000 }, async t => {
-  for (const harness of ["claude", "codex", "opencode", "dsh", "openclaw"] as const) {
+  for (const harness of ["claude", "codex", "dsh", "openclaw"] as const) {
     const peer = await peerRoot(t, { RELAY_CLOSE: "1", ...(harness === "dsh" ? { RELAY_JOIN: "" } : {}), ...(harness === "openclaw" ? { RELAY_OPENCLAW: "1" } : {}) });
     const { control, first } = await begin(t, harness, peer), calls = (await peer.sent()).length;
     for (const words of ["/clear", "/new", "/reset"]) {

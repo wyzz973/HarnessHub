@@ -8,9 +8,6 @@ export const MAX_MANIFEST_BYTES = 64 * 1024;
 export type ControlProtocol = "acp-v1" | "codex-app-server" | "pi-rpc" | "claude-agent-sdk" | "opencode-server" | "openclaw-gateway" | "hermes-gateway";
 export const CONTROL_PROTOCOLS: readonly ControlProtocol[] = ["acp-v1", "codex-app-server", "pi-rpc", "claude-agent-sdk", "opencode-server", "openclaw-gateway", "hermes-gateway"];
 export function isControlProtocol(value: unknown): value is ControlProtocol { return typeof value === "string" && (CONTROL_PROTOCOLS as readonly string[]).includes(value); }
-/** The protocols a Driver of this build speaks (adapters/control/factory.ts); a control of another protocol is listed, never offered. */
-export const DRIVEN_PROTOCOLS: readonly ControlProtocol[] = ["acp-v1", "codex-app-server", "pi-rpc", "hermes-gateway"];
-export function driverImplemented(protocol: ControlProtocol): boolean { return DRIVEN_PROTOCOLS.includes(protocol); }
 
 /** A data-only control recipe. Its presence does not prove protocol support. */
 export interface HarnessRecipe {

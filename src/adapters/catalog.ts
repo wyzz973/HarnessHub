@@ -25,6 +25,13 @@ const nativeDefinitions: readonly HarnessDefinition[] = [
       source: { repository: "openai/codex", revision: "9b738582b13c2cdbeff54af0afd04c50c3e7ba09", upstreamId: "codex", url: "https://github.com/openai/codex/blob/9b738582b13c2cdbeff54af0afd04c50c3e7ba09/codex-rs/app-server/README.md" } }],
   },
   {
+    // OpenCode 2's own server (`opencode serve --stdio`, HTTP and events), the Hub's private one per connection. The control keeps the id the ACP registry's
+    // entry had, so that a conversation begun over ACP goes on with this driver (its native session ids are OpenCode's own either way).
+    id: "opencode", name: "OpenCode", aliases: [], binaryNames: ["opencode"], configHints: [".config/opencode"],
+    controls: [{ id: "opencode-binary", protocol: "opencode-server", executableNames: ["opencode"], args: ["serve", "--stdio", "--hostname", "127.0.0.1", "--port", "0"], env: {}, package: null, distribution: null, requiredExecutables: [],
+      source: { repository: "anomalyco/opencode", revision: "v2.3.0", upstreamId: "opencode", url: "https://opencode.ai/docs/server/" } }],
+  },
+  {
     id: "pi", name: "Pi", aliases: [], binaryNames: ["pi"], configHints: [".pi/agent"],
     controls: [{ id: "pi-native", protocol: "pi-rpc", executableNames: ["pi"], args: ["--mode", "rpc"], env: {}, package: null, distribution: null, requiredExecutables: [],
       source: { repository: "badlogic/pi-mono", revision: "6fb2e7815167e6b19006fc526d1a5d0f5f998787", upstreamId: "pi", url: "https://github.com/badlogic/pi-mono/blob/6fb2e7815167e6b19006fc526d1a5d0f5f998787/packages/coding-agent/docs/rpc.md" } }],
@@ -95,7 +102,9 @@ export function loadBuiltinCatalog(platform: string): readonly HarnessDefinition
     definitions[index] = {
       id: upstream.id, name: native.name, aliases: [...new Set([...upstream.aliases, ...native.aliases])],
       binaryNames: [...new Set([...upstream.binaryNames, ...native.binaryNames])],
-      configHints: [...new Set([...upstream.configHints, ...native.configHints])], controls: [...native.controls, ...upstream.controls],
+      configHints: [...new Set([...upstream.configHints, ...native.configHints])],
+      // A native control replaces the registry's control of the same id.
+      controls: [...native.controls, ...upstream.controls.filter(control => !native.controls.some(own => own.id === control.id))],
     };
   }
   validateDefinitions(definitions);

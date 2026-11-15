@@ -2,58 +2,45 @@ import { HUB_POLICIES, type HarnessFlavor, type PermissionWay } from "../../cont
 import { MODE } from "./common.js";
 
 /**
- * OpenCode 2 (2.2.5, anomalyco/opencode at v2.2.5). Its permissions are rules `{action, resource, effect: allow|ask|deny}` evaluated last match
- * first (packages/core/src/permission.ts `evaluate`), every built-in agent starting from `* * allow` (only reading `.env` files asks;
- * packages/schema/src/agent.ts), so out of the box it asks about nothing. `opencode acp` starts its own `opencode serve` child with this
- * process's environment, which reads `OPENCODE_CONFIG_CONTENT` as one more configuration document, the last but managed settings
- * (packages/cli/src/server-process.ts, packages/core/src/config.ts); each document's `agents.<id>.permissions` are appended to that agent
- * after every top-level rule (packages/core/src/config/plugin/agent.ts), so the level's rules here are the last word over the user's own
- * configuration, for this process only, and nothing is written. Like T3 Code's sessionRules, each level is those rules on the agents a Hub
- * session runs (build, and its general subagent, which would otherwise edit unasked), and its ACP asks the Hub about every `ask`.
+ * OpenCode 2 through its own server (2.3.0; research of 2026-11-14 §3a). Its permissions are rules `{action, resource, effect: allow|ask|deny}`, the last
+ * that matches winning, every built-in agent starting from `* * allow` (only reading `.env` files asks), so out of the box it asks about nothing. A level is
+ * the session's own ruleset (`permissions` on `POST /session`, `PATCH /session/{id}`), after the agent's rules, for that session only: nothing is written
+ * into the user's configuration, and a resumed session gets the level it now runs at. Like T3 Code's sessionRules, the driver adds what the user allowed
+ * for the session, the agent's own path allowances (plan keeps its plan files writable) and the Hub's own tools.
  *
- * - A refusal over ACP rejects the call without a message, which ends OpenCode's turn (packages/cli/src/acp/permission.ts answers "reject");
- *   so what a level refuses is refused by a `deny` rule where it can be, which the model sees as an error and works around.
- * - Its saved "always" answers (a project's allow rules in OpenCode's database) come after every configured rule and still allow.
- * - Managed settings (an MDM profile) come after this document and keep their word.
+ * - A refusal carries words (`reply {decision: "reject", message}`), so the model sees why and goes on; "拒绝并停止" refuses without words, which ends the turn.
+ * - "本次会话允许" is a rule of the session, never OpenCode's `always` (that one is saved into the project's database).
+ * - Managed settings (an MDM profile) keep their word over a session's rules.
  */
 const RULE = (action: string, effect: "allow" | "ask" | "deny", resource = "*") => ({ action, resource, effect });
-/** The inline configuration of one level: the rules of build and general, and of plan when the level runs it. */
-function inline(agents: Readonly<Record<string, readonly ReturnType<typeof RULE>[]>>): Readonly<Record<string, string>> {
-  return { OPENCODE_CONFIG_CONTENT: JSON.stringify({ agents: Object.fromEntries(Object.entries(agents).map(([id, permissions]) => [id, { permissions }])) }) };
-}
-const ASKING = (edit: "allow" | "ask", shell: "allow" | "ask") => [RULE("edit", edit), RULE("shell", shell), RULE("external_directory", "ask")];
+const ASKING = (edit: "allow" | "ask", shell: "allow" | "ask", network: "allow" | "ask") => [RULE("edit", edit), RULE("shell", shell), RULE("external_directory", "ask"),
+  ...(network === "ask" ? [RULE("webfetch", "ask"), RULE("websearch", "ask")] : [])];
 const ways: Readonly<Record<keyof typeof HUB_POLICIES, PermissionWay>> = {
-  // Its plan agent refuses every edit but its plan file (packages/core/src/plugin/plan.ts) and still runs commands: they are refused here too,
-  // and so are the general subagent's edits and commands, which a plan session could start.
-  plan: { native: [MODE("plan")], session: { env: inline({ plan: [RULE("shell", "deny")], general: [RULE("edit", "deny"), RULE("shell", "deny")] }) }, policy: HUB_POLICIES.plan,
-    note: "OpenCode 自己的 plan 代理（只许写它的计划文件），Hub 另外禁止它跑命令" },
-  ask: { native: [MODE("build")], session: { env: inline({ build: ASKING("ask", "ask"), general: ASKING("ask", "ask") }) }, policy: HUB_POLICIES.ask },
-  auto_edit: { native: [MODE("build")], session: { env: inline({ build: ASKING("allow", "ask"), general: ASKING("allow", "ask") }) }, policy: HUB_POLICIES.auto_edit },
-  // No sandbox: what stands for one is the workspace's edge. Inside it nothing asks; a call that reaches outside asks (external_directory),
-  // and the Hub allows a read or a command and refuses a change there (a refusal ends OpenCode's turn).
-  auto: { native: [MODE("build")], session: { env: inline({ build: ASKING("allow", "allow"), general: ASKING("allow", "allow") }) },
-    policy: { ...HUB_POLICIES.auto, edit: "deny" }, note: "OpenCode 没有沙箱：工作区内都不问；要改工作区外的文件时 Hub 替你拒绝（OpenCode 收到拒绝会停下这一回合），命令碰到工作区外照样放行" },
-  full: { native: [MODE("build")], session: { env: inline({ build: [RULE("*", "allow")], general: [RULE("*", "allow")] }) }, policy: HUB_POLICIES.full },
+  // Its plan agent refuses every edit but its plan file and still runs commands: they are refused here too.
+  plan: { native: [MODE("plan")], session: { rules: [RULE("shell", "deny"), RULE("edit", "deny")] }, policy: HUB_POLICIES.plan, note: "OpenCode 自己的 plan 代理（只许写它的计划文件），Hub 另外禁止它跑命令" },
+  ask: { native: [MODE("build")], session: { rules: ASKING("ask", "ask", "ask") }, policy: HUB_POLICIES.ask },
+  auto_edit: { native: [MODE("build")], session: { rules: ASKING("allow", "ask", "ask") }, policy: HUB_POLICIES.auto_edit },
+  // No sandbox: what stands for one is the workspace's edge. Inside it nothing asks; a call that reaches outside asks (external_directory), and the Hub
+  // allows a read or a command and refuses a change there, with words, so the model goes on.
+  auto: { native: [MODE("build")], session: { rules: ASKING("allow", "allow", "allow") }, policy: { ...HUB_POLICIES.auto, edit: "deny" },
+    note: "OpenCode 没有沙箱：工作区内都不问；要改工作区外的文件时 Hub 替你拒绝，它会接着做别的；命令碰到工作区外照样放行" },
+  full: { native: [MODE("build")], session: { rules: [RULE("*", "allow")] }, policy: HUB_POLICIES.full },
 };
 
 export const opencodeFlavor: HarnessFlavor = {
   harnessId: "opencode",
   permission: ways,
   neutral: [MODE("build")],
-  // packages/cli/src/acp/config-option.ts: `effort` (category thought_level) lists the running model's variants plus `default`, and only for
-  // a model that has variants (packages/core/src/variant.ts: none…xhigh for OpenAI, low/medium/high/xhigh/max for Anthropic, low/high/max for
-  // DeepSeek, none/thinking for a model that only turns thinking on); a model without variants has no option at all.
+  // The running model's variants (`GET /model` `variants[]`: low/high/max for DeepSeek, none…xhigh for OpenAI, …) plus `default`; a model without variants
+  // has no option at all. The variant goes with the session's model (`POST /session/{id}/model`), so it changes without a new session.
   effort: { option: { ids: ["effort"], category: "thought_level" }, values: { off: ["none"], low: ["low", "minimal"], medium: ["medium"], high: ["high", "thinking"], max: ["max", "xhigh"] },
     note: "按所用模型的变体给档；没有变体的模型没有思考强度可选" },
-  asks: { read: false, edit: true, execute: true, note: "Hub 为每个会话下发的规则让它在改文件、跑命令、碰工作区外的路径前来问" },
+  asks: { read: false, edit: true, execute: true, note: "Hub 为每个会话写的规则让它在改文件、跑命令、碰工作区外的路径前来问" },
   nativePlan: true,
-  // packages/cli/src/acp/sessions.ts registerMcp: ACP `mcpServers` become runtime servers of the session's directory (experimental.mcp.add,
-  // "until restart", nothing written). No per-session system prompt over ACP (an agent's `system` replaces its whole prompt), but MCP server
-  // instructions go into the model's instructions as `<mcp_instructions>` (McpInstructions, core/mcp-guidance): the instructions go there.
-  // The record is read as files with its own file tools (2026-11-13; verified on the installed program: it read the directory and answered from it).
-  // No words in the middle of a turn: OpenCode's ACP (2.2.5) refuses a second prompt while one runs ("Session already has an active ACP
-  // prompt", opencode.ts BUSY) and its initialize advertises no steering method.
-  // Tools load on demand natively: OpenCode 2.2.5 calls MCP tools from its `execute` script (Code Mode; ten tools cost 257 input tokens up front on 2026-11-15,
-  // and a Turn that needed hub_turns called it from there).
-  capabilities: { sessionMcp: "acp", systemPrompt: "mcp-instructions", planTool: "hub", toolLoad: "native", resume: "native", fork: "native", attachments: "native", usage: "turn", record: "files", steer: "none" },
+  // The Hub's tools are a runtime MCP server of the session's directory on the Hub's own `opencode serve` (`PUT /experimental/mcp/harnesshub`), the
+  // instructions the session's own entry (`instructions/entries/harnesshub`); nothing is written. Tools load on demand natively (OpenCode 2's `execute`,
+  // Code Mode). OpenCode 2.3.0 has no task list of its own unless the user turns on its experimental `todowrite` (`experimental.todo`): the Hub's stays.
+  // Words in the middle of a turn are a steer of the same turn (`prompt {delivery: "steer"}`, taken at its next step).
+  capabilities: { sessionMcp: "runtime-mcp", systemPrompt: "session-instructions", planTool: "hub", toolLoad: "native", questions: "native", resume: "native", fork: "native", attachments: "native",
+    usage: "turn", record: "files", steer: "native" },
 };

@@ -34,7 +34,6 @@ test("G069-C01 the ACP and Codex Drivers place a relay Turn by their declaration
   // [harness, peer settings, the text parts sent, how the native side joins them]
   const cases: readonly (readonly [Harness, Record<string, string>, readonly string[]])[] = [
     ["claude", { RELAY_TRANSCRIPT: "" }, [body + "\n\n", WORDS]],
-    ["opencode", {}, [body + "\n\n", WORDS]],
     // dsh concatenates its text blocks without a separator (dsh-acp 0.2.1-rc.5 admitAcpPrompt): the packet keeps its blank line.
     ["dsh", { RELAY_JOIN: "" }, [body + "\n\n", WORDS]],
     ["openclaw", { RELAY_OPENCLAW: "1" }, [body + "\n\n" + WORDS]],
@@ -85,7 +84,7 @@ test("G069-C01 a relay Turn read as a command is refused whole (G069-F1, relay-d
   };
   // Claude Code's catalog lists /compact, as the real adapter's does: a word outside the catalog is words for it (G074-F3).
   const compactListed = { RELAY_COMMANDS: JSON.stringify([{ name: "compact", description: "compact the conversation" }]) };
-  for (const [harness, words, settings] of [["claude", "/compact keep the tests", compactListed], ["opencode", "/compact", {}]] as const) {
+  for (const [harness, words, settings] of [["claude", "/compact keep the tests", compactListed]] as const) {
     const { peer, result, events } = await relayed(harness, words, settings);
     assert.deepEqual([result.error?.code, result.input, await prompts(peer), events], ["RELAY_PREPARE_FAILED", "not_recorded", [], []], harness + ": refused, nothing sent");
   }

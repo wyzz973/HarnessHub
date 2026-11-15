@@ -8,13 +8,13 @@ import { AcpControl, dshRelayCapabilities } from "../../src/adapters/control/acp
 import { ClaudeControl } from "../../src/adapters/control/claude.js";
 import { CodexControl } from "../../src/adapters/control/codex.js";
 import { OpenClawControl } from "../../src/adapters/control/openclaw.js";
-import { OpenCodeControl } from "../../src/adapters/control/opencode.js";
 
 // The ACP and Codex Drivers on the relay peer (Hermes speaks its gateway: tests/protocol/hermes-gateway.test.ts) (tests/fixtures/relay-control-peer.mjs) as real child processes, each in a private
 // temporary root; OpenClaw's Gateway calls are answered from the peer's own state file, as the Gateway reads what the bridge
 // stored. Nothing here runs a Harness or reads a user's configuration.
 
-export type Harness = "claude" | "codex" | "opencode" | "dsh" | "openclaw";
+/** The Drivers that run on this ACP (and app-server) peer; OpenCode and Hermes speak their own protocols, tested on their replays (tests/protocol/opencode-server.test.ts, tests/protocol/hermes-gateway.test.ts). */
+export type Harness = "claude" | "codex" | "dsh" | "openclaw";
 const PEER = resolve("tests/fixtures/relay-control-peer.mjs");
 export const ID_A = relayPacketId("relay-0123456789abcdefghjk"), ID_B = relayPacketId("relay-mnpqrstvwxyz01234567"), ID_C = relayPacketId("relay-7777777777aaaaaaaaaa");
 
@@ -73,7 +73,7 @@ export function driver(t: TestContext, harness: Harness, peer: Peer, gateway = g
   const env = { ...peer.env, ...(harness === "codex" ? { RELAY_PROTOCOL: "codex" } : {}) };
   const launch: ControlLaunch = { protocol: harness === "codex" ? "codex-app-server" : "acp-v1", executable: process.execPath, args: [PEER, ...(harness === "openclaw" ? ["acp"] : [])], env };
   const settings = options(peer, overrides);
-  const control = harness === "claude" ? new ClaudeControl(launch, settings) : harness === "codex" ? new CodexControl(launch, settings) : harness === "opencode" ? new OpenCodeControl(launch, settings)
+  const control = harness === "claude" ? new ClaudeControl(launch, settings) : harness === "codex" ? new CodexControl(launch, settings)
     : harness === "openclaw" ? new OpenClawControl(launch, settings, gateway) : new AcpControl(launch, settings, dshRelayCapabilities);
   t.after(() => control.close().then(() => undefined, () => undefined));
   return control;

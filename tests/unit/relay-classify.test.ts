@@ -7,7 +7,7 @@ import { ClaudeControl, claudeRelayCapabilities } from "../../src/adapters/contr
 import { CodexControl, codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import { HermesGatewayControl, hermesRelayCapabilities } from "../../src/adapters/control/hermes/control.js";
 import { OpenClawControl, openClawRelayCapabilities } from "../../src/adapters/control/openclaw.js";
-import { OpenCodeControl, openCodeRelayCapabilities } from "../../src/adapters/control/opencode.js";
+import { OpenCodeServerControl, openCodeServerRelayCapabilities } from "../../src/adapters/control/opencode/control.js";
 import { nativeReading, relayEntries, sharedClassify, type RelayCatalog, type RelayClassify } from "../../src/adapters/control/relay-classify.js";
 
 // G069-C03 (ADR-055 §7.4, §8.1): each Driver's relay declaration reads an input as its native side parses it — leading
@@ -125,7 +125,7 @@ test("G069-C03 Codex: exactly /export, /compact, the Hub's clear alone and a lis
 });
 
 test("G069-C03 OpenCode: trimmed, /compact, the Hub's clear alone and listed commands (keep for an unknown effect); any other slash input is text (unlistedSlash text)", () => {
-  const classify = openCodeRelayCapabilities.commands.classify, catalog = entries(["review", "unknown"], ["init", "none"]);
+  const classify = openCodeServerRelayCapabilities.commands.classify, catalog = entries(["review", "unknown"], ["init", "none"]);
   check(classify, [
     // OpenCode's ACP has no clear: the Hub's is /clear, /new or /reset alone, trimmed as its commands are, even over a listed command
     // of the same name; with arguments or an attachment it is not one.
@@ -206,7 +206,7 @@ test("G069-C03 one source: each Driver's HarnessControl.classify equals its rela
   const drivers: readonly [string, HarnessControl, RelayClassify][] = [
     ["claude", offering, claudeRelayCapabilities.commands.classify],
     ["codex", new CodexControl(codexLaunch, options), codexRelayCapabilities.commands.classify],
-    ["opencode", new OpenCodeControl(acp, options), openCodeRelayCapabilities.commands.classify],
+    ["opencode", new OpenCodeServerControl({ ...acp, protocol: "opencode-server" }, options), openCodeServerRelayCapabilities.commands.classify],
     ["hermes", new HermesGatewayControl(hermesLaunch, options), hermesRelayCapabilities.commands.classify],
     ["openclaw", new OpenClawControl(acp, options, async () => { throw new Error("no Gateway"); }), openClawRelayCapabilities.commands.classify],
   ];

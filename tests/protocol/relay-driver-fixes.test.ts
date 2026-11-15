@@ -9,7 +9,6 @@ import { AcpControl, dshRelayCapabilities } from "../../src/adapters/control/acp
 import { claudeRelayCapabilities } from "../../src/adapters/control/claude.js";
 import { codexRelayCapabilities } from "../../src/adapters/control/codex.js";
 import { openClawRelayCapabilities } from "../../src/adapters/control/openclaw.js";
-import { openCodeRelayCapabilities } from "../../src/adapters/control/opencode.js";
 import { titledPacket } from "../../src/adapters/control/relay-turn.js";
 import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { driver, ID_A, options, packet, peerRoot, prompts, relayTurn, run, type Harness, type Peer } from "../fixtures/relay-drivers.js";
@@ -50,11 +49,10 @@ test("G069-F1 a relay Turn whose words the native side reads as a command is ref
   const cases: readonly (readonly [Harness, string, Record<string, string>])[] = [
     // Claude Code's catalog lists /compact, as the real adapter's does: a word outside the catalog is words for it (G074-F3).
     ["claude", "/compact keep the tests", COMPACT_LISTED], ["claude", "/clear", {}], ["claude", "/remote-control", {}],
-    ["opencode", "/compact", {}],
     ["openclaw", "/new", { RELAY_OPENCLAW: "1", RELAY_COMMANDS: JSON.stringify([{ name: "new", description: "new" }]) }], ["openclaw", "/clear", { RELAY_OPENCLAW: "1" }],
     ["codex", "/compact", {}], ["codex", "/export", {}],
     // The Hub's clear is a command on the Drivers whose native side has none too: a Turn with a packet is refused whole.
-    ["codex", "/clear", {}], ["opencode", "/new", {}], ["dsh", "/reset", {}],
+    ["codex", "/clear", {}], ["dsh", "/reset", {}],
   ];
   for (const [harness, words, settings] of cases) {
     const peer = await peerRoot(t, settings), { control, id } = await opened(t, harness, peer);
@@ -149,7 +147,7 @@ test("G074-F3 a relay Turn whose words are the Hub's own /export (offered when C
 });
 
 test("G069-F1 a possible command (no catalog yet) is refused the same", { timeout: 60000 }, async t => {
-  for (const [harness, words] of [["opencode", "/review now"], ["claude", "/review"], ["openclaw", "/think high"]] as const) {
+  for (const [harness, words] of [["claude", "/review"], ["openclaw", "/think high"]] as const) {
     const peer = await peerRoot(t, { RELAY_NO_COMMANDS: "1" }), { control, id } = await opened(t, harness, peer);
     const { result, events } = await run(control, id, relayTurn(ID_A, words, false));
     refused(result, harness);
@@ -239,7 +237,7 @@ test("G069-F10 a title line that names no packet does not hide the packet's own 
 // ---------------------------------------------------------------------------------------------------------------------
 
 test("G069-F11 every Driver places attachments after the user's words, as its declaration now says (pointersAfterUser true for all six, still to be probed)", { timeout: 60000 }, async t => {
-  const declared: Readonly<Record<Harness, RelayCapabilities>> = { claude: claudeRelayCapabilities, codex: codexRelayCapabilities, opencode: openCodeRelayCapabilities, dsh: dshRelayCapabilities, openclaw: openClawRelayCapabilities };
+  const declared: Readonly<Record<Harness, RelayCapabilities>> = { claude: claudeRelayCapabilities, codex: codexRelayCapabilities, dsh: dshRelayCapabilities, openclaw: openClawRelayCapabilities };
   for (const harness of Object.keys(declared) as Harness[]) {
     const peer = await peerRoot(t, harness === "openclaw" ? { RELAY_OPENCLAW: "1" } : {}), attachment = await fileIn(peer), { control, id } = await opened(t, harness, peer);
     assert.equal((await run(control, id, relayTurn(ID_A, WORDS), [attachment])).result.status, "completed", harness);

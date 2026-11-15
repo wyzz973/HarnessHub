@@ -9,7 +9,6 @@ import type { ControlEvent, ControlLaunch, ControlOptions } from "../../src/cont
 import { AcpControl } from "../../src/adapters/control/acp.js";
 import { OpenClawControl } from "../../src/adapters/control/factory.js";
 import { CursorControl } from "../../src/adapters/control/cursor.js";
-import { OpenCodeControl, parseOpenCodeModels } from "../../src/adapters/control/opencode.js";
 import { ClaudeControl } from "../../src/adapters/control/claude.js";
 import { classifyRemoteFailure, ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { bindNativeDependencies } from "../../src/adapters/control/native-dependencies.js";
@@ -418,33 +417,6 @@ test("OpenClaw refuses images its Gateway would drop or its running model cannot
   }
   assert.deepEqual([...new Set(methods)], ["models.list"], "gating reads the catalog and writes nothing");
 });
-test("OpenCode refines agent image support with each model's input kinds from the original CLI catalog", async t => {
-  const root = await mkdtemp(join(tmpdir(), "opencode-attachments-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const verbose = (id: string, image: boolean) => id + "\n" + JSON.stringify({ id: id.split("/")[1], providerID: id.split("/")[0], capabilities: { attachment: image, input: { text: true, audio: false, image, video: false, pdf: false } } }, null, 2) + "\n";
-  assert.deepEqual([...parseOpenCodeModels(verbose("opencode/big-pickle", false) + "broken/model\n{\n  not json\n}\n" + verbose("vision/eye", true))], [["opencode/big-pickle", { image: false, audio: false }], ["vision/eye", { image: true, audio: false }]]);
-  // An executable that is the original CLI for both `acp` and `models --verbose`.
-  const shim = join(root, "opencode-fixture.mjs");
-  await writeFile(shim, `#!${process.execPath}\nif (process.argv[2] === "models") { process.stdout.write(${JSON.stringify(verbose("native/model-a", false) + verbose("native/model-b", true))}); }\nelse { process.argv.splice(2, process.argv.length, "acp-v1", "attachments"); await import(${JSON.stringify(pathToFileURL(resolve("tests/fixtures/control-peer.mjs")).href)}); }\n`, { mode: 0o700 });
-  // The catalog command starts another Node process; a 1 s request budget is too tight for that under load (a slow
-  // command only drops the per-model refinement, which is exactly what this test asserts on).
-  const cliOptions = { ...options, requestTimeoutMs: 10000 };
-  const driver = new OpenCodeControl({ protocol: "acp-v1", executable: shim, args: ["acp"], env: {} }, cliOptions);
-  const image = attachment(root, "shot.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-  try {
-    await ready(driver);
-    const catalog = await driver.models();
-    assert.deepEqual(catalog.models.map(row => [row.id, row.inputs?.image]), [["native/model-a", false], ["native/model-b", true]]);
-    await assert.rejects(driver.checkAttachments([image]), (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_UNSUPPORTED", "the configured model cannot see images");
-  } finally { await driver.close(); }
-  const vision = new OpenCodeControl({ protocol: "acp-v1", executable: shim, args: ["acp"], env: {} }, cliOptions);
-  try { await vision.initialize(); await vision.open(process.cwd(), "native/model-b"); await vision.checkAttachments([image]); }
-  finally { await vision.close(); }
-  // Without the original catalog the agent-level declaration stands.
-  const plain = new OpenCodeControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "attachments"], env: {} }, options);
-  try { await ready(plain); assert.equal((await plain.models()).models.every(row => row.inputs === undefined), true); await plain.checkAttachments([image]); }
-  finally { await plain.close(); }
-});
-
 test("ACP catalog reads wait briefly for the agent's command announcement instead of racing it", async () => {
   const late = control("late-commands");
   try { await ready(late); const started = Date.now(); assert.deepEqual((await late.models()).commands, [{ name: "late", description: "arrives after session creation" }]); assert.ok(Date.now() - started < 1400, "the announcement ends the wait"); }
@@ -847,56 +819,6 @@ test("G032-NC23 for any other ACP agent, _auth/status_update stays an unsupporte
     assert.equal((await driver.models()).authentication, "unknown");
   } finally { await driver.close(); }
 });
-test("G032-NC24 OpenCode is offered its unlisted native /compact whatever version it reports and receives it as typed; a /compact it drops fails instead of passing for a compaction (ADR-053)", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "gateway-opencode-compact-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
-  const opencode = (env: Record<string, string> = {}) => new OpenCodeControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "opencode-compact"], env: { FIXTURE_TRACE: trace, ...env } }, options);
-  const compacts = (commands: readonly { readonly name: string; readonly description: string }[] | undefined) => (commands ?? []).filter(command => command.name === "compact");
-  const added = [{ name: "compact", description: "压缩上下文（OpenCode 的 /compact；原程序的 ACP 目录没有列出，由 HarnessHub 补入）", contextEffect: "compact" }];
-  const driver = opencode();
-  try {
-    assert.equal((await driver.initialize()).agentVersion, "1.18.35");
-    const id = await driver.open(process.cwd()), commands = (await driver.models()).commands;
-    assert.deepEqual(compacts(commands), added);
-    assert.deepEqual(commands?.map(command => command.name), ["init", "review", "compact"], "its own commands stay as announced");
-    // 1.18.35 hands the summary back as reply text (docs/verification/opencode-compact-2026-10-22.md).
-    const events: ControlEvent[] = [];
-    assert.deepEqual(await (await driver.startText(id, "/compact", event => events.push(event))).result, { status: "completed", reason: "end_turn" });
-    assert.deepEqual(texts(events), ["compacted"]);
-    const prompts = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: { prompt?: unknown } }).filter(row => row.method === "session/prompt");
-    assert.deepEqual(prompts.map(row => row.params?.prompt), [[{ type: "text", text: "/compact" }]], "sent as typed, with nothing added");
-  } finally { await driver.close(); }
-  // Any version, one that cannot be read and a local build are offered it the same way.
-  for (const version of ["1.19.0", "1.17.9", "absent", "local"]) {
-    const other = opencode({ FIXTURE_AGENT_VERSION: version });
-    try {
-      assert.equal((await other.initialize()).agentVersion, version === "absent" ? null : version);
-      await other.open(process.cwd()); assert.deepEqual(compacts((await other.models()).commands), added, version);
-    } finally { await other.close(); }
-  }
-  // An OpenCode that lists compact itself keeps its own entry, once.
-  const listed = opencode({ FIXTURE_COMPACT_LISTED: "1" });
-  try { await listed.initialize(); await listed.open(process.cwd()); assert.deepEqual(compacts((await listed.models()).commands), [{ name: "compact", description: "OpenCode's own compact", contextEffect: "compact" }]); }
-  finally { await listed.close(); }
-  // A compaction reported as an activity alone is a compaction.
-  const announced = opencode({ FIXTURE_COMPACT: "activity" });
-  try {
-    await announced.initialize(); const id = await announced.open(process.cwd()), events: ControlEvent[] = [];
-    assert.deepEqual(await (await announced.startText(id, "/compact", event => events.push(event))).result, { status: "completed", reason: "end_turn" });
-    assert.deepEqual(events.map(event => event.type), ["activity", "activity"]);
-  } finally { await announced.close(); }
-  // An ACP that drops the slash input ends the turn with nothing: the Turn fails and says OpenCode did not run /compact.
-  const ignoring = opencode({ FIXTURE_COMPACT: "ignored" });
-  try {
-    await ignoring.initialize(); const id = await ignoring.open(process.cwd()), events: ControlEvent[] = [];
-    for (const prompt of ["/compact", "/compact  "])
-      assert.deepEqual(await (await ignoring.startText(id, prompt, event => events.push(event))).result, { status: "failed", reason: "native_error",
-        error: { code: "NATIVE_COMMAND_IGNORED", message: "OpenCode 没有执行 /compact：这个版本的 ACP 没有处理这条命令，也没有返回任何内容。" }, input: "not_recorded" }, JSON.stringify(prompt));
-    // Only /compact itself is judged: another prompt that brings nothing back keeps the agent's own result.
-    assert.deepEqual(await (await ignoring.startText(id, "/compact now", event => events.push(event))).result, { status: "completed", reason: "end_turn" });
-    assert.deepEqual(events, []);
-  } finally { await ignoring.close(); }
-});
-
 /**
  * An OpenClaw driver on the bridge fixture (`openclaw-settings`: it restores sessions and answers prompts) whose Gateway
  * a recorder answers. The configured model is deepseek/deepseek-chat; the catalog also lists vision/large and other/model.
@@ -1053,40 +975,3 @@ test("G032-NC27 OpenClaw reads the transcript back as far as the Turn goes: a wi
   }
 });
 
-test("G032-NC34 OpenCode 2: an announced compact is kept once and /compact passes through as typed; a models command without --verbose is tried once, quietly, and the agent-declared image capability stands", async t => {
-  const root = await mkdtemp(join(tmpdir(), "gateway-opencode-v2-")), trace = join(root, "trace"), calls = join(root, "calls"); t.after(() => rm(root, { recursive: true, force: true }));
-  // OpenCode 2 announces `compact` as its only built-in (packages/cli/src/acp/catalog.ts) and reports the compaction as an update.
-  const announced = new OpenCodeControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "opencode-compact"], env: { FIXTURE_TRACE: trace, FIXTURE_AGENT_VERSION: "2.2.5", FIXTURE_COMPACT_LISTED: "1", FIXTURE_COMPACT: "activity" } }, options);
-  try {
-    assert.equal((await announced.initialize()).agentVersion, "2.2.5");
-    const id = await announced.open(process.cwd()), commands = (await announced.models()).commands ?? [];
-    assert.deepEqual(commands.map(command => command.name), ["init", "review", "compact"], "OpenCode's own compact once, nothing filled in");
-    assert.deepEqual(commands.filter(command => command.name === "compact"), [{ name: "compact", description: "OpenCode's own compact", contextEffect: "compact" }]);
-    const events: ControlEvent[] = [];
-    assert.deepEqual(await (await announced.startText(id, "/compact", event => events.push(event))).result, { status: "completed", reason: "end_turn" });
-    assert.deepEqual(events.map(event => event.type), ["activity", "activity"], "a compaction reported as an update is a compaction");
-    const prompts = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { method?: string; params?: { prompt?: unknown } }).filter(row => row.method === "session/prompt");
-    assert.deepEqual(prompts.map(row => row.params?.prompt), [[{ type: "text", text: "/compact" }]], "sent as typed");
-  } finally { await announced.close(); }
-  // OpenCode 2's `models` has no --verbose: the shim refuses it like a CLI does (and counts the attempts); the ACP side is the attachments fixture.
-  const shim = join(root, "opencode2-fixture.mjs");
-  await writeFile(shim, `#!${process.execPath}\nimport { appendFileSync } from "node:fs";\nif (process.argv[2] === "models") { appendFileSync(${JSON.stringify(calls)}, process.argv.slice(2).join(" ") + "\\n"); process.stderr.write("Unknown argument: verbose\\n"); process.exit(1); }\n`
-    + `process.argv.splice(2, process.argv.length, "acp-v1", "attachments"); await import(${JSON.stringify(pathToFileURL(resolve("tests/fixtures/control-peer.mjs")).href)});\n`, { mode: 0o700 });
-  const image = attachment(root, "shot.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-  const refused = new OpenCodeControl({ protocol: "acp-v1", executable: shim, args: ["acp"], env: {} }, { ...options, requestTimeoutMs: 10000 });
-  try {
-    await ready(refused);
-    const first = await refused.models(), second = await refused.models();
-    assert.ok(first.models.length > 0 && first.models.every(row => row.inputs === undefined), "no per-model refinement: the agent's declaration is the only word");
-    assert.deepEqual(second.models, first.models);
-    await refused.checkAttachments([image]);
-    assert.equal((await readFile(calls, "utf8")).trim(), "models --verbose", "tried once for the whole control, never again");
-  } finally { await refused.close(); }
-  // A listing of bare provider/id lines (OpenCode 2's `models` output) declares nothing and refines nothing.
-  const bare = join(root, "opencode2-bare.mjs");
-  await writeFile(bare, `#!${process.execPath}\nif (process.argv[2] === "models") { process.stdout.write("native/model-a\\nnative/model-b\\n"); process.exit(0); }\n`
-    + `process.argv.splice(2, process.argv.length, "acp-v1", "attachments"); await import(${JSON.stringify(pathToFileURL(resolve("tests/fixtures/control-peer.mjs")).href)});\n`, { mode: 0o700 });
-  const listing = new OpenCodeControl({ protocol: "acp-v1", executable: bare, args: ["acp"], env: {} }, { ...options, requestTimeoutMs: 10000 });
-  try { await ready(listing); assert.ok((await listing.models()).models.every(row => row.inputs === undefined)); await listing.checkAttachments([image]); }
-  finally { await listing.close(); }
-});

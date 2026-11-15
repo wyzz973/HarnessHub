@@ -59,7 +59,7 @@ function sessionGap(harnessId: string): string | null {
  * `mcpServers`, Codex's thread `config`): it has them in every Hub conversation with nothing written into the user's configuration, and
  * an install there is optional. OpenClaw's bridge refuses them: only there would an entry be needed, and there it cannot tell the conversation.
  */
-function bySession(harnessId: string): boolean { const entry = sessionEntryOf(flavorOf(harnessId)).tools; return entry === "acp" || entry === "thread-config"; }
+function bySession(harnessId: string): boolean { const entry = sessionEntryOf(flavorOf(harnessId)).tools; return entry === "acp" || entry === "thread-config" || entry === "runtime-mcp"; }
 const BY_SESSION_NOTE = "Hub 在每个会话开始时把工具传给它，不用写进配置；写进配置是可选的。";
 export interface HubToolsHost {
   readonly mcp: McpInventory;

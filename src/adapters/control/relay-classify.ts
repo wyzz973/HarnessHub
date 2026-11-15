@@ -193,8 +193,8 @@ export function codexNativeClassify(text: string, catalog: NativeModelCatalog | 
 // OpenCode
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** OpenCode's `/compact`, which its ACP takes without announcing it on some lines; the driver lists it when OpenCode does not. */
-export const OPENCODE_COMPACT = { name: "compact", description: "压缩上下文（OpenCode 的 /compact；原程序的 ACP 目录没有列出，由 HarnessHub 补入）", contextEffect: "compact" } as const;
+/** OpenCode's compaction (`POST /session/{id}/compact`), which its command list does not name; the driver lists it as `/compact`. */
+export const OPENCODE_COMPACT = { name: "compact", description: "压缩上下文（OpenCode 的会话压缩）", contextEffect: "compact" } as const;
 /** The command an input names as OpenCode's ACP reads one (`Iuf`): the trimmed input's first word after its slash; null for text. */
 export function openCodeCommand(text: string): { readonly name: string; readonly args: string } | null {
   const trimmed = text.trim();

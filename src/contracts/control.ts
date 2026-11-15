@@ -403,6 +403,11 @@ export interface HarnessControl {
    */
   fork?(checkpoint: string, cwd: string): Promise<string>;
   /**
+   * Takes the last `turns` turns, their answers included, out of the open conversation's native history, so that the next prompt goes on from there
+   * (OpenCode's revert, Codex's thread rollback). Called between Turns; rejects while a turn runs, and when the native side refused or could not be told.
+   */
+  rollback?(id: NativeConversationId, turns: number): Promise<void>;
+  /**
    * The open conversation's current model and option values as the native side reports them after a Turn, including
    * changes made by its own commands. Identities are the catalog's (model ids, option ids and values) so the Hub can apply
    * them again; a null model means the interface cannot tell. Called only after the Turn settled, before close; a failure

@@ -9,7 +9,7 @@ import { PiControl } from "./pi.js";
 export { OpenClawControl } from "./openclaw.js";
 import { OpenClawControl, openClawRelayCapabilities } from "./openclaw.js";
 import { CursorControl } from "./cursor.js";
-import { OpenCodeControl, openCodeRelayCapabilities } from "./opencode.js";
+import { OpenCodeServerControl, openCodeServerRelayCapabilities } from "./opencode/control.js";
 import { ClaudeControl, claudeRelayCapabilities } from "./claude.js";
 import { HermesGatewayControl, hermesRelayCapabilities } from "./hermes/control.js";
 import { flavorOf } from "../flavors/index.js";
@@ -58,9 +58,9 @@ export async function createNativeControl(harnessId: string, launch: ControlLaun
   if (launch.protocol === "pi-rpc") return new PiControl(launch, options);
   if (launch.protocol === "codex-app-server") return new CodexControl(launch, options);
   if (launch.protocol === "hermes-gateway") return new HermesGatewayControl(launch, options);
+  if (launch.protocol === "opencode-server") return new OpenCodeServerControl(launch, options);
   return harnessId === "openclaw" ? new OpenClawControl(launch, options) : harnessId === "cursor" ? new CursorControl(launch, options)
-    : harnessId === "opencode" ? new OpenCodeControl(launch, options) : harnessId === "claude" ? new ClaudeControl(launch, options)
-    : harnessId === "dsh" ? new DshControl(launch, options) : new AcpControl(launch, options);
+    : harnessId === "claude" ? new ClaudeControl(launch, options) : harnessId === "dsh" ? new DshControl(launch, options) : new AcpControl(launch, options);
 }
 
 /**
@@ -73,6 +73,11 @@ export function relayCapabilities(harnessId: string, protocol: ControlLaunch["pr
   if (protocol === "pi-rpc") return null;
   if (protocol === "codex-app-server") return codexRelayCapabilities;
   if (protocol === "hermes-gateway") return hermesRelayCapabilities;
-  return harnessId === "openclaw" ? openClawRelayCapabilities : harnessId === "opencode" ? openCodeRelayCapabilities : harnessId === "claude" ? claudeRelayCapabilities
-    : harnessId === "dsh" ? dshRelayCapabilities : null;
+  if (protocol === "opencode-server") return openCodeServerRelayCapabilities;
+  return harnessId === "openclaw" ? openClawRelayCapabilities : harnessId === "claude" ? claudeRelayCapabilities : harnessId === "dsh" ? dshRelayCapabilities : null;
+}
+
+/** The protocols a Driver here speaks (createNativeControl); a control of any other protocol is listed but cannot be started. Synchronous and pure. */
+export function hasDriver(protocol: ControlLaunch["protocol"]): boolean {
+  return protocol === "acp-v1" || protocol === "codex-app-server" || protocol === "pi-rpc" || protocol === "opencode-server" || protocol === "hermes-gateway";
 }
