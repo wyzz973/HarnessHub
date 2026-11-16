@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Check, CornerDownRight, History, ListPlus, Star, Paperclip, Plus, RefreshCw, ShieldCheck, SquareSlash, TriangleAlert, Zap } from "lucide-react";
+import { ArrowLeftRight, Brain, Check, CornerDownRight, History, ListPlus, Star, Paperclip, Plus, RefreshCw, Shield, ShieldBan, ShieldCheck, ShieldHalf, ShieldOff, ShieldQuestion, SquareSlash, TriangleAlert, Zap } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { PublicRun } from "../../../src/contracts/session.js";
@@ -45,8 +45,10 @@ interface ComposerProps extends ChatProps {
   readonly approval: DockedApproval | null;
   /** Rows between the notices and the composer: the held message and the plan bar. */
   readonly above?: ReactNode;
-  /** The line under the composer: round, steps, time and the usage the Gateway reported. */
+  /** The end of the line under the composer: round, steps, time and the usage the Gateway reported. */
   readonly below?: ReactNode;
+  /** The start of that line, before what the Harness may do: where a new conversation works (the home). */
+  readonly footStart?: ReactNode;
   /** The Agent list of the merged picker, which ⌘J opens. */
   readonly agentPickerOpen: boolean;
   /** One of the box's lists opened by its keys (⌥⌘M the model, ⌥⌘E the thinking level, ⌥⌘P the permission); a new `at` opens it again. */
@@ -119,11 +121,9 @@ export function harnessOptions(harnesses: readonly HarnessView[], readiness: rea
  * 8 px apart as the board's 7 px gaps. When the row is short of room the connection and the model give way (an ellipsis);
  * the Agent keeps its name (shortened only on a phone) and the pill and the chevron stay whole.
  */
-const SEGMENT = "h-7 max-w-none rounded-row px-1 outline-offset-[-2px] hover:bg-hover data-[popup-open]:bg-hover";
-/** The small blue pill of a native option inside the merged picker (the thinking level, or the mode). */
-function Pill({ children }: { readonly children: ReactNode }) {
-  return <span className="inline-flex h-5 items-center rounded-full bg-subtle px-[7px] text-[11px] leading-4 font-medium whitespace-nowrap text-fg-2">{children}</span>;
-}
+const SEGMENT = "h-7 max-w-none rounded-[7px] px-1.5 outline-offset-[-2px] hover:bg-hover data-[popup-open]:bg-hover";
+/** The mark of each permission level: the shield says how far the Harness may go, and the one without limits is the one that warns. */
+const PERMISSION_MARKS = { plan: ShieldBan, ask: ShieldQuestion, auto_edit: ShieldHalf, auto: ShieldCheck, full: ShieldOff } as const;
 
 /**
  * The message box of design language 2.0 (Main and Conversation boards): radius 28 with the three-layer shadow, blue when
@@ -286,7 +286,8 @@ export function Composer(props: ComposerProps) {
   const recalled = !provider && !session?.runs.some(run => run.selection.harnessId === draft.harnessId) ? props.rememberedChoice?.(draft.harnessId) ?? null : null;
   const lastUsed = (value: string, recalledValue: string | undefined) => recalled !== null && recalledValue !== undefined && value === recalledValue ? "上次使用" : undefined;
   const modelOptions: PickerOption[] = provider ? provider.models.map(model => ({ value: model, label: model, group: provider.name })) : [
-    { value: "", label: nativeDefault ? `${nativeDefault} · 本机默认` : props.nativeModelsLoading ? "读取本机模型…" : "跟随本机配置", short: nativeDefault ?? (props.nativeModelsLoading ? "读取模型…" : "本机默认模型"), description: "本机当前默认模型", group: "跟随 Harness" },
+    // Following the Harness's own setting is the list's first line, with the model that comes to now at its end.
+    { value: "", label: props.nativeModelsLoading && !nativeDefault ? "读取本机模型…" : "跟随 " + (harness?.name ?? "Harness"), short: nativeDefault ?? (props.nativeModelsLoading ? "读取模型…" : "本机默认模型"), ...(nativeDefault ? { description: nativeDefault } : {}) },
     ...(props.nativeModels?.models.map(model => ({ value: model.id, label: model.name, description: lastUsed(model.id, recalled?.nativeModel) ?? model.id, group: harness?.name ?? "本机模型" })) ?? []),
   ];
   if (provider && draft.model && !provider.models.includes(draft.model)) modelOptions.unshift({ value: draft.model, label: draft.model, description: `固定配置版本 ${draft.providerRevision}`, group: "会话当前版本" });
@@ -472,9 +473,9 @@ export function Composer(props: ComposerProps) {
   const canModel = !disabled && (provider !== undefined && provider !== null || props.nativeModels?.canSelect === true);
   // Beside the Harnesses, in the same layer: the chosen one's models and — where its model has them — its thinking levels. A choice there leaves the layer open.
   const column = "flex min-h-0 min-w-0 flex-1 flex-col";
-  const heading = "flex h-[45px] flex-none items-center px-3.5 text-caption text-fg-3 hairline-b";
-  const choice = (checked: boolean) => cn("picker-option flex w-full items-center gap-2 rounded-row border-none bg-transparent px-2.5 py-[7px] text-left text-ui-sm outline-offset-[-2px] transition-[color,background-color] duration-120 ease-standard hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-40", checked && "font-medium");
-  const tick = (checked: boolean) => <Check size={15} className={cn("flex-none text-accent-text", !checked && "invisible")} aria-hidden="true"/>;
+  const heading = "flex h-10 flex-none items-center px-3 text-[11px] leading-4 text-fg-3 hairline-b";
+  const choice = (checked: boolean) => cn("picker-option flex min-h-[30px] w-full items-center gap-2 rounded-row border-none bg-transparent px-2.5 py-[5px] text-left text-ui-sm outline-offset-[-2px] transition-[color,background-color] duration-120 ease-standard hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-40", checked && "font-medium");
+  const tick = (checked: boolean) => <Check size={14} className={cn("flex-none text-accent-text", !checked && "invisible")} aria-hidden="true"/>;
   // Models marked as favourites lead the column under 收藏 (after T3 Code's starred models), each Harness's its own; kept in this browser.
   const favourite = (model: string): string => draft.harnessId + "\u0000" + model;
   const asideModels: readonly PickerOption[] = [...modelOptions.filter(option => favourites.has(favourite(option.value))).map(option => ({ ...option, group: "收藏" })), ...modelOptions.filter(option => !favourites.has(favourite(option.value)))];
@@ -486,7 +487,7 @@ export function Composer(props: ComposerProps) {
           {option.group && (index === 0 || asideModels[index - 1]?.group !== option.group) ? <div className="px-2.5 pt-2 pb-1 text-caption font-medium text-fg-3">{option.group}</div> : null}
           <div className="group/model relative flex min-w-0 items-center">
             <button type="button" role="radio" aria-checked={draft.model === option.value} disabled={!canModel || option.disabled} title={option.description} className={cn(choice(draft.model === option.value), "pr-8")} onClick={() => changeModel(option.value)}>
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>{tick(draft.model === option.value)}</button>
+              <span className={option.value === "" ? "flex-none" : "min-w-0 flex-1 truncate"}>{option.label}</span>{option.value === "" ? <span className="min-w-0 flex-1 truncate text-right text-caption font-normal text-fg-3">{option.description ?? ""}</span> : null}{tick(draft.model === option.value)}</button>
             <button type="button" className={cn("icon-btn icon-btn-sm absolute right-1 text-fg-3 transition-opacity duration-120 ease-standard", starred ? "text-amber-dot opacity-100" : "opacity-0 group-hover/model:opacity-100 focus-visible:opacity-100")}
               aria-label={(starred ? "取消收藏：" : "收藏：") + option.label} aria-pressed={starred} title={starred ? "取消收藏" : "收藏"} onClick={() => toggleFavourite(favourite(option.value))}>
               <Star size={13} fill={starred ? "currentColor" : "none"} aria-hidden="true"/></button>
@@ -500,7 +501,7 @@ export function Composer(props: ComposerProps) {
         {speeds.some(entry => entry.level !== "standard" && entry.note) ? <span className="text-caption text-fg-3">{speeds.find(entry => entry.level !== "standard" && entry.note)?.note}</span> : null}
       </div> : null}
     </div>
-    {thought ? <div className={cn(column, "max-w-[190px] hairline-l")}>
+    {thought ? <div className={cn(column, "max-w-[150px] hairline-l")}>
       <div className={heading}>思考</div>
       <div className="scroll-area min-h-0 flex-1 p-[5px]" role="radiogroup" aria-label="思考的档位">
         {effortChoices(thought).map(option => <button key={option.value} type="button" role="radio" aria-checked={(level.effort ?? "") === option.value} disabled={disabled || props.nativeModelsLoading === true} className={choice((level.effort ?? "") === option.value)} onClick={() => changeEffort(option.value)}>
@@ -559,6 +560,11 @@ export function Composer(props: ComposerProps) {
       {outdated ? <span className="size-1.5 flex-none rounded-full bg-amber-dot" aria-hidden="true"/> : null}</button>
   </span> : undefined;
 
+  // What the Harness may do without asking stands under the box, with where the conversation works: it is not part of the message.
+  const PermissionMark = level.permission !== null && level.permission !== "custom" ? PERMISSION_MARKS[level.permission] : Shield;
+  const permissionPicker = draft.harnessId && !draft.providerId ? <SearchPicker side={popSide} align="end" {...listOpen("permission")} label="权限" value={level.permission ?? ""} placeholder="跟随本机配置" options={permissionChoices}
+                disabled={disabled || props.nativeModelsLoading} onChange={value => changeLevels(withPermission(level, draft.nativeOptions, value === "" ? null : value as PermissionLevel))} {...afterChoice} chevron className="gap-[5px] text-fg-2" footer={nativeFooter}
+                trigger={selected => <><PermissionMark size={14} className={cn("flex-none", level.permission === "full" && "text-amber")} aria-hidden="true"/><span className="max-w-[140px] truncate">{level.permission === "custom" ? "自定义" : selected?.short ?? selected?.label ?? "本机设置"}</span></>}/> : null;
   return <div className="composer-wrap flex flex-col gap-2">
     {/* Notices above the box: what waits, what is unavailable and why, with at most two ways forward (Interaction board). */}
     {pending || dirty && !blocked ? <div className="composer-change motion-fade-in flex flex-wrap items-center gap-2" role="status">
@@ -654,55 +660,48 @@ export function Composer(props: ComposerProps) {
             onBlur={() => { handedOver.current = false; setMention(null); }}/>
           <p id="composer-keyboard-hint" className="sr-only">{props.preferences.sendKey === "mod-enter" ? "Command+Enter 发送，Enter 换行" : "Enter 发送，Shift+Enter 换行"}{commands.length ? "，/ 原生命令" : ""}，@ 添加文件，输入框为空时 ↑ 编辑上一条{active ? "，Esc 或 ⌘. 停止当前回复" : ""}</p>
           <input ref={picker} type="file" multiple hidden tabIndex={-1} aria-hidden="true" onChange={event => { attach(event.target.files); event.target.value = ""; }}/>
-          <div className="flex flex-wrap items-center gap-x-1 gap-y-2">
-            <div className="-ml-2 flex flex-none items-center gap-0.5" role="group" aria-label="附件与权限">
-              <Menu side={popSide} align="start" {...listOpen("add")} trigger={<button ref={plusButton} type="button" className="press mr-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-40"
-                aria-label="添加文件或上下文" disabled={readonly}><Plus size={16}/></button>} items={[
+          <div className="composer-row flex min-w-0 items-center gap-1.5">
+              <Menu side={popSide} align="start" {...listOpen("add")} trigger={<button ref={plusButton} type="button" className="press -ml-1.5 flex size-7 flex-none items-center justify-center rounded-full border-none bg-transparent text-fg-2 shadow-[inset_0_0_0_1px_var(--border-strong)] transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-40"
+                aria-label="添加文件或上下文" disabled={readonly}><Plus size={15}/></button>} items={[
                 { label: "添加文件或图片…", icon: <Paperclip size={15}/>, hint: "@", disabled: !canAttach, onSelect: () => picker.current?.click() },
                 ...(commands.length ? [{ label: "原生命令", icon: <SquareSlash size={15}/>, hint: "/", disabled: disabled, onSelect: () => { setSlashClosedAt(null); (props.onReplaceDraft ?? props.onMessageDraft)("/"); setTimeout(() => inputRef.current?.focus(), 0); } }] : []),
                 ...(sessionsOffered ? [{ label: "继续原程序的会话…", icon: <History size={15}/>, disabled: disabled || props.mutation !== null, onSelect: () => openPanel("sessions") }] : []),
                 ...(props.sendAlone ? [{ separator: true as const }, { label: "只发这条消息", icon: <ArrowLeftRight size={15}/>, description: "不附之前的对话，只发你写的这一条", checked: props.sendAlone.checked, disabled: disabled, onSelect: props.sendAlone.onToggle }] : []),
               ]}/>
-              {draft.harnessId && !draft.providerId ? <SearchPicker side={popSide} {...listOpen("permission")} label="权限" value={level.permission ?? ""} placeholder="跟随本机配置" options={permissionChoices}
-                disabled={disabled || props.nativeModelsLoading} onChange={value => changeLevels(withPermission(level, draft.nativeOptions, value === "" ? null : value as PermissionLevel))} {...afterChoice} chevron className="gap-[5px] text-fg-2" footer={nativeFooter}
-                trigger={selected => <><ShieldCheck size={15} className="flex-none" aria-hidden="true"/><span className="hidden max-w-[140px] truncate sm:inline">{level.permission === "custom" ? "自定义" : selected?.short ?? selected?.label ?? "本机设置"}</span></>}/> : null}
-            </div>
-            <div className="ml-auto flex max-w-full min-w-0 items-center gap-1">
-              <div ref={chip} className="agent-chip flex h-8 max-w-full min-w-0 items-center overflow-hidden rounded-block p-0.5 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle has-[[data-popup-open]]:bg-subtle"
+              <div ref={chip} className="agent-chip flex h-7 min-w-0 items-center overflow-hidden"
                 role="group" aria-label="由谁来做：Harness、模型与思考强度">
-                <SearchPicker side={popSide} label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessChoices} disabled={disabled} wide size="lg" align="end" chevron={last === "agent"}
+                <SearchPicker side={popSide} label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessChoices} disabled={disabled} wide size="lg" align="start" chevron={last === "agent"}
                   open={agentPickerOpen && !docked} onOpenChange={onAgentPickerOpen} className={cn(SEGMENT, "flex-none gap-[7px] pl-1")}
                   footer={agentFooter} triggerRef={agentButton} describedBy={outdated ? outdatedId : undefined} {...afterChoice} aside={agentAside} {...(agentAside ? { anchor: chip } : {})}
                   empty={<>这台电脑上还没有找到可用的 Harness。<button type="button" className="link-btn" onClick={props.onHarnesses}>查看安装方式</button></>}
                   trigger={selected => selected && harness ? <>
                     {/* A newer version of the model connection in use waits in the advanced settings: its amber dot stays in sight here. */}
-                    <span className="relative flex flex-none"><BrandIcon brand={harness.id} name={harness.name} size={22}/>
+                    <span className="relative flex flex-none"><BrandIcon brand={harness.id} name={harness.name} size={18}/>
                       {outdated ? <span className="outdated-dot absolute -top-0.5 -right-0.5 size-2 rounded-full bg-amber-dot shadow-[0_0_0_1.5px_var(--bg-surface)]" aria-hidden="true"/> : null}</span>
                     <span className="max-w-[150px] truncate font-medium text-fg max-sm:max-w-[80px]">{selected.label}</span></>
                     : <span className="text-fg-2">选择 Harness</span>} onChange={pickAgent}/>
-                {showProvider ? <SearchPicker side={popSide} {...listOpen("provider")} label="选择模型连接" value={draft.providerId} placeholder="选择模型连接" options={providerOptions} disabled={disabled} align="end" chevron={last === "provider"} className={cn(SEGMENT, "gap-1.5")} {...afterChoice}
+                {showProvider ? <SearchPicker side={popSide} {...listOpen("provider")} label="选择模型连接" value={draft.providerId} placeholder="选择模型连接" options={providerOptions} disabled={disabled} align="start" chevron={last === "provider"} className={cn(SEGMENT, "gap-1.5")} {...afterChoice}
                   trigger={selected => <>{selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}<span className="max-w-[140px] truncate text-fg-2">{selected?.short ?? selected?.label ?? "选择模型连接"}</span></>}
                   onChange={value => { const next = providers.find(row => row.id === value); props.onDraft({ ...draft, providerId: next?.id ?? "", providerRevision: next?.revision ?? null, model: next?.defaultModel ?? "", nativeOptions: {} }); }}
                   footer={<button type="button" className="link-btn text-caption" onClick={props.onProviders}>管理模型连接</button>}/> : null}
-                {draft.harnessId ? <SearchPicker side={popSide} {...listOpen("model")} label="选择模型" value={draft.model} placeholder="选择模型" options={asideModels} disabled={disabled || !provider && !props.nativeModels?.canSelect} align="end" chevron={last === "model"} className={SEGMENT} {...afterChoice}
-                  trigger={selected => <span className="max-w-[160px] truncate text-fg-3">{selected?.short ?? selected?.label ?? "选择模型"}</span>}
-                  onChange={changeModel} footer={!provider ? <><span>{props.nativeModelsLoading ? "正在读取本机模型…" : "列表来自本机安装"}</span><button type="button" className="link-btn text-caption" onClick={props.onRefreshModels}>刷新本机模型</button></> : undefined}/> : null}
-                {thought ? <SearchPicker side={popSide} {...listOpen("thought")} label="思考强度" value={level.effort ?? ""} placeholder="跟随本机配置" options={effortChoices(thought)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "thought"}
-                  className={cn(SEGMENT, "flex-none")} {...afterChoice} footer={nativeFooter} trigger={() => <Pill>思考 {thinkingShown}</Pill>} onChange={changeEffort}/> : null}
+                {draft.harnessId ? <SearchPicker side={popSide} {...listOpen("model")} label="选择模型" value={draft.model} placeholder="选择模型" options={asideModels} disabled={disabled || !provider && !props.nativeModels?.canSelect} align="start" chevron={last === "model"} className={SEGMENT} {...afterChoice}
+                  trigger={selected => <span className="max-w-[160px] truncate text-fg-2">{selected?.short ?? selected?.label ?? "选择模型"}</span>}
+                  onChange={changeModel} footer={!provider ? <>{props.nativeModelsLoading ? <span>正在读取本机模型…</span> : <span/>}<button type="button" className="link-btn text-caption" onClick={props.onRefreshModels}>刷新本机模型</button></> : undefined}/> : null}
+                {thought ? <SearchPicker side={popSide} {...listOpen("thought")} label="思考强度" value={level.effort ?? ""} placeholder="跟随本机配置" options={effortChoices(thought)} disabled={disabled || props.nativeModelsLoading} align="start" chevron={last === "thought"}
+                  className={cn(SEGMENT, "flex-none")} {...afterChoice} footer={nativeFooter} trigger={() => <span className="flex items-center gap-1 text-fg-2"><Brain size={13} className="flex-none text-fg-3" aria-hidden="true"/>{thinkingShown}</span>} onChange={changeEffort}/> : null}
                 {speeds.length > 0 && speedNow !== "standard" ? <Tip label={"速度：" + speedWord(speedNow) + (level.speed === null ? "（跟随本机设置）" : "")}><button type="button" className={cn(SEGMENT, "flex-none")} disabled={disabled} aria-label={"速度：" + speedWord(speedNow)}
-                  onClick={() => onAgentPickerOpen(true)}><Pill><Zap size={11} aria-hidden="true"/>{speedWord(speedNow)}</Pill></button></Tip> : null}
-                {mode && modeInChip ? <SearchPicker side={popSide} {...listOpen("mode")} label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
-                  className={cn(SEGMENT, "flex-none")} {...afterChoice} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
+                  onClick={() => onAgentPickerOpen(true)}><span className="flex items-center gap-1 text-ui-sm text-fg-2"><Zap size={12} className="flex-none text-fg-3" aria-hidden="true"/>{speedWord(speedNow)}</span></button></Tip> : null}
+                {mode && modeInChip ? <SearchPicker side={popSide} {...listOpen("mode")} label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="start" chevron={last === "mode"}
+                  className={cn(SEGMENT, "flex-none")} {...afterChoice} trigger={() => <span className="text-fg-2">{modeShown}</span>} onChange={value => changeOption(mode.id, value)}/> : null}
               </div>
               <Tip label={active ? "停止当前回复 " + keyText("stop") : "发送 " + sendWord}><button type={active ? "button" : "submit"} aria-label={active ? "停止当前回复" : "发送消息"}
-                className={cn("press ml-0.5 flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none disabled:cursor-default",
-                  active ? "bg-fg text-app disabled:opacity-40" : "bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-40")}
+                className={cn("send-key press ml-auto flex size-[30px] flex-none items-center justify-center rounded-full border-none disabled:cursor-default",
+                  active ? "bg-fg text-app disabled:opacity-40" : "bg-accent text-on-accent hover:bg-accent-hover disabled:bg-hover disabled:text-fg-3")}
                 style={{ transition: "background-color 200ms var(--ease-standard), opacity 200ms var(--ease-standard), transform 120ms var(--ease-snap)" }}
                 disabled={active ? active.cancelRequested || props.mutation !== null : disableSend} onClick={active ? props.onCancel : undefined}>
                 {/* One glyph throughout, so the arrow turns into the square and back (#16, #17); sending and stopping only dim the key. */}
                 <SendStopIcon stop={active !== null}/>
               </button></Tip>
-            </div>
           </div>
         </form>
         {/* The panels the "+" menu and the Agent list open (ruling R2), placed against the control that holds their item. */}
@@ -722,7 +721,11 @@ export function Composer(props: ComposerProps) {
         </div> : null}
       </div>
     </div>
-    {props.below}
+    {props.footStart || permissionPicker || props.below ? <div className={cn("composer-foot flex min-h-7 flex-wrap items-center gap-x-0.5 gap-y-1 px-2", docked && "invisible")} inert={docked}>
+      {props.footStart}
+      {props.below ? <span className="flex min-w-0 items-center pl-1">{props.below}</span> : null}
+      {permissionPicker ? <span className="ml-auto flex flex-none">{permissionPicker}</span> : null}
+    </div> : null}
   </div>;
 }
 /**

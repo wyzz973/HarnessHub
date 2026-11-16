@@ -770,7 +770,7 @@ test("unified chat shows native plan, notices, tool details with diffs and turn 
   await group.locator(".action-row[data-type=file_change]").getByRole("button").click();
   await expect(log.locator(".native-diff .is-add")).toContainText("+新内容"); await expect(log.locator(".native-diff .is-remove")).toContainText("-旧内容");
   await page.locator(".assistant-message").last().hover(); await page.getByRole("button", { name: "执行详情", exact: true }).last().click();
-  await expect(panel.locator(".execution-details")).toContainText("输入"); await expect(panel).toContainText("1,500 / 10k tokens"); await expect(panel).toContainText("15%");
+  await expect(panel.locator(".execution-details")).toContainText("输入"); await expect(panel).toContainText("1,500 / 10k"); await expect(panel).toContainText("15%");
   await page.screenshot({ path: join(artifact, "native-activity.png"), fullPage: true, animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "native activity must not overflow a narrow screen");
