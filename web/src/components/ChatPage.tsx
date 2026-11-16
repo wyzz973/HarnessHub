@@ -830,7 +830,7 @@ export function ChatPage(props: ChatProps) {
       </div>
       {inline && asidePresence !== "closed" ? <aside className={cn("details-aside relative flex-none overflow-hidden", dragging ? "transition-none" : "transition-[width]", panelAtOnce && "duration-0!",
         panelOpen ? "w-(--panel-width) duration-(--dur-spring-soft) ease-spring-soft starting:w-0" : "w-0 duration-200 ease-in")} style={{ "--panel-width": shownWidth + "px" } as CSSProperties} aria-label="详情栏" aria-hidden={!panelOpen || undefined} inert={!panelOpen}>
-        <div className={cn("flex h-full w-(--panel-width) py-2 pr-2 pl-1", !panelFromKeyboard && "motion-panel-in")}><div className="details-pane flex min-w-0 flex-1 overflow-hidden rounded-pane bg-surface shadow-pane">{panel}</div></div>
+        <div className={cn("details-frame flex h-full w-(--panel-width) py-2 pr-2 pl-1", !panelFromKeyboard && "motion-panel-in")}><div className="details-pane flex min-w-0 flex-1 overflow-hidden rounded-pane bg-surface shadow-pane">{panel}</div></div>
         <PanelEdge width={shownWidth} dragging={dragging} onDrag={setDragging} onWidth={resize}/>
       </aside> : null}
     </div>

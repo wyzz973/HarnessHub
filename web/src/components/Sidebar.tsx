@@ -328,7 +328,7 @@ export function Sidebar(props: SidebarProps) {
   const pickedIds = [...picked], done = () => { setPicked(new Set()); anchor.current = null; };
   const rowProps = { now, currentId: page === "chat" ? currentId : null, disabled: interactionBusy, harness: name, onSession: props.onSession, unread: (session: SessionSummary) => unseen(looked, session), actions: props.actions, arrivals: arriving };
   const count = waiting.length, firstWaiting = useRef<HTMLButtonElement>(null);
-  const icon = (glyph: ReactNode) => <span className="flex w-4 flex-none justify-center text-fg-2" aria-hidden="true">{glyph}</span>;
+  const icon = (glyph: ReactNode) => <span className="nav-icon flex w-4 flex-none justify-center text-fg-2" aria-hidden="true">{glyph}</span>;
   const nav = (target: Page, label: string, glyph: ReactNode, extra?: ReactNode) => <button type="button" disabled={interactionBusy} aria-current={page === target ? "page" : undefined} onClick={() => props.onPage(target)}
     className="nav-row w-full flex-none disabled:opacity-40">{icon(glyph)}<span className="min-w-0 flex-1 trunc">{label}</span>{extra}</button>;
   const inboxRow = <button type="button" className="nav-row w-full flex-none data-[popup-open]:bg-selected" aria-label={count ? `等你处理（${count} 项）` : "等你处理"} {...(props.onInbox ? { onClick: props.onInbox } : {})}>
