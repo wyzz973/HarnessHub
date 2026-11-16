@@ -132,7 +132,7 @@ export function SearchField({ value, onChange, label, placeholder, className }: 
   return <label className={cn("flex h-7 items-center gap-1.5 rounded-control bg-surface pr-1.5 pl-2 text-fg-3 shadow-[inset_0_0_0_1px_var(--border-strong)] transition-shadow duration-120 ease-standard focus-within:shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_var(--accent-soft)]", className)}>
     <Search size={14} aria-hidden="true" className="flex-none"/>
     <input className="h-full min-w-0 flex-1 border-0 bg-transparent p-0 text-ui-sm text-fg outline-none placeholder:text-placeholder" aria-label={label} placeholder={placeholder} value={value} onChange={event => onChange(event.target.value)}/>
-    {value ? <button type="button" className="flex size-4 flex-none items-center justify-center rounded-full border-none bg-[color-mix(in_srgb,var(--text-3)_55%,transparent)] p-0 text-[var(--bg-surface)] hover:bg-[var(--text-3)]" aria-label="清除" onClick={() => onChange("")}><X size={10} aria-hidden="true"/></button> : null}
+    {value ? <button type="button" className="flex size-4 flex-none items-center justify-center rounded-full border-none bg-[color-mix(in_srgb,var(--text-3)_55%,transparent)] p-0 text-[var(--bg-app)] hover:bg-[var(--text-3)]" aria-label="清除" onClick={() => onChange("")}><X size={10} aria-hidden="true"/></button> : null}
   </label>;
 }
 /**

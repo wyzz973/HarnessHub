@@ -3,6 +3,9 @@
  * the window (desktop/main.ts); so behind the window is kept this copy — a second document that the page opens and keeps the same as its own
  * content: every element, attribute, word and scroll position, without what floats outside the page's root and with the glass surfaces left
  * blank. It is only ever seen through glass, and nothing in it can be pressed.
+ *
+ * The window's floor is a sheet of glass too, and through that one nothing of the copy must show (the page's own words lie right over it): the
+ * copy draws its content only where a surface floats (`reveal`), and everywhere a wash that steadies what is read on the glass.
  */
 const LEFT_OUT = new Set(["SCRIPT", "NOSCRIPT", "TEMPLATE"]);
 /** Elements that would load or play on their own: the copy keeps a box of their size. */
@@ -13,6 +16,8 @@ export interface Mirror {
   readonly ready: Promise<void>;
   /** Puts every scroll position of the copy where the page's is. */
   settle(): void;
+  /** Where the copy's content is drawn: the shapes of the surfaces that float over it, as one path in the window's coordinates; nowhere when null. */
+  reveal(path: string | null): void;
   stop(): void;
 }
 
@@ -74,12 +79,14 @@ export function startMirror(root: HTMLElement, blank: string): Mirror | null {
   // (a spinner under glass is not worth a second animation).
   const own = other.createElement("style");
   // The copy lies in a bare window behind the app's: its corners are cut a little rounder than the window's, so that none shows past them.
-  own.textContent = `html, body { background: transparent !important; overflow: hidden !important; } html { clip-path: inset(0 round 20px); }
+  own.textContent = `html { background: var(--pane-wash) !important; clip-path: inset(0 round 20px); } body { background: transparent !important; } html, body { overflow: hidden !important; }
 * { scroll-behavior: auto !important; overflow-anchor: none !important; caret-color: transparent !important; }
 :is(${blank}), :is(${blank}) *, .sidebar-pane * { visibility: hidden !important; }
-.sidebar-pane { background: var(--pane-wash) !important; }
 :is(.spinner, .spin, .spinner-arc, .shimmer-text, .shimmer, .status-dot, .motion-breathe, .pulse, .end-dot, .caret-host, .motion-token) { animation: none !important; }`;
   other.head.append(own);
+  // Until the page says where its surfaces float, nothing of the content is drawn.
+  const shown = other.createElement("style"), NOWHERE = "#root { visibility: hidden !important; }";
+  shown.textContent = NOWHERE; other.head.append(shown);
   const sheets = new Map<Element, Element>(), loading: Promise<void>[] = [];
   const sameSheets = () => {
     const now = new Set<Element>(document.head.querySelectorAll("link[rel~='stylesheet'], style"));
@@ -153,6 +160,7 @@ export function startMirror(root: HTMLElement, blank: string): Mirror | null {
   });
   return {
     ready, settle,
+    reveal: path => { const text = path === null ? NOWHERE : `#root { clip-path: path("${path}") !important; }`; if (shown.textContent !== text) shown.textContent = text; },
     stop: () => { window.clearInterval(audit); head.disconnect(); frame.disconnect(); body.disconnect(); document.removeEventListener("scroll", follow, { capture: true }); window.removeEventListener("resize", settleSoon); },
   };
 }
