@@ -1,4 +1,4 @@
-import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, Bell, BellOff, Blocks, Bot, CalendarClock, ChevronRight, CircleDot, CircleHelp, Copy, Folder, FolderOpen, GitBranch, Hash, Inbox as InboxIcon, ListFilter, MessageCircle, MoreHorizontal, PanelLeft, PencilLine, Pin, PinOff, Search, Settings, SlidersHorizontal, SquarePen, Trash2, X } from "lucide-react";
+import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, Bell, BellOff, Blocks, Bot, CalendarClock, ChevronRight, CircleDot, Copy, FolderOpen, GitBranch, Hash, Inbox as InboxIcon, ListFilter, MoreHorizontal, PanelLeft, PencilLine, Pin, PinOff, Search, Settings, SlidersHorizontal, SquarePen, Trash2, X } from "lucide-react";
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactNode, RefObject } from "react";
 import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
@@ -17,7 +17,7 @@ import { useNotificationChoice } from "../lib/notify.js";
 import { useNow } from "../lib/prefs.js";
 import { Collapsible } from "../ui/motion.js";
 import { Dialog, DIALOG_ACTIONS, DIALOG_COLUMN, DIALOG_FOOT, Menu, Popover, showNativeMenu } from "../ui/overlay.js";
-import { Badge, LogoMark, Spinner, StatusDot, Tip } from "../ui/primitives.js";
+import { Badge, Spinner, StatusDot, Tip } from "../ui/primitives.js";
 import { lastingOption } from "./Approval.js";
 import { BrandIcon } from "./BrandIcon.js";
 

@@ -22,7 +22,7 @@ import { packetFacts } from "../lib/relay-state.js";
 import { finished, knownToolDetail, parseUnifiedDiff, readToolDetail, type DiffFile } from "../lib/turn.js";
 import { Collapsible } from "../ui/motion.js";
 import { EmptyState, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitives.js";
-import { DiffLines, type ToolDetailLoader } from "./Activity.js";
+import { type ToolDetailLoader } from "./Activity.js";
 import { DiffBody, type DiffRemark } from "./DiffBody.js";
 import { CommitDialog, EditorRow, FileView, PullRequestRow, type WorkspaceAccess } from "./WorkspaceTools.js";
 import { GitChanges, GitScopeMenu, type GitAccess, type GitScope } from "./GitChanges.js";

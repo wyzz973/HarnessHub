@@ -47,7 +47,6 @@ export function Popover({ trigger, children, label, open, onOpenChange, side = "
     </BasePopover.Portal>
   </BasePopover.Root>;
 }
-export const PopoverClose = BasePopover.Close;
 
 /** A heading row for a popover or panel with an optional close button. */
 export function PopHead({ title, children, closeLabel }: { readonly title: ReactNode; readonly children?: ReactNode; readonly closeLabel?: string }) {

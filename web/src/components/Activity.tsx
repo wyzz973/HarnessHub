@@ -1,8 +1,7 @@
-import { Check, Circle, Download, Info, Link, TriangleAlert } from "lucide-react";
+import { Download, Info, Link, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { ContentRef } from "../../../src/contracts/content.js";
-import type { PlanStep } from "../../../src/contracts/protocol.js";
 import type { PublicOutput } from "../../../src/contracts/session.js";
 import { contentUrl, errorMessage, type ToolDetailView } from "../api.js";
 import { cn } from "../lib/cn.js";
@@ -72,23 +71,6 @@ export function StoredDetail({ content, fallback, load, native }: { readonly con
       {!detail.input && !detail.output && !detail.diff && !detail.locations?.length ? <p className="m-0 text-fg-3">这个工具没有返回可显示的输入或输出。</p> : null}
     </> : null}
   </div>;
-}
-/**
- * The task list a Harness reported (Conversation board): finished steps checked and struck through, the one in progress in blue, the rest
- * open. `owner` names whose list it is.
- */
-export function PlanView({ steps, explanation, owner, compact: small = false }: { readonly steps: readonly PlanStep[]; readonly explanation?: string | undefined; readonly owner?: string; readonly compact?: boolean }) {
-  const done = steps.filter(step => step.status === "completed").length;
-  return <section className={cn("native-plan flex flex-col", small ? "gap-2" : "gap-2.5")} aria-label="计划">
-    <p className="m-0 text-caption text-fg-3">{owner ? owner + " · " : ""}{done} / {steps.length}</p>
-    {explanation ? <p className="m-0 text-ui-sm text-fg-2">{explanation}</p> : null}
-    <ol className={cn("m-0 flex list-none flex-col p-0", small ? "gap-2" : "gap-2.5")}>{steps.map((step, index) => <li key={index} className="flex items-start gap-2 text-ui-sm">
-      <span role="img" aria-label={step.status === "completed" ? "已完成" : step.status === "in_progress" ? "进行中" : "待办"} className={cn("mt-[2.5px] flex flex-none", step.status === "completed" ? "text-fg-3" : step.status === "in_progress" ? "text-run" : "text-placeholder")}>
-        {step.status === "completed" ? <Check size={15} aria-hidden="true"/> : <Circle size={15} aria-hidden="true"/>}
-      </span>
-      <span className={cn("min-w-0 flex-1", step.status === "completed" ? "text-fg-3 line-through decoration-line-strong" : step.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{step.text}</span>
-    </li>)}</ol>
-  </section>;
 }
 /**
  * What the program announced during the Turn. Its warnings stay neutral (amber means only "waiting for you"); errors are red.

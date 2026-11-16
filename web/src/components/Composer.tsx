@@ -9,7 +9,7 @@ import { keyText } from "../lib/keys.js";
 import { ago } from "../lib/format.js";
 import { Menu, Popover, PopHead } from "../ui/overlay.js";
 import { motionStyle, SendStopIcon, usePresence, useReducedMotion } from "../ui/motion.js";
-import { Kbd, LogoMark, Segmented, Spinner, Tip } from "../ui/primitives.js";
+import { LogoMark, Segmented, Spinner, Tip } from "../ui/primitives.js";
 import { ApprovalDock, type PermissionRequestView } from "./Approval.js";
 import { attachmentProblem, ComposerAttachments } from "./Attachments.js";
 import { BrandIcon, providerBrand } from "./BrandIcon.js";
@@ -83,7 +83,6 @@ function readFavourites(): ReadonlySet<string> {
   try { const value: unknown = JSON.parse(localStorage.getItem(FAVOURITES_KEY) ?? "[]"); return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").slice(0, 500) : []); } catch { return new Set(); }
 }
 function writeFavourites(value: ReadonlySet<string>): void { try { localStorage.setItem(FAVOURITES_KEY, JSON.stringify([...value])); } catch { /* lasts for this page only */ } }
-function approximately(ms: number): string { return Math.max(1, Math.round(ms / 1000)) + " 秒"; }
 /** The readiness badge of one Harness entry, from its latest catalog read; nothing when it has not been read. */
 export function readinessStatus(harness: HarnessView, readiness: HarnessReadinessView | undefined): PickerOption["status"] {
   if (readiness === undefined || readiness.checkedAt === null) return undefined;
@@ -302,7 +301,6 @@ export function Composer(props: ComposerProps) {
   const mode = nativeOptions.find(option => option.category === "mode");
   const modeInChip = mode !== undefined && thought === undefined && !level.ids.has(mode.id);
   // The program's own approval rule (Codex's approval policy) sits at the bottom left; its sandbox and the rest stay in the settings.
-  const permission = nativeOptions.find(option => option.category === "permission");
   // A native option a level sets, changed here, leaves that level (lib/levels.ts withNativeOption): the Harness then runs the value chosen.
   const changeOption = (id: string, value: string) => { props.onDraft({ ...draft, nativeOptions: withNativeOption(level, draft.nativeOptions, id, value) }); };
   const valueName = (option: typeof nativeOptions[number], value: string) => (option.category === "thought_level" ? THINKING_NAMES[value] : undefined) ?? option.values.find(row => row.value === value)?.name ?? value;

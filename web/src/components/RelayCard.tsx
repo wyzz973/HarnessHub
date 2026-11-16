@@ -1,5 +1,4 @@
 import { ArrowRightLeft, Info, X } from "lucide-react";
-import { cn } from "../lib/cn.js";
 import { compact } from "../lib/format.js";
 import type { BannerView, InstallationView, RelayLine } from "../lib/relay-state.js";
 import type { RelayRequest } from "../relay.js";

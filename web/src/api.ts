@@ -7,21 +7,20 @@ import { decodePurgedView, decodePurgeSessionView, decodeWorktreeMark, decodeWor
 import type { DeletedSessionListView, PurgedView, PurgeSessionView, SearchView, SessionSearchView, WorktreeView } from "../../src/contracts/web.js";
 import { createRelayApi, decodeRelayFrame, relayBody, type RelayApi, type RelayEvent, type RelayReply, type RelayRequest, type RelayTransport } from "./relay.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, SteerView, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState, WorkspaceView,
+import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, LoginShellView, MaintenanceView, NativeResumeView, NativeSessionListView, SessionSummary, SteerView, UninstallCheckView, InstallCheckView, InstallationUpgradeCheckView, WebState, WorkspaceView,
   EditorView, GitBranchesView, GitChangedFileView, GitChangesView, GitCommitView, GitFileDiffView, GitLogView, GitPushView, GitScope, GitView, WorkspaceFileView } from "../../src/contracts/web.js";
 import { GH_STATES, type CheckpointListView, type CheckpointRestoreView, type GitPullRequestCreatedView, type GitPullRequestStatusView, type GitPullRequestView } from "../../src/contracts/web.js";
 import { GIT_CHANGE_STATUSES, HARNESS_TIERS } from "../../src/contracts/web.js";
 import type { TerminalExitView, TerminalOpenedView, TerminalView } from "../../src/contracts/terminal.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput, RuntimeRequirement, UpgradeSequenceCheck } from "../../src/contracts/management.js";
-import type { AttentionItem, BoardKind, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest, TaskBoard } from "../../src/contracts/session.js";
+import type { AttentionItem, BoardKind, HarnessSelection, SelectionRequest, TaskBoard } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
-import { BOARD_KINDS, parseNativeOptions, commandId, messageId, runId, sessionId, switchId } from "../../src/contracts/session.js";
+import { BOARD_KINDS, parseNativeOptions, runId, sessionId, switchId } from "../../src/contracts/session.js";
 import { parseContentRef, type ContentRef } from "../../src/contracts/content.js";
-import { RUN_STATUS_WORDS } from "../../src/contracts/protocol-words.js";
 import type { HarnessFlavor } from "../../src/contracts/flavor.js";
 import { PERMISSION_LEVELS } from "../../src/contracts/protocol.js";
-import type { NativeLimit, NativeUsage } from "../../src/contracts/control.js";
-import { CAPABILITY_CHANGE_KINDS, CAPABILITY_DRIFT_STATES, CAPABILITY_KINDS, CAPABILITY_MECHANISMS, CAPABILITY_OWNERS, CAPABILITY_STATUSES, CAPABILITY_WARNINGS, MAX_CAPABILITY_ENTRIES, type CapabilitiesView, type CapabilityChangeCheck, type CapabilityChangeView,
+import type { NativeLimit } from "../../src/contracts/control.js";
+import { CAPABILITY_CHANGE_KINDS, CAPABILITY_DRIFT_STATES, CAPABILITY_KINDS, CAPABILITY_MECHANISMS, CAPABILITY_OWNERS, CAPABILITY_STATUSES, CAPABILITY_WARNINGS, type CapabilitiesView, type CapabilityChangeCheck, type CapabilityChangeView,
   type CapabilityEdge, type CapabilityFacts, type CapabilityHistory, type CapabilityLinkChange, type CapabilityRestoreCheck, type CapabilitySkillPlan, type McpDefinitionView, type McpInventoryView, MCP_TARGET_STATES,
   type SkillSourceListing, type SkillUpdateView, INSTRUCTION_CHECK_OPTIONS, INSTRUCTION_TARGET_STATES, type InstructionCheckOption, type InstructionsView, type SubagentDefinitionView,
   type SubagentInventoryView, type SkillTextView } from "../../src/contracts/capabilities.js";
@@ -137,7 +136,6 @@ function choice<const T extends readonly string[]>(value: unknown, choices: T): 
   if (typeof value !== "string" || !choices.includes(value)) return invalid();
   return value as T[number];
 }
-const RUN_STATES = ["queued", "preparing", "running", "settling", "completed", "cancelled", "failed", "unknown"] as const;
 const SESSION_STATES = ["open", "closed", "blocked"] as const;
 export const PROVIDER_PROTOCOLS = ["openai-responses", "openai-chat-completions", "anthropic-messages", "gemini"] as const;
 function nativeOption(value: unknown): NativeOption {
@@ -154,11 +152,6 @@ function selection(value: unknown): HarnessSelection {
   if (row.provider !== undefined && row.nativeModel !== undefined) return invalid();
   return { harnessId: text(row.harnessId), controlId: text(row.controlId), ...(row.provider === undefined ? {} : { provider: target(row.provider) }),
     ...(row.nativeModel === undefined ? {} : { nativeModel: text(row.nativeModel) }), ...(row.nativeOptions === undefined ? {} : { nativeOptions: parseNativeOptions(row.nativeOptions) }) };
-}
-function requestedSelection(value: unknown): SelectionRequest {
-  const row = record(value);
-  return { harnessId: text(row.harnessId), ...(row.controlId === undefined ? {} : { controlId: text(row.controlId) }),
-    ...(row.provider === undefined ? {} : { provider: row.provider === null ? null : target(row.provider) }), ...(row.nativeModel === undefined ? {} : { nativeModel: text(row.nativeModel) }), ...(row.nativeOptions === undefined ? {} : { nativeOptions: parseNativeOptions(row.nativeOptions) }) };
 }
 function publicError(value: unknown): { code: string; message: string } | null {
   if (value === null) return null;
@@ -515,7 +508,6 @@ function contentRef(value: unknown): ContentRef { try { return parseContentRef(v
 function nativeInputs(value: unknown): NativeInputs { const row = record(value); return { image: bool(row.image), audio: bool(row.audio), file: bool(row.file) }; }
 /** Marks a request body that is sent as raw bytes with its own media type instead of JSON. */
 class RawBody { constructor(readonly blob: Blob) {} }
-function optionalNumber(value: unknown): number | undefined { return value === undefined ? undefined : number(value); }
 /** One frame of waiting approvals and questions (ADR-035); at most 32 items, each checked field by field. */
 export function decodeAttentionFrame(value: unknown): AttentionFrame {
   const row = record(value);
@@ -1282,5 +1274,3 @@ export function protocolLabel(protocol: ProviderProtocol | string): string {
   const labels: Record<string, string> = { "openai-responses": "OpenAI Responses", "openai-chat-completions": "OpenAI Chat", "anthropic-messages": "Anthropic Messages", gemini: "Gemini", "acp-v1": "ACP", "codex-app-server": "Codex 原生", "pi-rpc": "Pi RPC", "claude-agent-sdk": "Claude Agent SDK", "opencode-server": "OpenCode 服务", "openclaw-gateway": "OpenClaw 网关", "hermes-gateway": "Hermes 网关" };
   return labels[protocol] ?? protocol;
 }
-/** A Run's state in words, for what is read aloud and shown where nothing else says it: the one table of state words (protocol-words.ts). */
-export function runStatusLabel(status: RunStatus): string { return RUN_STATUS_WORDS[status]; }

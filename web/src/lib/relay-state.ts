@@ -1,4 +1,3 @@
-import type { PublicRun } from "../../../src/contracts/session.js";
 import type { ConversationView } from "./conversation.js";
 import type { SessionFacts } from "../../../src/contracts/web.js";
 import { runRelayInfo, type RelayAttentionCause, type RelayBinding, type RelayDeliveryState, type RelayEvidence, type RelayOption, type RelayPacket, type RelayPrefs, type RelayRequest, type RelayTier, type RelayView } from "../relay.js";

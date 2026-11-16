@@ -1,4 +1,4 @@
-import { CircleHelp, ShieldAlert, ShieldCheck, ShieldX, Square } from "lucide-react";
+import { CircleHelp, ShieldAlert, Square } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { SessionHeadView } from "../../../src/contracts/web.js";
@@ -6,7 +6,7 @@ import { remaining, secondsLeft } from "../attention.js";
 import { cn } from "../lib/cn.js";
 import { keyText } from "../lib/keys.js";
 import { useNow } from "../lib/prefs.js";
-import { Kbd, StatusDot, Tip } from "../ui/primitives.js";
+import { Kbd, Tip } from "../ui/primitives.js";
 
 export type PermissionRequestView = NonNullable<SessionHeadView["permissions"]>[number];
 type Request = PermissionRequestView;
@@ -211,27 +211,4 @@ export interface Decision { readonly title: string; readonly option: { readonly 
 export function decisionRole(options: readonly Option[], id: string): "once" | "refuse" | "other" {
   const { primary, refuse } = approvalRoles(options);
   return primary?.id === id ? "once" : refuse?.id === id || options.some(option => option.id === id && refusingOption(option)) ? "refuse" : "other";
-}
-/**
- * The one line an approval leaves in its Turn once decided (Motion board #21: it fades in, 200 ms). Allowing and refusing
- * say so with the request's own title; a decision made elsewhere says only that it was handled.
- */
-export function DecisionLine({ decision }: { readonly decision: Decision }) {
-  const option = decision.option, refused = option?.role === "refuse";
-  const text = option === null ? `这次审批已处理，等待 ${decision.harness} 继续：` : refused ? "你拒绝了：" : option.role === "once" ? "你允许了一次：" : `你选择了“${option.name}”：`;
-  const Icon = refused ? ShieldX : ShieldCheck;
-  return <p className="approval-result motion-fade-in m-0 flex min-w-0 items-center gap-2 text-ui-sm text-fg-3" role="status">
-    <Icon size={15} className="flex-none" aria-hidden="true"/><span className="min-w-0 truncate" title={decision.title}>{text}<span className="mono text-code">{decision.title}</span></span>
-  </p>;
-}
-/**
- * The mark a Turn keeps while its approval waits in the composer's place (Conversation board, decision F): the Turn's one
- * amber line, drawn once for the Turn's waiting approvals; the process line above it keeps its grey. A button, so a click
- * or ⏎ moves the focus to the approval.
- */
-export function DockedMarker() {
-  return <button type="button" className="docked-approval flex items-center gap-2 self-start rounded-row border-none bg-transparent px-0 text-ui-sm text-amber"
-    onClick={() => document.getElementById("approval-dock")?.focus()}>
-    <StatusDot tone="wait"/>等你批准，请求停在下方输入框的位置
-  </button>;
 }

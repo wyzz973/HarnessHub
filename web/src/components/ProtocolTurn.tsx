@@ -1,4 +1,4 @@
-import { Bot, Brain, Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleDashed, CircleHelp, CircleStop, Copy, FilePen, FilePlus, FileText, GitBranch, Globe, Info, ListChecks, MessageSquareText, Plug, RotateCcw, Search, SquareTerminal, Wrench } from "lucide-react";
+import { Bot, Brain, Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleDashed, CircleHelp, CircleStop, Copy, FilePen, FilePlus, FileText, GitBranch, Globe, Info, Plug, RotateCcw, Search, SquareTerminal, Wrench } from "lucide-react";
 import { createContext, memo, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { ReadItem, ReadTurn } from "../../../src/contracts/protocol-read.js";
@@ -11,7 +11,7 @@ import { useNow } from "../lib/prefs.js";
 import { endLine, quietLine, switchLine, turnByline, turnFooter } from "../lib/protocol/lines.js";
 import { liveStatus, type QueueNotice } from "../lib/protocol/live.js";
 import { changesTree, samePath, turnChanges, type TurnChanges } from "../lib/protocol/changes.js";
-import { arrange, gapOf, isGap, lay, opensByDefault, reasoningLabel, quietBlocks, summarizeGroup, turnFold, withReply, workLabel, type Block, type GapRow, type TurnFold, type WorkBlock } from "../lib/protocol/work.js";
+import { arrange, gapOf, lay, opensByDefault, reasoningLabel, quietBlocks, summarizeGroup, turnFold, withReply, workLabel, type Block, type GapRow, type TurnFold, type WorkBlock } from "../lib/protocol/work.js";
 import { utf8Length } from "../lib/protocol/window.js";
 import { rememberShown, shownSteps } from "../lib/turn.js";
 import { Collapsible, motionStyle, SwapText } from "../ui/motion.js";

@@ -616,7 +616,7 @@ function AgentDetail(props: HarnessProps & { harness: HarnessView; state: AgentS
   const job = related.find(item => item.id === selectedJobId) ?? related.find(installationActive) ?? related[0] ?? null;
   const unconfirmed = props.unconfirmed.find(item => item.harnessId === harness.id);
   const busy = Boolean(job && installationActive(job)) || props.submitting.includes(harness.id);
-  const here = onMachine(harness), version = versionOf(harness), seen = readinessOf(harness, props.readiness), ids = useId();
+  const here = onMachine(harness), version = versionOf(harness), ids = useId();
   // A running task is the state: its own section says it, so the state box is left out rather than said twice.
   const health = state.kind !== "missing" && !(state.kind === "busy" && job !== null && installationActive(job));
   return <>

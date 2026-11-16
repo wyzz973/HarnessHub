@@ -6,7 +6,6 @@ import type { ReactNode, RefObject } from "react";
 import type { TurnStatus } from "../../src/contracts/protocol.js";
 import type { AttentionItem, PublicRun, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import { parseProviderTarget } from "../../src/contracts/provider.js";
 import type { AttentionFrame, HarnessView, InstallationView, SearchHitView, SessionSummary, WebState } from "../../src/contracts/web.js";
 import type { NativeModelCatalog } from "../../src/contracts/control.js";
 import type { InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";

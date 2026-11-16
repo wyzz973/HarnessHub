@@ -154,10 +154,6 @@ export function DrawnCheck({ size = 15, circle = false, animate = true, delay, c
   </svg>;
 }
 
-/** The 7 px dot at the end of a reply still being written (Motion board #11); `done` fades it out in 200 ms. */
-export function EndDot({ done = false }: { readonly done?: boolean }) {
-  return <span className="end-dot" aria-hidden="true" {...(done ? { "data-done": "" } : {})}/>;
-}
 
 /**
  * Content that opens and closes in place (Motion board #13, #18, #22): its height goes from nothing to its content with a
