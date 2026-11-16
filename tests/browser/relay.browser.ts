@@ -504,7 +504,6 @@ test("the details panel's 上下文 page lists where each Harness stands and the
   gateway.announce();
   await page.getByRole("button", { name: "详情栏", exact: true }).click();
   const tab = page.getByRole("tab", { name: /^上下文/u });
-  await expect(tab).toContainText("2");
   await tab.click();
   const panel = page.getByRole("tabpanel");
   const claude = panel.locator(".relay-binding").filter({ hasText: "Claude Code" }), codex = panel.locator(".relay-binding").filter({ hasText: "Codex" });

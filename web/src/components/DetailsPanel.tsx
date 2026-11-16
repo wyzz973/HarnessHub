@@ -1,5 +1,5 @@
 import { BoardAdd, BoardEntries, TaskRoster, useTask, type TaskBoardAccess, type TaskSnapshot } from "./TaskBoard.js";
-import { ArrowRightLeft, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Circle, Clock, Columns2, FileText, Folder, FolderOpen, FolderTree, GitBranch, GitBranchPlus, Plug, Plus, Shrink, Space, WrapText, X } from "lucide-react";
+import { ArrowRightLeft, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Circle, Clock, Columns2, Ellipsis, FileText, Folder, FolderOpen, FolderTree, GitBranch, GitBranchPlus, Plug, Plus, Shrink, Space, WrapText, X } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { ITEM_STATUS_WORDS, TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
@@ -21,6 +21,7 @@ import { oneLine, summarizeGroup } from "../lib/protocol/work.js";
 import { packetFacts } from "../lib/relay-state.js";
 import { finished, knownToolDetail, parseUnifiedDiff, readToolDetail, type DiffFile } from "../lib/turn.js";
 import { Collapsible } from "../ui/motion.js";
+import { Menu } from "../ui/overlay.js";
 import { CopyButton, EmptyState, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitives.js";
 import { type ToolDetailLoader } from "./Activity.js";
 import { DiffBody, type DiffRemark } from "./DiffBody.js";
@@ -203,11 +204,18 @@ export function useConversationChanges(session: ConversationView, wanted: boolea
  * Copies one Turn's diagnostics (ADR-037). The Gateway assembles and scrubs the text; conversation content is in it only
  * when the user ticks the box, and it is written to the clipboard as it arrives, not kept in the page.
  */
-function RunDiagnostics({ runId, load }: { readonly runId: string; readonly load: (runId: string, includeContent: boolean) => Promise<string> }) {
+function RunDiagnostics({ runId, load, onSaid }: { readonly runId: string; readonly load: (runId: string, includeContent: boolean) => Promise<string>; readonly onSaid?: PanelProps["onSaid"] }) {
   const [content, setContent] = useState(false);
   const [state, setState] = useState<"idle" | "busy" | "copied" | "failed">("idle");
-  const copy = async () => {
-    setState("busy");
+  // Said as every copy is: the mark of having taken it stays 1.6 s; a refusal is also said where the page says such things.
+  useEffect(() => {
+    if (state !== "copied" && state !== "failed") return;
+    if (state === "failed") onSaid?.("无法复制诊断信息，请稍后再试。");
+    const timer = setTimeout(() => setState("idle"), 1600);
+    return () => clearTimeout(timer);
+  }, [state]);
+  const copy = async (content: boolean) => {
+    setContent(content); setState("busy");
     const text = load(runId, content);
     try {
       // A clipboard item can wait for the text, so the copy stays tied to the click in browsers that require it.
@@ -218,11 +226,13 @@ function RunDiagnostics({ runId, load }: { readonly runId: string; readonly load
       await navigator.clipboard.writeText(await text); setState("copied");
     } catch { void text.catch(() => {}); setState("failed"); }
   };
-  return <section className="run-diagnostics flex flex-col gap-2" aria-label="诊断信息">
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2"><button type="button" className="btn btn-sm diagnostics-copy" disabled={state === "busy"} title="版本、各阶段耗时、结束原因、清理状态与本回合 stderr 的最后 4 KiB；路径、环境变量值和密钥样式的字符串已隐去" onClick={() => void copy()}>{state === "busy" ? <><Spinner size={12} label=""/>正在准备…</> : state === "copied" ? "已复制" : "复制诊断信息"}</button>
-      <label className="flex items-center gap-1.5 text-caption text-fg-2"><input type="checkbox" className="accent-accent" checked={content} onChange={event => { setContent(event.target.checked); setState("idle"); }}/>含对话内容</label></div>
-    <p className={cn("m-0 text-caption text-red", state !== "failed" && "sr-only")} role="status">{state === "copied" ? `已复制诊断信息（${content ? "含" : "不含"}对话内容）。` : state === "failed" ? "无法复制诊断信息，请稍后再试。" : ""}</p>
-  </section>;
+  const words = "诊断信息：版本、各阶段耗时、结束原因、清理状态与本回合 stderr 的最后 4 KiB；路径、环境变量值和密钥样式的字符串已隐去";
+  return <span className="run-diagnostics -my-1 -mr-1.5 flex flex-none items-center">
+    <Menu align="end" trigger={<button type="button" className="icon-btn size-6 text-fg-3" aria-label="诊断信息" title={words} disabled={state === "busy"}>
+      {state === "busy" ? <Spinner size={12} label=""/> : state === "copied" ? <Check size={13} aria-hidden="true"/> : state === "failed" ? <X size={13} className="text-red" aria-hidden="true"/> : <Ellipsis size={14} aria-hidden="true"/>}</button>}
+      items={[{ label: "复制诊断信息", onSelect: () => void copy(false) }, { label: "复制诊断信息（含对话内容）", onSelect: () => void copy(true) }]}/>
+    <span className="sr-only" role="status">{state === "copied" ? `已复制诊断信息（${content ? "含" : "不含"}对话内容）。` : state === "failed" ? "无法复制诊断信息，请稍后再试。" : ""}</span>
+  </span>;
 }
 
 interface PanelProps {
@@ -310,8 +320,7 @@ export function DetailsPanel(props: PanelProps) {
     { id: "overview" as const, label: "概览" },
     { id: "changes" as const, label: "改动", count: total || null },
     { id: "process" as const, label: "过程", count: running || null },
-    // With how many packets were sent, when the relay has any to tell of.
-    ...(window !== null || props.relay ? [{ id: "context" as const, label: "上下文", count: props.relay?.view.packets.length || null }] : []),
+    ...(window !== null || props.relay ? [{ id: "context" as const, label: "上下文" }] : []),
   ];
   const shown: PanelTab = tabs.some(item => item.id === tab) ? tab : "overview";
   // The files opened beside the four pages (after the file tabs of T3 Code's right panel): each a tab of its own until closed; they are this conversation's, and gone with it.
@@ -320,24 +329,29 @@ export function DetailsPanel(props: PanelProps) {
   const openFile = props.tools?.file === undefined ? undefined : (path: string) => { const place = workspacePath(path, session.workspace); setOpened(current => current.includes(place) ? current : [...current, place]); setViewing(place); };
   const closeFile = (path: string) => { setOpened(current => current.filter(item => item !== path)); setViewing(current => current === path ? null : current); };
   const base = (path: string): string => path.split("/").at(-1) ?? path;
+  // The file being read is brought into sight in its row when it is chosen.
+  const files = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (viewing !== null) for (const tab of files.current?.children ?? []) if ((tab as HTMLElement).dataset.file === viewing) tab.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [viewing]);
   return <div className="details-panel flex h-full min-h-0 w-full min-w-0 flex-col bg-surface">
-    <div className="flex h-[52px] flex-none items-center gap-1.5 pr-2.5 pl-3">
-      <div className={cn("flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none]", viewing !== null && "[&_.tab[aria-selected=true]]:text-fg-2 [&_.tabs-indicator]:opacity-0")}>
-        <Tabs className={cn("tabs-pill min-w-0", opened.length === 0 ? "flex-1" : "flex-none")} items={tabs} value={shown} onChange={value => { setViewing(null); props.onTab(value); }} label="详情分类" idPrefix="details-tab" panelId="details-tabpanel"/>
-        {/* The files stand apart from the four pages: a hairline between, then each file's tab. */}
-        {opened.length > 0 ? <span aria-hidden="true" className="mx-1.5 my-auto h-4 w-px flex-none bg-line-strong"/> : null}
-        {opened.map(path => <span key={path} className={cn("file-tab group/tab my-auto flex h-7 flex-none items-center rounded-row pr-0.5 pl-2 text-ui-sm transition-colors duration-120 ease-standard", viewing === path ? "bg-subtle text-fg" : "text-fg-2 hover:bg-subtle")}>
-          <button type="button" className="max-w-[140px] truncate border-none bg-transparent p-0 font-mono text-code text-inherit" title={path} aria-pressed={viewing === path} onClick={() => setViewing(path)}>{base(path)}</button>
-          <button type="button" className="icon-btn ml-0.5 size-5 text-fg-3" aria-label={"关闭 " + base(path)} title="关闭" onClick={() => closeFile(path)}><X size={11}/></button></span>)}
-      </div>
+    <div className="flex h-[46px] flex-none items-center gap-1.5 pt-2.5 pr-2.5 pb-1 pl-3">
+      {/* While a file is read no page is the chosen one, and each of them — the one it was opened from too — leads back from the file. */}
+      <div className={cn("flex min-w-0 flex-1", viewing !== null && "[&_.tab[aria-selected=true]]:font-normal [&_.tab[aria-selected=true]]:text-fg-2 [&_.tabs-indicator]:opacity-0")}
+        onClick={event => { if (viewing !== null && (event.target as HTMLElement).closest("[role=tab]")?.getAttribute("data-key") === shown) setViewing(null); }}>
+        <Tabs className="tabs-pill min-w-0 flex-1" items={tabs} value={shown} onChange={value => { setViewing(null); props.onTab(value); }} label="详情分类" idPrefix="details-tab" panelId="details-tabpanel"/></div>
       {props.onClose ? <button type="button" className="icon-btn size-7 self-center text-fg-3" aria-label="关闭详情栏" title="关闭详情栏" onClick={props.onClose}><X size={14}/></button> : null}
     </div>
-    <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${shown}`}>
+    {/* The files stand under the four pages, in a row of their own: each keeps its name and its way out in sight, however many are open. */}
+    {opened.length > 0 ? <div ref={files} className="file-tabs flex h-8 flex-none items-center gap-1 overflow-x-auto overflow-y-hidden px-3 [scrollbar-width:none]" role="group" aria-label="打开的文件">
+      {opened.map(path => <span key={path} data-file={path} className={cn("file-tab group/tab flex h-7 flex-none items-center rounded-row pr-0.5 pl-2 text-ui-sm transition-colors duration-120 ease-standard", viewing === path ? "bg-subtle text-fg" : "text-fg-2 hover:bg-subtle")}>
+        <button type="button" className="max-w-[180px] truncate border-none bg-transparent p-0 text-inherit" title={path} aria-pressed={viewing === path} onClick={() => setViewing(path)}>{base(path)}</button>
+        <button type="button" className="icon-btn ml-0.5 size-5 text-fg-3" aria-label={"关闭 " + base(path)} title="关闭" onClick={() => closeFile(path)}><X size={11}/></button></span>)}
+    </div> : null}
+    <div className={cn("scroll-area panel-scroll min-h-0 flex-1", (viewing !== null || shown === "changes") && "panel-scroll-rows")} role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${shown}`}>
       {viewing !== null && props.tools ? <FileView path={viewing} access={props.tools} onReveal={props.onReveal}/>
         : shown === "changes" ? <Changes changes={changes} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}
           members={members} want={want} onOpenSession={props.onOpenSession} onReveal={props.onReveal} onRemark={props.onRemark} onOpenFile={openFile} git={repository ? props.git : undefined}/>
         : shown === "process" ? <>
-          {kept || background.length || session.retention?.upgraded || session.retention?.outside ? <div className="hairline-b"><Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/></div> : null}
+          {kept || background.length || session.retention?.upgraded || session.retention?.outside ? <Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/> : null}
           {selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <EmptyState icon={<Clock size={28}/>} title="还没有执行记录"/>}
         </>
         : shown === "context" ? <ContextPage window={window} runs={runs} relay={props.relay} name={name}/>
@@ -389,12 +403,13 @@ function contextEvents(runs: readonly PublicRun[]): readonly ContextEvent[] {
  * One section of the overview, as a module on the panel (a tile, as the system's own panels group what belongs together): its name, the one
  * figure that sums it up, and — when a page holds the whole of it — the way there from its name.
  */
+const SECTION_TITLE = "text-caption font-medium text-fg-3";
 function Section({ title, heading, figure, onOpen, children, className, label }: { readonly title: string; readonly heading?: ReactNode; readonly figure?: ReactNode; readonly onOpen?: (() => void) | undefined; readonly children?: ReactNode; readonly className?: string; readonly label?: string }) {
   return <section className={cn("panel-section flex min-w-0 flex-col rounded-card bg-surface px-3 pt-2 pb-2.5 shadow-hairline", className)} aria-label={label ?? title}>
     <header className="flex min-h-6 items-center gap-2">
-      {heading !== undefined ? heading : onOpen ? <button type="button" className="group/title -ml-1.5 flex min-w-0 items-center gap-0.5 rounded-row border-none bg-transparent py-0.5 pr-1 pl-1.5 text-ui-sm font-medium text-fg-2 hover:bg-subtle hover:text-fg" onClick={onOpen}>
-        <span className="trunc">{title}</span><ChevronRight size={12} aria-hidden="true" className="flex-none text-fg-3 transition-transform duration-120 ease-standard group-hover/title:translate-x-0.5"/></button>
-        : <h3 className="m-0 min-w-0 trunc text-ui-sm font-medium text-fg-2">{title}</h3>}
+      {heading !== undefined ? heading : onOpen ? <button type="button" className={cn("group/title -ml-1.5 flex min-w-0 items-center gap-0.5 rounded-row border-none bg-transparent py-0.5 pr-1 pl-1.5 hover:bg-subtle hover:text-fg", SECTION_TITLE)} onClick={onOpen}>
+        <span className="trunc">{title}</span><ChevronRight size={11} aria-hidden="true" className="flex-none transition-transform duration-120 ease-standard group-hover/title:translate-x-0.5"/></button>
+        : <h3 className={cn("m-0 min-w-0 trunc", SECTION_TITLE)}>{title}</h3>}
       {figure !== undefined && figure !== null ? <span className="ml-auto flex min-w-0 items-center gap-1.5 text-caption text-fg-2 tabular-nums">{figure}</span> : null}
     </header>
     {children}
@@ -403,7 +418,7 @@ function Section({ title, heading, figure, onOpen, children, className, label }:
 /** A file row: the mark of what happened to it, its place in the workspace and the lines it gained and lost, when they are known. */
 function FileRow({ path, workspace, add = 0, del = 0, created = false, onChoose }: { readonly path: string; readonly workspace: string; readonly add?: number; readonly del?: number; readonly created?: boolean; readonly onChoose?: (() => void) | undefined }) {
   const body = <><FileMark created={created}/><FilePath path={path} workspace={workspace}/><Lines add={add} del={del}/></>;
-  const look = "flex h-8 w-full min-w-0 items-center gap-2 px-2 text-left text-ui-sm text-fg";
+  const look = "flex h-7 w-full min-w-0 items-center gap-2 px-2 text-left text-ui-sm text-fg";
   return onChoose ? <button type="button" onClick={onChoose} title={path} className={cn("row border-none bg-transparent hover:bg-subtle", look)}>{body}</button>
     : <div className={cn("rounded-row", look)} title={path}>{body}</div>;
 }
@@ -439,9 +454,11 @@ function Overview(props: PanelProps & { readonly selected: PublicRun | null; rea
     if (props.focus !== "run" || facts.current === null) return;
     facts.current.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }, [props.focus, selected?.id]);
+  // A task of several conversations is told of near the top; a conversation alone keeps its board, or the way to start one, at the end.
+  const board = props.board === undefined ? null : <TaskSection task={task} members={members} current={session.id} name={props.name} onOpenSession={props.onOpenSession}/>;
   return <div className="panel-overview flex flex-col gap-2 px-2.5 pb-3">
     {planned !== undefined || recap !== undefined ? <ProgressSection plan={planned} recap={recap}/> : null}
-    {props.board !== undefined ? <TaskSection task={task} members={members} current={session.id} name={props.name} onOpenSession={props.onOpenSession}/> : null}
+    {members.length > 1 ? board : null}
     {changes.files.length > 0 || others.length > 0 || props.total > 0 ? <ChangesSection changes={changes} total={props.total} others={others} workspace={session.workspace} showChanges={props.showChanges}/> : null}
     {window !== null ? <ContextSection window={window} runs={runs} relay={props.relay?.view} name={props.name} onOpen={() => props.onTab("context")}/> : null}
     {props.kept || active.length > 0 || session.retention?.upgraded || session.retention?.outside ? <Section title="后台" figure={props.kept || active.length > 0 ? (active.length + (props.kept ? 1 : 0)) + " 项在跑" : null} onOpen={() => props.onTab("process")}>
@@ -449,6 +466,7 @@ function Overview(props: PanelProps & { readonly selected: PublicRun | null; rea
     <EnvironmentSection session={session} stamp={session.id + ":" + runs.length + ":" + (last?.status ?? "")} load={props.loadWorkspace} onReveal={props.onReveal} tools={props.tools} onSaid={props.onSaid} suggestion={oneLine(recap?.summary ?? session.title)}
       harness={selected ? null : <Line icon={<BrandIcon brand={session.selection.harnessId} name={props.name(session.selection.harnessId)} size={16}/>}><span className="text-fg">{props.name(session.selection.harnessId)}</span></Line>}/>
     {selected ? <div ref={facts}><RunSection {...props} run={selected} runs={runs}/></div> : null}
+    {members.length > 1 ? null : board}
   </div>;
 }
 /**
@@ -469,7 +487,10 @@ function EnvironmentSection({ session, stamp, load, onReveal, harness, tools, on
     return () => controller.abort();
   }, [stamp, session.id, again]);
   const git = read?.id === session.id ? read.facts.git : undefined, path = session.workspace, shown = homePath(path) || folderName(path);
-  const folder = <><span className="flex size-4 flex-none items-center justify-center text-fg-3"><Folder size={14} aria-hidden="true"/></span><span className="mono min-w-0 flex-1 trunc text-caption text-fg-2">{shown}</span></>;
+  // The folder by its name, then where it is: the name is what is looked for, and stays whole when the row is short.
+  const leaf = folderName(path), above = leaf !== "" && shown.endsWith("/" + leaf) ? shown.slice(0, -leaf.length - 1) : "";
+  const folder = <><span className="flex size-4 flex-none items-center justify-center text-fg-3"><Folder size={14} aria-hidden="true"/></span>
+    <span className="max-w-[70%] flex-none trunc text-fg">{above === "" ? shown : leaf}</span><span className="min-w-0 flex-1 trunc text-caption text-fg-3">{above}</span></>;
   return <Section title="环境"><div className="mt-1 flex flex-col">
     {harness}
     {onReveal ? <button type="button" className="row -mx-2 flex min-h-7 min-w-0 items-center gap-2.5 border-none bg-transparent px-2 text-left text-ui-sm hover:bg-subtle" title={"在访达中显示 " + path} onClick={() => onReveal()}>{folder}</button>
@@ -478,8 +499,12 @@ function EnvironmentSection({ session, stamp, load, onReveal, harness, tools, on
       <span className="flex size-4 flex-none items-center justify-center text-fg-3"><GitBranchPlus size={14} aria-hidden="true"/></span>
       <span className="min-w-0 flex-1 trunc text-fg-2">{session.worktree.inherited ? "和原对话共用工作树" : "自己的工作树，从 " + folderName(session.worktree.root) + " 分出"}</span></div> : null}
     {tools?.editors?.length && tools.openIn ? <EditorRow editors={tools.editors} onOpenIn={tools.openIn}/> : null}
-    {git !== undefined ? <Line icon={<GitBranch size={14} aria-hidden="true"/>} value={git.dirty > 0 && tools?.commit && tools.git
-      ? <button type="button" className="link-btn text-ui-sm" onClick={() => setCommitting(true)}>{git.dirty} 个文件未提交 · 提交…</button> : git.dirty > 0 ? git.dirty + " 个文件未提交" : "没有未提交的改动"}><span className="mono text-caption">{git.branch ?? "不在分支上"}</span></Line> : null}
+    {git !== undefined ? <div className="flex min-h-7 min-w-0 items-center gap-2.5 text-ui-sm">
+      <span className="flex size-4 flex-none items-center justify-center text-fg-3"><GitBranch size={14} aria-hidden="true"/></span>
+      <span className={cn("min-w-0 flex-1 trunc", git.branch === null ? "text-fg-2" : "text-fg")} title={git.branch ?? undefined}>{git.branch ?? "不在分支上"}</span>
+      {git.dirty > 0 ? <span className="flex-none text-caption text-fg-3 tabular-nums">{git.dirty} 个文件未提交</span> : null}
+      {git.dirty > 0 && tools?.commit && tools.git ? <button type="button" className="quiet -mr-2 h-6 px-2 text-accent-text hover:text-accent-text" onClick={() => setCommitting(true)}>提交…</button> : null}
+    </div> : null}
     {tools?.commit && tools.git ? <CommitDialog open={committing} onClose={() => setCommitting(false)} access={tools} suggestion={suggestion} onDone={said => { onSaid?.(said); setAgain(value => value + 1); }}/> : null}
     {git !== undefined && tools?.prStatus ? <PullRequestRow access={tools} stamp={stamp + ":" + again} suggestion={session.title || suggestion} onSaid={onSaid}/> : null}
   </div></Section>;
@@ -487,12 +512,10 @@ function EnvironmentSection({ session, stamp, load, onReveal, harness, tools, on
 /** The task list: a mark per step (done, in hand, to do), the steps themselves, and what the latest Turn said it came to. */
 function ProgressSection({ plan, recap }: { readonly plan: Planned | undefined; readonly recap: RecapItem | undefined }) {
   const steps = plan?.steps ?? [], done = steps.filter(step => step.status === "completed").length;
-  return <Section title="进度" figure={steps.length > 0 ? <span>{plan!.owner ? <span className="text-fg-3">{plan!.owner} · </span> : null}{done} / {steps.length}</span> : null}>
+  return <Section title="进度" figure={steps.length > 0 ? <span>{plan!.owner ? <span className="text-fg-3">{plan!.owner} · </span> : null}<span aria-label={`已完成 ${done} 步，共 ${steps.length} 步`}>{done} / {steps.length}</span></span> : null}>
     {steps.length > 0 ? <>
-      <div className="mt-2 flex h-[3px] gap-[3px]" role="img" aria-label={`已完成 ${done} 步，共 ${steps.length} 步`}>{steps.map((step, index) =>
-        <span key={index} className={cn("h-full min-w-0 flex-1 rounded-full transition-colors duration-200 ease-standard", step.status === "completed" ? "bg-fg-3" : step.status === "in_progress" ? "bg-run" : "bg-hover")}/>)}</div>
-      {plan!.explanation ? <p className="m-0 mt-2.5 text-ui-sm text-fg-2">{plan!.explanation}</p> : null}
-      <ol className="native-plan m-0 mt-2.5 flex list-none flex-col gap-1.5 p-0" aria-label="计划">{planRows(steps).map((row, at) => {
+      {plan!.explanation ? <p className="m-0 mt-1 text-ui-sm text-fg-2">{plan!.explanation}</p> : null}
+      <ol className="native-plan m-0 mt-1.5 flex list-none flex-col gap-1.5 p-0" aria-label="计划">{planRows(steps).map((row, at) => {
         if (row.kind === "fold") return <li key={"fold" + at} className="pl-[23px] text-caption text-fg-3">另外 {row.count} 步</li>;
         const step = steps[row.index]!;
         return <li key={row.index} className="flex items-start gap-2 text-ui-sm">
@@ -503,7 +526,7 @@ function ProgressSection({ plan, recap }: { readonly plan: Planned | undefined; 
         </li>;
       })}</ol>
     </> : null}
-    {recap !== undefined ? <div className={cn("flex flex-col gap-1 border-l-2 border-line pl-2.5", steps.length > 0 ? "mt-3" : "mt-2")}>
+    {recap !== undefined ? <div className={cn("flex flex-col gap-1", steps.length > 0 ? "mt-2.5 hairline-t pt-2.5" : "mt-1")}>
       <p className="m-0 text-ui-sm break-words whitespace-pre-wrap text-fg-2">{recap.summary}</p>
       {recap.ask ? <p className="m-0 text-ui-sm font-medium break-words">{recap.ask}</p> : null}
     </div> : null}
@@ -514,14 +537,20 @@ function TaskSection({ task, members, current, name, onOpenSession }: { readonly
   const entries = task.task?.board.entries ?? [], many = members.length > 1;
   const [adding, setAdding] = useState(false);
   const harnesses = new Set(members.map(member => member.harnessId)).size;
-  const add = adding ? null : <button type="button" className="icon-btn size-6 text-fg-3" aria-label="加一条所有 Harness 都要遵守的要求" title="加一条所有 Harness 都要遵守的要求" onClick={() => setAdding(true)}><Plus size={14}/></button>;
-  return <Section title="这件任务" figure={many ? <span>{members.length} 段对话{harnesses > 1 ? " · " + harnesses + " 个 Harness" : ""}</span> : add}>
-    {many ? <div className="-mx-2 mt-1.5"><TaskRoster members={members} current={current} onOpen={onOpenSession}/></div> : null}
-    {many ? <div className="mt-2.5 flex min-h-6 items-center gap-2"><span className="text-caption text-fg-3">都要遵守的</span><span className="ml-auto flex">{add}</span></div> : null}
-    <div className={cn(!many && entries.length > 0 && "mt-1")}><BoardEntries entries={entries} busy={task.busy} onForget={id => task.change({ forget: id })} name={name}/></div>
+  const words = "加一条所有 Harness 都要遵守的要求";
+  // Nothing on the board and no one else on the task: only the way to begin one, as quiet as the board is rare.
+  if (!many && entries.length === 0 && !adding) return <button type="button" className="quiet board-start self-start text-fg-3" title={words} onClick={() => setAdding(true)}><Plus size={13} aria-hidden="true"/>加一条要求</button>;
+  const add = adding ? null : <button type="button" className="icon-btn -my-0.5 -mr-1 size-6 text-fg-3" aria-label={words} title={words} onClick={() => setAdding(true)}><Plus size={14}/></button>;
+  const board = <>
+    <BoardEntries entries={entries} busy={task.busy} onForget={id => task.change({ forget: id })} name={name}/>
     {adding ? <div className="mt-1.5"><BoardAdd busy={task.busy} autoFocus onClose={() => setAdding(false)} onAdd={(text, done) => task.change({ kind: "constraint", text }, () => { done(); setAdding(false); })}/></div> : null}
     {task.problem ? <p className="m-0 mt-1.5 text-caption text-red" role="alert">{task.problem}</p> : null}
-  </Section>;
+  </>;
+  return many ? <Section title="这件任务" figure={<span>{members.length} 段对话{harnesses > 1 ? " · " + harnesses + " 个 Harness" : ""}</span>}>
+    <div className="-mx-2 mt-1"><TaskRoster members={members} current={current} onOpen={onOpenSession}/></div>
+    <div className="mt-2 flex min-h-6 items-center gap-2"><span className={SECTION_TITLE}>任务板</span><span className="ml-auto flex">{add}</span></div>
+    {board}
+  </Section> : <Section title="任务板" figure={add}>{board}</Section>;
 }
 /** The files changed: the conversation's own with their lines, and how many the other conversations of the task changed. */
 function ChangesSection({ changes, total, others, workspace, showChanges }: { readonly changes: ConversationChanges; readonly total: number; readonly others: TaskSnapshot["members"]; readonly workspace: string; readonly showChanges: (asked?: Omit<ChangesWant, "at">) => void }) {
@@ -552,9 +581,9 @@ function ContextSection({ window, runs, relay, name, onOpen }: { readonly window
   const packet = relay?.packets.at(-1), event = contextEvents(runs)[0];
   return <Section title="上下文" onOpen={onOpen} figure={<><span className="text-fg-3" title={window.harness + " 报的 tokens"}>{tokens(window.used)}{window.size === null ? "" : " / " + tokens(window.size)}</span>{percent(window) ? <span className="font-medium text-fg">{percent(window)}</span> : null}</>}>
     <WindowBar window={window} className="mt-1.5 mb-0.5"/>
-    {event || packet ? <div className="mt-1.5 flex flex-col">
-      {event ? <Line wrap icon={<Shrink size={14} aria-hidden="true"/>}>第 {event.n} 轮 · {event.text}</Line> : null}
-      {packet ? <Line wrap icon={<ArrowRightLeft size={14} aria-hidden="true"/>}>交接单 #{packet.number} 交给 {name(packet.target.harnessId)} · {packetFacts(packet)}</Line> : null}
+    {event || packet ? <div className="mt-1 flex flex-col">
+      {event ? <Line icon={<Shrink size={14} aria-hidden="true"/>} title={"第 " + event.n + " 轮 · " + event.text} value={<span className="text-caption text-fg-3">第 {event.n} 轮</span>}>{event.text}</Line> : null}
+      {packet ? <Line icon={<ArrowRightLeft size={14} aria-hidden="true"/>} title={packetFacts(packet)} value={<span className="text-caption text-fg-3">第 {packet.runIndex + 1} 轮</span>}>交接单 #{packet.number} 交给 {name(packet.target.harnessId)}</Line> : null}
     </div> : null}
   </Section>;
 }
@@ -566,17 +595,19 @@ function ContextPage({ window, runs, relay, name }: { readonly window: WindowUse
   const events = contextEvents(runs);
   return <div className="context-page flex flex-col gap-2 px-2.5 pb-3">
     {window !== null ? <section className="flex flex-col rounded-card bg-surface px-3 pt-3 pb-3 shadow-hairline" aria-label="上下文窗口">
-      <div className="flex items-baseline gap-2"><span className="text-[20px] leading-[26px] font-medium tabular-nums">{percent(window) ?? tokens(window.used)}</span>
-        <span className="text-caption text-fg-3">{window.size === null ? "tokens，这个 Harness 没有报窗口大小" : "的窗口已用"}</span></div>
+      {/* How full, and the exact count beside it; who told of it, and when, under the bar. */}
+      <div className="flex items-baseline gap-1.5"><span className="text-[20px] leading-[26px] font-medium tabular-nums">{percent(window) ?? tokens(window.used)}</span>
+        <span className="text-caption text-fg-3">{window.size === null ? "tokens" : "已用"}</span>
+        {window.size === null ? null : <span className="ml-auto text-caption text-fg-2 tabular-nums" title="tokens">{window.used.toLocaleString()} / {window.size.toLocaleString()}</span>}</div>
       <WindowBar window={window} className="mt-2.5"/>
       <p className="m-0 mt-2.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-3"><BrandIcon brand={window.harnessId} name={window.harness} size={16}/>
-        <span className="min-w-0 trunc">{window.harness} 在第 {window.n} 轮报的：<span className="text-fg-2 tabular-nums">{window.used.toLocaleString()}{window.size === null ? "" : " / " + window.size.toLocaleString()}</span> tokens</span></p>
+        <span className="min-w-0 trunc">{window.harness} 在第 {window.n} 轮报的{window.size === null ? "，没有报窗口大小" : ""}</span></p>
     </section> : null}
-    {events.length > 0 ? <section className="flex flex-col gap-1 rounded-card bg-surface px-3 pt-2.5 pb-3 shadow-hairline" aria-label="上下文的变化">
-      <span className="text-caption text-fg-3">发生过的</span>
-      <ul className="m-0 flex list-none flex-col gap-1.5 p-0">{events.map((event, index) => <li key={index} className="flex min-w-0 items-baseline gap-2 text-ui-sm"><span className="w-[52px] flex-none text-caption text-fg-3 tabular-nums">第 {event.n} 轮</span><span className="min-w-0 break-words">{event.text}</span></li>)}</ul>
+    {events.length > 0 ? <section className="flex flex-col rounded-card bg-surface px-3 pt-2 pb-2.5 shadow-hairline" aria-label="上下文的变化">
+      <span className={cn("flex min-h-6 items-center", SECTION_TITLE)}>发生过的</span>
+      <ul className="m-0 mt-0.5 flex list-none flex-col gap-1.5 p-0">{events.map((event, index) => <li key={index} className="flex min-w-0 items-baseline gap-2 text-ui-sm"><span className="min-w-0 flex-1 break-words">{event.text}</span><span className="flex-none text-caption text-fg-3 tabular-nums">第 {event.n} 轮</span></li>)}</ul>
     </section> : null}
-    {relay ? <div className="rounded-card bg-surface shadow-hairline [&>.relay-details]:px-3 [&>.relay-details]:pt-2.5 [&>.relay-details]:pb-3"><RelayDetails view={relay.view} name={id => name(id)} onViewPacket={relay.onViewPacket}/></div> : null}
+    {relay ? <RelayDetails view={relay.view} name={id => name(id)} onViewPacket={relay.onViewPacket}/> : null}
   </div>;
 }
 
@@ -586,9 +617,9 @@ function ContextPage({ window, runs, relay, name }: { readonly window: WindowUse
  */
 function RunTitle({ runs, run, onRun }: { readonly runs: readonly PublicRun[]; readonly run: PublicRun; readonly onRun: (id: string) => void }) {
   const n = run.protocol?.n ?? runs.indexOf(run) + 1;
-  if (runs.length < 2) return <h3 className="m-0 flex-none text-ui-sm font-medium text-fg-2">本轮</h3>;
-  return <h3 className="relative m-0 -ml-1.5 flex flex-none items-center gap-0.5 rounded-row py-0.5 pr-1 pl-1.5 text-ui-sm font-medium text-fg-2 focus-within:shadow-focus hover:bg-subtle hover:text-fg">
-    第 {n} 轮<ChevronDown size={12} aria-hidden="true" className="text-fg-3"/>
+  if (runs.length < 2) return <h3 className={cn("m-0 flex-none", SECTION_TITLE)}>本轮</h3>;
+  return <h3 className={cn("relative m-0 -ml-1.5 flex flex-none items-center gap-0.5 rounded-row py-0.5 pr-1 pl-1.5 focus-within:shadow-focus hover:bg-subtle hover:text-fg", SECTION_TITLE)}>
+    第 {n} 轮<ChevronDown size={11} aria-hidden="true"/>
     <select className="absolute inset-0 size-full cursor-pointer appearance-none opacity-0" value={run.id} onChange={event => onRun(event.target.value)} aria-label="选择回合">
       {runs.map((item, index) => <option key={item.id} value={item.id}>第 {item.protocol?.n ?? index + 1} 轮 · {[...item.input].slice(0, 28).join("")}{[...item.input].length > 28 ? "…" : ""}</option>)}
     </select>
@@ -605,7 +636,7 @@ function FileDiff({ file, workspace, open, wrap, split, onToggle, name, onReveal
     readonly depth?: number; readonly label?: string | undefined }) {
   const panel = useId(), row = useRef<HTMLLIElement>(null), shown = workspacePath(file.path, workspace);
   // The file's row stays at the top of the panel while its diff scrolls under it (after T3 Code's sticky headers).
-  return <li ref={row} className="group/file relative flex min-w-0 flex-col" data-path={file.path}>
+  return <li ref={row} className="file-card group/file relative flex min-w-0 flex-col" data-path={file.path}>
     <div className="sticky top-0 z-[2] bg-surface">
     <button type="button" className="row flex h-8 w-full min-w-0 items-center gap-2 border-none bg-app pr-2 text-left text-ui-sm text-fg hover:bg-subtle" style={{ paddingLeft: 8 + depth * 14 }} aria-expanded={open} aria-controls={panel} onClick={onToggle} title={file.path}>
       <ChevronRight size={12} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
@@ -620,7 +651,7 @@ function FileDiff({ file, workspace, open, wrap, split, onToggle, name, onReveal
     </span>
     </div>
     <Collapsible open={open} id={panel}>
-      <section className="mt-0.5 mb-2 min-w-0 overflow-hidden rounded-block bg-surface shadow-hairline" aria-label={"差异：" + shown}>
+      <section className="min-w-0 overflow-hidden hairline-t" aria-label={"差异：" + shown}>
         {file.diffs.length > 0 ? file.diffs.map((diff, index) => <div key={index} className={cn(index > 0 && "hairline-t")}><DiffBody file={{ ...diff, path: shown }} wrap={wrap} split={split} onRemark={onRemark}/></div>)
           : <p className="m-0 px-3 py-2 text-caption text-fg-3">没有差异文本</p>}
       </section>
@@ -687,7 +718,7 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
   return <div ref={setFrame} className="flex flex-col">
     <div className="flex min-h-11 flex-wrap items-center gap-x-2 gap-y-1 py-1.5 pr-2.5 pl-3.5">
       {/* The Hub's scopes, and Git's beside them; while a Git scope is shown, none of the Hub's is chosen. What does not fit beside them goes under them. */}
-      <Segmented label="改动范围" value={gitScope !== null ? "none" as unknown as ChangesScope : shownScope} onChange={value => { setGitScope(null); setScope(value); }}
+      <Segmented className="segmented-quiet" label="改动范围" value={gitScope !== null ? "none" as unknown as ChangesScope : shownScope} onChange={value => { setGitScope(null); setScope(value); }}
         options={[{ value: "turn" as const, label: "本轮" }, { value: "all" as const, label: "这段对话" }, ...(others.length > 0 ? [{ value: "task" as const, label: "其他对话" }] : [])]}/>
       {git !== undefined ? <GitScopeMenu access={git} scope={gitScope} onScope={setGitScope}/> : null}
       {gitScope !== null ? <span className="ml-auto flex flex-none items-center gap-1">
@@ -704,12 +735,15 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
     </div>
     {gitScope !== null && git !== undefined ? <GitChanges access={git} scope={gitScope} workspace={workspace} wrap={wrap} split={side} whitespace={whitespace} tree={tree} onRemark={onRemark}
       stamp={String(changes.edits) + ":" + changes.files.length + ":" + (selected?.id ?? "") + ":" + (selected?.status ?? "")}/>
-      : shownScope === "task" ? <div className="flex flex-col gap-3 px-2.5 pb-4">{others.map(member => <section key={member.sessionId} className="flex min-w-0 flex-col" aria-label={member.harness + " 改动的文件"}>
-      <div className="flex min-w-0 items-center gap-2 px-2 py-1.5"><BrandIcon brand={member.harnessId} name={member.harness} size={18}/>
-        <span className="flex min-w-0 flex-1 flex-col"><span className="trunc text-ui-sm">{oneLine(member.task) || member.harness}</span><span className="trunc text-caption text-fg-3">{member.harness} · {member.files.length} 个文件</span></span>
-        {onOpenSession ? <button type="button" className="link-btn flex-none text-caption" onClick={() => onOpenSession(member.sessionId)}>打开这段对话</button> : null}</div>
-      <ul className="m-0 flex list-none flex-col gap-px p-0">{member.files.map(path => <li key={path}><FileRow path={path} workspace={workspace}/></li>)}</ul>
-    </section>)}</div> : <>
+      : shownScope === "task" ? <div className="flex flex-col gap-2 px-2.5 pb-3">{others.map(member => {
+      // One conversation a module: who it is and what it was asked, which opens it, and under that the files it changed.
+      const who = <><BrandIcon brand={member.harnessId} name={member.harness} size={18} className="mt-px"/>
+        <span className="flex min-w-0 flex-1 flex-col"><span className="trunc text-ui-sm text-fg">{oneLine(member.task) || member.harness}</span><span className="trunc text-caption text-fg-3">{member.harness} · {member.files.length} 个文件</span></span></>;
+      return <section key={member.sessionId} className="flex min-w-0 flex-col rounded-card bg-surface p-1 shadow-hairline" aria-label={member.harness + " 改动的文件"}>
+        {onOpenSession ? <button type="button" className="row flex min-w-0 items-start gap-2 border-none bg-transparent px-2 py-1.5 text-left hover:bg-subtle" title="打开这段对话" onClick={() => onOpenSession(member.sessionId)}>{who}
+          <ChevronRight size={13} aria-hidden="true" className="mt-1 flex-none text-fg-3"/></button> : <div className="flex min-w-0 items-start gap-2 px-2 py-1.5">{who}</div>}
+        <ul className="m-0 flex list-none flex-col gap-px p-0">{member.files.map(path => <li key={path}><FileRow path={path} workspace={workspace}/></li>)}</ul>
+      </section>; })}</div> : <>
       {files.length ? <ul ref={list} className="m-0 flex list-none flex-col gap-px px-2.5 pb-2" aria-label="改动的文件">{tree
         ? <FileTree items={files} workspace={workspace} pathOf={file => file.path} linesOf={file => ({ add: file.add, del: file.del })} renderFile={(file, depth, label) =>
           <FileDiff key={file.path} file={file} workspace={workspace} open={open.has(file.path)} wrap={wrap} split={side} onToggle={() => toggle(file.path)} name={name} onReveal={onReveal} onRemark={onRemark} onOpenFile={onOpenFile} depth={depth} label={label}/>}/>
@@ -717,19 +751,20 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
       {changes.unread > 0 ? <p className="m-0 flex items-center gap-2 px-4 pb-3 text-caption text-fg-3"><button type="button" className="link-btn text-caption" onClick={changes.more}>更早的 {changes.unread} 处编辑</button></p> : null}
       {changes.loading ? <p className="m-0 flex items-center gap-1.5 px-4 pb-3 text-caption text-fg-3"><Spinner size={12} label=""/>正在读取改动…</p> : null}
       {changes.failures.length ? <p className="m-0 px-4 pb-3 text-caption text-red">{changes.failures.length} 处改动读取失败：{changes.failures[0]}</p> : null}
-      {files.length === 0 && !changes.loading && !changes.failures.length ? <p className="m-0 px-4 pb-4 text-caption text-fg-3">{shownScope === "turn" && changes.files.length ? "这一轮没有改动文件" : "这段对话没有改动文件"}</p> : null}
+      {files.length === 0 && !changes.loading && !changes.failures.length ? <EmptyState icon={<FileText size={28}/>} title={shownScope === "turn" && changes.files.length ? "这一轮没有改动文件" : "这段对话没有改动文件"}/> : null}
     </>}
   </div>;
 }
 
 /** How a Turn spent its time, as one bar: starting the program, waiting for the first output, then the reply and its tools. */
 function Phases({ run }: { readonly run: PublicRun }) {
-  const now = useNow(!finished(run.status)), timing = run.timing;
+  const live = !finished(run.status), now = useNow(live), timing = run.timing;
   if (!timing) return null;
+  // The phase a Turn in progress is in runs to this moment: the bar is never one finished phase standing for the whole.
   const rows: [string, number | undefined, number | undefined, string][] = [
-    ["启动", timing.preparingAt, timing.readyAt, "bg-placeholder"],
-    ["等首个输出", timing.dispatchedAt, timing.firstOutputAt, "bg-fg-2"],
-    ["回复与工具", timing.firstOutputAt, timing.endedAt ?? (finished(run.status) ? undefined : now), "bg-accent"],
+    ["启动", timing.preparingAt, timing.readyAt ?? (live && timing.dispatchedAt === undefined ? now : undefined), "bg-fg-3/50"],
+    ["等首个输出", timing.dispatchedAt, timing.firstOutputAt ?? (live ? now : undefined), "bg-fg-2"],
+    ["回复与工具", timing.firstOutputAt, timing.endedAt ?? (live ? now : undefined), "bg-accent"],
   ];
   const visible = rows.flatMap(([label, from, to, tone]) => from !== undefined && to !== undefined ? [{ label, span: Math.max(0, to - from), tone }] : []);
   const total = visible.reduce((sum, row) => sum + row.span, 0);
@@ -755,13 +790,14 @@ function RunProcess({ run, open, onToggle, loadToolDetail, name, now, waiting }:
       <BrandIcon brand={turn?.executor.harnessId ?? run.selection.harnessId} name={harness} size={18} className="mt-px"/>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="trunc text-ui-sm text-fg">{oneLine(run.input) || harness}</span>
-        <span className="trunc text-caption text-fg-3">{[harness, summary, time].filter(Boolean).join(" · ")}</span>
+        {/* What it did is said once: here while the Turn is closed, by its steps while it is open. */}
+        <span className="trunc text-caption text-fg-3">{[harness, open ? "" : summary, time].filter(Boolean).join(" · ")}</span>
       </span>
       {active ? <span className="mt-[7px] flex flex-none">{waiting ? <StatusDot tone="wait" label={waiting}/> : stateOf(run) === "queued" ? <StatusDot tone="idle" label={TURN_STATUS_WORDS.queued}/> : <StatusDot tone="run" label={TURN_STATUS_WORDS.running}/>}</span> : null}
       <ChevronRight size={12} aria-hidden="true" className={cn("mt-1 flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
     </button>
     <Collapsible open={open} id={panel}>
-      <div className="mt-0.5 mr-2 mb-2.5 ml-[21px] flex min-w-0 flex-col border-l border-line pl-2">
+      <div className="run-steps mr-2 mb-2.5 ml-[26px] flex min-w-0 flex-col pl-2">
         {turn === undefined ? <p className="m-0 px-1.5 py-1 text-caption text-red">这一轮无法显示：{run.protocolProblem ?? "服务没有给出这一轮的协议数据"}</p>
           : ownWork(turn).length || turn.items.some(item => item.type === "reasoning" || item.type === "context_event") ? <TurnSteps run={run} turn={turn} loadDetail={loadToolDetail} asking={waiting === "等你批准"}/>
           : <p className="m-0 px-1.5 py-1 text-caption text-fg-3">没有调用工具</p>}
@@ -778,15 +814,18 @@ function Process({ run, runs, onRun, loadToolDetail, name, waiting }: { readonly
 }
 function Background({ session, kept, items, busy, onEndProcess, name }: { readonly session: ConversationView; readonly kept: NonNullable<SessionHeadView["retention"]>["process"] | null; readonly items: readonly BackgroundRow[]; readonly busy: boolean; readonly onEndProcess?: (() => void) | undefined; readonly name: (id: string | undefined) => string }) {
   const now = useNow(kept !== null), keeper = kept ? name(kept.harnessId) : "原程序";
-  return <div className="flex flex-col gap-3 px-4 pt-3 pb-4 [.background-module_&]:px-3 [.background-module_&]:pt-1.5 [.background-module_&]:pb-3">
-    {kept ? <div className="kept-panel flex flex-col gap-2 rounded-block bg-surface p-3 shadow-hairline [.background-module_&]:bg-transparent [.background-module_&]:p-0 [.background-module_&]:shadow-none">
-      <div className="flex items-center gap-2"><StatusDot tone="run"/><strong className="text-ui-sm font-medium">{keeper} 保留在后台</strong></div>
-      <div className="flex flex-wrap items-center gap-3 text-caption text-fg-3"><span>后台活动 {kept.backgroundUpdates} 条</span><span>{Math.max(1, Math.round((kept.idleEndsAt - now) / 60000))} 分钟后结束</span></div>
-      {onEndProcess ? <button type="button" className="btn btn-sm self-start" disabled={busy} onClick={onEndProcess}>结束后台进程</button> : null}
+  // On the page of every Turn's steps each part is a module of its own; inside the overview's module they are its rows.
+  const tile = "rounded-card bg-surface shadow-hairline [.background-module_&]:rounded-none [.background-module_&]:bg-transparent [.background-module_&]:p-0 [.background-module_&]:shadow-none";
+  return <div className="flex flex-col gap-2 px-2.5 pb-2 [.background-module_&]:gap-1.5 [.background-module_&]:px-3 [.background-module_&]:pt-1 [.background-module_&]:pb-2.5">
+    {kept ? <div className={cn("kept-panel flex min-w-0 items-start gap-2.5 px-3 py-2.5", tile)}>
+      <span className="mt-[7px] flex flex-none"><StatusDot tone="run"/></span>
+      <span className="flex min-w-0 flex-1 flex-col"><span className="trunc text-ui-sm text-fg">{keeper} 保留在后台</span>
+        <span className="text-caption text-fg-3">{Math.max(1, Math.round((kept.idleEndsAt - now) / 60000))} 分钟后结束{kept.backgroundUpdates > 0 ? " · 后台活动 " + kept.backgroundUpdates + " 条" : ""}</span></span>
+      {onEndProcess ? <button type="button" className="quiet -mr-1.5 h-6 flex-none px-2" disabled={busy} aria-label="结束后台进程" title="结束后台进程" onClick={onEndProcess}>结束</button> : null}
     </div> : null}
     {session.retention?.upgraded ? <p className="kept-upgraded m-0 rounded-block bg-subtle px-3 py-2.5 text-ui-sm text-fg-2">升级 {name(session.retention.upgraded.harnessId)} 前，HarnessHub 关闭了这个对话保留的后台进程。下一条消息会用新版本重新启动原程序。</p> : null}
     {session.retention?.outside ? <p className="m-0 rounded-block bg-subtle px-3 py-2.5 text-ui-sm text-fg-2">原程序的后台任务可能仍在运行（{session.retention.outside.count} 个进程）：它们已离开原程序的进程组，HarnessHub 没有结束它们。</p> : null}
-    {items.length ? <ul className="m-0 flex list-none flex-col gap-px p-0">{items.map(({ item }) => <li key={item.id} className="flex min-h-[30px] items-center gap-2.5 px-1 text-ui-sm">
+    {items.length ? <ul className={cn("m-0 flex list-none flex-col gap-px px-2 py-1.5", tile)}>{items.map(({ item }) => <li key={item.id} className="flex min-h-[30px] items-center gap-2.5 px-1 text-ui-sm">
       <StatusDot tone={item.status === "running" ? "run" : item.status === "failed" ? "fail" : "idle"}/>
       <span className="min-w-0 flex-1"><span className="text-fg-3">{item.type === "subagent" ? "子任务" : "后台命令"} · </span>{item.type === "subagent" ? item.title : oneLine(item.command)}</span>
       <span className={cn("flex-none text-caption", item.status === "failed" ? "text-red" : "text-fg-3")}>{ITEM_STATUS_WORDS[item.status]}</span></li>)}</ul> : null}
@@ -807,7 +846,8 @@ function RunSection(props: PanelProps & { readonly run: PublicRun; readonly runs
     ...(counted && usage!.output !== undefined ? [{ label: "输出", value: tokens(usage!.output), title: usage!.output.toLocaleString() + " tokens" }] : []),
     ...(usage?.cost !== undefined && usage.cost.amount > 0 ? [{ label: usage.cost.scope === "turn" ? "费用" : "累计费用", value: moneyText(usage.cost), title: usage.cost.scope === "turn" ? "这一轮" : usage.cost.scope === "session" ? "原生会话累计" : "整个对话累计" }] : []),
   ];
-  return <Section title="本轮" heading={<RunTitle runs={props.runs} run={run} onRun={props.onRun}/>} figure={<span className={cn("run-state min-w-0 trunc", !terminal && "text-accent-text")} title={state}>{state}</span>} className="execution-details">
+  return <Section title="本轮" heading={<RunTitle runs={props.runs} run={run} onRun={props.onRun}/>} className="execution-details" figure={<><span className={cn("run-state min-w-0 trunc", !terminal && "text-accent-text")} title={state}>{state}</span>
+    {props.loadDiagnostics && terminal ? <RunDiagnostics key={run.id} runId={run.id} load={props.loadDiagnostics} onSaid={props.onSaid}/> : null}</>}>
     <div className="mt-1 flex flex-col">
       <Line icon={<BrandIcon brand={harnessId} name={turn?.executor.harness ?? harness?.name ?? harnessId} size={16}/>} value={model ? <span title={model.id}>{model.label}</span> : null}>
         <span className="text-fg">{turn?.executor.harness ?? harness?.name ?? harnessId}</span>{version ? <span className="text-fg-3"> {version}</span> : null}</Line>
@@ -819,6 +859,5 @@ function RunSection(props: PanelProps & { readonly run: PublicRun; readonly runs
     {turn === undefined ? <p className="m-0 mt-3 text-caption text-red">这一轮无法显示：{run.protocolProblem ?? "服务没有给出这一轮的协议数据"}</p> : null}
     {run.error ? <p className="m-0 mt-3 text-caption text-fg-2">错误代码 <code className="text-code">{run.error.code}</code></p> : null}
     {turn?.status === "unknown" ? <p className="m-0 mt-3 rounded-block bg-amber-soft px-3 py-2.5 text-ui-sm text-amber-on-tint">结果未知，不会自动重新执行。</p> : null}
-    {props.loadDiagnostics && terminal ? <div className="mt-3.5"><RunDiagnostics key={run.id} runId={run.id} load={props.loadDiagnostics}/></div> : null}
   </Section>;
 }

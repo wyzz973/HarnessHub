@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { deliveryWords, evidenceWords, packetFacts, syncWords } from "../lib/relay-state.js";
 import type { RelayApi, RelayPacket, RelayView } from "../relay.js";
 import { Dialog, DIALOG_ACTIONS, DIALOG_COLUMN, DialogClose, useClosingValue } from "../ui/overlay.js";
-import { Badge, EmptyState, Spinner, useCopy } from "../ui/primitives.js";
+import { Badge, Spinner, useCopy } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
 
 /** A packet's text as it was stored when it was sent: nothing is processed again when it is read (relay-architecture §10.2). */
@@ -51,28 +51,29 @@ export function RelayPacketDialog({ api, sessionId, packet, onClose, name }: {
  * sentence each, and the packets that were sent, with how each fared and a way to read it.
  */
 export function RelayDetails({ view, name, onViewPacket }: { readonly view: RelayView; readonly name: (id: string) => string; readonly onViewPacket: (packetId: string) => void }) {
-  return <div className="relay-details flex flex-col gap-5 px-[18px] pt-3.5 pb-4 text-ui-sm">
-    <section className="flex flex-col gap-1" aria-label="各 Harness 的同步状态">
-      <span className="text-caption text-fg-3">各 Harness 的同步状态</span>
-      {view.bindings.length ? <ul className="m-0 flex list-none flex-col p-0">{view.bindings.map(binding => <li key={binding.harnessId + ":" + binding.controlId} className="relay-binding flex min-w-0 flex-col gap-0.5 py-2 hairline-b last:border-b-0" data-sync={binding.sync}>
-        <div className="flex min-w-0 items-center gap-2"><BrandIcon brand={binding.harnessId} name={name(binding.harnessId)} size={18}/>
-          <span className="min-w-0 truncate font-medium">{name(binding.harnessId)}</span></div>
-        <p className="m-0 pl-[26px] text-caption text-fg-2">{syncWords(binding)}</p>
-      </li>)}</ul> : <p className="m-0 py-2 text-caption text-fg-3">还没有 Harness 在这个对话里留下原生会话。</p>}
+  // Two modules of the panel, as its other pages are made: a quiet name, then one row a Harness or a packet — who, how it stands, and under it the facts.
+  const tile = "flex min-w-0 flex-col rounded-card bg-surface px-3 pt-2 pb-2.5 shadow-hairline", label = "flex min-h-6 items-center text-caption font-medium text-fg-3";
+  return <div className="relay-details flex flex-col gap-2 text-ui-sm">
+    <section className={tile} aria-label="各 Harness 的同步状态">
+      <span className={label}>同步状态</span>
+      {view.bindings.length ? <ul className="m-0 flex list-none flex-col p-0">{view.bindings.map(binding => <li key={binding.harnessId + ":" + binding.controlId} className="relay-binding flex min-w-0 items-start gap-2 py-1.5" data-sync={binding.sync}>
+        <BrandIcon brand={binding.harnessId} name={name(binding.harnessId)} size={18} className="mt-px"/>
+        <span className="flex min-w-0 flex-1 flex-col"><span className="min-w-0 truncate">{name(binding.harnessId)}</span><span className="text-caption text-fg-3">{syncWords(binding)}</span></span>
+      </li>)}</ul> : <p className="m-0 py-1 text-caption text-fg-3">还没有 Harness 在这个对话里留下原生会话。</p>}
     </section>
-    <section className="flex flex-col gap-1" aria-label="交接单">
-      <span className="text-caption text-fg-3">交接单</span>
+    <section className={tile} aria-label="交接单">
+      <span className={label}>交接单</span>
       {view.packets.length ? <ul className="m-0 flex list-none flex-col p-0">{view.packets.map(packet => {
         const proof = packet.delivery === "recorded" ? evidenceWords(packet.evidence) : null;
-        return <li key={packet.packetId} className="relay-packet flex min-w-0 flex-col gap-1 py-2 hairline-b last:border-b-0" data-delivery={packet.delivery ?? "unknown"}>
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="font-medium">交接单 #{packet.number}</span><span className="min-w-0 truncate text-caption text-fg-3">交给 {name(packet.target.harnessId)}</span>
-            <Badge tone={packet.delivery === "not_recorded" ? "red" : packet.delivery === "recorded" || packet.delivery === "in_flight" ? "accent" : "neutral"}>{deliveryWords(packet.delivery)}{proof === null ? "" : ` · ${proof}`}</Badge>
-            <button type="button" className="link-btn ml-auto flex-none text-caption" aria-label={`查看原文 · 交接单 #${packet.number}`} onClick={() => onViewPacket(packet.packetId)}>查看原文</button>
+        return <li key={packet.packetId} className="relay-packet flex min-w-0 flex-col gap-0.5 py-1.5" data-delivery={packet.delivery ?? "unknown"}>
+          <div className="flex min-h-6 min-w-0 items-center gap-2">
+            <span className="min-w-0 truncate"><span>交接单 #{packet.number}</span><span className="text-fg-3"> 交给 {name(packet.target.harnessId)}</span></span>
+            <Badge className="flex-none" tone={packet.delivery === "not_recorded" ? "red" : packet.delivery === "recorded" || packet.delivery === "in_flight" ? "accent" : "neutral"}>{deliveryWords(packet.delivery)}{proof === null ? "" : ` · ${proof}`}</Badge>
+            <button type="button" className="quiet -mr-2 ml-auto h-6 px-2 text-caption" aria-label={`查看原文 · 交接单 #${packet.number}`} onClick={() => onViewPacket(packet.packetId)}>原文</button>
           </div>
           <p className="m-0 text-caption text-fg-3">{packetFacts(packet)}</p>
         </li>;
-      })}</ul> : <EmptyState title="还没有交接单">把对话交给另一个 Harness 时，发出的交接单会列在这里。</EmptyState>}
+      })}</ul> : <p className="m-0 py-1 text-caption text-fg-3">把对话交给另一个 Harness 时，发出的交接单列在这里。</p>}
     </section>
   </div>;
 }
