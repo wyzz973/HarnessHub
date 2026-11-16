@@ -18,7 +18,9 @@ function writeHeight(value: number): void { try { localStorage.setItem(HEIGHT_KE
 /** A color of the page as the terminal takes it: the value of one of the page's own variables, now. */
 const color = (name: string, fallback: string): string => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 /** The terminal in the page's colors: its ground and its words, the selection, and the cursor in the accent. The sixteen colors of a program's own output stay the terminal's. */
-const palette = () => ({ background: color("--bg-app", "#ffffff"), foreground: color("--text", "#1a1a1a"), cursor: color("--accent", "#1f6feb"), cursorAccent: color("--bg-app", "#ffffff"), selectionBackground: color("--bg-selected", "rgba(0,0,0,.12)") });
+/** Whether the page stands on the window's glass: the terminal then has no ground of its own. */
+const onGlass = () => document.documentElement.dataset.material === "liquid" && document.documentElement.dataset.glass !== "page";
+const palette = () => ({ background: onGlass() ? "rgba(0, 0, 0, 0)" : color("--bg-app", "#ffffff"), foreground: color("--text", "#1a1a1a"), cursor: color("--accent", "#1f6feb"), cursorAccent: color("--bg-app", "#ffffff"), selectionBackground: color("--bg-selected", "rgba(0,0,0,.12)") });
 
 /** A script of the project, as package.json names it, and the command that runs it with the project's own package manager. */
 export interface ProjectScript { readonly name: string; readonly command: string }
@@ -174,7 +176,7 @@ function TerminalPane({ id, active, access, exited, run, onRan, onFocus, onSelec
         if (closed) return;
         // The page's monospace first; a prompt's icons (powerline, Nerd Font glyphs) come from a Nerd Font when one is installed, glyph by glyph.
         const terminal = new Terminal({ fontFamily: 'ui-monospace, "SF Mono", Menlo, Monaco, "Symbols Nerd Font Mono", "Symbols Nerd Font", "MesloLGS NF", "MesloLGS Nerd Font Mono", "Hack Nerd Font Mono", "JetBrainsMono Nerd Font Mono", "FiraCode Nerd Font Mono", monospace', fontSize: 12.5,
-          lineHeight: 1.25, cursorBlink: true, allowProposedApi: false, macOptionIsMeta: false, scrollback: 10_000, theme: palette() });
+          lineHeight: 1.25, cursorBlink: true, allowProposedApi: false, allowTransparency: true, macOptionIsMeta: false, scrollback: 10_000, theme: palette() });
         const fit = new FitAddon();
         terminal.loadAddon(fit); terminal.open(element);
         // Fitted only while it has room: a tab that is not shown has none, and keeps the size it had.

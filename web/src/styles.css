@@ -145,6 +145,22 @@
 /* A window that is not the key one gives up its accent, as the system's controls do: fills go grey, words that are links keep their color. */
 :root[data-window="inactive"] { --accent: #8E8E93; --accent-hover: #8E8E93; --accent-soft: rgba(142, 142, 147, .16); @variant dark { --accent: #636366; --accent-hover: #636366; } }
 
+/*
+ * On the window's floor of glass (desktop app, macOS 26: the floor is a sheet of the system's Liquid Glass like every other surface) a card or a
+ * block is a lighter tile of that glass, not a solid sheet, and a panel beside the content is a pane of glass as the sidebar is. What has to hide
+ * what scrolls under it (a row that stays at the top of its list) is a cover: a denser tile that blurs what passes beneath.
+ */
+:root[data-material="liquid"]:not([data-glass="page"]) {
+  --bg-surface: rgba(255, 255, 255, .5); --cover: rgba(255, 255, 255, .66);
+  @variant dark { --bg-surface: rgba(255, 255, 255, .06); --cover: rgba(255, 255, 255, .1); }
+}
+:root[data-material="liquid"]:not([data-glass="page"]) :is(.details-pane, .details-panel, .terminal-drawer, .capabilities-page) { background: transparent; box-shadow: none; }
+:root[data-material="liquid"]:not([data-glass="page"]) :is(.details-pane, .capability-matrix[data-scrolled]) .sticky { background: var(--cover); -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3); }
+:root[data-material="liquid"]:not([data-glass="page"]) .capability-matrix:not([data-scrolled]) .sticky { background: transparent; }
+:root[data-material="liquid"]:not([data-glass="page"]) .details-pane .sticky:is(button):hover { background: color-mix(in srgb, var(--cover) 92%, var(--text)); }
+:root[data-material="liquid"]:not([data-glass="page"]) .details-pane .sticky .bg-app { background: transparent; }
+:root[data-material="liquid"]:not([data-glass="page"]) .native-diff { background: var(--bg-surface); }
+
 /* With "reduce transparency" the glass is a plain surface (the window's own material answers the setting by itself). */
 @media (prefers-reduced-transparency: reduce) {
   :root { --glass: #F4F4F6; --glass-thick: #FBFBFC; --glass-clear: #F0F0F2; --glass-blur: opacity(1); @variant dark { --glass: #2C2C30; --glass-thick: #28282C; --glass-clear: #343438; } }
@@ -856,11 +872,26 @@
   :root[data-glass="system"] :is(.composer-box, .tool-group, .follow-stream, .find-bar, .floating-bar, .surface-pop, .dialog-pop, .palette-pop, .drawer-left-pop, .sheet-pop, .tooltip-pop, .toast) {
     background: var(--wash); -webkit-backdrop-filter: none; backdrop-filter: none;
   }
-  :root[data-glass="system"] :is(.dialog-pop, .palette-pop, .composer-box, .drawer-left-pop, .sheet-pop) { background: var(--wash-thick); }
+  :root[data-glass="system"] :is(.dialog-pop, .palette-pop, .composer-box, .drawer-left-pop, .sheet-pop, .drawer-pop) { background: var(--wash-thick); }
+  /* A drawer that stays beside the page (a Harness's details) is a pane on the floor as the sidebar is: nothing lies under it to be steadied. */
+  :root[data-glass="system"] .side-sheet { background: transparent; box-shadow: none; }
   :root[data-glass="system"] .tool-group { background: transparent; }
   :root[data-glass="system"] .chat-foot :is(.relay-card, .queued-message, .composer-notice, .composer-change, [role="status"].rounded-block, [role="alert"].rounded-block) { -webkit-backdrop-filter: none; backdrop-filter: none; }
-  /* The sidebar's wash lies under its glass then (in the copy behind the window), where whatever floats over the sidebar sees it too. */
-  :root[data-glass="system"] .sidebar-pane { background: transparent; }
+  /*
+   * The window's floor is a sheet of that glass as well (2026-11-16: every surface is, the one the content lies on too), laid under the whole
+   * page: the page paints no color of its own under its content, and the sidebar's pane is glass on that glass. One wash for all of it lies
+   * under the glass (in the copy behind the window). It is so from the first moment the window stands on its glass, unless the page's
+   * surfaces turn out to be its own glass (data-glass="page"), where the content layer is the solid color it always was.
+   */
+  :root[data-material="liquid"]:not([data-glass="page"]) .sidebar-pane { background: transparent; box-shadow: none; }
+  :root[data-material="liquid"]:not([data-glass="page"]) .pane-backdrop { background: transparent; }
+  /* Until the copy behind the window is there to hold the wash under the glass, the page holds it over the glass: the tone does not change when it comes. */
+  :root[data-material="liquid"]:not([data-glass]) .app-shell { background: var(--pane-wash); }
+  /* With no color to fade into, the conversation fades out itself where it passes under the toolbar and comes to the window's foot. */
+  :root[data-material="liquid"]:not([data-glass="page"]) .scroll-edge { display: none; }
+  :root[data-material="liquid"]:not([data-glass="page"]) .chat-scroll:not(.welcome-scroll) {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 44px, #000 70px, #000 calc(100% - 66px), transparent calc(100% - 46px)); mask-image: linear-gradient(to bottom, transparent 44px, #000 70px, #000 calc(100% - 66px), transparent calc(100% - 46px));
+  }
   .chat-notices:not(:empty) ~ .chat-scroll { padding-top: 16px; }
 
   /* A Turn that ends in front of the reader goes from the height it had to the height it comes to rest at without a step (ProtocolTurn's settle). */
