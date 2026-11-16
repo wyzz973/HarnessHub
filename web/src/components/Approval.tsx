@@ -221,7 +221,7 @@ export function DecisionLine({ decision }: { readonly decision: Decision }) {
   const text = option === null ? `这次审批已处理，等待 ${decision.harness} 继续：` : refused ? "你拒绝了：" : option.role === "once" ? "你允许了一次：" : `你选择了“${option.name}”：`;
   const Icon = refused ? ShieldX : ShieldCheck;
   return <p className="approval-result motion-fade-in m-0 flex min-w-0 items-center gap-2 text-ui-sm text-fg-3" role="status">
-    <Icon size={15} className="flex-none" aria-hidden="true"/><span className="min-w-0 truncate" title={decision.title}>{text}<span className="mono text-[12.5px]">{decision.title}</span></span>
+    <Icon size={15} className="flex-none" aria-hidden="true"/><span className="min-w-0 truncate" title={decision.title}>{text}<span className="mono text-code">{decision.title}</span></span>
   </p>;
 }
 /**

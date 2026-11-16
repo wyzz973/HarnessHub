@@ -51,7 +51,7 @@ export function DiffBody({ file, wrap, split, onRemark }: { readonly file: DiffF
   const chosen = (at: number): boolean => run !== null && at >= run.from && at <= run.to;
   const number = (line: DiffLine, at: number, value: number | undefined) => remarkable(line)
     ? <button type="button" className="n diff-number" aria-label={"对第 " + (value ?? "") + " 行写评语"} title="写评语（按住 ⇧ 再点一行可选一段）" onClick={event => choose(at, event.shiftKey)}>
-      <span aria-hidden="true">{value}</span><MessageSquarePlus size={12} strokeWidth={2} aria-hidden="true"/></button>
+      <span aria-hidden="true">{value}</span><MessageSquarePlus size={12} aria-hidden="true"/></button>
     : <span className="n">{value}</span>;
   const remark = (at: number) => run !== null && run.to === at ? <div className="diff-remark" role="group" aria-label="评语">
     <textarea ref={box} className="field min-h-[58px] w-full resize-y px-2 py-1.5 font-sans text-ui-sm leading-5" value={draft} placeholder={run.from === run.to ? "对这一行说点什么" : "对这 " + (run.to - run.from + 1) + " 行说点什么"} aria-label="评语"

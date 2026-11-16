@@ -101,7 +101,7 @@ export function Menu({ trigger, items, side = "bottom", align = "end", footer, c
                 {/* Hidden from the item's name, the description is read as its description (aria-describedby). */}
                 {described ? <span className="flex min-w-0 flex-1 flex-col"><span>{entry.label}</span><span id={described} className="text-caption text-fg-3" aria-hidden="true">{entry.description}</span></span> : <span className="flex-1">{entry.label}</span>}
                 {entry.hint ? <span className="text-caption text-fg-3">{entry.hint}</span> : null}
-                {entry.checked !== undefined ? <Check size={15} strokeWidth={2.2} className={cn("flex-none text-accent-text", !entry.checked && "invisible")} aria-hidden="true"/> : null}</>;
+                {entry.checked !== undefined ? <Check size={15} className={cn("flex-none text-accent-text", !entry.checked && "invisible")} aria-hidden="true"/> : null}</>;
               const look = cn("menu-item", entry.danger && "menu-item-danger");
               return entry.href !== undefined
                 ? <BaseMenu.LinkItem key={index} className={look} href={entry.href} {...(entry.download ? { download: "" } : {})}>{body}</BaseMenu.LinkItem>

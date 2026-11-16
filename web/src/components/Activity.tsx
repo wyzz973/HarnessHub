@@ -84,7 +84,7 @@ export function PlanView({ steps, explanation, owner, compact: small = false }: 
     {explanation ? <p className="m-0 text-ui-sm text-fg-2">{explanation}</p> : null}
     <ol className={cn("m-0 flex list-none flex-col p-0", small ? "gap-2" : "gap-2.5")}>{steps.map((step, index) => <li key={index} className="flex items-start gap-2 text-ui-sm">
       <span role="img" aria-label={step.status === "completed" ? "已完成" : step.status === "in_progress" ? "进行中" : "待办"} className={cn("mt-[2.5px] flex flex-none", step.status === "completed" ? "text-fg-3" : step.status === "in_progress" ? "text-run" : "text-placeholder")}>
-        {step.status === "completed" ? <Check size={15} strokeWidth={1.9} aria-hidden="true"/> : <Circle size={15} strokeWidth={1.9} aria-hidden="true"/>}
+        {step.status === "completed" ? <Check size={15} aria-hidden="true"/> : <Circle size={15} aria-hidden="true"/>}
       </span>
       <span className={cn("min-w-0 flex-1", step.status === "completed" ? "text-fg-3 line-through decoration-line-strong" : step.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{step.text}</span>
     </li>)}</ol>

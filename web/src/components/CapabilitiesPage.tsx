@@ -165,11 +165,11 @@ const NAME_EDGE = "group-data-[scrolled]/matrix:shadow-[inset_-1px_0_0_var(--bor
 function CellMark({ cell, picked, raised, onPick, describedBy }: { readonly cell: Cell; readonly picked: boolean;
   /** On an opened row's grey: fills that are grey themselves take the surface color. */ readonly raised: boolean; readonly onPick: (pick: Pick) => void; readonly describedBy: string }) {
   switch (cell.kind) {
-    case "on": return <span role="img" aria-label={cell.label} title={cell.label} className={cn(CIRCLE, "size-7 bg-accent-soft text-accent dark:text-accent-text")}><Check size={14} strokeWidth={2.4} aria-hidden="true"/></span>;
+    case "on": return <span role="img" aria-label={cell.label} title={cell.label} className={cn(CIRCLE, "size-7 bg-accent-soft text-accent dark:text-accent-text")}><Check size={14} aria-hidden="true"/></span>;
     case "open": return <button type="button" aria-pressed={picked} aria-label={cell.label} aria-describedby={describedBy} title={cell.label} onClick={() => onPick(cell.pick)}
       className={cn(CIRCLE, "capability-cell size-7 p-0 [transition:scale_300ms_var(--ease-overshoot),background-color_120ms_var(--ease-standard),box-shadow_120ms_var(--ease-standard)] active:scale-90 motion-reduce:active:scale-100 keyboard:[transition:none] keyboard:active:scale-100",
         picked ? "bg-surface text-accent-text shadow-[inset_0_0_0_1.5px_var(--accent-text)]" : "bg-transparent shadow-[inset_0_0_0_1px_var(--border-strong)] hover:bg-subtle")}>
-      <Plus size={14} strokeWidth={2.4} aria-hidden="true" className={cn("[transition:scale_300ms_var(--ease-overshoot),opacity_120ms_var(--ease-standard)] keyboard:[transition:none]",
+      <Plus size={14} aria-hidden="true" className={cn("[transition:scale_300ms_var(--ease-overshoot),opacity_120ms_var(--ease-standard)] keyboard:[transition:none]",
         picked ? "scale-100 opacity-100" : "scale-50 opacity-0")}/></button>;
     case "chip": return <span role="img" aria-label={cell.label} title={cell.label} className={cn("inline-flex h-5 items-center rounded-full px-2 text-[11px] leading-4 font-medium whitespace-nowrap", cell.failed ? "bg-red-soft text-red-on-tint" : raised ? "bg-surface text-fg-2 shadow-hairline" : "bg-subtle text-fg-2")}>{cell.text}</span>;
     case "none": return <span role="img" aria-label={cell.label} title={cell.label} className="text-ui-sm text-fg-3">{cell.glyph}</span>;
@@ -582,7 +582,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
   const shellButton = narrowScreen ? <button type="button" className="icon-btn navigation-toggle" onClick={onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
     : sidebarHidden ? <Tip label={"展开侧栏 " + keyText("sidebar")}><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts={ariaKeys("sidebar")} onClick={onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null;
   const reload = <Tip label="重新读取"><button type="button" className="icon-btn" aria-label="重新读取" onClick={() => load()} disabled={loading}>{loading ? <Spinner size={15} label=""/> : <RefreshCw size={16}/>}</button></Tip>;
-  const title = <h1 id="capabilities-title" className="m-0 min-w-0 flex-1 trunc text-[22px] leading-[30px] font-semibold tracking-[-0.02em]">能力</h1>;
+  const title = <h1 id="capabilities-title" className="m-0 min-w-0 flex-1 trunc text-title">能力</h1>;
   const ready = view !== null && view.harnesses.length > 0;
   const tabItems = kinds.map(item => ({ id: item, label: KIND_LABEL[item], count: counts[item] }));
   const pickable = states.has("open");
@@ -650,7 +650,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
         </table>
       </div>
       {states.has("on") || states.has("open") || states.has("—") || states.has("?") ? <div className="capability-legend flex flex-wrap items-center gap-x-[18px] gap-y-2 text-caption text-fg-3">
-        {states.has("on") ? <span className="flex items-center gap-1.5"><span className={cn(CIRCLE, "size-[18px] bg-accent-soft text-accent dark:text-accent-text")}><Check size={10} strokeWidth={3} aria-hidden="true"/></span>已生效</span> : null}
+        {states.has("on") ? <span className="flex items-center gap-1.5"><span className={cn(CIRCLE, "size-[18px] bg-accent-soft text-accent dark:text-accent-text")}><Check size={10} aria-hidden="true"/></span>已生效</span> : null}
         {pickable ? <span className="flex items-center gap-1.5"><span className={cn(CIRCLE, "size-[18px] shadow-[inset_0_0_0_1px_var(--border-strong)]")}/>可以启用</span> : null}
         {states.has("—") ? <span className="flex items-center gap-1.5"><span className="w-[18px] text-center" aria-hidden="true">—</span>这个 Harness 不读它</span> : null}
         {states.has("?") ? <span className="flex items-center gap-1.5"><span className="w-[18px] text-center" aria-hidden="true">?</span>保存在磁盘之外，无法读取</span> : null}

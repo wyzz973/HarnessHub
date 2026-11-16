@@ -47,7 +47,7 @@ export function BranchOrigin({ origin, session, harnesses, onOpenSource, delegat
     {origin.history.length ? <div className="flex flex-col">
       <button type="button" aria-expanded={open} aria-controls={history} onClick={() => setOpen(value => !value)} className="row -ml-1.5 flex h-7 items-center gap-1.5 self-start border-none bg-transparent px-1.5 text-ui-sm text-fg-2 hover:bg-subtle">
         {imported ? <History size={14} className="text-fg-3" aria-hidden="true"/> : null}{imported ? "查看本机会话的历史" : delegated ? "查看原对话" : "查看分支前的对话"}
-        <ChevronRight size={12} strokeWidth={2.2} className={cn("text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
+        <ChevronRight size={12} className={cn("text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
       </button>
       <Collapsible open={open} id={history}><ol className="m-0 mt-2 ml-1 flex list-none flex-col gap-3 border-l border-line-strong p-0 pl-3.5">{origin.history.map((message, index) => <li key={index} className="flex min-w-0 flex-col gap-1">
         <span className="text-caption font-medium text-fg-3">{message.role === "user" ? "你" : name(message.harnessId)}</span>

@@ -71,7 +71,7 @@ function PlacePicker({ place, onPlace, recents, chooseFolder }: Pick<WelcomeProp
       trigger={<button ref={chip} type="button" aria-label={"项目文件夹：" + (folderName(place.workspace) || "未选择")} title={place.workspace}
         className="motion-fade-in flex h-7 max-w-full min-w-0 items-center gap-1 rounded-row border-none bg-transparent px-2 text-ui-sm text-fg transition-[color,background-color] duration-120 ease-standard hover:bg-subtle data-[popup-open]:bg-subtle">
         <span className="min-w-0 truncate">{folderName(place.workspace) || "选择文件夹"}</span>
-        {choosing ? <Spinner size={12} label="正在等你选择文件夹"/> : <ChevronDown size={12} strokeWidth={2} className="flex-none text-fg-3" aria-hidden="true"/>}</button>}
+        {choosing ? <Spinner size={12} label="正在等你选择文件夹"/> : <ChevronDown size={12} className="flex-none text-fg-3" aria-hidden="true"/>}</button>}
       items={[
         ...folders.map(path => ({ icon: <Folder size={14}/>, label: <span className="block max-w-[200px] truncate">{folderName(path)}</span>,
           hint: <span className="block max-w-[180px] truncate" title={path}>{homePath(path.replace(/\/[^/]*\/*$/u, "")) || "/"}</span>,

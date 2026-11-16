@@ -472,7 +472,7 @@ export function Composer(props: ComposerProps) {
   const column = "flex min-h-0 min-w-0 flex-1 flex-col";
   const heading = "flex h-[45px] flex-none items-center px-3.5 text-caption text-fg-3 hairline-b";
   const choice = (checked: boolean) => cn("picker-option flex w-full items-center gap-2 rounded-row border-none bg-transparent px-2.5 py-[7px] text-left text-ui-sm outline-offset-[-2px] transition-[color,background-color] duration-120 ease-standard hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-40", checked && "font-medium");
-  const tick = (checked: boolean) => <Check size={15} strokeWidth={2.2} className={cn("flex-none text-accent-text", !checked && "invisible")} aria-hidden="true"/>;
+  const tick = (checked: boolean) => <Check size={15} className={cn("flex-none text-accent-text", !checked && "invisible")} aria-hidden="true"/>;
   // Models marked as favourites lead the column under 收藏 (after T3 Code's starred models), each Harness's its own; kept in this browser.
   const favourite = (model: string): string => draft.harnessId + "\u0000" + model;
   const asideModels: readonly PickerOption[] = [...modelOptions.filter(option => favourites.has(favourite(option.value))).map(option => ({ ...option, group: "收藏" })), ...modelOptions.filter(option => !favourites.has(favourite(option.value)))];
@@ -487,7 +487,7 @@ export function Composer(props: ComposerProps) {
               <span className="min-w-0 flex-1 truncate">{option.label}</span>{tick(draft.model === option.value)}</button>
             <button type="button" className={cn("icon-btn icon-btn-sm absolute right-1 text-fg-3 transition-opacity duration-120 ease-standard", starred ? "text-amber-dot opacity-100" : "opacity-0 group-hover/model:opacity-100 focus-visible:opacity-100")}
               aria-label={(starred ? "取消收藏：" : "收藏：") + option.label} aria-pressed={starred} title={starred ? "取消收藏" : "收藏"} onClick={() => toggleFavourite(favourite(option.value))}>
-              <Star size={13} strokeWidth={2} fill={starred ? "currentColor" : "none"} aria-hidden="true"/></button>
+              <Star size={13} fill={starred ? "currentColor" : "none"} aria-hidden="true"/></button>
           </div></div>; })
           : <p className="m-0 px-3 py-6 text-center text-ui-sm text-fg-3">{props.nativeModelsLoading ? "正在读取本机模型…" : "没有可选的模型"}</p>}
       </div>
@@ -654,7 +654,7 @@ export function Composer(props: ComposerProps) {
           <div className="flex flex-wrap items-center gap-x-1 gap-y-2">
             <div className="-ml-2 flex flex-none items-center gap-0.5" role="group" aria-label="附件与权限">
               <Menu side={popSide} align="start" {...listOpen("add")} trigger={<button ref={plusButton} type="button" className="press mr-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg disabled:opacity-40"
-                aria-label="添加文件或上下文" disabled={readonly}><Plus size={16} strokeWidth={1.9}/></button>} items={[
+                aria-label="添加文件或上下文" disabled={readonly}><Plus size={16}/></button>} items={[
                 { label: "添加文件或图片…", icon: <Paperclip size={15}/>, hint: "@", disabled: !canAttach, onSelect: () => picker.current?.click() },
                 ...(commands.length ? [{ label: "原生命令", icon: <SquareSlash size={15}/>, hint: "/", disabled: disabled, onSelect: () => { setSlashClosedAt(null); (props.onReplaceDraft ?? props.onMessageDraft)("/"); setTimeout(() => inputRef.current?.focus(), 0); } }] : []),
                 ...(sessionsOffered ? [{ label: "继续原程序的会话…", icon: <History size={15}/>, disabled: disabled || props.mutation !== null, onSelect: () => openPanel("sessions") }] : []),

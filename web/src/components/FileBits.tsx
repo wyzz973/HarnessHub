@@ -3,9 +3,9 @@ import { workspacePath } from "../lib/format.js";
 
 /** What happened to a file, as a mark before its name: made new, removed, or changed (after the diff panel of T3 Code). */
 export function FileMark({ created, removed = false }: { readonly created: boolean; readonly removed?: boolean }) {
-  return created ? <SquarePlus size={14} strokeWidth={1.9} className="flex-none text-add-on-tint" role="img" aria-label="新建"/>
-    : removed ? <SquareMinus size={14} strokeWidth={1.9} className="flex-none text-del-on-tint" role="img" aria-label="删除"/>
-    : <SquareDot size={14} strokeWidth={1.9} className="flex-none text-fg-3" role="img" aria-label="修改"/>;
+  return created ? <SquarePlus size={14} className="flex-none text-add-on-tint" role="img" aria-label="新建"/>
+    : removed ? <SquareMinus size={14} className="flex-none text-del-on-tint" role="img" aria-label="删除"/>
+    : <SquareDot size={14} className="flex-none text-fg-3" role="img" aria-label="修改"/>;
 }
 /** A file's place in the workspace: the folders quiet, the name plain. */
 export function FilePath({ path, workspace }: { readonly path: string; readonly workspace: string }) {

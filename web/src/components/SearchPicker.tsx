@@ -105,7 +105,7 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
         {selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}
         <span className="min-w-0 truncate">{prefix ? <span className="text-fg-3">{prefix} </span> : null}{selected?.short ?? selected?.label ?? placeholder}</span>
       </>}
-      {chevron ? <ChevronDown size={12} strokeWidth={2} className="flex-none text-fg-3" aria-hidden="true"/> : null}
+      {chevron ? <ChevronDown size={12} className="flex-none text-fg-3" aria-hidden="true"/> : null}
     </BasePopover.Trigger>
     <BasePopover.Portal>
       <BasePopover.Positioner side={side} align={align} sideOffset={8} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-[55]" {...(anchor ? { anchor } : {})}>
@@ -150,7 +150,7 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
                       {option.status ? <span id={`${id}-status`} className={cn("badge flex-none", TONES[option.status.tone])} title={option.status.title}><span className="dot" aria-hidden="true"/>{option.status.label}</span> : null}</span>
                     {describe ? <small id={`${id}-description`} className={cn("truncate text-caption", option.disabled ? "text-amber" : "text-fg-3")}>{describe}</small> : null}
                   </span>
-                  <Check size={15} strokeWidth={2.2} className={cn("flex-none text-accent-text", value !== option.value && "invisible")} aria-hidden="true"/>
+                  <Check size={15} className={cn("flex-none text-accent-text", value !== option.value && "invisible")} aria-hidden="true"/>
                 </button>
               </div>;
             }) : <p className="m-0 px-3 py-6 text-center text-ui-sm text-fg-3">{options.length === 0 && empty !== undefined ? empty : "没有匹配的选项"}</p>}

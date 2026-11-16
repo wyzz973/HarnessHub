@@ -124,16 +124,16 @@ export function TerminalDrawer({ session, place, access, onClose, scripts, onQuo
       <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none]" role="tablist" aria-label="终端">
         {groups.map((group, index) => <span key={group.join("+")} className={cn("group/tab flex h-6 flex-none items-center rounded-row pr-0.5 pl-2 transition-colors duration-120 ease-standard", index === current ? "bg-subtle text-fg" : "hover:bg-subtle")}>
           <button type="button" role="tab" aria-selected={index === current} className="max-w-[200px] truncate border-none bg-transparent p-0 text-caption text-inherit" title={place} onClick={() => setCurrent(index)}>{tabTitle(group)}</button>
-          <button type="button" className="icon-btn ml-0.5 size-5 text-fg-3" aria-label={"关闭" + tabTitle(group)} title="关闭" onClick={() => end(group)}><X size={11} strokeWidth={2.2}/></button>
+          <button type="button" className="icon-btn ml-0.5 size-5 text-fg-3" aria-label={"关闭" + tabTitle(group)} title="关闭" onClick={() => end(group)}><X size={11}/></button>
         </span>)}
-        <Tip label="新开一个终端"><button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="新开一个终端" onClick={() => void add()}><Plus size={13} strokeWidth={2}/></button></Tip>
+        <Tip label="新开一个终端"><button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="新开一个终端" onClick={() => void add()}><Plus size={13}/></button></Tip>
       </div>
       <span className="mono hidden min-w-0 max-w-[30%] truncate px-1 sm:block" title={place}>{place}</span>
-      {onQuote ? <Tip label="引用到输入框"><button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="把选中的内容放进输入框" disabled={selection.trim() === ""} onClick={() => { onQuote(selection); setSelection(""); }}><TextQuote size={12} strokeWidth={2.2}/></button></Tip> : null}
-      <Tip label="分屏"><button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="左右分开再开一个终端" disabled={(groups[current]?.length ?? 2) >= 2} onClick={() => void split()}><Columns2 size={12} strokeWidth={2.2}/></button></Tip>
-      {scripts !== undefined ? <Menu align="end" onOpenChange={readScripts} trigger={<button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="运行项目脚本" title="运行项目脚本"><Play size={12} strokeWidth={2.2}/></button>}
+      {onQuote ? <Tip label="引用到输入框"><button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="把选中的内容放进输入框" disabled={selection.trim() === ""} onClick={() => { onQuote(selection); setSelection(""); }}><TextQuote size={12}/></button></Tip> : null}
+      <Tip label="分屏"><button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="左右分开再开一个终端" disabled={(groups[current]?.length ?? 2) >= 2} onClick={() => void split()}><Columns2 size={12}/></button></Tip>
+      {scripts !== undefined ? <Menu align="end" onOpenChange={readScripts} trigger={<button type="button" className="icon-btn size-6 flex-none text-fg-3" aria-label="运行项目脚本" title="运行项目脚本"><Play size={12}/></button>}
         items={found === null ? [{ heading: "正在读取 package.json…" }] : found.length === 0 ? [{ heading: "package.json 里没有脚本" }] : found.map(script => ({ label: script.name, hint: script.command, onSelect: () => void add(script) }))}/> : null}
-      <Tip label="收起"><button type="button" className="icon-btn size-6 flex-none" aria-label="收起终端" onClick={onClose}><X size={13} strokeWidth={2}/></button></Tip>
+      <Tip label="收起"><button type="button" className="icon-btn size-6 flex-none" aria-label="收起终端" onClick={onClose}><X size={13}/></button></Tip>
     </header>
     <div className="relative min-h-0 flex-1">
       {terminals === null ? <p className="m-0 flex items-center gap-2 px-4 py-3 text-caption text-fg-3"><Spinner size={12} label=""/>正在打开终端</p> : null}
@@ -142,7 +142,7 @@ export function TerminalDrawer({ session, place, access, onClose, scripts, onQuo
         {group.map((id, at) => <div key={id} className={cn("relative min-w-0 flex-1", at > 0 && "hairline-l")}>
           <TerminalPane id={id} active={index === current} access={access} exited={info(id)?.exited} run={pending.current.get(id)} onRan={() => pending.current.delete(id)}
             onFocus={() => setFocused(id)} onSelection={text => { if (focused === null || focused === id) setSelection(text); }}/>
-          {group.length > 1 ? <button type="button" className="icon-btn absolute top-1 right-1.5 z-10 size-5 text-fg-3 opacity-60 hover:opacity-100" aria-label={"结束" + (info(id)?.title ?? "终端")} title="结束这个终端" onClick={() => end([id])}><X size={11} strokeWidth={2.2}/></button> : null}
+          {group.length > 1 ? <button type="button" className="icon-btn absolute top-1 right-1.5 z-10 size-5 text-fg-3 opacity-60 hover:opacity-100" aria-label={"结束" + (info(id)?.title ?? "终端")} title="结束这个终端" onClick={() => end([id])}><X size={11}/></button> : null}
         </div>)}
       </div>)}
     </div>
@@ -221,7 +221,7 @@ function TerminalPane({ id, active, access, exited, run, onRan, onFocus, onSelec
   useEffect(() => { if (!active) return; const frame = requestAnimationFrame(() => { refit.current?.(); focus.current?.(); }); return () => cancelAnimationFrame(frame); }, [active]);
   return <div className="terminal-pane absolute inset-0 flex flex-col">
     {state === "failed" ? <div className="absolute top-1 right-8 z-10 flex items-center gap-1.5 text-caption text-fg-3" role="status">没有连上
-      <button type="button" className="icon-btn size-6" aria-label="重新连上终端" title="重新连上" onClick={() => setAttempt(value => value + 1)}><RotateCw size={12} strokeWidth={2}/></button></div>
+      <button type="button" className="icon-btn size-6" aria-label="重新连上终端" title="重新连上" onClick={() => setAttempt(value => value + 1)}><RotateCw size={12}/></button></div>
       : state === "ended" ? <div className="absolute top-1 right-8 z-10 text-caption text-fg-3" role="status">shell 已结束</div> : null}
     <div ref={host} className="terminal-host min-h-0 flex-1 overflow-hidden pr-1 pb-1.5 pl-4"/>
   </div>;

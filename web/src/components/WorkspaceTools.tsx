@@ -65,7 +65,7 @@ export function EditorRow({ editors, onOpenIn, path }: { readonly editors: reado
     <button type="button" className="row flex min-h-7 min-w-0 flex-1 items-center gap-2.5 border-none bg-transparent px-2 text-left text-ui-sm hover:bg-subtle" onClick={() => open(editor.id)}>
       <span className="flex size-4 flex-none items-center justify-center text-fg-3"><SquareArrowOutUpRight size={14} aria-hidden="true"/></span>
       <span className="min-w-0 flex-1 trunc text-fg-2">在 {editor.name} 里打开</span></button>
-    {editors.length > 1 ? <Menu align="end" trigger={<button type="button" className="icon-btn icon-btn-sm flex-none text-fg-3" aria-label="换一个编辑器打开" title="换一个编辑器"><ChevronDown size={13} strokeWidth={2} aria-hidden="true"/></button>}
+    {editors.length > 1 ? <Menu align="end" trigger={<button type="button" className="icon-btn icon-btn-sm flex-none text-fg-3" aria-label="换一个编辑器打开" title="换一个编辑器"><ChevronDown size={13} aria-hidden="true"/></button>}
       items={editors.map(row => ({ label: row.name, checked: row.id === editor.id, onSelect: () => open(row.id) }))}/> : null}
   </div>;
 }
@@ -225,9 +225,9 @@ export function FileView({ path, access, onReveal }: { readonly path: string; re
   return <div className="file-view flex min-h-0 flex-col">
     <div className="flex min-h-11 items-center gap-1 pr-2.5 pl-[18px]">
       <span className="mono min-w-0 flex-1 trunc text-code text-fg-2" title={path}>{path}</span>{first ? <span className="flex-none px-1 text-caption text-fg-3 tabular-nums">{size}</span> : null}
-      <button type="button" className="icon-btn size-7 text-fg-3" aria-label="复制路径" title={copied ? "已复制" : "复制路径"} onClick={() => { void navigator.clipboard.writeText(path).then(() => setCopied(true), () => undefined); }}><Copy size={13} strokeWidth={2} aria-hidden="true"/></button>
-      {onReveal ? <button type="button" className="icon-btn size-7 text-fg-3" aria-label="在访达中显示" title="在访达中显示" onClick={() => onReveal(path)}><FolderOpen size={13} strokeWidth={2} aria-hidden="true"/></button> : null}
-      {editor ? <button type="button" className="icon-btn size-7 text-fg-3" aria-label={"在 " + editor.name + " 里打开"} title={"在 " + editor.name + " 里打开"} onClick={() => access.openIn?.(editor.id, path)}><SquareArrowOutUpRight size={13} strokeWidth={2} aria-hidden="true"/></button> : null}
+      <button type="button" className="icon-btn size-7 text-fg-3" aria-label="复制路径" title={copied ? "已复制" : "复制路径"} onClick={() => { void navigator.clipboard.writeText(path).then(() => setCopied(true), () => undefined); }}><Copy size={13} aria-hidden="true"/></button>
+      {onReveal ? <button type="button" className="icon-btn size-7 text-fg-3" aria-label="在访达中显示" title="在访达中显示" onClick={() => onReveal(path)}><FolderOpen size={13} aria-hidden="true"/></button> : null}
+      {editor ? <button type="button" className="icon-btn size-7 text-fg-3" aria-label={"在 " + editor.name + " 里打开"} title={"在 " + editor.name + " 里打开"} onClick={() => access.openIn?.(editor.id, path)}><SquareArrowOutUpRight size={13} aria-hidden="true"/></button> : null}
     </div>
     {problem ? <p className="m-0 px-[18px] py-3 text-ui-sm text-red" role="alert">{problem}</p>
       : first === undefined ? <p className="m-0 flex items-center gap-2 px-[18px] py-3 text-ui-sm text-fg-3"><Spinner size={12} label=""/>正在读取</p>

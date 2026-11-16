@@ -85,7 +85,7 @@ export function SettingsDialog({ open, onOpenChange, api, relay, preferences, on
             <span className="flex w-4 flex-none justify-center text-fg-2 max-sm:hidden" aria-hidden="true"><row.icon size={16}/></span><span className="min-w-0 flex-1 trunc">{row.label}</span></button>)}
         </nav>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          <BaseDialog.Close className="icon-btn absolute top-3 right-3 z-10 size-7 text-fg-3 max-sm:fixed max-sm:top-2.5" aria-label="关闭设置" title="关闭"><X size={15} strokeWidth={2}/></BaseDialog.Close>
+          <BaseDialog.Close className="icon-btn absolute top-3 right-3 z-10 size-7 text-fg-3 max-sm:fixed max-sm:top-2.5" aria-label="关闭设置" title="关闭"><X size={15}/></BaseDialog.Close>
           <div ref={column} className="scroll-area flex min-h-0 flex-1 flex-col gap-8 px-6 pt-5 pb-8 max-sm:px-4" onScroll={watch}>
     <Section title="外观" id="settings-appearance">
       <Card className={ROWS}>

@@ -362,7 +362,7 @@ export function Sidebar(props: SidebarProps) {
           page itself they made the whole page scrollable once a row stood below the window. */}
       <PickContext.Provider value={picking}>
       <nav className="relative -mr-2 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain pb-2 [scrollbar-gutter:stable]" aria-label="对话列表">
-        {pinned.length > 0 ? <PinDragContext.Provider value={pinned.length > 1 ? dragPin : null}><Plain title="置顶" icon={<Pin size={11} strokeWidth={2.2} aria-hidden="true"/>} rows={pinned} {...rowProps} where={folder}/></PinDragContext.Provider> : null}
+        {pinned.length > 0 ? <PinDragContext.Provider value={pinned.length > 1 ? dragPin : null}><Plain title="置顶" icon={<Pin size={11} aria-hidden="true"/>} rows={pinned} {...rowProps} where={folder}/></PinDragContext.Provider> : null}
         {sessions.length === 0 ? null : grouping === "project"
           ? groups.map((project, index) => <ProjectGroup key={project.key} project={project} open={isOpen(project, index)} onToggle={open => choose(project.key, open)}
             now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} arrivals={arriving} harness={name} onSession={props.onSession} unread={session => unseen(looked, session)} actions={props.actions}/>)
@@ -422,7 +422,7 @@ function ProjectGroup({ project, open, onToggle, now, currentId, disabled, arriv
   return <div className="session-group flex flex-col gap-px">
     <button type="button" className="group-heading" aria-expanded={open} aria-controls={listId} title={project.scratch ? undefined : project.key}
       aria-label={project.name + (project.detail ? " · " + project.detail : "")} aria-describedby={summaryId} onClick={() => onToggle(!open)}>
-      <ChevronRight size={11} strokeWidth={2.4} aria-hidden="true" className={cn("flex-none motion-rotate", open && "rotate-90")}/>
+      <ChevronRight size={11} aria-hidden="true" className={cn("flex-none motion-rotate", open && "rotate-90")}/>
       <span className="min-w-0 flex-1 trunc">{project.name}{project.detail ? <span className="opacity-70"> · {project.detail}</span> : null}</span>
       {/* The same colors as on a row: amber waits for you, grey is at work, red failed; blue is kept for what you have not read. */}
       {!open && strongest ? <StatusDot tone={strongest.state === "wait" ? "wait" : strongest.state === "run" ? "work" : "fail"} live={false} size={6}/> : null}
@@ -450,7 +450,7 @@ function Shelf({ title, icon, rows, now, currentId, disabled, harness, onSession
   const toggle = () => { setChoice(!open); if (!open) setTimeout(() => shelf.current?.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 220); };
   return <div ref={shelf} className="session-shelf mt-1.5 flex flex-col gap-0.5">
     <button type="button" className="group-heading" aria-expanded={open} aria-controls={listId} onClick={toggle}>
-      <ChevronRight size={11} strokeWidth={2.4} aria-hidden="true" className={cn("flex-none motion-rotate", open && "rotate-90")}/>{icon}<span className="min-w-0 flex-1 trunc">{title}</span>
+      <ChevronRight size={11} aria-hidden="true" className={cn("flex-none motion-rotate", open && "rotate-90")}/>{icon}<span className="min-w-0 flex-1 trunc">{title}</span>
       <span className="tabular-nums" aria-hidden="true">{rows.length}</span><span className="sr-only">{rows.length} 个对话</span>
     </button>
     <Collapsible open={open} id={listId}>
@@ -492,7 +492,7 @@ function Trash({ access, now, harness }: { readonly access: TrashAccess; readonl
   return <div className="session-shelf trash-shelf mt-1.5 flex flex-col gap-0.5">
     <div className="group/trash relative flex items-center">
       <button type="button" className="group-heading" aria-expanded={open} aria-controls={listId} onClick={() => setOpen(!open)}>
-        <ChevronRight size={11} strokeWidth={2.4} aria-hidden="true" className={cn("flex-none motion-rotate", open && "rotate-90")}/><Trash2 size={12} aria-hidden="true"/>
+        <ChevronRight size={11} aria-hidden="true" className={cn("flex-none motion-rotate", open && "rotate-90")}/><Trash2 size={12} aria-hidden="true"/>
         <span className="min-w-0 flex-1 trunc">最近删除</span><span className="tabular-nums transition-opacity duration-120 ease-standard group-hover/trash:opacity-0" aria-hidden="true">{count}</span>
       </button>
       <button type="button" className="link-btn absolute right-2 text-caption opacity-0 transition-opacity duration-120 ease-standard group-hover/trash:opacity-100 focus-visible:opacity-100" onClick={() => setAsking({ id: null, title: "" })}>清空</button>
@@ -579,12 +579,12 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
       <BrandIcon brand={session.selection.harnessId} name={harness} size={14} className={cn("flex-none transition-[filter,opacity] duration-120 ease-standard", quiet && "opacity-60 grayscale group-hover/session:opacity-100 group-hover/session:grayscale-0")}/>
       {dot ? <span className="absolute -top-[3px] -right-[3px] flex rounded-full bg-sidebar p-px"><StatusDot tone={dot} size={6} live={dot === "work"}/></span> : null}
     </span>
-    {editing !== null ? <input className="session-rename -my-px -ml-1 h-[22px] min-w-0 flex-1 rounded-[5px] border-none bg-app px-1 text-ui-sm text-fg shadow-focus outline-none" value={editing} autoFocus aria-label="对话标题" maxLength={200}
+    {editing !== null ? <input className="session-rename -my-px -ml-1 h-[22px] min-w-0 flex-1 rounded-tag border-none bg-app px-1 text-ui-sm text-fg shadow-focus outline-none" value={editing} autoFocus aria-label="对话标题" maxLength={200}
         onFocus={event => event.currentTarget.select()} onChange={event => setEditing(event.target.value)}
         onBlur={() => { const next = editing.trim().replace(/\s+/gu, " "); setEditing(null); if (next && next !== session.title) actions?.rename(session.id, next); }}
         onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(null); } }}/>
       : <span className={cn("session-title min-w-0 flex-1 trunc", quiet && "text-fg-2", unread && "font-medium text-fg")}>{title}</span>}
-    {session.worktree && editing === null ? <GitBranch size={11} strokeWidth={2.2} className="flex-none text-fg-3" aria-hidden="true"/> : null}
+    {session.worktree && editing === null ? <GitBranch size={11} className="flex-none text-fg-3" aria-hidden="true"/> : null}
     {editing === null && (when || actions) ? <span className={cn("session-when flex min-w-[46px] flex-none justify-end text-caption tabular-nums transition-opacity duration-120 ease-standard",
       urgent ? "text-amber-on-tint" : state === "run" ? "text-accent-text" : "text-fg-3",
       actions && (menu ? "opacity-0" : "group-hover/session:opacity-0 group-has-[:focus-visible]/session:opacity-0"))} title={left?.hint} aria-hidden="true">{when}</span> : null}

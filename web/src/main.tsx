@@ -45,8 +45,9 @@ trackInputModality();
 trackDepartures();
 // Glass surfaces bend what is behind them at their rim (Chromium only: the desktop app).
 startLiquidGlass();
-// Interface icons are Lucide at a 1.75 stroke (ADR-054 §4); an icon may still pass its own strokeWidth.
-createRoot(root).render(<StrictMode><LucideProvider strokeWidth={1.75}><ToastProvider><App /></ToastProvider></LucideProvider></StrictMode>);
+// Interface icons are Lucide, drawn with one line weight at every size: 1.2 px on the screen (a stroke given in the icon's own 24 units came out thinner the
+// smaller the icon, and each small icon then carried a heavier stroke of its own to make up for it).
+createRoot(root).render(<StrictMode><LucideProvider strokeWidth={1.2} absoluteStrokeWidth><ToastProvider><App /></ToastProvider></LucideProvider></StrictMode>);
 // In the desktop app on macOS 26 the glass is the system's own, laid under the page.
 startSystemGlass();
 // And a title is shown as one of the page's own tips.

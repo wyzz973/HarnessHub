@@ -57,7 +57,7 @@ export function TaskRoster({ members, current, onOpen }: { readonly members: rea
       </span>
       <span className="mt-[3px] flex flex-none items-center text-caption">{member.status === "running" ? <StatusDot tone="run" label="进行中"/>
         : member.status === "failed" ? <span className="text-red">失败</span> : member.status === "unknown" ? <span className="text-amber">结果未知</span>
-        : member.status === "cancelled" ? <span className="text-fg-3">已停止</span> : member.status === "completed" ? <Check size={13} strokeWidth={2} className="text-fg-3" role="img" aria-label="已完成"/> : null}</span>
+        : member.status === "cancelled" ? <span className="text-fg-3">已停止</span> : member.status === "completed" ? <Check size={13} className="text-fg-3" role="img" aria-label="已完成"/> : null}</span>
     </>;
     return <li key={member.sessionId} className="relative flex min-w-0" style={member.depth > 0 ? { paddingLeft: Math.min(member.depth, 4) * 18 } : undefined}>
       {member.depth > 0 ? <span aria-hidden="true" className="pointer-events-none absolute top-0 h-[17px] w-[9px] rounded-bl-[5px] border-b border-l border-line-strong" style={{ left: (Math.min(member.depth, 4) - 1) * 18 + 9 }}/> : null}
@@ -79,7 +79,7 @@ export function BoardEntries({ entries, busy, onForget, name }: { readonly entri
     <span className="mt-0.5 flex-none rounded-tag bg-subtle px-1.5 text-[11px] leading-4 text-fg-2">{KINDS[entry.kind]}</span>
     <span className="flex min-w-0 flex-1 flex-col"><span className="break-words">{entry.text}</span>{entry.by === "user" ? null : <span className="text-caption text-fg-3">{name(entry.by)} 记的{entry.from === undefined ? "" : "，依据第 " + (entry.from.ordinal + 1) + " 轮你说的话"}</span>}</span>
     <button type="button" disabled={busy} onClick={() => onForget(entry.id)} aria-label={"从任务板去掉：" + entry.text} title="去掉"
-      className="icon-btn -my-0.5 size-6 flex-none text-fg-3 opacity-0 transition-opacity duration-120 ease-standard group-hover/entry:opacity-100 focus-visible:opacity-100"><X size={13} strokeWidth={2}/></button>
+      className="icon-btn -my-0.5 size-6 flex-none text-fg-3 opacity-0 transition-opacity duration-120 ease-standard group-hover/entry:opacity-100 focus-visible:opacity-100"><X size={13}/></button>
   </li>)}</ul>;
 }
 
@@ -88,7 +88,7 @@ export function BoardAdd({ busy, onAdd, onClose, autoFocus = false }: { readonly
   const [draft, setDraft] = useState("");
   const add = () => { const text = draft.trim(); if (text !== "") onAdd(text, () => setDraft("")); };
   return <div className="relative flex items-center">
-    <Plus size={13} strokeWidth={2} aria-hidden="true" className="pointer-events-none absolute left-2.5 text-fg-3"/>
+    <Plus size={13} aria-hidden="true" className="pointer-events-none absolute left-2.5 text-fg-3"/>
     <input className="field h-8 pl-7 text-ui-sm" value={draft} disabled={busy} autoFocus={autoFocus} onChange={event => setDraft(event.target.value)} placeholder="加一条所有 Harness 都要遵守的要求" aria-label="加一条所有 Harness 都要遵守的要求"
       onBlur={() => { if (draft.trim() === "") onClose?.(); }}
       onKeyDown={event => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); add(); } else if (event.key === "Escape") { event.stopPropagation(); setDraft(""); onClose?.(); } }}/>

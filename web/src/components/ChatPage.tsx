@@ -846,7 +846,7 @@ export function ChatPage(props: ChatProps) {
  */
 function ChangeBadge({ count, news }: { readonly count: number; readonly news: boolean }) {
   const [entering] = useState(news);
-  return <span className={cn("absolute top-px right-0 min-w-[15px] rounded-full bg-accent px-1 text-center text-[10px] leading-[15px] font-semibold text-on-accent", entering && "motion-pop-in")}
+  return <span className={cn("absolute top-px right-0 min-w-[15px] rounded-full bg-accent px-1 text-center text-[11px] leading-[15px] font-semibold text-on-accent", entering && "motion-pop-in")}
     style={entering ? motionStyle({ scaleFrom: .6 }) : undefined} aria-hidden="true">{count}</span>;
 }
 
@@ -909,16 +909,16 @@ function PlanBar({ session, active, harness }: { readonly session: ConversationV
       <span className="min-w-0 flex-1 truncate text-fg-3">{done}/{total} · {where}</span>
       <span className="relative h-1 w-[72px] flex-none overflow-hidden rounded-[2px] bg-hover max-sm:hidden" aria-hidden="true">
         <span className="absolute inset-0 origin-left rounded-[2px] bg-run transition-transform duration-200 ease-standard" style={{ transform: `scaleX(${total ? done / total : 0})` }}/></span>
-      <ChevronUp size={12} strokeWidth={2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-180")} aria-hidden="true"/>
+      <ChevronUp size={12} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-180")} aria-hidden="true"/>
     </button>
     <Collapsible open={open} id={id}>
       <div className="pt-2"><ul className="card m-0 flex max-h-[min(40vh,320px)] list-none flex-col gap-2 overflow-y-auto p-4 text-ui-sm" aria-label={`${harness(found.harnessId)} 的任务清单`}>
         {(unfolded ? steps.map((_, index) => ({ kind: "step" as const, index })) : planRows(steps)).map((row, position) => row.kind === "fold"
           ? <li key={"fold-" + position} className="flex min-w-0"><button type="button" className="plan-fold btn btn-ghost btn-sm -ml-1.5 text-fg-3" onClick={() => setUnfolded(true)}>还有 {row.count} 步，展开</button></li>
           : (step => <li key={row.index} className="flex min-w-0 items-start gap-2">
-          {step.status === "completed" ? <Check size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="已完成" role="img"/>
+          {step.status === "completed" ? <Check size={15} className="mt-0.5 flex-none text-fg-3" aria-label="已完成" role="img"/>
             : step.status === "in_progress" && working ? <Spinner size={15} tone="run" label="进行中"/>
-            : <Circle size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="待办" role="img"/>}
+            : <Circle size={15} className="mt-0.5 flex-none text-fg-3" aria-label="待办" role="img"/>}
           <span className={cn("min-w-0 break-words", step.status === "completed" ? "text-fg-3 line-through decoration-line-strong" : step.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{step.text}</span>
         </li>)(steps[row.index]!))}
       </ul></div>
