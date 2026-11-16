@@ -1,4 +1,4 @@
-import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, Bell, BellOff, Blocks, Bot, CalendarClock, ChevronRight, CircleDot, CircleHelp, Copy, Folder, FolderOpen, GitBranch, Hash, Inbox as InboxIcon, ListFilter, MessageCircle, MoreHorizontal, PanelLeft, PencilLine, Pin, PinOff, Search, Settings, SlidersHorizontal, SquarePen, Trash2, X } from "lucide-react";
+import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, Bell, BellOff, Blocks, Bot, CalendarClock, ChevronRight, CircleDot, Copy, FolderOpen, GitBranch, Hash, Inbox as InboxIcon, ListFilter, MoreHorizontal, PanelLeft, PencilLine, Pin, PinOff, Search, Settings, SlidersHorizontal, SquarePen, Trash2, X } from "lucide-react";
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactNode, RefObject } from "react";
 import { TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
@@ -16,8 +16,8 @@ import { markSeen, startSeen, unseen, useSeen } from "../lib/seen.js";
 import { useNotificationChoice } from "../lib/notify.js";
 import { useNow } from "../lib/prefs.js";
 import { Collapsible } from "../ui/motion.js";
-import { Dialog, Menu, Popover, showNativeMenu } from "../ui/overlay.js";
-import { Badge, LogoMark, Spinner, StatusDot, Tip } from "../ui/primitives.js";
+import { Dialog, DIALOG_ACTIONS, DIALOG_COLUMN, DIALOG_FOOT, Menu, Popover, showNativeMenu } from "../ui/overlay.js";
+import { Badge, Spinner, StatusDot, Tip } from "../ui/primitives.js";
 import { lastingOption } from "./Approval.js";
 import { BrandIcon } from "./BrandIcon.js";
 
@@ -362,7 +362,7 @@ export function Sidebar(props: SidebarProps) {
           page itself they made the whole page scrollable once a row stood below the window. */}
       <PickContext.Provider value={picking}>
       <nav className="relative -mr-2 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain pb-2 [scrollbar-gutter:stable]" aria-label="对话列表">
-        {pinned.length > 0 ? <PinDragContext.Provider value={pinned.length > 1 ? dragPin : null}><Plain title="置顶" icon={<Pin size={11} strokeWidth={2.2} aria-hidden="true"/>} rows={pinned} {...rowProps} where={folder}/></PinDragContext.Provider> : null}
+        {pinned.length > 0 ? <PinDragContext.Provider value={pinned.length > 1 ? dragPin : null}><Plain title="置顶" icon={<Pin size={11} aria-hidden="true"/>} rows={pinned} {...rowProps} where={folder}/></PinDragContext.Provider> : null}
         {sessions.length === 0 ? null : grouping === "project"
           ? groups.map((project, index) => <ProjectGroup key={project.key} project={project} open={isOpen(project, index)} onToggle={open => choose(project.key, open)}
             now={now} currentId={page === "chat" ? currentId : null} disabled={interactionBusy} arrivals={arriving} harness={name} onSession={props.onSession} unread={session => unseen(looked, session)} actions={props.actions}/>)
@@ -386,7 +386,7 @@ export function Sidebar(props: SidebarProps) {
           items={[{ heading: "稍后提醒" }, ...snoozeChoices(Date.now()).map(choice => ({ label: choice.label, icon: <AlarmClock size={14}/>, onSelect: () => { many.snooze(pickedIds, choice.until); done(); } }))]}/>
         <Tip label="归档"><button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label="全部归档" onClick={() => { many.archive(pickedIds); done(); }}><Archive size={14} aria-hidden="true"/></button></Tip>
         <Tip label="删除"><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:text-red" aria-label="全部删除" onClick={() => { many.remove(pickedIds); done(); }}><Trash2 size={14} aria-hidden="true"/></button></Tip>
-        <Tip label="取消选择（Esc）"><button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label="取消选择" onClick={done}><X size={14} aria-hidden="true"/></button></Tip>
+        <Tip label="取消选择 esc"><button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label="取消选择" onClick={done}><X size={14} aria-hidden="true"/></button></Tip>
       </div> : null}
     </div>
     <div className="flex-none pt-1">
@@ -422,14 +422,15 @@ function ProjectGroup({ project, open, onToggle, now, currentId, disabled, arriv
   return <div className="session-group flex flex-col gap-px">
     <button type="button" className="group-heading" aria-expanded={open} aria-controls={listId} title={project.scratch ? undefined : project.key}
       aria-label={project.name + (project.detail ? " · " + project.detail : "")} aria-describedby={summaryId} onClick={() => onToggle(!open)}>
-      <ChevronRight size={11} strokeWidth={2.4} aria-hidden="true" className={cn("flex-none motion-rotate", open && "rotate-90")}/>
+      <ChevronRight size={11} aria-hidden="true" className={cn("flex-none motion-rotate", open && "rotate-90")}/>
       <span className="min-w-0 flex-1 trunc">{project.name}{project.detail ? <span className="opacity-70"> · {project.detail}</span> : null}</span>
-      {!open && strongest ? <StatusDot tone={strongest.state === "wait" ? "wait" : strongest.state === "run" ? "run" : "fail"} live={false} size={6}/> : null}
+      {/* The same colors as on a row: amber waits for you, grey is at work, red failed; blue is kept for what you have not read. */}
+      {!open && strongest ? <StatusDot tone={strongest.state === "wait" ? "wait" : strongest.state === "run" ? "work" : "fail"} live={false} size={6}/> : null}
       {!open ? <span className="tabular-nums" aria-hidden="true">{project.rows.length}</span> : null}
       <span id={summaryId} className="sr-only">{project.rows.length} 个对话{strongest ? "，有" + STATE_WORDS[strongest.state] + "的" : ""}</span>
     </button>
     <Collapsible open={open} id={listId}>
-      <div className="flex flex-col gap-0.5">{project.rows.map(row => <div key={row.session.id} className={cn(arrivals.has(row.session.id) && "motion-list-insert")}><div>
+      <div className="flex flex-col gap-0.5">{project.rows.map(row => <div key={row.session.id} data-leave="close" className={cn("session-slot", arrivals.has(row.session.id) && "motion-list-insert")}><div>
         <SessionRow row={row} now={now} harness={harness(row.session.selection.harnessId)} current={currentId === row.session.id} disabled={disabled} onOpen={() => onSession(row.session.id)}
           unread={currentId !== row.session.id && row.state === "idle" && unread(row.session)} actions={actions}/>
       </div></div>)}</div>
@@ -449,7 +450,7 @@ function Shelf({ title, icon, rows, now, currentId, disabled, harness, onSession
   const toggle = () => { setChoice(!open); if (!open) setTimeout(() => shelf.current?.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 220); };
   return <div ref={shelf} className="session-shelf mt-1.5 flex flex-col gap-0.5">
     <button type="button" className="group-heading" aria-expanded={open} aria-controls={listId} onClick={toggle}>
-      <ChevronRight size={11} strokeWidth={2.4} aria-hidden="true" className={cn("flex-none motion-rotate", open && "rotate-90")}/>{icon}<span className="min-w-0 flex-1 trunc">{title}</span>
+      <ChevronRight size={11} aria-hidden="true" className={cn("flex-none motion-rotate", open && "rotate-90")}/>{icon}<span className="min-w-0 flex-1 trunc">{title}</span>
       <span className="tabular-nums" aria-hidden="true">{rows.length}</span><span className="sr-only">{rows.length} 个对话</span>
     </button>
     <Collapsible open={open} id={listId}>
@@ -491,7 +492,7 @@ function Trash({ access, now, harness }: { readonly access: TrashAccess; readonl
   return <div className="session-shelf trash-shelf mt-1.5 flex flex-col gap-0.5">
     <div className="group/trash relative flex items-center">
       <button type="button" className="group-heading" aria-expanded={open} aria-controls={listId} onClick={() => setOpen(!open)}>
-        <ChevronRight size={11} strokeWidth={2.4} aria-hidden="true" className={cn("flex-none motion-rotate", open && "rotate-90")}/><Trash2 size={12} aria-hidden="true"/>
+        <ChevronRight size={11} aria-hidden="true" className={cn("flex-none motion-rotate", open && "rotate-90")}/><Trash2 size={12} aria-hidden="true"/>
         <span className="min-w-0 flex-1 trunc">最近删除</span><span className="tabular-nums transition-opacity duration-120 ease-standard group-hover/trash:opacity-0" aria-hidden="true">{count}</span>
       </button>
       <button type="button" className="link-btn absolute right-2 text-caption opacity-0 transition-opacity duration-120 ease-standard group-hover/trash:opacity-100 focus-visible:opacity-100" onClick={() => setAsking({ id: null, title: "" })}>清空</button>
@@ -516,12 +517,12 @@ function Trash({ access, now, harness }: { readonly access: TrashAccess; readonl
     </Collapsible>
     <Dialog open={asking !== null} onOpenChange={value => { if (!value) setAsking(null); }} title={asking?.id === null ? "清空最近删除？" : "彻底删除这段对话？"}
       description={asking?.id === null ? count + " 段对话删除后找不回来。" : "“" + (asking?.title ?? "") + "”删除后找不回来。"}>
-      {asking !== null && (asking.id === null ? rows.some(row => row.worktree !== undefined) : held !== null) ? <label className="mx-5 flex cursor-pointer items-start gap-2 rounded-row bg-inset px-3 py-2 text-ui-sm text-fg-2">
+      {asking !== null && (asking.id === null ? rows.some(row => row.worktree !== undefined) : held !== null) ? <label className="mx-5 mt-3 flex cursor-pointer items-start gap-2 rounded-row bg-inset px-3 py-2 text-ui-sm text-fg-2">
         <input type="checkbox" className="mt-0.5 size-3.5 flex-none accent-[var(--accent)]" checked={withWorktree} onChange={event => setWithWorktree(event.target.checked)}/>
         <span className="flex flex-col gap-0.5"><span>{asking.id === null ? "同时删除这些对话自己的工作树" : "同时删除它的工作树" + (held?.branch ? "（分支 " + held.branch + " 保留）" : "（分支保留）")}</span>
           {asking.id !== null && held !== null && held.shared ? <span className="text-caption text-fg-3">别的对话还在用，会留下</span>
             : asking.id !== null && held !== null && held.dirty > 0 && withWorktree ? <span className="text-caption text-red">{held.dirty} 个未提交的文件会一起删掉</span> : null}</span></label> : null}
-      <div className="flex justify-end gap-2 px-5 pt-2 pb-5"><button type="button" className="btn" autoFocus onClick={() => setAsking(null)}>取消</button>
+      <div className={DIALOG_FOOT}><button type="button" className="btn" autoFocus onClick={() => setAsking(null)}>取消</button>
         <button type="button" className="btn btn-danger" onClick={() => {
           const target = asking, worktreeToo = withWorktree; setAsking(null);
           if (target === null) return;
@@ -541,7 +542,7 @@ function Plain({ title, icon, rows, now, currentId, disabled, harness, onSession
   readonly arrivals: ReadonlySet<string>; readonly where: (session: SessionSummary) => string }) {
   return <section className="session-run flex flex-col gap-0.5 pb-1.5" aria-label={title}>
     <h3 className="group-heading m-0 font-normal">{icon}{title}</h3>
-    {rows.map(row => <div key={row.session.id} className={cn(arrivals.has(row.session.id) && "motion-list-insert")}><div>
+    {rows.map(row => <div key={row.session.id} data-leave="close" className={cn("session-slot", arrivals.has(row.session.id) && "motion-list-insert")}><div>
       <SessionRow row={row} now={now} harness={harness(row.session.selection.harnessId)} current={currentId === row.session.id} disabled={disabled} onOpen={() => onSession(row.session.id)}
         unread={currentId !== row.session.id && row.state === "idle" && unread(row.session)} actions={actions} where={where(row.session)}/></div></div>)}
   </section>;
@@ -578,12 +579,12 @@ function SessionRow({ row, now, harness, current, disabled, onOpen, unread, acti
       <BrandIcon brand={session.selection.harnessId} name={harness} size={14} className={cn("flex-none transition-[filter,opacity] duration-120 ease-standard", quiet && "opacity-60 grayscale group-hover/session:opacity-100 group-hover/session:grayscale-0")}/>
       {dot ? <span className="absolute -top-[3px] -right-[3px] flex rounded-full bg-sidebar p-px"><StatusDot tone={dot} size={6} live={dot === "work"}/></span> : null}
     </span>
-    {editing !== null ? <input className="session-rename -my-px -ml-1 h-[22px] min-w-0 flex-1 rounded-[5px] border-none bg-app px-1 text-ui-sm text-fg shadow-focus outline-none" value={editing} autoFocus aria-label="对话标题" maxLength={200}
+    {editing !== null ? <input className="session-rename -my-px -ml-1 h-[22px] min-w-0 flex-1 rounded-tag border-none bg-app px-1 text-ui-sm text-fg shadow-focus outline-none" value={editing} autoFocus aria-label="对话标题" maxLength={200}
         onFocus={event => event.currentTarget.select()} onChange={event => setEditing(event.target.value)}
         onBlur={() => { const next = editing.trim().replace(/\s+/gu, " "); setEditing(null); if (next && next !== session.title) actions?.rename(session.id, next); }}
         onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditing(null); } }}/>
       : <span className={cn("session-title min-w-0 flex-1 trunc", quiet && "text-fg-2", unread && "font-medium text-fg")}>{title}</span>}
-    {session.worktree && editing === null ? <GitBranch size={11} strokeWidth={2.2} className="flex-none text-fg-3" aria-hidden="true"/> : null}
+    {session.worktree && editing === null ? <GitBranch size={11} className="flex-none text-fg-3" aria-hidden="true"/> : null}
     {editing === null && (when || actions) ? <span className={cn("session-when flex min-w-[46px] flex-none justify-end text-caption tabular-nums transition-opacity duration-120 ease-standard",
       urgent ? "text-amber-on-tint" : state === "run" ? "text-accent-text" : "text-fg-3",
       actions && (menu ? "opacity-0" : "group-hover/session:opacity-0 group-has-[:focus-visible]/session:opacity-0"))} title={left?.hint} aria-hidden="true">{when}</span> : null}
@@ -625,10 +626,10 @@ function SnoozeDialog({ title, onClose, onChoose }: { readonly title: string; re
   const start = new Date(); start.setDate(start.getDate() + 1); start.setHours(9, 0, 0, 0);
   const [value, setValue] = useState(local(start)), at = new Date(value).getTime(), valid = Number.isFinite(at) && at > Date.now();
   return <Dialog open onOpenChange={open => { if (!open) onClose(); }} title="稍后提醒" description={title}>
-    <form className="flex flex-col gap-3 px-5 pt-2 pb-5" onSubmit={event => { event.preventDefault(); if (valid) onChoose(at); }}>
-      <input type="datetime-local" className="h-9 rounded-control border border-line bg-surface px-2.5 text-ui-sm text-fg" value={value} min={local(new Date())} aria-label="提醒时间" autoFocus onChange={event => setValue(event.target.value)}/>
+    <form className={DIALOG_COLUMN} onSubmit={event => { event.preventDefault(); if (valid) onChoose(at); }}>
+      <input type="datetime-local" className="field" value={value} min={local(new Date())} aria-label="提醒时间" autoFocus onChange={event => setValue(event.target.value)}/>
       {!valid ? <p className="m-0 text-caption text-red">要选一个以后的时间</p> : null}
-      <div className="flex justify-end gap-2"><button type="button" className="btn" onClick={onClose}>取消</button><button type="submit" className="btn btn-primary" disabled={!valid}>稍后提醒</button></div>
+      <div className={DIALOG_ACTIONS}><button type="button" className="btn" onClick={onClose}>取消</button><button type="submit" className="btn btn-primary" disabled={!valid}>稍后提醒</button></div>
     </form>
   </Dialog>;
 }

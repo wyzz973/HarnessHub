@@ -56,8 +56,8 @@ export function FileTree<T>({ items, workspace, pathOf, linesOf, renderFile }: {
     : <li key={"folder:" + node.key} className="flex min-w-0 flex-col">
       <button type="button" className="row flex h-8 w-full min-w-0 items-center gap-2 border-none bg-transparent pr-2 text-left text-ui-sm text-fg-2 hover:bg-subtle" style={{ paddingLeft: 8 + depth * 14 }}
         aria-expanded={!closed.has(node.key)} onClick={() => toggle(node.key)} title={node.key}>
-        <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", !closed.has(node.key) && "rotate-90")}/>
-        <Folder size={13} strokeWidth={2} aria-hidden="true" className="flex-none text-fg-3"/><span className="min-w-0 flex-1 trunc">{node.name}</span>
+        <ChevronRight size={12} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", !closed.has(node.key) && "rotate-90")}/>
+        <Folder size={13} aria-hidden="true" className="flex-none text-fg-3"/><span className="min-w-0 flex-1 trunc">{node.name}</span>
         <Lines add={node.add} del={node.del}/>
       </button>
       {closed.has(node.key) ? null : <ul className="m-0 flex list-none flex-col gap-px p-0">{draw(node.children, depth + 1)}</ul>}

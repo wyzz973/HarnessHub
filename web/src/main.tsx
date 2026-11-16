@@ -7,7 +7,7 @@ import { App } from "./App.js";
 import { applyTheme, readPreferences } from "./lib/prefs.js";
 import { desktop, followWindow } from "./lib/desktop.js";
 import { followMenu } from "./lib/keys.js";
-import { trackInputModality } from "./ui/motion.js";
+import { trackDepartures, trackInputModality } from "./ui/motion.js";
 import { ToastProvider } from "./ui/overlay.js";
 import { startSystemGlass } from "./ui/glass.js";
 import { startLiquidGlass } from "./ui/liquid.js";
@@ -41,10 +41,13 @@ followMenu();
 followThemeColor(document.documentElement);
 // Actions started from the keyboard finish without animation (ADR-054 §3); this lives as long as the document.
 trackInputModality();
+// What is taken off the page by itself (a row, a notice, a bar) leaves with a motion of its own.
+trackDepartures();
 // Glass surfaces bend what is behind them at their rim (Chromium only: the desktop app).
 startLiquidGlass();
-// Interface icons are Lucide at a 1.75 stroke (ADR-054 §4); an icon may still pass its own strokeWidth.
-createRoot(root).render(<StrictMode><LucideProvider strokeWidth={1.75}><ToastProvider><App /></ToastProvider></LucideProvider></StrictMode>);
+// Interface icons are Lucide, drawn with one line weight at every size: 1.2 px on the screen (a stroke given in the icon's own 24 units came out thinner the
+// smaller the icon, and each small icon then carried a heavier stroke of its own to make up for it).
+createRoot(root).render(<StrictMode><LucideProvider strokeWidth={1.2} absoluteStrokeWidth><ToastProvider><App /></ToastProvider></LucideProvider></StrictMode>);
 // In the desktop app on macOS 26 the glass is the system's own, laid under the page.
 startSystemGlass();
 // And a title is shown as one of the page's own tips.

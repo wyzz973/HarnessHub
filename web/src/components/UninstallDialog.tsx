@@ -33,7 +33,7 @@ export function UninstallDialog({ api, harness, installation, onClose, onConfirm
   const blocked = busy.length > 0 || (check?.otherUsers.length ?? 0) > 0 || (check?.undeclaredServices.length ?? 0) > 0 || (check?.resident.length ?? 0) > 0;
   const after = check?.after;
   return <Dialog open={harness !== null && installation !== null} onOpenChange={open => { if (!open) onClose(); }} title={`卸载 ${what}`}
-    description={`${shownInstallation?.label ?? ""}${shownInstallation?.version ? ` · ${shownInstallation.version}` : ""}`} className="uninstall-dialog w-[min(560px,calc(100vw-32px))]">
+    description={`${shownInstallation?.label ?? ""}${shownInstallation?.version ? ` · ${shownInstallation.version}` : ""}`} wide className="uninstall-dialog">
     <ConfirmBody>
       {failure ? <CheckFailed message={failure} onRetry={() => setAttempt(value => value + 1)}/>
         : check === null ? <Checking>正在检查哪些程序在使用这份安装…</Checking>

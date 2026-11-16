@@ -198,7 +198,7 @@ export function CommandPalette({ open, onOpenChange, commands, onClosed, search 
   </BaseDialog.Root>;
 }
 
-/** One action and its keys; `range` reads "1 – 9", `or` is another way to do the same, such as esc in the composer. `action`: one whose keys the user may change. */
+/** One action and its keys; `range` reads "1 – 9" (the keys before the last two are held for both), `or` is another way to do the same, such as esc in the composer. `action`: one whose keys the user may change. */
 interface ShortcutRow { readonly label: string; readonly keys: readonly string[]; readonly range?: boolean; readonly or?: readonly string[]; readonly action?: KeyAction }
 const chosen = (id: KeyAction): ShortcutRow => ({ label: KEY_ACTIONS.find(row => row.id === id)!.label, keys: [], action: id });
 /**
@@ -207,7 +207,7 @@ const chosen = (id: KeyAction): ShortcutRow => ({ label: KEY_ACTIONS.find(row =>
  * ⌘N, ⌘T and ⌘W, so HarnessHub takes none of them, and a lasting approval option has no key at all.
  */
 export const SHORTCUT_GROUPS: readonly { readonly title: string; readonly rows: readonly ShortcutRow[] }[] = [
-  { title: "通用", rows: [chosen("new"), chosen("palette"), chosen("nextWaiting"), chosen("previous"), chosen("next"), { label: "第 1–9 个对话", keys: ["⌥⌘1", "⌥⌘9"], range: true },
+  { title: "通用", rows: [chosen("new"), chosen("palette"), chosen("nextWaiting"), chosen("previous"), chosen("next"), { label: "第 1–9 个对话", keys: ["⌥", "⌘", "1", "9"], range: true },
     chosen("sidebar"), { label: "撤销侧栏操作", keys: ["⌘", "Z"] }, chosen("shortcuts"), { label: "关闭", keys: ["esc"] }] },
   { title: "对话", rows: [
     { label: "发送", keys: ["⏎"] }, { label: "换行", keys: ["⇧", "⏎"] }, chosen("picker"), chosen("model"), chosen("effort"), chosen("permission"), { ...chosen("stop"), or: ["esc"] }, chosen("panel"), chosen("terminal"), chosen("find"),
@@ -250,7 +250,7 @@ export function ShortcutList({ className, editable = false }: { readonly classNa
     <h3 id={`${id}-${index}`} className="m-0 px-1 pb-1 text-caption font-medium text-fg-3">{group.title}</h3>
     <dl className="m-0 flex flex-col">{group.rows.map(row => { const shown = row.action === undefined ? row.keys : chordKeys(keys[row.action]); return <div key={row.label} className="flex min-h-9 items-center gap-3 hairline-b px-1 last:border-b-0">
       <dt className="min-w-0 flex-1 text-ui-sm text-fg">{row.label}</dt>
-      <dd className="m-0 flex flex-none items-center gap-[3px]">{editable && row.action !== undefined ? <KeyRecorder action={row.action}/> : row.range ? <><Kbd>{shown[0]}</Kbd><span className="px-0.5 text-caption text-fg-3">–</span><Kbd>{shown[1]}</Kbd></> : shown.map((key, index) => <Kbd key={index}>{key}</Kbd>)}
+      <dd className="m-0 flex flex-none items-center gap-[3px]">{editable && row.action !== undefined ? <KeyRecorder action={row.action}/> : row.range ? <>{shown.slice(0, -2).map((key, index) => <Kbd key={index}>{key}</Kbd>)}<Kbd>{shown.at(-2)}</Kbd><span className="px-0.5 text-caption text-fg-3">–</span><Kbd>{shown.at(-1)}</Kbd></> : shown.map((key, index) => <Kbd key={index}>{key}</Kbd>)}
         {row.or ? <><span className="px-1 text-caption text-fg-3">或</span>{row.or.map((key, index) => <Kbd key={"or-" + index}>{key}</Kbd>)}</> : null}</dd>
     </div>; })}</dl>
   </div>)}</div>;

@@ -83,7 +83,7 @@ export function GitScopeMenu({ access, scope, onScope }: { readonly access: GitA
     : next !== null ? <button type="button" className="link-btn text-caption" disabled={reading} onClick={more}>{reading ? "正在读取…" : "读更早的提交"}</button> : undefined;
   return <SearchPicker label="选择 Git 改动范围" value={value} placeholder="Git" options={options} open={open} onOpenChange={opened} onChange={choose} side="bottom" align="end" wide
     chevron={false} footer={footer} className={cn("btn btn-ghost btn-sm h-7 flex-none gap-1 px-2", scope !== null && "bg-subtle text-fg")}
-    trigger={() => <><GitBranch size={13} strokeWidth={2} aria-hidden="true"/><span className="max-w-[160px] truncate">{scope === null ? "Git" : scope.kind === "uncommitted" ? "未提交" : scope.kind === "branch" ? "相对 " + (scope.base ?? "默认分支") : scope.kind === "turn" ? "第 " + (scope.ordinal + 1) + " 轮" : scope.sha.slice(0, 7)}</span></>}/>;
+    trigger={() => <><GitBranch size={13} aria-hidden="true"/><span className="max-w-[160px] truncate">{scope === null ? "Git" : scope.kind === "uncommitted" ? "未提交" : scope.kind === "branch" ? "相对 " + (scope.base ?? "默认分支") : scope.kind === "turn" ? "第 " + (scope.ordinal + 1) + " 轮" : scope.sha.slice(0, 7)}</span></>}/>;
 }
 
 /** One file of a Git scope: its row, and under it — when opened — its diff, read then. */
@@ -105,7 +105,7 @@ function GitFile({ file, scope, access, workspace, whitespace, wrap, split, open
   return <li className="flex min-w-0 flex-col" data-path={file.path}>
     {/* The file's row stays at the top of the panel while its diff scrolls under it. */}
     <button type="button" className="row sticky top-0 z-[2] flex h-8 w-full min-w-0 items-center gap-2 border-none bg-surface pr-2 text-left text-ui-sm text-fg hover:bg-subtle" style={{ paddingLeft: 8 + depth * 14 }} aria-expanded={open} aria-controls={panel} onClick={onToggle} title={file.oldPath ? file.oldPath + " → " + file.path : file.path}>
-      <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
+      <ChevronRight size={12} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
       <FileMark created={file.status === "added" || file.status === "untracked"} removed={file.status === "deleted"}/>{label === undefined ? <FilePath path={file.path} workspace={workspace}/> : <span className="min-w-0 flex-1 trunc">{label}</span>}
       {file.status === "untracked" ? <span className="flex-none text-caption text-fg-3">未跟踪</span> : file.status === "renamed" ? <span className="flex-none text-caption text-fg-3">改名</span> : null}
       <Lines add={file.added ?? 0} del={file.removed ?? 0}/>
@@ -160,10 +160,10 @@ export function GitChanges({ access, scope, workspace, wrap, split, whitespace, 
     <div className="flex min-h-8 items-center gap-2 px-[18px] pb-1 text-caption text-fg-3">
       <span className="min-w-0 flex-1 truncate" title={current !== null && "base" in current && current.base ? current.base.ref + " @ " + current.base.sha.slice(0, 7) : undefined}>{scopeName(scope)}{current !== null && "base" in current && current.base ? "（自 " + current.base.sha.slice(0, 7) + " 起）" : ""}</span>
       <button type="button" className="icon-btn size-7 flex-none text-fg-3" aria-label="重新读取" title="重新读取" disabled={reading} onClick={() => setGeneration(value => value + 1)}>
-        <RefreshCw size={13} strokeWidth={2} className={cn(reading && "animate-spin")} aria-hidden="true"/></button>
+        <RefreshCw size={13} className={cn(reading && "animate-spin")} aria-hidden="true"/></button>
       {files.length > 0 ? <><span className="flex items-center gap-1.5"><Lines add={add} del={del}/></span>
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label={every ? "全部收起" : "全部展开"} title={every ? "全部收起" : "全部展开"} onClick={() => setChosen(every ? new Set() : new Set(files.map(file => file.path)))}>
-          {every ? <ChevronsDownUp size={14} strokeWidth={2}/> : <ChevronsUpDown size={14} strokeWidth={2}/>}</button></> : null}
+          {every ? <ChevronsDownUp size={14}/> : <ChevronsUpDown size={14}/>}</button></> : null}
     </div>
     {current === null ? <p className="m-0 flex items-center gap-2 px-[18px] py-3 text-caption text-fg-3"><Spinner size={12} label=""/>正在读取</p>
       : "problem" in current ? <p className="m-0 px-[18px] py-3 text-caption text-red">{current.problem}</p>

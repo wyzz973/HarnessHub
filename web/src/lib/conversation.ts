@@ -30,5 +30,3 @@ export function conversationOf(state: WindowState): ConversationView {
   made.set(state, view);
   return view;
 }
-/** Whether the Turns held are the whole conversation: nothing older is left to read. */
-export const holdsFirst = (view: ConversationView): boolean => view.window.older === null;

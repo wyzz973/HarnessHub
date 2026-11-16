@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { SubagentDefinitionView, SubagentInventoryView, SubagentTargetView, SubagentView } from "../../../src/contracts/capabilities.js";
 import { errorMessage, type GatewayApi } from "../api.js";
 import { Dialog } from "../ui/overlay.js";
-import { Notice, Spinner } from "../ui/primitives.js";
+import { ConfirmButton, Notice, Spinner } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { DIALOG_BODY, DIALOG_FOOT, Field, type ChangeRequest } from "./CapabilityChangeDialog.js";
 
@@ -38,7 +38,7 @@ function SubagentDialog({ api, editing, onClose, onSaved }: { readonly api: Gate
     api.saveSubagent(editing.name ?? name.trim(), { description, prompt }, editing.name !== null).then(saved => { setBusy(false); onSaved(saved); }, error => { setBusy(false); setFailure(errorMessage(error)); });
   };
   return <Dialog open={editing !== null} onOpenChange={open => { if (!open && !busy) onClose(); }} title={editing?.name ? "编辑 " + editing.name : "新建子 Agent"}
-    description="只保存名字、说明和正文；模型、工具和权限跟父会话。" className="subagent-dialog w-[min(640px,calc(100vw-32px))]">
+    description="只保存名字、说明和正文；模型、工具和权限跟父会话。" wide className="subagent-dialog">
     <div className={DIALOG_BODY}>
       {failure ? <Notice tone="red">{failure}</Notice> : null}
       {editing?.name ? null : <Field label="名字（小写字母、数字和 -）"><input className="field" aria-label="子 Agent 名字" value={name} placeholder="code-checker" onChange={event => setName(event.target.value)}/></Field>}
@@ -83,7 +83,7 @@ export function SubagentsPanel({ api, harness, reload, onChange, onNotice }: { r
           <th scope="row" className="py-2.5 pr-3 font-normal"><span className="flex flex-col gap-1"><strong className="font-medium">{agent.name}</strong>
             <span className="text-fg-2">{agent.definition.description}</span>
             <span className="-ml-2.5 flex gap-0.5"><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing({ name: agent.name, definition: agent.definition })}><Pencil size={12}/>编辑</button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => void remove(agent.name)}><Trash2 size={12}/>从清单删除</button></span></span></th>
+              <ConfirmButton className="btn btn-ghost btn-sm" confirm={<><Trash2 size={12}/>再点一次删除</>} onConfirm={() => void remove(agent.name)}><Trash2 size={12}/>从清单删除</ConfirmButton></span></span></th>
           {columns.map(item => { const target = agent.targets.find(entry => entry.harnessId === item.harnessId); return <td key={item.harnessId} className="px-2 py-2.5">{target ? <TargetCell api={api} agent={agent} target={target} harnessName={item.name} onChange={onChange} onClaim={(name, harnessId) => void claim(name, harnessId)}/> : null}</td>; })}
         </tr>)}</tbody></table></div>}
     {skipped.length ? <ul className="m-0 mt-3 flex list-none flex-col gap-0.5 p-0 text-caption text-fg-3">{skipped.map(item => <li key={item.harnessId}>{item.name}：{item.reason}</li>)}</ul> : null}

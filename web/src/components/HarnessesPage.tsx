@@ -320,7 +320,7 @@ function installWay(harness: HarnessView): InstallWay | null {
     : runs === "managed" ? native ? shortChannel(native.channel) : recipe?.kind === "python" ? "uv" : recipe?.kind === "binary" ? "发布包" : "npm"
     : install?.method === "terminal" ? "终端" : install?.method === "script" ? "官方脚本" : "npm";
   // The row says what would run: the official command, or the package HarnessHub installs; a note of the official page first.
-  const description = harness.tier === "frozen" ? "已冻结：不再新增能力，保留现有接入"
+  const description = harness.tier === "frozen" ? "已冻结：保留现有接入，不再新增能力"
     : install?.note ? install.note
     : runs === "managed" ? recipeText(recipe)
     : install ? "官网命令 " + install.command : recipeText(recipe);
@@ -542,7 +542,7 @@ function AgentCard({ harness, state, action, selected, onOpen }: {
         {/* The state sits beside the name only, so the version and channel below keep the card's whole width. */}
         <div className="flex min-w-0 items-center gap-1.5">
           <h3 id={nameId} className="trunc m-0 text-[15px] leading-[22px] font-semibold">{harness.name}</h3>
-          {harness.tier === "frozen" ? <Badge tone="neutral" className="harness-frozen flex-none" title="冻结：保留适配与历史对话，不再打磨">冻结</Badge> : null}
+          {harness.tier === "frozen" ? <Badge tone="neutral" className="harness-frozen flex-none" title="已冻结：保留现有接入，不再新增能力">冻结</Badge> : null}
           {state.kind === "ready" ? null : <StatusPill tone={state.tone} live={state.live} className="-my-px ml-auto flex-none" {...(state.hint ? { title: state.hint } : {})}><SwapText text={state.pill}/></StatusPill>}
         </div>
         <span className="agent-meta trunc text-caption leading-4 text-fg-3" title={`${version ?? "版本未知"} · ${placeOf(harness, true)}`}>{version ?? "版本未知"} · {placeOf(harness, false)}</span>
@@ -562,7 +562,7 @@ function CatalogRow({ harness, way, first, busy, status, failure, onOpen, onInst
       <BrandIcon brand={harness.id} name={harness.name} size={32}/>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex min-w-0 items-center gap-1.5"><span className="trunc text-ui-sm font-medium">{harness.name}</span>
-          {harness.tier === "frozen" ? <Badge tone="neutral" className="harness-frozen flex-none" title="冻结：保留适配与历史对话，不再打磨">冻结</Badge> : null}</span>
+          {harness.tier === "frozen" ? <Badge tone="neutral" className="harness-frozen flex-none" title="已冻结：保留现有接入，不再新增能力">冻结</Badge> : null}</span>
         <span className={cn("trunc text-caption", failure ? "text-red" : "text-fg-3")} title={failure ? "上次安装没有成功：" + failure : way.description}>{failure ? "上次安装没有成功：" + failure : way.description}</span>
       </span>
     </button>
@@ -616,14 +616,14 @@ function AgentDetail(props: HarnessProps & { harness: HarnessView; state: AgentS
   const job = related.find(item => item.id === selectedJobId) ?? related.find(installationActive) ?? related[0] ?? null;
   const unconfirmed = props.unconfirmed.find(item => item.harnessId === harness.id);
   const busy = Boolean(job && installationActive(job)) || props.submitting.includes(harness.id);
-  const here = onMachine(harness), version = versionOf(harness), seen = readinessOf(harness, props.readiness), ids = useId();
+  const here = onMachine(harness), version = versionOf(harness), ids = useId();
   // A running task is the state: its own section says it, so the state box is left out rather than said twice.
   const health = state.kind !== "missing" && !(state.kind === "busy" && job !== null && installationActive(job));
   return <>
     <header className="flex items-center gap-3.5 pt-5 pr-4 pb-4 pl-5">
       <BrandIcon brand={harness.id} name={name} size={52}/>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex min-w-0 items-center gap-1.5"><h2 className="trunc m-0 text-panel">{name}</h2>{harness.tier === "frozen" ? <Badge tone="neutral" title="冻结：保留适配与历史对话，不再打磨">冻结</Badge> : null}</div>
+        <div className="flex min-w-0 items-center gap-1.5"><h2 className="trunc m-0 text-panel">{name}</h2>{harness.tier === "frozen" ? <Badge tone="neutral" title="已冻结：保留现有接入，不再新增能力">冻结</Badge> : null}</div>
         <p className="agent-meta m-0 text-caption text-fg-3">{here ? `${version ?? "版本未知"} · ${placeOf(harness, true)}` : "未安装"}</p>
       </div>
       <button type="button" className="icon-btn self-start text-fg-3" aria-label="关闭 Harness 详情" onClick={props.onClose}><X size={15}/></button>
@@ -837,6 +837,6 @@ function InstallationLogs({ api, job }: { api: GatewayApi; job: InstallationJobV
     <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)} className="-mx-1.5 flex items-center gap-1.5 self-start rounded-row border-none bg-transparent px-1.5 py-1 text-ui-sm font-medium text-fg-2 hover:text-fg">
       <ChevronRight size={14} className={cn("motion-rotate", open && "rotate-90")} aria-hidden="true"/>安装日志<span className="text-fg-3">{logs.length}</span></button>
     <Collapsible open={open} id={id}><div className="flex flex-col gap-1.5 pt-1.5">{fault ? <Notice tone="amber">{fault}</Notice> : null}
-      <div className="log-output max-h-64 overflow-auto rounded-block bg-inset p-3" role="log" aria-label="安装日志" aria-live="off">{logs.length ? logs.map(line => <div key={line.seq} className={cn("flex gap-2.5 font-mono text-[11.5px] leading-[1.6]", line.stream === "stderr" && "text-amber")}><span className="flex-none text-fg-3">{new Date(line.time).toLocaleTimeString("zh-CN", { hour12: false })}</span><code className="whitespace-pre-wrap wrap-anywhere">{line.text}</code></div>) : <p className="m-0 text-caption text-fg-3">暂无日志输出</p>}</div></div></Collapsible>
+      <div className="log-output max-h-64 overflow-auto rounded-block bg-inset p-3" role="log" aria-label="安装日志" aria-live="off">{logs.length ? logs.map(line => <div key={line.seq} className={cn("flex gap-2.5 font-mono text-code", line.stream === "stderr" && "text-amber")}><span className="flex-none text-fg-3">{new Date(line.time).toLocaleTimeString("zh-CN", { hour12: false })}</span><code className="whitespace-pre-wrap wrap-anywhere">{line.text}</code></div>) : <p className="m-0 text-caption text-fg-3">暂无日志输出</p>}</div></div></Collapsible>
   </div>;
 }

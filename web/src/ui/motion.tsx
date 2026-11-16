@@ -14,15 +14,56 @@ export function useReducedMotion(): boolean { return useMedia("(prefers-reduced-
 
 /**
  * Records on the root element whether the last input came from the keyboard or a pointer (`data-input="keyboard"` or
- * `"pointer"`), so that actions started from the keyboard finish without animation (Motion board #37) and the `keyboard:`
- * variant can tell them apart. Composition keys of an input method do not count. Returns the function that stops it.
+ * `"pointer"`), for what shows only to someone using the keyboard (the `keyboard:` variant), and marks the moment after a
+ * key press (`data-keyed`, for KEYED_MS), so that what a key starts finishes without animation (Motion board #37). The mark
+ * is short on purpose: what happens by itself later — a reply arriving, a Turn folding as it ends — is not something the key
+ * started, and moves as it would for anyone. Composition keys of an input method do not count. Returns the function that stops it.
  */
+const KEYED_MS = 280;
 export function trackInputModality(root: HTMLElement = document.documentElement): () => void {
-  const keyboard = (event: KeyboardEvent) => { if (!event.isComposing) root.dataset.input = "keyboard"; };
-  const pointer = () => { root.dataset.input = "pointer"; };
+  let timer = 0;
+  const keyboard = (event: KeyboardEvent) => {
+    if (event.isComposing) return;
+    root.dataset.input = "keyboard"; root.dataset.keyed = "";
+    window.clearTimeout(timer); timer = window.setTimeout(() => { delete root.dataset.keyed; }, KEYED_MS);
+  };
+  const pointer = () => { root.dataset.input = "pointer"; window.clearTimeout(timer); delete root.dataset.keyed; };
   document.addEventListener("keydown", keyboard, true);
   document.addEventListener("pointerdown", pointer, true);
-  return () => { document.removeEventListener("keydown", keyboard, true); document.removeEventListener("pointerdown", pointer, true); delete root.dataset.input; };
+  return () => { document.removeEventListener("keydown", keyboard, true); document.removeEventListener("pointerdown", pointer, true); window.clearTimeout(timer); delete root.dataset.input; delete root.dataset.keyed; };
+}
+
+/**
+ * Lets what is taken off the page leave it. An element that says how it leaves (`data-leave`) and is removed by itself — not with what holds it — is
+ * put back where it was, inert, for the moment its leaving takes, and then taken out for good:
+ *   "close"  shuts its height and fades (a row of a list, a notice in the flow)
+ *   "fade"   fades, giving back the few pixels it came in by (a bar or a pill that floats)
+ *   "sink"   slides down out of the foot of what holds it (the terminal)
+ * Not after a key press (#37), not with reduced motion, and not when a list loses many rows at once (a filter, a list read anew). Lives as long as the document.
+ */
+export function trackDepartures(): () => void {
+  const observer = new MutationObserver(records => {
+    let gone: { readonly node: HTMLElement; readonly record: MutationRecord }[] | null = null;
+    for (const record of records) for (const node of record.removedNodes) if (node instanceof HTMLElement && node.dataset.leave !== undefined && node.dataset.leaving === undefined) (gone ??= []).push({ node, record });
+    if (gone === null || document.documentElement.hasAttribute("data-keyed") || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (gone.filter(item => item.node.dataset.leave === "close").length > 3) return;
+    for (const { node, record } of gone) {
+      const parent = record.target, before = record.nextSibling;
+      if (!(parent instanceof HTMLElement) || !parent.isConnected) continue;
+      node.dataset.leaving = ""; node.inert = true; node.setAttribute("aria-hidden", "true"); node.style.pointerEvents = "none";
+      node.classList.remove("motion-list-insert", "motion-enter", "motion-fade-in");
+      parent.insertBefore(node, before !== null && before.parentNode === parent ? before : null);
+      const tall = node.offsetHeight, way = node.dataset.leave, timing: KeyframeAnimationOptions = { duration: way === "sink" ? 220 : 180, easing: "cubic-bezier(.4, 0, .2, 1)", fill: "forwards" };
+      if (way === "close") { node.style.overflow = "clip"; node.style.minHeight = "0"; }
+      const frames: Keyframe[] = way === "close" ? [{ height: tall + "px", opacity: 1 }, { height: "0px", opacity: 0, paddingTop: "0px", paddingBottom: "0px", marginTop: "0px", marginBottom: "0px" }]
+        : way === "sink" ? [{ marginBottom: "0px" }, { marginBottom: -tall + "px" }]
+        : [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(" + (node.dataset.leaveShift ?? "-4") + "px)" }];
+      const done = () => node.remove();
+      try { node.animate(frames, timing).finished.then(done, done); } catch { done(); }
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  return () => observer.disconnect();
 }
 
 /**
@@ -113,10 +154,6 @@ export function DrawnCheck({ size = 15, circle = false, animate = true, delay, c
   </svg>;
 }
 
-/** The 7 px dot at the end of a reply still being written (Motion board #11); `done` fades it out in 200 ms. */
-export function EndDot({ done = false }: { readonly done?: boolean }) {
-  return <span className="end-dot" aria-hidden="true" {...(done ? { "data-done": "" } : {})}/>;
-}
 
 /**
  * Content that opens and closes in place (Motion board #13, #18, #22): its height goes from nothing to its content with a

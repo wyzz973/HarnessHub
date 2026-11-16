@@ -34,7 +34,7 @@ export function InstallDialog({ api, harness, onClose, onConfirm }: {
   // The title keeps the Harness while the dialog closes (useClosingValue); it opens and closes with `harness`.
   const name = useClosingValue(harness)?.name ?? "Harness";
   return <Dialog open={harness !== null} onOpenChange={open => { if (!open) onClose(); }} title={`安装 ${name}`} description={check ? check.method === "npm" ? "按官网方式，用 npm 安装" : "按官网方式，运行官方安装脚本" : "按官网方式安装"}
-    className="install-dialog w-[min(560px,calc(100vw-32px))]">
+    wide className="install-dialog">
     <ConfirmBody>
       {failure ? <CheckFailed message={failure} onRetry={() => setAttempt(value => value + 1)}/>
         : check === null ? <Checking>正在准备…</Checking>

@@ -1,10 +1,9 @@
-import type { FileChangeItem, PlanItem, PlanStep, SubagentItem, WorkItem } from "../../../../src/contracts/protocol.js";
+import type { FileChangeItem, PlanItem, PlanStep, WorkItem } from "../../../../src/contracts/protocol.js";
 import type { ReadItem, ReadTurn } from "../../../../src/contracts/protocol-read.js";
-import { costWords, statusText } from "../../../../src/contracts/protocol-lines.js";
-import { TURN_STATUS_WORDS } from "../../../../src/contracts/protocol-words.js";
+import { statusText } from "../../../../src/contracts/protocol-lines.js";
 import type { TurnStatus } from "../../../../src/contracts/protocol.js";
 import type { PublicRun } from "../../../../src/contracts/session.js";
-import { compact, elapsed, spentText } from "../format.js";
+import { compact } from "../format.js";
 import { moneyText } from "../../../../src/contracts/protocol-lines.js";
 import { isWork, turnOver } from "./work.js";
 
@@ -61,8 +60,6 @@ export function planRows(steps: readonly PlanStep[]): readonly PlanRow[] {
   }
   return rows;
 }
-/** The task list of one Turn, when it has one. */
-export function planOf(turn: ReadTurn): PlanItem | undefined { return turn.items.findLast((item): item is PlanItem => item.type === "plan" && item.steps.length > 0); }
 
 /** Whether an item happened inside a delegated task (its parent is one of the Turn's tasks). */
 function inside(item: ReadItem, tasks: ReadonlySet<string>): boolean { return item.parentId !== undefined && tasks.has(item.parentId); }
@@ -91,12 +88,8 @@ export function editsOf(turn: ReadTurn): readonly FileChangeItem[] {
 }
 /** How many changes some Turns made, counted as places, known without reading any detail. */
 export function changeCount(runs: readonly PublicRun[]): number { return runs.reduce((count, run) => count + (run.protocol === undefined ? 0 : editsOf(run.protocol).length), 0); }
-/** Work the Turn handed to others: its delegated tasks. */
-export function tasksHanded(turn: ReadTurn): readonly SubagentItem[] { return turn.items.filter((item): item is SubagentItem => item.type === "subagent"); }
 
 export { statusText };
-/** How the Turn stands, in the one table's word. */
-export function statusWord(turn: Pick<ReadTurn, "status">): string { return TURN_STATUS_WORDS[turn.status]; }
 /** Whether the Turn is over. */
 export function over(turn: Pick<ReadTurn, "status">): boolean { return turnOver(turn); }
 /** A Run's state as a Turn's: the Turn's own when the page could read it, else the stored Run's (whose closing phase is the Turn still running). */

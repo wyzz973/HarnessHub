@@ -99,13 +99,13 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
   const setTrigger = useCallback((node: HTMLButtonElement | null) => { triggerRef.current = node; if (outerTrigger) outerTrigger.current = node; }, [outerTrigger]);
   return <BasePopover.Root open={open} onOpenChange={next => setOpen(next)}>
     <BasePopover.Trigger render={<button ref={setTrigger} type="button" aria-label={label} aria-describedby={describedBy} disabled={disabled} title={selected?.label ?? placeholder}
-      className={cn("selection-trigger inline-flex h-[30px] max-w-[220px] min-w-0 items-center gap-1.5 rounded-row border-none bg-transparent px-2 text-ui-sm text-fg-2 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle hover:text-fg disabled:opacity-40 data-[popup-open]:bg-subtle data-[popup-open]:text-fg",
+      className={cn("selection-trigger inline-flex h-7 max-w-[220px] min-w-0 items-center gap-1.5 rounded-row border-none bg-transparent px-2 text-ui-sm text-fg-2 transition-[color,background-color] duration-120 ease-standard hover:bg-subtle hover:text-fg disabled:opacity-40 data-[popup-open]:bg-subtle data-[popup-open]:text-fg",
         selected?.icon && !trigger && "font-medium text-fg", className)}/>}>
       {trigger ? trigger(selected) : <>
         {selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}
         <span className="min-w-0 truncate">{prefix ? <span className="text-fg-3">{prefix} </span> : null}{selected?.short ?? selected?.label ?? placeholder}</span>
       </>}
-      {chevron ? <ChevronDown size={12} strokeWidth={2} className="flex-none text-fg-3" aria-hidden="true"/> : null}
+      {chevron ? <ChevronDown size={12} className="flex-none text-fg-3" aria-hidden="true"/> : null}
     </BasePopover.Trigger>
     <BasePopover.Portal>
       <BasePopover.Positioner side={side} align={align} sideOffset={8} collisionPadding={12} positionMethod="fixed" className="hh-positioner z-[55]" {...(anchor ? { anchor } : {})}>
@@ -150,12 +150,12 @@ export function SearchPicker({ label, value, placeholder, options, onChange, dis
                       {option.status ? <span id={`${id}-status`} className={cn("badge flex-none", TONES[option.status.tone])} title={option.status.title}><span className="dot" aria-hidden="true"/>{option.status.label}</span> : null}</span>
                     {describe ? <small id={`${id}-description`} className={cn("truncate text-caption", option.disabled ? "text-amber" : "text-fg-3")}>{describe}</small> : null}
                   </span>
-                  <Check size={15} strokeWidth={2.2} className={cn("flex-none text-accent-text", value !== option.value && "invisible")} aria-hidden="true"/>
+                  <Check size={15} className={cn("flex-none text-accent-text", value !== option.value && "invisible")} aria-hidden="true"/>
                 </button>
               </div>;
             }) : <p className="m-0 px-3 py-6 text-center text-ui-sm text-fg-3">{options.length === 0 && empty !== undefined ? empty : "没有匹配的选项"}</p>}
           </div>
-          <div className="flex items-center justify-between gap-2 px-3.5 py-2 text-caption text-fg-3 hairline-t">{footer ?? <span>↑ ↓ 选择 · Enter 确认 · Esc 关闭</span>}</div>
+          {footer !== undefined ? <div className="flex items-center justify-between gap-2 px-3.5 py-2 text-caption text-fg-3 hairline-t">{footer}</div> : null}
           </div>
           {aside !== undefined ? <div className="picker-aside flex min-h-0 min-w-0 flex-1 hairline-l max-sm:hidden">{aside}</div> : null}
         </BasePopover.Popup>

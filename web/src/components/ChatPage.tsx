@@ -12,16 +12,16 @@ import type { ConversationView } from "../lib/conversation.js";
 import { failureMessage, type AccountLimitsView } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { actionOf, ariaKeys, keyText, useKeys } from "../lib/keys.js";
-import { clock, folderName, homePath, inScratch, projectOf, shortTitle } from "../lib/format.js";
+import { folderName, homePath, inScratch, projectOf } from "../lib/format.js";
 import { useMedia, useNow, type Preferences } from "../lib/prefs.js";
 import { bannerOf, installationNotices, relayHasStory, relayLine } from "../lib/relay-state.js";
 import { useClosedNotices } from "../lib/use-relay.js";
 import type { RelayApi, RelayPrefs, RelayRequest, RelayView } from "../relay.js";
 import type { QueueNotice } from "../lib/protocol/live.js";
-import { changeCount, latestPlan, over, planRows, shownPlan, statusParts, stateOf } from "../lib/protocol/runs.js";
+import { over, planRows, shownPlan, statusParts, stateOf } from "../lib/protocol/runs.js";
 import { finished } from "../lib/turn.js";
 import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
-import { Dialog, Menu, useToast } from "../ui/overlay.js";
+import { Dialog, DIALOG_ACTIONS, DIALOG_COLUMN, Menu, useToast } from "../ui/overlay.js";
 import { EmptyState, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
 import type { ToolDetailLoader } from "./Activity.js";
 import { decisionRole, dockedRequest, PermissionCard, type Decision, type PermissionRequestView } from "./Approval.js";
@@ -56,18 +56,18 @@ export function selectionProblem(draft: SelectionDraft, harnesses: readonly Harn
   if (!harness.controls.some(row => row.id === draft.controlId && row.available)) return "这个控制入口目前不可用，请在 Harness 页中检查。";
   if (!draft.providerId) return null;
   const provider = providers.find(row => row.id === draft.providerId);
-  if (!provider || !provider.enabled) return "这个 Provider 已停用或不可用，请重新选择。";
-  if (!harness.providerProtocols.includes(provider.protocol)) return "这个 Harness 暂不支持所选 Provider 的协议。请选择兼容的 Provider。";
+  if (!provider || !provider.enabled) return "这个连接已停用或不可用，请重新选择。";
+  if (!harness.providerProtocols.includes(provider.protocol)) return "这个 Harness 不支持所选连接的协议，请换一个连接。";
   if (provider.protocol === "gemini" && !provider.hasCredential && draft.providerRevision === provider.revision) return "Gemini 连接需要 API Key，请先在模型连接中补充密钥。";
   if (!draft.model || draft.providerRevision === null) return "请选择要使用的模型。";
-  if (draft.providerRevision === provider.revision && !provider.models.includes(draft.model)) return "所选模型不在当前 Provider 的配置中。";
+  if (draft.providerRevision === provider.revision && !provider.models.includes(draft.model)) return "所选模型不在当前连接的配置里。";
   return null;
 }
 export function effectiveProviderProblem(selection: HarnessSelection, providers: readonly ProviderView[]): string | null {
   if (!selection.provider) return null;
   const provider = providers.find(row => row.id === selection.provider?.providerId);
-  if (!provider) return "当前 Provider 已不可用，请应用另一个选择后继续。";
-  return provider.enabled ? null : "当前 Provider 已停用。请启用它，或切换到另一个 Provider 后继续。";
+  if (!provider) return "当前连接已不可用，换一个后继续。";
+  return provider.enabled ? null : "当前连接已停用。启用它，或换一个连接后继续。";
 }
 function draftMatches(draft: SelectionDraft, selection: HarnessSelection): boolean { return JSON.stringify(draft) === JSON.stringify(selectionDraft(selection)); }
 
@@ -687,7 +687,7 @@ export function ChatPage(props: ChatProps) {
     return { checked, onToggle: () => relay.onNext(checked ? null : SEND_ALONE) };
   })() : undefined;
   const composer = <Composer {...props} sendAlone={sendAlone} onSendDraft={text => send(text)} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}
-    onOpenDelegate={props.onDelegate && session?.status === "open" ? () => setDelegating(true) : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} openList={openList} onEditLast={editLast} onReplaceDraft={fillDraft}
+    approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} openList={openList} onEditLast={editLast} onReplaceDraft={fillDraft}
     above={session ? <>
       {relay ? <RelayCard line={relayNow} banner={banner} target={harnessName(session.selection.harnessId)} next={relay.next} onNext={relay.onNext}
         onDismissBanner={() => { if (banner !== null) closed.add(closedKey(banner.key)); }}/> : null}
@@ -742,8 +742,8 @@ export function ChatPage(props: ChatProps) {
             {/* The Conversation board's header ends with the details button and "…": showing every step and ending the conversation
                 are items of that menu (rulings R1, R3), so they are there at every width. */}
             <div className="tool-group">
-              {props.terminals ? <Tip label={<>{terminal ? "收起终端" : "打开终端"}（{keyText("terminal")}）</>}><button type="button" className="icon-btn max-sm:hidden" aria-label="终端" aria-pressed={terminal} onClick={() => setTerminal(value => !value)}><SquareTerminal size={16}/></button></Tip> : null}
-              <Tip label={<>{panelOpen ? "收起详情" : "打开详情"}（{keyText("panel")}）</>}><button type="button" className="icon-btn relative" aria-label="详情栏" aria-pressed={panelOpen} aria-describedby={changes ? "details-changes" : undefined} onClick={() => setPanel(!panelOpen)}>
+              {props.terminals ? <Tip label={(terminal ? "收起终端 " : "打开终端 ") + keyText("terminal")}><button type="button" className="icon-btn max-sm:hidden" aria-label="终端" aria-pressed={terminal} onClick={() => setTerminal(value => !value)}><SquareTerminal size={16}/></button></Tip> : null}
+              <Tip label={(panelOpen ? "收起详情 " : "打开详情 ") + keyText("panel")}><button type="button" className="icon-btn relative" aria-label="详情栏" aria-pressed={panelOpen} aria-describedby={changes ? "details-changes" : undefined} onClick={() => setPanel(!panelOpen)}>
                 <PanelRight size={16}/>{!panelOpen && changes ? <ChangeBadge count={changes} news={changesArrived}/> : null}
               </button></Tip>
               {changes ? <span id="details-changes" className="sr-only">本对话改动 {changes} 处</span> : null}
@@ -809,7 +809,7 @@ export function ChatPage(props: ChatProps) {
         {/* The message box floats over the conversation, which keeps that much room under its last line (--foot-height). */}
         {session !== null && !props.loading ? <div className="scroll-edge scroll-edge-bottom" data-under-glass="" aria-hidden="true"/> : null}
         {session !== null && !props.loading ? <footer ref={foot} className="chat-foot pointer-events-none absolute inset-x-0 bottom-0 z-10 px-4 pt-1.5 pb-4 sm:px-8"><div className="pointer-events-auto relative mx-auto flex max-w-reading flex-col gap-2">
-          {!followBottom ? <button type="button" className="follow-stream motion-enter press absolute -top-11 left-1/2 z-10 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border-none pr-3 pl-3.5 text-caption font-medium text-fg-2 transition-[color,transform] duration-120 ease-standard hover:text-fg"
+          {!followBottom ? <button type="button" data-leave="fade" data-leave-shift="6" className="follow-stream motion-enter press absolute -top-11 left-1/2 z-10 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border-none pr-3 pl-3.5 text-caption font-medium text-fg-2 transition-[color,transform] duration-120 ease-standard hover:text-fg"
             style={motionStyle({ shift: 6 })} onClick={resumeFollowing} aria-label="回到最新回复"><span>回到最新</span><ArrowDown size={13} aria-hidden="true"/></button> : null}
           {props.queueNotice ? <Notice tone="amber" onDismiss={props.onDismissQueueNotice}>{props.queueNotice}</Notice> : null}
           {refused && props.onFreeWorkspace ? <Notice tone="amber" className="kept-conflict" title="工作区正被另一个对话占用" action={<button type="button" className="btn btn-sm" disabled={freeing || mutation !== null} onClick={() => { setFreeing(true); void props.onFreeWorkspace!(refused).finally(() => setFreeing(false)); }}>{freeing ? "正在结束…" : "结束那个对话的后台进程并重试"}</button>}>那个对话的后台进程还在：结束它再重试，或稍后再试。</Notice> : null}
@@ -832,9 +832,9 @@ export function ChatPage(props: ChatProps) {
     {props.onDelegate && session ? <DelegateDialog open={delegating} onClose={() => setDelegating(false)} current={session.selection.harnessId} onDelegate={props.onDelegate}
       harnesses={harnesses.filter(harness => !props.hiddenHarnesses.has(harness.id) && harness.controls.some(control => control.available))}/> : null}
     <Dialog open={confirmClose} onOpenChange={setConfirmClose} title="结束这次会话？" description="历史保留，之后不能再往这个对话发消息。">
-      <div className="flex flex-col gap-4 px-5 pt-2 pb-5">
+      <div className={DIALOG_COLUMN}>
         {active || pending ? <p className="m-0 text-ui-sm text-fg-2">当前执行或待生效的选择会停止，已经产生的内容与文件会保留。</p> : null}
-        <div className="flex justify-end gap-2"><button type="button" className="btn" onClick={() => setConfirmClose(false)} autoFocus>继续对话</button><button type="button" className="btn btn-primary" onClick={() => { setConfirmClose(false); props.onClose(); }}>结束会话</button></div>
+        <div className={DIALOG_ACTIONS}><button type="button" className="btn" onClick={() => setConfirmClose(false)} autoFocus>继续对话</button><button type="button" className="btn btn-primary" onClick={() => { setConfirmClose(false); props.onClose(); }}>结束会话</button></div>
       </div>
     </Dialog>
   </section>;
@@ -846,7 +846,7 @@ export function ChatPage(props: ChatProps) {
  */
 function ChangeBadge({ count, news }: { readonly count: number; readonly news: boolean }) {
   const [entering] = useState(news);
-  return <span className={cn("absolute top-px right-0 min-w-[15px] rounded-full bg-accent px-1 text-center text-[10px] leading-[15px] font-semibold text-on-accent", entering && "motion-pop-in")}
+  return <span className={cn("absolute top-px right-0 min-w-[15px] rounded-full bg-accent px-1 text-center text-[11px] leading-[15px] font-semibold text-on-accent", entering && "motion-pop-in")}
     style={entering ? motionStyle({ scaleFrom: .6 }) : undefined} aria-hidden="true">{count}</span>;
 }
 
@@ -909,16 +909,16 @@ function PlanBar({ session, active, harness }: { readonly session: ConversationV
       <span className="min-w-0 flex-1 truncate text-fg-3">{done}/{total} · {where}</span>
       <span className="relative h-1 w-[72px] flex-none overflow-hidden rounded-[2px] bg-hover max-sm:hidden" aria-hidden="true">
         <span className="absolute inset-0 origin-left rounded-[2px] bg-run transition-transform duration-200 ease-standard" style={{ transform: `scaleX(${total ? done / total : 0})` }}/></span>
-      <ChevronUp size={12} strokeWidth={2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-180")} aria-hidden="true"/>
+      <ChevronUp size={12} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-180")} aria-hidden="true"/>
     </button>
     <Collapsible open={open} id={id}>
       <div className="pt-2"><ul className="card m-0 flex max-h-[min(40vh,320px)] list-none flex-col gap-2 overflow-y-auto p-4 text-ui-sm" aria-label={`${harness(found.harnessId)} 的任务清单`}>
         {(unfolded ? steps.map((_, index) => ({ kind: "step" as const, index })) : planRows(steps)).map((row, position) => row.kind === "fold"
           ? <li key={"fold-" + position} className="flex min-w-0"><button type="button" className="plan-fold btn btn-ghost btn-sm -ml-1.5 text-fg-3" onClick={() => setUnfolded(true)}>还有 {row.count} 步，展开</button></li>
           : (step => <li key={row.index} className="flex min-w-0 items-start gap-2">
-          {step.status === "completed" ? <Check size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="已完成" role="img"/>
+          {step.status === "completed" ? <Check size={15} className="mt-0.5 flex-none text-fg-3" aria-label="已完成" role="img"/>
             : step.status === "in_progress" && working ? <Spinner size={15} tone="run" label="进行中"/>
-            : <Circle size={15} strokeWidth={1.9} className="mt-0.5 flex-none text-fg-3" aria-label="待办" role="img"/>}
+            : <Circle size={15} className="mt-0.5 flex-none text-fg-3" aria-label="待办" role="img"/>}
           <span className={cn("min-w-0 break-words", step.status === "completed" ? "text-fg-3 line-through decoration-line-strong" : step.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{step.text}</span>
         </li>)(steps[row.index]!))}
       </ul></div>

@@ -6,7 +6,6 @@ import type { ReactNode, RefObject } from "react";
 import type { TurnStatus } from "../../src/contracts/protocol.js";
 import type { AttentionItem, PublicRun, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import { parseProviderTarget } from "../../src/contracts/provider.js";
 import type { AttentionFrame, HarnessView, InstallationView, SearchHitView, SessionSummary, WebState } from "../../src/contracts/web.js";
 import type { NativeModelCatalog } from "../../src/contracts/control.js";
 import type { InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
@@ -1038,12 +1037,13 @@ export function App() {
   }, [api, sessionId]);
   // A message the palette found: its conversation opens with find on the words, at that message.
   const [findRequest, setFindRequest] = useState<(FindTarget & { readonly sessionId: string; readonly stamp: number }) | null>(null);
-  /** Opens the conversation listed before or after the open one; from another page, or with none open, the newest. The ends of the list are where it stops. */
+  /** Opens the conversation listed before or after the open one; from another page, or with none open, the first. The ends of the list are where it stops. */
   const stepSession = (by: -1 | 1) => {
-    const list = state?.sessions ?? [];
+    // In the order the sidebar shows them (pinned first, then its groups), as ⌥⌘1 to ⌥⌘9 go by; before the sidebar has said, as the list came.
+    const list = sidebarOrder.current.length > 0 ? sidebarOrder.current : (state?.sessions ?? []).map(item => item.id);
     if (list.length === 0) return;
-    const here = page === "chat" ? list.findIndex(item => item.id === sessionIdRef.current) : -1, next = here < 0 ? list[0] : list[here + by];
-    if (next !== undefined && next.id !== sessionIdRef.current) selectSession(next.id);
+    const here = page === "chat" ? list.indexOf(sessionIdRef.current ?? "") : -1, next = here < 0 ? list[0] : list[here + by];
+    if (next !== undefined && next !== sessionIdRef.current) selectSession(next);
   };
   const nextWaiting = () => {
     setPalette(false); setShortcuts(false); setInboxOpen(false);

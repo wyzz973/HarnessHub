@@ -1,4 +1,4 @@
-import { AlertCircle, BookOpen, Check, ChevronDown, ChevronRight, CircleCheck, Download, Eye, History, Menu as MenuIcon, PanelLeft, Pencil, Plug, Plus, Puzzle, RefreshCw, RotateCcw, ScrollText, Search, SquareSlash, Trash2, Users, Webhook, X,
+import { AlertCircle, BookOpen, Check, ChevronDown, ChevronRight, CircleCheck, Download, Eye, History, Menu as MenuIcon, PanelLeft, Pencil, Plug, Plus, Puzzle, RefreshCw, RotateCcw, ScrollText, SquareSlash, Trash2, Users, Webhook, X,
   type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { LOCAL_SKILL_SOURCE, type SkillTextView, type CapabilitiesView, type CapabilityChangeView, type CapabilityDrift, type CapabilityDriftState, type CapabilityEdge, type CapabilityEntry, type CapabilityFacts, type CapabilityHistory,
@@ -8,7 +8,7 @@ import { cn } from "../lib/cn.js";
 import { ariaKeys, keyText } from "../lib/keys.js";
 import { useMedia } from "../lib/prefs.js";
 import { Collapsible, FloatingBar } from "../ui/motion.js";
-import { Badge, EmptyState, Fact, Notice, Spinner, Tabs, Tip } from "../ui/primitives.js";
+import { Badge, EmptyState, Fact, Notice, SearchField, Spinner, Tabs, Tip } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { ChangeDialog, RestoreDialog, UndoDialog, WriteDialog, filesOf, type ChangeRequest, type CheckState, type SwitchRequest, type WriteItem, type Written } from "./CapabilityChangeDialog.js";
 import { McpInventoryPanel } from "./McpInventoryPanel.js";
@@ -165,11 +165,11 @@ const NAME_EDGE = "group-data-[scrolled]/matrix:shadow-[inset_-1px_0_0_var(--bor
 function CellMark({ cell, picked, raised, onPick, describedBy }: { readonly cell: Cell; readonly picked: boolean;
   /** On an opened row's grey: fills that are grey themselves take the surface color. */ readonly raised: boolean; readonly onPick: (pick: Pick) => void; readonly describedBy: string }) {
   switch (cell.kind) {
-    case "on": return <span role="img" aria-label={cell.label} title={cell.label} className={cn(CIRCLE, "size-7 bg-accent-soft text-accent dark:text-accent-text")}><Check size={14} strokeWidth={2.4} aria-hidden="true"/></span>;
+    case "on": return <span role="img" aria-label={cell.label} title={cell.label} className={cn(CIRCLE, "size-7 bg-accent-soft text-accent dark:text-accent-text")}><Check size={14} aria-hidden="true"/></span>;
     case "open": return <button type="button" aria-pressed={picked} aria-label={cell.label} aria-describedby={describedBy} title={cell.label} onClick={() => onPick(cell.pick)}
       className={cn(CIRCLE, "capability-cell size-7 p-0 [transition:scale_300ms_var(--ease-overshoot),background-color_120ms_var(--ease-standard),box-shadow_120ms_var(--ease-standard)] active:scale-90 motion-reduce:active:scale-100 keyboard:[transition:none] keyboard:active:scale-100",
         picked ? "bg-surface text-accent-text shadow-[inset_0_0_0_1.5px_var(--accent-text)]" : "bg-transparent shadow-[inset_0_0_0_1px_var(--border-strong)] hover:bg-subtle")}>
-      <Plus size={14} strokeWidth={2.4} aria-hidden="true" className={cn("[transition:scale_300ms_var(--ease-overshoot),opacity_120ms_var(--ease-standard)] keyboard:[transition:none]",
+      <Plus size={14} aria-hidden="true" className={cn("[transition:scale_300ms_var(--ease-overshoot),opacity_120ms_var(--ease-standard)] keyboard:[transition:none]",
         picked ? "scale-100 opacity-100" : "scale-50 opacity-0")}/></button>;
     case "chip": return <span role="img" aria-label={cell.label} title={cell.label} className={cn("inline-flex h-5 items-center rounded-full px-2 text-[11px] leading-4 font-medium whitespace-nowrap", cell.failed ? "bg-red-soft text-red-on-tint" : raised ? "bg-surface text-fg-2 shadow-hairline" : "bg-subtle text-fg-2")}>{cell.text}</span>;
     case "none": return <span role="img" aria-label={cell.label} title={cell.label} className="text-ui-sm text-fg-3">{cell.glyph}</span>;
@@ -582,7 +582,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
   const shellButton = narrowScreen ? <button type="button" className="icon-btn navigation-toggle" onClick={onMenu} aria-label="打开导航"><MenuIcon size={18}/></button>
     : sidebarHidden ? <Tip label={"展开侧栏 " + keyText("sidebar")}><button type="button" className="icon-btn" aria-label="展开侧栏" aria-keyshortcuts={ariaKeys("sidebar")} onClick={onExpandSidebar}><PanelLeft size={16}/></button></Tip> : null;
   const reload = <Tip label="重新读取"><button type="button" className="icon-btn" aria-label="重新读取" onClick={() => load()} disabled={loading}>{loading ? <Spinner size={15} label=""/> : <RefreshCw size={16}/>}</button></Tip>;
-  const title = <h1 id="capabilities-title" className="m-0 min-w-0 flex-1 trunc text-[22px] leading-[30px] font-semibold tracking-[-0.02em]">能力</h1>;
+  const title = <h1 id="capabilities-title" className="m-0 min-w-0 flex-1 trunc text-title">能力</h1>;
   const ready = view !== null && view.harnesses.length > 0;
   const tabItems = kinds.map(item => ({ id: item, label: KIND_LABEL[item], count: counts[item] }));
   const pickable = states.has("open");
@@ -610,10 +610,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
         <h2 ref={heading} tabIndex={-1} className="m-0 text-section outline-none">{KIND_LABEL[kind]} <span className="font-normal text-fg-3">{counts[kind]}</span></h2>
         <p className="m-0 text-ui-sm text-pretty text-fg-2">{pickable ? PICK_HINT : KIND_HINT[kind]}</p>
       </div>
-      <label className={cn("flex h-7 items-center gap-2 rounded-control bg-surface px-2.5 text-fg-3 shadow-[inset_0_0_0_1px_var(--border-strong)] focus-within:shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_var(--accent-soft)]", wide ? "w-[220px]" : "min-w-[160px] flex-1")}>
-        <Search size={15} aria-hidden="true" className="flex-none"/>
-        <input className="h-full min-w-0 flex-1 border-0 bg-transparent p-0 text-ui-sm text-fg outline-none placeholder:text-placeholder" aria-label="搜索能力" placeholder={"搜索" + (/^[A-Za-z]/u.test(KIND_LABEL[kind]) ? " " : "") + KIND_LABEL[kind]} value={query} onChange={event => setQuery(event.target.value)}/>
-      </label>
+      <SearchField className={wide ? "w-[220px]" : "min-w-[160px] flex-1"} label="搜索能力" placeholder={"搜索" + (/^[A-Za-z]/u.test(KIND_LABEL[kind]) ? " " : "") + KIND_LABEL[kind]} value={query} onChange={setQuery}/>
       {kind === "skill" ? <button type="button" className="btn flex-none" onClick={() => setWriting({ name: null, text: { description: "", body: "" } })}><Plus size={15}/>新建技能</button> : null}
     </div>
     {problem ? <Notice tone="red" action={<button type="button" className="btn btn-sm" onClick={() => load()}>重试</button>}>{problem}</Notice> : null}
@@ -653,7 +650,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
         </table>
       </div>
       {states.has("on") || states.has("open") || states.has("—") || states.has("?") ? <div className="capability-legend flex flex-wrap items-center gap-x-[18px] gap-y-2 text-caption text-fg-3">
-        {states.has("on") ? <span className="flex items-center gap-1.5"><span className={cn(CIRCLE, "size-[18px] bg-accent-soft text-accent dark:text-accent-text")}><Check size={10} strokeWidth={3} aria-hidden="true"/></span>已生效</span> : null}
+        {states.has("on") ? <span className="flex items-center gap-1.5"><span className={cn(CIRCLE, "size-[18px] bg-accent-soft text-accent dark:text-accent-text")}><Check size={10} aria-hidden="true"/></span>已生效</span> : null}
         {pickable ? <span className="flex items-center gap-1.5"><span className={cn(CIRCLE, "size-[18px] shadow-[inset_0_0_0_1px_var(--border-strong)]")}/>可以启用</span> : null}
         {states.has("—") ? <span className="flex items-center gap-1.5"><span className="w-[18px] text-center" aria-hidden="true">—</span>这个 Harness 不读它</span> : null}
         {states.has("?") ? <span className="flex items-center gap-1.5"><span className="w-[18px] text-center" aria-hidden="true">?</span>保存在磁盘之外，无法读取</span> : null}

@@ -22,7 +22,7 @@ import { packetFacts } from "../lib/relay-state.js";
 import { finished, knownToolDetail, parseUnifiedDiff, readToolDetail, type DiffFile } from "../lib/turn.js";
 import { Collapsible } from "../ui/motion.js";
 import { EmptyState, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitives.js";
-import { DiffLines, type ToolDetailLoader } from "./Activity.js";
+import { type ToolDetailLoader } from "./Activity.js";
 import { DiffBody, type DiffRemark } from "./DiffBody.js";
 import { CommitDialog, EditorRow, FileView, PullRequestRow, type WorkspaceAccess } from "./WorkspaceTools.js";
 import { GitChanges, GitScopeMenu, type GitAccess, type GitScope } from "./GitChanges.js";
@@ -313,9 +313,9 @@ export function DetailsPanel(props: PanelProps) {
         {opened.length > 0 ? <span aria-hidden="true" className="mx-1.5 my-auto h-4 w-px flex-none bg-line-strong"/> : null}
         {opened.map(path => <span key={path} className={cn("file-tab group/tab my-auto flex h-7 flex-none items-center rounded-row pr-0.5 pl-2 text-ui-sm transition-colors duration-120 ease-standard", viewing === path ? "bg-subtle text-fg" : "text-fg-2 hover:bg-subtle")}>
           <button type="button" className="max-w-[140px] truncate border-none bg-transparent p-0 font-mono text-code text-inherit" title={path} aria-pressed={viewing === path} onClick={() => setViewing(path)}>{base(path)}</button>
-          <button type="button" className="icon-btn ml-0.5 size-5 text-fg-3" aria-label={"关闭 " + base(path)} title="关闭" onClick={() => closeFile(path)}><X size={11} strokeWidth={2.2}/></button></span>)}
+          <button type="button" className="icon-btn ml-0.5 size-5 text-fg-3" aria-label={"关闭 " + base(path)} title="关闭" onClick={() => closeFile(path)}><X size={11}/></button></span>)}
       </div>
-      {props.onClose ? <button type="button" className="icon-btn size-7 self-center text-fg-3" aria-label="关闭详情栏" title="关闭详情栏" onClick={props.onClose}><X size={14} strokeWidth={2}/></button> : null}
+      {props.onClose ? <button type="button" className="icon-btn size-7 self-center text-fg-3" aria-label="关闭详情栏" title="关闭详情栏" onClick={props.onClose}><X size={14}/></button> : null}
     </div>
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${shown}`}>
       {viewing !== null && props.tools ? <FileView path={viewing} access={props.tools} onReveal={props.onReveal}/>
@@ -323,7 +323,7 @@ export function DetailsPanel(props: PanelProps) {
           members={members} want={want} onOpenSession={props.onOpenSession} onReveal={props.onReveal} onRemark={props.onRemark} onOpenFile={openFile} git={props.git}/>
         : shown === "process" ? <>
           {kept || background.length || session.retention?.upgraded || session.retention?.outside ? <div className="hairline-b"><Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/></div> : null}
-          {selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <EmptyState icon={<Clock size={22}/>} title="还没有执行记录"/>}
+          {selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <EmptyState icon={<Clock size={28}/>} title="还没有执行记录"/>}
         </>
         : shown === "context" ? <ContextPage window={window} runs={runs} relay={props.relay} name={name}/>
         : <Overview {...props} selected={selected} planned={planned} changes={changes} total={total} task={task} members={members} window={window} kept={kept} background={background} name={name} showChanges={showChanges}/>}
@@ -375,7 +375,7 @@ function Section({ title, heading, figure, onOpen, children, className, label }:
   return <section className={cn("panel-section flex min-w-0 flex-col px-4 pt-3 pb-3.5 hairline-b last:border-b-0", className)} aria-label={label ?? title}>
     <header className="flex min-h-6 items-center gap-2">
       {heading !== undefined ? heading : onOpen ? <button type="button" className="group/title -ml-1.5 flex min-w-0 items-center gap-0.5 rounded-row border-none bg-transparent py-0.5 pr-1 pl-1.5 text-ui font-medium text-fg hover:bg-subtle" onClick={onOpen}>
-        <span className="trunc">{title}</span><ChevronRight size={13} strokeWidth={2} aria-hidden="true" className="flex-none text-fg-3 transition-transform duration-120 ease-standard group-hover/title:translate-x-0.5"/></button>
+        <span className="trunc">{title}</span><ChevronRight size={13} aria-hidden="true" className="flex-none text-fg-3 transition-transform duration-120 ease-standard group-hover/title:translate-x-0.5"/></button>
         : <h3 className="m-0 min-w-0 trunc text-ui font-medium text-fg">{title}</h3>}
       {figure !== undefined && figure !== null ? <span className="ml-auto flex min-w-0 items-center gap-1.5 text-caption text-fg-2 tabular-nums">{figure}</span> : null}
     </header>
@@ -479,7 +479,7 @@ function ProgressSection({ plan, recap }: { readonly plan: Planned | undefined; 
         const step = steps[row.index]!;
         return <li key={row.index} className="flex items-start gap-2 text-ui-sm">
           <span role="img" aria-label={step.status === "completed" ? "已完成" : step.status === "in_progress" ? "进行中" : "待办"} className={cn("mt-[2.5px] flex size-[15px] flex-none items-center justify-center", step.status === "completed" ? "text-fg-3" : step.status === "in_progress" ? "text-run" : "text-placeholder")}>
-            {step.status === "completed" ? <Check size={15} strokeWidth={1.9} aria-hidden="true"/> : step.status === "in_progress" && plan!.live ? <Spinner size={14} tone="run" label=""/> : <Circle size={15} strokeWidth={1.9} aria-hidden="true"/>}
+            {step.status === "completed" ? <Check size={15} aria-hidden="true"/> : step.status === "in_progress" && plan!.live ? <Spinner size={14} tone="run" label=""/> : <Circle size={15} aria-hidden="true"/>}
           </span>
           <span className={cn("min-w-0 flex-1 break-words", step.status === "completed" ? "text-fg-3" : step.status === "in_progress" ? "font-medium text-fg" : "text-fg-2")}>{step.text}</span>
         </li>;
@@ -496,7 +496,7 @@ function TaskSection({ task, members, current, name, onOpenSession }: { readonly
   const entries = task.task?.board.entries ?? [], many = members.length > 1;
   const [adding, setAdding] = useState(false);
   const harnesses = new Set(members.map(member => member.harnessId)).size;
-  const add = adding ? null : <button type="button" className="icon-btn size-6 text-fg-3" aria-label="加一条所有 Harness 都要遵守的要求" title="加一条所有 Harness 都要遵守的要求" onClick={() => setAdding(true)}><Plus size={14} strokeWidth={2}/></button>;
+  const add = adding ? null : <button type="button" className="icon-btn size-6 text-fg-3" aria-label="加一条所有 Harness 都要遵守的要求" title="加一条所有 Harness 都要遵守的要求" onClick={() => setAdding(true)}><Plus size={14}/></button>;
   return <Section title="这件任务" figure={many ? <span>{members.length} 段对话{harnesses > 1 ? " · " + harnesses + " 个 Harness" : ""}</span> : add}>
     {many ? <div className="-mx-2 mt-1.5"><TaskRoster members={members} current={current} onOpen={onOpenSession}/></div> : null}
     {many ? <div className="mt-2.5 flex min-h-6 items-center gap-2"><span className="text-caption text-fg-3">都要遵守的</span><span className="ml-auto flex">{add}</span></div> : null}
@@ -516,7 +516,7 @@ function ChangesSection({ changes, total, others, workspace, showChanges }: { re
     {changes.files.length > most ? <button type="button" className="link-btn mt-1 self-start text-caption" onClick={() => showChanges({ scope: "all" })}>另外 {changes.files.length - most} 个文件</button> : null}
     {others.length > 0 ? <button type="button" className="row -mx-2 mt-1.5 flex min-w-0 items-center gap-2 border-none bg-transparent px-2 py-1.5 text-left text-ui-sm text-fg-2 hover:bg-subtle" onClick={() => showChanges({ scope: "task" })}>
       <span className="flex flex-none -space-x-1">{[...new Map(others.map(member => [member.harnessId, member])).values()].slice(0, 4).map(member => <BrandIcon key={member.harnessId} brand={member.harnessId} name={member.harness} size={16} className="ring-2 ring-app"/>)}</span>
-      <span className="min-w-0 flex-1 trunc">任务里其他对话改了 {elsewhere} 个文件</span><ChevronRight size={13} strokeWidth={2} aria-hidden="true" className="flex-none text-fg-3"/>
+      <span className="min-w-0 flex-1 trunc">任务里其他对话改了 {elsewhere} 个文件</span><ChevronRight size={13} aria-hidden="true" className="flex-none text-fg-3"/>
     </button> : null}
   </Section>;
 }
@@ -549,7 +549,7 @@ function ContextPage({ window, runs, relay, name }: { readonly window: WindowUse
   const events = contextEvents(runs);
   return <div className="flex flex-col">
     {window !== null ? <section className="flex flex-col px-4 pt-4 pb-4 hairline-b" aria-label="上下文窗口">
-      <div className="flex items-baseline gap-2"><span className="text-[22px] leading-7 font-medium tabular-nums">{percent(window) ?? tokens(window.used)}</span>
+      <div className="flex items-baseline gap-2"><span className="text-[20px] leading-[26px] font-medium tabular-nums">{percent(window) ?? tokens(window.used)}</span>
         <span className="text-caption text-fg-3">{window.size === null ? "tokens，这个 Harness 没有报窗口大小" : "的窗口已用"}</span></div>
       <WindowBar window={window} className="mt-2.5"/>
       <p className="m-0 mt-2.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-3"><BrandIcon brand={window.harnessId} name={window.harness} size={16}/>
@@ -571,7 +571,7 @@ function RunTitle({ runs, run, onRun }: { readonly runs: readonly PublicRun[]; r
   const n = run.protocol?.n ?? runs.indexOf(run) + 1;
   if (runs.length < 2) return <h3 className="m-0 flex-none text-ui font-medium text-fg">本轮</h3>;
   return <h3 className="relative m-0 -ml-1.5 flex flex-none items-center gap-0.5 rounded-row py-0.5 pr-1 pl-1.5 text-ui font-medium text-fg focus-within:shadow-focus hover:bg-subtle">
-    第 {n} 轮<ChevronDown size={13} strokeWidth={2} aria-hidden="true" className="text-fg-3"/>
+    第 {n} 轮<ChevronDown size={13} aria-hidden="true" className="text-fg-3"/>
     <select className="absolute inset-0 size-full cursor-pointer appearance-none opacity-0" value={run.id} onChange={event => onRun(event.target.value)} aria-label="选择回合">
       {runs.map((item, index) => <option key={item.id} value={item.id}>第 {item.protocol?.n ?? index + 1} 轮 · {[...item.input].slice(0, 28).join("")}{[...item.input].length > 28 ? "…" : ""}</option>)}
     </select>
@@ -593,16 +593,16 @@ function FileDiff({ file, workspace, open, wrap, split, onToggle, name, onReveal
   return <li ref={row} className="group/file relative flex min-w-0 flex-col" data-path={file.path}>
     <div className="sticky top-0 z-[2] bg-surface">
     <button type="button" className="row flex h-8 w-full min-w-0 items-center gap-2 border-none bg-app pr-2 text-left text-ui-sm text-fg hover:bg-subtle" style={{ paddingLeft: 8 + depth * 14 }} aria-expanded={open} aria-controls={panel} onClick={onToggle} title={file.path}>
-      <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
+      <ChevronRight size={12} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
       <FileMark created={file.created}/>{label === undefined ? <FilePath path={file.path} workspace={workspace}/> : <span className="min-w-0 flex-1 trunc">{label}</span>}
       <span className="flex min-w-[52px] flex-none items-center justify-end gap-1.5 transition-opacity duration-120 ease-standard group-hover/file:opacity-0 group-has-[:focus-visible]/file:opacity-0">
         {file.harnessIds.map(id => <BrandIcon key={id} brand={id} name={name(id)} size={16}/>)}<Lines add={file.add} del={file.del}/></span>
     </button>
     <span className="absolute top-1 right-1.5 flex items-center opacity-0 transition-opacity duration-120 ease-standard group-hover/file:opacity-100 group-has-[:focus-visible]/file:opacity-100">
       <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"复制路径：" + shown} title={copied ? "已复制" : "复制路径"} onClick={() => { void navigator.clipboard.writeText(shown).then(() => setCopied(true), () => undefined); }}>
-        {copied ? <Check size={13} strokeWidth={2} aria-hidden="true"/> : <Copy size={13} strokeWidth={2} aria-hidden="true"/>}</button>
-      {onOpenFile ? <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"打开文件：" + shown} title="打开文件" onClick={() => onOpenFile(file.path)}><FileText size={13} strokeWidth={2} aria-hidden="true"/></button> : null}
-      {onReveal ? <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"在访达中显示：" + shown} title="在访达中显示" onClick={() => onReveal(file.path)}><FolderOpen size={13} strokeWidth={2} aria-hidden="true"/></button> : null}
+        {copied ? <Check size={13} aria-hidden="true"/> : <Copy size={13} aria-hidden="true"/>}</button>
+      {onOpenFile ? <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"打开文件：" + shown} title="打开文件" onClick={() => onOpenFile(file.path)}><FileText size={13} aria-hidden="true"/></button> : null}
+      {onReveal ? <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"在访达中显示：" + shown} title="在访达中显示" onClick={() => onReveal(file.path)}><FolderOpen size={13} aria-hidden="true"/></button> : null}
     </span>
     </div>
     <Collapsible open={open} id={panel}>
@@ -632,7 +632,7 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
   const [gitScope, setGitScope] = useState<GitScope | null>(null), [whitespace, setWhitespace] = useState(false);
   const [wrap, setWrap] = useState(readWrap), [split, setSplit] = useState(readSplit), [tree, setTree] = useState(readTree);
   const byFolder = () => setTree(value => { writeTree(!value); return !value; });
-  const treeButton = <button type="button" className="icon-btn size-7 text-fg-3" aria-label="按文件夹显示" aria-pressed={tree} title={tree ? "按文件夹显示：开" : "按文件夹显示：关"} onClick={byFolder}><FolderTree size={14} strokeWidth={2}/></button>;
+  const treeButton = <button type="button" className="icon-btn size-7 text-fg-3" aria-label="按文件夹显示" aria-pressed={tree} title={tree ? "按文件夹显示：开" : "按文件夹显示：关"} onClick={byFolder}><FolderTree size={14}/></button>;
   const beside = () => setSplit(value => { try { localStorage.setItem(SPLIT_KEY, value ? "0" : "1"); } catch { /* lasts for this page only */ } return !value; });
   const fold = () => setWrap(value => { try { localStorage.setItem(WRAP_KEY, value ? "0" : "1"); } catch { /* lasts for this page only */ } return !value; });
   // The files the user opened or closed by hand; until then a short list is open whole and a long one at its first file.
@@ -653,7 +653,7 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
     requestAnimationFrame(() => { for (const item of list.current?.children ?? []) if ((item as HTMLElement).dataset.path === path) item.scrollIntoView({ block: "nearest" }); });
   }, [want, changes.files, changes.loading]);
   const others = members.filter(member => member.sessionId !== sessionId && member.files.length > 0);
-  if (!changes.edits && others.length === 0 && git === undefined) return <EmptyState icon={<FileText size={22}/>} title="还没有改动"/>;
+  if (!changes.edits && others.length === 0 && git === undefined) return <EmptyState icon={<FileText size={28}/>} title="还没有改动"/>;
   const turn = selected ? changes.files.filter(file => file.runIds.has(selected.id)).map(file => fileIn(file, selected.id)) : [];
   const shownScope: ChangesScope = scope === "task" && others.length === 0 ? "all" : scope;
   const files = shownScope === "turn" ? turn : changes.files;
@@ -668,16 +668,16 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
         options={[{ value: "turn" as const, label: "本轮" }, { value: "all" as const, label: "这段对话" }, ...(others.length > 0 ? [{ value: "task" as const, label: "其他对话" }] : [])]}/>
       {git !== undefined ? <GitScopeMenu access={git} scope={gitScope} onScope={setGitScope}/> : null}
       {gitScope !== null ? <span className="ml-auto flex flex-none items-center gap-1">
-        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="忽略空白" aria-pressed={whitespace} title={whitespace ? "忽略空白：开" : "忽略空白：关"} onClick={() => setWhitespace(value => !value)}><Space size={14} strokeWidth={2}/></button>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="忽略空白" aria-pressed={whitespace} title={whitespace ? "忽略空白：开" : "忽略空白：关"} onClick={() => setWhitespace(value => !value)}><Space size={14}/></button>
         {treeButton}
-        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="并排显示" aria-pressed={split} title={split ? "并排显示：开" : "并排显示：关"} onClick={beside}><Columns2 size={14} strokeWidth={2}/></button>
-        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap || split} disabled={split} title={split ? "并排时长行总是折行" : wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14} strokeWidth={2}/></button></span>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="并排显示" aria-pressed={split} title={split ? "并排显示：开" : "并排显示：关"} onClick={beside}><Columns2 size={14}/></button>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap || split} disabled={split} title={split ? "并排时长行总是折行" : wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14}/></button></span>
       : shownScope !== "task" && files.length > 0 ? <span className="ml-auto flex flex-none items-center gap-1"><span className="mr-1 flex items-center gap-1.5"><Lines add={add} del={del}/></span>
         {treeButton}
-        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="并排显示" aria-pressed={split} title={split ? "并排显示：开" : "并排显示：关"} onClick={beside}><Columns2 size={14} strokeWidth={2}/></button>
-        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap || split} disabled={split} title={split ? "并排时长行总是折行" : wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14} strokeWidth={2}/></button>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="并排显示" aria-pressed={split} title={split ? "并排显示：开" : "并排显示：关"} onClick={beside}><Columns2 size={14}/></button>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap || split} disabled={split} title={split ? "并排时长行总是折行" : wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14}/></button>
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label={every ? "全部收起" : "全部展开"} title={every ? "全部收起" : "全部展开"} onClick={() => setChosen(every ? new Set() : new Set(files.map(file => file.path)))}>
-          {every ? <ChevronsDownUp size={14} strokeWidth={2}/> : <ChevronsUpDown size={14} strokeWidth={2}/>}</button></span> : null}
+          {every ? <ChevronsDownUp size={14}/> : <ChevronsUpDown size={14}/>}</button></span> : null}
     </div>
     {gitScope !== null && git !== undefined ? <GitChanges access={git} scope={gitScope} workspace={workspace} wrap={wrap} split={split} whitespace={whitespace} tree={tree} onRemark={onRemark}
       stamp={String(changes.edits) + ":" + changes.files.length + ":" + (selected?.id ?? "") + ":" + (selected?.status ?? "")}/>
@@ -735,7 +735,7 @@ function RunProcess({ run, open, onToggle, loadToolDetail, name, now, waiting }:
         <span className="trunc text-caption text-fg-3">{[harness, summary, time].filter(Boolean).join(" · ")}</span>
       </span>
       {active ? <span className="mt-[7px] flex flex-none">{waiting ? <StatusDot tone="wait" label={waiting}/> : stateOf(run) === "queued" ? <StatusDot tone="idle" label={TURN_STATUS_WORDS.queued}/> : <StatusDot tone="run" label={TURN_STATUS_WORDS.running}/>}</span> : null}
-      <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("mt-1 flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
+      <ChevronRight size={12} aria-hidden="true" className={cn("mt-1 flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
     </button>
     <Collapsible open={open} id={panel}>
       <div className="mt-0.5 mb-2 ml-[17px] flex min-w-0 flex-col border-l border-line pl-2">

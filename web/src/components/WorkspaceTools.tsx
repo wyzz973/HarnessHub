@@ -2,7 +2,7 @@ import { ChevronDown, Copy, FolderOpen, GitBranch, GitPullRequest, SquareArrowOu
 import { useEffect, useMemo, useRef, useState } from "react";
 import { errorMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
-import { Dialog, Menu } from "../ui/overlay.js";
+import { Dialog, DIALOG_ACTIONS, DIALOG_COLUMN, Menu } from "../ui/overlay.js";
 import { Spinner } from "../ui/primitives.js";
 import { FileMark, Lines } from "./FileBits.js";
 
@@ -65,7 +65,7 @@ export function EditorRow({ editors, onOpenIn, path }: { readonly editors: reado
     <button type="button" className="row flex min-h-7 min-w-0 flex-1 items-center gap-2.5 border-none bg-transparent px-2 text-left text-ui-sm hover:bg-subtle" onClick={() => open(editor.id)}>
       <span className="flex size-4 flex-none items-center justify-center text-fg-3"><SquareArrowOutUpRight size={14} aria-hidden="true"/></span>
       <span className="min-w-0 flex-1 trunc text-fg-2">在 {editor.name} 里打开</span></button>
-    {editors.length > 1 ? <Menu align="end" trigger={<button type="button" className="icon-btn icon-btn-sm flex-none text-fg-3" aria-label="换一个编辑器打开" title="换一个编辑器"><ChevronDown size={13} strokeWidth={2} aria-hidden="true"/></button>}
+    {editors.length > 1 ? <Menu align="end" trigger={<button type="button" className="icon-btn icon-btn-sm flex-none text-fg-3" aria-label="换一个编辑器打开" title="换一个编辑器"><ChevronDown size={13} aria-hidden="true"/></button>}
       items={editors.map(row => ({ label: row.name, checked: row.id === editor.id, onSelect: () => open(row.id) }))}/> : null}
   </div>;
 }
@@ -106,8 +106,8 @@ export function CommitDialog({ open, onClose, access, suggestion, onDone }: { re
     setProblem(null); setBusy("push");
     try { const sent = await access.push(); onDone("已推送到 " + sent.remote + "/" + sent.branch); onClose(); } catch (failure: unknown) { setProblem(errorMessage(failure)); } finally { setBusy(null); }
   };
-  return <Dialog open={open} onOpenChange={next => { if (!next && busy === null) onClose(); }} title="提交改动" className="commit-dialog flex w-[min(560px,calc(100vw-32px))] flex-col" initialFocus={field}>
-    <div className="flex min-h-0 flex-col gap-3 px-5 pt-3 pb-5">
+  return <Dialog open={open} onOpenChange={next => { if (!next && busy === null) onClose(); }} title="提交改动" wide className="commit-dialog flex flex-col" initialFocus={field}>
+    <div className={DIALOG_COLUMN}>
       {detail === null && problem === null ? <p className="m-0 flex items-center gap-2 py-6 text-ui-sm text-fg-3"><Spinner size={13} label=""/>正在读取工作区的状态</p> : null}
       {detail !== null ? <>
         <p className="m-0 flex min-w-0 items-center gap-2 text-ui-sm text-fg-2"><GitBranch size={14} className="flex-none text-fg-3" aria-hidden="true"/><span className="mono min-w-0 trunc text-caption text-fg">{detail.branch ?? "不在分支上"}</span>
@@ -124,8 +124,8 @@ export function CommitDialog({ open, onClose, access, suggestion, onDone }: { re
         </> : <p className="m-0 py-2 text-ui-sm text-fg-2">没有未提交的改动{ahead > 0 ? "；有 " + ahead + " 个提交还没有推送。" : "。"}</p>}
       </> : null}
       {problem ? <p className="m-0 max-h-[120px] overflow-auto rounded-row bg-inset px-2.5 py-2 text-caption break-words whitespace-pre-wrap text-red" role="alert">{problem}</p> : null}
-      <div className="flex items-center justify-end gap-2 pt-1">
-        <button type="button" className="btn btn-ghost" disabled={busy !== null} onClick={onClose}>取消</button>
+      <div className={DIALOG_ACTIONS}>
+        <button type="button" className="btn" disabled={busy !== null} onClick={onClose}>取消</button>
         {files.length === 0 ? (ahead > 0 && canPush ? <button type="button" className="btn btn-primary" disabled={busy !== null} onClick={() => void pushOnly()}>{busy === "push" ? <Spinner size={13} label=""/> : null}推送</button> : null) : <>
           {canPush ? <button type="button" className="btn" disabled={busy !== null || message.trim() === "" || chosen.length === 0} onClick={() => void run(true)}>{busy === "push" ? <Spinner size={13} label=""/> : null}提交并推送</button> : null}
           <button type="button" className="btn btn-primary" disabled={busy !== null || message.trim() === "" || chosen.length === 0} onClick={() => void run(false)}>{busy === "commit" ? <Spinner size={13} label=""/> : null}提交</button>
@@ -189,16 +189,16 @@ function PullRequestDialog({ open, onClose, access, status, suggestion, onDone }
     catch (failure: unknown) { setProblem(errorMessage(failure)); }
     finally { setBusy(false); }
   };
-  return <Dialog open={open} onOpenChange={next => { if (!next && !busy) onClose(); }} title="建 PR" className="flex w-[min(560px,calc(100vw-32px))] flex-col" initialFocus={field}>
-    <div className="flex min-h-0 flex-col gap-3 px-5 pt-3 pb-5">
+  return <Dialog open={open} onOpenChange={next => { if (!next && !busy) onClose(); }} title="建 PR" wide className="flex flex-col" initialFocus={field}>
+    <div className={DIALOG_COLUMN}>
       <p className="m-0 flex min-w-0 items-center gap-2 text-ui-sm text-fg-2"><GitBranch size={14} className="flex-none text-fg-3" aria-hidden="true"/>
         <span className="mono min-w-0 trunc text-caption text-fg">{status.branch}</span><span className="flex-none text-caption text-fg-3">→ {status.defaultBranch}{status.unpushed > 0 ? " · 先推送 " + status.unpushed + " 个提交" : ""}</span></p>
       <input ref={field} className="field h-9 w-full px-2.5 text-ui-sm" value={title} placeholder="标题" aria-label="PR 标题" onChange={event => setTitle(event.target.value)}/>
       <textarea className="field min-h-[110px] w-full resize-y px-2.5 py-2 text-ui-sm leading-5" value={body} placeholder="说明（可以不写）" aria-label="PR 说明" onChange={event => setBody(event.target.value)}
         onKeyDown={event => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void make(); } }}/>
       {problem ? <p className="m-0 max-h-[120px] overflow-auto rounded-row bg-inset px-2.5 py-2 text-caption break-words whitespace-pre-wrap text-red" role="alert">{problem}</p> : null}
-      <div className="flex items-center justify-end gap-2 pt-1">
-        <button type="button" className="btn btn-ghost" disabled={busy} onClick={onClose}>取消</button>
+      <div className={DIALOG_ACTIONS}>
+        <button type="button" className="btn" disabled={busy} onClick={onClose}>取消</button>
         <button type="button" className="btn btn-primary" disabled={busy || title.trim() === ""} onClick={() => void make()}>{busy ? <Spinner size={13} label=""/> : null}{status.unpushed > 0 ? "推送并建 PR" : "建 PR"}</button>
       </div>
     </div>
@@ -225,9 +225,9 @@ export function FileView({ path, access, onReveal }: { readonly path: string; re
   return <div className="file-view flex min-h-0 flex-col">
     <div className="flex min-h-11 items-center gap-1 pr-2.5 pl-[18px]">
       <span className="mono min-w-0 flex-1 trunc text-code text-fg-2" title={path}>{path}</span>{first ? <span className="flex-none px-1 text-caption text-fg-3 tabular-nums">{size}</span> : null}
-      <button type="button" className="icon-btn size-7 text-fg-3" aria-label="复制路径" title={copied ? "已复制" : "复制路径"} onClick={() => { void navigator.clipboard.writeText(path).then(() => setCopied(true), () => undefined); }}><Copy size={13} strokeWidth={2} aria-hidden="true"/></button>
-      {onReveal ? <button type="button" className="icon-btn size-7 text-fg-3" aria-label="在访达中显示" title="在访达中显示" onClick={() => onReveal(path)}><FolderOpen size={13} strokeWidth={2} aria-hidden="true"/></button> : null}
-      {editor ? <button type="button" className="icon-btn size-7 text-fg-3" aria-label={"在 " + editor.name + " 里打开"} title={"在 " + editor.name + " 里打开"} onClick={() => access.openIn?.(editor.id, path)}><SquareArrowOutUpRight size={13} strokeWidth={2} aria-hidden="true"/></button> : null}
+      <button type="button" className="icon-btn size-7 text-fg-3" aria-label="复制路径" title={copied ? "已复制" : "复制路径"} onClick={() => { void navigator.clipboard.writeText(path).then(() => setCopied(true), () => undefined); }}><Copy size={13} aria-hidden="true"/></button>
+      {onReveal ? <button type="button" className="icon-btn size-7 text-fg-3" aria-label="在访达中显示" title="在访达中显示" onClick={() => onReveal(path)}><FolderOpen size={13} aria-hidden="true"/></button> : null}
+      {editor ? <button type="button" className="icon-btn size-7 text-fg-3" aria-label={"在 " + editor.name + " 里打开"} title={"在 " + editor.name + " 里打开"} onClick={() => access.openIn?.(editor.id, path)}><SquareArrowOutUpRight size={13} aria-hidden="true"/></button> : null}
     </div>
     {problem ? <p className="m-0 px-[18px] py-3 text-ui-sm text-red" role="alert">{problem}</p>
       : first === undefined ? <p className="m-0 flex items-center gap-2 px-[18px] py-3 text-ui-sm text-fg-3"><Spinner size={12} label=""/>正在读取</p>

@@ -1,5 +1,5 @@
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
-import { Bell, HardDrive, Keyboard, MessageSquare, Monitor, Moon, Palette, RefreshCw, ScanSearch, Sun, X } from "lucide-react";
+import { Bell, ChevronRight, HardDrive, Keyboard, MessageSquare, Monitor, Moon, Palette, RefreshCw, ScanSearch, Sun, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { HUB_PROGRESS_INSTRUCTIONS } from "../../../src/contracts/table.js";
@@ -38,7 +38,7 @@ function LoginShellPanel({ api, onChanged }: { readonly api: GatewayApi; readonl
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2.5">
       <div className="min-w-[min(240px,100%)] flex-1"><div className="text-ui font-medium">从登录 shell 补充搜索目录</div>
         <p className="m-0 mt-0.5 text-ui-sm text-fg-2">运行你的登录 shell{view.shell ? `（${view.shell} -l）` : ""}读取 PATH，只用来找 Harness。</p></div>
-      {view.available ? <button type="button" className="btn flex-none" disabled={busy} onClick={() => change(api.readLoginShell(crypto.randomUUID()))}>{busy ? <Spinner size={13} label=""/> : <RefreshCw size={14} aria-hidden="true"/>}读取并重新检测</button> : null}</div>
+      {view.available ? <button type="button" className="btn flex-none" disabled={busy} onClick={() => change(api.readLoginShell(crypto.randomUUID()))}>{busy ? <Spinner size={13} label=""/> : <RefreshCw size={14} aria-hidden="true"/>}读取 PATH</button> : null}</div>
     {view.dirs.length ? <ul className="m-0 flex list-none flex-col gap-1 p-0">{view.dirs.map(dir => <li key={dir} className="flex items-center gap-2 rounded-row bg-inset py-1 pr-1 pl-3"><code className="min-w-0 flex-1 text-code break-all">{dir}</code><button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => change(api.removeLoginShellDirectory(dir, crypto.randomUUID()))}>移除</button></li>)}</ul>
       : view.readAt !== null ? <small className="text-ui-sm text-fg-3">登录 shell 的 PATH 没有带来新的目录。</small> : null}
     {problem ? <p className="m-0 text-ui-sm text-red" role="status">{problem}</p> : null}
@@ -85,7 +85,7 @@ export function SettingsDialog({ open, onOpenChange, api, relay, preferences, on
             <span className="flex w-4 flex-none justify-center text-fg-2 max-sm:hidden" aria-hidden="true"><row.icon size={16}/></span><span className="min-w-0 flex-1 trunc">{row.label}</span></button>)}
         </nav>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          <BaseDialog.Close className="icon-btn absolute top-3 right-3 z-10 size-7 text-fg-3 max-sm:fixed max-sm:top-2.5" aria-label="关闭设置" title="关闭"><X size={15} strokeWidth={2}/></BaseDialog.Close>
+          <BaseDialog.Close className="icon-btn absolute top-3 right-3 z-10 size-7 text-fg-3 max-sm:fixed max-sm:top-2.5" aria-label="关闭设置" title="关闭"><X size={15}/></BaseDialog.Close>
           <div ref={column} className="scroll-area flex min-h-0 flex-1 flex-col gap-8 px-6 pt-5 pb-8 max-sm:px-4" onScroll={watch}>
     <Section title="外观" id="settings-appearance">
       <Card className={ROWS}>
@@ -99,17 +99,17 @@ export function SettingsDialog({ open, onOpenChange, api, relay, preferences, on
       <Card className={ROWS}>
         <Row title="过程显示" control={<Segmented label="默认过程显示" value={preferences.density} onChange={value => onPreference("density", value)}
           options={[{ value: "detailed", label: "每一步" }, { value: "compact", label: "一行小结" }, { value: "failures", label: "只留出错的" }, { value: "answer", label: "只看回答" }]}/>}/>
-        <Row title="发送" control={<Segmented label="发送" value={preferences.sendKey} onChange={value => onPreference("sendKey", value)} options={[{ value: "enter" as const, label: "Enter" }, { value: "mod-enter" as const, label: "⌘Enter" }]}/>}/>
+        <Row title="发送" control={<Segmented label="发送" value={preferences.sendKey} onChange={value => onPreference("sendKey", value)} options={[{ value: "enter" as const, label: "⏎" }, { value: "mod-enter" as const, label: "⌘⏎" }]}/>}/>
         <Row title="回复进行中时按回车" control={<Segmented label="回复进行中时按回车" value={preferences.whileRunning} onChange={value => onPreference("whileRunning", value)}
           options={[{ value: "queue", label: "留到结束后发" }, { value: "steer", label: "现在就告诉它" }]}/>}>
           ⌘⏎ 反过来。</Row>
         {relay.prefs === null ? null : <Row title="换 Harness 时附上之前的对话" control={<Segmented label="换 Harness 时附上之前的对话" value={relay.prefs.attach} onChange={value => relay.change("attach", value)}
-          options={[{ value: "auto", label: "开（默认）", disabled: relay.saving }, { value: "off", label: "关", disabled: relay.saving }]}/>}>
+          options={[{ value: "auto", label: "开", disabled: relay.saving }, { value: "off", label: "关", disabled: relay.saving }]}/>}>
           {relay.problem ? <span className="mt-1 block text-red" role="status">{relay.problem}</span> : null}</Row>}
         {relay.prefs === null ? null : <Row title={PROGRESS_LABEL} control={<Segmented label={PROGRESS_LABEL} value={relay.prefs.progress} onChange={value => relay.change("progress", value)}
-          options={[{ value: "auto", label: "自动（默认）", disabled: relay.saving }, { value: "on", label: "开", disabled: relay.saving }, { value: "off", label: "关", disabled: relay.saving }]}/>}>
+          options={[{ value: "auto", label: "自动", disabled: relay.saving }, { value: "on", label: "开", disabled: relay.saving }, { value: "off", label: "关", disabled: relay.saving }]}/>}>
           自动：自己有任务清单的 Harness 不另外要求。
-          <details className="progress-instructions mt-1.5"><summary className="cursor-pointer text-fg-3">给 Harness 的说明</summary>
+          <details className="progress-instructions group/more mt-1.5"><summary className="inline-flex cursor-pointer list-none items-center gap-1 text-fg-3 [&::-webkit-details-marker]:hidden"><ChevronRight size={13} aria-hidden="true" className="motion-rotate flex-none group-open/more:rotate-90"/>给 Harness 的说明</summary>
             <pre className="m-0 mt-1 rounded-row bg-inset px-3 py-2 text-code whitespace-pre-wrap">{HUB_PROGRESS_INSTRUCTIONS}</pre></details></Row>}
       </Card>
     </Section>
@@ -122,7 +122,7 @@ export function SettingsDialog({ open, onOpenChange, api, relay, preferences, on
     <Section title="发现" id="settings-discovery">
       <Card className={ROWS}>
         <LoginShellPanel api={api} onChanged={onRescan}/>
-        <Row title="重新检测" control={<button type="button" className="btn" onClick={onRescan} disabled={scanning}>{scanning ? <Spinner size={13} label=""/> : <RefreshCw size={14} aria-hidden="true"/>}立即检测</button>}/>
+        <Row title="本机的 Harness" control={<button type="button" className="btn" onClick={onRescan} disabled={scanning}>{scanning ? <Spinner size={13} label=""/> : <RefreshCw size={14} aria-hidden="true"/>}重新检测</button>}/>
         <Row className="frozen-setting" title={FROZEN_LABEL} control={<Switch checked={preferences.showFrozen} onChange={value => onPreference("showFrozen", value)} label={FROZEN_LABEL}/>}/>
       </Card>
     </Section>
@@ -132,7 +132,7 @@ export function SettingsDialog({ open, onOpenChange, api, relay, preferences, on
     <Section title="数据" id="settings-data">
       <Card className={ROWS}>
         <div className="px-4 py-3.5 text-ui-sm text-fg-2">对话和附件只存在这台 Mac 上。</div>
-        <Row title="显示偏好" control={<button type="button" className="btn btn-sm" onClick={() => (Object.keys(DEFAULT_PREFERENCES) as (keyof Preferences)[]).forEach(key => onPreference(key, DEFAULT_PREFERENCES[key] as never))}>恢复默认</button>}/>
+        <Row title="显示偏好" control={<button type="button" className="btn" onClick={() => (Object.keys(DEFAULT_PREFERENCES) as (keyof Preferences)[]).forEach(key => onPreference(key, DEFAULT_PREFERENCES[key] as never))}>恢复默认</button>}/>
       </Card>
     </Section>
           </div>

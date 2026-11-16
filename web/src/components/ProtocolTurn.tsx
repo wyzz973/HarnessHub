@@ -1,4 +1,4 @@
-import { Bot, Brain, Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleDashed, CircleHelp, CircleStop, Copy, FilePen, FilePlus, FileText, GitBranch, Globe, Info, ListChecks, MessageSquareText, Plug, RotateCcw, Search, SquareTerminal, Wrench } from "lucide-react";
+import { Bot, Brain, Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleDashed, CircleHelp, CircleStop, Copy, FilePen, FilePlus, FileText, GitBranch, Globe, Info, Plug, RotateCcw, Search, SquareTerminal, Wrench } from "lucide-react";
 import { createContext, memo, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { ReadItem, ReadTurn } from "../../../src/contracts/protocol-read.js";
@@ -11,7 +11,7 @@ import { useNow } from "../lib/prefs.js";
 import { endLine, quietLine, switchLine, turnByline, turnFooter } from "../lib/protocol/lines.js";
 import { liveStatus, type QueueNotice } from "../lib/protocol/live.js";
 import { changesTree, samePath, turnChanges, type TurnChanges } from "../lib/protocol/changes.js";
-import { arrange, gapOf, isGap, lay, opensByDefault, reasoningLabel, quietBlocks, summarizeGroup, turnFold, withReply, workLabel, type Block, type GapRow, type TurnFold, type WorkBlock } from "../lib/protocol/work.js";
+import { arrange, gapOf, lay, opensByDefault, reasoningLabel, quietBlocks, summarizeGroup, turnFold, withReply, workLabel, type Block, type GapRow, type TurnFold, type WorkBlock } from "../lib/protocol/work.js";
 import { utf8Length } from "../lib/protocol/window.js";
 import { rememberShown, shownSteps } from "../lib/turn.js";
 import { Collapsible, motionStyle, SwapText } from "../ui/motion.js";
@@ -99,7 +99,7 @@ function ActionMark({ item }: { readonly item: WorkItem }) {
 
 const ROW = "group/step flex min-h-[30px] w-full min-w-0 items-center gap-[9px] rounded-row px-1.5 py-[5px] text-left text-ui-sm leading-[18px]";
 function Chevron({ open }: { readonly open: boolean }) {
-  return <ChevronRight size={12} strokeWidth={2.2} className={cn("flex-none text-fg-3 opacity-0 transition-[rotate,opacity] duration-200 ease-expo group-hover/step:opacity-100 group-focus-visible/step:opacity-100 keyboard:transition-none", open && "rotate-90 opacity-100")} aria-hidden="true"/>;
+  return <ChevronRight size={12} className={cn("flex-none text-fg-3 opacity-0 transition-[rotate,opacity] duration-200 ease-expo group-hover/step:opacity-100 group-focus-visible/step:opacity-100 keyboard:transition-none", open && "rotate-90 opacity-100")} aria-hidden="true"/>;
 }
 /** What a task hands back from inside: its own items, laid out as a Turn's are, under the task. */
 function Inside({ items, label }: { readonly items: readonly ReadItem[]; readonly label: string }) {
@@ -153,7 +153,7 @@ function ReasoningRow({ item }: { readonly item: ReasoningItem }) {
   </>;
   return <li className={cn("reasoning-row min-w-0", entering && "motion-row-in")} data-state={item.status}>
     {has ? <button type="button" className={cn(ROW, "row border-none bg-transparent hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => { ctx.touch(); setChoice(!open); }}>{content}</button> : <div className={ROW}>{content}</div>}
-    {has ? <Collapsible open={open} id={panel}><div className="native-thinking mt-0.5 mb-2 ml-[30px] border-l border-line-strong pl-3 text-ui-sm text-fg-2"><StreamingMarkdown text={item.text} isStreaming={running}/>
+    {has ? <Collapsible open={open} id={panel}><div className="native-thinking mt-0.5 mb-2 ml-[30px] border-l border-line-strong pl-[11px] text-ui-sm text-fg-2"><StreamingMarkdown text={item.text} isStreaming={running}/>
       {leftOut(item, item.text) > 0 ? <MoreText runId={ctx.run.id} seq={item.seq} rest={leftOut(item, item.text)}/> : null}</div></Collapsible> : null}
   </li>;
 }
@@ -164,7 +164,7 @@ function GapRowView({ gap }: { readonly gap: GapRow }) {
   useEffect(() => { setBusy(false); }, [gap.count]);
   return <li className="gap-row min-w-0" data-gap={gap.count}>
     <button type="button" className={cn(ROW, "row border-none bg-transparent text-fg-2 hover:bg-subtle")} disabled={busy || ctx.reads === undefined} onClick={() => { setBusy(true); ctx.reads?.expand(gap.ordinal); }}>
-      <span className="flex size-[15px] flex-none items-center justify-center text-fg-3">{busy ? <Spinner size={14} tone="run" label=""/> : <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true"/>}</span>
+      <span className="flex size-[15px] flex-none items-center justify-center text-fg-3">{busy ? <Spinner size={14} tone="run" label=""/> : <ChevronRight size={12} aria-hidden="true"/>}</span>
       <span className="min-w-0 flex-1">{busy ? "正在读取中间的 " : "展开中间的 "}{gap.count} 项</span></button></li>;
 }
 
@@ -190,7 +190,7 @@ function ActionGroup({ block }: { readonly block: WorkBlock }) {
     <button type="button" className={cn(ROW, "row group/step !w-fit max-w-full border-none bg-transparent pr-2 text-fg hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => { ctx.touch(); setChoice(!open); }}>
       {live ? <span className="flex size-[15px] flex-none items-center justify-center"><Spinner size={14} tone="run" label=""/></span> : null}
       <span className={cn("min-w-0 trunc transition-colors group-hover/step:text-fg", open ? "text-fg" : "text-fg-2")}><SummaryWords parts={summary.parts} gap={gapCount(block)}/></span>
-      <ChevronRight size={12} strokeWidth={2.2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
+      <ChevronRight size={12} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
     </button>
     <Collapsible open={open} id={panel}><ActionRows block={block} className="mt-0.5 mb-1.5 ml-[7px] border-l border-line-strong pl-[9px]"/></Collapsible>
   </div>;
@@ -230,7 +230,7 @@ function ItemView({ item }: { readonly item: ReadItem }) {
     case "notice": return <NoticeList notices={[{ severity: item.severity, title: item.text, ...(item.more ? { detail: item.more } : {}) }]}/>;
     case "error": {
       return <div className="run-error flex items-start gap-2 rounded-block bg-surface px-3 py-2.5 text-ui-sm text-fg shadow-hairline" role="status" data-class={item.class}>
-        {item.status === "unknown" ? <CircleHelp size={17} strokeWidth={1.9} className="mt-px flex-none text-fg-3" aria-hidden="true"/> : <CircleAlert size={17} strokeWidth={1.9} className="mt-px flex-none text-red" aria-hidden="true"/>}
+        {item.status === "unknown" ? <CircleHelp size={17} className="mt-px flex-none text-fg-3" aria-hidden="true"/> : <CircleAlert size={17} className="mt-px flex-none text-red" aria-hidden="true"/>}
         <span className="min-w-0 break-words">{failureMessage({ code: item.code ?? "", message: item.message })}</span>
       </div>;
     }
@@ -298,7 +298,7 @@ function TurnFoldView({ fold, settle }: { readonly fold: TurnFold; readonly sett
   return <div className="turn-fold min-w-0" data-open={open ? "true" : "false"} data-problems={summary.problems || undefined}>
     <button type="button" className={cn(ROW, "row group/step !w-fit max-w-full border-none bg-transparent pr-2 text-fg hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => setOpen(!open)}>
       <span className={cn("min-w-0 trunc transition-colors group-hover/step:text-fg", open ? "text-fg" : "text-fg-2")}><SummaryWords parts={summary.parts} gap={gap}/></span>
-      <ChevronRight size={12} strokeWidth={2.2} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
+      <ChevronRight size={12} className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")} aria-hidden="true"/>
     </button>
     <Collapsible open={open} id={panel}>
       <div className="mt-1 mb-1.5 ml-[7px] flex min-w-0 flex-col gap-2.5 border-l border-line-strong pl-[9px]" role="group" aria-label="这一轮的过程">
@@ -324,7 +324,7 @@ function ChangesCard({ changes, workspace, onOpen }: { readonly changes: TurnCha
     const file = changes.files[0]!, body = <><FileMark created={file.op === "create"} removed={file.op === "delete"}/><FilePath path={file.path} workspace={workspace}/><Lines add={file.added} del={file.removed}/></>;
     const look = "turn-changes flex h-9 w-full min-w-0 items-center gap-2 rounded-block bg-surface px-3 text-left font-mono text-code text-fg shadow-hairline";
     return onOpen ? <button type="button" className={cn(look, "group/changes border-none transition-colors duration-120 ease-standard hover:bg-subtle")} title={shared ?? "查看改动"} aria-label={"查看改动：" + file.shown} onClick={() => onOpen(file.path)}>{body}
-      <ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className="flex-none text-fg-3"/></button> : <div className={look} title={shared}>{body}</div>;
+      <ChevronRight size={12} aria-hidden="true" className="flex-none text-fg-3"/></button> : <div className={look} title={shared}>{body}</div>;
   }
   const every = closed.size === 0;
   const toggle = (key: string) => setClosed(current => { const next = new Set(current); if (!next.delete(key)) next.add(key); return next; });
@@ -334,13 +334,13 @@ function ChangesCard({ changes, workspace, onOpen }: { readonly changes: TurnCha
       <Lines add={changes.added} del={changes.removed}/>
       <span className="min-w-1 flex-1"/>
       {folders.length > 0 ? <button type="button" className="icon-btn size-7 flex-none text-fg-3" aria-label={every ? "收起文件夹" : "展开文件夹"} title={every ? "收起文件夹" : "展开文件夹"} onClick={() => setClosed(every ? new Set(folders.map(row => row.key)) : new Set())}>
-        {every ? <ChevronsDownUp size={14} strokeWidth={2}/> : <ChevronsUpDown size={14} strokeWidth={2}/>}</button> : null}
+        {every ? <ChevronsDownUp size={14}/> : <ChevronsUpDown size={14}/>}</button> : null}
       {onOpen ? <button type="button" className="btn btn-ghost btn-sm flex-none" onClick={() => onOpen()}>查看改动</button> : null}
     </header>
     <ul className="m-0 flex list-none flex-col gap-px p-1.5 pt-1.5 hairline-t" aria-label="改动的文件">{rows.map(row => {
       const look = "flex h-7 w-full min-w-0 items-center gap-1.5 pr-1.5 text-left font-mono text-code", indent = { paddingLeft: 6 + row.depth * 16 };
       if (row.kind === "folder") { const open = !closed.has(row.key); return <li key={row.key}><button type="button" className={cn("row border-none bg-transparent text-fg-2 hover:bg-subtle", look)} style={indent} aria-expanded={open} onClick={() => toggle(row.key)}>
-        <span className="flex size-[14px] flex-none items-center justify-center"><ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" className={cn("text-fg-3 motion-rotate", open && "rotate-90")}/></span>
+        <span className="flex size-[14px] flex-none items-center justify-center"><ChevronRight size={12} aria-hidden="true" className={cn("text-fg-3 motion-rotate", open && "rotate-90")}/></span>
         <span className="min-w-0 flex-1 trunc">{row.name}</span>{open ? null : <Lines add={row.added} del={row.removed}/>}</button></li>; }
       const body = <><FileMark created={row.file.op === "create"} removed={row.file.op === "delete"}/><span className="min-w-0 flex-1 trunc">{row.name}</span><Lines add={row.file.added} del={row.file.removed}/></>;
       return <li key={row.key}>{onOpen ? <button type="button" className={cn("row border-none bg-transparent text-fg hover:bg-subtle", look)} style={indent} title={"查看改动：" + row.file.shown} onClick={() => onOpen(row.file.path)}>{body}</button>
@@ -353,7 +353,7 @@ function ChangesCard({ changes, workspace, onOpen }: { readonly changes: TurnCha
 function EndView({ turn }: { readonly turn: ReadTurn }) {
   const end = endLine(turn);
   if (end === null) return null;
-  const icon = turn.status === "failed" ? <CircleAlert size={15} strokeWidth={1.9} className="text-red" aria-hidden="true"/> : turn.status === "unknown" ? <CircleHelp size={15} strokeWidth={1.9} aria-hidden="true"/> : <CircleStop size={15} strokeWidth={1.9} aria-hidden="true"/>;
+  const icon = turn.status === "failed" ? <CircleAlert size={15} className="text-red" aria-hidden="true"/> : turn.status === "unknown" ? <CircleHelp size={15} aria-hidden="true"/> : <CircleStop size={15} aria-hidden="true"/>;
   return <QuietLine item="end" icon={icon} tone={end.tone}>{end.text}</QuietLine>;
 }
 
@@ -501,6 +501,30 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
   // One that ends in front of the reader folds in front of them, once: drawn open, then closing.
   const touched = useRef(false), wasLive = useRef(!over), stays = useRef(false), settling = useRef(false);
   if (wasLive.current && over) { wasLive.current = false; stays.current = touched.current; settling.current = !touched.current; }
+  // Ending in front of the reader, the Turn swaps its live lines for its fold, its changes and its footer in one drawing: its height goes from what it
+  // was to what that comes to rest at over a moment, so the column does not step (what is inside moves as it does; the bottom is let out as it goes).
+  const article = useRef<HTMLElement | null>(null), tall = useRef(0);
+  useLayoutEffect(() => { if (!over && article.current !== null) tall.current = article.current.offsetHeight; });
+  useLayoutEffect(() => {
+    const element = article.current, from = tall.current;
+    tall.current = 0;
+    if (!over || !watched || element === null || from === 0 || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    // Where it comes to rest: as tall as what it now holds, less the fold that is drawn open only to close.
+    const last = element.lastElementChild as HTMLElement | null, closing = element.querySelector<HTMLElement>(":scope > .turn-fold[data-open='true'] > .collapsible");
+    if (last === null) return;
+    const rest = last.offsetTop + last.offsetHeight - (last.offsetParent === element ? 0 : element.offsetTop) - (closing?.offsetHeight ?? 0);
+    if (Math.abs(rest - from) < 2) return;
+    const began = performance.now(), span = 260;
+    let frame = 0;
+    const step = () => {
+      const part = Math.min((performance.now() - began) / span, 1), eased = 1 - (1 - part) ** 3;
+      if (part >= 1) { element.classList.remove("is-settling"); element.style.removeProperty("height"); return; }
+      element.style.height = Math.round((from + (rest - from) * eased) * 2) / 2 + "px";
+      frame = requestAnimationFrame(step);
+    };
+    element.classList.add("is-settling"); step();
+    return () => { cancelAnimationFrame(frame); element.classList.remove("is-settling"); element.style.removeProperty("height"); };
+  }, [over]);
   const context = useMemo<TurnContext>(() => ({ turn, run, reads, over, cancelling, detailed, children: arrangement.children, message, loadDetail: loadToolDetail, seen, onViewPacket, touch: () => { touched.current = true; } }),
     [turn, run, reads, over, cancelling, detailed, arrangement.children, message, loadToolDetail, seen, onViewPacket]);
   const pieces = useMemo(() => segments(arrangement.blocks), [arrangement.blocks]);
@@ -539,7 +563,7 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
       return arrived(sent.id) ? <div key={"user:" + piece.item.id} className="motion-message-in">{bubble}</div> : <div key={"user:" + piece.item.id}>{bubble}</div>;
     }
     const last = index === pieces.length - 1;
-    return <article key={"turn:" + run.id + ":" + index} className={cn("message assistant-message protocol-turn group flex min-w-0 flex-col gap-2.5", !over && "is-active")} data-run-status={run.status} data-run-id={run.id} aria-busy={!over} aria-label={harness + " 的回复" + (over ? "" : "（进行中）")}>
+    return <article key={"turn:" + run.id + ":" + index} ref={last ? article : undefined} className={cn("message assistant-message protocol-turn group flex min-w-0 flex-col gap-2.5", !over && "is-active")} data-run-status={run.status} data-run-id={run.id} aria-busy={!over} aria-label={harness + " 的回复" + (over ? "" : "（进行中）")}>
       {last && fold !== null ? <TurnFoldView fold={fold} settle={settling.current}/> : null}
       <Blocks blocks={last && fold !== null ? [...fold.kept, ...fold.answer] : way !== undefined ? quietBlocks(piece.blocks, way, over) : piece.blocks}/>
       {last ? <>

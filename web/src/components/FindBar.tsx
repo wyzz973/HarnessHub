@@ -126,13 +126,13 @@ export function FindBar({ access, onClose, scroller, messageAt, textOf, initial 
     setAt((to + hits.length) % hits.length);
   };
   const count = hits.length === 0 ? (query.trim() === "" || busy ? "" : "没有找到") : (at + 1) + " / " + hits.length + (next !== null ? "+" : "");
-  return <div className="find-bar absolute top-[58px] right-4 z-20 flex h-9 items-center gap-1 rounded-full py-1 pr-1 pl-3" role="search" aria-label="在对话里查找">
+  return <div data-leave="fade" data-leave-shift="-6" className="find-bar absolute top-[58px] right-4 z-20 flex h-9 items-center gap-1 rounded-full py-1 pr-1 pl-3" role="search" aria-label="在对话里查找">
     <input ref={field} className="h-7 w-48 min-w-0 border-none bg-transparent text-ui-sm text-fg outline-none placeholder:text-placeholder" value={query} placeholder="在对话里查找" aria-label="在对话里查找"
       onChange={event => setQuery(event.target.value)}
       onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter") { event.preventDefault(); go(event.shiftKey ? -1 : 1); } else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); } }}/>
     <span className="min-w-12 flex-none text-right text-caption text-fg-3 tabular-nums" role="status">{busy ? <Spinner size={12} label="正在查找"/> : problem ?? count}</span>
-    <button type="button" className="icon-btn size-7 text-fg-3" aria-label="上一处" title="上一处（⇧Enter）" disabled={hits.length === 0} onClick={() => go(-1)}><ChevronUp size={14} strokeWidth={2}/></button>
-    <button type="button" className="icon-btn size-7 text-fg-3" aria-label="下一处" title="下一处（Enter）" disabled={hits.length === 0} onClick={() => go(1)}><ChevronDown size={14} strokeWidth={2}/></button>
-    <button type="button" className="icon-btn size-7 text-fg-3" aria-label="关闭查找" title="关闭（Esc）" onClick={onClose}><X size={14} strokeWidth={2}/></button>
+    <button type="button" className="icon-btn size-7 text-fg-3" aria-label="上一处" title="上一处 ⇧⏎" disabled={hits.length === 0} onClick={() => go(-1)}><ChevronUp size={14}/></button>
+    <button type="button" className="icon-btn size-7 text-fg-3" aria-label="下一处" title="下一处 ⏎" disabled={hits.length === 0} onClick={() => go(1)}><ChevronDown size={14}/></button>
+    <button type="button" className="icon-btn size-7 text-fg-3" aria-label="关闭查找" title="关闭 esc" onClick={onClose}><X size={14}/></button>
   </div>;
 }

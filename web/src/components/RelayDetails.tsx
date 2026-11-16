@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { deliveryWords, evidenceWords, packetFacts, syncWords } from "../lib/relay-state.js";
 import type { RelayApi, RelayPacket, RelayView } from "../relay.js";
-import { Dialog, DialogClose, useClosingValue } from "../ui/overlay.js";
+import { Dialog, DIALOG_ACTIONS, DIALOG_COLUMN, DialogClose, useClosingValue } from "../ui/overlay.js";
 import { Badge, EmptyState, Spinner } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
 
@@ -39,13 +39,13 @@ export function RelayPacketDialog({ api, sessionId, packet, onClose, name }: {
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = setTimeout(() => setCopy("idle"), 1800);
   };
-  return <Dialog open={packet !== null} onOpenChange={open => { if (!open) onClose(); }} title={title} description={description} className="relay-packet-dialog w-[min(760px,calc(100vw-32px))]">
-    <div className="flex flex-col gap-3 px-5 pt-3 pb-5">
+  return <Dialog open={packet !== null} onOpenChange={open => { if (!open) onClose(); }} title={title} description={description} wide className="relay-packet-dialog">
+    <div className={DIALOG_COLUMN}>
       {current.status === "loading" ? <p className="m-0 flex items-center gap-2 py-6 text-ui-sm text-fg-2" role="status"><Spinner size={13} label=""/>正在读取交接单</p>
         : current.status === "failed" ? <p className="m-0 rounded-block bg-red-soft px-3 py-2.5 text-ui-sm text-red-on-tint" role="alert">{current.message}</p>
         : <pre className="relay-packet-text m-0 max-h-[min(60vh,520px)] overflow-auto rounded-block bg-inset p-3 font-mono text-code break-words whitespace-pre-wrap" tabIndex={0} aria-label="交接单原文">{current.text}</pre>}
       <p className="m-0 text-caption text-fg-3">这是发出时的原文，逐字保存；查看时不会重新处理。{current.status === "ready" && current.etag ? <span className="mono" title="原文的 sha256"> sha256 {current.etag.replace(/^sha256[-:]/u, "").slice(0, 12)}…</span> : null}</p>
-      <div className="flex justify-end gap-2">
+      <div className={DIALOG_ACTIONS}>
         {current.status === "ready" ? <button type="button" className="btn" onClick={() => void write(current.text)}>{copy === "copied" ? "已复制" : copy === "failed" ? "无法使用剪贴板" : "复制原文"}</button> : null}
         <DialogClose className="btn btn-primary">关闭</DialogClose>
       </div>

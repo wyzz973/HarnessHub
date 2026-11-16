@@ -67,9 +67,9 @@
   --run: #0A84FF;
   /* Amber means only "waiting for you"; red means only failure */
   --amber: #7A4D02; --amber-dot: #F5A70A; --amber-soft: rgba(251, 179, 21, .15); --amber-line: rgba(251, 179, 21, .55);
-  --red: #B3282B; --red-dot: #E5484D; --red-soft: rgba(220, 60, 61, .09); --red-line: rgba(220, 60, 61, .32); --red-fill: #D93036;
+  --red: #B3282B; --red-dot: #E5484D; --red-soft: rgba(220, 60, 61, .09); --red-fill: #D93036;
   /* Green appears only on the added lines of a diff */
-  --green: #0B7A1E; --green-dot: #10A122; --green-soft: rgba(16, 161, 34, .12);
+  --green: #0B7A1E;
   --add-bg: rgba(30, 158, 60, .12); --add-text: #17832F; --del-bg: rgba(205, 32, 84, .09); --del-text: #C01D4E;
   /* Small text on a tint takes a higher-contrast shade of its hue, so it reads at 4.5:1 */
   --amber-on-tint: #6B4302; --red-on-tint: #8F1F22; --add-on-tint: #14702A; --del-on-tint: #A31743; --text-3-on-tint: #5E5E63;
@@ -118,8 +118,8 @@
     --accent: #0071E3; --accent-hover: #1A82F0; --accent-soft: rgba(10, 132, 255, .22); --accent-text: #5EADFF; --on-accent: #FFFFFF;
     --run: #5EADFF;
     --amber: #E8A317; --amber-dot: #F5A70A; --amber-soft: rgba(251, 179, 21, .15); --amber-line: rgba(251, 179, 21, .45);
-    --red: #F17778; --red-dot: #E5484D; --red-soft: rgba(241, 119, 120, .14); --red-line: rgba(241, 119, 120, .38); --red-fill: #D93036;
-    --green: #53C556; --green-dot: #32D74B; --green-soft: rgba(50, 215, 75, .14);
+    --red: #F17778; --red-dot: #E5484D; --red-soft: rgba(241, 119, 120, .14); --red-fill: #D93036;
+    --green: #53C556;
     --add-bg: rgba(50, 215, 75, .13); --add-text: #4FD364; --del-bg: rgba(255, 44, 86, .15); --del-text: #FF6482;
     --amber-on-tint: #F5C24B; --red-on-tint: #F9A8A8; --add-on-tint: #7FE28D; --del-on-tint: #FF9DB0; --text-3-on-tint: #A8A8AE;
     --scrim: rgba(0, 0, 0, .42);
@@ -161,9 +161,6 @@
   --color-window: var(--bg-window);
   --color-cover: var(--bg-cover);
   --color-glass: var(--glass);
-  --color-glass-thick: var(--glass-thick);
-  --color-glass-clear: var(--glass-clear);
-  --color-red-fill: var(--red-fill);
   --color-sidebar: var(--bg-sidebar);
   --color-sidebar-hover: var(--bg-sidebar-hover);
   --color-selected: var(--bg-selected);
@@ -190,23 +187,16 @@
   --color-amber: var(--amber);
   --color-amber-dot: var(--amber-dot);
   --color-amber-soft: var(--amber-soft);
-  --color-amber-line: var(--amber-line);
   --color-red: var(--red);
   --color-red-dot: var(--red-dot);
   --color-red-soft: var(--red-soft);
-  --color-red-line: var(--red-line);
   --color-green: var(--green);
-  --color-green-dot: var(--green-dot);
-  --color-green-soft: var(--green-soft);
-  --color-add-bg: var(--add-bg);
   --color-add: var(--add-text);
-  --color-del-bg: var(--del-bg);
   --color-del: var(--del-text);
   --color-amber-on-tint: var(--amber-on-tint);
   --color-red-on-tint: var(--red-on-tint);
   --color-add-on-tint: var(--add-on-tint);
   --color-del-on-tint: var(--del-on-tint);
-  --color-fg-3-on-tint: var(--text-3-on-tint);
   --shadow-*: initial;
   --shadow-hairline: var(--sh-hairline);
   --shadow-card: var(--sh-card);
@@ -333,7 +323,6 @@
 @keyframes hh-spin { to { transform: rotate(360deg); } }
 @keyframes hh-shimmer { 0% { background-position: 100% 0; } 25%, 100% { background-position: 0% 0; } }
 @keyframes hh-fade-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes hh-fade-out { from { opacity: 1; } to { opacity: 0; } }
 @keyframes hh-enter { from { opacity: 0; transform: translateY(var(--motion-shift, 4px)); } to { opacity: 1; transform: none; } }
 @keyframes hh-swap-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 @keyframes hh-swap-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-3px); } }
@@ -409,8 +398,6 @@
   .motion-fade-in { animation: hh-fade-in var(--motion-duration, var(--dur-base)) var(--ease-out) both; animation-delay: var(--motion-delay, 0ms); }
   .motion-enter, .enter { animation: hh-enter var(--motion-duration, var(--dur-base)) var(--ease-out) both; animation-delay: var(--motion-delay, 0ms); }
   /* #12 Hand-over: the running layer leaves in 200 ms, the finished one arrives 0.21 s later; they never overlap */
-  .motion-depart { animation: hh-fade-out var(--dur-base) var(--ease-standard) forwards; }
-  .motion-arrive { animation: hh-fade-in 250ms ease-in-out 210ms both; }
   /* #04 Long thinking: the words breathe between 1 and .75 every 2 s, starting after 3 s */
   .motion-breathe { animation: hh-breathe 2s ease-in-out 3s infinite; }
   /* #15 A sent message springs up 10 px (1.1 s) while it fades in */
@@ -424,6 +411,7 @@
   /* #36 A new item at the top of a list: its height opens while it fades in; the child needs min-height: 0 */
   .motion-list-insert { display: grid; animation: hh-list-insert var(--dur-base) var(--ease-expo) both; }
   .motion-list-insert > * { min-height: 0; overflow: hidden; }
+
   /* #18 / #22 Chevrons turn with the expand curve; the caller sets the angle with rotate-90 or rotate-180, the `rotate` property */
   .motion-rotate { transition: rotate var(--dur-base) var(--ease-expo); }
   /* #16 / #17 Send ⇄ stop: the icon turns through 96° and lifts 2.5 px; the glyphs cross-fade */
@@ -460,6 +448,10 @@
   .collapsible-inner { min-height: 0; overflow: hidden; }
   .collapsible[data-state="open"] > .collapsible-inner { overflow: visible; }
   .collapsible[data-open="false"] > .collapsible-inner { visibility: hidden; transition: visibility 0s linear var(--dur-base); }
+  /* The browser's own disclosure opens and closes the same way (where it can: its content's height from nothing to what it holds). */
+  details { interpolate-size: allow-keywords; }
+  details::details-content { block-size: 0; overflow: clip; opacity: 0; transition: block-size var(--dur-base) var(--ease-expo), opacity var(--dur-base) var(--ease-expo), content-visibility var(--dur-base) allow-discrete; }
+  details[open]::details-content { block-size: auto; opacity: 1; }
 
   /*
    * #29 Floating bar: rises 16 px in 300 ms, falls in 200 ms. It centres itself between 16 px insets at its content's width,
@@ -495,7 +487,6 @@
   .btn-danger { background: var(--red-soft); color: var(--red); }
   .btn-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--red-dot) 20%, transparent); color: var(--red-on-tint); }
   .btn-sm { height: 24px; padding: 0 9px; gap: 5px; border-radius: 7px; font-size: 12px; line-height: 18px; }
-  .btn-lg { height: 32px; padding: 0 14px; gap: 8px; border-radius: 9px; font-size: 13px; }
   .icon-btn {
     display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: none; padding: 0; border: none; border-radius: var(--radius-row);
     background: transparent; color: var(--text-2); transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-snap);
@@ -532,7 +523,7 @@
 
   /* Fields: a recessed fill with a hairline; the focus ring is the system's soft blue */
   .field {
-    width: 100%; height: 30px; padding: 0 10px; border: none; border-radius: var(--radius-control); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--border-strong);
+    width: 100%; height: 28px; padding: 0 10px; border: none; border-radius: var(--radius-control); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--border-strong);
     color: var(--text); font-size: 13px; line-height: 20px; outline: none; transition: box-shadow var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
   }
   textarea.field { height: auto; padding: 7px 10px; resize: vertical; }
@@ -541,7 +532,7 @@
 
   /* Badges (pills) and status pills */
   .badge { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 999px; background: var(--bg-subtle); color: var(--text-2); font-size: 11px; line-height: 16px; font-weight: 500; white-space: nowrap; }
-  .badge-accent, .badge-green { background: var(--accent-soft); color: var(--accent-text); }
+  .badge-accent { background: var(--accent-soft); color: var(--accent-text); }
   .badge-amber { background: var(--amber-soft); color: var(--amber-on-tint); }
   .badge-red { background: var(--red-soft); color: var(--red-on-tint); }
   .badge-count { justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; font-weight: 600; }
@@ -608,6 +599,7 @@
     background: var(--glass-thick); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); border-radius: var(--radius-dialog); box-shadow: var(--sh-pop); color: var(--text); outline: none;
     transition: opacity 160ms var(--ease-out), transform var(--dur-spring) var(--ease-spring);
   }
+  .dialog-wide { width: min(640px, calc(100vw - 32px)); }
   .dialog-pop[data-starting-style] { opacity: 0; transform: scale(.94); }
   .dialog-pop[data-ending-style] { opacity: 0; transform: scale(.97); transition: opacity 140ms ease-in, transform 140ms ease-in; }
   .palette-pop {
@@ -859,6 +851,10 @@
   :root[data-glass="system"] .sidebar-pane { background: transparent; }
   .chat-notices:not(:empty) ~ .chat-scroll { padding-top: 16px; }
 
+  /* A Turn that ends in front of the reader goes from the height it had to the height it comes to rest at without a step (ProtocolTurn's settle). */
+  .is-settling { overflow: clip; }
+  .is-settling > * { flex-shrink: 0; }
+
   /* The terminal rises from the window's foot at its full height (so what is in it is laid out once), pushing the conversation up as it comes. */
   .terminal-drawer { transition: margin-bottom 260ms var(--ease-out); }
   @starting-style { .terminal-drawer { margin-bottom: calc(-1 * var(--drawer-height, 0px)); } }
@@ -876,13 +872,15 @@
 
 /*
  * #37 Actions started from the keyboard finish at once: popups, dialogs, tabs, segments, switches, collapsibles, bars.
+ * "Started from the keyboard" is the moment after a key press (data-keyed, ui/motion.tsx): what happens by itself later moves as usual.
  * Important declarations in the base layer outrank those of later layers, so this also wins over the reduced-motion fades.
  */
 @layer base {
-  :root[data-input="keyboard"] :is(.surface-pop, .tooltip-pop, .backdrop, .dialog-pop, .palette-pop, .drawer-pop, .drawer-left-pop, .sheet-pop, .tabs-indicator, .segmented-thumb, .switch, .switch-thumb, .collapsible, .motion-rotate, .floating-bar, .btn, .press, .sidebar-slot, .titlebar, .terminal-drawer, .harness-management-body) {
+  :root[data-keyed] :is(.surface-pop, .tooltip-pop, .backdrop, .dialog-pop, .palette-pop, .drawer-pop, .drawer-left-pop, .sheet-pop, .tabs-indicator, .segmented-thumb, .switch, .switch-thumb, .collapsible, .motion-rotate, .floating-bar, .btn, .press, .sidebar-slot, .titlebar, .terminal-drawer, .harness-management-body) {
     transition-duration: 0s !important;
   }
-  :root[data-input="keyboard"] :is(.btn, .press):active { transform: none !important; }
+  :root[data-keyed] :is(.btn, .press):active { transform: none !important; }
+  :root[data-keyed] details::details-content { transition-duration: 0s !important; }
 }
 
 /*
@@ -890,7 +888,7 @@
  * rule below stops at once, so a transform or loop added later cannot slip through.
  */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0s !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; transition-delay: 0s !important; scroll-behavior: auto !important; }
+  *, *::before, *::after, details::details-content { animation-duration: 0s !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; transition-delay: 0s !important; scroll-behavior: auto !important; }
   @layer components {
     /* Loops become still: the spinner a dot, the shimmer plain text, dots and breathing at rest */
     .spinner, .spin { animation: none !important; }
@@ -909,8 +907,7 @@
     /* Entrances that the Motion board marks "fade only" keep a short fade */
     :is(.motion-row-in, .motion-fade-in, .motion-enter, .enter, .motion-message-in, .motion-list-insert) { animation: hh-fade-in 120ms var(--ease-standard) both !important; }
     /* Those marked "at once": the hand-over swaps, panel content and popping marks simply appear */
-    .motion-depart { animation: none !important; opacity: 0; }
-    :is(.motion-arrive, .motion-panel-in, .motion-pop-in, .motion-line-grow) { animation: none !important; }
+    :is(.motion-panel-in, .motion-pop-in, .motion-line-grow) { animation: none !important; }
     /* Popups, dialogs, drawers, toasts and bars only fade */
     :is(.surface-pop, .dialog-pop, .palette-pop, .drawer-pop, .tooltip-pop, .floating-bar, .toast) { transition: opacity 120ms var(--ease-standard) !important; }
     :is(.backdrop, .toast-content) { transition: opacity 120ms var(--ease-standard) !important; }
