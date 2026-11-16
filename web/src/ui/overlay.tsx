@@ -170,15 +170,15 @@ function SystemMenu({ trigger, items, side, open, onOpenChange }: {
  * the right, "left" is the narrow-screen navigation drawer and "sheet" rises from the bottom; those three keep the title
  * for assistive technology only.
  */
-export function Dialog({ open, onOpenChange, title, description, children, className, kind = "center", initialFocus }: {
+export function Dialog({ open, onOpenChange, title, description, children, className, kind = "center", wide = false, initialFocus }: {
   readonly open: boolean; readonly onOpenChange: (open: boolean) => void; readonly title: ReactNode; readonly description?: ReactNode; readonly children: ReactNode;
-  readonly className?: string; readonly kind?: "center" | "drawer" | "left" | "sheet"; readonly initialFocus?: RefObject<HTMLElement | null>;
+  readonly className?: string; readonly kind?: "center" | "drawer" | "left" | "sheet"; readonly wide?: boolean; readonly initialFocus?: RefObject<HTMLElement | null>;
 }) {
   const pop = kind === "drawer" ? "drawer-pop" : kind === "left" ? "drawer-left-pop" : kind === "sheet" ? "sheet-pop" : "dialog-pop";
   return <BaseDialog.Root open={open} onOpenChange={next => onOpenChange(next)}>
     <BaseDialog.Portal>
       <BaseDialog.Backdrop className="backdrop z-[60]"/>
-      <BaseDialog.Popup className={cn(pop, "z-[61]", className)} {...(initialFocus ? { initialFocus } : {})}>
+      <BaseDialog.Popup className={cn(pop, "z-[61]", kind === "center" && wide && "dialog-wide", className)} {...(initialFocus ? { initialFocus } : {})}>
         {kind === "center" ? <div className="px-5 pt-5"><BaseDialog.Title className="m-0 text-panel">{title}</BaseDialog.Title>{description ? <BaseDialog.Description className="mt-1.5 mb-0 text-ui-sm text-fg-2">{description}</BaseDialog.Description> : null}</div>
           : <BaseDialog.Title className="sr-only">{title}</BaseDialog.Title>}
         {children}
@@ -187,6 +187,15 @@ export function Dialog({ open, onOpenChange, title, description, children, class
   </BaseDialog.Root>;
 }
 export const DialogClose = BaseDialog.Close;
+/*
+ * A dialog's one skeleton: 20 px at its sides and foot, 12 under the title, 16 above its actions; two widths (480, and 640 with `wide`); the
+ * way out is a plain button and the action the primary one. A dialog whose content scrolls keeps its actions in sight (DIALOG_BODY, then
+ * DIALOG_FOOT); a short one is one column that ends in its actions (DIALOG_COLUMN, DIALOG_ACTIONS inside it).
+ */
+export const DIALOG_BODY = "scroll-area flex max-h-[min(64dvh,560px)] flex-col gap-3 px-5 pt-3 pb-1 text-ui-sm [&>*]:shrink-0";
+export const DIALOG_FOOT = "flex flex-wrap items-center justify-end gap-2 px-5 pt-4 pb-5";
+export const DIALOG_COLUMN = "flex min-h-0 flex-col gap-3 px-5 pt-3 pb-5";
+export const DIALOG_ACTIONS = "flex flex-wrap items-center justify-end gap-2 pt-1";
 
 /** What a toast says: one line, and at most one action such as "撤销". */
 export interface ToastOptions {

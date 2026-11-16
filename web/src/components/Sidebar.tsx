@@ -16,7 +16,7 @@ import { markSeen, startSeen, unseen, useSeen } from "../lib/seen.js";
 import { useNotificationChoice } from "../lib/notify.js";
 import { useNow } from "../lib/prefs.js";
 import { Collapsible } from "../ui/motion.js";
-import { Dialog, Menu, Popover, showNativeMenu } from "../ui/overlay.js";
+import { Dialog, DIALOG_ACTIONS, DIALOG_COLUMN, DIALOG_FOOT, Menu, Popover, showNativeMenu } from "../ui/overlay.js";
 import { Badge, LogoMark, Spinner, StatusDot, Tip } from "../ui/primitives.js";
 import { lastingOption } from "./Approval.js";
 import { BrandIcon } from "./BrandIcon.js";
@@ -424,12 +424,13 @@ function ProjectGroup({ project, open, onToggle, now, currentId, disabled, arriv
       aria-label={project.name + (project.detail ? " · " + project.detail : "")} aria-describedby={summaryId} onClick={() => onToggle(!open)}>
       <ChevronRight size={11} strokeWidth={2.4} aria-hidden="true" className={cn("flex-none motion-rotate", open && "rotate-90")}/>
       <span className="min-w-0 flex-1 trunc">{project.name}{project.detail ? <span className="opacity-70"> · {project.detail}</span> : null}</span>
-      {!open && strongest ? <StatusDot tone={strongest.state === "wait" ? "wait" : strongest.state === "run" ? "run" : "fail"} live={false} size={6}/> : null}
+      {/* The same colors as on a row: amber waits for you, grey is at work, red failed; blue is kept for what you have not read. */}
+      {!open && strongest ? <StatusDot tone={strongest.state === "wait" ? "wait" : strongest.state === "run" ? "work" : "fail"} live={false} size={6}/> : null}
       {!open ? <span className="tabular-nums" aria-hidden="true">{project.rows.length}</span> : null}
       <span id={summaryId} className="sr-only">{project.rows.length} 个对话{strongest ? "，有" + STATE_WORDS[strongest.state] + "的" : ""}</span>
     </button>
     <Collapsible open={open} id={listId}>
-      <div className="flex flex-col gap-0.5">{project.rows.map(row => <div key={row.session.id} className={cn(arrivals.has(row.session.id) && "motion-list-insert")}><div>
+      <div className="flex flex-col gap-0.5">{project.rows.map(row => <div key={row.session.id} data-leave="close" className={cn("session-slot", arrivals.has(row.session.id) && "motion-list-insert")}><div>
         <SessionRow row={row} now={now} harness={harness(row.session.selection.harnessId)} current={currentId === row.session.id} disabled={disabled} onOpen={() => onSession(row.session.id)}
           unread={currentId !== row.session.id && row.state === "idle" && unread(row.session)} actions={actions}/>
       </div></div>)}</div>
@@ -516,12 +517,12 @@ function Trash({ access, now, harness }: { readonly access: TrashAccess; readonl
     </Collapsible>
     <Dialog open={asking !== null} onOpenChange={value => { if (!value) setAsking(null); }} title={asking?.id === null ? "清空最近删除？" : "彻底删除这段对话？"}
       description={asking?.id === null ? count + " 段对话删除后找不回来。" : "“" + (asking?.title ?? "") + "”删除后找不回来。"}>
-      {asking !== null && (asking.id === null ? rows.some(row => row.worktree !== undefined) : held !== null) ? <label className="mx-5 flex cursor-pointer items-start gap-2 rounded-row bg-inset px-3 py-2 text-ui-sm text-fg-2">
+      {asking !== null && (asking.id === null ? rows.some(row => row.worktree !== undefined) : held !== null) ? <label className="mx-5 mt-3 flex cursor-pointer items-start gap-2 rounded-row bg-inset px-3 py-2 text-ui-sm text-fg-2">
         <input type="checkbox" className="mt-0.5 size-3.5 flex-none accent-[var(--accent)]" checked={withWorktree} onChange={event => setWithWorktree(event.target.checked)}/>
         <span className="flex flex-col gap-0.5"><span>{asking.id === null ? "同时删除这些对话自己的工作树" : "同时删除它的工作树" + (held?.branch ? "（分支 " + held.branch + " 保留）" : "（分支保留）")}</span>
           {asking.id !== null && held !== null && held.shared ? <span className="text-caption text-fg-3">别的对话还在用，会留下</span>
             : asking.id !== null && held !== null && held.dirty > 0 && withWorktree ? <span className="text-caption text-red">{held.dirty} 个未提交的文件会一起删掉</span> : null}</span></label> : null}
-      <div className="flex justify-end gap-2 px-5 pt-2 pb-5"><button type="button" className="btn" autoFocus onClick={() => setAsking(null)}>取消</button>
+      <div className={DIALOG_FOOT}><button type="button" className="btn" autoFocus onClick={() => setAsking(null)}>取消</button>
         <button type="button" className="btn btn-danger" onClick={() => {
           const target = asking, worktreeToo = withWorktree; setAsking(null);
           if (target === null) return;
@@ -541,7 +542,7 @@ function Plain({ title, icon, rows, now, currentId, disabled, harness, onSession
   readonly arrivals: ReadonlySet<string>; readonly where: (session: SessionSummary) => string }) {
   return <section className="session-run flex flex-col gap-0.5 pb-1.5" aria-label={title}>
     <h3 className="group-heading m-0 font-normal">{icon}{title}</h3>
-    {rows.map(row => <div key={row.session.id} className={cn(arrivals.has(row.session.id) && "motion-list-insert")}><div>
+    {rows.map(row => <div key={row.session.id} data-leave="close" className={cn("session-slot", arrivals.has(row.session.id) && "motion-list-insert")}><div>
       <SessionRow row={row} now={now} harness={harness(row.session.selection.harnessId)} current={currentId === row.session.id} disabled={disabled} onOpen={() => onSession(row.session.id)}
         unread={currentId !== row.session.id && row.state === "idle" && unread(row.session)} actions={actions} where={where(row.session)}/></div></div>)}
   </section>;
@@ -625,10 +626,10 @@ function SnoozeDialog({ title, onClose, onChoose }: { readonly title: string; re
   const start = new Date(); start.setDate(start.getDate() + 1); start.setHours(9, 0, 0, 0);
   const [value, setValue] = useState(local(start)), at = new Date(value).getTime(), valid = Number.isFinite(at) && at > Date.now();
   return <Dialog open onOpenChange={open => { if (!open) onClose(); }} title="稍后提醒" description={title}>
-    <form className="flex flex-col gap-3 px-5 pt-2 pb-5" onSubmit={event => { event.preventDefault(); if (valid) onChoose(at); }}>
+    <form className={DIALOG_COLUMN} onSubmit={event => { event.preventDefault(); if (valid) onChoose(at); }}>
       <input type="datetime-local" className="h-9 rounded-control border border-line bg-surface px-2.5 text-ui-sm text-fg" value={value} min={local(new Date())} aria-label="提醒时间" autoFocus onChange={event => setValue(event.target.value)}/>
       {!valid ? <p className="m-0 text-caption text-red">要选一个以后的时间</p> : null}
-      <div className="flex justify-end gap-2"><button type="button" className="btn" onClick={onClose}>取消</button><button type="submit" className="btn btn-primary" disabled={!valid}>稍后提醒</button></div>
+      <div className={DIALOG_ACTIONS}><button type="button" className="btn" onClick={onClose}>取消</button><button type="submit" className="btn btn-primary" disabled={!valid}>稍后提醒</button></div>
     </form>
   </Dialog>;
 }

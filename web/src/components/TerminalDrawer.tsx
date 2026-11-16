@@ -111,7 +111,7 @@ export function TerminalDrawer({ session, place, access, onClose, scripts, onQuo
   const fitHeight = (value: number): number => Math.round(Math.max(MIN, Math.min(value, window.innerHeight * .7)));
   const info = (id: string) => terminals?.find(terminal => terminal.id === id);
   const tabTitle = (group: readonly string[]) => group.map(id => info(id)?.title ?? "终端").join(" · ");
-  return <section className={cn("terminal-drawer relative flex flex-none flex-col bg-app hairline-t", dragging && "select-none")} style={{ height: fitHeight(height), "--drawer-height": fitHeight(height) + "px" } as CSSProperties} aria-label="终端">
+  return <section data-leave="sink" className={cn("terminal-drawer relative flex flex-none flex-col bg-app hairline-t", dragging && "select-none")} style={{ height: fitHeight(height), "--drawer-height": fitHeight(height) + "px" } as CSSProperties} aria-label="终端">
     <div role="separator" aria-orientation="horizontal" aria-label="调整终端高度" tabIndex={0} title="拖动调整高度" className="group/edge absolute inset-x-0 -top-[3px] z-10 h-[7px] cursor-row-resize touch-none outline-none"
       onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); from.current = { y: event.clientY, height: fitHeight(height) }; setDragging(true); }}
       onPointerMove={event => { const begin = from.current; if (begin !== null) setHeight(fitHeight(begin.height + begin.y - event.clientY)); }}

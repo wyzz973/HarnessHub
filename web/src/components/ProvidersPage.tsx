@@ -1,10 +1,10 @@
-import { ChevronRight, Eye, EyeOff, KeyRound, Link2, Pencil, Plus, Search, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { ChevronRight, Eye, EyeOff, KeyRound, Link2, Pencil, Plus, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { ProviderProtocol, ProviderView, ProviderWriteInput } from "../../../src/contracts/provider.js";
 import { protocolLabel, PROVIDER_PROTOCOLS } from "../api.js";
 import { cn } from "../lib/cn.js";
-import { Badge, EmptyState, Notice, Spinner, Tip } from "../ui/primitives.js";
+import { Badge, EmptyState, Notice, SearchField, Spinner, Tip } from "../ui/primitives.js";
 import { BrandIcon, providerBrand } from "./BrandIcon.js";
 import { PageShell } from "./PageShell.js";
 
@@ -27,10 +27,9 @@ export function ProvidersPage(props: ProvidersProps) {
   return <PageShell title="模型连接" titleId="providers-title" onMenu={props.onMenu} sidebarHidden={props.sidebarHidden} onExpandSidebar={props.onExpandSidebar} onBack={props.onChat}
     description="连接只存在本机，不改 Harness 自己的配置。" {...(props.providers.length ? { actions: add } : {})}>
     {props.error ? <Notice tone="red" onDismiss={props.onDismissError}>{props.error}</Notice> : null}
-    {props.providers.length === 0 ? <EmptyState icon={<SlidersHorizontal size={22}/>} title="连接你的第一个模型服务" action={add}>填写服务地址和密钥，再添加要使用的模型。</EmptyState> : <>
+    {props.providers.length === 0 ? <EmptyState icon={<SlidersHorizontal size={28}/>} title="连接你的第一个模型服务" action={add}>填写服务地址和密钥，再添加要使用的模型。</EmptyState> : <>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <label className="flex h-[34px] min-w-[min(220px,100%)] flex-1 items-center gap-2 rounded-control bg-surface px-2.5 text-fg-3 shadow-[inset_0_0_0_1px_var(--border-strong)] focus-within:shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_var(--accent-soft)]">
-          <Search size={15} aria-hidden="true"/><input className="min-w-0 flex-1 border-none bg-transparent text-ui-sm text-fg outline-none" type="search" aria-label="搜索 Providers" placeholder="搜索名称、地址或模型" value={query} onChange={event => setQuery(event.target.value)}/></label>
+        <SearchField className="min-w-[min(220px,100%)] flex-1" label="搜索 Providers" placeholder="搜索名称、地址或模型" value={query} onChange={setQuery}/>
         <span className="text-ui-sm text-fg-3">{props.providers.length} 个连接</span></div>
       <div className="flex flex-col gap-3">{providers.length === 0 ? <p className="m-0 text-ui-sm text-fg-2">没有匹配的 Provider。<button type="button" className="link-btn" onClick={() => setQuery("")}>清除搜索</button></p> : providers.map(provider => {
         const probe = props.probes[provider.id], currentProbe = probe?.revision === provider.revision ? probe : undefined;

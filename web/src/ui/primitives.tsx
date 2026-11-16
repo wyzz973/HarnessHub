@@ -1,7 +1,7 @@
 import { Switch as BaseSwitch } from "@base-ui/react/switch";
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
-import { AlertCircle, CircleCheck, Info, TriangleAlert, X } from "lucide-react";
-import { useCallback, useId, useLayoutEffect, useRef, type KeyboardEvent, type ReactElement, type ReactNode } from "react";
+import { AlertCircle, CircleCheck, Info, Search, TriangleAlert, X } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactElement, type ReactNode } from "react";
 import { cn } from "../lib/cn.js";
 
 /**
@@ -82,7 +82,7 @@ export function Notice({ tone = "neutral", title, children, action, onDismiss, c
   const accent = { neutral: "text-fg-3", amber: "text-amber", red: "text-red", accent: "text-accent-text", green: "text-accent-text" }[tone];
   // The title is text on the tint: the tone's higher-contrast shade (ruling M); the icon is a mark and keeps the tone's colour.
   const ink = { neutral: "text-fg", amber: "text-amber-on-tint", red: "text-red-on-tint", accent: "text-accent-text", green: "text-accent-text" }[tone];
-  return <div role={tone === "red" ? "alert" : "status"} className={cn("motion-fade-in flex items-start gap-2.5 rounded-block px-3 py-2.5 text-ui-sm", colors, className)}>
+  return <div role={tone === "red" ? "alert" : "status"} data-leave="close" className={cn("motion-fade-in flex items-start gap-2.5 rounded-block px-3 py-2.5 text-ui-sm", colors, className)}>
     <Icon size={16} className={cn("mt-0.5 flex-none", accent)} aria-hidden="true"/>
     <div className="min-w-0 flex-1">
       {title ? <strong className={cn("block font-semibold", ink)}>{title}</strong> : null}{children ? <div className={cn(title ? "mt-0.5 text-fg-2" : "text-fg")}>{children}</div> : null}
@@ -94,7 +94,7 @@ export function Notice({ tone = "neutral", title, children, action, onDismiss, c
 /** An empty place: a quiet icon, what is missing, and at most one way forward. */
 export function EmptyState({ icon, title, children, action }: { readonly icon?: ReactNode; readonly title: string; readonly children?: ReactNode; readonly action?: ReactNode }) {
   return <div className="motion-fade-in mx-auto flex max-w-sm flex-col items-center gap-2 px-6 py-10 text-center">
-    {icon ? <div className="mb-1 flex text-fg-3 [&_svg]:size-7" aria-hidden="true">{icon}</div> : null}
+    {icon ? <div className="mb-1 flex text-fg-3" aria-hidden="true">{icon}</div> : null}
     <h2 className="m-0 text-ui font-medium text-fg-2">{title}</h2>{children ? <p className="m-0 text-ui-sm text-fg-3">{children}</p> : null}{action ? <div className="mt-2">{action}</div> : null}
   </div>;
 }
@@ -110,6 +110,24 @@ export function Tip({ label, children, side = "bottom" }: { readonly label: Reac
   </BaseTooltip.Root>;
 }
 export const TipProvider = BaseTooltip.Provider;
+/** Where one types to narrow a list, or to name what to fetch: one look and one height (28) everywhere, and a way to empty it. */
+export function SearchField({ value, onChange, label, placeholder, className }: { readonly value: string; readonly onChange: (value: string) => void; readonly label: string; readonly placeholder?: string; readonly className?: string }) {
+  return <label className={cn("flex h-7 items-center gap-1.5 rounded-control bg-surface pr-1.5 pl-2 text-fg-3 shadow-[inset_0_0_0_1px_var(--border-strong)] transition-shadow duration-120 ease-standard focus-within:shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_var(--accent-soft)]", className)}>
+    <Search size={14} aria-hidden="true" className="flex-none"/>
+    <input className="h-full min-w-0 flex-1 border-0 bg-transparent p-0 text-ui-sm text-fg outline-none placeholder:text-placeholder" aria-label={label} placeholder={placeholder} value={value} onChange={event => onChange(event.target.value)}/>
+    {value ? <button type="button" className="flex size-4 flex-none items-center justify-center rounded-full border-none bg-[color-mix(in_srgb,var(--text-3)_55%,transparent)] p-0 text-[var(--bg-surface)] hover:bg-[var(--text-3)]" aria-label="清除" onClick={() => onChange("")}><X size={10} strokeWidth={2.6} aria-hidden="true"/></button> : null}
+  </label>;
+}
+/**
+ * A button for what cannot be taken back, without a dialog: the first press arms it (its words become `confirm`, in red, for three seconds, or
+ * until the focus leaves it), the second does it.
+ */
+export function ConfirmButton({ children, confirm, onConfirm, className, disabled }: { readonly children: ReactNode; readonly confirm: ReactNode; readonly onConfirm: () => void; readonly className?: string; readonly disabled?: boolean }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => { if (!armed) return; const timer = window.setTimeout(() => setArmed(false), 3000); return () => window.clearTimeout(timer); }, [armed]);
+  return <button type="button" className={cn(className, armed && "text-red hover:text-red")} disabled={disabled ?? false} data-armed={armed || undefined} onBlur={() => setArmed(false)}
+    onClick={() => { if (armed) { setArmed(false); onConfirm(); } else setArmed(true); }}>{armed ? confirm : children}</button>;
+}
 /** A labelled row of a definition list, for facts shown two columns wide. */
 export function Fact({ label, children }: { readonly label: ReactNode; readonly children: ReactNode }) {
   return <><dt className="text-fg-3">{label}</dt><dd className="m-0 min-w-0 break-words">{children}</dd></>;
@@ -182,7 +200,8 @@ export function Segmented<T extends string>({ options, value, onChange, label, s
   const choose = useCallback((key: string) => { if (key !== value) onChange(key as T); }, [onChange, value]);
   return <div ref={group} role="radiogroup" aria-label={label} className={cn("segmented", size === "md" && "segmented-md", className)} data-thumb="" onKeyDown={event => rovingKey(event, enabled, value, choose)}>
     <span ref={thumb} className="segmented-thumb" aria-hidden="true"/>
-    {options.map(option => <button key={option.value} type="button" role="radio" data-key={option.value} aria-checked={option.value === value} tabIndex={option.value === value ? 0 : -1}
+    {/* One of them can always be reached with Tab: the chosen one, or — where the value is none of them (another control holds the choice) — the first. */}
+    {options.map(option => <button key={option.value} type="button" role="radio" data-key={option.value} aria-checked={option.value === value} tabIndex={option.value === (enabled.includes(value) ? value : enabled[0]) ? 0 : -1}
       disabled={option.disabled ?? false} onClick={() => choose(option.value)}>{option.label}</button>)}
   </div>;
 }

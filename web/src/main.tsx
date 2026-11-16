@@ -7,7 +7,7 @@ import { App } from "./App.js";
 import { applyTheme, readPreferences } from "./lib/prefs.js";
 import { desktop, followWindow } from "./lib/desktop.js";
 import { followMenu } from "./lib/keys.js";
-import { trackInputModality } from "./ui/motion.js";
+import { trackDepartures, trackInputModality } from "./ui/motion.js";
 import { ToastProvider } from "./ui/overlay.js";
 import { startSystemGlass } from "./ui/glass.js";
 import { startLiquidGlass } from "./ui/liquid.js";
@@ -41,6 +41,8 @@ followMenu();
 followThemeColor(document.documentElement);
 // Actions started from the keyboard finish without animation (ADR-054 §3); this lives as long as the document.
 trackInputModality();
+// What is taken off the page by itself (a row, a notice, a bar) leaves with a motion of its own.
+trackDepartures();
 // Glass surfaces bend what is behind them at their rim (Chromium only: the desktop app).
 startLiquidGlass();
 // Interface icons are Lucide at a 1.75 stroke (ADR-054 §4); an icon may still pass its own strokeWidth.

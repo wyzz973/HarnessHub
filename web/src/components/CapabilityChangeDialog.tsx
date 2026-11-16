@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CapabilityChangeCheck, CapabilityChangeView, CapabilityRestoreCheck, InstructionCheckOption } from "../../../src/contracts/capabilities.js";
 import { ApiError, errorMessage, requestKey, type GatewayApi } from "../api.js";
 import { cn } from "../lib/cn.js";
-import { Dialog } from "../ui/overlay.js";
+import { Dialog, DIALOG_BODY, DIALOG_FOOT } from "../ui/overlay.js";
 import { Fact, Notice, Spinner } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
 
@@ -24,14 +24,9 @@ const PLAN_ACTION: Readonly<Record<NonNullable<CapabilityChangeCheck["skills"]>[
 function bytes(value: number): string { return value < 1024 ? value + " B" : value < 1024 * 1024 ? (value / 1024).toFixed(1) + " KB" : (value / 1024 / 1024).toFixed(1) + " MB"; }
 /** The frame of a block of changed lines, links or one file's changes (Capabilities board): radius 12 inside a hairline. */
 const BLOCK = "overflow-hidden rounded-block bg-surface shadow-[inset_0_0_0_1px_var(--border)]";
-/**
- * The body and the footer of every capability dialog, so that they read as one family. Spaced as the board's write
- * preview: 18 px from the title block to the first block, 12 px between blocks, the buttons 14 px below the body and
- * 18 px above the edge, with no rule between them. A body taller than its limit scrolls; its blocks never shrink, since
- * a block that clips its overflow would otherwise be squeezed and hide the very lines the user is asked to confirm.
- */
-export const DIALOG_BODY = "scroll-area flex max-h-[min(64dvh,560px)] flex-col gap-3 px-5 pt-[18px] pb-3 text-ui-sm [&>*]:shrink-0";
-export const DIALOG_FOOT = "flex flex-wrap items-center justify-end gap-2 px-5 pt-3.5 pb-[18px]";
+/** The dialogs of the capabilities share the page's one dialog skeleton (ui/overlay.tsx): a body that scrolls, its blocks never shrinking — a block that clips its
+ * overflow would otherwise be squeezed and hide the very lines the user is asked to confirm — and the actions under it. */
+export { DIALOG_BODY, DIALOG_FOOT } from "../ui/overlay.js";
 /** A labelled field of a capability dialog's form; the control keeps its own accessible name. */
 export function Field({ label, children }: { readonly label: string; readonly children: ReactNode }) {
   return <label className="flex flex-col gap-1.5"><span className="text-caption font-medium text-fg-2">{label}</span>{children}</label>;
@@ -129,7 +124,7 @@ export function ChangeDialog({ api, request, onClose, onDone }: { readonly api: 
     setBusy(true); setFailure(null);
     api.applyCapabilityChange(check.fingerprint, requestKey()).then(view => { setBusy(false); onDone(view, request?.done ?? "已完成"); }, error => { setBusy(false); setCheck(null); setFailure(errorMessage(error)); });
   };
-  return <Dialog open={request !== null} onOpenChange={open => { if (!open && !busy) onClose(); }} title={request?.title ?? "修改"} className="skill-switch-dialog w-[min(600px,calc(100vw-32px))]">
+  return <Dialog open={request !== null} onOpenChange={open => { if (!open && !busy) onClose(); }} title={request?.title ?? "修改"} wide className="skill-switch-dialog">
     <div className={DIALOG_BODY}>
       {failure ? <Notice tone="red" action={<button type="button" className="btn btn-sm" onClick={() => setAttempt(value => value + 1)}><RefreshCw size={13}/>重新检查</button>}>{failure}</Notice>
         : check === null ? <p className="m-0 flex items-center gap-2 text-fg-2" role="status"><Spinner size={14} label=""/>正在读取配置并准备改动…</p>
@@ -174,7 +169,7 @@ export function RestoreDialog({ api, backupId, onClose, onDone }: { readonly api
     setBusy(true); setFailure(null);
     api.restoreBackup(check.fingerprint, requestKey()).then(view => { setBusy(false); onDone(view); }, error => { setBusy(false); setCheck(null); setFailure(errorMessage(error)); });
   };
-  return <Dialog open={backupId !== null} onOpenChange={open => { if (!open && !busy) onClose(); }} title="恢复修改前的文件" description={check?.file} className="restore-dialog w-[min(600px,calc(100vw-32px))]">
+  return <Dialog open={backupId !== null} onOpenChange={open => { if (!open && !busy) onClose(); }} title="恢复修改前的文件" description={check?.file} wide className="restore-dialog">
     <div className={DIALOG_BODY}>
       {failure ? <Notice tone="red" action={<button type="button" className="btn btn-sm" onClick={() => setAttempt(value => value + 1)}><RefreshCw size={13}/>重新检查</button>}>{failure}</Notice>
         : check === null ? <p className="m-0 flex items-center gap-2 text-fg-2" role="status"><Spinner size={14} label=""/>正在比对备份与现在的文件…</p>
@@ -301,7 +296,7 @@ export function WriteDialog({ api, open, items, onCheck, onClose }: {
     if (!stopped && items.every(item => item.check.state !== "ready" || item.check.check.blocked !== null || steps.get(item.id)?.state === "written")) onClose(written(steps), true);
   };
   return <Dialog open={open} onOpenChange={next => { if (!next && !busy) onClose(written(progress), false); }} title={loading ? "正在准备改动" : "写入 " + files.length + " 个文件"}
-    description="只改下面这些行；写完可以撤销。" className="capability-write-dialog w-[min(560px,calc(100vw-32px))]">
+    description="只改下面这些行；写完可以撤销。" wide className="capability-write-dialog">
     <div className={DIALOG_BODY}>
       {groups.map(group => {
         const first = group[0]!, check = first.check.state === "ready" ? first.check.check : null;
@@ -413,7 +408,7 @@ export function UndoDialog({ api, written, onClose, onDone }: { readonly api: Ga
   };
   const files = new Set(steps.filter(step => step.kind !== "none").map(step => step.file)).size;
   return <Dialog open={written !== null} onOpenChange={open => { if (!open && !busy) onClose(); }} title={"撤销写入的 " + files + " 个文件"} description="改回写入之前的样子；下面是会改回的内容。"
-    className="capability-undo-dialog w-[min(560px,calc(100vw-32px))]">
+    wide className="capability-undo-dialog">
     <div className={DIALOG_BODY}>
       {failure ? <Notice tone="red" action={<button type="button" className="btn btn-sm" onClick={() => setAttempt(value => value + 1)}><RefreshCw size={13}/>重新检查</button>}>{failure}</Notice> : null}
       {steps.map(step => {

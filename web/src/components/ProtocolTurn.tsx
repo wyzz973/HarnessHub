@@ -153,7 +153,7 @@ function ReasoningRow({ item }: { readonly item: ReasoningItem }) {
   </>;
   return <li className={cn("reasoning-row min-w-0", entering && "motion-row-in")} data-state={item.status}>
     {has ? <button type="button" className={cn(ROW, "row border-none bg-transparent hover:bg-subtle")} aria-expanded={open} aria-controls={panel} onClick={() => { ctx.touch(); setChoice(!open); }}>{content}</button> : <div className={ROW}>{content}</div>}
-    {has ? <Collapsible open={open} id={panel}><div className="native-thinking mt-0.5 mb-2 ml-[30px] border-l border-line-strong pl-3 text-ui-sm text-fg-2"><StreamingMarkdown text={item.text} isStreaming={running}/>
+    {has ? <Collapsible open={open} id={panel}><div className="native-thinking mt-0.5 mb-2 ml-[30px] border-l border-line-strong pl-[11px] text-ui-sm text-fg-2"><StreamingMarkdown text={item.text} isStreaming={running}/>
       {leftOut(item, item.text) > 0 ? <MoreText runId={ctx.run.id} seq={item.seq} rest={leftOut(item, item.text)}/> : null}</div></Collapsible> : null}
   </li>;
 }
@@ -501,6 +501,30 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
   // One that ends in front of the reader folds in front of them, once: drawn open, then closing.
   const touched = useRef(false), wasLive = useRef(!over), stays = useRef(false), settling = useRef(false);
   if (wasLive.current && over) { wasLive.current = false; stays.current = touched.current; settling.current = !touched.current; }
+  // Ending in front of the reader, the Turn swaps its live lines for its fold, its changes and its footer in one drawing: its height goes from what it
+  // was to what that comes to rest at over a moment, so the column does not step (what is inside moves as it does; the bottom is let out as it goes).
+  const article = useRef<HTMLElement | null>(null), tall = useRef(0);
+  useLayoutEffect(() => { if (!over && article.current !== null) tall.current = article.current.offsetHeight; });
+  useLayoutEffect(() => {
+    const element = article.current, from = tall.current;
+    tall.current = 0;
+    if (!over || !watched || element === null || from === 0 || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    // Where it comes to rest: as tall as what it now holds, less the fold that is drawn open only to close.
+    const last = element.lastElementChild as HTMLElement | null, closing = element.querySelector<HTMLElement>(":scope > .turn-fold[data-open='true'] > .collapsible");
+    if (last === null) return;
+    const rest = last.offsetTop + last.offsetHeight - (last.offsetParent === element ? 0 : element.offsetTop) - (closing?.offsetHeight ?? 0);
+    if (Math.abs(rest - from) < 2) return;
+    const began = performance.now(), span = 260;
+    let frame = 0;
+    const step = () => {
+      const part = Math.min((performance.now() - began) / span, 1), eased = 1 - (1 - part) ** 3;
+      if (part >= 1) { element.classList.remove("is-settling"); element.style.removeProperty("height"); return; }
+      element.style.height = Math.round((from + (rest - from) * eased) * 2) / 2 + "px";
+      frame = requestAnimationFrame(step);
+    };
+    element.classList.add("is-settling"); step();
+    return () => { cancelAnimationFrame(frame); element.classList.remove("is-settling"); element.style.removeProperty("height"); };
+  }, [over]);
   const context = useMemo<TurnContext>(() => ({ turn, run, reads, over, cancelling, detailed, children: arrangement.children, message, loadDetail: loadToolDetail, seen, onViewPacket, touch: () => { touched.current = true; } }),
     [turn, run, reads, over, cancelling, detailed, arrangement.children, message, loadToolDetail, seen, onViewPacket]);
   const pieces = useMemo(() => segments(arrangement.blocks), [arrangement.blocks]);
@@ -539,7 +563,7 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
       return arrived(sent.id) ? <div key={"user:" + piece.item.id} className="motion-message-in">{bubble}</div> : <div key={"user:" + piece.item.id}>{bubble}</div>;
     }
     const last = index === pieces.length - 1;
-    return <article key={"turn:" + run.id + ":" + index} className={cn("message assistant-message protocol-turn group flex min-w-0 flex-col gap-2.5", !over && "is-active")} data-run-status={run.status} data-run-id={run.id} aria-busy={!over} aria-label={harness + " 的回复" + (over ? "" : "（进行中）")}>
+    return <article key={"turn:" + run.id + ":" + index} ref={last ? article : undefined} className={cn("message assistant-message protocol-turn group flex min-w-0 flex-col gap-2.5", !over && "is-active")} data-run-status={run.status} data-run-id={run.id} aria-busy={!over} aria-label={harness + " 的回复" + (over ? "" : "（进行中）")}>
       {last && fold !== null ? <TurnFoldView fold={fold} settle={settling.current}/> : null}
       <Blocks blocks={last && fold !== null ? [...fold.kept, ...fold.answer] : way !== undefined ? quietBlocks(piece.blocks, way, over) : piece.blocks}/>
       {last ? <>

@@ -12,7 +12,7 @@ export function SkillTextDialog({ editing, onClose, onSubmit }: { readonly editi
   const [name, setName] = useState(""), [description, setDescription] = useState(""), [body, setBody] = useState("");
   useEffect(() => { if (editing === null) return; setName(editing.name ?? ""); setDescription(editing.text.description); setBody(editing.text.body); }, [editing]);
   return <Dialog open={editing !== null} onOpenChange={open => { if (!open) onClose(); }} title={editing?.name ? "编辑技能 " + editing.name : "新建技能"}
-    description="写进 ~/.agents/skills，各 Harness 都读得到。" className="skill-text-dialog w-[min(640px,calc(100vw-32px))]">
+    description="写进 ~/.agents/skills，各 Harness 都读得到。" wide className="skill-text-dialog">
     <div className={DIALOG_BODY}>
       {editing?.name ? null : <Field label="名字（小写字母、数字和 -，也是文件夹名）"><input className="field" aria-label="技能名字" value={name} placeholder="standup-notes" onChange={event => setName(event.target.value)}/></Field>}
       <Field label="说明（一段；各 Harness 按它决定什么时候用）"><input className="field" aria-label="技能说明" value={description} onChange={event => setDescription(event.target.value)}/></Field>

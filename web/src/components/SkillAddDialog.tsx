@@ -1,9 +1,9 @@
-import { Download, Search } from "lucide-react";
+import { Download } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { SkillSourceListing } from "../../../src/contracts/capabilities.js";
 import { errorMessage, type GatewayApi } from "../api.js";
 import { Dialog } from "../ui/overlay.js";
-import { Badge, Notice, Spinner } from "../ui/primitives.js";
+import { Badge, Notice, SearchField, Spinner } from "../ui/primitives.js";
 import { DIALOG_BODY, DIALOG_FOOT, type ChangeRequest } from "./CapabilityChangeDialog.js";
 
 const STATE_LABEL: Readonly<Record<SkillSourceListing["skills"][number]["state"], string>> = { new: "可添加", installed: "已安装", conflict: "同名冲突", refused: "不能安装" };
@@ -32,12 +32,10 @@ export function SkillAddDialog({ api, open, onClose, onChange }: { readonly api:
     onClose();
   };
   const toggle = (name: string) => setChosen(current => { const next = new Set(current); if (next.has(name)) next.delete(name); else next.add(name); return next; });
-  return <Dialog open={open} onOpenChange={value => { if (!value && !busy) onClose(); }} title="从 GitHub 添加技能" description="放进共享目录 ~/.agents/skills。" className="skill-add-dialog w-[min(640px,calc(100vw-32px))]">
+  return <Dialog open={open} onOpenChange={value => { if (!value && !busy) onClose(); }} title="从 GitHub 添加技能" description="放进共享目录 ~/.agents/skills。" wide className="skill-add-dialog">
     <div className={DIALOG_BODY}>
       <form className="flex gap-2" onSubmit={event => { event.preventDefault(); read(); }}>
-        <label className="flex h-[34px] min-w-0 flex-1 items-center gap-2 rounded-control bg-surface px-2.5 text-fg-3 shadow-[inset_0_0_0_1px_var(--border-strong)] focus-within:shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_var(--accent-soft)]">
-          <Search size={15} className="flex-none" aria-hidden="true"/>
-          <input className="h-full min-w-0 flex-1 border-0 bg-transparent p-0 text-ui-sm text-fg outline-none placeholder:text-placeholder" aria-label="GitHub 仓库" placeholder="owner/repo 或 https://github.com/owner/repo" value={source} onChange={event => setSource(event.target.value)}/></label>
+        <SearchField className="min-w-0 flex-1" label="GitHub 仓库" placeholder="owner/repo 或 https://github.com/owner/repo" value={source} onChange={setSource}/>
         <button type="submit" className="btn" disabled={busy || !source.trim()}>{busy ? <Spinner size={13} label=""/> : null}读取</button>
       </form>
       <p className="m-0 text-caption text-fg-3">只读 GitHub 公开仓库，不用令牌。</p>

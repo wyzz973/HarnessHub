@@ -1,4 +1,4 @@
-import { AlertCircle, BookOpen, Check, ChevronDown, ChevronRight, CircleCheck, Download, Eye, History, Menu as MenuIcon, PanelLeft, Pencil, Plug, Plus, Puzzle, RefreshCw, RotateCcw, ScrollText, Search, SquareSlash, Trash2, Users, Webhook, X,
+import { AlertCircle, BookOpen, Check, ChevronDown, ChevronRight, CircleCheck, Download, Eye, History, Menu as MenuIcon, PanelLeft, Pencil, Plug, Plus, Puzzle, RefreshCw, RotateCcw, ScrollText, SquareSlash, Trash2, Users, Webhook, X,
   type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { LOCAL_SKILL_SOURCE, type SkillTextView, type CapabilitiesView, type CapabilityChangeView, type CapabilityDrift, type CapabilityDriftState, type CapabilityEdge, type CapabilityEntry, type CapabilityFacts, type CapabilityHistory,
@@ -8,7 +8,7 @@ import { cn } from "../lib/cn.js";
 import { ariaKeys, keyText } from "../lib/keys.js";
 import { useMedia } from "../lib/prefs.js";
 import { Collapsible, FloatingBar } from "../ui/motion.js";
-import { Badge, EmptyState, Fact, Notice, Spinner, Tabs, Tip } from "../ui/primitives.js";
+import { Badge, EmptyState, Fact, Notice, SearchField, Spinner, Tabs, Tip } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { ChangeDialog, RestoreDialog, UndoDialog, WriteDialog, filesOf, type ChangeRequest, type CheckState, type SwitchRequest, type WriteItem, type Written } from "./CapabilityChangeDialog.js";
 import { McpInventoryPanel } from "./McpInventoryPanel.js";
@@ -610,10 +610,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
         <h2 ref={heading} tabIndex={-1} className="m-0 text-section outline-none">{KIND_LABEL[kind]} <span className="font-normal text-fg-3">{counts[kind]}</span></h2>
         <p className="m-0 text-ui-sm text-pretty text-fg-2">{pickable ? PICK_HINT : KIND_HINT[kind]}</p>
       </div>
-      <label className={cn("flex h-7 items-center gap-2 rounded-control bg-surface px-2.5 text-fg-3 shadow-[inset_0_0_0_1px_var(--border-strong)] focus-within:shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_var(--accent-soft)]", wide ? "w-[220px]" : "min-w-[160px] flex-1")}>
-        <Search size={15} aria-hidden="true" className="flex-none"/>
-        <input className="h-full min-w-0 flex-1 border-0 bg-transparent p-0 text-ui-sm text-fg outline-none placeholder:text-placeholder" aria-label="搜索能力" placeholder={"搜索" + (/^[A-Za-z]/u.test(KIND_LABEL[kind]) ? " " : "") + KIND_LABEL[kind]} value={query} onChange={event => setQuery(event.target.value)}/>
-      </label>
+      <SearchField className={wide ? "w-[220px]" : "min-w-[160px] flex-1"} label="搜索能力" placeholder={"搜索" + (/^[A-Za-z]/u.test(KIND_LABEL[kind]) ? " " : "") + KIND_LABEL[kind]} value={query} onChange={setQuery}/>
       {kind === "skill" ? <button type="button" className="btn flex-none" onClick={() => setWriting({ name: null, text: { description: "", body: "" } })}><Plus size={15}/>新建技能</button> : null}
     </div>
     {problem ? <Notice tone="red" action={<button type="button" className="btn btn-sm" onClick={() => load()}>重试</button>}>{problem}</Notice> : null}

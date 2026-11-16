@@ -53,7 +53,7 @@ export function InstallationUpgradeDialog({ api, harness, installation, onClose,
   const update = check ? check.kind === "self-update" || check.kind === "rerun" : shownInstallation?.upgrade === "self-update" || shownInstallation?.upgrade === "rerun";
   const busy = check?.conversations.filter(item => item.busy) ?? [], idle = check?.conversations.filter(item => !item.busy) ?? [];
   return <Dialog open={harness !== null && installation !== null} onOpenChange={open => { if (!open) onClose(); }} title={`${update ? "更新" : "升级"} ${what}`}
-    description={`${shownInstallation?.label ?? ""}${shownInstallation?.version ? ` · ${shownInstallation.version}` : ""}`} className="upgrade-installation-dialog w-[min(560px,calc(100vw-32px))]">
+    description={`${shownInstallation?.label ?? ""}${shownInstallation?.version ? ` · ${shownInstallation.version}` : ""}`} wide className="upgrade-installation-dialog">
     <ConfirmBody>
       {failure ? <CheckFailed message={failure} onRetry={() => setAttempt(value => value + 1)}/>
         : check === null ? <Checking>正在准备…</Checking>

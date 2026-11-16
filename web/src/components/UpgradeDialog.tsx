@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import type { HarnessView, MaintenanceView } from "../../../src/contracts/web.js";
 import { errorMessage, type GatewayApi } from "../api.js";
 import { cn } from "../lib/cn.js";
-import { Dialog, useClosingValue } from "../ui/overlay.js";
+import { Dialog, DIALOG_BODY, DIALOG_FOOT, useClosingValue } from "../ui/overlay.js";
 import { Notice, Spinner } from "../ui/primitives.js";
 
 /*
@@ -16,17 +16,13 @@ import { Notice, Spinner } from "../ui/primitives.js";
  * reduced.
  */
 
-/**
- * The scrolling middle of a confirmation: what the check found, 18 px under the title block, 12 px between blocks. A body
- * taller than its limit scrolls; its blocks never shrink, so one that clips its overflow is never squeezed into hiding
- * what the user is asked to confirm.
- */
+/** The scrolling middle of a confirmation: what the check found, in the page's one dialog skeleton (ui/overlay.tsx). */
 export function ConfirmBody({ children }: { readonly children: ReactNode }) {
-  return <div className="scroll-area flex max-h-[min(64dvh,560px)] flex-col gap-3 px-5 pt-[18px] pb-3 [&>*]:shrink-0">{children}</div>;
+  return <div className={DIALOG_BODY}>{children}</div>;
 }
-/** The buttons of a confirmation, 14 px below the body and 18 px above the edge, with no rule: the way out first, the action last. */
+/** The buttons of a confirmation: the way out first, the action last. */
 export function ConfirmFooter({ children }: { readonly children: ReactNode }) {
-  return <div className="flex flex-wrap items-center justify-end gap-2 px-5 pt-3.5 pb-[18px]">{children}</div>;
+  return <div className={DIALOG_FOOT}>{children}</div>;
 }
 /** What a confirmation says while its check runs. */
 export function Checking({ children }: { readonly children: ReactNode }) {
@@ -105,7 +101,7 @@ export function UpgradeDialog({ api, harness, onClose, onConfirm, onOpenSession 
   const serviceName = (label: string) => check?.restart.find(item => item.label === label)?.name ?? check?.resident.find(item => item.label === label)?.name ?? sequence?.restarts.find(item => item.label === label)?.name ?? label;
   const blocked = busy.length > 0 || (check?.otherUsers.length ?? 0) > 0 || runtimeBlocks.length > 0;
   const left = check ? [...check.resident, ...check.processes.map(item => ({ label: null, name: item.name, pid: item.pid, restartCommand: null }))] : [];
-  return <Dialog open={harness !== null} onOpenChange={open => { if (!open) onClose(); }} title={`升级 ${name}`} description={`${current} → ${target}`} className="upgrade-dialog w-[min(560px,calc(100vw-32px))]">
+  return <Dialog open={harness !== null} onOpenChange={open => { if (!open) onClose(); }} title={`升级 ${name}`} description={`${current} → ${target}`} wide className="upgrade-dialog">
     <ConfirmBody>
       {failure ? <CheckFailed message={failure} onRetry={() => setAttempt(value => value + 1)}/>
         : check === null ? <Checking>正在检查哪些程序在使用 {name}…</Checking>

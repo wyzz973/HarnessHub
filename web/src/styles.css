@@ -424,6 +424,7 @@
   /* #36 A new item at the top of a list: its height opens while it fades in; the child needs min-height: 0 */
   .motion-list-insert { display: grid; animation: hh-list-insert var(--dur-base) var(--ease-expo) both; }
   .motion-list-insert > * { min-height: 0; overflow: hidden; }
+
   /* #18 / #22 Chevrons turn with the expand curve; the caller sets the angle with rotate-90 or rotate-180, the `rotate` property */
   .motion-rotate { transition: rotate var(--dur-base) var(--ease-expo); }
   /* #16 / #17 Send ⇄ stop: the icon turns through 96° and lifts 2.5 px; the glyphs cross-fade */
@@ -460,6 +461,10 @@
   .collapsible-inner { min-height: 0; overflow: hidden; }
   .collapsible[data-state="open"] > .collapsible-inner { overflow: visible; }
   .collapsible[data-open="false"] > .collapsible-inner { visibility: hidden; transition: visibility 0s linear var(--dur-base); }
+  /* The browser's own disclosure opens and closes the same way (where it can: its content's height from nothing to what it holds). */
+  details { interpolate-size: allow-keywords; }
+  details::details-content { block-size: 0; overflow: clip; opacity: 0; transition: block-size var(--dur-base) var(--ease-expo), opacity var(--dur-base) var(--ease-expo), content-visibility var(--dur-base) allow-discrete; }
+  details[open]::details-content { block-size: auto; opacity: 1; }
 
   /*
    * #29 Floating bar: rises 16 px in 300 ms, falls in 200 ms. It centres itself between 16 px insets at its content's width,
@@ -608,6 +613,7 @@
     background: var(--glass-thick); -webkit-backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); backdrop-filter: var(--lens, opacity(1)) var(--glass-blur); border-radius: var(--radius-dialog); box-shadow: var(--sh-pop); color: var(--text); outline: none;
     transition: opacity 160ms var(--ease-out), transform var(--dur-spring) var(--ease-spring);
   }
+  .dialog-wide { width: min(640px, calc(100vw - 32px)); }
   .dialog-pop[data-starting-style] { opacity: 0; transform: scale(.94); }
   .dialog-pop[data-ending-style] { opacity: 0; transform: scale(.97); transition: opacity 140ms ease-in, transform 140ms ease-in; }
   .palette-pop {
@@ -859,6 +865,10 @@
   :root[data-glass="system"] .sidebar-pane { background: transparent; }
   .chat-notices:not(:empty) ~ .chat-scroll { padding-top: 16px; }
 
+  /* A Turn that ends in front of the reader goes from the height it had to the height it comes to rest at without a step (ProtocolTurn's settle). */
+  .is-settling { overflow: clip; }
+  .is-settling > * { flex-shrink: 0; }
+
   /* The terminal rises from the window's foot at its full height (so what is in it is laid out once), pushing the conversation up as it comes. */
   .terminal-drawer { transition: margin-bottom 260ms var(--ease-out); }
   @starting-style { .terminal-drawer { margin-bottom: calc(-1 * var(--drawer-height, 0px)); } }
@@ -876,13 +886,15 @@
 
 /*
  * #37 Actions started from the keyboard finish at once: popups, dialogs, tabs, segments, switches, collapsibles, bars.
+ * "Started from the keyboard" is the moment after a key press (data-keyed, ui/motion.tsx): what happens by itself later moves as usual.
  * Important declarations in the base layer outrank those of later layers, so this also wins over the reduced-motion fades.
  */
 @layer base {
-  :root[data-input="keyboard"] :is(.surface-pop, .tooltip-pop, .backdrop, .dialog-pop, .palette-pop, .drawer-pop, .drawer-left-pop, .sheet-pop, .tabs-indicator, .segmented-thumb, .switch, .switch-thumb, .collapsible, .motion-rotate, .floating-bar, .btn, .press, .sidebar-slot, .titlebar, .terminal-drawer, .harness-management-body) {
+  :root[data-keyed] :is(.surface-pop, .tooltip-pop, .backdrop, .dialog-pop, .palette-pop, .drawer-pop, .drawer-left-pop, .sheet-pop, .tabs-indicator, .segmented-thumb, .switch, .switch-thumb, .collapsible, .motion-rotate, .floating-bar, .btn, .press, .sidebar-slot, .titlebar, .terminal-drawer, .harness-management-body) {
     transition-duration: 0s !important;
   }
-  :root[data-input="keyboard"] :is(.btn, .press):active { transform: none !important; }
+  :root[data-keyed] :is(.btn, .press):active { transform: none !important; }
+  :root[data-keyed] details::details-content { transition-duration: 0s !important; }
 }
 
 /*
@@ -890,7 +902,7 @@
  * rule below stops at once, so a transform or loop added later cannot slip through.
  */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0s !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; transition-delay: 0s !important; scroll-behavior: auto !important; }
+  *, *::before, *::after, details::details-content { animation-duration: 0s !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; transition-delay: 0s !important; scroll-behavior: auto !important; }
   @layer components {
     /* Loops become still: the spinner a dot, the shimmer plain text, dots and breathing at rest */
     .spinner, .spin { animation: none !important; }

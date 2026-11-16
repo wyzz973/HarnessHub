@@ -21,7 +21,7 @@ import type { QueueNotice } from "../lib/protocol/live.js";
 import { changeCount, latestPlan, over, planRows, shownPlan, statusParts, stateOf } from "../lib/protocol/runs.js";
 import { finished } from "../lib/turn.js";
 import { Collapsible, motionStyle, usePresence } from "../ui/motion.js";
-import { Dialog, Menu, useToast } from "../ui/overlay.js";
+import { Dialog, DIALOG_ACTIONS, DIALOG_COLUMN, Menu, useToast } from "../ui/overlay.js";
 import { EmptyState, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
 import type { ToolDetailLoader } from "./Activity.js";
 import { decisionRole, dockedRequest, PermissionCard, type Decision, type PermissionRequestView } from "./Approval.js";
@@ -687,7 +687,7 @@ export function ChatPage(props: ChatProps) {
     return { checked, onToggle: () => relay.onNext(checked ? null : SEND_ALONE) };
   })() : undefined;
   const composer = <Composer {...props} sendAlone={sendAlone} onSendDraft={text => send(text)} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}
-    onOpenDelegate={props.onDelegate && session?.status === "open" ? () => setDelegating(true) : undefined} approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} openList={openList} onEditLast={editLast} onReplaceDraft={fillDraft}
+    approval={approval} agentPickerOpen={agentPicker} onAgentPickerOpen={setAgentPicker} openList={openList} onEditLast={editLast} onReplaceDraft={fillDraft}
     above={session ? <>
       {relay ? <RelayCard line={relayNow} banner={banner} target={harnessName(session.selection.harnessId)} next={relay.next} onNext={relay.onNext}
         onDismissBanner={() => { if (banner !== null) closed.add(closedKey(banner.key)); }}/> : null}
@@ -809,7 +809,7 @@ export function ChatPage(props: ChatProps) {
         {/* The message box floats over the conversation, which keeps that much room under its last line (--foot-height). */}
         {session !== null && !props.loading ? <div className="scroll-edge scroll-edge-bottom" data-under-glass="" aria-hidden="true"/> : null}
         {session !== null && !props.loading ? <footer ref={foot} className="chat-foot pointer-events-none absolute inset-x-0 bottom-0 z-10 px-4 pt-1.5 pb-4 sm:px-8"><div className="pointer-events-auto relative mx-auto flex max-w-reading flex-col gap-2">
-          {!followBottom ? <button type="button" className="follow-stream motion-enter press absolute -top-11 left-1/2 z-10 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border-none pr-3 pl-3.5 text-caption font-medium text-fg-2 transition-[color,transform] duration-120 ease-standard hover:text-fg"
+          {!followBottom ? <button type="button" data-leave="fade" data-leave-shift="6" className="follow-stream motion-enter press absolute -top-11 left-1/2 z-10 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border-none pr-3 pl-3.5 text-caption font-medium text-fg-2 transition-[color,transform] duration-120 ease-standard hover:text-fg"
             style={motionStyle({ shift: 6 })} onClick={resumeFollowing} aria-label="回到最新回复"><span>回到最新</span><ArrowDown size={13} aria-hidden="true"/></button> : null}
           {props.queueNotice ? <Notice tone="amber" onDismiss={props.onDismissQueueNotice}>{props.queueNotice}</Notice> : null}
           {refused && props.onFreeWorkspace ? <Notice tone="amber" className="kept-conflict" title="工作区正被另一个对话占用" action={<button type="button" className="btn btn-sm" disabled={freeing || mutation !== null} onClick={() => { setFreeing(true); void props.onFreeWorkspace!(refused).finally(() => setFreeing(false)); }}>{freeing ? "正在结束…" : "结束那个对话的后台进程并重试"}</button>}>那个对话的后台进程还在：结束它再重试，或稍后再试。</Notice> : null}
@@ -832,9 +832,9 @@ export function ChatPage(props: ChatProps) {
     {props.onDelegate && session ? <DelegateDialog open={delegating} onClose={() => setDelegating(false)} current={session.selection.harnessId} onDelegate={props.onDelegate}
       harnesses={harnesses.filter(harness => !props.hiddenHarnesses.has(harness.id) && harness.controls.some(control => control.available))}/> : null}
     <Dialog open={confirmClose} onOpenChange={setConfirmClose} title="结束这次会话？" description="历史保留，之后不能再往这个对话发消息。">
-      <div className="flex flex-col gap-4 px-5 pt-2 pb-5">
+      <div className={DIALOG_COLUMN}>
         {active || pending ? <p className="m-0 text-ui-sm text-fg-2">当前执行或待生效的选择会停止，已经产生的内容与文件会保留。</p> : null}
-        <div className="flex justify-end gap-2"><button type="button" className="btn" onClick={() => setConfirmClose(false)} autoFocus>继续对话</button><button type="button" className="btn btn-primary" onClick={() => { setConfirmClose(false); props.onClose(); }}>结束会话</button></div>
+        <div className={DIALOG_ACTIONS}><button type="button" className="btn" onClick={() => setConfirmClose(false)} autoFocus>继续对话</button><button type="button" className="btn btn-primary" onClick={() => { setConfirmClose(false); props.onClose(); }}>结束会话</button></div>
       </div>
     </Dialog>
   </section>;

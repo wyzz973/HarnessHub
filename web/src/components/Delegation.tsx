@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { HarnessView, SessionSummary } from "../../../src/contracts/web.js";
 import { errorMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
-import { Dialog } from "../ui/overlay.js";
+import { Dialog, DIALOG_ACTIONS, DIALOG_COLUMN } from "../ui/overlay.js";
 import { SwapText } from "../ui/motion.js";
 import { Spinner, StatusDot } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
@@ -35,8 +35,8 @@ export function DelegateDialog({ open, onClose, harnesses, current, onDelegate }
     onDelegate(target, text).then(() => { try { localStorage.setItem(LAST_KEY, target.id); } catch { /* a convenience */ } setText(""); onClose(); },
       (failure: unknown) => setProblem(errorMessage(failure))).finally(() => setBusy(false));
   };
-  return <Dialog open={open} onOpenChange={next => { if (!next && !busy) onClose(); }} title="委派" className="w-[520px]" initialFocus={field}>
-    <div className="flex flex-col gap-3 px-5 pt-4 pb-5">
+  return <Dialog open={open} onOpenChange={next => { if (!next && !busy) onClose(); }} title="委派" initialFocus={field}>
+    <div className={DIALOG_COLUMN}>
       <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="交给哪个 Harness">
         {harnesses.map(harness => { const on = harness.id === target?.id; return <button key={harness.id} type="button" role="radio" aria-checked={on} onClick={() => setChosen(harness.id)}
           className={cn("press flex h-8 items-center gap-1.5 rounded-control border-none pr-2.5 pl-1.5 text-ui-sm transition-[color,background-color,box-shadow] duration-120 ease-standard",
@@ -46,8 +46,8 @@ export function DelegateDialog({ open, onClose, harnesses, current, onDelegate }
       <textarea ref={field} value={text} onChange={event => setText(event.target.value)} rows={4} placeholder={target ? `让 ${target.name} 做什么？` : "做什么？"} aria-label="委派的任务"
         className="field min-h-24 resize-y py-2 leading-5" onKeyDown={event => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } }}/>
       {problem ? <p className="m-0 text-caption text-red" role="alert">{problem}</p> : null}
-      <div className="flex items-center justify-end gap-2">
-        <button type="button" className="btn btn-ghost" disabled={busy} onClick={onClose}>取消</button>
+      <div className={DIALOG_ACTIONS}>
+        <button type="button" className="btn" disabled={busy} onClick={onClose}>取消</button>
         <button type="button" className="btn btn-primary" disabled={busy || target === undefined || text.trim() === ""} aria-keyshortcuts="Meta+Enter" onClick={submit}>{busy ? <Spinner size={13} label="" className="text-on-accent"/> : null}委派</button>
       </div>
     </div>

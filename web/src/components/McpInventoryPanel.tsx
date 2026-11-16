@@ -4,7 +4,7 @@ import type { McpDefinitionView, McpInventoryView, McpServerView, McpTargetView 
 import { errorMessage, type GatewayApi } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { Dialog } from "../ui/overlay.js";
-import { Badge, Notice, Spinner } from "../ui/primitives.js";
+import { Badge, ConfirmButton, Notice, Spinner } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { DIALOG_BODY, DIALOG_FOOT, Field, type ChangeRequest } from "./CapabilityChangeDialog.js";
 
@@ -61,7 +61,7 @@ function ServerDialog({ api, editing, onClose, onSaved }: { readonly api: Gatewa
       <button type="button" className="icon-btn icon-btn-sm" aria-label="删除这一行" onClick={() => set(items.filter((_, at) => at !== index))}><Trash2 size={14}/></button>
     </div>)}
     <button type="button" className="btn btn-ghost btn-sm -ml-2.5 self-start" onClick={() => set([...items, { kind: "variable", key: "", variable: "", value: "", prefix: headerRows ? "Bearer " : "" }])}><Plus size={13}/>添加</button></fieldset>;
-  return <Dialog open={editing !== null} onOpenChange={open => { if (!open && !busy) onClose(); }} title={editing?.name ? "编辑 " + editing.name : "新建 MCP 服务器"} description="只存变量名，不存密钥值。" className="mcp-server-dialog w-[min(640px,calc(100vw-32px))]">
+  return <Dialog open={editing !== null} onOpenChange={open => { if (!open && !busy) onClose(); }} title={editing?.name ? "编辑 " + editing.name : "新建 MCP 服务器"} description="只存变量名，不存密钥值。" wide className="mcp-server-dialog">
     <div className={DIALOG_BODY}>
       {failure ? <Notice tone="red">{failure}</Notice> : null}
       {editing?.name ? null : <Field label="名称"><input className="field" aria-label="服务器名称" value={name} placeholder="filesystem" onChange={event => setName(event.target.value)}/></Field>}
@@ -94,7 +94,7 @@ function ImportDialog({ api, view, open, onClose, onImported }: { readonly api: 
     try { for (const [id, claim] of chosen) await api.importMcpServer(id, [...claim]); setBusy(false); onImported(chosen.size); }
     catch (error) { setBusy(false); setFailure(errorMessage(error)); }
   };
-  return <Dialog open={open} onOpenChange={value => { if (!value && !busy) onClose(); }} title="从现有配置导入 MCP 服务器" description="收进清单，不改配置文件。" className="mcp-import-dialog w-[min(680px,calc(100vw-32px))]">
+  return <Dialog open={open} onOpenChange={value => { if (!value && !busy) onClose(); }} title="从现有配置导入 MCP 服务器" description="收进清单，不改配置文件。" wide className="mcp-import-dialog">
     <div className={DIALOG_BODY}>
       {failure ? <Notice tone="red">{failure}</Notice> : null}
       {view.candidates.length === 0 ? <p className="m-0 text-fg-3">各 Harness 的用户级配置里没有 MCP 服务器。</p>
@@ -156,7 +156,7 @@ export function McpInventoryPanel({ api, harness, reload, onChange, onNotice }: 
             <code className="text-caption break-all text-fg-2">{summary(server.definition, server.command)}</code>
             {server.variables.length ? <span className="flex flex-wrap gap-1">{server.variables.map(variable => <Badge key={variable.name} tone={variable.set ? "accent" : "amber"} title={variable.set ? "HarnessHub 的环境里已设置" : "HarnessHub 的环境里未设置"}>{variable.name}{variable.set ? "" : " 未设置"}</Badge>)}</span> : null}
             <span className="-ml-2.5 flex gap-0.5"><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing({ name: server.name, definition: server.definition })}><Pencil size={12}/>编辑</button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => void remove(server.name)}><Trash2 size={12}/>从清单删除</button></span></span></th>
+              <ConfirmButton className="btn btn-ghost btn-sm" confirm={<><Trash2 size={12}/>再点一次删除</>} onConfirm={() => void remove(server.name)}><Trash2 size={12}/>从清单删除</ConfirmButton></span></span></th>
           {columns.map(item => { const target = server.targets.find(entry => entry.harnessId === item.harnessId); return <td key={item.harnessId} className="px-2 py-2.5">{target ? <TargetCell api={api} server={server} target={target} harnessName={item.name} onChange={onChange} onClaim={(name, harnessId) => void claim(name, harnessId)}/> : null}</td>; })}
         </tr>)}</tbody></table></div>}
     {view ? <ImportDialog api={api} view={view} open={importing} onClose={() => setImporting(false)} onImported={count => { setImporting(false); onNotice("已导入 " + count + " 个服务器。各 Harness 的配置没有改动。", false); setTick(value => value + 1); }}/> : null}

@@ -323,7 +323,7 @@ export function DetailsPanel(props: PanelProps) {
           members={members} want={want} onOpenSession={props.onOpenSession} onReveal={props.onReveal} onRemark={props.onRemark} onOpenFile={openFile} git={props.git}/>
         : shown === "process" ? <>
           {kept || background.length || session.retention?.upgraded || session.retention?.outside ? <div className="hairline-b"><Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/></div> : null}
-          {selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <EmptyState icon={<Clock size={22}/>} title="还没有执行记录"/>}
+          {selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <EmptyState icon={<Clock size={28}/>} title="还没有执行记录"/>}
         </>
         : shown === "context" ? <ContextPage window={window} runs={runs} relay={props.relay} name={name}/>
         : <Overview {...props} selected={selected} planned={planned} changes={changes} total={total} task={task} members={members} window={window} kept={kept} background={background} name={name} showChanges={showChanges}/>}
@@ -653,7 +653,7 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
     requestAnimationFrame(() => { for (const item of list.current?.children ?? []) if ((item as HTMLElement).dataset.path === path) item.scrollIntoView({ block: "nearest" }); });
   }, [want, changes.files, changes.loading]);
   const others = members.filter(member => member.sessionId !== sessionId && member.files.length > 0);
-  if (!changes.edits && others.length === 0 && git === undefined) return <EmptyState icon={<FileText size={22}/>} title="还没有改动"/>;
+  if (!changes.edits && others.length === 0 && git === undefined) return <EmptyState icon={<FileText size={28}/>} title="还没有改动"/>;
   const turn = selected ? changes.files.filter(file => file.runIds.has(selected.id)).map(file => fileIn(file, selected.id)) : [];
   const shownScope: ChangesScope = scope === "task" && others.length === 0 ? "all" : scope;
   const files = shownScope === "turn" ? turn : changes.files;
