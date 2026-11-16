@@ -129,7 +129,7 @@ export function Tip({ label, children, side = "bottom" }: { readonly label: Reac
 export const TipProvider = BaseTooltip.Provider;
 /** Where one types to narrow a list, or to name what to fetch: one look and one height (28) everywhere, and a way to empty it. */
 export function SearchField({ value, onChange, label, placeholder, className }: { readonly value: string; readonly onChange: (value: string) => void; readonly label: string; readonly placeholder?: string; readonly className?: string }) {
-  return <label className={cn("flex h-7 items-center gap-1.5 rounded-control bg-surface pr-1.5 pl-2 text-fg-3 shadow-[inset_0_0_0_1px_var(--border-strong)] transition-shadow duration-120 ease-standard focus-within:shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_var(--accent-soft)]", className)}>
+  return <label className={cn("search-box flex h-7 items-center gap-1.5 rounded-control bg-surface pr-1.5 pl-2 text-fg-3 shadow-[inset_0_0_0_1px_var(--border-strong)] transition-shadow duration-120 ease-standard focus-within:shadow-[inset_0_0_0_1px_var(--accent),0_0_0_3px_var(--accent-soft)]", className)}>
     <Search size={14} aria-hidden="true" className="flex-none"/>
     <input className="h-full min-w-0 flex-1 border-0 bg-transparent p-0 text-ui-sm text-fg outline-none placeholder:text-placeholder" aria-label={label} placeholder={placeholder} value={value} onChange={event => onChange(event.target.value)}/>
     {value ? <button type="button" className="flex size-4 flex-none items-center justify-center rounded-full border-none bg-[color-mix(in_srgb,var(--text-3)_55%,transparent)] p-0 text-[var(--bg-app)] hover:bg-[var(--text-3)]" aria-label="清除" onClick={() => onChange("")}><X size={10} aria-hidden="true"/></button> : null}
@@ -155,6 +155,7 @@ export function Fact({ label, children }: { readonly label: ReactNode; readonly 
  * items (`layout`); moves are animated once the first placement has painted.
  */
 function useSlidingMark(container: { readonly current: HTMLElement | null }, selected: string, mark: { readonly current: HTMLElement | null }, layout: string): void {
+  const last = useRef(selected);
   useLayoutEffect(() => {
     const root = container.current, indicator = mark.current;
     if (!root || !indicator) return;
@@ -164,6 +165,11 @@ function useSlidingMark(container: { readonly current: HTMLElement | null }, sel
       indicator.style.opacity = ""; indicator.style.width = target.offsetWidth + "px"; indicator.style.transform = `translateX(${target.offsetLeft}px)`;
     };
     place();
+    // On the glass, a thumb moved by a choice is liquid: it draws out along its way and settles back. Not when it is first placed, not from the keys (#37).
+    const html = document.documentElement;
+    if (last.current !== selected && root.hasAttribute("data-ready") && html.dataset.material === "liquid" && html.dataset.glass !== "page" && !html.hasAttribute("data-keyed")
+      && !matchMedia("(prefers-reduced-motion: reduce)").matches) indicator.animate?.([{ scale: "1 1" }, { scale: "1.1 .86", offset: .32 }, { scale: "1 1" }], { duration: 460, easing: "cubic-bezier(.3, .7, .3, 1)" });
+    last.current = selected;
     const frame = requestAnimationFrame(() => root.setAttribute("data-ready", ""));
     const observer = new ResizeObserver(place); observer.observe(root);
     for (const child of root.children) observer.observe(child);

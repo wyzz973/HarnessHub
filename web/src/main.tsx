@@ -12,6 +12,7 @@ import { ToastProvider } from "./ui/overlay.js";
 import { startSystemGlass } from "./ui/glass.js";
 import { startLiquidGlass } from "./ui/liquid.js";
 import { startTitleTips } from "./ui/tips.js";
+import { followLight } from "./ui/light.js";
 
 /**
  * Keeps the browser's theme color (the window or tab bar around the page) on the theme the page shows. index.html gives
@@ -41,6 +42,7 @@ followMenu();
 followThemeColor(document.documentElement);
 // Actions started from the keyboard finish without animation (ADR-054 §3); this lives as long as the document.
 trackInputModality();
+followLight();
 // What is taken off the page by itself (a row, a notice, a bar) leaves with a motion of its own.
 trackDepartures();
 // Glass surfaces bend what is behind them at their rim (Chromium only: the desktop app).

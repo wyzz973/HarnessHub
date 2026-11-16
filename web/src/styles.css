@@ -153,9 +153,9 @@
  * what scrolls under it (a row that stays at the top of its list) is a cover: a denser tile that blurs what passes beneath.
  */
 :root[data-material="liquid"]:not([data-glass="page"]) {
-  --bg-surface: rgba(255, 255, 255, .5); --cover: rgba(255, 255, 255, .66);
+  --cover: rgba(255, 255, 255, .66);
   /* Over a bright desktop the dark glass is a middle tone: the quietest words are a step lighter there than on a solid page. */
-  @variant dark { --bg-surface: rgba(255, 255, 255, .06); --cover: rgba(255, 255, 255, .1); --text-3: #A9A9B1; }
+  @variant dark { --cover: rgba(255, 255, 255, .1); --text-3: #A9A9B1; }
 }
 :root[data-material="liquid"]:not([data-glass="page"]) :is(.details-pane, .details-panel, .terminal-drawer, .capabilities-page) { background: transparent; box-shadow: none; }
 :root[data-material="liquid"]:not([data-glass="page"]) :is(.details-pane, .capability-matrix[data-scrolled]) .sticky { background: var(--cover); -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3); }
@@ -169,6 +169,136 @@
 :root[data-material="liquid"]:not([data-glass="page"]) .details-pane .file-card:has(> .collapsible:not([data-state="closed"])) .sticky { border-bottom-right-radius: 0; border-bottom-left-radius: 0; }
 :root[data-material="liquid"]:not([data-glass="page"]) .details-pane .file-card:not(:has(> .collapsible:not([data-state="closed"]))) .sticky { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
 :root[data-material="liquid"]:not([data-glass="page"]) .details-pane .file-card:not(:has(> .collapsible:not([data-state="closed"]))) .sticky:is(button):hover { background: var(--bg-subtle); }
+
+/*
+ * Liquid Glass, component by component (2026-11-16, the user: every component is Liquid Glass, not only the surfaces they stand on). The window's surfaces — its
+ * floor, the panes on it, what floats over the conversation — are sheets of the system's own glass. Such a sheet lies under the page and cannot follow what
+ * scrolls in it, so what stands on those surfaces is drawn as glass of the same make, in two shapes:
+ *   raised — a tile (a card, a module, a message, a table) or a bead (a button, a thumb, a chosen row, a check box): a clear body a little brighter at its
+ *            top, a line of light along its upper edge and a fainter one along its lower, its thickness lit from inside, and a soft shadow under it;
+ *   sunk   — a well (a field, a track, a block of code): a darker fill, shade under its upper lip and light along its lower one.
+ * Glass that can be pressed catches the light where the pointer is and lights up under a press (ui/light.ts says where). Nothing here is a flat patch of color.
+ */
+:root[data-material="liquid"]:not([data-glass="page"]) {
+  --rim: inset 0 1px 0 rgba(255, 255, 255, .9), inset 0 -1px 0 rgba(255, 255, 255, .34), inset 0 0 0 .5px rgba(255, 255, 255, .6), inset 0 0 0 2px rgba(255, 255, 255, .1), inset 0 0 18px rgba(255, 255, 255, .14);
+  --rim-bead: inset 0 1px 0 rgba(255, 255, 255, .92), inset 0 -.5px 0 rgba(255, 255, 255, .42), inset 0 0 0 .5px rgba(255, 255, 255, .55);
+  --rim-tint: inset 0 1px 0 rgba(255, 255, 255, .46), inset 0 -.5px 0 rgba(255, 255, 255, .16), inset 0 0 0 .5px rgba(255, 255, 255, .24);
+  --lift: 0 0 0 .5px rgba(0, 0, 0, .065), 0 1px 2px rgba(0, 0, 0, .045), 0 10px 26px -12px rgba(0, 0, 0, .2);
+  --lift-hover: 0 0 0 .5px rgba(0, 0, 0, .08), 0 2px 5px rgba(0, 0, 0, .06), 0 16px 34px -12px rgba(0, 0, 0, .26);
+  --lift-sm: 0 0 0 .5px rgba(0, 0, 0, .085), 0 1px 2px rgba(0, 0, 0, .07), 0 3px 8px -4px rgba(0, 0, 0, .12);
+  --well: inset 0 1px 2px rgba(0, 0, 0, .09), inset 0 0 0 .5px rgba(0, 0, 0, .055), 0 .5px 0 rgba(255, 255, 255, .8);
+  --sheen: linear-gradient(180deg, rgba(255, 255, 255, .28), rgba(255, 255, 255, .05) 52%, rgba(255, 255, 255, 0));
+  --light: rgba(255, 255, 255, .55); --light-press: rgba(255, 255, 255, .85);
+  --bg-surface: rgba(255, 255, 255, .34);
+  --bead: rgba(255, 255, 255, .44); --bead-soft: rgba(255, 255, 255, .3); --bead-hover: rgba(255, 255, 255, .6); --bead-active: rgba(255, 255, 255, .76);
+  --bg-inset: rgba(0, 0, 0, .045); --bg-well: rgba(255, 255, 255, .8);
+  --thumb: rgba(255, 255, 255, .86);
+  --sh-hairline: var(--rim), var(--lift);
+  --sh-card: var(--rim), var(--lift);
+  --sh-card-hover: var(--rim), var(--lift-hover);
+  --sh-thumb: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .06), 0 1px 3px rgba(0, 0, 0, .16), 0 4px 10px -4px rgba(0, 0, 0, .14);
+  --sh-well: var(--rim-bead), var(--lift-sm);
+  --sh-kbd: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .12), 0 1px 0 rgba(0, 0, 0, .08);
+  @variant dark {
+    --rim: inset 0 1px 0 rgba(255, 255, 255, .24), inset 0 -1px 0 rgba(255, 255, 255, .06), inset 0 0 0 .5px rgba(255, 255, 255, .11), inset 0 0 0 2px rgba(255, 255, 255, .025), inset 0 0 18px rgba(255, 255, 255, .035);
+    --rim-bead: inset 0 1px 0 rgba(255, 255, 255, .28), inset 0 -.5px 0 rgba(255, 255, 255, .07), inset 0 0 0 .5px rgba(255, 255, 255, .12);
+    --rim-tint: inset 0 1px 0 rgba(255, 255, 255, .38), inset 0 -.5px 0 rgba(255, 255, 255, .1), inset 0 0 0 .5px rgba(255, 255, 255, .18);
+    --lift: 0 0 0 .5px rgba(0, 0, 0, .34), 0 1px 2px rgba(0, 0, 0, .18), 0 10px 26px -10px rgba(0, 0, 0, .5);
+    --lift-hover: 0 0 0 .5px rgba(0, 0, 0, .4), 0 2px 5px rgba(0, 0, 0, .22), 0 16px 34px -12px rgba(0, 0, 0, .6);
+    --lift-sm: 0 0 0 .5px rgba(0, 0, 0, .36), 0 1px 2px rgba(0, 0, 0, .24), 0 3px 8px -4px rgba(0, 0, 0, .3);
+    --well: inset 0 1px 2px rgba(0, 0, 0, .34), inset 0 0 0 .5px rgba(0, 0, 0, .24), 0 .5px 0 rgba(255, 255, 255, .08);
+    --sheen: linear-gradient(180deg, rgba(255, 255, 255, .075), rgba(255, 255, 255, .01) 52%, rgba(255, 255, 255, 0));
+    --light: rgba(255, 255, 255, .13); --light-press: rgba(255, 255, 255, .24);
+    --bg-surface: rgba(255, 255, 255, .06);
+    --bead: rgba(255, 255, 255, .11); --bead-soft: rgba(255, 255, 255, .07); --bead-hover: rgba(255, 255, 255, .17); --bead-active: rgba(255, 255, 255, .24);
+    --bg-inset: rgba(0, 0, 0, .2); --bg-well: rgba(255, 255, 255, .14);
+    --thumb: rgba(255, 255, 255, .24);
+    --sh-thumb: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .34), 0 1px 3px rgba(0, 0, 0, .4);
+    --sh-kbd: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .4), 0 1px 0 rgba(0, 0, 0, .3);
+  }
+
+  /* Tiles: every card and module, a message you wrote, a table. */
+  & :is(.card, .bg-surface:is(.rounded-card, .rounded-block, .rounded-control, [class*="rounded-["]):not(.sticky, [class*="accent"]), .user-bubble, .kbd) { background-image: var(--sheen); }
+  & .bg-surface:is(.rounded-card, .rounded-block, .rounded-control, [class*="rounded-["]):not([class*="shadow"], .sticky) { box-shadow: var(--rim), var(--lift); }
+  & .bg-surface[class*="shadow-[inset_0_0_0_1px_var(--border"]:not(.search-box) { box-shadow: var(--rim), var(--lift); }
+  & .card-interactive:hover { box-shadow: var(--rim), var(--lift-hover); }
+  & .card[data-selected="true"] { box-shadow: var(--rim), var(--lift), 0 0 0 1.5px var(--accent-text); }
+  & .user-bubble { background-color: var(--bead); box-shadow: var(--rim), var(--lift); }
+  & .markdown .table-scroll { border-radius: var(--radius-block); background-color: var(--bg-surface); background-image: var(--sheen); box-shadow: var(--rim), var(--lift); }
+  & .markdown .table-scroll :is(th, td):first-child { padding-left: 12px; }
+  & .markdown .table-scroll :is(th, td):last-child { padding-right: 12px; }
+  & .markdown .table-scroll tr:last-child > td { border-bottom: none; }
+
+  /* Beads: the plain button, a count or a state in its pill, a key, the round key that adds to a message, and every block that was a tint of grey (a chip, a note). */
+  & :is(.btn:not(.btn-primary, .btn-ghost, .btn-outline, .btn-danger), .badge:not(.badge-accent, .badge-amber, .badge-red), .status-pill:not([data-tone]), .toast-action, .plus-key,
+      .bg-subtle:is(.rounded-block, .rounded-row, .rounded-control, .rounded-tag, .rounded-full):not(.h-1, .shadow-focus, [class*="shadow-["])) {
+    background-color: var(--bead); background-image: var(--sheen); box-shadow: var(--rim-bead), var(--lift-sm);
+  }
+  & :is(.btn:not(.btn-primary, .btn-ghost, .btn-outline, .btn-danger), .toast-action, .plus-key, .user-bubble):hover:not(:disabled) { background-color: var(--bead-hover); }
+  & .btn:not(.btn-primary, .btn-danger):active:not(:disabled) { background-color: var(--bead-active); }
+  /* A tinted bead keeps its color: the accent, amber for what waits for you, red for what failed. */
+  & :is(.btn-danger, .badge-accent, .badge-amber, .badge-red, .status-pill[data-tone],
+      :is(.bg-accent-soft, .bg-amber-soft, .bg-red-soft):is(.rounded-card, .rounded-block, .rounded-row, .rounded-control, .rounded-tag, .rounded-full):not([class*="shadow-["])) {
+    background-image: var(--sheen); box-shadow: var(--rim-tint), var(--lift-sm);
+  }
+  /* The one filled button, and the key that sends: glass in the accent, lit from above, with its own color under it. */
+  & :is(.btn-primary, .send-key.bg-accent:not(:disabled)) {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, .26), rgba(255, 255, 255, 0) 62%);
+    box-shadow: var(--rim-tint), 0 0 0 .5px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .12), 0 6px 14px -6px color-mix(in srgb, var(--accent) 72%, transparent);
+  }
+  & .send-key:disabled { background-color: var(--bead-soft); background-image: var(--sheen); box-shadow: var(--rim-bead); }
+  /* What has no fill until it is pointed at or chosen becomes a bead then: a quiet button, an icon, a row. */
+  & :is(.btn-ghost, .btn-outline, .icon-btn, .quiet, .row, .nav-row):hover:not(:disabled, [data-disabled], [aria-current="page"], [aria-current="true"], [aria-pressed="true"], [aria-expanded="true"],
+      [aria-checked="true"], [data-popup-open], [data-selected="true"], .is-active) { background-color: var(--bead-soft); box-shadow: var(--rim-bead); }
+  & :is(.icon-btn:is([aria-pressed="true"], [aria-expanded="true"], [data-popup-open]), .quiet:is([aria-pressed="true"], [aria-checked="true"], [data-popup-open]),
+      .nav-row:is([aria-current="page"], [aria-current="true"], [data-selected="true"]), .is-active.bg-subtle, .segmented-quiet > .segmented-thumb) {
+    background-color: var(--bead); background-image: var(--sheen); box-shadow: var(--rim-bead), var(--lift-sm);
+  }
+  /* A chosen bead pointed at brightens; it never dims. */
+  & :is(.icon-btn:is([aria-pressed="true"], [aria-expanded="true"], [data-popup-open]), .quiet:is([aria-pressed="true"], [aria-checked="true"], [data-popup-open]),
+      .nav-row:is([aria-current="page"], [aria-current="true"], [data-selected="true"])):hover { background-color: var(--bead-hover); }
+  & .btn-outline { background-color: var(--bead-soft); box-shadow: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .1); @variant dark { box-shadow: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .34); } }
+  /* Anything else that shows a ground only under the pointer shows a bead there too. */
+  & :is(button, a, summary, label, [role="button"], [role="option"], [role="menuitem"], [role="tab"])[class*="hover:bg-"]:hover:not(:disabled, [aria-disabled="true"], .btn, .plus-key, .send-key, .toast-action,
+      .bg-subtle, .is-active, [aria-selected="true"], [aria-pressed="true"], [class*="bg-["]) {
+    background-color: var(--bead-soft); background-image: var(--sheen); box-shadow: var(--rim-bead);
+  }
+  & .file-card:has(> .collapsible:not([data-state="closed"])) { background-image: var(--sheen); box-shadow: var(--rim), var(--lift); }
+  & :is(.tabs-indicator, .segmented-thumb) { background-image: var(--sheen); }
+  & .menu-item[data-highlighted] { box-shadow: var(--rim-tint); }
+  /* The light under the pointer, and the glass lighting up under a press. */
+  & :is(.btn, .icon-btn, .quiet, .row, .nav-row, .plus-key, .send-key, .toast-action, .card-interactive, .menu-item):hover:not(:disabled, [data-disabled]) {
+    background-image: radial-gradient(80px circle at var(--px, 50%) var(--py, -12px), var(--light), transparent 72%), var(--sheen);
+  }
+  & :is(.btn, .icon-btn, .quiet, .row, .nav-row, .plus-key, .send-key, .toast-action, .card-interactive, .menu-item):active:not(:disabled, [data-disabled]) {
+    background-image: radial-gradient(120px circle at var(--px, 50%) var(--py, 50%), var(--light-press), transparent 74%), var(--sheen);
+  }
+
+  /* Check boxes: a small bead; checked, a bead of the accent with its tick. */
+  & input[type="checkbox"]:not(.task-list-item > input) {
+    appearance: none; -webkit-appearance: none; display: inline-block; flex: none; min-width: 14px; min-height: 14px; margin: 0; border-radius: 4.5px; cursor: pointer;
+    background-color: var(--bead); background-image: var(--sheen); box-shadow: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .2), 0 1px 2px rgba(0, 0, 0, .08);
+    transition: background-color var(--dur-fast) var(--ease-standard);
+    @variant dark { box-shadow: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .5), 0 1px 2px rgba(0, 0, 0, .3); }
+  }
+  & input[type="checkbox"]:not(.task-list-item > input):checked {
+    background-color: var(--accent); background-repeat: no-repeat; background-position: center; background-size: 72% 72%, auto;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.6 6.3 5 8.6 9.5 3.6' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"), linear-gradient(180deg, rgba(255, 255, 255, .28), rgba(255, 255, 255, 0) 62%);
+    box-shadow: var(--rim-tint), 0 0 0 .5px rgba(0, 0, 0, .14), 0 1px 3px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  & input[type="checkbox"]:not(.task-list-item > input):disabled { opacity: .4; cursor: default; }
+
+  /* Wells: where words are typed, what a thumb slides in, and code. */
+  & :is(.search-field, .search-box, .field:not(:focus, :focus-visible), .segmented:not(.segmented-quiet), .tabs-pill, .code-block, .bg-subtle.h-1,
+      .bg-inset:is(.rounded-card, .rounded-block, .rounded-row, .rounded-control)) {
+    background-color: var(--bg-inset); box-shadow: var(--well);
+  }
+  & .search-box:focus-within { box-shadow: var(--well), var(--sh-focus); }
+  & .markdown :not(pre) > code { box-shadow: inset 0 .5px 1px rgba(0, 0, 0, .08), 0 .5px 0 rgba(255, 255, 255, .6); @variant dark { box-shadow: inset 0 .5px 1px rgba(0, 0, 0, .3), 0 .5px 0 rgba(255, 255, 255, .07); } }
+  & .switch { box-shadow: inset 0 1px 2px rgba(0, 0, 0, .16), inset 0 0 0 .5px rgba(0, 0, 0, .06), 0 .5px 0 rgba(255, 255, 255, .7); @variant dark { box-shadow: inset 0 1px 2px rgba(0, 0, 0, .4), 0 .5px 0 rgba(255, 255, 255, .09); } }
+  & .switch[data-checked] { background-image: linear-gradient(180deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, 0) 62%); }
+  & .switch-thumb { background: linear-gradient(180deg, #FFFFFF, #F1F1F4); box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .9), 0 0 0 .5px rgba(0, 0, 0, .08), 0 1px 3px rgba(0, 0, 0, .26); }
+}
 
 /* With "reduce transparency" the glass is a plain surface (the window's own material answers the setting by itself). */
 @media (prefers-reduced-transparency: reduce) {
