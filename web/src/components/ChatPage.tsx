@@ -515,8 +515,8 @@ export function ChatPage(props: ChatProps) {
   const inline = wide && session !== null;
   const panelOpen = session !== null && (inline ? preferences.panel : overlay);
   const [panelWidth, setPanelWidth] = useState(readPanelWidth), [dragging, setDragging] = useState(false), row = useRef<HTMLDivElement>(null);
-  // As wide as it was dragged to, within what the row has: the conversation keeps 360 px, the panel is never under 360 px nor over seven tenths of the row.
-  const fit = useCallback((width: number): number => { const room = row.current?.clientWidth ?? window.innerWidth; return Math.round(Math.max(PANEL_MIN, Math.min(width, room - 360, room * .7))); }, []);
+  // As wide as it was dragged to, within what the row has: the conversation keeps 440 px (its message box needs them), the panel is never under 360 px nor over seven tenths of the row.
+  const fit = useCallback((width: number): number => { const room = row.current?.clientWidth ?? window.innerWidth; return Math.round(Math.max(PANEL_MIN, Math.min(width, room - 440, room * .7))); }, []);
   const [rowWidth, setRowWidth] = useState(0);
   useLayoutEffect(() => {
     const element = row.current;
@@ -546,9 +546,16 @@ export function ChatPage(props: ChatProps) {
   useLayoutEffect(() => { shownChanges.current = { id: session?.id ?? null, count: changes }; });
   const panelTab: PanelTab = tab ?? "overview";
   // Opened from the keyboard (⌘\), the panel's content does not slide in (#37). Decided once per opening: an animation
-  // that followed the live input mode would start over whenever the next input came from the pointer.
-  const [panelFromKeyboard, setPanelFromKeyboard] = useState(false);
-  const setPanel = (open: boolean) => { if (open && !panelOpen) setPanelFromKeyboard(document.documentElement.dataset.input === "keyboard"); if (inline) props.onPreference("panel", open); else setOverlay(open); };
+  // that followed the live input mode would start over whenever the next input came from the pointer. And for the conversation
+  // it was opened in: a panel that comes with a conversation begun by a message is not what a key asked for, and moves as for anyone.
+  const [keyedOpen, setKeyedOpen] = useState<string | null>(null), [keyedPanel, setKeyedPanel] = useState<string | null>(null);
+  const panelFromKeyboard = keyedOpen !== null && keyedOpen === session?.id, panelAtOnce = keyedPanel !== null && keyedPanel === session?.id;
+  const setPanel = (open: boolean) => {
+    const keyed = document.documentElement.dataset.input === "keyboard" ? session?.id ?? null : null;
+    if (open && !panelOpen) setKeyedOpen(keyed);
+    setKeyedPanel(keyed);
+    if (inline) props.onPreference("panel", open); else setOverlay(open);
+  };
   const openDetails = (runId: string) => {
     if (panelOpen && panelTab === "overview" && panelFocus === "run" && (panelRun ?? session?.runs.at(-1)?.id) === runId) { setPanel(false); return; }
     setPanelRun(runId); setTab("overview"); setPanelFocus("run"); setPanel(true);
@@ -793,7 +800,7 @@ export function ChatPage(props: ChatProps) {
         }}>
           {props.sessionError ? <EmptyState title="无法打开这个对话" action={<button className="btn" onClick={props.onNew}>新建对话</button>}>{props.sessionError}</EmptyState>
             : props.loading ? <div className="flex items-center justify-center gap-2 py-24 text-ui-sm text-fg-2"><Spinner/><span>正在读取对话</span></div>
-            : session === null ? <Welcome harnesses={harnesses.filter(harness => !props.hiddenHarnesses.has(harness.id))} readiness={props.readiness ?? []} onHarnesses={props.onHarnesses} composer={composer}/>
+            : session === null ? <Welcome harnesses={harnesses.filter(harness => !props.hiddenHarnesses.has(harness.id))} readiness={props.readiness ?? []} onHarnesses={props.onHarnesses}/>
             : <div className="transcript mx-auto flex max-w-reading flex-col gap-7 pb-4" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
               {olderCursor !== null ? <div ref={topMark} className="older-turns flex justify-center"><button type="button" className="btn btn-ghost btn-sm" onClick={() => void loadOlder()}>加载更早的对话</button></div> : null}
               {session.origin && olderCursor === null ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession} delegated={session.parent !== undefined}/> : null}
@@ -806,10 +813,11 @@ export function ChatPage(props: ChatProps) {
               {orphanCards.length ? orphanCards : null}
             </div>}
         </div>
-        {/* The message box floats over the conversation, which keeps that much room under its last line (--foot-height). */}
+        {/* The message box floats over the conversation, which keeps that much room under its last line (--foot-height). It stands in the same
+            place before there is a conversation: the first message is written where every later one is, and nothing moves when it is sent. */}
         {session !== null && !props.loading ? <div className="scroll-edge scroll-edge-bottom" data-under-glass="" aria-hidden="true"/> : null}
-        {session !== null && !props.loading ? <footer ref={foot} className="chat-foot pointer-events-none absolute inset-x-0 bottom-0 z-10 px-4 pt-1.5 pb-4 sm:px-8"><div className="pointer-events-auto relative mx-auto flex max-w-reading flex-col gap-2">
-          {!followBottom ? <button type="button" data-leave="fade" data-leave-shift="6" className="follow-stream motion-enter press absolute -top-11 left-1/2 z-10 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border-none pr-3 pl-3.5 text-caption font-medium text-fg-2 transition-[color,transform] duration-120 ease-standard hover:text-fg"
+        {!props.loading && !props.sessionError ? <footer ref={foot} className="chat-foot pointer-events-none absolute inset-x-0 bottom-0 z-10 px-4 pt-1.5 pb-4 sm:px-8"><div className="pointer-events-auto relative mx-auto flex max-w-reading flex-col gap-2">
+          {session !== null && !followBottom ? <button type="button" data-leave="fade" data-leave-shift="6" className="follow-stream motion-enter press absolute -top-11 left-1/2 z-10 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border-none pr-3 pl-3.5 text-caption font-medium text-fg-2 transition-[color,transform] duration-120 ease-standard hover:text-fg"
             style={motionStyle({ shift: 6 })} onClick={resumeFollowing} aria-label="回到最新回复"><span>回到最新</span><ArrowDown size={13} aria-hidden="true"/></button> : null}
           {props.queueNotice ? <Notice tone="amber" onDismiss={props.onDismissQueueNotice}>{props.queueNotice}</Notice> : null}
           {refused && props.onFreeWorkspace ? <Notice tone="amber" className="kept-conflict" title="工作区正被另一个对话的后台进程占用" action={<button type="button" className="btn btn-sm" disabled={freeing || mutation !== null} onClick={() => { setFreeing(true); void props.onFreeWorkspace!(refused).finally(() => setFreeing(false)); }}>{freeing ? "正在结束…" : "结束它并重试"}</button>}/> : null}
@@ -820,7 +828,7 @@ export function ChatPage(props: ChatProps) {
           onQuote={text => { props.onMessageDraft(value => (value.trim() ? value.replace(/\s+$/u, "") + "\n\n" : "") + "```\n" + text.replace(/\s+$/u, "") + "\n```\n"); textarea.current?.focus(); }}
           {...(props.workspaceTools?.file ? { scripts: projectScripts(props.workspaceTools.file) } : {})}/> : null}
       </div>
-      {inline && asidePresence !== "closed" ? <aside className={cn("details-aside relative flex-none overflow-hidden keyboard:duration-0", dragging ? "transition-none" : "transition-[width]",
+      {inline && asidePresence !== "closed" ? <aside className={cn("details-aside relative flex-none overflow-hidden", dragging ? "transition-none" : "transition-[width]", panelAtOnce && "duration-0!",
         panelOpen ? "w-(--panel-width) duration-(--dur-spring-soft) ease-spring-soft starting:w-0" : "w-0 duration-200 ease-in")} style={{ "--panel-width": shownWidth + "px" } as CSSProperties} aria-label="详情栏" aria-hidden={!panelOpen || undefined} inert={!panelOpen}>
         <div className={cn("flex h-full w-(--panel-width) py-2 pr-2 pl-1", !panelFromKeyboard && "motion-panel-in")}><div className="details-pane flex min-w-0 flex-1 overflow-hidden rounded-pane bg-surface shadow-pane">{panel}</div></div>
         <PanelEdge width={shownWidth} dragging={dragging} onDrag={setDragging} onWidth={resize}/>

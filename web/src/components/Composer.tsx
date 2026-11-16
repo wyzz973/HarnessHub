@@ -391,9 +391,8 @@ export function Composer(props: ComposerProps) {
   const showProvider = props.providerManagement !== false || draft.providerId !== "";
   const segments = ["agent", ...(showProvider ? ["provider"] : []), ...(draft.harnessId ? ["model"] : []), ...(thought ? ["thought"] : []), ...(modeInChip ? ["mode"] : [])];
   const last = segments.at(-1);
-  // On the home the box sits mid-page and its lists open below it (Main board), turning up when they do not fit there;
-  // at the foot of a conversation they open above.
-  const popSide: "top" | "bottom" = session ? "top" : "bottom";
+  // The box stands at the page's foot before and in a conversation alike: what it opens, opens upward.
+  const popSide: "top" | "bottom" = "top";
   const pickAgent = (value: string) => {
     if (value === draft.harnessId) return;
     // The levels go with the conversation to the Harness chosen: applied once its catalog says what it has (below).
@@ -609,7 +608,7 @@ export function Composer(props: ComposerProps) {
       <div ref={box} className={cn("composer-box relative rounded-composer transition-[box-shadow] duration-200 ease-standard",
         docked ? "shadow-[0_0_0_1px_var(--amber-line),0_0_0_4px_var(--amber-soft),var(--sh-composer)]"
           : dragging ? "shadow-[var(--sh-focus),var(--sh-composer)]" : "shadow-composer")} onFocus={event => { focusedHere.current = event.target; }}>
-        <form className={cn("composer flex flex-col rounded-composer pt-4 pr-2.5 pb-2.5 pl-5 ease-standard", session ? "gap-2.5" : "gap-3",
+        <form className={cn("composer flex flex-col gap-2.5 rounded-composer pt-4 pr-2.5 pb-2.5 pl-5 ease-standard",
           docked ? "invisible pointer-events-none absolute inset-x-0 bottom-0 -translate-y-1 opacity-0 transition-[opacity,translate,visibility] duration-100"
             : closingAtOnce ? "visible translate-y-0 opacity-100" : "visible translate-y-0 opacity-100 transition-[opacity,translate] delay-100 duration-100", dragging && "is-dropping")}
           aria-label={session ? "继续对话" : "新对话"} aria-hidden={docked || undefined} inert={docked}
@@ -619,10 +618,10 @@ export function Composer(props: ComposerProps) {
           onDrop={event => { if (event.dataTransfer.files.length) { event.preventDefault(); setDragging(false); if (!readonly) attach(event.dataTransfer.files); } }}>
           <label className="sr-only" htmlFor="message-input">发送消息</label>
           {props.attachments.length ? <ComposerAttachments items={props.attachments} inputs={inputs} disabled={props.mutation === "sending"} onRemove={props.onRemoveAttachment}/> : null}
-          <textarea id="message-input" ref={inputRef} rows={session ? 1 : 2} value={props.messageDraft} disabled={readonly} placeholder={placeholder}
+          <textarea id="message-input" ref={inputRef} rows={1} value={props.messageDraft} disabled={readonly} placeholder={placeholder}
             aria-describedby={noteShown || blocked && !readonly || stripNotice ? "composer-notice composer-keyboard-hint" : "composer-keyboard-hint"} aria-autocomplete={commands.length ? "list" : undefined}
             aria-controls={slashOpen || mentionOpen ? listId : undefined} aria-activedescendant={slashOpen && slashMatches.length ? `${listId}-${slashIndex}` : mentionOpen ? `${listId}-file` : undefined}
-            className={cn("w-full resize-none border-none bg-transparent p-0 text-[15px] leading-6 text-fg outline-none placeholder:text-placeholder disabled:opacity-40", session ? "min-h-6" : "min-h-12")}
+            className="min-h-6 w-full resize-none border-none bg-transparent p-0 text-[15px] leading-6 text-fg outline-none placeholder:text-placeholder disabled:opacity-40"
             onChange={event => {
               handedOver.current = false;
               const value = event.target.value, caret = event.target.selectionStart;
@@ -751,7 +750,7 @@ function AdvancedSettings(props: ComposerProps & {
   readonly controls: readonly HarnessView["controls"][number][]; readonly selectedControl: HarnessView["controls"][number] | undefined; readonly outdated: boolean; readonly disabled: boolean;
   readonly nativeOptions: readonly NativeOption[]; readonly optionPicker: (option: NativeOption, label: string, extra?: { readonly open?: boolean }) => ReactNode;
   readonly nativeState: NonNullable<NonNullable<ComposerProps["session"]>["nativeStates"]>[number] | undefined; readonly describeNative: (model: string | undefined, options: Readonly<Record<string, string>> | undefined) => string;
-  /** Where its panel opens: below the box on the home, above it in a conversation. */
+  /** Where its panel opens: above the box, which stands at the page's foot. */
   readonly popSide: "top" | "bottom";
   readonly open: boolean; readonly onOpenChange: (open: boolean) => void;
   readonly anchor: RefObject<Element | null>; readonly returnFocus: RefObject<HTMLElement | null>;

@@ -17,7 +17,7 @@ export interface Place { readonly scratch: boolean; readonly workspace: string; 
 
 interface WelcomeProps {
   readonly harnesses: readonly HarnessView[]; readonly readiness: readonly HarnessReadinessView[];
-  readonly onHarnesses: () => void; readonly composer: ReactNode;
+  readonly onHarnesses: () => void;
 }
 interface PlaceProps {
   readonly place: Place; readonly onPlace: (place: Place) => void;
@@ -27,10 +27,11 @@ interface PlaceProps {
   readonly chooseFolder: (start: string | undefined) => Promise<string | null>;
 }
 /**
- * The start of a new conversation: a greeting and the composer, whose own line under the box says where the conversation works
- * (PlacePicker). A Harness that needs the user is said in one line; when all are ready nothing is.
+ * The start of a new conversation: a greeting in the middle of the page. The composer stands at the page's foot as it does in every
+ * conversation (ChatPage), and its own line under the box says where the conversation works (PlacePicker). A Harness that needs the user
+ * is said in one line; when all are ready nothing is.
  */
-export function Welcome({ harnesses, readiness, onHarnesses, composer }: WelcomeProps) {
+export function Welcome({ harnesses, readiness, onHarnesses }: WelcomeProps) {
   const available = harnesses.filter(harness => harness.controls.some(control => control.available));
   const tone = (harness: HarnessView) => {
     const control = harness.controls.find(item => item.id === harness.defaultControlId && item.available) ?? harness.controls.find(item => item.available);
@@ -42,11 +43,10 @@ export function Welcome({ harnesses, readiness, onHarnesses, composer }: Welcome
   // does not start the entrance over.
   const [enter] = useState(() => document.documentElement.dataset.input === "keyboard" ? undefined : "motion-enter");
   const note = available.length === 0 ? "这台 Mac 上还没有可用的 Harness" : attention.length === 1 ? `${attention[0]!.name} 需要处理` : attention.length > 1 ? `${attention.length} 个 Harness 需要处理` : null;
-  return <div className="welcome mx-auto flex min-h-full w-full max-w-[760px] flex-col justify-center pt-8 pb-[min(150px,16vh)]">
-    <h2 className={cn(enter, "m-0 mb-7 text-center text-[24px] leading-8 font-medium tracking-[-0.02em] text-balance sm:text-greeting sm:leading-[42px]")}>今天想让哪个 Harness 做什么？</h2>
-    {note ? <p className={cn(enter, "-mt-4 mb-6 text-center text-ui-sm")} style={enter ? motionStyle({ delay: 40 }) : undefined}>
+  return <div className="welcome mx-auto flex min-h-full w-full max-w-reading flex-col items-center justify-center gap-3 pt-14 pb-[calc(var(--foot-height,0px)+24px)]">
+    <h2 className={cn(enter, "m-0 text-center text-[24px] leading-8 font-medium tracking-[-0.02em] text-balance sm:text-greeting sm:leading-[42px]")}>今天想让哪个 Harness 做什么？</h2>
+    {note ? <p className={cn(enter, "m-0 text-center text-ui-sm")} style={enter ? motionStyle({ delay: 40 }) : undefined}>
       <button type="button" className={cn("link-btn font-normal", available.length ? "text-amber hover:text-amber" : "")} onClick={onHarnesses}>{note}</button></p> : null}
-    {composer}
   </div>;
 }
 

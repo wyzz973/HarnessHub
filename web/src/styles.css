@@ -139,7 +139,7 @@
     --sh-thumb: 0 0 0 .5px rgba(0, 0, 0, .3), 0 1px 3px rgba(0, 0, 0, .4);
     --thumb: #5F5F64;
     --pane-tint: rgba(255, 255, 255, .025); --pane-rim: rgba(255, 255, 255, .09);
-    --pane-wash: rgba(22, 22, 26, .5);
+    --pane-wash: rgba(22, 22, 26, .58);
     --wash: rgba(30, 30, 34, .3); --wash-thick: rgba(30, 30, 34, .5);
     --wash-pop: rgba(40, 40, 46, .74);
   }
@@ -154,7 +154,8 @@
  */
 :root[data-material="liquid"]:not([data-glass="page"]) {
   --bg-surface: rgba(255, 255, 255, .5); --cover: rgba(255, 255, 255, .66);
-  @variant dark { --bg-surface: rgba(255, 255, 255, .06); --cover: rgba(255, 255, 255, .1); }
+  /* Over a bright desktop the dark glass is a middle tone: the quietest words are a step lighter there than on a solid page. */
+  @variant dark { --bg-surface: rgba(255, 255, 255, .06); --cover: rgba(255, 255, 255, .1); --text-3: #A9A9B1; }
 }
 :root[data-material="liquid"]:not([data-glass="page"]) :is(.details-pane, .details-panel, .terminal-drawer, .capabilities-page) { background: transparent; box-shadow: none; }
 :root[data-material="liquid"]:not([data-glass="page"]) :is(.details-pane, .capability-matrix[data-scrolled]) .sticky { background: var(--cover); -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3); }
@@ -163,6 +164,11 @@
 :root[data-material="liquid"]:not([data-glass="page"]) .details-pane .sticky:is(button):hover { background: color-mix(in srgb, var(--cover) 92%, var(--text)); }
 :root[data-material="liquid"]:not([data-glass="page"]) .details-pane .sticky .bg-app { background: transparent; }
 :root[data-material="liquid"]:not([data-glass="page"]) .native-diff { background: var(--bg-surface); }
+/* A changed file that is open is one module, its row and under it its diff; closed, it is a plain row of the list (nothing passes under it, so it needs no cover). */
+.file-card:has(> .collapsible:not([data-state="closed"])) { margin-block: 2px 6px; border-radius: var(--radius-block); background: var(--bg-surface); box-shadow: var(--shadow-hairline); overflow: clip; }
+:root[data-material="liquid"]:not([data-glass="page"]) .details-pane .file-card:has(> .collapsible:not([data-state="closed"])) .sticky { border-bottom-right-radius: 0; border-bottom-left-radius: 0; }
+:root[data-material="liquid"]:not([data-glass="page"]) .details-pane .file-card:not(:has(> .collapsible:not([data-state="closed"]))) .sticky { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
+:root[data-material="liquid"]:not([data-glass="page"]) .details-pane .file-card:not(:has(> .collapsible:not([data-state="closed"]))) .sticky:is(button):hover { background: var(--bg-subtle); }
 
 /* With "reduce transparency" the glass is a plain surface (the window's own material answers the setting by itself). */
 @media (prefers-reduced-transparency: reduce) {
@@ -717,6 +723,7 @@
   .tab[aria-selected="true"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; border-radius: 1px; background: var(--accent-text); }
   .tabs[data-indicator] > .tab::after { display: none; }
   .tab-count { font-weight: inherit; }
+  .tabs-pill .tab-count { color: var(--text-2); font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums; }
   .tabs-indicator { position: absolute; left: 0; bottom: 0; height: 2px; border-radius: 1px; background: var(--accent-text); pointer-events: none; }
   .tabs[data-ready] > .tabs-indicator { transition: transform var(--dur-spring) var(--ease-spring), width var(--dur-spring) var(--ease-spring); }
   /* #33 Switch: the thumb slides and the track changes color, 200 ms snap */
@@ -915,6 +922,15 @@
     -webkit-mask-image: linear-gradient(to bottom, transparent 44px, #000 70px, #000 calc(100% - 66px), transparent calc(100% - 46px)); mask-image: linear-gradient(to bottom, transparent 44px, #000 70px, #000 calc(100% - 66px), transparent calc(100% - 46px));
   }
   .chat-notices:not(:empty) ~ .chat-scroll { padding-top: 16px; }
+  /* The details beside a conversation come under their tabs and to the pane's foot as softly as the conversation does. A page whose rows stay at the top while
+     their content passes under them (the changes, a file) keeps its top edge whole. */
+  .panel-scroll { padding-top: 6px; }
+  :root[data-material="liquid"]:not([data-glass="page"]) .panel-scroll {
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 6px, #000 calc(100% - 12px), transparent); mask-image: linear-gradient(to bottom, transparent, #000 6px, #000 calc(100% - 12px), transparent);
+  }
+  :root[data-material="liquid"]:not([data-glass="page"]) .panel-scroll-rows {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent);
+  }
 
   /* A Turn that ends in front of the reader goes from the height it had to the height it comes to rest at without a step (ProtocolTurn's settle). */
   .is-settling { overflow: clip; }

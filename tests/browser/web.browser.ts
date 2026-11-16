@@ -1201,14 +1201,15 @@ test("a Turn's diagnostics are copied from its details without conversation cont
   await composer.fill("NATIVE_ACTIVITY"); await composer.press("Enter");
   await expect(log).toContainText("原生活动已完成。");
   await log.getByRole("button", { name: "执行详情", exact: true }).last().click();
-  const content = page.getByRole("checkbox", { name: "含对话内容" });
-  await expect(content).not.toBeChecked();
-  const copy = page.getByRole("button", { name: "复制诊断信息", exact: true });
-  await copy.click(); await expect(page.getByText("已复制诊断信息（不含对话内容）。")).toBeVisible();
+  const more = page.getByRole("button", { name: "诊断信息", exact: true });
+  await more.click(); await page.getByRole("menuitem", { name: "复制诊断信息", exact: true }).click();
+  await expect(page.getByText("已复制诊断信息（不含对话内容）。")).toBeVisible();
   const plain = await page.evaluate(() => navigator.clipboard.readText());
   assert.equal(plain.split("\n")[0], "HarnessHub 诊断 · 不含对话内容");
   assert.equal(plain.includes("NATIVE_ACTIVITY"), false); assert.equal(plain.includes(fixture.root), false, "no private path reaches the page");
-  await content.check(); await copy.click(); await expect(page.getByText("已复制诊断信息（含对话内容）。")).toBeVisible();
+  await expect(page.getByText("已复制诊断信息（不含对话内容）。")).toBeHidden();
+  await more.click(); await page.getByRole("menuitem", { name: "复制诊断信息（含对话内容）", exact: true }).click();
+  await expect(page.getByText("已复制诊断信息（含对话内容）。")).toBeVisible();
   const full = await page.evaluate(() => navigator.clipboard.readText());
   assert.match(full.split("\n")[0]!, /^HarnessHub 诊断 · 含对话内容/u); assert.match(full, /\n提示词：\nNATIVE_ACTIVITY\n/u);
   await page.screenshot({ path: join(artifact, "run-diagnostics.png"), animations: "disabled" });
@@ -1542,7 +1543,7 @@ test("G054-FR2 G054-FR3 the process folds into one line, the density choice stay
   await panel.getByRole("tab", { name: /过程/u }).click();
   await expect(panel.locator(".action-row").first()).toContainText("ls -la");
   await panel.getByRole("tab", { name: "概览", exact: true }).click(); await expect(panel).toContainText("Codex · 1 / 2");
-  await expect(panel.locator(".execution-details")).toContainText("输入"); await expect(panel.getByRole("button", { name: "复制诊断信息", exact: true })).toBeVisible();
+  await expect(panel.locator(".execution-details")).toContainText("输入"); await expect(panel.getByRole("button", { name: "诊断信息", exact: true })).toBeVisible();
   await page.screenshot({ path: join(artifact, "details-panel.png"), animations: "disabled" });
   await page.getByRole("button", { name: "详情栏", exact: true }).click(); await expect(panel).toHaveCount(0);
   // Narrower, the panel opens over the conversation and closes back to it.

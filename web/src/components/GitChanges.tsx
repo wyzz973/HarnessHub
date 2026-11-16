@@ -98,7 +98,7 @@ function GitFile({ file, scope, access, workspace, whitespace, wrap, split, open
     return () => controller.abort();
   }, [open, key]);
   const shown = workspacePath(file.path, workspace), current = read !== null && read.key.slice(0, read.key.lastIndexOf("#")) === what ? read : null;
-  return <li className="flex min-w-0 flex-col" data-path={file.path}>
+  return <li className="file-card flex min-w-0 flex-col" data-path={file.path}>
     {/* The file's row stays at the top of the panel while its diff scrolls under it. */}
     <button type="button" className="row sticky top-0 z-[2] flex h-8 w-full min-w-0 items-center gap-2 border-none bg-surface pr-2 text-left text-ui-sm text-fg hover:bg-subtle" style={{ paddingLeft: 8 + depth * 14 }} aria-expanded={open} aria-controls={panel} onClick={onToggle} title={file.oldPath ? file.oldPath + " → " + file.path : file.path}>
       <ChevronRight size={12} aria-hidden="true" className={cn("flex-none text-fg-3 motion-rotate", open && "rotate-90")}/>
@@ -107,7 +107,7 @@ function GitFile({ file, scope, access, workspace, whitespace, wrap, split, open
       <Lines add={file.added ?? 0} del={file.removed ?? 0}/>
     </button>
     <Collapsible open={open} id={panel}>
-      <section className="mt-0.5 mb-2 min-w-0 overflow-hidden rounded-block bg-surface shadow-hairline" aria-label={"差异：" + shown}>
+      <section className="min-w-0 overflow-hidden hairline-t" aria-label={"差异：" + shown}>
         {current === null ? <p className="m-0 flex items-center gap-2 px-3 py-2 text-caption text-fg-3"><Spinner size={12} label=""/>正在读取差异</p>
           : "problem" in current ? <p className="m-0 px-3 py-2 text-caption text-red">{current.problem}</p>
           : current.binary || file.binary ? <p className="m-0 px-3 py-2 text-caption text-fg-3">二进制文件，没有文本差异</p>
