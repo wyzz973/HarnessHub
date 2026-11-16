@@ -52,12 +52,12 @@ function ServerDialog({ api, editing, onClose, onSaved }: { readonly api: Gatewa
   };
   const rows = (label: string, items: Row[], set: (rows: Row[]) => void, headerRows: boolean) => <fieldset className="m-0 flex min-w-0 flex-col gap-1.5 border-0 p-0"><legend className="mb-1.5 p-0 text-caption font-medium text-fg-2">{label}</legend>
     {items.map((row, index) => <div key={index} className="flex flex-wrap items-center gap-1.5">
-      <input className="field h-[30px] w-[150px]" aria-label={label + "的名字"} value={row.key} placeholder={headerRows ? "Authorization" : "LOG_LEVEL"} onChange={event => set(items.map((item, at) => at === index ? { ...item, key: event.target.value } : item))}/>
-      <select className="field h-[30px] w-auto py-0" aria-label={label + "取值方式"} value={row.kind} onChange={event => set(items.map((item, at) => at === index ? { ...item, kind: event.target.value as Row["kind"] } : item))}>
+      <input className="field w-[150px]" aria-label={label + "的名字"} value={row.key} placeholder={headerRows ? "Authorization" : "LOG_LEVEL"} onChange={event => set(items.map((item, at) => at === index ? { ...item, key: event.target.value } : item))}/>
+      <select className="field w-auto py-0" aria-label={label + "取值方式"} value={row.kind} onChange={event => set(items.map((item, at) => at === index ? { ...item, kind: event.target.value as Row["kind"] } : item))}>
         <option value="variable">取自环境变量</option><option value="value">字面值（不能是密钥）</option></select>
-      {row.kind === "variable" ? <>{headerRows ? <input className="field h-[30px] w-[90px]" aria-label="前缀" placeholder="Bearer " value={row.prefix} onChange={event => set(items.map((item, at) => at === index ? { ...item, prefix: event.target.value } : item))}/> : null}
-        <input className="field h-[30px] w-[150px]" aria-label="取值的变量" placeholder="MY_TOKEN" value={row.variable} onChange={event => set(items.map((item, at) => at === index ? { ...item, variable: event.target.value } : item))}/></>
-        : <input className="field h-[30px] w-[180px]" aria-label="字面值" value={row.value} onChange={event => set(items.map((item, at) => at === index ? { ...item, value: event.target.value } : item))}/>}
+      {row.kind === "variable" ? <>{headerRows ? <input className="field w-[90px]" aria-label="前缀" placeholder="Bearer " value={row.prefix} onChange={event => set(items.map((item, at) => at === index ? { ...item, prefix: event.target.value } : item))}/> : null}
+        <input className="field w-[150px]" aria-label="取值的变量" placeholder="MY_TOKEN" value={row.variable} onChange={event => set(items.map((item, at) => at === index ? { ...item, variable: event.target.value } : item))}/></>
+        : <input className="field w-[180px]" aria-label="字面值" value={row.value} onChange={event => set(items.map((item, at) => at === index ? { ...item, value: event.target.value } : item))}/>}
       <button type="button" className="icon-btn icon-btn-sm" aria-label="删除这一行" onClick={() => set(items.filter((_, at) => at !== index))}><Trash2 size={14}/></button>
     </div>)}
     <button type="button" className="btn btn-ghost btn-sm -ml-2.5 self-start" onClick={() => set([...items, { kind: "variable", key: "", variable: "", value: "", prefix: headerRows ? "Bearer " : "" }])}><Plus size={13}/>添加</button></fieldset>;

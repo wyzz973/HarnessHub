@@ -627,7 +627,7 @@ function SnoozeDialog({ title, onClose, onChoose }: { readonly title: string; re
   const [value, setValue] = useState(local(start)), at = new Date(value).getTime(), valid = Number.isFinite(at) && at > Date.now();
   return <Dialog open onOpenChange={open => { if (!open) onClose(); }} title="稍后提醒" description={title}>
     <form className={DIALOG_COLUMN} onSubmit={event => { event.preventDefault(); if (valid) onChoose(at); }}>
-      <input type="datetime-local" className="h-9 rounded-control border border-line bg-surface px-2.5 text-ui-sm text-fg" value={value} min={local(new Date())} aria-label="提醒时间" autoFocus onChange={event => setValue(event.target.value)}/>
+      <input type="datetime-local" className="field" value={value} min={local(new Date())} aria-label="提醒时间" autoFocus onChange={event => setValue(event.target.value)}/>
       {!valid ? <p className="m-0 text-caption text-red">要选一个以后的时间</p> : null}
       <div className={DIALOG_ACTIONS}><button type="button" className="btn" onClick={onClose}>取消</button><button type="submit" className="btn btn-primary" disabled={!valid}>稍后提醒</button></div>
     </form>

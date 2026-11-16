@@ -537,7 +537,7 @@
 
   /* Fields: a recessed fill with a hairline; the focus ring is the system's soft blue */
   .field {
-    width: 100%; height: 30px; padding: 0 10px; border: none; border-radius: var(--radius-control); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--border-strong);
+    width: 100%; height: 28px; padding: 0 10px; border: none; border-radius: var(--radius-control); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--border-strong);
     color: var(--text); font-size: 13px; line-height: 20px; outline: none; transition: box-shadow var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
   }
   textarea.field { height: auto; padding: 7px 10px; resize: vertical; }

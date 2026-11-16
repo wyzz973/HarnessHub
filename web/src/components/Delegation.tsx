@@ -104,7 +104,7 @@ function DelegationCard({ item, name, load, onOpen, onReport, reportTo, busy, to
       {state ? <span className={cn("flex flex-none items-center gap-1.5 text-caption", failed ? "text-red" : "text-fg-3")}>{running ? <StatusDot tone="run"/> : null}<SwapText text={state} shimmer={running}/></span> : null}
     </div>
     <p className="m-0 line-clamp-2 break-words text-fg-2" title={item.title}>{item.title}</p>
-    {said ? <p className="delegation-result m-0 line-clamp-4 border-t border-line pt-2 break-words whitespace-pre-wrap text-fg">{said}</p> : null}
+    {said ? <p className="delegation-result m-0 line-clamp-4 hairline-t pt-2 break-words whitespace-pre-wrap text-fg">{said}</p> : null}
     <div className="-mb-0.5 -ml-1.5 flex flex-wrap items-center gap-1">
       <button type="button" className="btn btn-ghost btn-sm" onClick={onOpen}><ArrowUpRight size={13}/>打开</button>
       {known ? <span className="ml-1 flex items-center gap-1 text-caption text-fg-3"><Check size={12} aria-hidden="true"/>已告知 {reportTo}</span>
