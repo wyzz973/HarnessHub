@@ -37,7 +37,7 @@ import type { GitAccess } from "./GitChanges.js";
 import { RelayPacketDialog, type PacketTarget } from "./RelayDetails.js";
 import { RelayCard, RelayInstallation, SEND_ALONE, type RelayNext } from "./RelayCard.js";
 import { ProtocolTurn, type TurnReads } from "./ProtocolTurn.js";
-import { Welcome, type Place } from "./Welcome.js";
+import { PlacePicker, Welcome, type Place } from "./Welcome.js";
 import { DelegateDialog, DelegationCards, type DelegationResult } from "./Delegation.js";
 import { PERMISSION_WORDS, selectionLevels } from "../../../src/contracts/levels.js";
 
@@ -700,6 +700,7 @@ export function ChatPage(props: ChatProps) {
       </div> : null}
       {nextStep ? <NextStep recap={nextStep} harness={harnessName(nextStep.harnessId)} blocked={answerBlocked} onAnswer={answer}/> : <PlanBar session={session} active={active} harness={harnessName}/>}
     </> : null}
+    footStart={session ? undefined : <PlacePicker place={props.place} onPlace={props.onPlace} recents={props.recentFolders} chooseFolder={props.onChooseFolder}/>}
     below={session ? <StatusLine session={session} active={active} limits={props.limits?.find(row => row.harnessId === session.selection.harnessId && row.controlId === session.selection.controlId)}/> : null}/>;
   // What the page announces of the Turn in progress, or of one waiting in the queue (never the active Run), in the header's
   // words for the same state: the two waits as 等你批准 and 等你回答 (decision G), a Turn not started yet as 排队中 (ruling N).
@@ -792,8 +793,7 @@ export function ChatPage(props: ChatProps) {
         }}>
           {props.sessionError ? <EmptyState title="无法打开这个对话" action={<button className="btn" onClick={props.onNew}>新建对话</button>}>{props.sessionError}</EmptyState>
             : props.loading ? <div className="flex items-center justify-center gap-2 py-24 text-ui-sm text-fg-2"><Spinner/><span>正在读取对话</span></div>
-            : session === null ? <Welcome harnesses={harnesses.filter(harness => !props.hiddenHarnesses.has(harness.id))} readiness={props.readiness ?? []} place={props.place} onPlace={props.onPlace}
-              recents={props.recentFolders} chooseFolder={props.onChooseFolder} onHarnesses={props.onHarnesses} composer={composer}/>
+            : session === null ? <Welcome harnesses={harnesses.filter(harness => !props.hiddenHarnesses.has(harness.id))} readiness={props.readiness ?? []} onHarnesses={props.onHarnesses} composer={composer}/>
             : <div className="transcript mx-auto flex max-w-reading flex-col gap-7 pb-4" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
               {olderCursor !== null ? <div ref={topMark} className="older-turns flex justify-center"><button type="button" className="btn btn-ghost btn-sm" onClick={() => void loadOlder()}>加载更早的对话</button></div> : null}
               {session.origin && olderCursor === null ? <BranchOrigin origin={session.origin} session={session} harnesses={harnesses} onOpenSource={props.onOpenSession} delegated={session.parent !== undefined}/> : null}
@@ -982,7 +982,7 @@ function StatusLine({ session, active, limits }: { readonly session: Conversatio
   const now = useNow(counting);
   if (turn === undefined) return null;
   const parts = statusParts(turn, counting ? now : undefined), limitShown = limits !== undefined && limits.limits.some(limit => limit.usedPercent !== undefined);
-  return <p className="composer-status m-0 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 px-1 text-caption text-fg-3" aria-label="本轮状态">
+  return <p className="composer-status m-0 flex flex-wrap items-center gap-x-2 gap-y-0.5 px-1 text-caption text-fg-3" aria-label="本轮状态">
     {parts.map((part, index) => <Fragment key={index}>{index ? <span aria-hidden="true">·</span> : null}{part.share === undefined ? <span>{part.text}</span>
       : <span className="inline-flex items-center gap-[5px]" title={`上下文已用 ${part.share}%（由原程序报告）`}>
         <svg width="13" height="13" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--bg-hover)" strokeWidth="3"/>

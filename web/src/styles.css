@@ -93,6 +93,7 @@
   --pane-tint: rgba(255, 255, 255, .22); --pane-rim: rgba(255, 255, 255, .55);
   --pane-wash: rgba(248, 248, 250, .5);         /* over the system's Liquid Glass, so the sidebar's words read on any desktop */
   --wash: rgba(255, 255, 255, .3); --wash-thick: rgba(255, 255, 255, .54);
+  --wash-pop: rgba(252, 252, 254, .78);        /* a list, a menu or a dialog over the glass floor: what lies under it must not read through */
 
   @variant dark {
     color-scheme: dark;
@@ -140,6 +141,7 @@
     --pane-tint: rgba(255, 255, 255, .025); --pane-rim: rgba(255, 255, 255, .09);
     --pane-wash: rgba(22, 22, 26, .5);
     --wash: rgba(30, 30, 34, .3); --wash-thick: rgba(30, 30, 34, .5);
+    --wash-pop: rgba(40, 40, 46, .74);
   }
 }
 /* A window that is not the key one gives up its accent, as the system's controls do: fills go grey, words that are links keep their color. */
@@ -156,6 +158,7 @@
 }
 :root[data-material="liquid"]:not([data-glass="page"]) :is(.details-pane, .details-panel, .terminal-drawer, .capabilities-page) { background: transparent; box-shadow: none; }
 :root[data-material="liquid"]:not([data-glass="page"]) :is(.details-pane, .capability-matrix[data-scrolled]) .sticky { background: var(--cover); -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3); }
+:root[data-material="liquid"]:not([data-glass="page"]) .details-pane .sticky { border-radius: var(--radius-block); }
 :root[data-material="liquid"]:not([data-glass="page"]) .capability-matrix:not([data-scrolled]) .sticky { background: transparent; }
 :root[data-material="liquid"]:not([data-glass="page"]) .details-pane .sticky:is(button):hover { background: color-mix(in srgb, var(--cover) 92%, var(--text)); }
 :root[data-material="liquid"]:not([data-glass="page"]) .details-pane .sticky .bg-app { background: transparent; }
@@ -684,11 +687,29 @@
   .segmented:not([data-thumb]) > button[aria-pressed="true"], .segmented:not([data-thumb]) > button[aria-checked="true"] { background: var(--thumb); box-shadow: var(--sh-thumb); }
   .segmented-thumb { position: absolute; z-index: 0; top: 2px; left: 0; height: calc(100% - 4px); border-radius: 6px; background: var(--thumb); box-shadow: var(--sh-thumb); pointer-events: none; }
   .segmented[data-ready] > .segmented-thumb { transition: transform var(--dur-spring) var(--ease-spring), width var(--dur-spring) var(--ease-spring); }
+  /* The same choice among the quiet controls of the line under the message box: no track, and a faint capsule for the thumb. */
+  .segmented-quiet { padding: 0; gap: 2px; background: transparent; }
+  .segmented-quiet > button { height: 28px; padding: 0 8px; border-radius: 8px; font-size: 13px; line-height: 20px; }
+  .segmented-quiet > .segmented-thumb { top: 0; height: 100%; border-radius: 8px; background: var(--bg-subtle); box-shadow: none; }
   .segmented-md { border-radius: 9px; }
   .segmented-md > button { height: 28px; padding: 0 12px; border-radius: 7px; font-size: 13px; line-height: 20px; }
   .segmented-md > .segmented-thumb { border-radius: 7px; }
   /* #24 Tabs: the underline slides its position and width (200 ms); the text color changes in 120 ms */
+  /*
+   * A control of the message box and of the line under it: words and a small mark with no ground of their own until the pointer is over them,
+   * all of one height and one size, so the line reads as a line. What opens a list ends in a small chevron.
+   */
+  .quiet { display: inline-flex; flex: none; align-items: center; gap: 6px; height: 28px; max-width: 100%; min-width: 0; padding: 0 8px; border: none; border-radius: 8px; background: transparent; color: var(--text-2); font-size: 13px; line-height: 20px; white-space: nowrap; transition: color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard); }
+  .quiet:hover:not(:disabled), .quiet[data-popup-open] { background: var(--bg-hover); color: var(--text); }
+  .quiet:disabled { opacity: .4; }
+  .quiet[aria-pressed="true"], .quiet[aria-checked="true"] { background: var(--bg-subtle); color: var(--text); font-weight: 500; }
   .tabs { position: relative; display: flex; align-items: stretch; }
+  /* Tabs as one capsule whose thumb slides to the page shown (the details beside a conversation): the system's segmented control. */
+  .tabs-pill { isolation: isolate; align-items: center; padding: 2px; border-radius: 10px; background: var(--bg-subtle); }
+  .tabs-pill > .tab { z-index: 1; flex: 1 1 0; justify-content: center; height: 28px; padding: 0 10px; border-radius: 8px; }
+  .tabs-pill > .tab + .tab { margin-left: 2px; }
+  .tabs-pill > .tab[aria-selected="true"] { color: var(--text); }
+  .tabs-pill > .tabs-indicator { z-index: 0; top: 2px; bottom: 2px; height: auto; border-radius: 8px; background: var(--thumb); box-shadow: var(--sh-thumb); }
   .tab { position: relative; display: inline-flex; flex: none; align-items: center; gap: 5px; height: 36px; padding: 0; border: none; background: transparent; color: var(--text-2); font-size: 13px; line-height: 20px; white-space: nowrap; transition: color var(--dur-fast) var(--ease-standard); }
   .tab + .tab { margin-left: 20px; }
   .tab:hover { color: var(--text); }
@@ -872,7 +893,8 @@
   :root[data-glass="system"] :is(.composer-box, .tool-group, .follow-stream, .find-bar, .floating-bar, .surface-pop, .dialog-pop, .palette-pop, .drawer-left-pop, .sheet-pop, .tooltip-pop, .toast) {
     background: var(--wash); -webkit-backdrop-filter: none; backdrop-filter: none;
   }
-  :root[data-glass="system"] :is(.dialog-pop, .palette-pop, .composer-box, .drawer-left-pop, .sheet-pop, .drawer-pop) { background: var(--wash-thick); }
+  :root[data-glass="system"] :is(.composer-box, .drawer-left-pop, .sheet-pop, .drawer-pop) { background: var(--wash-thick); }
+  :root[data-glass="system"] :is(.surface-pop, .dialog-pop, .palette-pop, .tooltip-pop) { background: var(--wash-pop); }
   /* A drawer that stays beside the page (a Harness's details) is a pane on the floor as the sidebar is: nothing lies under it to be steadied. */
   :root[data-glass="system"] .side-sheet { background: transparent; box-shadow: none; }
   :root[data-glass="system"] .tool-group { background: transparent; }
