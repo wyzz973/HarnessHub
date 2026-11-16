@@ -409,7 +409,8 @@ export class ConversationRoutes {
   /** GET /api/v1/sessions?after=<cursor>&limit= */
   sessions(query: { readonly after?: string | undefined; readonly limit?: string | number | undefined }): SessionListView {
     const limit = whole(query.limit, "limit", 1);
-    const page = asked(() => this.options.reader.list({ ...(query.after === undefined ? {} : { after: query.after as SessionListCursor }), ...(limit === undefined ? {} : { limit }) }));
+    // The pinned stand at the top of the page's list whatever their age: the first page brings them all.
+    const page = asked(() => this.options.reader.list({ ...(query.after === undefined ? { withPinned: true } : { after: query.after as SessionListCursor }), ...(limit === undefined ? {} : { limit }) }));
     return { sessions: page.rows.map(row => this.listRow(row)), next: page.next };
   }
   /** GET /api/v1/sessions/deleted?before=<cursor>&limit= (2026-11-14): the conversations the user deleted, the latest deleted first; each its row of the list and when it was deleted. */

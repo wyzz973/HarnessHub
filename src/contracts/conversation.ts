@@ -482,7 +482,8 @@ export interface SessionListRow {
 }
 /** Opaque. A list reads on from it; there is no ceiling on how many conversations a list reaches. */
 export type SessionListCursor = string & { readonly __sessionListCursor: true };
-export interface SessionListQuery { readonly after?: SessionListCursor; readonly limit?: number }
+/** `withPinned`: the first page (no `after`) also holds, after its own rows, every pinned conversation further down the list, so the pinned are in hand however old they are. */
+export interface SessionListQuery { readonly after?: SessionListCursor; readonly limit?: number; readonly withPinned?: boolean }
 export interface SessionListPage { readonly rows: readonly SessionListRow[]; readonly next: SessionListCursor | null }
 /** A conversation the user deleted (2026-11-14), as the list of the recently deleted has it: its row and when it was deleted. */
 export interface DeletedListRow extends SessionListRow { readonly deletedAt: number }

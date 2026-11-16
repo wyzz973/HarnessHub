@@ -40,10 +40,10 @@ export function DiffLines({ file, headers = true }: { readonly file: DiffFile; r
       <span className="n">{line.kind === "remove" ? line.oldNo : line.newNo}</span><span className="s">{line.kind === "add" ? "+" : line.kind === "remove" ? "-" : ""}</span><span className="c">{line.text}</span>
     </div>)}</>;
 }
-/** Unified diff with line numbers and roles; the text stays exact for copying. Only green marks added lines (ADR-054 §1). */
+/** Unified diff with line numbers and roles; the text stays exact for copying. Only green marks added lines (ADR-054 §1). One file's diff goes without its header lines: the line it is under names the file. */
 export function DiffView({ text, fallback = "改动", className }: { readonly text: string; readonly fallback?: string; readonly className?: string }) {
   const files = parseUnifiedDiff(text, fallback);
-  return <div className={cn("native-diff diff py-1.5", className)}>{files.map((file, index) => <div key={index}><DiffLines file={file}/></div>)}</div>;
+  return <div className={cn("native-diff diff py-1.5", className)}>{files.map((file, index) => <div key={index}><DiffLines file={file} headers={files.length > 1}/></div>)}</div>;
 }
 
 function Section({ title, children }: { readonly title: string; readonly children: ReactNode }) {

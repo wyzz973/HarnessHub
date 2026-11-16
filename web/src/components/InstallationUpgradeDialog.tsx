@@ -1,9 +1,9 @@
-import { ArrowUpRight, Check, Copy } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { HarnessView, InstallationUpgradeCheckView, InstallationView } from "../../../src/contracts/web.js";
 import { errorMessage, type GatewayApi } from "../api.js";
 import { Dialog, useClosingValue } from "../ui/overlay.js";
-import { Notice } from "../ui/primitives.js";
+import { CopyButton, Notice } from "../ui/primitives.js";
 import { Checking, CheckFailed, Command, ConfirmBody, ConfirmFooter, Fact, Facts, SessionLink } from "./UpgradeDialog.js";
 
 /**
@@ -19,12 +19,9 @@ export function upgradeLabel(installation: InstallationView): string {
 
 /** A command the user runs in a terminal, with a way to copy it. */
 function TerminalCommand({ command }: { readonly command: string }) {
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-  useEffect(() => { if (state === "idle") return; const timer = setTimeout(() => setState("idle"), 1600); return () => clearTimeout(timer); }, [state]);
   return <div className="flex items-start gap-2 rounded-control bg-inset py-1.5 pr-1.5 pl-3">
     <code className="upgrade-terminal-command min-w-0 flex-1 py-[3px] text-[12px] leading-5 wrap-anywhere">{command}</code>
-    <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label="复制命令" title={state === "copied" ? "已复制" : state === "failed" ? "无法使用剪贴板，可选中文本后复制" : "复制命令"}
-      onClick={() => { void navigator.clipboard.writeText(command).then(() => setState("copied"), () => setState("failed")); }}>{state === "copied" ? <Check size={14}/> : <Copy size={14}/>}</button>
+    <CopyButton text={command} label="复制命令"/>
   </div>;
 }
 

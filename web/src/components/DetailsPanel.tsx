@@ -1,6 +1,6 @@
 import { BoardAdd, BoardEntries, TaskRoster, useTask, type TaskBoardAccess, type TaskSnapshot } from "./TaskBoard.js";
-import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Circle, CircleDollarSign, Clock, Columns2, Copy, FileText, Folder, FolderOpen, FolderTree, GitBranch, GitBranchPlus, Plug, Plus, Shrink, Space, Timer, WrapText, X } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Circle, CircleDollarSign, Clock, Columns2, FileText, Folder, FolderOpen, FolderTree, GitBranch, GitBranchPlus, Plug, Plus, Shrink, Space, Timer, WrapText, X } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { ITEM_STATUS_WORDS, TURN_STATUS_WORDS } from "../../../src/contracts/protocol-words.js";
 import { moneyText } from "../../../src/contracts/protocol-lines.js";
@@ -21,7 +21,7 @@ import { oneLine, summarizeGroup } from "../lib/protocol/work.js";
 import { packetFacts } from "../lib/relay-state.js";
 import { finished, knownToolDetail, parseUnifiedDiff, readToolDetail, type DiffFile } from "../lib/turn.js";
 import { Collapsible } from "../ui/motion.js";
-import { EmptyState, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitives.js";
+import { CopyButton, EmptyState, Segmented, Spinner, StatusDot, Tabs } from "../ui/primitives.js";
 import { type ToolDetailLoader } from "./Activity.js";
 import { DiffBody, type DiffRemark } from "./DiffBody.js";
 import { CommitDialog, EditorRow, FileView, PullRequestRow, type WorkspaceAccess } from "./WorkspaceTools.js";
@@ -269,11 +269,26 @@ export type ChangesScope = "turn" | "all" | "task";
  * The tabs' underline slides to the chosen tab (Motion board #24). How the panel comes in is its container's (ChatPage slides the content in 60 ms after the panel, #23;
  * a drawer or a sheet moves by itself): the panel adds no motion of its own, so its content never slides twice.
  */
+/** Whether each folder asked about is a Git repository, as last read: Git's scopes are offered only where it is, and at once where it was. */
+const repositories = new Map<string, boolean>();
+function useRepository(folder: string, sessionId: string, load: PanelProps["loadWorkspace"]): boolean {
+  const key = sessionId + "\n" + folder, [known, setKnown] = useState<{ readonly key: string; readonly is: boolean } | null>(null), reader = useRef(load);
+  reader.current = load;
+  useEffect(() => {
+    if (reader.current === undefined) return;
+    const controller = new AbortController();
+    reader.current(controller.signal).then(facts => { repositories.set(key, facts.git !== undefined); if (!controller.signal.aborted) setKnown({ key, is: facts.git !== undefined }); }, () => undefined);
+    return () => controller.abort();
+  }, [key]);
+  return (known?.key === key ? known.is : repositories.get(key)) === true;
+}
+
 export function DetailsPanel(props: PanelProps) {
   const { session, tab } = props;
   const runs = session.runs;
   const selected = runs.find(run => run.id === props.runId) ?? runs.at(-1) ?? null;
   const changes = useConversationChanges(session, tab === "changes" || tab === "overview", props.loadToolDetail, props.loadChanges);
+  const repository = useRepository(session.workspace, session.id, props.loadWorkspace);
   const found = latestPlan(runs);
   const planned = found !== undefined ? { steps: found.plan.steps, explanation: found.plan.explanation, owner: found.run.protocol.executor.harness, live: !finished(found.run.status) }
     : changes.plan === null ? undefined : { ...changes.plan, owner: props.harnesses.find(row => row.id === changes.plan!.owner)?.name ?? changes.plan.owner, live: false };
@@ -320,7 +335,7 @@ export function DetailsPanel(props: PanelProps) {
     <div className="scroll-area min-h-0 flex-1" role="tabpanel" id="details-tabpanel" aria-labelledby={`details-tab-${shown}`}>
       {viewing !== null && props.tools ? <FileView path={viewing} access={props.tools} onReveal={props.onReveal}/>
         : shown === "changes" ? <Changes changes={changes} selected={selected} workspace={session.workspace} name={name} sessionId={session.id}
-          members={members} want={want} onOpenSession={props.onOpenSession} onReveal={props.onReveal} onRemark={props.onRemark} onOpenFile={openFile} git={props.git}/>
+          members={members} want={want} onOpenSession={props.onOpenSession} onReveal={props.onReveal} onRemark={props.onRemark} onOpenFile={openFile} git={repository ? props.git : undefined}/>
         : shown === "process" ? <>
           {kept || background.length || session.retention?.upgraded || session.retention?.outside ? <div className="hairline-b"><Background session={session} kept={kept} items={background} busy={props.busy} onEndProcess={props.onEndProcess} name={name}/></div> : null}
           {selected ? <Process run={selected} runs={runs} onRun={props.onRun} loadToolDetail={props.loadToolDetail} name={name} waiting={run => waitingWords(session, run)}/> : <EmptyState icon={<Clock size={28}/>} title="还没有执行记录"/>}
@@ -587,8 +602,6 @@ function FileDiff({ file, workspace, open, wrap, split, onToggle, name, onReveal
     /** How far in it stands, under its folders (the list by folder); and the name shown there in place of its path. */
     readonly depth?: number; readonly label?: string | undefined }) {
   const panel = useId(), row = useRef<HTMLLIElement>(null), shown = workspacePath(file.path, workspace);
-  const [copied, setCopied] = useState(false);
-  useEffect(() => { if (!copied) return; const timer = setTimeout(() => setCopied(false), 1600); return () => clearTimeout(timer); }, [copied]);
   // The file's row stays at the top of the panel while its diff scrolls under it (after T3 Code's sticky headers).
   return <li ref={row} className="group/file relative flex min-w-0 flex-col" data-path={file.path}>
     <div className="sticky top-0 z-[2] bg-surface">
@@ -599,8 +612,7 @@ function FileDiff({ file, workspace, open, wrap, split, onToggle, name, onReveal
         {file.harnessIds.map(id => <BrandIcon key={id} brand={id} name={name(id)} size={16}/>)}<Lines add={file.add} del={file.del}/></span>
     </button>
     <span className="absolute top-1 right-1.5 flex items-center opacity-0 transition-opacity duration-120 ease-standard group-hover/file:opacity-100 group-has-[:focus-visible]/file:opacity-100">
-      <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"复制路径：" + shown} title={copied ? "已复制" : "复制路径"} onClick={() => { void navigator.clipboard.writeText(shown).then(() => setCopied(true), () => undefined); }}>
-        {copied ? <Check size={13} aria-hidden="true"/> : <Copy size={13} aria-hidden="true"/>}</button>
+      <CopyButton text={shown} label={"复制路径：" + shown} tip="复制路径" size={13}/>
       {onOpenFile ? <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"打开文件：" + shown} title="打开文件" onClick={() => onOpenFile(file.path)}><FileText size={13} aria-hidden="true"/></button> : null}
       {onReveal ? <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={"在访达中显示：" + shown} title="在访达中显示" onClick={() => onReveal(file.path)}><FolderOpen size={13} aria-hidden="true"/></button> : null}
     </span>
@@ -634,6 +646,15 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
   const byFolder = () => setTree(value => { writeTree(!value); return !value; });
   const treeButton = <button type="button" className="icon-btn size-7 text-fg-3" aria-label="按文件夹显示" aria-pressed={tree} title={tree ? "按文件夹显示：开" : "按文件夹显示：关"} onClick={byFolder}><FolderTree size={14}/></button>;
   const beside = () => setSplit(value => { try { localStorage.setItem(SPLIT_KEY, value ? "0" : "1"); } catch { /* lasts for this page only */ } return !value; });
+  // Two sides need room: in a panel narrower than 560 px the lines stand one under the other until it is drawn wider (the choice is kept).
+  const [frame, setFrame] = useState<HTMLDivElement | null>(null), [roomy, setRoomy] = useState(true), side = split && roomy;
+  useLayoutEffect(() => {
+    if (frame === null) return;
+    const measure = () => setRoomy(frame.clientWidth >= 560);
+    measure();
+    const observer = new ResizeObserver(measure); observer.observe(frame);
+    return () => observer.disconnect();
+  }, [frame]);
   const fold = () => setWrap(value => { try { localStorage.setItem(WRAP_KEY, value ? "0" : "1"); } catch { /* lasts for this page only */ } return !value; });
   // The files the user opened or closed by hand; until then a short list is open whole and a long one at its first file.
   const [chosen, setChosen] = useState<ReadonlySet<string> | null>(null);
@@ -661,25 +682,25 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
   const every = files.length > 0 && files.every(file => open.has(file.path));
   const toggle = (path: string) => { const next = new Set(open); if (!next.delete(path)) next.add(path); setChosen(next); };
   const add = files.reduce((sum, file) => sum + file.add, 0), del = files.reduce((sum, file) => sum + file.del, 0);
-  return <div className="flex flex-col">
-    <div className="flex min-h-11 items-center gap-2 pr-2.5 pl-3.5">
-      {/* The Hub's scopes, and Git's beside them; while a Git scope is shown, none of the Hub's is chosen. */}
+  return <div ref={setFrame} className="flex flex-col">
+    <div className="flex min-h-11 flex-wrap items-center gap-x-2 gap-y-1 py-1.5 pr-2.5 pl-3.5">
+      {/* The Hub's scopes, and Git's beside them; while a Git scope is shown, none of the Hub's is chosen. What does not fit beside them goes under them. */}
       <Segmented label="改动范围" value={gitScope !== null ? "none" as unknown as ChangesScope : shownScope} onChange={value => { setGitScope(null); setScope(value); }}
         options={[{ value: "turn" as const, label: "本轮" }, { value: "all" as const, label: "这段对话" }, ...(others.length > 0 ? [{ value: "task" as const, label: "其他对话" }] : [])]}/>
       {git !== undefined ? <GitScopeMenu access={git} scope={gitScope} onScope={setGitScope}/> : null}
       {gitScope !== null ? <span className="ml-auto flex flex-none items-center gap-1">
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label="忽略空白" aria-pressed={whitespace} title={whitespace ? "忽略空白：开" : "忽略空白：关"} onClick={() => setWhitespace(value => !value)}><Space size={14}/></button>
         {treeButton}
-        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="并排显示" aria-pressed={split} title={split ? "并排显示：开" : "并排显示：关"} onClick={beside}><Columns2 size={14}/></button>
-        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap || split} disabled={split} title={split ? "并排时长行总是折行" : wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14}/></button></span>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="并排显示" aria-pressed={split} title={!split ? "并排显示：关" : roomy ? "并排显示：开" : "并排显示：开（面板拉宽后并排）"} onClick={beside}><Columns2 size={14}/></button>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap || side} disabled={side} title={side ? "并排时长行总是折行" : wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14}/></button></span>
       : shownScope !== "task" && files.length > 0 ? <span className="ml-auto flex flex-none items-center gap-1"><span className="mr-1 flex items-center gap-1.5"><Lines add={add} del={del}/></span>
         {treeButton}
-        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="并排显示" aria-pressed={split} title={split ? "并排显示：开" : "并排显示：关"} onClick={beside}><Columns2 size={14}/></button>
-        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap || split} disabled={split} title={split ? "并排时长行总是折行" : wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14}/></button>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="并排显示" aria-pressed={split} title={!split ? "并排显示：关" : roomy ? "并排显示：开" : "并排显示：开（面板拉宽后并排）"} onClick={beside}><Columns2 size={14}/></button>
+        <button type="button" className="icon-btn size-7 text-fg-3" aria-label="长行折行" aria-pressed={wrap || side} disabled={side} title={side ? "并排时长行总是折行" : wrap ? "长行折行：开" : "长行折行：关"} onClick={fold}><WrapText size={14}/></button>
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label={every ? "全部收起" : "全部展开"} title={every ? "全部收起" : "全部展开"} onClick={() => setChosen(every ? new Set() : new Set(files.map(file => file.path)))}>
           {every ? <ChevronsDownUp size={14}/> : <ChevronsUpDown size={14}/>}</button></span> : null}
     </div>
-    {gitScope !== null && git !== undefined ? <GitChanges access={git} scope={gitScope} workspace={workspace} wrap={wrap} split={split} whitespace={whitespace} tree={tree} onRemark={onRemark}
+    {gitScope !== null && git !== undefined ? <GitChanges access={git} scope={gitScope} workspace={workspace} wrap={wrap} split={side} whitespace={whitespace} tree={tree} onRemark={onRemark}
       stamp={String(changes.edits) + ":" + changes.files.length + ":" + (selected?.id ?? "") + ":" + (selected?.status ?? "")}/>
       : shownScope === "task" ? <div className="flex flex-col gap-3 px-2.5 pb-4">{others.map(member => <section key={member.sessionId} className="flex min-w-0 flex-col" aria-label={member.harness + " 改动的文件"}>
       <div className="flex min-w-0 items-center gap-2 px-2 py-1.5"><BrandIcon brand={member.harnessId} name={member.harness} size={18}/>
@@ -689,8 +710,8 @@ function Changes({ changes, selected, workspace, name, sessionId, members, want,
     </section>)}</div> : <>
       {files.length ? <ul ref={list} className="m-0 flex list-none flex-col gap-px px-2.5 pb-2" aria-label="改动的文件">{tree
         ? <FileTree items={files} workspace={workspace} pathOf={file => file.path} linesOf={file => ({ add: file.add, del: file.del })} renderFile={(file, depth, label) =>
-          <FileDiff key={file.path} file={file} workspace={workspace} open={open.has(file.path)} wrap={wrap} split={split} onToggle={() => toggle(file.path)} name={name} onReveal={onReveal} onRemark={onRemark} onOpenFile={onOpenFile} depth={depth} label={label}/>}/>
-        : files.map(file => <FileDiff key={file.path} file={file} workspace={workspace} open={open.has(file.path)} wrap={wrap} split={split} onToggle={() => toggle(file.path)} name={name} onReveal={onReveal} onRemark={onRemark} onOpenFile={onOpenFile}/>)}</ul> : null}
+          <FileDiff key={file.path} file={file} workspace={workspace} open={open.has(file.path)} wrap={wrap} split={side} onToggle={() => toggle(file.path)} name={name} onReveal={onReveal} onRemark={onRemark} onOpenFile={onOpenFile} depth={depth} label={label}/>}/>
+        : files.map(file => <FileDiff key={file.path} file={file} workspace={workspace} open={open.has(file.path)} wrap={wrap} split={side} onToggle={() => toggle(file.path)} name={name} onReveal={onReveal} onRemark={onRemark} onOpenFile={onOpenFile}/>)}</ul> : null}
       {changes.unread > 0 ? <p className="m-0 flex items-center gap-2 px-4 pb-3 text-caption text-fg-3"><button type="button" className="link-btn text-caption" onClick={changes.more}>更早的 {changes.unread} 处编辑</button></p> : null}
       {changes.loading ? <p className="m-0 flex items-center gap-1.5 px-4 pb-3 text-caption text-fg-3"><Spinner size={12} label=""/>正在读取改动…</p> : null}
       {changes.failures.length ? <p className="m-0 px-4 pb-3 text-caption text-red">{changes.failures.length} 处改动读取失败：{changes.failures[0]}</p> : null}

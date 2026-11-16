@@ -719,6 +719,13 @@
   .markdown li { margin: .25em 0; }
   .markdown li::marker { color: var(--text-2); }
   .markdown li > p { margin: 0; }
+  /* A list inside an item stands right under it and leaves no gap of its own after it */
+  .markdown li > ul, .markdown li > ol { margin: .25em 0 0; }
+  /* A task list: the box stands where the bullet would; it shows a state and is not pressed, so it is drawn as the app draws one, never dimmed */
+  .markdown ul.contains-task-list { list-style: none; padding-left: .1em; }
+  .markdown .task-list-item > input[type="checkbox"] { appearance: none; width: 14px; height: 14px; margin: 0 8px 0 0; vertical-align: -2px; border: 1px solid var(--text-3); border-radius: 4px; background: transparent; opacity: 1; }
+  .markdown .task-list-item > input[type="checkbox"]:checked { border-color: transparent;
+    background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14' fill='none' stroke='white' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.6 7.4l2.2 2.2 4.6-5'/%3E%3C/svg%3E") center / 14px no-repeat; }
   .markdown blockquote { margin: 0 0 .7em; padding: 2px 0 2px 12px; border-left: 2px solid var(--border-strong); color: var(--text-2); }
   /* A quote's line stops 2 px under its last line wherever the quote is, instead of running on by its last block's margin */
   .markdown blockquote > :last-child { margin-bottom: 0; }
@@ -728,9 +735,13 @@
   .markdown table { border-collapse: collapse; font-size: 13px; line-height: 20px; min-width: 100%; }
   .markdown th, .markdown td { padding: 6px 10px; border-bottom: .5px solid var(--border-strong); text-align: left; vertical-align: top; }
   .markdown th { color: var(--text-2); font-weight: 600; }
+  /* The first column starts at the text's own edge, and the last ends at it */
+  .markdown :is(th, td):first-child { padding-left: 0; }
+  .markdown :is(th, td):last-child { padding-right: 0; }
   .markdown .table-scroll { overflow-x: auto; margin: 0 0 .7em; }
+  /* A table or a code block that arrives comes in whole, once (its words were let out before it could be drawn as one) */
+  .markdown.is-streaming :is(.table-scroll, .code-block) { animation: hh-fade-in var(--dur-base) var(--ease-out) both; }
   .markdown .image-alt { color: var(--text-3); font-style: italic; }
-  .markdown input[type="checkbox"] { margin: 0 6px 0 0; vertical-align: -1px; }
 
   /* Code blocks; Shiki gives every token a light and a dark color */
   .code-block { position: relative; margin: 0 0 .7em; border-radius: var(--radius-block); background: var(--bg-inset); box-shadow: inset 0 0 0 .5px var(--border); overflow: hidden; }
@@ -759,8 +770,9 @@
   .diff.is-wrapped .diff-line { min-width: 0; }
   .diff.is-wrapped .diff-line > .c { min-width: 0; flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
   /* A line's number starts a remark on it: under the pointer the number gives its place to the mark. */
-  .diff-number { display: inline-flex; align-items: center; justify-content: flex-end; border: none; background: transparent; font: inherit; cursor: pointer; }
-  .diff-number > svg { display: none; color: var(--accent-text); }
+  /* The number stays at the line's first row when the line is folded onto several */
+  .diff-number { display: inline-flex; align-items: flex-start; justify-content: flex-end; border: none; background: transparent; font: inherit; cursor: pointer; }
+  .diff-number > svg { display: none; margin-top: 4px; color: var(--accent-text); }
   .diff-number:hover > span, .diff-number:focus-visible > span { display: none; }
   .diff-number:hover > svg, .diff-number:focus-visible > svg { display: block; }
   :is(.diff-line, .diff-pair).is-chosen { box-shadow: inset 2px 0 0 var(--accent); }

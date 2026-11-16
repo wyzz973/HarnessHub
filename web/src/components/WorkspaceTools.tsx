@@ -1,9 +1,9 @@
-import { ChevronDown, Copy, FolderOpen, GitBranch, GitPullRequest, SquareArrowOutUpRight } from "lucide-react";
+import { ChevronDown, FolderOpen, GitBranch, GitPullRequest, SquareArrowOutUpRight } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { errorMessage } from "../api.js";
 import { cn } from "../lib/cn.js";
 import { Dialog, DIALOG_ACTIONS, DIALOG_COLUMN, Menu } from "../ui/overlay.js";
-import { Spinner } from "../ui/primitives.js";
+import { CopyButton, Spinner } from "../ui/primitives.js";
 import { FileMark, Lines } from "./FileBits.js";
 
 /*
@@ -210,7 +210,7 @@ function PullRequestDialog({ open, onClose, access, status, suggestion, onDone }
  * with it — its path copied, the file shown in the Finder or opened in an editor. A file that is not text says so with its size.
  */
 export function FileView({ path, access, onReveal }: { readonly path: string; readonly access: WorkspaceAccess; readonly onReveal?: ((path: string) => void) | undefined }) {
-  const [pages, setPages] = useState<readonly FilePage[]>([]), [problem, setProblem] = useState<string | null>(null), [reading, setReading] = useState(false), [copied, setCopied] = useState(false);
+  const [pages, setPages] = useState<readonly FilePage[]>([]), [problem, setProblem] = useState<string | null>(null), [reading, setReading] = useState(false);
   const read = (offset: number, signal: AbortSignal) => {
     if (access.file === undefined) return;
     setReading(true); setProblem(null);
@@ -218,14 +218,13 @@ export function FileView({ path, access, onReveal }: { readonly path: string; re
       .finally(() => { if (!signal.aborted) setReading(false); });
   };
   useEffect(() => { const controller = new AbortController(); setPages([]); read(0, controller.signal); return () => controller.abort(); }, [path]);
-  useEffect(() => { if (!copied) return; const timer = setTimeout(() => setCopied(false), 1600); return () => clearTimeout(timer); }, [copied]);
   const first = pages[0], last = pages.at(-1), lines = useMemo(() => pages.map(page => page.text ?? "").join("").split("\n"), [pages]);
   const editor = access.editors && access.openIn ? preferredEditor(access.editors) : undefined;
   const size = first === undefined ? "" : first.size >= 1024 * 1024 ? (first.size / 1024 / 1024).toFixed(1) + " MB" : Math.max(1, Math.round(first.size / 1024)) + " KB";
   return <div className="file-view flex min-h-0 flex-col">
     <div className="flex min-h-11 items-center gap-1 pr-2.5 pl-[18px]">
       <span className="mono min-w-0 flex-1 trunc text-code text-fg-2" title={path}>{path}</span>{first ? <span className="flex-none px-1 text-caption text-fg-3 tabular-nums">{size}</span> : null}
-      <button type="button" className="icon-btn size-7 text-fg-3" aria-label="复制路径" title={copied ? "已复制" : "复制路径"} onClick={() => { void navigator.clipboard.writeText(path).then(() => setCopied(true), () => undefined); }}><Copy size={13} aria-hidden="true"/></button>
+      <CopyButton text={path} label="复制路径" size={13} className="size-7"/>
       {onReveal ? <button type="button" className="icon-btn size-7 text-fg-3" aria-label="在访达中显示" title="在访达中显示" onClick={() => onReveal(path)}><FolderOpen size={13} aria-hidden="true"/></button> : null}
       {editor ? <button type="button" className="icon-btn size-7 text-fg-3" aria-label={"在 " + editor.name + " 里打开"} title={"在 " + editor.name + " 里打开"} onClick={() => access.openIn?.(editor.id, path)}><SquareArrowOutUpRight size={13} aria-hidden="true"/></button> : null}
     </div>

@@ -1,5 +1,5 @@
-import { Bot, Brain, Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleDashed, CircleHelp, CircleStop, Copy, FilePen, FilePlus, FileText, GitBranch, Globe, Info, Plug, RotateCcw, Search, SquareTerminal, Wrench } from "lucide-react";
-import { createContext, memo, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Bot, Brain, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleDashed, CircleHelp, CircleStop, FilePen, FilePlus, FileText, GitBranch, Globe, Info, Plug, RotateCcw, Search, SquareTerminal, Wrench } from "lucide-react";
+import { createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { ReadItem, ReadTurn } from "../../../src/contracts/protocol-read.js";
 import type { ReasoningItem, SwitchItem, WorkItem } from "../../../src/contracts/protocol.js";
@@ -15,7 +15,7 @@ import { arrange, gapOf, lay, opensByDefault, reasoningLabel, quietBlocks, summa
 import { utf8Length } from "../lib/protocol/window.js";
 import { rememberShown, shownSteps } from "../lib/turn.js";
 import { Collapsible, motionStyle, SwapText } from "../ui/motion.js";
-import { Spinner } from "../ui/primitives.js";
+import { CopyIcon, Spinner, useCopy } from "../ui/primitives.js";
 import { NoticeList, OutputList, StoredDetail, type ToolDetailLoader } from "./Activity.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { FileMark, FilePath, Lines } from "./FileBits.js";
@@ -55,6 +55,8 @@ function MoreText({ runId, seq, rest, label }: { readonly runId: string; readonl
 interface TurnContext {
   readonly turn: ReadTurn; readonly run: PublicRun;
   readonly reads: TurnReads | undefined; readonly over: boolean; readonly cancelling: boolean; readonly detailed: boolean;
+  /** The Run has ended, though the Turn may still be letting its reply's words out (`over` waits for them); and where each text says that it is all shown. */
+  readonly ended: boolean; readonly shown: (length: number, id?: string) => void;
   readonly children: ReadonlyMap<string, readonly ReadItem[]>;
   readonly message: (id: string) => PublicMessage | undefined;
   readonly loadDetail: ToolDetailLoader | undefined;
@@ -221,7 +223,7 @@ function ItemView({ item }: { readonly item: ReadItem }) {
     case "reasoning": return <ul className="m-0 list-none p-0"><ReasoningRow item={item}/></ul>;
     case "assistant_message": {
       const text = ctx.message(item.messageId)?.text ?? "", rest = leftOut(item, text);
-      return text || rest > 0 ? <>{text ? <div className="contents" data-message-id={item.messageId}><StreamingMarkdown text={text} isStreaming={!ctx.over && !ctx.cancelling && item.status === "running" && rest === 0} caret={rest === 0} className="text-reading"/></div> : null}
+      return text || rest > 0 ? <>{text ? <div className="contents" data-message-id={item.messageId}><StreamingMarkdown text={text} isStreaming={!ctx.ended && !ctx.cancelling && item.status === "running" && rest === 0} caret={rest === 0} className="text-reading" onShown={ctx.shown} shownId={item.messageId}/></div> : null}
         {rest > 0 ? <MoreText runId={ctx.run.id} seq={item.seq} rest={rest} label={text ? "显示更多" : "显示这段回复"}/> : null}</> : null;
     }
     case "plan_proposal": return <div className="plan-proposal flex min-w-0 flex-col gap-1"><span className="px-1.5 text-caption text-fg-3">方案</span><StreamingMarkdown text={item.markdown} isStreaming={false} className="text-reading"/></div>;
@@ -377,19 +379,6 @@ function LiveLine({ queue, startupHint, waiting, replying }: { readonly queue: Q
 /** The explanation of a Turn that waits in the queue, with the deadline counting down. */
 function QueuedLine({ queue }: { readonly queue: QueueNotice }) { return <QueuedTurn queue={queue}/>; }
 
-function useCopy(text: string): { readonly state: "idle" | "copied" | "failed"; readonly write: () => void } {
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle"), timer = useRef<ReturnType<typeof setTimeout> | null>(null), mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; if (timer.current) clearTimeout(timer.current); }; }, []);
-  const write = () => {
-    void navigator.clipboard.writeText(text).then(() => {
-      if (!mounted.current) return;
-      setState("copied");
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => setState("idle"), 1800);
-    }, () => { if (mounted.current) setState("failed"); });
-  };
-  return { state, write };
-}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The Turn
@@ -488,11 +477,19 @@ export const ProtocolTurn = memo(function ProtocolTurn(props: ProtocolTurnProps)
 function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetry, loadToolDetail, onBranch, onResend, restore, onSelectBranch, branchBusy, onDetails, detailsOpen, onViewPacket, startupHint, queue, waiting, reads, workspace, onOpenChanges, quiet: way, children }: ProtocolTurnProps & { readonly turn: ReadTurn }) {
   // The reply is a message of the conversation, which arrives on the stream apart from the Turn's other items: its words are shown at once.
   const replyMessage = message(run.assistantMessageId), turn = useMemo(() => withReply(given, replyMessage), [given, replyMessage]);
-  const arrangement = useMemo(() => arrange(turn, { asking: waiting === "approval" }), [turn, waiting]), over = arrangement.over, cancelling = run.cancelRequested;
+  const arrangement = useMemo(() => arrange(turn, { asking: waiting === "approval" }), [turn, waiting]), ended = arrangement.over, cancelling = run.cancelRequested;
   // A hand-over line comes in only when the Turn that carries it was accepted moments ago; one drawn with the page's history stays still.
   const [recent] = useState(() => run.timing !== undefined && Date.now() - run.timing.acceptedAt < 5000 && !turnIsOver(run));
   // A Turn watched to its end brings its footer in; one found ended has it from the start.
   const [watched] = useState(() => !turnIsOver(run));
+  // A Turn watched to its end ends in front of the reader once the words of its reply are all out: they are let out at a pace and may be behind when the
+  // Run ends, and a footer drawn then would be pushed down line by line. Until they are out it stands as it did while it ran; never for more than 1.5 s.
+  const lastReply = useMemo(() => { for (let index = turn.items.length - 1; index >= 0; index--) { const item = turn.items[index]!; if (item.type === "assistant_message") return item.messageId; } return undefined; }, [turn.items]);
+  const [written, setWritten] = useState<{ readonly id: string; readonly length: number } | null>(null), [held, setHeld] = useState(false);
+  const shown = useCallback((length: number, id?: string) => { if (id !== undefined) setWritten(current => current !== null && current.id === id && current.length === length ? current : { id, length }); }, []);
+  useEffect(() => { if (!ended || !watched) return; const timer = setTimeout(() => setHeld(true), 1500); return () => clearTimeout(timer); }, [ended, watched]);
+  const lastText = lastReply === undefined ? "" : replyMessage?.id === lastReply ? replyMessage.text : message(lastReply)?.text ?? "";
+  const over = ended && (!watched || held || lastText === "" || written !== null && written.id === lastReply && written.length === lastText.length);
   // The items the reader has seen: a Turn found as it is has none that come in; one watched running has each as it arrives.
   const [seen] = useState<Set<string>>(() => shownSteps(run.id) ?? new Set(turn.items.map(item => item.id)));
   useLayoutEffect(() => { rememberShown(run.id, seen); }, [run.id, seen]);
@@ -525,8 +522,8 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
     element.classList.add("is-settling"); step();
     return () => { cancelAnimationFrame(frame); element.classList.remove("is-settling"); element.style.removeProperty("height"); };
   }, [over]);
-  const context = useMemo<TurnContext>(() => ({ turn, run, reads, over, cancelling, detailed, children: arrangement.children, message, loadDetail: loadToolDetail, seen, onViewPacket, touch: () => { touched.current = true; } }),
-    [turn, run, reads, over, cancelling, detailed, arrangement.children, message, loadToolDetail, seen, onViewPacket]);
+  const context = useMemo<TurnContext>(() => ({ turn, run, reads, over, ended, shown, cancelling, detailed, children: arrangement.children, message, loadDetail: loadToolDetail, seen, onViewPacket, touch: () => { touched.current = true; } }),
+    [turn, run, reads, over, ended, shown, cancelling, detailed, arrangement.children, message, loadToolDetail, seen, onViewPacket]);
   const pieces = useMemo(() => segments(arrangement.blocks), [arrangement.blocks]);
   // A Turn that ended well folds what it did before its answer behind one line; one that failed or was stopped stays as it stands, where it went wrong in sight.
   const tail = pieces.at(-1), folds = over && !detailed && way === undefined && turn.status === "completed" && !stays.current;
@@ -543,7 +540,7 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
   // What the Harness said in this Turn, for copying and for the line that says the Turn is replying: its segments, which stand between its actions, one after another.
   const replies = [...new Set(turn.items.flatMap(item => item.type === "assistant_message" ? [item.messageId] : []))].map(id => message(id)?.text ?? "");
   const reply = replies.filter(Boolean).join("\n\n");
-  const copy = useCopy(reply);
+  const copy = useCopy();
   const retry = onRetry !== undefined && (turn.status === "failed" || turn.status === "cancelled");
   // A reply that ended may be tried again: the same message sent again from its place, on a branch of its own.
   const again = onRetry !== undefined && !retry && over;
@@ -575,7 +572,7 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
         {over ? <div className={cn("turn-meta -mt-1 flex min-h-7 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-caption text-fg-3", watched && "motion-fade-in")}>
           <span className="turn-footer flex min-w-0 items-center gap-1.5"><BrandIcon brand={turn.executor.harnessId} name={harness} size={16}/><span className="min-w-0 break-words" title={turnFooter(turn)}>{turnByline(turn)}</span></span>
           <div className={cn("message-actions flex items-center gap-0.5 transition-opacity duration-150", quiet && "[@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100")}>
-            {reply ? <ActionButton label={copy.state === "copied" ? "已复制回复" : "复制回复"} onClick={copy.write}>{copy.state === "copied" ? <Check size={14}/> : <Copy size={14}/>}</ActionButton> : null}
+            {reply ? <ActionButton label={copy.state === "copied" ? "已复制回复" : "复制回复"} onClick={() => copy.copy(reply)}><CopyIcon copied={copy.state === "copied"}/></ActionButton> : null}
             {onBranch && (turn.status === "completed" || turn.status === "failed" || turn.status === "cancelled") ? <ActionButton label="从这里分支" onClick={() => onBranch(run.id)}><GitBranch size={14}/></ActionButton> : null}
             {onDetails ? <ActionButton label="执行详情" pressed={detailsOpen ?? false} onClick={() => onDetails(run.id)}><Info size={14}/></ActionButton> : null}
             {again ? <ActionButton label="重试这条回复" onClick={() => onRetry(run.input, run.attachments)}><RotateCcw size={14}/></ActionButton> : null}
@@ -588,6 +585,7 @@ function TurnView({ run, turn: given, message, arrived, detailed, onEdit, onRetr
   })}</Context.Provider>;
 }
 
+const NOT_HEARD = () => { /* the panel waits for nothing */ };
 /**
  * The steps of a Turn for the details panel: its actions, thoughts and compactions as the transcript draws them, each run of them open, and
  * not its reply, its notices or the rest. Nothing in it comes in: the panel shows what has happened.
@@ -597,7 +595,7 @@ export function TurnSteps({ run, turn, loadDetail, asking }: { readonly run: Pub
   const [seen] = useState<Set<string>>(() => new Set(turn.items.map(item => item.id)));
   useLayoutEffect(() => { for (const item of turn.items) seen.add(item.id); }, [turn.items, seen]);
   const blocks = useMemo(() => arrangement.blocks.filter(block => block.kind === "work" || block.item.type === "reasoning" || block.item.type === "context_event"), [arrangement.blocks]);
-  const context = useMemo<TurnContext>(() => ({ turn, run, reads: undefined, over: arrangement.over, cancelling: false, detailed: true, children: arrangement.children, message: () => undefined, loadDetail, seen, onViewPacket: undefined, touch: () => { /* nothing folds in the panel */ } }),
+  const context = useMemo<TurnContext>(() => ({ turn, run, reads: undefined, over: arrangement.over, ended: arrangement.over, shown: NOT_HEARD, cancelling: false, detailed: true, children: arrangement.children, message: () => undefined, loadDetail, seen, onViewPacket: undefined, touch: () => { /* nothing folds in the panel */ } }),
     [turn, run, arrangement, loadDetail, seen]);
   if (blocks.length === 0) return null;
   return <Context.Provider value={context}><div className="turn-steps flex min-w-0 flex-col gap-px" role="group" aria-label="这一轮的步骤"><Blocks blocks={blocks}/></div></Context.Provider>;

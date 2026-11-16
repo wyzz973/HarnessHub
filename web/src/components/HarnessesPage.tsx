@@ -1,5 +1,5 @@
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
-import { ArrowRight, Check, ChevronRight, CircleAlert, CircleArrowUp, CircleCheck, CircleDashed, Clock3, Copy, Info, Package, RefreshCw, ScanSearch, Search, Square, Terminal, X } from "lucide-react";
+import { ArrowRight, ChevronRight, CircleAlert, CircleArrowUp, CircleCheck, CircleDashed, Clock3, Info, Package, RefreshCw, ScanSearch, Search, Square, Terminal, X } from "lucide-react";
 import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent, ReactNode } from "react";
 import type { HarnessEntrySource, HarnessReadinessView, HarnessView, InstallationView, SessionSummary } from "../../../src/contracts/web.js";
@@ -9,7 +9,7 @@ import { cn } from "../lib/cn.js";
 import { ago } from "../lib/format.js";
 import { Collapsible, DrawnCheck, SwapText } from "../ui/motion.js";
 import { Dialog } from "../ui/overlay.js";
-import { Badge, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
+import { Badge, CopyButton, Notice, Spinner, StatusPill, Tip } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { readinessStatus } from "./Composer.js";
 import { PageShell } from "./PageShell.js";
@@ -575,12 +575,9 @@ function CatalogRow({ harness, way, first, busy, status, failure, onOpen, onInst
 
 /** A command shown for copying, as the details show every command (board: "在原程序里继续对话"). */
 function CommandBox({ command, label }: { readonly command: string; readonly label: string }) {
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-  useEffect(() => { if (state === "idle") return; const timer = setTimeout(() => setState("idle"), 1600); return () => clearTimeout(timer); }, [state]);
   return <div className="flex items-start gap-2 rounded-control bg-inset py-1.5 pr-1.5 pl-3">
     <code className="min-w-0 flex-1 py-[3px] text-[12px] leading-[20px] wrap-anywhere">{command}</code>
-    <button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label={label} title={state === "copied" ? "已复制" : state === "failed" ? "无法使用剪贴板，可选中文本后复制" : label}
-      onClick={() => { void navigator.clipboard.writeText(command).then(() => setState("copied"), () => setState("failed")); }}>{state === "copied" ? <Check size={14}/> : <Copy size={14}/>}</button>
+    <CopyButton text={command} label={label}/>
   </div>;
 }
 /** A section's title in the details; beside an action (a task picker) it stays on one line and the action gives way. */
