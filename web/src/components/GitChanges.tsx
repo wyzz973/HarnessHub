@@ -36,10 +36,6 @@ export interface GitAccess {
 }
 
 /** What a scope is called, as its menu and its heading say it. */
-export function scopeName(scope: GitScope): string {
-  return scope.kind === "uncommitted" ? "未提交的改动" : scope.kind === "branch" ? "相对 " + (scope.base ?? "默认分支") + " 的全部改动" : scope.kind === "turn" ? "第 " + (scope.ordinal + 1) + " 轮改了什么"
-    : "提交 " + scope.sha.slice(0, 7) + (scope.subject ? " · " + scope.subject : "");
-}
 
 /**
  * The Git scopes offered beside the Hub's, in one list that can be searched (after T3 Code's scope menu and its base branch chooser): what is not committed, the branch
@@ -156,18 +152,20 @@ export function GitChanges({ access, scope, workspace, wrap, split, whitespace, 
   const every = files.length > 0 && files.every(file => open.has(file.path));
   const add = files.reduce((sum, file) => sum + (file.added ?? 0), 0), del = files.reduce((sum, file) => sum + (file.removed ?? 0), 0);
   const toggle = (path: string) => { const next = new Set(open); if (!next.delete(path)) next.add(path); setChosen(next); };
+  // One line over the files: what the scope holds (the button above already names the scope), and what is done with all of it.
+  const base = current !== null && "base" in current && current.base ? current.base : null;
   return <div className="git-changes flex flex-col">
     <div className="flex min-h-8 items-center gap-2 px-[18px] pb-1 text-caption text-fg-3">
-      <span className="min-w-0 flex-1 truncate" title={current !== null && "base" in current && current.base ? current.base.ref + " @ " + current.base.sha.slice(0, 7) : undefined}>{scopeName(scope)}{current !== null && "base" in current && current.base ? "（自 " + current.base.sha.slice(0, 7) + " 起）" : ""}</span>
-      <button type="button" className="icon-btn size-7 flex-none text-fg-3" aria-label="重新读取" title="重新读取" disabled={reading} onClick={() => setGeneration(value => value + 1)}>
-        <RefreshCw size={13} className={cn(reading && "animate-spin")} aria-hidden="true"/></button>
+      {current === null ? <span className="flex min-w-0 flex-1 items-center gap-2"><Spinner size={12} label=""/>正在读取</span>
+        : "problem" in current ? <span className="min-w-0 flex-1 text-red" role="status">{current.problem}</span>
+        : <span className="min-w-0 flex-1 truncate" title={base ? base.ref + " @ " + base.sha.slice(0, 7) : undefined}>{files.length === 0 ? scope.kind === "uncommitted" ? "没有未提交的改动" : "这里没有改动" : files.length + " 个文件"}{base ? " · 自 " + base.sha.slice(0, 7) + " 起" : ""}</span>}
       {files.length > 0 ? <><span className="flex items-center gap-1.5"><Lines add={add} del={del}/></span>
         <button type="button" className="icon-btn size-7 text-fg-3" aria-label={every ? "全部收起" : "全部展开"} title={every ? "全部收起" : "全部展开"} onClick={() => setChosen(every ? new Set() : new Set(files.map(file => file.path)))}>
           {every ? <ChevronsDownUp size={14}/> : <ChevronsUpDown size={14}/>}</button></> : null}
+      <button type="button" className="icon-btn size-7 flex-none text-fg-3" aria-label="重新读取" title="重新读取" disabled={reading} onClick={() => setGeneration(value => value + 1)}>
+        <RefreshCw size={13} className={cn(reading && "animate-spin")} aria-hidden="true"/></button>
     </div>
-    {current === null ? <p className="m-0 flex items-center gap-2 px-[18px] py-3 text-caption text-fg-3"><Spinner size={12} label=""/>正在读取</p>
-      : "problem" in current ? <p className="m-0 px-[18px] py-3 text-caption text-red">{current.problem}</p>
-      : files.length === 0 ? <p className="m-0 px-[18px] py-3 text-caption text-fg-3">{scope.kind === "uncommitted" ? "没有未提交的改动" : "这里没有改动"}</p>
+    {files.length === 0 ? null
       : <ul ref={list} className="m-0 flex list-none flex-col gap-px px-2.5 pb-2" aria-label="改动的文件">{tree
         ? <FileTree items={files} workspace={workspace} pathOf={file => file.path} linesOf={file => ({ add: file.added ?? 0, del: file.removed ?? 0 })} renderFile={(file, depth, label) => <GitFile key={file.status + ":" + file.path} file={file} scope={scope} access={access}
           workspace={workspace} whitespace={whitespace} wrap={wrap} split={split} open={open.has(file.path)} generation={generation_} onToggle={() => toggle(file.path)} onRemark={onRemark} depth={depth} label={label}/>}/>

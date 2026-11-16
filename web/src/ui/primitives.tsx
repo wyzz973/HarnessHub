@@ -1,8 +1,25 @@
 import { Switch as BaseSwitch } from "@base-ui/react/switch";
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
-import { AlertCircle, CircleCheck, Info, Search, TriangleAlert, X } from "lucide-react";
+import { AlertCircle, Check, CircleCheck, Copy, Info, Search, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactElement, type ReactNode } from "react";
 import { cn } from "../lib/cn.js";
+
+/** Copying, done and said one way: the clipboard is written, and for 1.6 s the caller shows that it took the text, or that it refused. */
+export function useCopy(): { readonly state: "idle" | "copied" | "failed"; readonly copy: (text: string) => void } {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  useEffect(() => { if (state === "idle") return; const timer = setTimeout(() => setState("idle"), 1600); return () => clearTimeout(timer); }, [state]);
+  const copy = useCallback((text: string) => { void navigator.clipboard.writeText(text).then(() => setState("copied"), () => setState("failed")); }, []);
+  return { state, copy };
+}
+/** The sheet of a copy button, a tick while the copy is fresh. */
+export function CopyIcon({ copied, size = 14 }: { readonly copied: boolean; readonly size?: number }) {
+  return copied ? <Check size={size} aria-hidden="true" className="motion-pop-in"/> : <Copy size={size} aria-hidden="true"/>;
+}
+/** An icon button that copies `text`; `label` names it, and its tip says what became of the copy. */
+export function CopyButton({ text, label, tip = label, size = 14, className }: { readonly text: string; readonly label: string; readonly tip?: string; readonly size?: number; readonly className?: string }) {
+  const { state, copy } = useCopy();
+  return <button type="button" className={cn("icon-btn icon-btn-sm text-fg-3", className)} aria-label={label} title={state === "copied" ? "已复制" : state === "failed" ? "无法使用剪贴板，可选中文本后复制" : tip} onClick={() => copy(text)}><CopyIcon copied={state === "copied"} size={size}/></button>;
+}
 
 /**
  * HarnessHub's mark, "one point fanning out" (ADR-054 §4): a blue tile, one dot, three lines. Drawn on the 32 grid of the

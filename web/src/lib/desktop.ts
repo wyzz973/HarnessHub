@@ -17,7 +17,8 @@ interface Bridge {
   pickFolder(start?: string): Promise<string | null>;
   setGlass?(panes: readonly GlassPane[]): void;
 }
-export const desktop: Bridge | null = (window as unknown as { readonly hubDesktop?: Bridge }).hubDesktop ?? null;
+// Read where there is a window: the page's own libraries are also run without one (their unit tests).
+export const desktop: Bridge | null = typeof window === "undefined" ? null : (window as unknown as { readonly hubDesktop?: Bridge }).hubDesktop ?? null;
 
 /** A menu command the page has no key for (the others arrive as their own key press). */
 export const COMMAND_EVENT = "hub:command";

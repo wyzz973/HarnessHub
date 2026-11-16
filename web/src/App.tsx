@@ -547,7 +547,7 @@ export function App() {
           }
           failures += 1;
           const terminal = failures >= 8 || failure instanceof ApiError && ["AUTH_REQUIRED", "HOST_REJECTED", "ORIGIN_REJECTED"].includes(failure.code);
-          setConnectionError(terminal ? "实时连接未能恢复，历史和草稿已保留。点击重新连接可再试。" : "实时连接暂时中断，正在恢复；历史和草稿已保留。");
+          setConnectionError(terminal ? "连接没有恢复，历史和草稿都在。" : "连接中断，正在恢复；历史和草稿都在。");
           if (terminal) { setSessionLoading(false); return; }
           await wait(Math.min(15000, 500 * 2 ** Math.min(failures, 5)));
         }

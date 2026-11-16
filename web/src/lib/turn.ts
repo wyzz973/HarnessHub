@@ -151,7 +151,7 @@ export function rehypeReveal(options: { readonly chunks: readonly Chunk[] }) {
  * the committed text: order and content never change (ADR-047), only when each part becomes visible.
  */
 export interface Reveal { readonly text: string; readonly shown: number; readonly rate: number; readonly chunks: readonly Chunk[]; readonly at: number }
-export type RevealAction = { readonly type: "arrive"; readonly text: string; readonly at: number; readonly animate: boolean } | { readonly type: "tick" } | { readonly type: "flush" } | { readonly type: "settle" };
+export type RevealAction = { readonly type: "arrive"; readonly text: string; readonly at: number; readonly animate: boolean } | { readonly type: "tick"; readonly closing?: boolean } | { readonly type: "flush" } | { readonly type: "settle" };
 /**
  * Where a release ending at `to` may stop: never inside a run of fence characters (` or ~) that opens a line after at most
  * three spaces. Half a closing fence ("``") would show as one more line of code until the rest came, so the block would grow
@@ -180,7 +180,8 @@ export function reveal(state: Reveal, action: RevealAction): Reveal {
       const backlog = state.text.length - state.shown;
       if (backlog <= 0) return state;
       const rate = state.rate * .9 + backlog * .1;
-      let to = state.shown + Math.max(1, Math.min(backlog, Math.ceil(rate / 20)));
+      // Once the reply has ended (`closing`), what is left is let out in about half a second: a third of it at each release, sixteen characters at least.
+      let to = state.shown + Math.min(backlog, action.closing ? Math.max(16, Math.ceil(backlog / 3)) : Math.max(1, Math.ceil(rate / 20)));
       // Never between the two halves of a character outside the basic plane, nor inside a fence marker.
       const unit = state.text.charCodeAt(to - 1);
       if (to < state.text.length && unit >= 0xD800 && unit <= 0xDBFF) to++;

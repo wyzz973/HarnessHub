@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { deliveryWords, evidenceWords, packetFacts, syncWords } from "../lib/relay-state.js";
 import type { RelayApi, RelayPacket, RelayView } from "../relay.js";
 import { Dialog, DIALOG_ACTIONS, DIALOG_COLUMN, DialogClose, useClosingValue } from "../ui/overlay.js";
-import { Badge, EmptyState, Spinner } from "../ui/primitives.js";
+import { Badge, EmptyState, Spinner, useCopy } from "../ui/primitives.js";
 import { BrandIcon } from "./BrandIcon.js";
 
 /** A packet's text as it was stored when it was sent: nothing is processed again when it is read (relay-architecture §10.2). */
@@ -17,28 +17,21 @@ export function RelayPacketDialog({ api, sessionId, packet, onClose, name }: {
 }) {
   const shown = useClosingValue(packet);
   const [state, setState] = useState<PacketText | null>(null);
-  const [copy, setCopy] = useState<"idle" | "copied" | "failed">("idle");
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copying = useCopy(), copy = copying.state;
   const packetId = packet?.packetId ?? null;
   useEffect(() => {
     if (packetId === null) return;
     const controller = new AbortController();
-    setState({ packetId, status: "loading" }); setCopy("idle");
+    setState({ packetId, status: "loading" });
     api.packetText(sessionId, packetId, controller.signal).then(
       result => { if (!controller.signal.aborted) setState({ packetId, status: "ready", text: result.text, etag: result.etag }); },
       (failure: unknown) => { if (!controller.signal.aborted) setState({ packetId, status: "failed", message: failure instanceof Error ? failure.message : "这份交接单没有读到。" }); });
     return () => controller.abort();
   }, [api, sessionId, packetId]);
-  useEffect(() => () => { if (timer.current !== null) clearTimeout(timer.current); }, []);
   if (shown === null) return null;
   const current = state !== null && state.packetId === shown.packetId ? state : { packetId: shown.packetId, status: "loading" as const };
   const facts = shown.facts, title = shown.number === null ? "交接单" : `交接单 #${shown.number}`;
   const description = facts === null ? "发出时的原文" : [`发给 ${name(facts.target.harnessId)}`, packetFacts(facts)].filter(Boolean).join(" · ");
-  const write = async (text: string) => {
-    try { await navigator.clipboard.writeText(text); setCopy("copied"); } catch { setCopy("failed"); }
-    if (timer.current !== null) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setCopy("idle"), 1800);
-  };
   return <Dialog open={packet !== null} onOpenChange={open => { if (!open) onClose(); }} title={title} description={description} wide className="relay-packet-dialog">
     <div className={DIALOG_COLUMN}>
       {current.status === "loading" ? <p className="m-0 flex items-center gap-2 py-6 text-ui-sm text-fg-2" role="status"><Spinner size={13} label=""/>正在读取交接单</p>
@@ -46,7 +39,7 @@ export function RelayPacketDialog({ api, sessionId, packet, onClose, name }: {
         : <pre className="relay-packet-text m-0 max-h-[min(60vh,520px)] overflow-auto rounded-block bg-inset p-3 font-mono text-code break-words whitespace-pre-wrap" tabIndex={0} aria-label="交接单原文">{current.text}</pre>}
       <p className="m-0 text-caption text-fg-3">这是发出时的原文，逐字保存；查看时不会重新处理。{current.status === "ready" && current.etag ? <span className="mono" title="原文的 sha256"> sha256 {current.etag.replace(/^sha256[-:]/u, "").slice(0, 12)}…</span> : null}</p>
       <div className={DIALOG_ACTIONS}>
-        {current.status === "ready" ? <button type="button" className="btn" onClick={() => void write(current.text)}>{copy === "copied" ? "已复制" : copy === "failed" ? "无法使用剪贴板" : "复制原文"}</button> : null}
+        {current.status === "ready" ? <button type="button" className="btn" onClick={() => copying.copy(current.text)}>{copy === "copied" ? "已复制" : copy === "failed" ? "无法使用剪贴板" : "复制原文"}</button> : null}
         <DialogClose className="btn btn-primary">关闭</DialogClose>
       </div>
     </div>

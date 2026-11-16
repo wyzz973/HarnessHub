@@ -1095,7 +1095,8 @@ export class FileConversationStore implements ConversationStore, RelayStorePort,
       .filter(row => after === undefined || row.updatedAt < after.updatedAt || (row.updatedAt === after.updatedAt && row.id > after.id));
     const page = rows.slice(0, limit).map(listRowOf);
     const last = page[page.length - 1];
-    return { rows: page, next: rows.length > limit && last !== undefined ? encodeListCursor(last.updatedAt, last.id) : null };
+    const pinned = query.withPinned === true && after === undefined ? rows.slice(limit).filter(row => row.pinned === true).map(listRowOf) : [];
+    return { rows: pinned.length ? [...page, ...pinned] : page, next: rows.length > limit && last !== undefined ? encodeListCursor(last.updatedAt, last.id) : null };
   }
   /** The conversations the user deleted (2026-11-14), the latest deleted first, a page at a time (`before`: the `next` of the page before). */
   listDeleted(query: DeletedListQuery = {}): DeletedListPage {

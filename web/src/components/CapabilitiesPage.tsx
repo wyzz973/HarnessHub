@@ -52,10 +52,10 @@ const STATUS_TONE: Readonly<Record<CapabilityStatus, string>> = { active: "text-
 /** The page switches to its side-by-side layout (category list beside the content) from this width of its own. */
 const WIDE_PAGE = 880;
 /**
- * The matrix as the board draws it: 70 px per Agent, the names at least 220 px (150 on phones), rows inset 16 px from
- * both sides of the card. The name cell's own padding (16 + 12) and the last column's 16 px inset are on top of those.
+ * The matrix: 62 px per Harness and the names at least 180 px (150 on phones), so seven Harnesses stand in the window's own width without a
+ * sideways scroll; rows inset 16 px from both sides of the card. The name cell's own padding (16 + 12) and the last column's 16 px inset are on top of those.
  */
-const MATRIX_COLUMN = 70, MATRIX_NAME = 220, MATRIX_NAME_NARROW = 150, MATRIX_NAME_PADDING = 28, MATRIX_INSET = 16;
+const MATRIX_COLUMN = 62, MATRIX_NAME = 180, MATRIX_NAME_NARROW = 150, MATRIX_NAME_PADDING = 28, MATRIX_INSET = 16;
 
 function size(bytes: number): string { return bytes < 1024 ? bytes + " B" : bytes < 1024 * 1024 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / 1024 / 1024).toFixed(1) + " MB"; }
 function factsText(facts: CapabilityFacts): string {
@@ -215,7 +215,7 @@ function PluginSupport({ harnesses }: { readonly harnesses: readonly HarnessCapa
   const switching = harnesses.filter(harness => harness.pluginSwitch !== null), reading = harnesses.filter(harness => harness.pluginReason !== null);
   return <section className="plugin-support card px-4 py-3.5 text-ui-sm" aria-label="插件开关">
     <h3 className="m-0 text-ui font-semibold">插件开关</h3>
-    <p className="m-0 mt-1 text-fg-2">{switching.length ? switching.map(harness => harness.name).join("、") + " 的插件可以在这里停用或启用：点空着的格子启用，展开插件可以停用；都先显示要改的那一行，确认后才写入，并保留备份。" : "这里列出的插件都只读。"}
+    <p className="m-0 mt-1 text-fg-2">{switching.length ? switching.map(harness => harness.name).join("、") + " 的插件可以在这里停用或启用：点空着的格子启用，展开插件停用。" : "这里列出的插件都只读。"}
       <span className="text-fg-3">安装与卸载还没有提供。</span></p>
     {reading.length ? <ul className="m-0 mt-2 flex list-none flex-col gap-1 p-0 text-caption text-fg-2">{reading.map(harness => <li key={harness.harnessId}><span className="font-medium text-fg">{harness.name}</span>：{harness.pluginReason}</li>)}</ul> : null}
   </section>;
@@ -406,7 +406,7 @@ function MatrixRow({ entry, columns, expanded, onToggle, badges, source, picked,
   const header = useId(), shown = expanded;
   return <>
     <tr className={shown ? "bg-subtle" : "hairline-b"}>
-      <th scope="row" id={header} className={cn("sticky left-0 z-[1] h-[68px] py-1.5 pr-3 pl-4 text-left font-normal", NAME_EDGE, shown ? "bg-subtle" : "bg-surface")}>
+      <th scope="row" id={header} className={cn("sticky left-0 z-[1] h-[52px] py-1.5 pr-3 pl-4 text-left font-normal", NAME_EDGE, shown ? "bg-subtle" : "bg-surface")}>
         <button type="button" className="group/name flex w-full min-w-0 flex-col items-start gap-px border-0 bg-transparent p-0 text-left" aria-expanded={expanded} onClick={onToggle}>
           <span className="flex max-w-full min-w-0 items-center gap-2"><span className="min-w-0 trunc font-mono text-code font-medium">{entry.name}</span>{badges(shown)}
             <ChevronRight size={14} aria-hidden="true" className={cn("motion-rotate flex-none text-fg-3", expanded ? "rotate-90" : "opacity-0 group-hover/name:opacity-100 group-focus-visible/name:opacity-100")}/></span>
@@ -414,7 +414,7 @@ function MatrixRow({ entry, columns, expanded, onToggle, badges, source, picked,
         </button>
       </th>
       {columns.map((harness, index) => { const cell = cellOf(entry, harness);
-        return <td key={harness.harnessId} className={cn("h-[68px] p-0 text-center", index === columns.length - 1 && "pr-4")}><span className="flex items-center justify-center">
+        return <td key={harness.harnessId} className={cn("h-[52px] p-0 text-center", index === columns.length - 1 && "pr-4")}><span className="flex items-center justify-center">
           <CellMark cell={cell} picked={cell.kind === "open" && picked.has(cell.pick.cell)} raised={shown} onPick={onPick} describedBy={header}/></span></td>; })}
     </tr>
     {shown ? <tr className="capability-detail-row hairline-b bg-subtle"><td colSpan={columns.length + 1} className="p-0">
@@ -636,7 +636,7 @@ export function CapabilitiesPage({ api, initialHarness, hidden, onMenu, sidebarH
             <th scope="col" className={cn("sticky left-0 z-[1] bg-surface pt-3.5 pr-3 pb-2.5 pl-4 align-bottom text-caption leading-5 font-normal text-fg-3", NAME_EDGE)}>{KIND_HEAD[kind]}</th>
             {columns.map((item, index) => <th key={item.harnessId} scope="col" className={cn("pt-3.5 pb-2.5 pl-0.5 align-bottom font-normal", index === columns.length - 1 ? "pr-4" : "pr-0.5")} title={item.name + " · " + (item.version || "版本未知")}>
               <span className="relative flex flex-col items-center gap-1.5"><BrandIcon brand={item.harnessId} name={item.name} size={26}/>
-                <span aria-hidden="true" className="max-w-[66px] trunc text-[11px] leading-5 text-fg-2">{shortName(item.name)}</span>
+                <span aria-hidden="true" className="max-w-[58px] trunc text-[11px] leading-5 text-fg-2">{shortName(item.name)}</span>
                 <span className="sr-only">{item.name} {item.version || "版本未知"}</span></span></th>)}
           </tr></thead>
           <tbody className="[&>tr:last-child]:border-b-0">{rows.map(entry => { const warnings = warningCount(entry), update = updateOf(entry);

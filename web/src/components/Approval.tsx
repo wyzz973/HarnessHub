@@ -71,7 +71,7 @@ export function PermissionCard({ request, harness, busy, onDecision }: { readonl
         <span className="sr-only" aria-live="polite">{left.source ? `${left.source} · ` : ""}{spokenLeft(seconds ?? 0, left.text)}</span></> : null}
     </div>
     <strong className="text-ui font-semibold break-words">{request.title}</strong>
-    {request.detail ? <p className="m-0 max-h-48 overflow-auto rounded-block bg-inset px-3 py-2 text-ui-sm whitespace-pre-wrap break-words text-fg-2">{request.detail}</p> : null}
+    {request.detail && !request.title.includes(request.detail.trim()) ? <p className="m-0 max-h-48 overflow-auto rounded-block bg-inset px-3 py-2 text-ui-sm whitespace-pre-wrap break-words text-fg-2">{request.detail}</p> : null}
     {request.input?.kind === "secret" ? <input type="password" autoComplete="off" aria-label={request.title} className="field" value={input} disabled={disabled} onChange={event => setInput(event.target.value)}/>
       : request.input ? <textarea aria-label={request.title} className="field" value={input} rows={request.input.kind === "editor" ? 6 : 2} disabled={disabled} onChange={event => setInput(event.target.value)}/> : null}
     <div className="flex flex-wrap items-center gap-2">
@@ -180,7 +180,8 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
     </div>
     <div className="flex flex-col gap-1 rounded-block bg-inset px-3 py-2.5">
       <span className="mono text-[13px] leading-5 break-all whitespace-pre-wrap text-fg">{request.title}</span>
-      {request.detail ? <span className="max-h-[7.5rem] overflow-auto text-caption whitespace-pre-wrap break-words text-fg-3">{/^(?:--- |diff |@@ )/mu.test(request.detail)
+      {/* What the line above already says (a file's name, written again under "写入 …") is not said twice. */}
+      {request.detail && !request.title.includes(request.detail.trim()) ? <span className="max-h-[7.5rem] overflow-auto text-caption whitespace-pre-wrap break-words text-fg-3">{/^(?:--- |diff |@@ )/mu.test(request.detail)
         ? request.detail.split("\n").map((line, index) => <span key={index} className={cn("block", /^\+(?!\+\+ )/u.test(line) ? "mono text-add" : /^-(?!-- )/u.test(line) ? "mono text-del" : undefined)}>{line || " "}</span>)
         : request.detail}</span> : null}
     </div>

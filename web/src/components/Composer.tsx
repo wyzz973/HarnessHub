@@ -9,7 +9,7 @@ import { keyText } from "../lib/keys.js";
 import { ago } from "../lib/format.js";
 import { Menu, Popover, PopHead } from "../ui/overlay.js";
 import { motionStyle, SendStopIcon, usePresence, useReducedMotion } from "../ui/motion.js";
-import { LogoMark, Segmented, Spinner, Tip } from "../ui/primitives.js";
+import { Kbd, LogoMark, Segmented, Spinner, Tip } from "../ui/primitives.js";
 import { ApprovalDock, type PermissionRequestView } from "./Approval.js";
 import { attachmentProblem, ComposerAttachments } from "./Attachments.js";
 import { BrandIcon, providerBrand } from "./BrandIcon.js";
@@ -347,9 +347,12 @@ export function Composer(props: ComposerProps) {
     : session?.retention?.outside ? `原程序的后台任务可能仍在运行（${session.retention.outside.count} 个进程）：它们已离开原程序的进程组，HarnessHub 没有结束它们。`
     // Only for the Harness's own setting: a level sets the mode itself (plan, or back to the default when a restored thread opens).
     : !draft.providerId && level.permission === null && draft.nativeOptions.collaboration_mode === undefined && nativeState?.observed?.options.collaboration_mode === "plan" ? `这个 ${harness?.name ?? "Harness"} 线程仍为计划模式：跟随本机配置不会改回，把协作模式改为“默认”即可退出。`
-    : active && canSteer && props.messageDraft.trim() ? steerFirst ? `回复进行中：按 ${sendWord} 现在就告诉它，${otherWord} 留到这一轮结束后再发。` : `回复进行中：按 ${sendWord} 留到这一轮结束后再发，${otherWord} 现在就告诉它。`
-    : active && props.queued === null && props.messageDraft.trim() ? `回复进行中：按 ${sendWord} 先暂存这条消息，本轮正常结束后自动发出。`
     : problem;
+  // Written while a reply runs: the two ways it can go, each a key that can also be pressed here, the one Enter takes first. They stand over the
+  // box, so the box itself stays as it is while it is typed in.
+  const steerWay = canSteer ? { id: "steer", name: "现在就告诉它", key: steerFirst || !canQueue ? sendWord : otherWord, icon: <CornerDownRight size={13} aria-hidden="true"/>, run: () => props.onSteer?.() } : null;
+  const queueWay = canQueue ? { id: "queue", name: "本轮结束后发送", key: canSteer && steerFirst ? otherWord : sendWord, icon: <ListPlus size={13} aria-hidden="true"/>, run: () => props.onQueue?.() } : null;
+  const ways = [steerWay, queueWay].filter(way => way !== null).sort((a, b) => Number(b.key === sendWord) - Number(a.key === sendWord));
   // The pending or failed switch speaks for itself in its own strip, and the blocked conversation in its notice; before any
   // Agent is chosen, the merged picker's "选择 Agent" already says what is missing.
   const noteShown = note !== null && !(pending || dirty && !blocked) && !(blocked && !readonly) && !(onboarding && note === problem) && !docked;
@@ -424,10 +427,11 @@ export function Composer(props: ComposerProps) {
   const listOpen = (id: NonNullable<typeof list>) => ({ open: list === id && !docked, onOpenChange: (open: boolean) => setList(current => open ? id : current === id ? null : current) });
   const { agentPickerOpen, onAgentPickerOpen } = props;
   // A list asked for by its keys opens where it is offered; the model's, where the box offers no list of its own, opens the Harness list with its models beside it.
-  const askedList = useRef<number | null>(null);
+  // One asked for before this box was on the page was answered by the box that was (the one a new conversation's first message was written in): not again here.
+  const askedList = useRef<number | null>(null), since = useRef(Date.now());
   useEffect(() => {
     const asked = props.openList;
-    if (!asked || askedList.current === asked.at || docked) return;
+    if (!asked || askedList.current === asked.at || asked.at < since.current || docked) return;
     askedList.current = asked.at;
     const offered = asked.list === "model" ? draft.harnessId !== "" : asked.list === "thought" ? thought !== null && thought !== undefined : draft.harnessId !== "" && !draft.providerId;
     if (offered) setList(asked.list); else if (asked.list === "model") onAgentPickerOpen(true);
@@ -574,6 +578,9 @@ export function Composer(props: ComposerProps) {
       : <p id="composer-notice" className="composer-note motion-fade-in m-0 px-1 text-caption text-fg-2">{note}</p> : null}
     {!draft.providerId && props.nativeModelsError && !selectionFailed && !docked ? <p className="composer-note m-0 px-1 text-caption text-fg-2" role="status">{props.nativeModelsError} <button type="button" className="link-btn" onClick={props.onRefreshModels}>刷新模型</button></p> : null}
     {levelNotes.length && !docked ? <p className="composer-note level-note m-0 px-1 text-caption text-fg-2" role="status">{levelNotes.join(" ")}</p> : null}
+    {ways.length && !docked ? <div className="composer-note running-ways motion-fade-in -mb-0.5 flex flex-wrap items-center gap-1" role="group" aria-label="回复进行中，这条消息怎么发">
+      {ways.map(way => <button key={way.id} type="button" className="btn btn-ghost btn-sm text-fg-2" aria-label={way.name} aria-keyshortcuts={way.key === "⏎" ? "Enter" : way.key === "⌘⏎" ? "Meta+Enter" : "Alt+Meta+Enter"} onClick={way.run}>{way.icon}{way.name}<Kbd variant="hint">{way.key}</Kbd></button>)}
+    </div> : null}
     {props.above}
     <div className="relative">
       {slashOpen ? <div className="surface-pop motion-fade-in absolute bottom-[calc(100%+8px)] left-0 z-20 flex max-h-[min(320px,50vh)] w-[min(400px,100%)] flex-col overflow-hidden" style={motionStyle({ duration: 120 })}>
@@ -687,10 +694,6 @@ export function Composer(props: ComposerProps) {
                 {mode && modeInChip ? <SearchPicker side={popSide} {...listOpen("mode")} label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
                   className={cn(SEGMENT, "flex-none")} {...afterChoice} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
               </div>
-              {canSteer ? <Tip label={"现在就告诉它 " + (steerFirst || !canQueue ? sendWord : otherWord)}><button type="button" className="press flex h-8 w-8 flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
-                aria-label="现在就告诉它" onClick={() => props.onSteer?.()}><CornerDownRight size={16}/></button></Tip> : null}
-              {canQueue ? <Tip label={"本轮结束后发送 " + (canSteer && steerFirst ? otherWord : sendWord)}><button type="button" className="press flex h-8 w-8 flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
-                aria-label="本轮结束后发送" onClick={() => props.onQueue?.()}><ListPlus size={16}/></button></Tip> : null}
               <Tip label={active ? "停止当前回复 " + keyText("stop") : "发送 " + sendWord}><button type={active ? "button" : "submit"} aria-label={active ? "停止当前回复" : "发送消息"}
                 className={cn("press ml-0.5 flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none disabled:cursor-default",
                   active ? "bg-fg text-app disabled:opacity-40" : "bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-40")}
