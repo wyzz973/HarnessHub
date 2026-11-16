@@ -1,4 +1,4 @@
-import { app, BaseWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, screen, shell, systemPreferences, View, WebContentsView, type MenuItemConstructorOptions, type WebContents } from "electron";
+import { app, BaseWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, screen, shell, View, WebContentsView, type MenuItemConstructorOptions, type WebContents } from "electron";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -111,19 +111,15 @@ function savedBounds(): { width: number; height: number; x?: number; y?: number 
 // Before the Gateway answers the window shows no page of its own: only its strip that moves the window. Under it stand the window's glass and
 // the content layer's color (standIn below).
 const BLANK = "data:text/html;charset=utf-8," + encodeURIComponent("<!doctype html><meta charset=\"utf-8\"><style>html,body{margin:0;height:100%;background:transparent}body{-webkit-app-region:drag}</style>");
-/**
- * The page's look while there is no page: the window's floor of glass, and on it the sidebar's pane where it last was. Where the system shows
- * less through its windows the page's content layer is a solid color, and that color stands in around the pane instead of the floor.
- */
+/** The page's look while there is no page: the window's own ground, and floating on it the sidebar's pane of glass where it last was. */
 let standing = false, laid = new Set<string>();
 function standIn(): void {
   if (win === null || win.isDestroyed() || glass === null || material !== "liquid" || standing) return;
   const handle = win.getNativeWindowHandle(), zoom = typeof kept.zoom === "number" && kept.zoom > 0 ? kept.zoom : 1, shown = kept.sidebar !== false;
   const size = win.getContentBounds();
-  if (systemPreferences.accessibilityDisplayShouldReduceTransparency) {
-    const color = nativeTheme.shouldUseDarkColors ? [28 / 255, 28 / 255, 30 / 255] as const : [1, 1, 1] as const;
-    glass.backdrop(handle, color[0], color[1], color[2], 8 * zoom, 8 * zoom, shown ? 274 * zoom : 0, 16 * zoom);
-  } else if (!laid.has("floor")) { glass.pane(handle, "floor", 0, 0, size.width, size.height, 12, 0, 1, 1 | 4 | 16, 0); laid.add("floor"); }
+  // The window's ground, as the system's own windows have it (windowBackgroundColor), with the sidebar's pane of glass floating on it.
+  const color = nativeTheme.shouldUseDarkColors ? [30 / 255, 30 / 255, 30 / 255] as const : [1, 1, 1] as const;
+  glass.backdrop(handle, color[0], color[1], color[2], 8 * zoom, 8 * zoom, shown ? 274 * zoom : 0, 16 * zoom);
   if (shown && !laid.has("sidebar")) { glass.pane(handle, "sidebar", 8 * zoom, 8 * zoom, 274 * zoom, Math.max(size.height - 16 * zoom, 0), 16 * zoom, 0, 1, 4 | 16, 1); laid.add("sidebar"); }
   standing = true;
 }

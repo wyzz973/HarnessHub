@@ -12,13 +12,11 @@ import { desktop, type GlassPane } from "../lib/desktop.js";
 import { startMirror, type Mirror } from "./mirror.js";
 
 export const SURFACES = ".composer-box, .tool-group, .follow-stream, .find-bar, .floating-bar, .surface-pop, .dialog-pop, .palette-pop, .drawer-left-pop, .sheet-pop, .tooltip-pop, .toast, "
-  // The panel beside the conversation is a pane of glass on the floor, as the sidebar is; and the bar that asks before unsaved words are left.
+  // The inspector beside the conversation is glass from edge to edge (macOS 26: sidebars float inset, inspectors run edge to edge); and the bar that asks before unsaved words are left.
   + ".details-pane, .drawer-pop, .leave-bar, "
   // What stands with the message box over the conversation: a queued message, a notice, a handover card. Its own tint lies on the glass.
   + ".chat-foot .relay-card, .chat-foot .queued-message, .chat-foot .composer-notice, .chat-foot .composer-change, .chat-foot [role='status'].rounded-block, .chat-foot [role='alert'].rounded-block";
 const OPENINGS = ".sidebar-pane";
-/** The floor's corners: a little inside the window's own, which cut them. */
-const FLOOR_RADIUS = 12;
 const UNDER = "[data-under-glass]";
 
 interface Sheet { readonly element: Element; readonly id: string; readonly box: DOMRect; readonly radius: number; readonly alpha: number; readonly layer: Element | null; readonly depth: number }
@@ -68,9 +66,6 @@ export function startSystemGlass(): void {
     if (html.dataset.material !== "liquid") return;
     const shell = document.querySelector(".app-shell");
     const panes: GlassPane[] = [], sheets: Sheet[] = [];
-    // The floor: one sheet under the whole page, which paints no color of its own under its content then. It lies there from the first
-    // moment (the window stands on it before the page is drawn) unless the page's surfaces turn out to be its own glass.
-    if (html.dataset.glass !== "page") panes.push({ id: "floor", left: 0, top: 0, width: innerWidth, height: innerHeight, radius: FLOOR_RADIUS, alpha: 1, anchor: 1 | 4 | 16 });
     for (const element of document.querySelectorAll<HTMLElement>(OPENINGS)) {
       const box = element.getBoundingClientRect();
       if (box.width < 1 || box.height < 1 || !element.checkVisibility({ visibilityProperty: true })) continue;
@@ -124,7 +119,7 @@ export function startSystemGlass(): void {
     }
     const text = rules.join("\n");
     if (text !== cutting) { cutting = text; holes.replaceSync(text); }
-    // The copy behind the window draws its content only under these surfaces: anywhere else it would show through the floor, under the page's own words.
+    // The copy behind the window draws its content only under these surfaces; elsewhere it is the window's own ground, which the sidebar's glass shows.
     if (system && mirror !== null) {
       const whole = new DOMRect(0, 0, 0, 0), path = sheets.map(sheet => cut(sheet, whole, 1, 1)).join(" ");
       if (path !== revealed) { revealed = path; mirror.reveal(path === "" ? null : path); }

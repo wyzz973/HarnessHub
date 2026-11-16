@@ -18,9 +18,7 @@ function writeHeight(value: number): void { try { localStorage.setItem(HEIGHT_KE
 /** A color of the page as the terminal takes it: the value of one of the page's own variables, now. */
 const color = (name: string, fallback: string): string => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 /** The terminal in the page's colors: its ground and its words, the selection, and the cursor in the accent. The sixteen colors of a program's own output stay the terminal's. */
-/** Whether the page stands on the window's glass: the terminal then has no ground of its own. */
-const onGlass = () => document.documentElement.dataset.material === "liquid" && document.documentElement.dataset.glass !== "page";
-const palette = () => ({ background: onGlass() ? "rgba(0, 0, 0, 0)" : color("--bg-app", "#ffffff"), foreground: color("--text", "#1a1a1a"), cursor: color("--accent", "#1f6feb"), cursorAccent: color("--bg-app", "#ffffff"), selectionBackground: color("--bg-selected", "rgba(0,0,0,.12)") });
+const palette = () => ({ background: color("--bg-app", "#ffffff"), foreground: color("--text", "#1a1a1a"), cursor: color("--accent", "#1f6feb"), cursorAccent: color("--bg-app", "#ffffff"), selectionBackground: color("--bg-selected", "rgba(0,0,0,.12)") });
 
 /** A script of the project, as package.json names it, and the command that runs it with the project's own package manager. */
 export interface ProjectScript { readonly name: string; readonly command: string }

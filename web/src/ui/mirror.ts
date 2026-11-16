@@ -4,8 +4,8 @@
  * content: every element, attribute, word and scroll position, without what floats outside the page's root and with the glass surfaces left
  * blank. It is only ever seen through glass, and nothing in it can be pressed.
  *
- * The window's floor is a sheet of glass too, and through that one nothing of the copy must show (the page's own words lie right over it): the
- * copy draws its content only where a surface floats (`reveal`), and everywhere a wash that steadies what is read on the glass.
+ * The copy draws its content only where a surface floats (`reveal`); everywhere else it is the window's own ground, so that the sidebar's glass,
+ * which floats over the window and not over the desktop, has the same tone as the content beside it (as a native sidebar does).
  */
 const LEFT_OUT = new Set(["SCRIPT", "NOSCRIPT", "TEMPLATE"]);
 /** Elements that would load or play on their own: the copy keeps a box of their size. */
@@ -79,7 +79,7 @@ export function startMirror(root: HTMLElement, blank: string): Mirror | null {
   // (a spinner under glass is not worth a second animation).
   const own = other.createElement("style");
   // The copy lies in a bare window behind the app's: its corners are cut a little rounder than the window's, so that none shows past them.
-  own.textContent = `html { background: var(--pane-wash) !important; clip-path: inset(0 round 20px); } body { background: transparent !important; } html, body { overflow: hidden !important; }
+  own.textContent = `html { background: var(--bg-app) !important; clip-path: inset(0 round 20px); } body { background: transparent !important; } html, body { overflow: hidden !important; }
 * { scroll-behavior: auto !important; overflow-anchor: none !important; caret-color: transparent !important; }
 :is(${blank}), :is(${blank}) *, .sidebar-pane * { visibility: hidden !important; }
 :is(.spinner, .spin, .spinner-arc, .shimmer-text, .shimmer, .status-dot, .motion-breathe, .pulse, .end-dot, .caret-host, .motion-token) { animation: none !important; }`;

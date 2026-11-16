@@ -148,156 +148,151 @@
 :root[data-window="inactive"] { --accent: #8E8E93; --accent-hover: #8E8E93; --accent-soft: rgba(142, 142, 147, .16); @variant dark { --accent: #636366; --accent-hover: #636366; } }
 
 /*
- * On the window's floor of glass (desktop app, macOS 26: the floor is a sheet of the system's Liquid Glass like every other surface) a card or a
- * block is a lighter tile of that glass, not a solid sheet, and a panel beside the content is a pane of glass as the sidebar is. What has to hide
- * what scrolls under it (a row that stays at the top of its list) is a cover: a denser tile that blurs what passes beneath.
+ * The desktop app on macOS 26 and later, made as the system's own windows are (Apple's guidance: Liquid Glass is the layer of controls and navigation
+ * that floats over the content, never the content itself, and never glass on glass). The content lies on the window's own ground; the glass is the
+ * sidebar (a pane floating inset), the inspector beside the conversation (edge to edge), the toolbar's groups, the message box and what pops up.
+ * On the inspector's glass, a row that stays at the top of its list while the rest scrolls under it is a cover: denser, blurring what passes beneath.
  */
-:root[data-material="liquid"]:not([data-glass="page"]) {
-  --cover: rgba(255, 255, 255, .66);
-  /* Over a bright desktop the dark glass is a middle tone: the quietest words are a step lighter there than on a solid page. */
-  @variant dark { --cover: rgba(255, 255, 255, .1); --text-3: #A9A9B1; }
-}
-:root[data-material="liquid"]:not([data-glass="page"]) :is(.details-pane, .details-panel, .terminal-drawer, .capabilities-page) { background: transparent; box-shadow: none; }
-:root[data-material="liquid"]:not([data-glass="page"]) :is(.details-pane, .capability-matrix[data-scrolled]) .sticky { background: var(--cover); -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3); }
-:root[data-material="liquid"]:not([data-glass="page"]) .details-pane .sticky { border-radius: var(--radius-block); }
-:root[data-material="liquid"]:not([data-glass="page"]) .capability-matrix:not([data-scrolled]) .sticky { background: transparent; }
+:root[data-material="liquid"]:not([data-glass="page"]) { --cover: rgba(255, 255, 255, .66); @variant dark { --cover: rgba(255, 255, 255, .1); } }
+:root[data-material="liquid"]:not([data-glass="page"]) :is(.details-pane, .details-panel) { background: transparent; box-shadow: none; }
+:root[data-material="liquid"]:not([data-glass="page"]) .details-pane .sticky { background: var(--cover); -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3); border-radius: var(--radius-block); }
 :root[data-material="liquid"]:not([data-glass="page"]) .details-pane .sticky:is(button):hover { background: color-mix(in srgb, var(--cover) 92%, var(--text)); }
 :root[data-material="liquid"]:not([data-glass="page"]) .details-pane .sticky .bg-app { background: transparent; }
-:root[data-material="liquid"]:not([data-glass="page"]) .native-diff { background: var(--bg-surface); }
-/* A changed file that is open is one module, its row and under it its diff; closed, it is a plain row of the list (nothing passes under it, so it needs no cover). */
+/* A changed file that is open is one box, its row and under it its diff; closed, it is a plain row of the list (nothing passes under it, so it needs no cover). */
 .file-card:has(> .collapsible:not([data-state="closed"])) { margin-block: 2px 6px; border-radius: var(--radius-block); background: var(--bg-surface); box-shadow: var(--shadow-hairline); overflow: clip; }
 :root[data-material="liquid"]:not([data-glass="page"]) .details-pane .file-card:has(> .collapsible:not([data-state="closed"])) .sticky { border-bottom-right-radius: 0; border-bottom-left-radius: 0; }
 :root[data-material="liquid"]:not([data-glass="page"]) .details-pane .file-card:not(:has(> .collapsible:not([data-state="closed"]))) .sticky { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
 :root[data-material="liquid"]:not([data-glass="page"]) .details-pane .file-card:not(:has(> .collapsible:not([data-state="closed"]))) .sticky:is(button):hover { background: var(--bg-subtle); }
+/* The inspector runs from edge to edge of the window: no margin round it, and its corners are the window's own (the window cuts them). */
+:root[data-shell="desktop"] .details-frame { padding: 0; }
+:root[data-shell="desktop"] .details-pane { border-radius: 0; }
 
 /*
- * Liquid Glass, component by component (2026-11-16, the user: every component is Liquid Glass, not only the surfaces they stand on). The window's surfaces — its
- * floor, the panes on it, what floats over the conversation — are sheets of the system's own glass. Such a sheet lies under the page and cannot follow what
- * scrolls in it, so what stands on those surfaces is drawn as glass of the same make, in two shapes:
- *   raised — a tile (a card, a module, a message, a table) or a bead (a button, a thumb, a chosen row, a check box): a clear body a little brighter at its
- *            top, a line of light along its upper edge and a fainter one along its lower, its thickness lit from inside, and a soft shadow under it;
- *   sunk   — a well (a field, a track, a block of code): a darker fill, shade under its upper lip and light along its lower one.
- * Glass that can be pressed catches the light where the pointer is and lights up under a press (ui/light.ts says where). Nothing here is a flat patch of color.
+ * The desktop app's words, grounds and controls are macOS's own, as AppKit draws them on macOS 27 (read from its semantic colors, and from its controls drawn
+ * at their sizes): words in labelColor and its levels; the window's ground windowBackgroundColor; a box quaternarySystemFill; a control a flat system fill with
+ * no rim and no shadow, a rounded rectangle up to the regular size (24) and a capsule from the large one (28); the one prominent control in controlAccentColor;
+ * links in linkColor; the focus ring keyboardFocusIndicatorColor; a chosen row the unemphasized selection. The page in a browser keeps its own look.
  */
-:root[data-material="liquid"]:not([data-glass="page"]) {
-  --rim: inset 0 1px 0 rgba(255, 255, 255, .9), inset 0 -1px 0 rgba(255, 255, 255, .34), inset 0 0 0 .5px rgba(255, 255, 255, .6), inset 0 0 0 2px rgba(255, 255, 255, .1), inset 0 0 18px rgba(255, 255, 255, .14);
-  --rim-bead: inset 0 1px 0 rgba(255, 255, 255, .92), inset 0 -.5px 0 rgba(255, 255, 255, .42), inset 0 0 0 .5px rgba(255, 255, 255, .55);
-  --rim-tint: inset 0 1px 0 rgba(255, 255, 255, .46), inset 0 -.5px 0 rgba(255, 255, 255, .16), inset 0 0 0 .5px rgba(255, 255, 255, .24);
-  --lift: 0 0 0 .5px rgba(0, 0, 0, .065), 0 1px 2px rgba(0, 0, 0, .045), 0 10px 26px -12px rgba(0, 0, 0, .2);
-  --lift-hover: 0 0 0 .5px rgba(0, 0, 0, .08), 0 2px 5px rgba(0, 0, 0, .06), 0 16px 34px -12px rgba(0, 0, 0, .26);
-  --lift-sm: 0 0 0 .5px rgba(0, 0, 0, .085), 0 1px 2px rgba(0, 0, 0, .07), 0 3px 8px -4px rgba(0, 0, 0, .12);
-  --well: inset 0 1px 2px rgba(0, 0, 0, .09), inset 0 0 0 .5px rgba(0, 0, 0, .055), 0 .5px 0 rgba(255, 255, 255, .8);
-  --sheen: linear-gradient(180deg, rgba(255, 255, 255, .28), rgba(255, 255, 255, .05) 52%, rgba(255, 255, 255, 0));
-  --light: rgba(255, 255, 255, .55); --light-press: rgba(255, 255, 255, .85);
-  --bg-surface: rgba(255, 255, 255, .34);
-  --bead: rgba(255, 255, 255, .44); --bead-soft: rgba(255, 255, 255, .3); --bead-hover: rgba(255, 255, 255, .6); --bead-active: rgba(255, 255, 255, .76);
-  --bg-inset: rgba(0, 0, 0, .045); --bg-well: rgba(255, 255, 255, .8);
-  --thumb: rgba(255, 255, 255, .86);
-  --sh-hairline: var(--rim), var(--lift);
-  --sh-card: var(--rim), var(--lift);
-  --sh-card-hover: var(--rim), var(--lift-hover);
-  --sh-thumb: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .06), 0 1px 3px rgba(0, 0, 0, .16), 0 4px 10px -4px rgba(0, 0, 0, .14);
-  --sh-well: var(--rim-bead), var(--lift-sm);
-  --sh-kbd: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .12), 0 1px 0 rgba(0, 0, 0, .08);
+:root[data-shell="desktop"] {
+  --bg-app: #FFFFFF; --bg-window: #F6F6F6; --bg-surface: rgba(0, 0, 0, .03); --bg-cover: #FFFFFF; --bg-field: #FFFFFF; --bg-box: #F7F7F7;
+  --fill-1: rgba(0, 0, 0, .098); --fill-2: rgba(0, 0, 0, .078); --fill-3: rgba(0, 0, 0, .047); --fill-4: rgba(0, 0, 0, .027); --track-off: rgba(0, 0, 0, .098); --on-unkeyed: rgba(0, 0, 0, .14);
+  --bg-subtle: var(--fill-3); --bg-hover: var(--fill-2); --bg-active: var(--fill-1); --bg-selected: var(--fill-1); --bg-sidebar-hover: var(--fill-4); --bg-inset: var(--fill-4);
+  --border: rgba(0, 0, 0, .098); --border-strong: rgba(0, 0, 0, .15);
+  --text: rgba(0, 0, 0, .847); --text-2: rgba(0, 0, 0, .62); --text-3: rgba(0, 0, 0, .498); --text-placeholder: rgba(0, 0, 0, .498); --text-3-on-tint: rgba(0, 0, 0, .55);
+  --accent: #007AFF; --accent-hover: #0068DA; --accent-soft: rgba(0, 122, 255, .12); --accent-text: #0068DA; --on-accent: #FFFFFF; --run: #007AFF;
+  --selection: #B3D7FF; --thumb: rgba(0, 0, 0, .128);
+  --sh-hairline: 0 0 0 0 transparent; --sh-card: 0 0 0 0 transparent; --sh-card-hover: 0 0 0 0 transparent; --sh-thumb: none; --sh-kbd: none;
+  --sh-well: 0 0 0 .5px rgba(0, 0, 0, .1); --sh-focus: 0 0 0 3.5px rgba(0, 103, 244, .5);
+  --radius-control: 5.5px; --radius-card: 10px;
   @variant dark {
-    --rim: inset 0 1px 0 rgba(255, 255, 255, .24), inset 0 -1px 0 rgba(255, 255, 255, .06), inset 0 0 0 .5px rgba(255, 255, 255, .11), inset 0 0 0 2px rgba(255, 255, 255, .025), inset 0 0 18px rgba(255, 255, 255, .035);
-    --rim-bead: inset 0 1px 0 rgba(255, 255, 255, .28), inset 0 -.5px 0 rgba(255, 255, 255, .07), inset 0 0 0 .5px rgba(255, 255, 255, .12);
-    --rim-tint: inset 0 1px 0 rgba(255, 255, 255, .38), inset 0 -.5px 0 rgba(255, 255, 255, .1), inset 0 0 0 .5px rgba(255, 255, 255, .18);
-    --lift: 0 0 0 .5px rgba(0, 0, 0, .34), 0 1px 2px rgba(0, 0, 0, .18), 0 10px 26px -10px rgba(0, 0, 0, .5);
-    --lift-hover: 0 0 0 .5px rgba(0, 0, 0, .4), 0 2px 5px rgba(0, 0, 0, .22), 0 16px 34px -12px rgba(0, 0, 0, .6);
-    --lift-sm: 0 0 0 .5px rgba(0, 0, 0, .36), 0 1px 2px rgba(0, 0, 0, .24), 0 3px 8px -4px rgba(0, 0, 0, .3);
-    --well: inset 0 1px 2px rgba(0, 0, 0, .34), inset 0 0 0 .5px rgba(0, 0, 0, .24), 0 .5px 0 rgba(255, 255, 255, .08);
-    --sheen: linear-gradient(180deg, rgba(255, 255, 255, .075), rgba(255, 255, 255, .01) 52%, rgba(255, 255, 255, 0));
-    --light: rgba(255, 255, 255, .13); --light-press: rgba(255, 255, 255, .24);
-    --bg-surface: rgba(255, 255, 255, .06);
-    --bead: rgba(255, 255, 255, .11); --bead-soft: rgba(255, 255, 255, .07); --bead-hover: rgba(255, 255, 255, .17); --bead-active: rgba(255, 255, 255, .24);
-    --bg-inset: rgba(0, 0, 0, .2); --bg-well: rgba(255, 255, 255, .14);
-    --thumb: rgba(255, 255, 255, .24);
-    --sh-thumb: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .34), 0 1px 3px rgba(0, 0, 0, .4);
-    --sh-kbd: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .4), 0 1px 0 rgba(0, 0, 0, .3);
+    --bg-app: #1E1E1E; --bg-window: #282828; --bg-surface: rgba(255, 255, 255, .03); --bg-cover: #1E1E1E; --bg-field: rgba(0, 0, 0, .25); --bg-box: #252525;
+    --fill-1: rgba(255, 255, 255, .098); --fill-2: rgba(255, 255, 255, .078); --fill-3: rgba(255, 255, 255, .047); --fill-4: rgba(255, 255, 255, .027); --track-off: rgba(255, 255, 255, .098); --on-unkeyed: rgba(255, 255, 255, .142);
+    --border: rgba(255, 255, 255, .098); --border-strong: rgba(255, 255, 255, .12);
+    --text: rgba(255, 255, 255, .847); --text-2: rgba(255, 255, 255, .66); --text-3: rgba(255, 255, 255, .549); --text-placeholder: rgba(255, 255, 255, .549); --text-3-on-tint: rgba(255, 255, 255, .6);
+    --accent-hover: #1A86FF; --accent-soft: rgba(0, 122, 255, .24); --accent-text: #419CFF; --run: #0A84FF;
+    --selection: #3F638B; --thumb: rgba(255, 255, 255, .126);
+    --sh-well: 0 0 0 .5px rgba(255, 255, 255, .12); --sh-focus: 0 0 0 3.5px rgba(26, 169, 255, .5);
+  }
+  /* A window that is not the key one draws its accented controls grey, as the system's do. */
+  &[data-window="inactive"] {
+    --accent: #B4B4B8; --accent-hover: #B4B4B8; --accent-soft: rgba(0, 0, 0, .06); --run: #8E8E93; @variant dark { --accent: #5E5E62; --accent-hover: #5E5E62; --accent-soft: rgba(255, 255, 255, .08); }
+    /* An on switch and a ticked box go a soft grey with a dark mark, and the default button is drawn like the others. */
+    & .switch[data-checked] { background: var(--on-unkeyed); }
+    & input[type="checkbox"]:not(.task-list-item > input):checked { background-color: var(--on-unkeyed); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.6 6.2 5 8.5 9.4 3.6' fill='none' stroke='%23212121' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+    @variant dark { & input[type="checkbox"]:not(.task-list-item > input):checked { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.6 6.2 5 8.5 9.4 3.6' fill='none' stroke='%23E1E1E1' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); } }
+    & :is(.btn-primary, .btn-primary:hover:not(:disabled)) { background: var(--fill-2); color: var(--text); }
   }
 
-  /* Tiles: every card and module, a message you wrote, a table. */
-  & :is(.card, .bg-surface:is(.rounded-card, .rounded-block, .rounded-control, [class*="rounded-["]):not(.sticky, [class*="accent"]), .user-bubble, .kbd) { background-image: var(--sheen); }
-  & .bg-surface:is(.rounded-card, .rounded-block, .rounded-control, [class*="rounded-["]):not([class*="shadow"], .sticky) { box-shadow: var(--rim), var(--lift); }
-  & .bg-surface[class*="shadow-[inset_0_0_0_1px_var(--border"]:not(.search-box) { box-shadow: var(--rim), var(--lift); }
-  & .card-interactive:hover { box-shadow: var(--rim), var(--lift-hover); }
-  & .card[data-selected="true"] { box-shadow: var(--rim), var(--lift), 0 0 0 1.5px var(--accent-text); }
-  & .user-bubble { background-color: var(--bead); box-shadow: var(--rim), var(--lift); }
-  & .markdown .table-scroll { border-radius: var(--radius-block); background-color: var(--bg-surface); background-image: var(--sheen); box-shadow: var(--rim), var(--lift); }
-  & .markdown .table-scroll :is(th, td):first-child { padding-left: 12px; }
-  & .markdown .table-scroll :is(th, td):last-child { padding-right: 12px; }
-  & .markdown .table-scroll tr:last-child > td { border-bottom: none; }
+  /* Push buttons. */
+  & .btn { height: 24px; padding: 0 11px; gap: 5px; border-radius: var(--radius-control); background: var(--fill-2); color: var(--text); font-size: 13px; line-height: 16px; font-weight: 400; box-shadow: none; }
+  & .btn:hover:not(:disabled) { background: var(--fill-2); }
+  & .btn:active:not(:disabled) { background: var(--fill-1); transform: none; }
+  & .btn-sm { height: 20px; padding: 0 8px; gap: 4px; border-radius: 5px; font-size: 11px; line-height: 14px; }
+  & :is(.btn-primary, .btn-primary:hover:not(:disabled)) { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+  & .btn-primary:active:not(:disabled) { background: var(--accent-hover); }
+  & :is(.btn-danger, .btn-danger:hover:not(:disabled)) { background: rgba(255, 56, 60, .12); color: #E0262B; @variant dark { background: rgba(255, 66, 69, .2); color: #FF6B6E; } }
+  & :is(.btn-ghost, .btn-outline) { background: transparent; color: var(--text); }
+  & .btn-outline { box-shadow: inset 0 0 0 1px var(--border-strong); }
+  & :is(.btn-ghost, .btn-outline):hover:not(:disabled) { background: var(--fill-3); }
+  /* Borderless buttons: no ground until the pointer is on them; a fill while they stand on (pressed, open). */
+  & :is(.icon-btn, .quiet):hover:not(:disabled) { background: var(--fill-3); }
+  & :is(.icon-btn, .quiet):active:not(:disabled) { background: var(--fill-1); transform: none; }
+  & .icon-btn:is([aria-pressed="true"], [aria-expanded="true"], [data-popup-open]) { background: var(--fill-2); color: var(--text); }
+  & .quiet:is([aria-pressed="true"], [aria-checked="true"], [data-popup-open]) { background: var(--fill-2); font-weight: 400; }
+  & .plus-key { box-shadow: none; background: var(--fill-3); }
+  & .plus-key:hover:not(:disabled) { background: var(--fill-2); }
 
-  /* Beads: the plain button, a count or a state in its pill, a key, the round key that adds to a message, and every block that was a tint of grey (a chip, a note). */
-  & :is(.btn:not(.btn-primary, .btn-ghost, .btn-outline, .btn-danger), .badge:not(.badge-accent, .badge-amber, .badge-red), .status-pill:not([data-tone]), .toast-action, .plus-key,
-      .bg-subtle:is(.rounded-block, .rounded-row, .rounded-control, .rounded-tag, .rounded-full):not(.h-1, .shadow-focus, [class*="shadow-["])) {
-    background-color: var(--bead); background-image: var(--sheen); box-shadow: var(--rim-bead), var(--lift-sm);
+  /* Segmented controls: a fill for the track, the chosen segment a deeper fill of the whole height; a line between two segments that are not chosen. */
+  & .segmented:not(.segmented-quiet) { padding: 0; gap: 0; border-radius: var(--radius-control); background: var(--fill-2); }
+  & .segmented:not(.segmented-quiet) > button { height: 24px; padding: 0 10px; border-radius: var(--radius-control); color: var(--text); font-size: 13px; line-height: 16px; font-weight: 400; }
+  & .segmented:not(.segmented-quiet) > .segmented-thumb { top: 0; height: 100%; border-radius: var(--radius-control); background: var(--thumb); box-shadow: none; }
+  & :is(.segmented-md, .segmented-md > button, .segmented-md > .segmented-thumb) { border-radius: 14px; }
+  & .segmented-md > button { height: 28px; padding: 0 12px; }
+  & .segmented-quiet > .segmented-thumb { background: var(--fill-2); }
+  & :is(.segmented:not(.segmented-quiet) > button, .tabs-pill > .tab) + :is(button, .tab)::before {
+    content: ""; position: absolute; left: -.5px; top: 6px; bottom: 6px; width: 1px; background: var(--fill-1); transition: opacity var(--dur-fast) var(--ease-standard);
   }
-  & :is(.btn:not(.btn-primary, .btn-ghost, .btn-outline, .btn-danger), .toast-action, .plus-key, .user-bubble):hover:not(:disabled) { background-color: var(--bead-hover); }
-  & .btn:not(.btn-primary, .btn-danger):active:not(:disabled) { background-color: var(--bead-active); }
-  /* A tinted bead keeps its color: the accent, amber for what waits for you, red for what failed. */
-  & :is(.btn-danger, .badge-accent, .badge-amber, .badge-red, .status-pill[data-tone],
-      :is(.bg-accent-soft, .bg-amber-soft, .bg-red-soft):is(.rounded-card, .rounded-block, .rounded-row, .rounded-control, .rounded-tag, .rounded-full):not([class*="shadow-["])) {
-    background-image: var(--sheen); box-shadow: var(--rim-tint), var(--lift-sm);
-  }
-  /* The one filled button, and the key that sends: glass in the accent, lit from above, with its own color under it. */
-  & :is(.btn-primary, .send-key.bg-accent:not(:disabled)) {
-    background-image: linear-gradient(180deg, rgba(255, 255, 255, .26), rgba(255, 255, 255, 0) 62%);
-    box-shadow: var(--rim-tint), 0 0 0 .5px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .12), 0 6px 14px -6px color-mix(in srgb, var(--accent) 72%, transparent);
-  }
-  & .send-key:disabled { background-color: var(--bead-soft); background-image: var(--sheen); box-shadow: var(--rim-bead); }
-  /* What has no fill until it is pointed at or chosen becomes a bead then: a quiet button, an icon, a row. */
-  & :is(.btn-ghost, .btn-outline, .icon-btn, .quiet, .row, .nav-row):hover:not(:disabled, [data-disabled], [aria-current="page"], [aria-current="true"], [aria-pressed="true"], [aria-expanded="true"],
-      [aria-checked="true"], [data-popup-open], [data-selected="true"], .is-active) { background-color: var(--bead-soft); box-shadow: var(--rim-bead); }
-  & :is(.icon-btn:is([aria-pressed="true"], [aria-expanded="true"], [data-popup-open]), .quiet:is([aria-pressed="true"], [aria-checked="true"], [data-popup-open]),
-      .nav-row:is([aria-current="page"], [aria-current="true"], [data-selected="true"]), .is-active.bg-subtle, .segmented-quiet > .segmented-thumb) {
-    background-color: var(--bead); background-image: var(--sheen); box-shadow: var(--rim-bead), var(--lift-sm);
-  }
-  /* A chosen bead pointed at brightens; it never dims. */
-  & :is(.icon-btn:is([aria-pressed="true"], [aria-expanded="true"], [data-popup-open]), .quiet:is([aria-pressed="true"], [aria-checked="true"], [data-popup-open]),
-      .nav-row:is([aria-current="page"], [aria-current="true"], [data-selected="true"])):hover { background-color: var(--bead-hover); }
-  & .btn-outline { background-color: var(--bead-soft); box-shadow: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .1); @variant dark { box-shadow: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .34); } }
-  /* Anything else that shows a ground only under the pointer shows a bead there too. */
-  & :is(button, a, summary, label, [role="button"], [role="option"], [role="menuitem"], [role="tab"])[class*="hover:bg-"]:hover:not(:disabled, [aria-disabled="true"], .btn, .plus-key, .send-key, .toast-action,
-      .bg-subtle, .is-active, [aria-selected="true"], [aria-pressed="true"], [class*="bg-["]) {
-    background-color: var(--bead-soft); background-image: var(--sheen); box-shadow: var(--rim-bead);
-  }
-  & .file-card:has(> .collapsible:not([data-state="closed"])) { background-image: var(--sheen); box-shadow: var(--rim), var(--lift); }
-  & :is(.tabs-indicator, .segmented-thumb) { background-image: var(--sheen); }
-  & .menu-item[data-highlighted] { box-shadow: var(--rim-tint); }
-  /* The light under the pointer, and the glass lighting up under a press. */
-  & :is(.btn, .icon-btn, .quiet, .row, .nav-row, .plus-key, .send-key, .toast-action, .card-interactive, .menu-item):hover:not(:disabled, [data-disabled]) {
-    background-image: radial-gradient(80px circle at var(--px, 50%) var(--py, -12px), var(--light), transparent 72%), var(--sheen);
-  }
-  & :is(.btn, .icon-btn, .quiet, .row, .nav-row, .plus-key, .send-key, .toast-action, .card-interactive, .menu-item):active:not(:disabled, [data-disabled]) {
-    background-image: radial-gradient(120px circle at var(--px, 50%) var(--py, 50%), var(--light-press), transparent 74%), var(--sheen);
-  }
+  & :is(.segmented > button[aria-checked="true"], .tabs-pill > .tab[aria-selected="true"])::before,
+  & :is(.segmented > button[aria-checked="true"], .tabs-pill > .tab[aria-selected="true"]) + :is(button, .tab)::before { opacity: 0; }
+  /* The inspector's pages: a large segmented control, a capsule. */
+  & .tabs-pill { padding: 0; border-radius: 14px; background: var(--fill-2); }
+  & .tabs-pill > .tab { height: 28px; padding: 0 10px; border-radius: 14px; }
+  & .tabs-pill > .tab + .tab { margin-left: 0; }
+  & .tabs-pill > .tab[aria-selected="true"] { color: var(--text); font-weight: 400; }
+  & .tabs-pill > .tabs-indicator { top: 0; bottom: 0; border-radius: 14px; background: var(--thumb); box-shadow: none; }
 
-  /* Check boxes: a small bead; checked, a bead of the accent with its tick. */
-  & input[type="checkbox"]:not(.task-list-item > input) {
-    appearance: none; -webkit-appearance: none; display: inline-block; flex: none; min-width: 14px; min-height: 14px; margin: 0; border-radius: 4.5px; cursor: pointer;
-    background-color: var(--bead); background-image: var(--sheen); box-shadow: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .2), 0 1px 2px rgba(0, 0, 0, .08);
-    transition: background-color var(--dur-fast) var(--ease-standard);
-    @variant dark { box-shadow: var(--rim-bead), 0 0 0 .5px rgba(0, 0, 0, .5), 0 1px 2px rgba(0, 0, 0, .3); }
-  }
-  & input[type="checkbox"]:not(.task-list-item > input):checked {
-    background-color: var(--accent); background-repeat: no-repeat; background-position: center; background-size: 72% 72%, auto;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.6 6.3 5 8.6 9.5 3.6' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"), linear-gradient(180deg, rgba(255, 255, 255, .28), rgba(255, 255, 255, 0) 62%);
-    box-shadow: var(--rim-tint), 0 0 0 .5px rgba(0, 0, 0, .14), 0 1px 3px color-mix(in srgb, var(--accent) 45%, transparent);
-  }
-  & input[type="checkbox"]:not(.task-list-item > input):disabled { opacity: .4; cursor: default; }
+  /* Switches: the small size; the knob a lozenge, drawn out while pressed. */
+  & .switch { width: 45px; height: 20px; border-radius: 10px; background: var(--track-off); box-shadow: none; }
+  & .switch[data-checked] { background: var(--accent); }
+  & .switch-thumb { top: 2px; left: 2px; width: 26px; height: 16px; border-radius: 8px; background: #FFFFFF; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .04), 0 1px 2px rgba(0, 0, 0, .22); @variant dark { background: #E2E2E2; } }
+  & .switch[data-checked] .switch-thumb { transform: translateX(15px); }
+  & .switch:active:not([data-disabled]) .switch-thumb { width: 30px; }
+  & .switch[data-checked]:active:not([data-disabled]) .switch-thumb { transform: translateX(11px); }
 
-  /* Wells: where words are typed, what a thumb slides in, and code. */
-  & :is(.search-field, .search-box, .field:not(:focus, :focus-visible), .segmented:not(.segmented-quiet), .tabs-pill, .code-block, .bg-subtle.h-1,
-      .bg-inset:is(.rounded-card, .rounded-block, .rounded-row, .rounded-control)) {
-    background-color: var(--bg-inset); box-shadow: var(--well);
-  }
-  & .search-box:focus-within { box-shadow: var(--well), var(--sh-focus); }
-  & .markdown :not(pre) > code { box-shadow: inset 0 .5px 1px rgba(0, 0, 0, .08), 0 .5px 0 rgba(255, 255, 255, .6); @variant dark { box-shadow: inset 0 .5px 1px rgba(0, 0, 0, .3), 0 .5px 0 rgba(255, 255, 255, .07); } }
-  & .switch { box-shadow: inset 0 1px 2px rgba(0, 0, 0, .16), inset 0 0 0 .5px rgba(0, 0, 0, .06), 0 .5px 0 rgba(255, 255, 255, .7); @variant dark { box-shadow: inset 0 1px 2px rgba(0, 0, 0, .4), 0 .5px 0 rgba(255, 255, 255, .09); } }
-  & .switch[data-checked] { background-image: linear-gradient(180deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, 0) 62%); }
-  & .switch-thumb { background: linear-gradient(180deg, #FFFFFF, #F1F1F4); box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .9), 0 0 0 .5px rgba(0, 0, 0, .08), 0 1px 3px rgba(0, 0, 0, .26); }
+  /* Check boxes. */
+  & input[type="checkbox"]:not(.task-list-item > input) { appearance: none; -webkit-appearance: none; display: inline-block; flex: none; min-width: 14px; min-height: 14px; margin: 0; border-radius: 4px; background: var(--fill-1); cursor: default; }
+  & input[type="checkbox"]:not(.task-list-item > input):checked { background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.6 6.2 5 8.5 9.4 3.6' fill='none' stroke='white' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 78% no-repeat; }
+  & input[type="checkbox"]:not(.task-list-item > input):disabled { opacity: .4; }
+  & input[type="checkbox"]:not(.task-list-item > input):focus-visible { outline: none; box-shadow: var(--sh-focus); }
+
+  /* Fields: the field's own ground and a hairline; pop-up buttons a control fill with their chevrons; search a capsule. */
+  & .field { height: 24px; padding: 0 7px; border-radius: var(--radius-control); background: var(--bg-field); box-shadow: inset 0 0 0 1px var(--border-strong); font-size: 13px; }
+  & textarea.field { height: auto; padding: 4px 7px; }
+  & :is(.field:focus, .field:focus-visible) { background: var(--bg-field); box-shadow: inset 0 0 0 1px var(--border-strong), var(--sh-focus); }
+  & select.field { appearance: none; -webkit-appearance: none; padding-right: 24px; background: var(--fill-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 12'%3E%3Cpath d='M1.5 4.5 4 2l2.5 2.5M1.5 7.5 4 10l2.5-2.5' fill='none' stroke='%23000000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 8px center / 7px 11px; box-shadow: none;
+    @variant dark { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 12'%3E%3Cpath d='M1.5 4.5 4 2l2.5 2.5M1.5 7.5 4 10l2.5-2.5' fill='none' stroke='%23FFFFFF' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); } }
+  & .search-box { height: 24px; border-radius: 12px; background: var(--bg-field); box-shadow: inset 0 0 0 1px var(--border-strong); }
+  & .search-box:focus-within { box-shadow: inset 0 0 0 1px var(--border-strong), var(--sh-focus); }
+  & .search-field { border-radius: 14px; background: var(--fill-3); }
+  & .search-field:hover { background: var(--fill-2); }
+
+  /* Small things: a count or a state, a key. */
+  & .badge:not(.badge-accent, .badge-amber, .badge-red) { background: var(--fill-2); color: var(--text-2); }
+  & .status-pill:not([data-tone]) { background: var(--fill-3); }
+  & .kbd { background: var(--fill-3); box-shadow: none; border-radius: 4px; color: var(--text-2); }
+
+  /* Rows: a chosen row is the unemphasized selection, no heavier words; rows of the sidebar take no ground under the pointer, nearly. */
+  & .row:hover { background: var(--fill-3); }
+  & .nav-row:hover { background: var(--fill-4); }
+  & :is(.nav-row[aria-current="page"], .nav-row[aria-current="true"], .nav-row[data-selected="true"]) { background: var(--fill-1); font-weight: 400; }
+  & .menu-item { border-radius: 5px; }
+  /* The sidebar's own places carry their symbols in the accent, as a native sidebar's do by default. */
+  & .sidebar-pane .nav-icon { color: var(--accent); }
+
+  /* Boxes and the content in them: a box is a fill with no edge; your message a bubble; code its box; nothing in the content is glass. */
+  & .card { background: var(--bg-surface); box-shadow: none; }
+  & .card-interactive:hover { background: var(--fill-3); box-shadow: none; }
+  & .card[data-selected="true"] { box-shadow: 0 0 0 2px var(--accent); }
+  & .user-bubble { background: var(--fill-2); border-radius: 16px; }
+  & .user-bubble:hover { background: var(--fill-1); }
+  & .code-block { background: var(--bg-surface); box-shadow: none; }
+  & .markdown :not(pre) > code { background: var(--fill-3); }
+  /* On the inspector's glass the sections are not boxes: one under the other, a hairline between. */
+  & .details-pane .rounded-card.bg-surface { background: transparent; box-shadow: none; border-radius: 0; }
+  & .details-pane .rounded-card.bg-surface + .rounded-card.bg-surface { border-top: .5px solid var(--border); }
+  /* The capabilities' table keeps its first column and its head over what scrolls under them: the box's own color, solid. */
+  & .capability-matrix .sticky { background-color: var(--bg-box); }
+  & .capability-matrix .sticky.bg-subtle { background-image: linear-gradient(var(--fill-3), var(--fill-3)); }
 }
 
 /* With "reduce transparency" the glass is a plain surface (the window's own material answers the setting by itself). */
@@ -1036,21 +1031,8 @@
   :root[data-glass="system"] .side-sheet { background: transparent; box-shadow: none; }
   :root[data-glass="system"] .tool-group { background: transparent; }
   :root[data-glass="system"] .chat-foot :is(.relay-card, .queued-message, .composer-notice, .composer-change, [role="status"].rounded-block, [role="alert"].rounded-block) { -webkit-backdrop-filter: none; backdrop-filter: none; }
-  /*
-   * The window's floor is a sheet of that glass as well (2026-11-16: every surface is, the one the content lies on too), laid under the whole
-   * page: the page paints no color of its own under its content, and the sidebar's pane is glass on that glass. One wash for all of it lies
-   * under the glass (in the copy behind the window). It is so from the first moment the window stands on its glass, unless the page's
-   * surfaces turn out to be its own glass (data-glass="page"), where the content layer is the solid color it always was.
-   */
-  :root[data-material="liquid"]:not([data-glass="page"]) .sidebar-pane { background: transparent; box-shadow: none; }
-  :root[data-material="liquid"]:not([data-glass="page"]) .pane-backdrop { background: transparent; }
-  /* Until the copy behind the window is there to hold the wash under the glass, the page holds it over the glass: the tone does not change when it comes. */
-  :root[data-material="liquid"]:not([data-glass]) .app-shell { background: var(--pane-wash); }
-  /* With no color to fade into, the conversation fades out itself where it passes under the toolbar and comes to the window's foot. */
-  :root[data-material="liquid"]:not([data-glass="page"]) .scroll-edge { display: none; }
-  :root[data-material="liquid"]:not([data-glass="page"]) .chat-scroll:not(.welcome-scroll) {
-    -webkit-mask-image: linear-gradient(to bottom, transparent 44px, #000 70px, #000 calc(100% - 66px), transparent calc(100% - 46px)); mask-image: linear-gradient(to bottom, transparent 44px, #000 70px, #000 calc(100% - 66px), transparent calc(100% - 46px));
-  }
+  /* The sidebar's glass floats over the window's own ground (drawn in the copy behind the window), as a native sidebar does: no wash of the page's over it. */
+  :root[data-glass="system"] .sidebar-pane { background: transparent; }
   .chat-notices:not(:empty) ~ .chat-scroll { padding-top: 16px; }
   /* The details beside a conversation come under their tabs and to the pane's foot as softly as the conversation does. A page whose rows stay at the top while
      their content passes under them (the changes, a file) keeps its top edge whole. */
