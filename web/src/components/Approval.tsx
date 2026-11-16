@@ -191,7 +191,7 @@ export function ApprovalDock({ request, harness, busy, onDecision, onStop, stopD
       <button type="button" className="decision btn btn-ghost press" disabled={disabled} onClick={back}>返回</button>
       <button type="submit" className="decision btn btn-primary press px-3.5" disabled={disabled}>拒绝并发送</button>
     </form> : <div className="flex flex-wrap items-center justify-end gap-2">
-      {onStop ? <Tip label={"停止当前回复（" + keyText("stop") + "）"} side="top"><button type="button" className="btn btn-ghost -ml-1.5 mr-auto px-2.5" aria-label="停止当前回复" disabled={stopDisabled} onClick={onStop}>
+      {onStop ? <Tip label={"停止当前回复 " + keyText("stop")} side="top"><button type="button" className="btn btn-ghost -ml-1.5 mr-auto px-2.5" aria-label="停止当前回复" disabled={stopDisabled} onClick={onStop}>
         <Square size={10} fill="currentColor" aria-hidden="true"/><span>停止</span></button></Tip> : null}
       {request.note && refuse ? <button type="button" className="decision btn btn-ghost press max-sm:grow" disabled={disabled} onClick={() => setTelling(true)}>拒绝并说明</button> : null}
       {refusals.map(option => button(option, "ghost"))}

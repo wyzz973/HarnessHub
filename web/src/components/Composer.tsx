@@ -262,7 +262,7 @@ export function Composer(props: ComposerProps) {
   const canSteer = active !== null && !active.cancelRequested && props.onSteer !== undefined && !readonly && !blocked && props.messageDraft.trim() !== "" && bytes <= MAX_MESSAGE_BYTES && props.attachments.length === 0;
   const steerFirst = props.preferences.whileRunning === "steer";
   // The keys that send, and the other way of sending while a reply runs, as the settings make them.
-  const sendWord = props.preferences.sendKey === "mod-enter" ? "⌘⏎" : "Enter", otherWord = props.preferences.sendKey === "mod-enter" ? "⌥⌘⏎" : "⌘⏎";
+  const sendWord = props.preferences.sendKey === "mod-enter" ? "⌘⏎" : "⏎", otherWord = props.preferences.sendKey === "mod-enter" ? "⌥⌘⏎" : "⌘⏎";
   const send = async (other = false) => {
     if (canSteer && (steerFirst !== other || !canQueue)) { props.onSteer!(); return; }
     if (canQueue) { props.onQueue!(); return; }
@@ -585,7 +585,6 @@ export function Composer(props: ComposerProps) {
             <span className="mono flex-none text-ui-sm font-medium">/{command.name}</span><span className="min-w-0 truncate text-caption text-fg-3">{command.description}</span>
           </button>) : <p className="m-0 px-3 py-4 text-center text-ui-sm text-fg-3">没有匹配的命令</p>}
         </div>
-        <div className="px-3.5 py-2 text-caption text-fg-3 hairline-t">↑ ↓ 选择 · Enter 填入 · Esc 关闭</div>
       </div> : null}
       {mentionOpen ? <div className="surface-pop motion-fade-in absolute bottom-[calc(100%+8px)] left-0 z-20 flex w-[min(360px,100%)] flex-col overflow-hidden" style={motionStyle({ duration: 120 })}>
         <div role="listbox" aria-label="引用文件" id={listId} className="p-[5px]">
@@ -593,7 +592,6 @@ export function Composer(props: ComposerProps) {
             className="flex w-full items-center gap-2.5 rounded-row border-none bg-subtle px-2.5 py-2 text-left"><Paperclip size={15} className="flex-none text-fg-2" aria-hidden="true"/>
             <span className="flex min-w-0 flex-col"><span className="text-ui-sm font-medium">从这台电脑选择文件…</span><span className="text-caption text-fg-3">作为附件发出</span></span></button>
         </div>
-        <div className="px-3.5 py-2 text-caption text-fg-3 hairline-t">Enter 选择 · Esc 保留 @ 作为文字</div>
       </div> : null}
       <div ref={box} className={cn("composer-box relative rounded-composer transition-[box-shadow] duration-200 ease-standard",
         docked ? "shadow-[0_0_0_1px_var(--amber-line),0_0_0_4px_var(--amber-soft),var(--sh-composer)]"
@@ -675,8 +673,8 @@ export function Composer(props: ComposerProps) {
                       {outdated ? <span className="outdated-dot absolute -top-0.5 -right-0.5 size-2 rounded-full bg-amber-dot shadow-[0_0_0_1.5px_var(--bg-surface)]" aria-hidden="true"/> : null}</span>
                     <span className="max-w-[150px] truncate font-medium text-fg max-sm:max-w-[80px]">{selected.label}</span></>
                     : <span className="text-fg-2">选择 Harness</span>} onChange={pickAgent}/>
-                {showProvider ? <SearchPicker side={popSide} {...listOpen("provider")} label="选择 Provider" value={draft.providerId} placeholder="选择 Provider" options={providerOptions} disabled={disabled} align="end" chevron={last === "provider"} className={cn(SEGMENT, "gap-1.5")} {...afterChoice}
-                  trigger={selected => <>{selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}<span className="max-w-[140px] truncate text-fg-2">{selected?.short ?? selected?.label ?? "选择 Provider"}</span></>}
+                {showProvider ? <SearchPicker side={popSide} {...listOpen("provider")} label="选择模型连接" value={draft.providerId} placeholder="选择模型连接" options={providerOptions} disabled={disabled} align="end" chevron={last === "provider"} className={cn(SEGMENT, "gap-1.5")} {...afterChoice}
+                  trigger={selected => <>{selected?.icon ? <span className="flex flex-none items-center">{selected.icon}</span> : null}<span className="max-w-[140px] truncate text-fg-2">{selected?.short ?? selected?.label ?? "选择模型连接"}</span></>}
                   onChange={value => { const next = providers.find(row => row.id === value); props.onDraft({ ...draft, providerId: next?.id ?? "", providerRevision: next?.revision ?? null, model: next?.defaultModel ?? "", nativeOptions: {} }); }}
                   footer={<button type="button" className="link-btn text-caption" onClick={props.onProviders}>管理模型连接</button>}/> : null}
                 {draft.harnessId ? <SearchPicker side={popSide} {...listOpen("model")} label="选择模型" value={draft.model} placeholder="选择模型" options={asideModels} disabled={disabled || !provider && !props.nativeModels?.canSelect} align="end" chevron={last === "model"} className={SEGMENT} {...afterChoice}
@@ -689,11 +687,11 @@ export function Composer(props: ComposerProps) {
                 {mode && modeInChip ? <SearchPicker side={popSide} {...listOpen("mode")} label={OPTION_NAMES[mode.id] ?? mode.name} value={draft.nativeOptions[mode.id] ?? ""} placeholder="跟随本机配置" options={optionChoices(mode, true)} disabled={disabled || props.nativeModelsLoading} align="end" chevron={last === "mode"}
                   className={cn(SEGMENT, "flex-none")} {...afterChoice} trigger={() => <Pill>{modeShown}</Pill>} onChange={value => changeOption(mode.id, value)}/> : null}
               </div>
-              {canSteer ? <Tip label={"现在就告诉它（" + (steerFirst || !canQueue ? sendWord : otherWord) + "）"}><button type="button" className="press flex h-8 w-8 flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
+              {canSteer ? <Tip label={"现在就告诉它 " + (steerFirst || !canQueue ? sendWord : otherWord)}><button type="button" className="press flex h-8 w-8 flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
                 aria-label="现在就告诉它" onClick={() => props.onSteer?.()}><CornerDownRight size={16}/></button></Tip> : null}
-              {canQueue ? <Tip label={"本轮结束后发送（" + (canSteer && steerFirst ? otherWord : sendWord) + "）"}><button type="button" className="press flex h-8 w-8 flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
+              {canQueue ? <Tip label={"本轮结束后发送 " + (canSteer && steerFirst ? otherWord : sendWord)}><button type="button" className="press flex h-8 w-8 flex-none items-center justify-center rounded-full border-none bg-subtle text-fg-2 transition-[color,background-color,transform] duration-120 ease-standard hover:bg-hover hover:text-fg"
                 aria-label="本轮结束后发送" onClick={() => props.onQueue?.()}><ListPlus size={16}/></button></Tip> : null}
-              <Tip label={active ? "停止当前回复（" + keyText("stop") + "）" : "发送（" + sendWord + "）"}><button type={active ? "button" : "submit"} aria-label={active ? "停止当前回复" : "发送消息"}
+              <Tip label={active ? "停止当前回复 " + keyText("stop") : "发送 " + sendWord}><button type={active ? "button" : "submit"} aria-label={active ? "停止当前回复" : "发送消息"}
                 className={cn("press ml-0.5 flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full border-none disabled:cursor-default",
                   active ? "bg-fg text-app disabled:opacity-40" : "bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-40")}
                 style={{ transition: "background-color 200ms var(--ease-standard), opacity 200ms var(--ease-standard), transform 120ms var(--ease-snap)" }}
@@ -766,7 +764,7 @@ function AdvancedSettings(props: ComposerProps & {
     {!provider && APPROVAL_NOTES[draft.harnessId] ? <div className={row}><span className={heading}>审批</span><small className="text-ui-sm text-fg-2">{APPROVAL_NOTES[draft.harnessId]}</small></div> : null}
     {controls.length > 1 ? <div className={row}><span className={heading}>控制入口</span><div className="-ml-2"><SearchPicker label="选择控制入口" {...nested} value={draft.controlId} placeholder="控制入口" options={controls.map(control => ({ value: control.id, label: protocolLabel(control.protocol), description: control.id }))} disabled={disabled} onChange={value => props.onDraft({ ...draft, controlId: value, nativeOptions: {} })}/></div></div>
       : <div className={row}><span className={heading}>控制入口</span><span className="flex items-center gap-2 text-ui-sm"><strong className="font-medium">{selectedControl ? protocolLabel(selectedControl.protocol) : "尚未选择"}</strong>{draft.controlId ? <code className="text-caption text-fg-3">{draft.controlId}</code> : null}</span></div>}
-    {provider && draft.providerRevision !== null ? <div className={row}><span className={heading}>Provider 配置</span><strong className="text-ui-sm font-medium">{provider.name} · 版本 {draft.providerRevision}</strong>
+    {provider && draft.providerRevision !== null ? <div className={row}><span className={heading}>连接配置</span><strong className="text-ui-sm font-medium">{provider.name} · 版本 {draft.providerRevision}</strong>
       {outdated ? <button type="button" className="btn btn-sm self-start" disabled={disabled} onClick={() => props.onDraft({ ...draft, providerRevision: provider.revision, model: provider.models.includes(draft.model) ? draft.model : provider.defaultModel })}>使用最新版本 {provider.revision}</button> : <small className="text-caption text-fg-3">会话固定使用这个版本。</small>}</div>
       : <p className="m-0 px-3.5 py-3 text-ui-sm text-fg-2 hairline-b">沿用本机已安装 Harness 的模型配置和登录状态。</p>}
     {!provider && props.onRetention ? <div className={cn(row, "kept-setting")}><span className={heading}>后台任务</span>

@@ -225,7 +225,7 @@ test("real browser validates Provider management, public chat switching, cancell
 
   await page.getByRole("button", { name: "模型连接", exact: true }).click();
   await expect(page.getByRole("heading", { name: "连接你的第一个模型服务" })).toBeVisible();
-  await page.getByRole("button", { name: "添加 Provider", exact: true }).first().click();
+  await page.getByRole("button", { name: "添加连接", exact: true }).first().click();
   await responsive("provider-editor");
   async function createProvider(name: string, model: string, key: string, protocol = "openai-responses") {
     await page.getByLabel("名称", { exact: true }).fill(name);
@@ -234,13 +234,13 @@ test("real browser validates Provider management, public chat switching, cancell
     await page.getByLabel(/API Key/u).fill(key);
     await page.getByLabel("模型 ID 列表", { exact: true }).fill(model);
     await page.getByLabel("默认模型", { exact: true }).selectOption(model);
-    await page.getByRole("button", { name: "添加 Provider", exact: true }).click();
+    await page.getByRole("button", { name: "添加连接", exact: true }).click();
     await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
   }
   await createProvider("工作模型 A", "model-a", "browser-fixture-key-A");
   await page.getByRole("button", { name: "测试 工作模型 A 的模型目录", exact: true }).click();
   await expect(page.getByText("模型目录可达 · 返回 2 个模型", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "添加 Provider", exact: true }).click();
+  await page.getByRole("button", { name: "添加连接", exact: true }).click();
   await createProvider("工作模型 B", "model-b", "browser-fixture-key-B");
   await page.screenshot({ path: join(artifact, "providers-desktop.png"), fullPage: true, animations: "disabled" });
   await page.emulateMedia({ colorScheme: "dark" }); await page.screenshot({ path: join(artifact, "providers-dark-desktop.png"), fullPage: true, animations: "disabled" }); await page.emulateMedia({ colorScheme: "light" });
@@ -283,7 +283,7 @@ test("real browser validates Provider management, public chat switching, cancell
   assert.ok(motion.durations.every(value => value <= 150) && motion.properties.split(",").every(property => property.trim() === "opacity"), "reduced motion leaves the picker only a short fade: " + motion.properties + " " + motion.durations.join(","));
   await page.keyboard.press("Escape"); await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await pick("选择 Provider", "工作模型 A");
+  await pick("选择模型连接", "工作模型 A");
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   await composer.fill("请梳理这个项目的运行链路");
   await composer.dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true });
@@ -332,7 +332,7 @@ test("real browser validates Provider management, public chat switching, cancell
       droppedSwitchResponse = true; await route.abort("connectionreset");
     } else await route.continue();
   });
-  await pick("选择 Provider", "工作模型 B");
+  await pick("选择模型连接", "工作模型 B");
   await expect(page.getByRole("alert")).toContainText("暂时无法连接本机网关");
   await page.getByRole("button", { name: "重试切换", exact: true }).click();
   await expect.poll(() => switchKeys.length).toBe(2); assert.equal(switchKeys[0], switchKeys[1]);
@@ -340,7 +340,7 @@ test("real browser validates Provider management, public chat switching, cancell
   await page.evaluate(() => { const hold = Reflect.get(window, "__holdFactDelivery"); if (typeof hold === "function") hold(false); });
   await page.unroute("**/api/v1/sessions/" + first.id);
   await page.unroute("**/api/v1/sessions/" + first.id + "/switches");
-  await expect(page.getByRole("button", { name: "选择 Provider", exact: true })).toContainText("工作模型 B");
+  await expect(page.getByRole("button", { name: "选择模型连接", exact: true })).toContainText("工作模型 B");
   await expect.poll(async () => (await snapshot()).epoch).toBe(2);
   await composer.fill("继续解释下一步"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await page.getByRole("button", { name: "发送消息", exact: true }).click();
   await expect(log).toContainText("已由 model-b 处理");
@@ -389,7 +389,7 @@ test("real browser validates Provider management, public chat switching, cancell
   current = await snapshot(); assert.equal(current.runs.at(-1)?.status, "cancelled");
   await page.getByRole("button", { name: "模型连接", exact: true }).click();
   await page.getByRole("button", { name: "编辑 工作模型 B", exact: true }).click();
-  await page.getByRole("checkbox", { name: "启用这个 Provider", exact: true }).uncheck();
+  await page.getByRole("checkbox", { name: "启用这个连接", exact: true }).uncheck();
   await page.getByRole("button", { name: "保存修改", exact: true }).click();
   await expect(page.getByRole("heading", { name: "模型连接", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
@@ -400,10 +400,10 @@ test("real browser validates Provider management, public chat switching, cancell
   const palette = page.getByRole("combobox", { name: "搜索对话、消息、页面或操作", exact: true }); await palette.fill("模型与账号");
   await expect(page.getByRole("option")).toHaveCount(1); await expect(page.getByRole("option")).toHaveAccessibleName(/^模型连接/u);
   await palette.press("Enter"); await expect(page.getByRole("heading", { name: "模型连接", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "添加 Provider", exact: true }).click();
+  await page.getByRole("button", { name: "添加连接", exact: true }).click();
   await createProvider("其他协议连接", "claude-fixture", "browser-fixture-key-C", "anthropic-messages");
   await page.getByRole("button", { name: "返回对话", exact: true }).click();
-  await page.getByRole("button", { name: "选择 Provider", exact: true }).click();
+  await page.getByRole("button", { name: "选择模型连接", exact: true }).click();
   await expect(page.getByRole("option", { name: "其他协议连接", exact: true })).toBeDisabled();
   await page.keyboard.press("Escape");
   assert.ok(!(await page.locator("body").innerText()).includes("browser-fixture-key"));
@@ -460,7 +460,7 @@ test("live chat renders committed partial Markdown before completion, respects r
     name: "流式验收模型", protocol: "openai-responses", baseUrl: fixture.baseUrl, models: ["model-a"], defaultModel: "model-a", enabled: true, apiKey: "synthetic-stream-fixture-key",
   } } }); assert.equal(created.status(), 201);
   await page.goto(origin); await expect(page.getByRole("textbox", { name: "发送消息", exact: true })).toBeVisible();
-  for (const [label, value] of [["选择 Harness", "Codex"], ["选择 Provider", "流式验收模型"]] as const) {
+  for (const [label, value] of [["选择 Harness", "Codex"], ["选择模型连接", "流式验收模型"]] as const) {
     await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click();
   }
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
@@ -611,11 +611,11 @@ test("unavailable native authentication keeps the same conversation usable, show
     const id = new URL(page.url()).hash.slice(1).split("session=")[1]; assert.ok(id);
     return await readThrough(context, origin, id);
   };
-  await agent("Codex"); await pick("选择 Provider", "可用模型连接");
+  await agent("Codex"); await pick("选择模型连接", "可用模型连接");
   await composer.fill("FIRST_CONVERSATION"); await composer.press("Enter"); await expect(log).toContainText("已由");
   await expect.poll(async () => (await current()).runs[0].status).toBe("completed"); const first = await current();
   await composer.fill("选择失败也要保留这条草稿");
-  await agent("Signed Out"); await pick("选择 Provider", "Harness 原生连接");
+  await agent("Signed Out"); await pick("选择模型连接", "Harness 原生连接");
   await expect(page.getByText(/本机认证尚未就绪/)).toBeVisible();
   await expect(page.getByRole("button",{name:"发送消息",exact:true})).toBeDisabled();
   // The picker shows what the latest catalog read and Runs found, before anything else is sent.
@@ -631,7 +631,7 @@ test("unavailable native authentication keeps the same conversation usable, show
   await expect(page.getByText(/本机认证尚未就绪/)).toBeVisible();
   await expect(composer).toHaveValue("选择失败也要保留这条草稿");
   assert.equal((await current()).lastSwitch.id, failed.lastSwitch.id, "refresh must not retry an already failed selection");
-  await agent("Codex"); await pick("选择 Provider","可用模型连接");
+  await agent("Codex"); await pick("选择模型连接","可用模型连接");
   await expect(page.getByRole("button", { name: "选择 Harness", exact: true })).toContainText("Codex");
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled();
   await composer.press("Enter"); await expect.poll(async () => (await current()).runs[1]?.status).toBe("completed");
@@ -652,7 +652,7 @@ test("unavailable native authentication keeps the same conversation usable, show
   await expect.poll(async () => (await current()).runs[2]?.id).toBe(retried.runs[2].id); assert.equal((await current()).runs.length, 3);
   await composer.fill("第一段对话的未发送草稿");
   await page.getByRole("button", { name: "新对话", exact: true }).click();
-  await agent("Codex"); await pick("选择 Provider", "可用模型连接");
+  await agent("Codex"); await pick("选择模型连接", "可用模型连接");
   await composer.fill("SECOND_CONVERSATION"); await composer.press("Enter"); await expect(page).toHaveURL(/#session=/u); await expect.poll(async () => (await current()).runs[0]?.status).toBe("completed");
   const second = await current(); assert.notEqual(second.id, first.id); await composer.fill("第二段对话的未发送草稿");
   await page.getByRole("button", { name: "FIRST_CONVERSATION", exact: true }).click();
@@ -682,7 +682,7 @@ test("native settings switch without Apply and approvals survive refresh or canc
   browser = await chromium.launch({ headless: true }); const context = await isolatedContext(browser, { viewport: { width: 943, height: 1079 } }), page = await context.newPage();
   await page.goto(fixture.gateway.url);
   await expect(page.getByRole("button", { name: "模型连接", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "选择 Provider", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "选择模型连接", exact: true })).toHaveCount(0);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
   await pick("选择 Harness", "Codex"); await expect(page.getByRole("button", { name: "选择模型", exact: true })).toBeEnabled(); await askEachStep(page);
@@ -1416,7 +1416,7 @@ test("the settings page reads the login shell's PATH only when asked, says it ru
   const panel = page.getByRole("region", { name: "来自登录 shell 的目录" });
   await expect(panel).toContainText("运行你的登录 shell（login-sh -l）读取 PATH，只用来找 Harness。");
   await expect(panel.locator("li")).toHaveCount(0); await expect(panel).not.toContainText("没有带来新的目录");
-  await panel.getByRole("button", { name: "读取并重新检测" }).click();
+  await panel.getByRole("button", { name: "读取 PATH" }).click();
   await expect(panel.locator("li code")).toHaveText([bin], { timeout: 30000 });
   await page.screenshot({ path: join(artifact, "login-shell-panel.png"), animations: "disabled" });
   await panel.locator("li").getByRole("button", { name: "移除" }).click();
@@ -1424,7 +1424,7 @@ test("the settings page reads the login shell's PATH only when asked, says it ru
   await expect(panel).toContainText("登录 shell 的 PATH 没有带来新的目录。");
   // A shell the system's list no longer names is refused with its reason, and the directories stay as they were.
   await writeFile(shells, "/bin/sh\n");
-  await panel.getByRole("button", { name: "读取并重新检测" }).click();
+  await panel.getByRole("button", { name: "读取 PATH" }).click();
   await expect(panel.getByRole("status")).toHaveText("HarnessHub 没有运行你的登录 shell：它必须是列在 /etc/shells 中的绝对路径。用 Homebrew 等方式安装、没有加入这个文件的 shell 常见这种情况。搜索目录没有变化。");
   await expect(panel.locator("li")).toHaveCount(0);
   await page.screenshot({ path: join(artifact, "login-shell-refused.png"), animations: "disabled" });
@@ -2395,8 +2395,8 @@ test("G054-DL9 the application's shortcuts open what they name, ⌥⌘↓ goes t
 });
 
 /**
- * How a maintenance confirmation is spaced: as the capability dialogs, after the Capabilities board's write preview, the
- * body's first block 18 px under the title block and 12 px between blocks, the buttons 14 px below the body and 18 px
+ * How a maintenance confirmation is spaced: as every dialog whose content scrolls (ui/overlay.tsx DIALOG_BODY, DIALOG_FOOT), the
+ * body's first block 12 px under the title block and 12 px between blocks, the buttons 16 px below the body and 20 px
  * above the edge, with no rule between them (Base UI titles a dialog with an h2). `squeezed` counts the body's blocks
  * that would be drawn shorter than without the body's height limit if they clipped their overflow, which lets a block of
  * a flex column shrink below its content: a body taller than its limit must scroll instead. The probe's styles are put
@@ -2414,7 +2414,7 @@ function confirmationGeometry(dialog: ReturnType<Page["getByRole"]>) {
       footer: [style.borderTopWidth, style.paddingTop, style.paddingBottom], squeezed: limited.filter((height, index) => height + 0.5 < natural[index]!).length };
   });
 }
-const CONFIRMATION_GEOMETRY = { first: 18, gap: "12px", footer: ["0px", "14px", "18px"], squeezed: 0 };
+const CONFIRMATION_GEOMETRY = { first: 12, gap: "12px", footer: ["0px", "16px", "20px"], squeezed: 0 };
 
 test("G054-DL1 nothing loads from elsewhere: the policy allows only this Gateway, the page asks nothing of anywhere else, and no Google Fonts rule remains", { timeout: 120000 }, async t => {
   const fixture = await launchFixture(false); let browser: Browser | null = null;

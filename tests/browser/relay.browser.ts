@@ -574,8 +574,8 @@ test("the settings page offers the one relay setting when the Gateway has it, sa
   const group = page.getByRole("radiogroup", { name: "换 Harness 时附上之前的对话", exact: true });
   await expect(group).toBeVisible();
   // On is the default; it is the only relay setting there is.
-  await expect(group.getByRole("radio")).toHaveText(["开（默认）", "关"]);
-  await expect(group.getByRole("radio", { name: "开（默认）" })).toHaveAttribute("aria-checked", "true");
+  await expect(group.getByRole("radio")).toHaveText(["开", "关"]);
+  await expect(group.getByRole("radio", { name: "开", exact: true })).toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("radiogroup", { name: "跨厂商交接" })).toHaveCount(0); await expect(page.getByRole("radiogroup", { name: "送达拿不准时" })).toHaveCount(0);
   await expect(page.getByText("换 Harness 时附上之前的对话", { exact: true })).toBeVisible();
   await shoot(page, "settings-relay");
@@ -590,7 +590,7 @@ test("the settings page offers the one relay setting when the Gateway has it, sa
 
   // A write the Gateway refuses puts the choice back and says so; nothing is left looking saved.
   gateway.prefsFailure = 502;
-  await group.getByRole("radio", { name: "开（默认）" }).click();
+  await group.getByRole("radio", { name: "开", exact: true }).click();
   await expect(page.getByText("这项设置没有保存（网关返回 502）。")).toBeVisible();
   await expect(group.getByRole("radio", { name: "关" })).toHaveAttribute("aria-checked", "true");
   assert.deepEqual(errors, []);

@@ -386,7 +386,7 @@ export function Sidebar(props: SidebarProps) {
           items={[{ heading: "稍后提醒" }, ...snoozeChoices(Date.now()).map(choice => ({ label: choice.label, icon: <AlarmClock size={14}/>, onSelect: () => { many.snooze(pickedIds, choice.until); done(); } }))]}/>
         <Tip label="归档"><button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label="全部归档" onClick={() => { many.archive(pickedIds); done(); }}><Archive size={14} aria-hidden="true"/></button></Tip>
         <Tip label="删除"><button type="button" className="icon-btn icon-btn-sm text-fg-3 hover:text-red" aria-label="全部删除" onClick={() => { many.remove(pickedIds); done(); }}><Trash2 size={14} aria-hidden="true"/></button></Tip>
-        <Tip label="取消选择（Esc）"><button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label="取消选择" onClick={done}><X size={14} aria-hidden="true"/></button></Tip>
+        <Tip label="取消选择 esc"><button type="button" className="icon-btn icon-btn-sm text-fg-3" aria-label="取消选择" onClick={done}><X size={14} aria-hidden="true"/></button></Tip>
       </div> : null}
     </div>
     <div className="flex-none pt-1">

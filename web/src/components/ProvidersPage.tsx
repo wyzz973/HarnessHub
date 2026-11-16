@@ -22,16 +22,16 @@ export function ProvidersPage(props: ProvidersProps) {
   const [query, setQuery] = useState("");
   const providers = props.providers.filter(provider => `${provider.name} ${provider.baseUrl} ${provider.models.join(" ")}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   if (props.editor !== null) return <ProviderEditor key={props.editor === "new" ? "new" : props.editor.id} {...props} current={props.editor === "new" ? undefined : props.editor}/>;
-  const add = <button type="button" className="btn btn-primary" onClick={() => props.onEdit("new")}><Plus size={15} aria-hidden="true"/>添加 Provider</button>;
+  const add = <button type="button" className="btn btn-primary" onClick={() => props.onEdit("new")}><Plus size={15} aria-hidden="true"/>添加连接</button>;
   // With no connection yet the empty place offers the one way forward; the head offers it once there is a list.
   return <PageShell title="模型连接" titleId="providers-title" onMenu={props.onMenu} sidebarHidden={props.sidebarHidden} onExpandSidebar={props.onExpandSidebar} onBack={props.onChat}
-    description="连接只存在本机，不改 Harness 自己的配置。" {...(props.providers.length ? { actions: add } : {})}>
+    description="连接和密钥只存在本机，不改 Harness 自己的配置。" {...(props.providers.length ? { actions: add } : {})}>
     {props.error ? <Notice tone="red" onDismiss={props.onDismissError}>{props.error}</Notice> : null}
     {props.providers.length === 0 ? <EmptyState icon={<SlidersHorizontal size={28}/>} title="连接你的第一个模型服务" action={add}>填写服务地址和密钥，再添加要使用的模型。</EmptyState> : <>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <SearchField className="min-w-[min(220px,100%)] flex-1" label="搜索 Providers" placeholder="搜索名称、地址或模型" value={query} onChange={setQuery}/>
+        <SearchField className="min-w-[min(220px,100%)] flex-1" label="搜索连接" placeholder="搜索名称、地址或模型" value={query} onChange={setQuery}/>
         <span className="text-ui-sm text-fg-3">{props.providers.length} 个连接</span></div>
-      <div className="flex flex-col gap-3">{providers.length === 0 ? <p className="m-0 text-ui-sm text-fg-2">没有匹配的 Provider。<button type="button" className="link-btn" onClick={() => setQuery("")}>清除搜索</button></p> : providers.map(provider => {
+      <div className="flex flex-col gap-3">{providers.length === 0 ? <p className="m-0 text-ui-sm text-fg-2">没有匹配的连接。<button type="button" className="link-btn" onClick={() => setQuery("")}>清除搜索</button></p> : providers.map(provider => {
         const probe = props.probes[provider.id], currentProbe = probe?.revision === provider.revision ? probe : undefined;
         return <article key={provider.id} className={cn("card flex flex-col gap-3 p-4", !provider.enabled && "opacity-70")} aria-labelledby={"provider-" + provider.id}>
           <div className="flex flex-wrap items-start gap-x-3 gap-y-2.5"><BrandIcon brand={providerBrand(provider.baseUrl)} name={provider.name} size={32}/>
@@ -45,7 +45,6 @@ export function ProvidersPage(props: ProvidersProps) {
               <p className="m-0 my-1.5 text-fg-3">只测了模型目录。</p><div className="flex flex-wrap gap-1.5">{currentProbe.models.map(model => <Badge key={model} className="mono font-normal">{model}</Badge>)}</div></details>}</div> : null}
         </article>;
       })}</div>
-      <p className="m-0 flex items-center gap-2 text-ui-sm text-fg-3"><ShieldCheck size={14} aria-hidden="true"/>密钥只存在本机。</p>
     </>}
   </PageShell>;
 }
@@ -87,10 +86,10 @@ function ProviderEditor(props: ProvidersProps & { current: ProviderView | undefi
     catch { /* Parent displays the request error and preserves unsaved fields. */ }
   };
   const field = "flex min-w-0 flex-col gap-1.5";
-  return <PageShell title={current ? "编辑连接" : "添加连接"} titleId="editor-title" onMenu={props.onMenu} sidebarHidden={props.sidebarHidden} onExpandSidebar={props.onExpandSidebar} onBack={props.onBack} backLabel="返回 Provider 列表"
-    description={current ? `修改「${current.name}」的地址、密钥和模型。已有对话仍按原来的配置版本调用。` : "填写连接信息和模型 ID，配置保存在本机。"}
-    actions={<><span className="hidden text-caption text-fg-3 sm:inline">{dirty ? "未保存" : current ? `配置版本 ${current.revision}` : "新的 Provider"}</span><button type="button" className="btn" onClick={props.onBack} disabled={props.saving}>取消</button>
-      <button type="submit" form="provider-editor-form" className="btn btn-primary" disabled={props.saving}>{props.saving ? <Spinner size={13} label="" className="text-on-accent"/> : <Plus size={14} aria-hidden="true"/>}{current ? "保存修改" : "添加 Provider"}</button></>}>
+  return <PageShell title={current ? "编辑连接" : "添加连接"} titleId="editor-title" onMenu={props.onMenu} sidebarHidden={props.sidebarHidden} onExpandSidebar={props.onExpandSidebar} onBack={props.onBack} backLabel="返回连接列表"
+    description={current ? `修改「${current.name}」的地址、密钥和模型。已有对话仍按原来的配置版本调用。` : "填写连接信息和模型 ID。"}
+    actions={<><span className="hidden text-caption text-fg-3 sm:inline">{dirty ? "未保存" : current ? `配置版本 ${current.revision}` : "新的连接"}</span><button type="button" className="btn" onClick={props.onBack} disabled={props.saving}>取消</button>
+      <button type="submit" form="provider-editor-form" className="btn btn-primary" disabled={props.saving}>{props.saving ? <Spinner size={13} label="" className="text-on-accent"/> : <Plus size={14} aria-hidden="true"/>}{current ? "保存修改" : "添加连接"}</button></>}>
     {!current ? <div className="flex flex-wrap gap-2" role="group" aria-label="常用服务">{[{ label: "OpenAI", icon: <BrandIcon brand="openai" name="OpenAI" size={20}/>, pick: () => { setProtocol("openai-responses"); setBaseUrl("https://api.openai.com/v1"); }, on: protocol === "openai-responses" && baseUrl === "https://api.openai.com/v1" },
       { label: "Gemini", icon: <BrandIcon brand="gemini" name="Gemini" size={20}/>, pick: () => { setProtocol("gemini"); setBaseUrl("https://generativelanguage.googleapis.com"); }, on: protocol === "gemini" },
       { label: "自定义连接", icon: <SlidersHorizontal size={18} className="text-fg-2" aria-hidden="true"/>, pick: () => { setProtocol("openai-responses"); setBaseUrl(""); }, on: false }].map(preset =>
@@ -115,9 +114,8 @@ function ProviderEditor(props: ProvidersProps & { current: ProviderView | undefi
         <label className={field}><span className="sr-only">模型 ID 列表</span><textarea className="field mono" aria-label="模型 ID 列表" value={modelsText} onChange={event => setModelsText(event.target.value)} placeholder={"model-id-1\nmodel-id-2"} rows={4} required spellCheck={false}/></label>
         <label className={cn(field, "sm:max-w-sm")}><span className="label m-0">默认模型</span><select className="field" aria-label="默认模型" value={defaultModel} onChange={event => setDefaultModel(event.target.value)} required><option value="">选择默认模型</option>{defaultModel && !models.includes(defaultModel) ? <option value={defaultModel}>{defaultModel} · 不在列表中</option> : null}{models.map(model => <option value={model} key={model}>{model}</option>)}</select></label>
       </FieldGroup>
-      <label className="card flex cursor-pointer items-start gap-3 p-4"><input type="checkbox" className="mt-0.5 h-4 w-4 flex-none accent-[var(--accent)]" checked={enabled} onChange={event => setEnabled(event.target.checked)} disabled={props.saving} aria-label="启用这个 Provider"/>
-        <span className="min-w-0"><strong className="block text-ui font-medium">启用这个 Provider</strong><small className="text-ui-sm text-fg-2">允许在新的会话选择中使用。已固定版本的执行保持原配置。</small></span></label>
+      <label className="card flex cursor-pointer items-start gap-3 p-4"><input type="checkbox" className="mt-0.5 h-4 w-4 flex-none accent-[var(--accent)]" checked={enabled} onChange={event => setEnabled(event.target.checked)} disabled={props.saving} aria-label="启用这个连接"/>
+        <span className="min-w-0"><strong className="block text-ui font-medium">启用这个连接</strong><small className="text-ui-sm text-fg-2">允许在新的会话选择中使用。已固定版本的执行保持原配置。</small></span></label>
     </form>
-    <p className="m-0 flex items-center gap-2 text-ui-sm text-fg-3"><ShieldCheck size={14} aria-hidden="true"/>密钥保存在本机，已有配置不会回显。</p>
   </PageShell>;
 }

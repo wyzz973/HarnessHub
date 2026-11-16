@@ -56,18 +56,18 @@ export function selectionProblem(draft: SelectionDraft, harnesses: readonly Harn
   if (!harness.controls.some(row => row.id === draft.controlId && row.available)) return "这个控制入口目前不可用，请在 Harness 页中检查。";
   if (!draft.providerId) return null;
   const provider = providers.find(row => row.id === draft.providerId);
-  if (!provider || !provider.enabled) return "这个 Provider 已停用或不可用，请重新选择。";
-  if (!harness.providerProtocols.includes(provider.protocol)) return "这个 Harness 暂不支持所选 Provider 的协议。请选择兼容的 Provider。";
+  if (!provider || !provider.enabled) return "这个连接已停用或不可用，请重新选择。";
+  if (!harness.providerProtocols.includes(provider.protocol)) return "这个 Harness 不支持所选连接的协议，请换一个连接。";
   if (provider.protocol === "gemini" && !provider.hasCredential && draft.providerRevision === provider.revision) return "Gemini 连接需要 API Key，请先在模型连接中补充密钥。";
   if (!draft.model || draft.providerRevision === null) return "请选择要使用的模型。";
-  if (draft.providerRevision === provider.revision && !provider.models.includes(draft.model)) return "所选模型不在当前 Provider 的配置中。";
+  if (draft.providerRevision === provider.revision && !provider.models.includes(draft.model)) return "所选模型不在当前连接的配置里。";
   return null;
 }
 export function effectiveProviderProblem(selection: HarnessSelection, providers: readonly ProviderView[]): string | null {
   if (!selection.provider) return null;
   const provider = providers.find(row => row.id === selection.provider?.providerId);
-  if (!provider) return "当前 Provider 已不可用，请应用另一个选择后继续。";
-  return provider.enabled ? null : "当前 Provider 已停用。请启用它，或切换到另一个 Provider 后继续。";
+  if (!provider) return "当前连接已不可用，换一个后继续。";
+  return provider.enabled ? null : "当前连接已停用。启用它，或换一个连接后继续。";
 }
 function draftMatches(draft: SelectionDraft, selection: HarnessSelection): boolean { return JSON.stringify(draft) === JSON.stringify(selectionDraft(selection)); }
 
@@ -742,8 +742,8 @@ export function ChatPage(props: ChatProps) {
             {/* The Conversation board's header ends with the details button and "…": showing every step and ending the conversation
                 are items of that menu (rulings R1, R3), so they are there at every width. */}
             <div className="tool-group">
-              {props.terminals ? <Tip label={<>{terminal ? "收起终端" : "打开终端"}（{keyText("terminal")}）</>}><button type="button" className="icon-btn max-sm:hidden" aria-label="终端" aria-pressed={terminal} onClick={() => setTerminal(value => !value)}><SquareTerminal size={16}/></button></Tip> : null}
-              <Tip label={<>{panelOpen ? "收起详情" : "打开详情"}（{keyText("panel")}）</>}><button type="button" className="icon-btn relative" aria-label="详情栏" aria-pressed={panelOpen} aria-describedby={changes ? "details-changes" : undefined} onClick={() => setPanel(!panelOpen)}>
+              {props.terminals ? <Tip label={(terminal ? "收起终端 " : "打开终端 ") + keyText("terminal")}><button type="button" className="icon-btn max-sm:hidden" aria-label="终端" aria-pressed={terminal} onClick={() => setTerminal(value => !value)}><SquareTerminal size={16}/></button></Tip> : null}
+              <Tip label={(panelOpen ? "收起详情 " : "打开详情 ") + keyText("panel")}><button type="button" className="icon-btn relative" aria-label="详情栏" aria-pressed={panelOpen} aria-describedby={changes ? "details-changes" : undefined} onClick={() => setPanel(!panelOpen)}>
                 <PanelRight size={16}/>{!panelOpen && changes ? <ChangeBadge count={changes} news={changesArrived}/> : null}
               </button></Tip>
               {changes ? <span id="details-changes" className="sr-only">本对话改动 {changes} 处</span> : null}
